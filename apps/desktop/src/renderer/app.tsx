@@ -22,13 +22,10 @@ import {
 import {
   LAYOUT_DEFAULTS,
   LAYOUT_LIMITS,
-  LAYOUT_STORAGE_KEYS,
   activeFileAfterClose,
   activeFileAfterRemoval,
   clamp,
   nextDiagnosticIndex,
-  readStoredBoolean,
-  readStoredNumber,
   tabCloseDisposition,
 } from "./editor-state.js";
 import {
@@ -45,42 +42,75 @@ import { ProjectTree, type ProjectTreeHandle } from "./project-tree.js";
 
 import { ExecutionController, filesToSave } from "./execution.js";
 import { Welcome, Toolbar, DevicePanel, BottomPanel, Modal } from "./workbench-ui.js";
-import { Appearance, readPreference, UI_SCALES, CODE_SIZES } from "./appearance.js";
-import { ToolsPanel, ActivityPanel, RemoteFilesPanel, type ToolTab } from "./tools-panel.js";
+import { settingsStore, useSettings } from "./settings-state.js";
+import type { Settings } from "./settings.js";
+import {
+  SettingsPanel,
+  SettingsQuickControls,
+  SettingsTab,
+  SettingsError,
+  settingsCopy,
+} from "./settings-panel.js";
+import { ToolsPanel, ActivityPanel, RemoteFilesPanel } from "./tools-panel.js";
 import { RemoteFilesController } from "./remote-files.js";
-import { readTheme, THEME_KEY, type Theme } from "./theme.js";
+import { isModalOpen } from "./modal.js";
+import { Picker } from "./picker.js";
 
-import { copy, type Locale } from "./copy.js";
+import { copy } from "./copy.js";
 type Tab = { file: string; content: string; saved: string };
 type PendingDraft = { workspaceId: string; file: string; content: string; timer: number };
 type PendingCreate = { kind: WorkspaceEntry["kind"]; parent: string };
 
 export function App(): React.JSX.Element {
-  const [locale, setLocale] = useState<Locale>(() =>
-    navigator.language.toLowerCase().startsWith("zh") ? "zh-TW" : "en",
-  );
+  const { values: settings, saveError, reducedMotion } = useSettings();
+  const {
+    locale,
+    theme,
+    uiScale,
+    codeSize,
+    toolTab,
+    filesOpen,
+    deviceOpen,
+    problemsOpen,
+    filesWidth,
+    deviceWidth,
+    problemsHeight,
+  } = settings;
   const t = copy[locale];
-  const [theme, setTheme] = useState<Theme>(() => readTheme(window.localStorage));
+  const st = settingsCopy[locale];
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsActive, setSettingsActive] = useState(false);
+  const setToolTab = (
+    value: Settings["toolTab"] | ((previous: Settings["toolTab"]) => Settings["toolTab"]),
+  ): void => settingsStore.set("toolTab", value);
+  const setFilesOpen = (
+    value: Settings["filesOpen"] | ((previous: Settings["filesOpen"]) => Settings["filesOpen"]),
+  ): void => settingsStore.set("filesOpen", value);
+  const setDeviceOpen = (
+    value: Settings["deviceOpen"] | ((previous: Settings["deviceOpen"]) => Settings["deviceOpen"]),
+  ): void => settingsStore.set("deviceOpen", value);
+  const setProblemsOpen = (
+    value:
+      Settings["problemsOpen"] | ((previous: Settings["problemsOpen"]) => Settings["problemsOpen"]),
+  ): void => settingsStore.set("problemsOpen", value);
+  const setFilesWidth = (
+    value: Settings["filesWidth"] | ((previous: Settings["filesWidth"]) => Settings["filesWidth"]),
+  ): void => settingsStore.set("filesWidth", value);
+  const setDeviceWidth = (
+    value:
+      Settings["deviceWidth"] | ((previous: Settings["deviceWidth"]) => Settings["deviceWidth"]),
+  ): void => settingsStore.set("deviceWidth", value);
+  const setProblemsHeight = (
+    value:
+      | Settings["problemsHeight"]
+      | ((previous: Settings["problemsHeight"]) => Settings["problemsHeight"]),
+  ): void => settingsStore.set("problemsHeight", value);
   const [controller] = useState(() => new ExecutionController(window.kobrixa));
   const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const locked = controller.editingLocked;
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
-  const [toolTab, setToolTab] = useState<ToolTab>(() => {
-    const stored = localStorage.getItem("kobrixa.tools.tab");
-    return stored === "files" || stored === "activity" ? stored : "connection";
-  });
-  const [uiScale, setUiScale] = useState(() => readPreference("kobrixa.uiScale", UI_SCALES, 100));
-  const [codeSize, setCodeSize] = useState(() =>
-    readPreference("kobrixa.codeSize", CODE_SIZES, 16),
-  );
   const [deviceOverlay, setDeviceOverlay] = useState(false);
-  useEffect(() => {
-    document.documentElement.style.setProperty("--ui-scale", String(uiScale / 100));
-    localStorage.setItem("kobrixa.uiScale", String(uiScale));
-    localStorage.setItem("kobrixa.codeSize", String(codeSize));
-    localStorage.setItem("kobrixa.tools.tab", toolTab);
-  }, [uiScale, codeSize, toolTab]);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
   }, [remoteFiles, execution.session?.id, execution.deployed?.path]);
@@ -91,10 +121,6 @@ export function App(): React.JSX.Element {
   const [projectBusy, setProjectBusy] = useState(false);
   const projectBusyRef = useRef(false);
   useEffect(() => controller.attach(), [controller]);
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem(THEME_KEY, theme);
-  }, [theme]);
   const [workspace, setWorkspace] = useState<WorkspaceSummary>();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeFile, setActiveFile] = useState<string>();
@@ -123,52 +149,6 @@ export function App(): React.JSX.Element {
   const [moveDestination, setMoveDestination] = useState("");
   const [pendingTrash, setPendingTrash] = useState<string>();
   const [managingEntries, setManagingEntries] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(() =>
-    readStoredBoolean(
-      window.localStorage,
-      LAYOUT_STORAGE_KEYS.filesOpen,
-      LAYOUT_DEFAULTS.filesOpen,
-    ),
-  );
-  const [deviceOpen, setDeviceOpen] = useState(() =>
-    readStoredBoolean(
-      window.localStorage,
-      LAYOUT_STORAGE_KEYS.deviceOpen,
-      LAYOUT_DEFAULTS.deviceOpen,
-    ),
-  );
-  const [problemsOpen, setProblemsOpen] = useState(() =>
-    readStoredBoolean(
-      window.localStorage,
-      LAYOUT_STORAGE_KEYS.problemsOpen,
-      LAYOUT_DEFAULTS.problemsOpen,
-    ),
-  );
-  const [filesWidth, setFilesWidth] = useState(() =>
-    readStoredNumber(
-      window.localStorage,
-      LAYOUT_STORAGE_KEYS.filesWidth,
-      LAYOUT_DEFAULTS.filesWidth,
-      LAYOUT_LIMITS.filesWidth.min,
-      LAYOUT_LIMITS.filesWidth.max,
-    ),
-  );
-  const [deviceWidth, setDeviceWidth] = useState(() => {
-    const stored = localStorage.getItem(LAYOUT_STORAGE_KEYS.deviceWidth);
-    const value = stored === null ? LAYOUT_DEFAULTS.deviceWidth : Number(stored);
-    return Number.isFinite(value)
-      ? clamp(value, LAYOUT_LIMITS.deviceWidth.min, LAYOUT_LIMITS.deviceWidth.max)
-      : LAYOUT_DEFAULTS.deviceWidth;
-  });
-  const [problemsHeight, setProblemsHeight] = useState(() =>
-    readStoredNumber(
-      window.localStorage,
-      LAYOUT_STORAGE_KEYS.problemsHeight,
-      LAYOUT_DEFAULTS.problemsHeight,
-      LAYOUT_LIMITS.problemsHeight.min,
-      500,
-    ),
-  );
   const editorRef = useRef<EditorHandle>(null);
   const treeRef = useRef<ProjectTreeHandle>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -240,19 +220,6 @@ export function App(): React.JSX.Element {
     "--problems-height": problemsOpen ? `${problemsHeight}px` : `${(40 * uiScale) / 100}px`,
     "--problems-divider": problemsOpen ? "5px" : "0px",
   } as CSSProperties;
-
-  useEffect(() => {
-    document.documentElement.lang = locale;
-  }, [locale]);
-
-  useEffect(() => {
-    window.localStorage.setItem(LAYOUT_STORAGE_KEYS.filesOpen, String(filesOpen));
-    window.localStorage.setItem(LAYOUT_STORAGE_KEYS.deviceOpen, String(deviceOpen));
-    window.localStorage.setItem(LAYOUT_STORAGE_KEYS.problemsOpen, String(problemsOpen));
-    window.localStorage.setItem(LAYOUT_STORAGE_KEYS.filesWidth, String(filesWidth));
-    window.localStorage.setItem(LAYOUT_STORAGE_KEYS.deviceWidth, String(deviceWidth));
-    window.localStorage.setItem(LAYOUT_STORAGE_KEYS.problemsHeight, String(problemsHeight));
-  }, [deviceOpen, deviceWidth, filesOpen, filesWidth, problemsHeight, problemsOpen]);
 
   useEffect(() => {
     const workspaceElement = workspaceRef.current;
@@ -347,7 +314,35 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const listener = (event: KeyboardEvent): void => {
-      if (modalOpen) return;
+      if (modalOpen || isModalOpen()) return;
+      const modifier = event.metaKey || event.ctrlKey;
+      const key = event.key.toLocaleLowerCase("en-US");
+      const consume = (): void => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      if (modifier && key === ",") {
+        consume();
+        openSettings();
+        return;
+      }
+      if (settingsActive && modifier && key === "w") {
+        consume();
+        closeSettings();
+        return;
+      }
+      if (event.ctrlKey && key === "tab") {
+        consume();
+        cycleTabs(event.shiftKey ? -1 : 1);
+        return;
+      }
+      if (
+        settingsActive &&
+        ((modifier && key === "s") || (event.altKey && event.shiftKey && key === "f"))
+      ) {
+        consume();
+        return;
+      }
       if (locked || projectBusy || managingEntries) {
         if (
           ((event.metaKey || event.ctrlKey) && ["s", "w"].includes(event.key.toLowerCase())) ||
@@ -358,12 +353,6 @@ export function App(): React.JSX.Element {
         }
         return;
       }
-      const modifier = event.metaKey || event.ctrlKey;
-      const key = event.key.toLocaleLowerCase("en-US");
-      const consume = (): void => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
       if (modifier && key === "s") {
         consume();
         void saveActive();
@@ -376,9 +365,6 @@ export function App(): React.JSX.Element {
       } else if (modifier && key === "b") {
         consume();
         setFilesOpen((value) => !value);
-      } else if (event.ctrlKey && key === "tab") {
-        consume();
-        cycleTabs(event.shiftKey ? -1 : 1);
       } else if (event.key === "F8") {
         consume();
         void navigateDiagnostics(event.shiftKey ? -1 : 1);
@@ -512,14 +498,35 @@ export function App(): React.JSX.Element {
     }
   }
 
+  function openSettings(): void {
+    setSettingsOpen(true);
+    setSettingsActive(true);
+    if (settingsActive) document.getElementById("settings-title")?.focus({ preventScroll: true });
+  }
+  function closeSettings(): void {
+    setSettingsOpen(false);
+    setSettingsActive(false);
+    window.requestAnimationFrame(() => {
+      if (workspace && activeFile) editorRef.current?.focus();
+      else document.querySelector<HTMLButtonElement>(".settings-trigger")?.focus();
+    });
+  }
   function cycleTabs(direction: 1 | -1): void {
-    if (!tabs.length) return;
-    const current = Math.max(
-      0,
-      tabs.findIndex((tab) => tab.file === activeFile),
-    );
-    const next = (current + direction + tabs.length) % tabs.length;
-    setActiveFile(tabs[next]?.file);
+    const count = tabs.length + Number(settingsOpen);
+    if (!count) return;
+    const current = settingsActive
+      ? tabs.length
+      : Math.max(
+          0,
+          tabs.findIndex((tab) => tab.file === activeFile),
+        );
+    const next = (current + direction + count) % count;
+    if (next === tabs.length) openSettings();
+    else {
+      setSettingsActive(false);
+      setActiveFile(tabs[next]?.file);
+      window.requestAnimationFrame(() => editorRef.current?.focus());
+    }
   }
 
   async function navigateDiagnostics(direction: 1 | -1): Promise<void> {
@@ -618,6 +625,7 @@ export function App(): React.JSX.Element {
     file: string,
     replaceTabs = false,
   ): Promise<void> {
+    setSettingsActive(false);
     const existing = !replaceTabs && tabs.find((tab) => tab.file === file);
     if (existing) {
       setActiveFile(file);
@@ -655,7 +663,7 @@ export function App(): React.JSX.Element {
   }
 
   async function saveActive(): Promise<void> {
-    if (controller.editingLocked) return;
+    if (settingsActive || controller.editingLocked) return;
     if (activeFile) await saveTab(activeFile);
   }
 
@@ -857,7 +865,8 @@ export function App(): React.JSX.Element {
       controller.editingLocked ||
       projectBusyRef.current ||
       managingEntries ||
-      modalOpen
+      modalOpen ||
+      isModalOpen()
     )
       return;
     const request = { workspaceId: workspace.id, saveAll: saveAllChanges };
@@ -1010,26 +1019,40 @@ export function App(): React.JSX.Element {
     setProblemsOpen(true);
   }
 
+  const settingsPage = (
+    <SettingsPanel
+      settings={settings}
+      onChange={(key, value) => settingsStore.set(key, value)}
+      onReset={settingsStore.resetLayout}
+      active={settingsActive}
+      saveError={saveError}
+      onRetry={settingsStore.save}
+    />
+  );
+  const settingsTab = settingsOpen && (
+    <SettingsTab
+      locale={locale}
+      active={settingsActive}
+      onSelect={openSettings}
+      onClose={closeSettings}
+    />
+  );
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${saveError && !settingsActive ? "has-settings-error" : ""}`}>
       <Toolbar
         t={t}
         locale={locale}
         appearance={
-          <Appearance
-            locale={locale}
-            theme={theme}
-            scale={uiScale}
-            fontSize={codeSize}
-            onTheme={setTheme}
-            onScale={setUiScale}
-            onFontSize={setCodeSize}
+          <SettingsQuickControls
+            settings={settings}
+            onChange={(key, value) => settingsStore.set(key, value)}
+            onOpen={openSettings}
           />
         }
         deviceLocked={controller.locked || managingEntries || projectBusy || modalOpen}
         name={workspace?.name}
         locked={locked || managingEntries || projectBusy || modalOpen}
-        canSave={Boolean(active && active.content !== active.saved)}
+        canSave={Boolean(!settingsActive && active && active.content !== active.saved)}
         state={execution}
         onNew={() => {
           setProjectName("my-robot");
@@ -1048,19 +1071,30 @@ export function App(): React.JSX.Element {
           setToolTab("connection");
           setDeviceOpen(true);
         }}
-        onLocale={() => setLocale((value) => (value === "en" ? "zh-TW" : "en"))}
       />
+      {saveError && !settingsActive && (
+        <SettingsError locale={locale} onRetry={settingsStore.save} />
+      )}
       {!workspace ? (
-        <Welcome
-          t={t}
-          onNew={() => {
-            if (!projectBusy) {
-              setProjectName("my-robot");
-              setNewProjectOpen(true);
-            }
-          }}
-          onOpen={() => void openProject()}
-        />
+        settingsActive ? (
+          <section className="standalone-settings">
+            <div className="tabs" role="tablist" aria-label={st.title}>
+              {settingsTab}
+            </div>
+            {settingsPage}
+          </section>
+        ) : (
+          <Welcome
+            t={t}
+            onNew={() => {
+              if (!projectBusy) {
+                setProjectName("my-robot");
+                setNewProjectOpen(true);
+              }
+            }}
+            onOpen={() => void openProject()}
+          />
+        )
       ) : (
         <section
           className={`workspace ${deviceOverlay ? "device-overlay" : ""}`}
@@ -1123,7 +1157,7 @@ export function App(): React.JSX.Element {
             onPointerDown={(event) => beginSidebarResize("files", event)}
           />
 
-          <section className="center" ref={centerRef}>
+          <section className={`center ${settingsActive ? "settings-active" : ""}`} ref={centerRef}>
             <div className="editor-toolbar">
               <button
                 aria-pressed={filesOpen}
@@ -1138,7 +1172,7 @@ export function App(): React.JSX.Element {
               </div>
               <div className="editor-tools">
                 <button
-                  disabled={!active || locked}
+                  disabled={settingsActive || !active || locked}
                   title={`${t.format} · Shift+Alt/Option+F`}
                   onClick={() => void editorRef.current?.format()}
                 >
@@ -1146,7 +1180,7 @@ export function App(): React.JSX.Element {
                 </button>
                 <button
                   className="icon-button"
-                  disabled={!diagnostics.length}
+                  disabled={settingsActive || !diagnostics.length}
                   aria-label={t.previousProblem}
                   title={`${t.previousProblem} · Shift+F8`}
                   onClick={() => void navigateDiagnostics(-1)}
@@ -1155,7 +1189,7 @@ export function App(): React.JSX.Element {
                 </button>
                 <button
                   className="icon-button"
-                  disabled={!diagnostics.length}
+                  disabled={settingsActive || !diagnostics.length}
                   aria-label={t.nextProblem}
                   title={`${t.nextProblem} · F8`}
                   onClick={() => void navigateDiagnostics(1)}
@@ -1182,7 +1216,7 @@ export function App(): React.JSX.Element {
 
             <div className="tabs" role="tablist" aria-label={t.files}>
               {tabs.map((tab) => {
-                const selected = tab.file === activeFile;
+                const selected = !settingsActive && tab.file === activeFile;
                 const tabDirty = tab.content !== tab.saved;
                 return (
                   <div
@@ -1196,6 +1230,7 @@ export function App(): React.JSX.Element {
                       aria-selected={selected}
                       title={tab.file}
                       onClick={() => {
+                        setSettingsActive(false);
                         setActiveFile(tab.file);
                         window.requestAnimationFrame(() => editorRef.current?.focus());
                       }}
@@ -1218,9 +1253,10 @@ export function App(): React.JSX.Element {
                   </div>
                 );
               })}
+              {settingsTab}
             </div>
 
-            <div className="editor-stage">
+            <div className="editor-stage" hidden={settingsActive}>
               {locked && (
                 <div className="editor-lock" role="status">
                   {t.phases[execution.phase]} <span>{t.locked}</span>
@@ -1232,6 +1268,9 @@ export function App(): React.JSX.Element {
                   ref={editorRef}
                   theme={theme}
                   fontSize={codeSize}
+                  wordWrap={settings.wordWrap}
+                  indentSize={settings.indentSize}
+                  reducedMotion={reducedMotion}
                   readOnly={locked || projectBusy}
                   file={active.file}
                   value={active.content}
@@ -1247,6 +1286,7 @@ export function App(): React.JSX.Element {
               )}
             </div>
 
+            {settingsPage}
             <div
               className="resize-handle resize-problems"
               role="separator"
@@ -1397,16 +1437,17 @@ export function App(): React.JSX.Element {
             }}
           >
             <h2 id="entry-title">{t.chooseEntry}</h2>
-            <select
+            <Picker<string>
+              locale={locale}
+              label={t.chooseEntry}
+              searchable
               value={selectedEntry}
-              onChange={(event) => setSelectedEntry(event.target.value)}
-            >
-              {pendingWorkspace.entryCandidates.map((entry) => (
-                <option key={entry} value={entry}>
-                  {entry}
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedEntry}
+              options={pendingWorkspace.entryCandidates.map((entry) => ({
+                value: entry,
+                label: entry,
+              }))}
+            />
             <div className="modal-actions">
               <button type="button" onClick={() => setPendingWorkspace(undefined)}>
                 {t.close}
@@ -1420,6 +1461,7 @@ export function App(): React.JSX.Element {
       )}
       {pendingCreate && (
         <Modal
+          fallbackFocus={() => treeRef.current?.focus(pendingCreate.parent)}
           onClose={() => {
             if (!managingEntries) setPendingCreate(undefined);
           }}
@@ -1470,6 +1512,7 @@ export function App(): React.JSX.Element {
       )}
       {pendingMove && (
         <Modal
+          fallbackFocus={() => treeRef.current?.focus(pendingMove)}
           onClose={() => {
             if (!managingEntries) setPendingMove(undefined);
           }}
@@ -1488,17 +1531,18 @@ export function App(): React.JSX.Element {
             <p className="modal-path">{pendingMove}</p>
             <label>
               {t.moveDestination}
-              <select
-                autoFocus
+              <Picker<string>
+                locale={locale}
+                label={t.moveDestination}
+                searchable
                 value={moveDestination}
-                onChange={(event) => setMoveDestination(event.target.value)}
-              >
-                {moveDestinations.map((directory) => (
-                  <option key={directory || "root"} value={directory}>
-                    {directory || workspace?.rootLabel}
-                  </option>
-                ))}
-              </select>
+                disabled={managingEntries}
+                onChange={setMoveDestination}
+                options={moveDestinations.map((directory) => ({
+                  value: directory,
+                  label: directory || workspace?.rootLabel || "/",
+                }))}
+              />
             </label>
             <div className="modal-actions">
               <button
@@ -1517,6 +1561,7 @@ export function App(): React.JSX.Element {
       )}
       {pendingTrash && (
         <Modal
+          fallbackFocus={() => treeRef.current?.focus(pendingTrash)}
           onClose={() => {
             if (!managingEntries) setPendingTrash(undefined);
           }}
@@ -1617,7 +1662,7 @@ export function App(): React.JSX.Element {
           {locked ? t.phases[execution.phase] : checking ? t.checking : status}
         </span>
         <div className="status-group status-details">
-          {active && (
+          {active && !settingsActive && (
             <>
               <span>
                 {t.line} {cursor.line}, {t.column} {cursor.column}

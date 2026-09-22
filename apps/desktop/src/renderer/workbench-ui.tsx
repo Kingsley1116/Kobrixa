@@ -3,13 +3,29 @@ import kobrixaMark from "../../../../assets/brand/kobrixa-mark.svg";
 import type { DeviceDescriptor, Diagnostic } from "../shared/api.js";
 import type { Copy, Locale } from "./copy.js";
 import type { ExecutionState } from "./execution.js";
+import { Picker } from "./picker.js";
+export { Modal } from "./modal.js";
 
 export function Icon({
   name,
 }: {
-  name: "play" | "stop" | "sun" | "moon" | "plus" | "folder" | "device" | "code" | "arrow";
+  name:
+    | "play"
+    | "stop"
+    | "sun"
+    | "moon"
+    | "plus"
+    | "folder"
+    | "device"
+    | "code"
+    | "arrow"
+    | "settings"
+    | "language";
 }): React.JSX.Element {
   const paths = {
+    settings:
+      "M9 3h6v3l2 1 2.5-1.5 3 5L20 12v2l2.5 1.5-3 5L17 19l-2 1v3H9v-3l-2-1-2.5 1.5-3-5L4 14v-2L1.5 10.5l3-5L7 7l2-1Z M15 13a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+    language: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18Z",
     play: "m8 5 11 7-11 7Z",
     stop: "M6 6h12v12H6Z",
     sun: "M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
@@ -98,7 +114,7 @@ export function ActionMenu({
   children,
 }: {
   label: string;
-  visibleLabel?: string;
+  visibleLabel?: ReactNode;
   children: ReactNode;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
@@ -122,6 +138,8 @@ export function ActionMenu({
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
           setOpen(false);
           trigger.current?.focus();
         }
@@ -193,7 +211,6 @@ export function Toolbar({
   onDelete,
   onCancel,
   onDevice,
-  onLocale,
 }: {
   t: Copy;
   locale: Locale;
@@ -214,7 +231,6 @@ export function Toolbar({
   onDelete(): void;
   onCancel(): void;
   onDevice(): void;
-  onLocale(): void;
 }): React.JSX.Element {
   return (
     <header className="topbar">
@@ -307,12 +323,7 @@ export function Toolbar({
           </>
         )}
       </div>
-      <div className="preferences">
-        {appearance}
-        <button className="locale" onClick={onLocale}>
-          {locale === "en" ? "繁中" : "EN"}
-        </button>
-      </div>
+      <div className="preferences">{appearance}</div>
     </header>
   );
 }
@@ -408,18 +419,18 @@ export function DevicePanel({
           </button>
           <label>
             {t.selectDevice}
-            <select
-              value={selected ?? ""}
+            <Picker
+              locale={locale}
+              label={t.selectDevice}
+              searchable
+              value={selected}
               disabled={connectionBusy || !found.length}
-              onChange={(event) => onSelect(event.target.value)}
-            >
-              <option value="">{t.selectDevice}</option>
-              {found.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name} · {device.transport.toUpperCase()}
-                </option>
-              ))}
-            </select>
+              onChange={onSelect}
+              options={found.map((device) => ({
+                value: device.id,
+                label: `${device.name} · ${device.transport.toUpperCase()}`,
+              }))}
+            />
           </label>
           {mode === "wifi" && (
             <label>
@@ -541,54 +552,3 @@ export function BottomPanel({
 }
 
 /** Shared focus trap and focus restoration for every existing dialog. */
-export function Modal({
-  children,
-  onClose,
-}: {
-  children: ReactNode;
-  onClose(): void;
-}): React.JSX.Element {
-  const root = useRef<HTMLDivElement>(null);
-  const previousFocus = useRef(document.activeElement as HTMLElement | null);
-  const close = useRef(onClose);
-  close.current = onClose;
-  useEffect(() => {
-    const previous = previousFocus.current;
-    if (!root.current?.contains(document.activeElement))
-      root.current?.querySelector<HTMLElement>("input, select, button")?.focus();
-    return () => {
-      if (previous?.isConnected) previous.focus();
-    };
-  }, []);
-  return (
-    <div
-      className="modal-backdrop"
-      ref={root}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          close.current();
-        }
-        if (event.key === "Tab") {
-          const elements = [
-            ...(root.current?.querySelectorAll<HTMLElement>(
-              'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]',
-            ) ?? []),
-          ];
-          const first = elements[0],
-            last = elements.at(-1);
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last?.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first?.focus();
-          }
-        }
-      }}
-    >
-      {children}
-    </div>
-  );
-}

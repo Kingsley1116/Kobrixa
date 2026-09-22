@@ -53,6 +53,9 @@ function setup() {
     },
     device: {
       files: vi.fn(),
+      prepareFiles: vi.fn(),
+      executeFiles: vi.fn(),
+      stopFiles: vi.fn(),
       onEvent: vi.fn((listener) => {
         deviceListener = listener;
         return () => {};

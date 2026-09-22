@@ -53,7 +53,41 @@ export type RemoteFileResult = {
       message: string;
     }
 );
+export type FileBatchAction = "upload" | "download" | "delete";
+export interface FileBatchRequest {
+  sessionId: string;
+  requestId: string;
+  action: FileBatchAction;
+  path: string;
+  paths: string[];
+  source: "files" | "folders";
+  locale: "en" | "zh-TW";
+}
+export interface FileBatchRef {
+  sessionId: string;
+  requestId: string;
+  planId: string;
+}
+export interface FileBatchItem {
+  id: string;
+  label: string;
+  kind: "file" | "directory";
+  size?: number;
+  conflict: boolean;
+  status: "pending" | "running" | "succeeded" | "skipped" | "failed";
+  message?: string;
+}
+export interface FileBatchSnapshot extends FileBatchRef {
+  action: FileBatchAction;
+  phase: "checking" | "ready" | "running" | "complete" | "failed" | "stopped" | "cancelled";
+  items: FileBatchItem[];
+  issues: string[];
+  stopRequested: boolean;
+  currentId?: string | undefined;
+  progress?: { transferred: number; total: number } | undefined;
+}
 export type DeviceEvent =
+  | { type: "file-batch"; snapshot: FileBatchSnapshot }
   | { type: "files-changed"; sessionId: string; requestId: string; paths: string[] }
   | {
       type: "file-progress";
@@ -103,6 +137,9 @@ export interface KobrixaApi {
   };
   device: {
     files(request: RemoteFileRequest): Promise<RemoteFileResult>;
+    prepareFiles(request: FileBatchRequest): Promise<FileBatchSnapshot>;
+    executeFiles(ref: FileBatchRef, policy: "skip" | "replace"): Promise<FileBatchSnapshot>;
+    stopFiles(ref: FileBatchRef): Promise<void>;
     discover(): Promise<DeviceDescriptor[]>;
     connect(descriptor: DeviceDescriptor): Promise<string>;
     connectWifi(address: string): Promise<string>;

@@ -383,3 +383,24 @@ EndIf
     );
   });
 });
+
+describe("configurable formatting indentation", () => {
+  it.each([2, 4] as const)(
+    "formats nested blocks with %i spaces without changing tokens",
+    (indentSize) => {
+      const source = "If True Then\nWhile True\nLCD.Clear()\nEndWhile\nElse\nLCD.Update()\nEndIf\n";
+      const formatted = formatBasicPlus(source, { indentSize });
+      expect(formatted).toBe(
+        `If True Then\n${" ".repeat(indentSize)}While True\n${" ".repeat(indentSize * 2)}LCD.Clear()\n${" ".repeat(indentSize)}EndWhile\nElse\n${" ".repeat(indentSize)}LCD.Update()\nEndIf\n`,
+      );
+      expect(formatBasicPlus(formatted, { indentSize })).toBe(formatted);
+      expect(formatted.split("\n").map((line) => line.trim())).toEqual(
+        source.split("\n").map((line) => line.trim()),
+      );
+    },
+  );
+  it("preserves the two-space default for existing callers", () => {
+    const source = "If True Then\nLCD.Clear()\nEndIf\n";
+    expect(formatBasicPlus(source)).toBe(formatBasicPlus(source, { indentSize: 2 }));
+  });
+});

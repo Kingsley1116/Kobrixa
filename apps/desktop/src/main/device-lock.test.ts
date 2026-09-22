@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { DeviceOperationError, UsbTransport, type DeviceSession } from "@kobrixa/device";
+import {
+  DeviceOperationError,
+  UsbTransport,
+  type DeviceSession,
+  type RemoteEntry,
+} from "@kobrixa/device";
 import { DeviceService } from "./device.js";
 import type { BuildService } from "./build.js";
 import type { WebContents } from "electron";
@@ -17,7 +22,7 @@ async function setup() {
   const session = {
     descriptor: { id: "mock", name: "EV3", transport: "usb" as const },
     connected: true,
-    list: vi.fn(async () => []),
+    list: vi.fn(async (): Promise<RemoteEntry[]> => []),
     upload: vi.fn(),
     uploadStream: vi.fn(),
     download: vi.fn(),
@@ -45,6 +50,29 @@ async function setup() {
   return { service, session, id, files, events };
 }
 describe("main-process device lock", () => {
+  it("keeps a prepared file batch exclusive until confirmation is cancelled", async () => {
+    const h = await setup();
+    h.session.list.mockResolvedValue([{ name: "a", path: `${ROOT}/a`, kind: "file", size: 0 }]);
+    const owner = { id: 1, once: vi.fn(), on: vi.fn() } as unknown as WebContents;
+    const plan = await h.service.prepareFiles(
+      {
+        sessionId: h.id,
+        requestId: "request",
+        action: "delete",
+        path: ROOT,
+        paths: [`${ROOT}/a`],
+        source: "files",
+        locale: "en",
+      },
+      owner,
+    );
+    expect(plan.phase).toBe("ready");
+    await expect(h.service.run(h.id, `${ROOT}/a`)).rejects.toThrow("in progress");
+    await expect(h.service.executeFiles(plan, "replace", 2)).rejects.toThrow("expired");
+    await h.service.stopFiles(plan, 1);
+    await expect(h.service.run(h.id, `${ROOT}/a`)).resolves.toBeUndefined();
+    expect(h.session.delete).not.toHaveBeenCalled();
+  });
   it("reserves the session for the entire deployment, including gaps between files", async () => {
     const h = await setup();
     const deployment = h.service.deploy(h.id, "build", ROOT);

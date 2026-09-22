@@ -90,7 +90,8 @@ export const BASIC_PLUS_COMPLETIONS = [
   ...BASIC_PLUS_API_COMPLETIONS.map((completion) => completion.label),
 ].sort((left, right) => left.localeCompare(right));
 
-export function formatBasicPlus(source: string): string {
+export function formatBasicPlus(source: string, options: { indentSize?: 2 | 4 } = {}): string {
+  const indentation = " ".repeat(options.indentSize ?? 2);
   const lines = source.replaceAll("\r\n", "\n").split("\n");
   let indent = 0;
   return `${lines
@@ -104,7 +105,7 @@ export function formatBasicPlus(source: string): string {
       ) {
         indent = Math.max(0, indent - 1);
       }
-      const formatted = line ? `${"  ".repeat(indent)}${line}` : "";
+      const formatted = line ? `${indentation.repeat(indent)}${line}` : "";
       if (
         /^(if\b.*\bthen\s*$|else\s*$|elseif\b.*\bthen\s*$|while\b|for\b|sub\b|function\b|module\b)/.test(
           lower,

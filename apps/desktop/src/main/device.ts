@@ -13,6 +13,8 @@ import {
   type DeviceSession,
 } from "@kobrixa/device";
 import { remoteFileOperation } from "./remote-files.js";
+import { FileBatchManager } from "./file-batch.js";
+import type { FileBatchRequest, FileBatchRef, FileBatchSnapshot } from "../shared/api.js";
 import type { RemoteFileRequest, RemoteFileResult, DeviceEvent } from "../shared/api.js";
 import type { BuildService } from "./build.js";
 
@@ -46,6 +48,8 @@ export class DeviceService {
   readonly #busy = new Map<string, AbortController>();
   readonly #usb = new UsbTransport();
   readonly #wifi = new WiFiTransport();
+  private batches: FileBatchManager | undefined;
+  private batchOwners = new WeakSet<WebContents>();
 
   constructor(
     private readonly builds: BuildService,
@@ -164,6 +168,43 @@ export class DeviceService {
     }
   }
 
+  async prepareFiles(request: FileBatchRequest, owner: WebContents): Promise<FileBatchSnapshot> {
+    const { dialog } = await import("electron");
+    this.batches ??= new FileBatchManager(
+      (id, work) => this.operation(id, work),
+      dialog,
+      (snapshot) => this.send({ type: "file-batch", snapshot }),
+      (request, paths) =>
+        this.send({
+          type: "files-changed",
+          sessionId: request.sessionId,
+          requestId: request.requestId,
+          paths,
+        }),
+    );
+    if (!this.batchOwners.has(owner)) {
+      this.batchOwners.add(owner);
+      const ownerId = owner.id;
+      owner.once("destroyed", () => this.batches?.abandonOwner(ownerId));
+      owner.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+        if (isMainFrame) this.batches?.abandonOwner(ownerId);
+      });
+    }
+    return this.batches.prepare(request, owner.id);
+  }
+  async executeFiles(
+    ref: FileBatchRef,
+    policy: "skip" | "replace",
+    owner: number,
+  ): Promise<FileBatchSnapshot> {
+    if (!this.batches) throw new Error("Unknown file operation.");
+    return this.batches.execute(ref, policy, owner);
+  }
+  async stopFiles(ref: FileBatchRef, owner: number): Promise<void> {
+    if (!this.batches) throw new Error("Unknown file operation.");
+    return this.batches.stop(ref, owner);
+  }
+
   private async connectWith(
     connect: () => Promise<DeviceSession>,
     transport: string,
@@ -243,6 +284,7 @@ export class DeviceService {
   }
 
   private send(event: DeviceEvent): void {
-    this.renderer()?.send("device:event", event);
+    const renderer = this.renderer();
+    if (renderer && !renderer.isDestroyed?.()) renderer.send("device:event", event);
   }
 }

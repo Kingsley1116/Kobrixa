@@ -2,9 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.js";
 import "./styles.css";
-import { readTheme } from "./theme.js";
+import { applyAppearance } from "./settings.js";
+import { settingsStore } from "./settings-state.js";
 
-document.documentElement.dataset.theme = readTheme(window.localStorage);
+applyAppearance(settingsStore.getSnapshot().values, document.documentElement);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

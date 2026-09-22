@@ -129,6 +129,31 @@ export function registerIpc(
         .parse(request),
     ),
   );
+  const batchRef = z.object({ sessionId: id, requestId: id, planId: id });
+  handle("device:files-prepare", (event, request: unknown) => {
+    const parsed = z
+      .object({
+        sessionId: id,
+        requestId: id,
+        action: z.enum(["upload", "download", "delete"]),
+        path: file,
+        paths: z.array(file).max(10000),
+        source: z.enum(["files", "folders"]),
+        locale: z.enum(["en", "zh-TW"]),
+      })
+      .parse(request);
+    return devices.prepareFiles(parsed, event.sender);
+  });
+  handle("device:files-execute", (event, ref: unknown, policy: unknown) =>
+    devices.executeFiles(
+      batchRef.parse(ref),
+      z.enum(["skip", "replace"]).parse(policy),
+      event.sender.id,
+    ),
+  );
+  handle("device:files-stop", (event, ref: unknown) =>
+    devices.stopFiles(batchRef.parse(ref), event.sender.id),
+  );
   handle("device:discover", () => devices.discover());
   handle("device:connect", (_event, target: unknown) => devices.connect(parseDescriptor(target)));
   handle("device:connect-wifi", (_event, address: unknown) =>

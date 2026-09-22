@@ -126,8 +126,11 @@ function registerLanguage(): void {
     },
   });
   monaco.languages.registerDocumentFormattingEditProvider("basic-plus", {
-    provideDocumentFormattingEdits: (model) => [
-      { range: model.getFullModelRange(), text: formatBasicPlus(model.getValue()) },
+    provideDocumentFormattingEdits: (model, options) => [
+      {
+        range: model.getFullModelRange(),
+        text: formatBasicPlus(model.getValue(), { indentSize: options.tabSize === 4 ? 4 : 2 }),
+      },
     ],
   });
 }
@@ -153,6 +156,9 @@ export interface EditorHandle {
 interface EditorProps {
   theme: Theme;
   fontSize: number;
+  wordWrap: boolean;
+  indentSize: 2 | 4;
+  reducedMotion: boolean;
   readOnly: boolean;
   file: string;
   value: string;
@@ -192,6 +198,9 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     ariaLabel,
     theme,
     fontSize,
+    wordWrap,
+    indentSize,
+    reducedMotion,
     readOnly,
     onChange,
     onCursorChange,
@@ -271,8 +280,12 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       glyphMargin: true,
       folding: true,
       lineNumbersMinChars: 3,
-      smoothScrolling: true,
-      cursorSmoothCaretAnimation: "on",
+      wordWrap: wordWrap ? "on" : "off",
+      detectIndentation: false,
+      tabSize: indentSize,
+      insertSpaces: true,
+      smoothScrolling: !reducedMotion,
+      cursorSmoothCaretAnimation: reducedMotion ? "off" : "on",
       renderWhitespace: "selection",
       renderValidationDecorations: "on",
       scrollBeyondLastLine: false,
@@ -312,6 +325,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       model = monaco.editor.createModel(value, languageFor(file), modelUri(file));
       models.current.set(file, model);
     }
+    model.updateOptions({ tabSize: indentSize, indentSize, insertSpaces: true });
     activeFile.current = file;
     instance.setModel(model);
     const savedState = viewStates.current.get(file);
@@ -336,6 +350,15 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useEffect(() => {
     editor.current?.updateOptions({ fontSize, lineHeight: Math.round((fontSize * 25) / 16) });
   }, [fontSize]);
+  useEffect(() => {
+    editor.current?.updateOptions({
+      wordWrap: wordWrap ? "on" : "off",
+      smoothScrolling: !reducedMotion,
+      cursorSmoothCaretAnimation: reducedMotion ? "off" : "on",
+    });
+    for (const model of models.current.values())
+      model.updateOptions({ tabSize: indentSize, indentSize, insertSpaces: true });
+  }, [wordWrap, indentSize, reducedMotion]);
   useEffect(() => {
     monaco.editor.setTheme(`kobrixa-${theme}`);
   }, [theme]);
