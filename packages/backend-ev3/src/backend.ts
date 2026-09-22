@@ -153,7 +153,6 @@ class ObjectAssembler {
   readonly patches: Patch[] = [];
   readonly allocations = new Map<string, Allocation>();
   readonly diagnostics: Diagnostic[] = [];
-  #timerBaselines: number | undefined;
   localBytes = 0;
 
   get isBackgroundThread(): boolean {
@@ -170,6 +169,7 @@ class ObjectAssembler {
     readonly globalAllocations: ReadonlyMap<string, Allocation>,
     readonly threadObjects: ReadonlyMap<string, number>,
     readonly mutexObjectId: number,
+    readonly timerBaselines: number | undefined,
     readonly runtimeDirectory?: string,
   ) {
     const parameters = orderedParameters(fn);
@@ -276,6 +276,15 @@ class ObjectAssembler {
       ...(this.fn.name === "main" ? this.globalAllocations.values() : []),
     ].filter((allocation) => allocation.type.kind === "array");
     for (const allocation of arrays) {
+      // Input array parameters already contain the caller's handle. Replacing
+      // it here loses the supplied elements and silently disconnects writes.
+      if (
+        this.fn.parameters.some(
+          (parameter) =>
+            parameter.direction !== "out" && this.allocationFor(parameter.name) === allocation,
+        )
+      )
+        continue;
       const type = allocation.type;
       if (type.kind !== "array") continue;
       if (type.element === "string") {
@@ -393,6 +402,31 @@ class ObjectAssembler {
     const scratch = this.scratch(4);
     this.bytes.push(OP.MOVE_F_32, ...parameter, ...lv(scratch));
     return lv(scratch);
+  }
+
+  private motorPercentage(value: IRValue): number[] | undefined {
+    if (value.kind === "number" || value.kind === "integer")
+      return lc(Math.trunc(Math.max(-100, Math.min(100, value.value))));
+    const source = this.integerParameter(value);
+    if (!source) return undefined;
+    // OUTPUT_* reads a signed DATA8, not DATA32. Merely pointing it at an
+    // integer wraps e.g. -160 to +96, reversing the requested direction.
+    const bounded = this.scratch(4);
+    const outside = this.scratch(1);
+    const upper = this.newLabel("motor-upper-limit");
+    const done = this.newLabel("motor-percentage-ready");
+    this.bytes.push(OP.MOVE_32_32, ...source, ...lv(bounded));
+    this.bytes.push(OP.CP_LT_32, ...lv(bounded), ...lc(-100), ...lv(outside));
+    this.bytes.push(OP.JR_FALSE, ...lv(outside));
+    this.addPatch(upper);
+    this.bytes.push(OP.MOVE_32_32, ...lc(-100), ...lv(bounded));
+    this.markLabel(upper);
+    this.bytes.push(OP.CP_GT_32, ...lv(bounded), ...lc(100), ...lv(outside));
+    this.bytes.push(OP.JR_FALSE, ...lv(outside));
+    this.addPatch(done);
+    this.bytes.push(OP.MOVE_32_32, ...lc(100), ...lv(bounded));
+    this.markLabel(done);
+    return lv(bounded);
   }
 
   private byteParameter(value: IRValue): number[] | undefined {
@@ -734,8 +768,8 @@ class ObjectAssembler {
   }
 
   private timerBaseline(index: number): number {
-    if (this.#timerBaselines === undefined) this.#timerBaselines = this.scratch(9 * 4);
-    return this.#timerBaselines + index * 4;
+    if (this.timerBaselines === undefined) throw new Error("Timer storage was not allocated.");
+    return this.timerBaselines + index * 4;
   }
 
   private lcdAutoUpdate(): void {
@@ -1015,11 +1049,28 @@ class ObjectAssembler {
         if (index !== nonInteger) args[index] = this.integerParameter(instruction.args[index]!);
       }
     }
+    const motorPercentageIndex =
+      /^Motor[ABCD]{1,2}\.(SetPower|StartPower|SetSpeed|StartSpeed)$/.test(instruction.operation)
+        ? 0
+        : [
+              "Motor.Start",
+              "Motor.StartPower",
+              "Motor.StartSteer",
+              "Motor.Move",
+              "Motor.MovePower",
+              "Motor.Schedule",
+              "Motor.SchedulePower",
+              "Motor.ScheduleSteer",
+              "Motor.MoveSteer",
+            ].includes(instruction.operation)
+          ? 1
+          : -1;
     // Native timing and motor operands are integer fields, including computed
     // expressions stored as DATAF. Convert before encoding the instruction.
     if (instruction.operation.startsWith("Motor") || instruction.operation === "Program.Delay") {
       instruction.args.forEach((value, index) => {
-        if (this.typeOf(value)?.kind === "number") args[index] = this.integerParameter(value);
+        if (index === motorPercentageIndex) args[index] = this.motorPercentage(value);
+        else if (this.typeOf(value)?.kind === "number") args[index] = this.integerParameter(value);
       });
     }
     const arg = (index: number): number[] => args[index]!;
@@ -1029,13 +1080,13 @@ class ObjectAssembler {
     if (timer) {
       const baseline = this.timerBaseline(Number(timer[2]) - 1);
       if (timer[1] === "Reset") {
-        this.bytes.push(OP.TIMER_READ, ...lv(baseline));
+        this.bytes.push(OP.TIMER_READ, ...gv(baseline));
       } else if (target) {
         this.bytes.push(OP.TIMER_READ, ...this.location(target));
         this.bytes.push(
           OP.SUB_32,
           ...this.location(target),
-          ...lv(baseline),
+          ...gv(baseline),
           ...this.location(target),
         );
       }
@@ -1484,9 +1535,12 @@ class ObjectAssembler {
         this.bytes.push(OP.MOVE_16_32, ...lv(handle), ...this.location(target));
         return;
       }
-      case "Row.Delete":
-        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...arg(0));
+      case "Row.Delete": {
+        const handle = this.integerParameter(instruction.args[0]!);
+        if (!handle) break;
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...handle);
         return;
+      }
       case "Row.Read": {
         if (!target) break;
         const readArray = this.typeOf(instruction.args[0]!);
@@ -1497,7 +1551,9 @@ class ObjectAssembler {
         {
           const index = this.integerParameter(instruction.args[1]!);
           if (!index) break;
-          this.bytes.push(OP.ARRAY_READ, ...arg(0), ...index, ...this.location(target));
+          const handle = this.integerParameter(instruction.args[0]!);
+          if (!handle) break;
+          this.bytes.push(OP.ARRAY_READ, ...handle, ...index, ...this.location(target));
         }
         return;
       }
@@ -1510,13 +1566,17 @@ class ObjectAssembler {
         const index = this.integerParameter(instruction.args[1]!);
         const value = this.floatParameter(instruction.args[2]!);
         if (!index || !value) break;
-        this.bytes.push(OP.ARRAY_WRITE, ...arg(0), ...index, ...value);
+        const handle = this.integerParameter(instruction.args[0]!);
+        if (!handle) break;
+        this.bytes.push(OP.ARRAY_WRITE, ...handle, ...index, ...value);
         return;
       }
       case "Row.Size": {
         if (!target) break;
         const size = this.scratch(4);
-        this.bytes.push(OP.ARRAY, ...lc(ARRAY.SIZE), ...arg(0), ...lv(size));
+        const handle = this.integerParameter(instruction.args[0]!);
+        if (!handle) break;
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.SIZE), ...handle, ...lv(size));
         this.bytes.push(
           target.type.kind === "number" ? OP.MOVE_32_F : OP.MOVE_32_32,
           ...lv(size),
@@ -1527,7 +1587,9 @@ class ObjectAssembler {
       case "Row.Resize": {
         const length = this.integerParameter(instruction.args[1]!);
         if (!length) break;
-        this.bytes.push(OP.ARRAY, ...lc(ARRAY.RESIZE), ...arg(0), ...length);
+        const handle = this.integerParameter(instruction.args[0]!);
+        if (!handle) break;
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.RESIZE), ...handle, ...length);
         return;
       }
       case "Text.Append":
@@ -3438,6 +3500,17 @@ export class EV3Backend implements CompilerBackend {
       globalBytes += sizeOf(variable.type);
     }
     const mailboxAllocator = { next: 0 };
+    const hasTimers = ir.functions.some((fn) =>
+      fn.blocks.some((block) =>
+        block.instructions.some(
+          (instruction) =>
+            instruction.op === "ev3-call" && /^Time\.(Get|Reset)[1-9]$/.test(instruction.operation),
+        ),
+      ),
+    );
+    // All functions and threads observe the same nine program timers.
+    const timerBaselines = hasTimers ? Math.ceil(globalBytes / 4) * 4 : undefined;
+    if (timerBaselines !== undefined) globalBytes = timerBaselines + 9 * 4;
     const threadTargets = new Set(
       ir.functions.flatMap((fn) =>
         fn.blocks.flatMap((block) =>
@@ -3462,6 +3535,7 @@ export class EV3Backend implements CompilerBackend {
         globalAllocations,
         threadObjects,
         mutexObjectId,
+        timerBaselines,
         ir.program.runtimeDirectory,
       );
       const code = assembler.assemble(signal);

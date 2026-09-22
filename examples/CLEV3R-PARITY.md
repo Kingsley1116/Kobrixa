@@ -6,7 +6,7 @@ The reference is the complete [Clev3r Examples tree](https://github.com/iCheh/Cl
 
 Parity here means coverage of the programming lessons, API families, and hardware workflows in that tree. These are finite, independently written demonstrations with explicit expectations; they are not copies, identical user interfaces, benchmark scores, or a guarantee for every hardware arrangement. The two media resources use Kobrixa's own artwork and sound.／此處「對照」指涵蓋該目錄的程式主題、API 與硬體操作流程。範例均獨立撰寫、有限執行並有明確預期值；不複製原程式、介面或基準分數，也不宣稱所有硬體組合已驗收。媒體使用 Kobrixa 自有圖像與音效。
 
-Hardware follow-up: [2026-09-21 results](../docs/audits/hardware-new-examples-2026-09-21.md) distinguishes original-image checks, the gyro fixture, completion-only runs, and untested hardware.／[實機後續結果](../docs/audits/hardware-new-examples-2026-09-21.md) 區分原程式驗證、陀螺儀改埠、僅正常結束及尚未具備的硬體。
+Hardware follow-up: [2026-09-21 results](https://github.com/Kingsley1116/Kobrixa/blob/2d5c6f7cd6a67e4dff9493166852aa860b4c19b5/docs/audits/hardware-new-examples-2026-09-21.md) distinguishes original-image checks, the gyro fixture, completion-only runs, and untested hardware.／[實機後續結果](https://github.com/Kingsley1116/Kobrixa/blob/2d5c6f7cd6a67e4dff9493166852aa860b4c19b5/docs/audits/hardware-new-examples-2026-09-21.md) 區分原程式驗證、陀螺儀改埠、僅正常結束及尚未具備的硬體。
 
 ## Main program mapping / 主程式對照
 
@@ -96,7 +96,7 @@ Use suitable temporary paths and `curl.exe` on Windows. Each audit rebuilds the 
 
 The 41 counterparts include button/sensor branches, compass wraparound, IR no-signal/odd/even sectors, random bounds, mailbox receipt/timeout, and worker scheduling at 1/2/7/11 instruction quanta. The interpreter models native non-reentrant SUBCALL objects; tests exercise the full 32-frame recursion boundary and explicit overflow, plus mutual recursion.／41 個對照專案另檢查按鍵／感測分支、羅盤環繞、IR 無訊號／奇偶區段、隨機上下界、信箱收到／逾時，及每 1／2／7／11 指令切換的並行工作。驗證器遵守原生 SUBCALL 不可重入規則，並檢查 32 層遞迴邊界、明確超限及相互遞迴。
 
-[Audit findings and current results](../docs/audits/clev3r-parity-bytecode-2026-09-20.md).／[稽核發現與最新結果](../docs/audits/clev3r-parity-bytecode-2026-09-20.md)。
+[Audit findings and current results](https://github.com/Kingsley1116/Kobrixa/blob/2d5c6f7cd6a67e4dff9493166852aa860b4c19b5/docs/audits/clev3r-parity-bytecode-2026-09-20.md).／[稽核發現與最新結果](https://github.com/Kingsley1116/Kobrixa/blob/2d5c6f7cd6a67e4dff9493166852aa860b4c19b5/docs/audits/clev3r-parity-bytecode-2026-09-20.md)。
 
 ## Runtime bounds / 執行範圍
 

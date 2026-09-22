@@ -1,48 +1,41 @@
-// Audit-only EV3 bytecode interpreter. Device operations use deterministic stubs.
-// This is not a complete EV3 VM or a hardware certification tool.
-// Usage: node tools/audit-example-bytecode.mjs bytecodes.h bytecodes.c output-directory [selection.json]
+// Limited EV3 interpreter for tests; device operations use deterministic stubs.
 import assert from "node:assert/strict";
-import { auditCompilerRegressions } from "./audit-compiler-regressions.mjs";
-import { fileURLToPath } from "node:url";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { createHash } from "node:crypto";
-import { EV3Backend, inspectRbf } from "../packages/backend-ev3/dist/index.js";
-import { BasicPlusFrontend } from "../frontends/basic-plus/dist/index.js";
-import { loadProject } from "../packages/compiler/dist/index.js";
-import { validateIR } from "../packages/ir/dist/index.js";
-const root = fileURLToPath(new URL("../", import.meta.url));
-const [headerPath, tablePath, outputPath, selectionPath] = process.argv.slice(2);
-if (!headerPath || !tablePath || !outputPath)
-  throw Error("Expected bytecodes.h, bytecodes.c, and output directory arguments");
-const h = await fs.readFile(headerPath, "utf8"),
-  c = await fs.readFile(tablePath, "utf8");
-const nums = Object.fromEntries(
-  [...h.matchAll(/^\s*(\w+)\s*=\s*(0x[\da-f]+|\d+)\s*,/gim)].map((m) => [m[1], Number(m[2])]),
+import fs from "node:fs";
+import { inspectRbf } from "../../../packages/backend-ev3/dist/index.js";
+const schema = JSON.parse(
+  fs.readFileSync(new URL("../fixtures/opcodes.json", import.meta.url), "utf8"),
 );
-const ops = new Map(),
-  subs = new Map();
-for (const m of c.matchAll(/\bOC\(\s*(\w+)\s*,([^)]*)\)/g)) {
-  if (nums[m[1]] !== undefined)
-    ops.set(nums[m[1]], {
-      name: m[1].slice(2),
-      types: m[2]
-        .split(",")
-        .map((x) => x.trim())
-        .filter((x) => x !== "0"),
-    });
+const defaultTables = { ops: new Map(schema.ops), subs: new Map(schema.subs) };
+export function firmwareTables(h, c) {
+  const nums = Object.fromEntries(
+    [...h.matchAll(/^\s*(\w+)\s*=\s*(0x[\da-f]+|\d+)\s*,/gim)].map((m) => [m[1], Number(m[2])]),
+  );
+  const ops = new Map(),
+    subs = new Map();
+  for (const m of c.matchAll(/\bOC\(\s*(\w+)\s*,([^)]*)\)/g)) {
+    if (nums[m[1]] !== undefined)
+      ops.set(nums[m[1]], {
+        name: m[1].slice(2),
+        types: m[2]
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x) => x !== "0"),
+      });
+  }
+  for (const m of c.matchAll(/\bSC\(\s*(\w+)\s*,\s*(\w+)\s*,([^)]*)\)/g)) {
+    if (nums[m[2]] !== undefined)
+      subs.set(m[1] + ":" + nums[m[2]], {
+        name: m[2],
+        types: m[3]
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x) => x !== "0"),
+      });
+  }
+  return { ops, subs };
 }
-for (const m of c.matchAll(/\bSC\(\s*(\w+)\s*,\s*(\w+)\s*,([^)]*)\)/g)) {
-  if (nums[m[2]] !== undefined)
-    subs.set(m[1] + ":" + nums[m[2]], {
-      name: m[2],
-      types: m[3]
-        .split(",")
-        .map((x) => x.trim())
-        .filter((x) => x !== "0"),
-    });
-}
-function decode(b) {
+function decode(b, tables = defaultTables) {
+  const { ops, subs } = tables;
   const info = inspectRbf(b);
   b = Buffer.from(b);
   const objects = [];
@@ -602,6 +595,16 @@ class VM {
       return;
     }
     if (n === "INPUT_READY") return;
+    if (n === "INPUT_WRITE") {
+      const data = this.mem(a[3]);
+      this.trace.push({
+        op: n,
+        layer: r(0),
+        port: r(1),
+        bytes: [...data.b.subarray(data.off, data.off + r(2))],
+      });
+      return;
+    }
     if (n === "INPUT_TEST") {
       w(2, 0);
       return;
@@ -713,6 +716,25 @@ class VM {
       this.arrays.delete(r(1));
       return;
     }
+    if (n === "ARRAY.WRITE_CONTENT" || n === "ARRAY.READ_CONTENT") {
+      const ar = this.array(a[2]),
+        off = r(3),
+        count = r(4),
+        data = this.mem(a[5]);
+      if (off < 0 || count < 0 || data.off + count > data.b.length)
+        throw Error("array content bounds");
+      if (n === "ARRAY.WRITE_CONTENT") {
+        // Firmware resizes to exactly the extent of the written content.
+        const replacement = Buffer.alloc(Math.ceil((off + count) / ar.size) * ar.size);
+        ar.b.copy(replacement);
+        ar.b = replacement;
+        data.b.copy(ar.b, off, data.off, data.off + count);
+      } else {
+        data.b.fill(0, data.off, data.off + count);
+        ar.b.copy(data.b, data.off, Math.min(off, ar.b.length), Math.min(off + count, ar.b.length));
+      }
+      return;
+    }
     if (n === "ARRAY_READ" || n === "ARRAY_WRITE") {
       const ar = this.array(a[0]),
         off = r(1) * ar.size;
@@ -807,162 +829,4 @@ class VM {
     throw Error("unsupported " + n);
   }
 }
-// Literal bytes independently check the central VM representation rule:
-// MOVEF_F LC0(2) preserves bits 0x00000002; MOVE32_F LC0(2) converts to 2.0.
-{
-  const code = Buffer.from([0x3f, 0x02, 0x60, 0x3b, 0x02, 0x64, 0x0a]);
-  const image = Buffer.alloc(28 + code.length);
-  image.write("LEGO");
-  image.writeUInt32LE(image.length, 4);
-  image.writeUInt16LE(104, 8);
-  image.writeUInt16LE(1, 10);
-  image.writeUInt32LE(8, 12);
-  image.writeUInt32LE(28, 16);
-  code.copy(image, 28);
-  const result = new VM(decode(image)).run();
-  assert.equal(result.status, "ended");
-  const memory = Buffer.from(result.globals, "hex");
-  assert.equal(memory.readUInt32LE(0), 2);
-  assert.equal(memory.readFloatLE(4), 2);
-}
-// These literal native images are independent of the compiler being checked.
-function nativeImage(codes, globalBytes = 8) {
-  let offset = 16 + 12 * codes.length;
-  const image = Buffer.alloc(offset + codes.reduce((sum, code) => sum + code.length, 0));
-  image.write("LEGO");
-  image.writeUInt32LE(image.length, 4);
-  image.writeUInt16LE(104, 8);
-  image.writeUInt16LE(codes.length, 10);
-  image.writeUInt32LE(globalBytes, 12);
-  codes.forEach((code, index) => {
-    image.writeUInt32LE(offset, 16 + 12 * index);
-    image.writeUInt16LE(index === 0 ? 0 : 1, 22 + 12 * index);
-    Buffer.from(code).copy(image, offset);
-    offset += code.length;
-  });
-  return image;
-}
-{
-  // MOVE32_8 128 saturates to 127; MOVE8_32 -128 propagates NaN.
-  const run = new VM(
-    decode(nativeImage([[0x38, 0x82, 0x80, 0, 0x60, 0x32, 0x81, 0x80, 0x64, 0x0a]])),
-  ).run();
-  assert.equal(run.status, "ended");
-  const memory = Buffer.from(run.globals, "hex");
-  assert.equal(memory.readInt8(0), 127);
-  assert.equal(memory.readInt32LE(4), -2147483648);
-  // Firmware RL8 drops shifted-out bits; it does not rotate them back in.
-  const shifted = new VM(decode(nativeImage([[0x2c, 0x82, 0xa5, 0, 1, 0x60, 0x0a]]))).run();
-  assert.equal(Buffer.from(shifted.globals, "hex")[0], 0x4a);
-  // The native SIN instruction consumes degrees, whereas Basic Plus uses radians.
-  const trig = new VM(
-    decode(nativeImage([[nums.opMATH, nums.SIN, 0x83, 0, 0, 0xb4, 0x42, 0x60, 0x0a]])),
-  ).run();
-  assert.equal(trig.status, "ended");
-  assert.equal(Buffer.from(trig.globals, "hex").readFloatLE(), 1);
-  // A SUBCALL calling its busy self is invalid, even though a host JS stack can do it.
-  const recursive = new VM(
-    decode(
-      nativeImage([
-        [0x09, 2, 0, 0x0a],
-        [0, 0x09, 2, 0, 0x08, 0x0a],
-      ]),
-    ),
-  ).run();
-  assert.equal(recursive.status, "error");
-  assert.match(recursive.error, /Non-reentrant/);
-}
-async function projects(dir) {
-  const es = await fs.readdir(dir, { withFileTypes: true });
-  if (es.some((e) => e.name === "kobrixa.json")) return [dir];
-  return (
-    await Promise.all(
-      es
-        .filter((e) => e.isDirectory() && !["build", "node_modules"].includes(e.name))
-        .map((e) => projects(path.join(dir, e.name))),
-    )
-  ).flat();
-}
-const out = path.resolve(outputPath);
-await fs.mkdir(out, { recursive: true });
-const regressions = await auditCompilerRegressions((bytes) => new VM(decode(bytes)).run());
-await fs.writeFile(
-  path.join(out, "compiler-regressions.json"),
-  JSON.stringify(regressions, null, 2) + "\n",
-);
-const results = [];
-const selection = selectionPath ? JSON.parse(await fs.readFile(selectionPath, "utf8")) : null;
-if (selection) {
-  assert(selection.length > 0, "Empty example selection");
-  assert.equal(new Set(selection.map((item) => item.project)).size, selection.length);
-  for (const item of selection)
-    assert(/^[a-z0-9-]+\/[a-z0-9-]+$/.test(item.project), "Invalid example path");
-}
-const directories = selection
-  ? selection.map((item) => path.join(root, "examples", item.project))
-  : await projects(path.join(root, "examples"));
-for (const dir of directories.sort()) {
-  const project = path.relative(path.join(root, "examples"), dir).split(path.sep).join("/"),
-    loaded = await loadProject(dir);
-  assert.deepEqual(loaded.diagnostics, [], project + " project diagnostics");
-  assert(loaded.project, project + " missing project");
-  const front = await new BasicPlusFrontend().compile(loaded.project, new AbortController().signal);
-  assert.deepEqual(front.diagnostics, [], project + " frontend diagnostics");
-  assert(front.ir, project + " missing IR");
-  assert.deepEqual(validateIR(front.ir), [], project + " IR diagnostics");
-  const back = await new EV3Backend().compile(front.ir, new AbortController().signal);
-  assert.deepEqual(back.diagnostics, [], project + " backend diagnostics");
-  if (!back.rbf) throw Error(project + JSON.stringify(back.diagnostics));
-  const selected = selection?.find((item) => item.project === project);
-  const decoded = decode(back.rbf);
-  const sim = new VM(decoded, selected?.defaultInput ?? {}).run();
-  const variants = [];
-  if (selected)
-    for (const { input: scenario } of selected.scenarios ?? [])
-      variants.push({ scenario, ...new VM(decoded, scenario).run() });
-  if (
-    !selection &&
-    (project.startsWith("sensors/") ||
-      project.startsWith("capstones/") ||
-      project === "motors/motor-counter")
-  )
-    for (const scenario of [
-      { sensor: 0, motorCount: 0, button: 1 },
-      { sensor: 75, motorCount: -1, button: 2 },
-    ])
-      variants.push({ scenario, ...new VM(decoded, scenario).run() });
-  if (!selection && ["sensors/raw-and-mode", "sensors/sensor-details"].includes(project)) {
-    for (const sensor of [-42, -2147483648]) {
-      const scenario = { sensor };
-      variants.push({ scenario, ...new VM(decoded, scenario).run() });
-    }
-  }
-  const filename = project.replaceAll("/", "--");
-  await fs.writeFile(path.join(out, filename + ".rbf"), back.rbf);
-  await fs.writeFile(
-    path.join(out, filename + ".json"),
-    JSON.stringify({ ir: front.ir, decoded, sim, variants }, null, 2),
-  );
-  results.push({
-    project,
-    bytes: back.rbf.length,
-    sha256: createHash("sha256").update(back.rbf).digest("hex"),
-    sources: loaded.project.sources.map((source) => ({
-      path: source.path,
-      sha256: createHash("sha256").update(source.content).digest("hex"),
-    })),
-    instructions: decoded.objects.reduce((n, o) => n + o.ins.length, 0),
-    ...sim,
-    variants,
-  });
-  console.log(
-    project,
-    sim.status,
-    sim.error ?? "",
-    sim.trace
-      .filter((x) => x.op === "UI_DRAW.TEXT" || x.op === "UI_DRAW.VALUE")
-      .slice(0, 8)
-      .map((x) => x.args),
-  );
-}
-await fs.writeFile(path.join(out, "results.json"), JSON.stringify(results, null, 2));
+export { decode, VM };

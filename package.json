@@ -10,7 +10,7 @@
     "dev": "pnpm -r --filter=!@kobrixa/desktop build && pnpm --filter @kobrixa/desktop dev",
     "build": "pnpm -r build",
     "check": "pnpm -r check && eslint .",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && pnpm test:bytecode",
     "test:hardware": "node tests/hardware/run.mjs",
     "assets:build": "node tools/build-assets.mjs",
     "format": "prettier --write .",
@@ -19,7 +19,8 @@
     "examples:audit": "node tools/audit-new-examples.mjs",
     "test:examples:audit": "node --test tools/check-new-example-results.test.mjs",
     "examples:parity:audit": "node tools/audit-new-examples.mjs --selection examples/clev3r-parity.json",
-    "examples:coverage": "node tools/check-example-coverage.mjs"
+    "examples:coverage": "node tools/check-example-coverage.mjs",
+    "test:bytecode": "tsc -b packages/backend-ev3/tsconfig.json frontends/basic-plus/tsconfig.json && node --test tests/bytecode/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",

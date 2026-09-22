@@ -295,6 +295,38 @@ describe("BasicPlusFrontend", () => {
 });
 
 describe("numeric variable storage", () => {
+  it("accepts numeric outputs into integer-initialized globals across Subs", async () => {
+    const result = await new BasicPlusFrontend().compile(
+      project(`value = 0
+Sub Worker
+  ReadValue(value)
+EndSub
+Function ReadValue(out number output)
+  output = 1.5
+EndFunction
+`),
+      new AbortController().signal,
+    );
+    expect(result.diagnostics).toEqual([]);
+    expect(validateIR(result.ir!)).toEqual([]);
+    expect(result.ir!.globals.find((variable) => variable.name === "value")!.type.kind).toBe(
+      "number",
+    );
+  });
+
+  it("continues to reject string storage for numeric outputs", async () => {
+    const result = await new BasicPlusFrontend().compile(
+      project(`value = "text"
+ReadValue(value)
+Function ReadValue(out number output)
+  output = 1.5
+EndFunction
+`),
+      new AbortController().signal,
+    );
+    expect(result.diagnostics.map((entry) => entry.code)).toContain("BP2006");
+  });
+
   it("widens all numeric return branches to one floating-point call signature", async () => {
     const result = await new BasicPlusFrontend().compile(
       project(`

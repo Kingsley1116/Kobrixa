@@ -53,7 +53,7 @@ Expected summary: **20 new examples, 33 runs, 107 assertions, 0 mismatches**.／
 
 The output directory contains each `.rbf`, decoded instructions, IR and execution traces, plus `checked-results.json` with source and RBF hashes. Reusing an output directory overwrites the selected projects' artifacts.／輸出目錄包含各 `.rbf`、指令解碼、IR、執行軌跡及含原始碼與 RBF 雜湊的 `checked-results.json`；重用輸出目錄會覆寫所選範例的產物。
 
-See [audit findings and limits](../docs/audits/new-examples-bytecode-2026-09-20.md) and the [recorded results](../docs/audits/new-examples-bytecode-2026-09-20.json).／詳細發現與限制請見上述稽核報告與結果。
+See [audit findings and limits](https://github.com/Kingsley1116/Kobrixa/blob/2d5c6f7cd6a67e4dff9493166852aa860b4c19b5/docs/audits/new-examples-bytecode-2026-09-20.md) and the [recorded results](https://github.com/Kingsley1116/Kobrixa/blob/2d5c6f7cd6a67e4dff9493166852aa860b4c19b5/docs/audits/new-examples-bytecode-2026-09-20.json).／詳細發現與限制請見上述稽核報告與結果。
 
 ## Reference and limits / 參考與限制
 

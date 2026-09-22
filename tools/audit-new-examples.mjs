@@ -32,7 +32,7 @@ const plan = JSON.parse(await fs.readFile(selection, "utf8"));
 const run = spawnSync(
   process.execPath,
   [
-    path.join(root, "tools/audit-example-bytecode.mjs"),
+    path.join(root, "tools/run-example-bytecode.mjs"),
     path.resolve(header),
     path.resolve(table),
     path.resolve(output),

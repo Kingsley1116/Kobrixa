@@ -582,6 +582,14 @@ class FunctionBuilder {
       const expected: IRType | undefined = operationType
         ? this.preferredOperationType(operationType)
         : declaration?.parameters[index]?.type;
+      // An output writes the caller's storage. A numeric literal used to
+      // initialize that storage must not prevent a later floating-point output.
+      if (
+        declaration?.parameters[index]?.direction === "out" &&
+        argument.kind === "name" &&
+        expected?.kind === "number"
+      )
+        this.ensureVariable(argument.name, expected, argument.span, argument.global);
       return this.lowerExpression(argument, expected);
     });
     if (operation) {
@@ -858,6 +866,41 @@ export function lowerProgram(
     functions.push(builder.compile(declaration.body));
     diagnostics.push(...builder.diagnostics);
   }
+  // A later function can widen shared numeric storage (including out arguments).
+  // Propagate that representation to arithmetic and copies already lowered in
+  // main or earlier functions, until the dependent values have stable types.
+  let widened: boolean;
+  do {
+    widened = false;
+    for (const fn of functions) {
+      const variables = new Map([
+        ...globals,
+        ...[...fn.parameters, ...fn.locals].map((variable) => [variable.name, variable] as const),
+      ]);
+      const isNumber = (value: IRValue): boolean =>
+        value.kind === "number" ||
+        (value.kind === "variable" && variables.get(value.name)?.type.kind === "number");
+      for (const block of fn.blocks) {
+        for (const instruction of block.instructions) {
+          if (!("target" in instruction) || !instruction.target) continue;
+          const target = variables.get(instruction.target);
+          if (target?.type.kind !== "integer") continue;
+          const needsNumber =
+            (instruction.op === "assign" && isNumber(instruction.value)) ||
+            (instruction.op === "unary" &&
+              instruction.operator === "-" &&
+              isNumber(instruction.value)) ||
+            (instruction.op === "binary" &&
+              ["+", "-", "*", "/", "%"].includes(instruction.operator) &&
+              (isNumber(instruction.left) || isNumber(instruction.right)));
+          if (needsNumber) {
+            target.type = { kind: "number" };
+            widened = true;
+          }
+        }
+      }
+    }
+  } while (widened);
   return {
     ir: {
       version: 1,
