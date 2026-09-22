@@ -160,7 +160,13 @@ export const ProjectTree = forwardRef<ProjectTreeHandle, ProjectTreeProps>(funct
 
   function select(entryPath: string, focus = false): void {
     onSelectedPath(entryPath);
-    if (focus) window.requestAnimationFrame(() => itemRefs.current.get(entryPath)?.focus());
+    if (focus)
+      window.requestAnimationFrame(() => {
+        const item = itemRefs.current.get(entryPath);
+        // A quick F2 can open the rename field before this deferred row focus runs.
+        // Do not steal focus from that field and cancel the rename on blur.
+        if (!item?.querySelector("input")) item?.focus();
+      });
   }
 
   function protectedEntry(entryPath: string): boolean {
@@ -396,7 +402,20 @@ export const ProjectTree = forwardRef<ProjectTreeHandle, ProjectTreeProps>(funct
             <span aria-hidden="true" className="tree-chevron-spacer" />
           )}
           <span className={`tree-kind ${node.kind}`} aria-hidden="true">
-            {node.kind === "file" ? fileBadge(node.path) : ""}
+            {node.kind === "file" ? (
+              fileBadge(node.path)
+            ) : (
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <path d="M3 7V5h6l2 2h10v13H3Z" />
+              </svg>
+            )}
           </span>
           {renamingPath === node.path ? (
             <input

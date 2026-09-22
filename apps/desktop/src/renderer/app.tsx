@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import kobrixaMark from "../../../../assets/brand/kobrixa-mark.svg";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from "react";
 import type {
-  BuildEvent,
   DeviceDescriptor,
-  DeviceEvent,
   Diagnostic,
   WorkspaceEntry,
   WorkspaceMutationResult,
@@ -39,213 +43,67 @@ import {
 } from "./file-tree.js";
 import { ProjectTree, type ProjectTreeHandle } from "./project-tree.js";
 
-import { deploymentPath } from "./build-path.js";
+import { ExecutionController, filesToSave } from "./execution.js";
+import { Welcome, Toolbar, DevicePanel, BottomPanel, Modal } from "./workbench-ui.js";
+import { Appearance, readPreference, UI_SCALES, CODE_SIZES } from "./appearance.js";
+import { ToolsPanel, ActivityPanel, RemoteFilesPanel, type ToolTab } from "./tools-panel.js";
+import { RemoteFilesController } from "./remote-files.js";
+import { readTheme, THEME_KEY, type Theme } from "./theme.js";
 
-type Locale = "en" | "zh-TW";
+import { copy, type Locale } from "./copy.js";
 type Tab = { file: string; content: string; saved: string };
 type PendingDraft = { workspaceId: string; file: string; content: string; timer: number };
 type PendingCreate = { kind: WorkspaceEntry["kind"]; parent: string };
-
-const copy = {
-  en: {
-    newProject: "New project",
-    open: "Open",
-    save: "Save",
-    build: "Build",
-    cancel: "Cancel",
-    welcome: "Build ideas that move",
-    intro: "Open a Basic Plus program or create a small EV3 project to begin.",
-    files: "Project",
-    diagnostics: "Diagnostics",
-    devices: "EV3 device",
-    discover: "Find EV3",
-    connect: "Connect",
-    disconnect: "Disconnect",
-    upload: "Upload",
-    run: "Run",
-    stop: "Stop",
-    remove: "Delete",
-    address: "Wi-Fi address",
-    noProblems: "No problems found.",
-    ready: "Ready",
-    selectDevice: "Select a discovered EV3",
-    candidate: "v1 candidate",
-    projectName: "Project name",
-    projectNameHint: "Letters, numbers, dashes and underscores",
-    create: "Create project",
-    chooseEntry: "Choose entry file",
-    continue: "Continue",
-    close: "Cancel",
-    format: "Format",
-    previousProblem: "Previous problem",
-    nextProblem: "Next problem",
-    showFiles: "Show project",
-    hideFiles: "Hide project",
-    showDevice: "Show EV3 panel",
-    hideDevice: "Hide EV3 panel",
-    showProblems: "Show diagnostics",
-    hideProblems: "Hide diagnostics",
-    closeTab: "Close tab",
-    unsavedTitle: "Save changes before closing?",
-    unsavedBody: (file: string) => `${file} has changes that have not been saved to the project.`,
-    saveAndClose: "Save and close",
-    discardAndClose: "Discard changes",
-    checking: "Checking…",
-    errors: "errors",
-    warnings: "warnings",
-    chooseFile: "Choose a project file",
-    saved: "Saved",
-    unsaved: "Unsaved changes",
-    editorLabel: "Code editor",
-    line: "Ln",
-    column: "Col",
-    basicPlus: "BASIC PLUS",
-    buildComplete: "Build complete",
-    buildFailed: "Build failed",
-    startingBuild: "Starting build…",
-    savedStatus: "Saved",
-    choosingLocation: "Choose a project location…",
-    searching: "Searching for EV3…",
-    devicesFound: (count: number) => `Found ${count} EV3 device(s)`,
-    noDevice: "No EV3 found",
-    actionComplete: (action: string) => `${action} complete`,
-    resizeFiles: "Resize project panel",
-    resizeDevice: "Resize EV3 panel",
-    resizeProblems: "Resize diagnostics panel",
-    fileTree: "Project files",
-    newFile: "New file",
-    newFolder: "New folder",
-    moreActions: "More file actions",
-    rename: "Rename",
-    move: "Move…",
-    moveTitle: "Move project item",
-    moveDestination: "Destination folder",
-    trash: "Move to Trash",
-    trashTitle: "Move this item to Trash?",
-    trashBody: (entry: string) => `${entry} will be removed from this project and moved to Trash.`,
-    trashDirty: "Open unsaved changes inside it will be discarded.",
-    entryName: "Name",
-    entryParent: "Location",
-    createFileTitle: "Create file",
-    createFolderTitle: "Create folder",
-    createEntryAction: "Create",
-    expand: "Expand",
-    collapse: "Collapse",
-    manifestDirty: "Save or discard kobrixa.json changes before moving the build entry.",
-    managingFiles: "Updating project files…",
-  },
-  "zh-TW": {
-    newProject: "建立專案",
-    open: "開啟",
-    save: "儲存",
-    build: "建置",
-    cancel: "取消",
-    welcome: "讓創意真正動起來",
-    intro: "開啟 Basic Plus 程式，或建立一個 EV3 小專案開始使用。",
-    files: "專案",
-    diagnostics: "診斷",
-    devices: "EV3 裝置",
-    discover: "搜尋 EV3",
-    connect: "連線",
-    disconnect: "中斷",
-    upload: "上傳",
-    run: "執行",
-    stop: "停止",
-    remove: "刪除",
-    address: "Wi-Fi 位址",
-    noProblems: "沒有發現問題。",
-    ready: "就緒",
-    selectDevice: "選擇搜尋到的 EV3",
-    candidate: "v1 候選版",
-    projectName: "專案名稱",
-    projectNameHint: "可使用英文字母、數字、連字號與底線",
-    create: "建立專案",
-    chooseEntry: "選擇進入點檔案",
-    continue: "繼續",
-    close: "取消",
-    format: "格式化",
-    previousProblem: "上一個問題",
-    nextProblem: "下一個問題",
-    showFiles: "顯示專案",
-    hideFiles: "隱藏專案",
-    showDevice: "顯示 EV3 面板",
-    hideDevice: "隱藏 EV3 面板",
-    showProblems: "顯示診斷",
-    hideProblems: "隱藏診斷",
-    closeTab: "關閉分頁",
-    unsavedTitle: "關閉前要儲存變更嗎？",
-    unsavedBody: (file: string) => `${file} 的變更尚未儲存到專案。`,
-    saveAndClose: "儲存並關閉",
-    discardAndClose: "捨棄變更",
-    checking: "檢查中…",
-    errors: "錯誤",
-    warnings: "警告",
-    chooseFile: "選擇專案檔案",
-    saved: "已儲存",
-    unsaved: "有未儲存變更",
-    editorLabel: "程式碼編輯器",
-    line: "行",
-    column: "列",
-    basicPlus: "BASIC PLUS",
-    buildComplete: "建置完成",
-    buildFailed: "建置失敗",
-    startingBuild: "正在開始建置…",
-    savedStatus: "已儲存",
-    choosingLocation: "選擇專案存放位置…",
-    searching: "正在搜尋 EV3…",
-    devicesFound: (count: number) => `找到 ${count} 部 EV3 裝置`,
-    noDevice: "找不到 EV3",
-    actionComplete: (action: string) => `${action} 完成`,
-    resizeFiles: "調整專案面板寬度",
-    resizeDevice: "調整 EV3 面板寬度",
-    resizeProblems: "調整診斷面板高度",
-    fileTree: "專案檔案",
-    newFile: "新增檔案",
-    newFolder: "新增資料夾",
-    moreActions: "更多檔案操作",
-    rename: "重新命名",
-    move: "移動…",
-    moveTitle: "移動專案項目",
-    moveDestination: "目的資料夾",
-    trash: "移到垃圾桶",
-    trashTitle: "要將此項目移到垃圾桶嗎？",
-    trashBody: (entry: string) => `${entry} 將從專案移除並移到系統垃圾桶。`,
-    trashDirty: "其中已開啟但尚未儲存的變更將被捨棄。",
-    entryName: "名稱",
-    entryParent: "位置",
-    createFileTitle: "新增檔案",
-    createFolderTitle: "新增資料夾",
-    createEntryAction: "建立",
-    expand: "展開",
-    collapse: "收合",
-    manifestDirty: "移動建置入口前，請先儲存或捨棄 kobrixa.json 的變更。",
-    managingFiles: "正在更新專案檔案…",
-  },
-} as const;
 
 export function App(): React.JSX.Element {
   const [locale, setLocale] = useState<Locale>(() =>
     navigator.language.toLowerCase().startsWith("zh") ? "zh-TW" : "en",
   );
   const t = copy[locale];
+  const [theme, setTheme] = useState<Theme>(() => readTheme(window.localStorage));
+  const [controller] = useState(() => new ExecutionController(window.kobrixa));
+  const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const locked = controller.editingLocked;
+  const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
+  const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
+  const [toolTab, setToolTab] = useState<ToolTab>(() => {
+    const stored = localStorage.getItem("kobrixa.tools.tab");
+    return stored === "files" || stored === "activity" ? stored : "connection";
+  });
+  const [uiScale, setUiScale] = useState(() => readPreference("kobrixa.uiScale", UI_SCALES, 100));
+  const [codeSize, setCodeSize] = useState(() =>
+    readPreference("kobrixa.codeSize", CODE_SIZES, 16),
+  );
+  const [deviceOverlay, setDeviceOverlay] = useState(false);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ui-scale", String(uiScale / 100));
+    localStorage.setItem("kobrixa.uiScale", String(uiScale));
+    localStorage.setItem("kobrixa.codeSize", String(codeSize));
+    localStorage.setItem("kobrixa.tools.tab", toolTab);
+  }, [uiScale, codeSize, toolTab]);
+  useEffect(() => {
+    remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
+  }, [remoteFiles, execution.session?.id, execution.deployed?.path]);
+  useEffect(() => window.kobrixa.device.onEvent(remoteFiles.onEvent), [remoteFiles]);
+  const [connectionMode, setConnectionMode] = useState<"usb" | "wifi">("usb");
+  const connectionModeRef = useRef(connectionMode);
+  connectionModeRef.current = connectionMode;
+  const [projectBusy, setProjectBusy] = useState(false);
+  const projectBusyRef = useRef(false);
+  useEffect(() => controller.attach(), [controller]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
   const [workspace, setWorkspace] = useState<WorkspaceSummary>();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeFile, setActiveFile] = useState<string>();
   const [liveDiagnostics, setLiveDiagnostics] = useState<Diagnostic[]>([]);
   const [buildDiagnostics, setBuildDiagnostics] = useState<Diagnostic[]>([]);
   const [status, setStatus] = useState<string>(t.ready);
-  const [buildId, setBuildId] = useState<string>();
-  const [buildDestination, setBuildDestination] = useState<{
-    workspaceId: string;
-    buildId: string;
-    path: string;
-  }>();
-  const [building, setBuilding] = useState(false);
   const [devices, setDevices] = useState<DeviceDescriptor[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<string>();
-  const [sessionId, setSessionId] = useState<string>();
-  const [deviceState, setDeviceState] = useState("disconnected");
   const [wifiAddress, setWifiAddress] = useState("");
   const [focusTarget, setFocusTarget] = useState<EditorFocusTarget>();
   const [cursor, setCursor] = useState<CursorPosition>({ line: 1, column: 1 });
@@ -295,15 +153,13 @@ export function App(): React.JSX.Element {
       LAYOUT_LIMITS.filesWidth.max,
     ),
   );
-  const [deviceWidth, setDeviceWidth] = useState(() =>
-    readStoredNumber(
-      window.localStorage,
-      LAYOUT_STORAGE_KEYS.deviceWidth,
-      LAYOUT_DEFAULTS.deviceWidth,
-      LAYOUT_LIMITS.deviceWidth.min,
-      LAYOUT_LIMITS.deviceWidth.max,
-    ),
-  );
+  const [deviceWidth, setDeviceWidth] = useState(() => {
+    const stored = localStorage.getItem(LAYOUT_STORAGE_KEYS.deviceWidth);
+    const value = stored === null ? LAYOUT_DEFAULTS.deviceWidth : Number(stored);
+    return Number.isFinite(value)
+      ? clamp(value, LAYOUT_LIMITS.deviceWidth.min, LAYOUT_LIMITS.deviceWidth.max)
+      : LAYOUT_DEFAULTS.deviceWidth;
+  });
   const [problemsHeight, setProblemsHeight] = useState(() =>
     readStoredNumber(
       window.localStorage,
@@ -354,8 +210,6 @@ export function App(): React.JSX.Element {
       return true;
     });
   }, [buildDiagnostics, liveDiagnostics]);
-  const errorCount = diagnostics.filter((item) => item.severity === "error").length;
-  const warningCount = diagnostics.filter((item) => item.severity === "warning").length;
   const openFiles = useMemo(() => tabs.map((tab) => tab.file), [tabs]);
   const treeRoot = useMemo(
     () => buildFileTree(workspace?.rootLabel ?? "", workspace?.entries ?? []),
@@ -381,20 +235,11 @@ export function App(): React.JSX.Element {
     "--files-width": filesOpen ? `${filesWidth}px` : "0px",
     "--files-divider": filesOpen ? "5px" : "0px",
     "--device-width": deviceOpen ? `${deviceWidth}px` : "0px",
+    "--device-panel-width": `${deviceWidth}px`,
     "--device-divider": deviceOpen ? "5px" : "0px",
-    "--problems-height": problemsOpen ? `${problemsHeight}px` : "36px",
+    "--problems-height": problemsOpen ? `${problemsHeight}px` : `${(40 * uiScale) / 100}px`,
     "--problems-divider": problemsOpen ? "5px" : "0px",
   } as CSSProperties;
-  const remotePath = useMemo(() => {
-    if (
-      buildDestination &&
-      buildDestination.workspaceId === workspace?.id &&
-      buildDestination.buildId === buildId
-    )
-      return buildDestination.path;
-    const name = (workspace?.name ?? "program").replace(/[^A-Za-z0-9_-]+/g, "_");
-    return `/home/root/lms2012/prjs/${name}.rbf`;
-  }, [workspace?.name, workspace?.id, buildId, buildDestination]);
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -414,21 +259,9 @@ export function App(): React.JSX.Element {
     const centerElement = centerRef.current;
     if (!workspaceElement || !centerElement) return undefined;
     const fitLayout = (): void => {
-      const dividers = (filesOpen ? 5 : 0) + (deviceOpen ? 5 : 0);
-      const available = Math.max(0, workspaceElement.clientWidth - 420 - dividers);
-      let nextFiles = filesOpen ? filesWidth : 0;
-      let nextDevice = deviceOpen ? deviceWidth : 0;
-      let overflow = Math.max(0, nextFiles + nextDevice - available);
-      if (deviceOpen && overflow > 0) {
-        const reduction = Math.min(overflow, nextDevice - LAYOUT_LIMITS.deviceWidth.min);
-        nextDevice -= reduction;
-        overflow -= reduction;
-      }
-      if (filesOpen && overflow > 0) {
-        nextFiles -= Math.min(overflow, nextFiles - LAYOUT_LIMITS.filesWidth.min);
-      }
-      if (filesOpen && nextFiles !== filesWidth) setFilesWidth(nextFiles);
-      if (deviceOpen && nextDevice !== deviceWidth) setDeviceWidth(nextDevice);
+      setDeviceOverlay(
+        workspaceElement.clientWidth < (filesOpen ? filesWidth + 5 : 0) + 420 + deviceWidth + 5,
+      );
       const problemsMaximum = Math.max(
         LAYOUT_LIMITS.problemsHeight.min,
         Math.floor(centerElement.clientHeight * 0.45),
@@ -457,32 +290,36 @@ export function App(): React.JSX.Element {
   }, [diagnosticIndex, diagnostics.length]);
 
   useEffect(() => {
-    const stopBuild = window.kobrixa.build.onEvent((event: BuildEvent) => {
-      if (event.type === "progress") setStatus(event.progress.message);
+    const last = execution.logs.at(-1);
+    if (last)
+      setStatus(
+        last.failed
+          ? `${t.phases.error}: ${last.detail ?? t.messages[last.message]}`
+          : t.messages[last.message],
+      );
+  }, [execution.logs, t]);
+
+  useEffect(() => {
+    setBuildDiagnostics(execution.diagnostics);
+    if (execution.diagnostics.some((item) => item.severity === "error")) {
+      setProblemsOpen(true);
+    }
+  }, [execution.diagnostics]);
+
+  useEffect(() => {
+    if (execution.phase === "awaitingDevice") {
+      setDeviceOpen(true);
+      setToolTab("connection");
+    }
+    if (execution.error && !execution.fileBusy) {
+      if (execution.error.phase === "building" && execution.diagnostics.length)
+        setProblemsOpen(true);
       else {
-        setBuilding(false);
-        setBuildId(event.buildId);
-        setBuildDiagnostics(event.result.diagnostics);
-        const destination = deploymentPath(event.result);
-        setBuildDestination(
-          destination
-            ? { workspaceId: event.workspaceId, buildId: event.buildId, path: destination }
-            : undefined,
-        );
-        setStatus(event.result.success ? t.buildComplete : t.buildFailed);
+        setDeviceOpen(true);
+        setToolTab("activity");
       }
-    });
-    const stopDevice = window.kobrixa.device.onEvent((event: DeviceEvent) => {
-      if (event.type === "state") {
-        setDeviceState(event.state);
-        if (event.sessionId) setSessionId(event.sessionId);
-      } else setStatus(`${event.category}: ${event.message}`);
-    });
-    return () => {
-      stopBuild();
-      stopDevice();
-    };
-  }, [t]);
+    }
+  }, [execution.phase, execution.error]);
 
   useEffect(() => {
     const workspaceId = workspace?.id;
@@ -511,6 +348,16 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const listener = (event: KeyboardEvent): void => {
       if (modalOpen) return;
+      if (locked || projectBusy || managingEntries) {
+        if (
+          ((event.metaKey || event.ctrlKey) && ["s", "w"].includes(event.key.toLowerCase())) ||
+          (event.altKey && event.shiftKey && event.key.toLowerCase() === "f")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
       const modifier = event.metaKey || event.ctrlKey;
       const key = event.key.toLocaleLowerCase("en-US");
       const consume = (): void => {
@@ -635,6 +482,7 @@ export function App(): React.JSX.Element {
   }
 
   function requestCloseTab(file: string): void {
+    if (controller.editingLocked) return;
     const tab = tabs.find((item) => item.file === file);
     if (!tab) return;
     const disposition = tabCloseDisposition(tab.content !== tab.saved);
@@ -693,6 +541,7 @@ export function App(): React.JSX.Element {
   }
 
   async function loadWorkspace(selected: WorkspaceSummary): Promise<void> {
+    controller.setWorkspace(selected.id);
     setWorkspace(selected);
     setTabs([]);
     setActiveFile(undefined);
@@ -716,9 +565,12 @@ export function App(): React.JSX.Element {
   }
 
   async function createProject(): Promise<void> {
+    if (controller.editingLocked || projectBusyRef.current) return;
     const name = projectName.trim();
     if (!name) return;
     setNewProjectOpen(false);
+    projectBusyRef.current = true;
+    setProjectBusy(true);
     try {
       setStatus(t.choosingLocation);
       const next = await window.kobrixa.workspace.create(name);
@@ -727,14 +579,23 @@ export function App(): React.JSX.Element {
     } catch (error) {
       setNewProjectOpen(true);
       report(error);
+    } finally {
+      projectBusyRef.current = false;
+      setProjectBusy(false);
     }
   }
 
   async function openProject(): Promise<void> {
+    if (controller.editingLocked || projectBusyRef.current) return;
+    projectBusyRef.current = true;
+    setProjectBusy(true);
     try {
       await adoptWorkspace(await window.kobrixa.workspace.open());
     } catch (error) {
       report(error);
+    } finally {
+      projectBusyRef.current = false;
+      setProjectBusy(false);
     }
   }
 
@@ -794,17 +655,19 @@ export function App(): React.JSX.Element {
   }
 
   async function saveActive(): Promise<void> {
+    if (controller.editingLocked) return;
     if (activeFile) await saveTab(activeFile);
   }
 
   function updateActive(file: string, content: string): void {
-    if (!workspace) return;
+    if (!workspace || controller.editingLocked) return;
     setBuildDiagnostics([]);
     setTabs((value) => value.map((tab) => (tab.file === file ? { ...tab, content } : tab)));
     queueDraft(workspace.id, file, content);
   }
 
   function beginCreateEntry(kind: WorkspaceEntry["kind"], parent: string): void {
+    if (controller.editingLocked) return;
     setPendingCreate({ kind, parent });
     setEntryName(kind === "file" ? "untitled.bp" : "new-folder");
   }
@@ -855,11 +718,11 @@ export function App(): React.JSX.Element {
       const movedSelection = moved[selectedTreePath];
       return movedSelection ? expandAncestors(remapped, movedSelection) : remapped;
     });
-    setBuildId(undefined);
+    controller.invalidateBuild();
   }
 
   async function moveManagedEntry(source: string, target: string): Promise<boolean> {
-    if (!workspace) return false;
+    if (!workspace || controller.editingLocked) return false;
     if (buildEntryMovesWith(source) && manifestHasUnsavedChanges()) {
       setStatus(t.manifestDirty);
       return false;
@@ -965,7 +828,7 @@ export function App(): React.JSX.Element {
       setLiveDiagnostics((current) => current.filter((item) => !removed.has(item.file)));
       setBuildDiagnostics((current) => current.filter((item) => !removed.has(item.file)));
       setFocusTarget((current) => (current && removed.has(current.file) ? undefined : current));
-      setBuildId(undefined);
+      controller.invalidateBuild();
       setPendingTrash(undefined);
       setStatus(t.ready);
       window.requestAnimationFrame(() => treeRef.current?.focus(focusPath));
@@ -976,28 +839,42 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function startBuild(): Promise<void> {
+  async function saveAllChanges(): Promise<void> {
     if (!workspace) return;
-    try {
-      setBuilding(true);
-      setBuildDiagnostics([]);
-      setStatus(t.startingBuild);
-      const id = await window.kobrixa.build.start(workspace.id, sourceOverlays);
-      setBuildId(id);
-    } catch (error) {
-      setBuilding(false);
-      report(error);
+    await flushAllDrafts();
+    for (const [file, content] of filesToSave(workspace.drafts, tabs)) {
+      await window.kobrixa.workspace.write(workspace.id, file, content);
+      setTabs((current) =>
+        current.map((tab) => (tab.file === file ? { ...tab, saved: content } : tab)),
+      );
+      removeWorkspaceDraft(file);
     }
   }
 
+  function requestExecution(run: boolean): void {
+    if (
+      !workspace ||
+      controller.editingLocked ||
+      projectBusyRef.current ||
+      managingEntries ||
+      modalOpen
+    )
+      return;
+    const request = { workspaceId: workspace.id, saveAll: saveAllChanges };
+    if (run) void controller.run(request);
+    else void controller.build(request);
+  }
+
   async function discover(): Promise<void> {
+    if (discovering) return;
     try {
       setDiscovering(true);
       setStatus(t.searching);
       const found = await window.kobrixa.device.discover();
       setDevices(found);
-      setSelectedDevice(found[0]?.id);
-      setStatus(found.length ? t.devicesFound(found.length) : t.noDevice);
+      setSelectedDevice(found.find((device) => device.transport === connectionModeRef.current)?.id);
+      const count = found.filter((device) => device.transport === connectionModeRef.current).length;
+      setStatus(count ? t.devicesFound(count) : t.noDevice);
     } catch (error) {
       report(error);
     } finally {
@@ -1005,35 +882,13 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function connect(): Promise<void> {
-    try {
-      const descriptor = devices.find((device) => device.id === selectedDevice);
-      const id = descriptor
-        ? await window.kobrixa.device.connect(descriptor)
-        : await window.kobrixa.device.connectWifi(wifiAddress.trim());
-      setSessionId(id);
-    } catch (error) {
-      report(error);
-    }
-  }
-
-  async function deviceAction(action: "upload" | "run" | "stop" | "delete"): Promise<void> {
-    if (!sessionId) return;
-    try {
-      if (action === "upload") {
-        if (!buildId) throw new Error("Build the project successfully before uploading.");
-        await window.kobrixa.device.deploy(
-          sessionId,
-          buildId,
-          remotePath.slice(0, remotePath.lastIndexOf("/")),
-        );
-      } else if (action === "run") await window.kobrixa.device.run(sessionId, remotePath);
-      else if (action === "stop") await window.kobrixa.device.stop(sessionId);
-      else await window.kobrixa.device.delete(sessionId, remotePath);
-      setStatus(t.actionComplete(action));
-    } catch (error) {
-      report(error);
-    }
+  function connect(): void {
+    const descriptor = devices.find(
+      (device) => device.id === selectedDevice && device.transport === connectionMode,
+    );
+    if (descriptor) void controller.connect(descriptor);
+    else if (connectionMode === "wifi" && wifiAddress.trim())
+      void controller.connect(wifiAddress.trim());
   }
 
   function report(error: unknown): void {
@@ -1041,9 +896,16 @@ export function App(): React.JSX.Element {
   }
 
   function sidebarMaximum(side: "files" | "device"): number {
+    if (side === "device") return LAYOUT_LIMITS.deviceWidth.max;
     const workspaceWidth = workspaceRef.current?.clientWidth ?? window.innerWidth;
     const otherWidth =
-      side === "files" ? (deviceOpen ? deviceWidth : 0) : filesOpen ? filesWidth : 0;
+      side === "files"
+        ? deviceOpen && !deviceOverlay
+          ? deviceWidth
+          : 0
+        : filesOpen
+          ? filesWidth
+          : 0;
     const dividerWidth = (filesOpen ? 5 : 0) + (deviceOpen ? 5 : 0);
     const limit = side === "files" ? LAYOUT_LIMITS.filesWidth : LAYOUT_LIMITS.deviceWidth;
     return Math.max(
@@ -1150,76 +1012,61 @@ export function App(): React.JSX.Element {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <img className="brand-mark" src={kobrixaMark} alt="" aria-hidden="true" />
-          <span>Kobrixa</span>
-          <small>{t.candidate}</small>
-        </div>
-        <nav className="actions">
-          <button
-            onClick={() => {
+      <Toolbar
+        t={t}
+        locale={locale}
+        appearance={
+          <Appearance
+            locale={locale}
+            theme={theme}
+            scale={uiScale}
+            fontSize={codeSize}
+            onTheme={setTheme}
+            onScale={setUiScale}
+            onFontSize={setCodeSize}
+          />
+        }
+        deviceLocked={controller.locked || managingEntries || projectBusy || modalOpen}
+        name={workspace?.name}
+        locked={locked || managingEntries || projectBusy || modalOpen}
+        canSave={Boolean(active && active.content !== active.saved)}
+        state={execution}
+        onNew={() => {
+          setProjectName("my-robot");
+          setNewProjectOpen(true);
+        }}
+        onOpen={() => void openProject()}
+        onSave={() => void saveActive()}
+        onRun={() => requestExecution(true)}
+        onBuild={() => requestExecution(false)}
+        onStop={() => void controller.stop()}
+        onUpload={() => void controller.upload()}
+        onRunUploaded={() => void controller.runDeployed()}
+        onDelete={() => void controller.deleteDeployed()}
+        onCancel={() => void controller.cancelBuild()}
+        onDevice={() => {
+          setToolTab("connection");
+          setDeviceOpen(true);
+        }}
+        onLocale={() => setLocale((value) => (value === "en" ? "zh-TW" : "en"))}
+      />
+      {!workspace ? (
+        <Welcome
+          t={t}
+          onNew={() => {
+            if (!projectBusy) {
               setProjectName("my-robot");
               setNewProjectOpen(true);
-            }}
-          >
-            {t.newProject}
-          </button>
-          <button onClick={() => void openProject()}>{t.open}</button>
-          <button
-            disabled={!active || active.content === active.saved}
-            onClick={() => void saveActive()}
-          >
-            {t.save}
-          </button>
-          <span className="divider" />
-          <button
-            className="primary"
-            disabled={!workspace || building}
-            onClick={() => void startBuild()}
-          >
-            {t.build}
-          </button>
-          <button
-            disabled={!building || !buildId}
-            onClick={() => buildId && void window.kobrixa.build.cancel(buildId)}
-          >
-            {t.cancel}
-          </button>
-        </nav>
-        <button
-          className="locale"
-          onClick={() => setLocale((value) => (value === "en" ? "zh-TW" : "en"))}
-        >
-          {locale === "en" ? "繁中" : "EN"}
-        </button>
-      </header>
-
-      {!workspace ? (
-        <section className="welcome">
-          <div className="orb">
-            <span>EV3</span>
-          </div>
-          <p className="eyebrow">KOBRIXA IDE</p>
-          <h1>{t.welcome}</h1>
-          <p>{t.intro}</p>
-          <div className="welcome-actions">
-            <button className="primary large" onClick={() => void openProject()}>
-              {t.open}
-            </button>
-            <button
-              className="large"
-              onClick={() => {
-                setProjectName("my-robot");
-                setNewProjectOpen(true);
-              }}
-            >
-              {t.newProject}
-            </button>
-          </div>
-        </section>
+            }
+          }}
+          onOpen={() => void openProject()}
+        />
       ) : (
-        <section className="workspace" ref={workspaceRef} style={workspaceStyle}>
+        <section
+          className={`workspace ${deviceOverlay ? "device-overlay" : ""}`}
+          ref={workspaceRef}
+          style={workspaceStyle}
+        >
           <aside
             className={`sidebar files-panel ${filesOpen ? "" : "collapsed"}`}
             aria-hidden={!filesOpen}
@@ -1231,7 +1078,7 @@ export function App(): React.JSX.Element {
                   ref={treeRef}
                   activeFile={activeFile}
                   buildEntry={workspace.manifest?.entry}
-                  busy={managingEntries}
+                  busy={managingEntries || locked || projectBusy}
                   copy={{
                     treeLabel: t.fileTree,
                     newFile: t.newFile,
@@ -1291,7 +1138,7 @@ export function App(): React.JSX.Element {
               </div>
               <div className="editor-tools">
                 <button
-                  disabled={!active}
+                  disabled={!active || locked}
                   title={`${t.format} · Shift+Alt/Option+F`}
                   onClick={() => void editorRef.current?.format()}
                 >
@@ -1361,6 +1208,7 @@ export function App(): React.JSX.Element {
                     </button>
                     <button
                       className="tab-close"
+                      disabled={locked}
                       aria-label={`${t.closeTab}: ${tab.file}`}
                       title={`${t.closeTab} · Mod+W`}
                       onClick={() => requestCloseTab(tab.file)}
@@ -1373,9 +1221,18 @@ export function App(): React.JSX.Element {
             </div>
 
             <div className="editor-stage">
+              {locked && (
+                <div className="editor-lock" role="status">
+                  {t.phases[execution.phase]} <span>{t.locked}</span>
+                </div>
+              )}
               {active ? (
                 <Editor
+                  key={workspace.id}
                   ref={editorRef}
+                  theme={theme}
+                  fontSize={codeSize}
+                  readOnly={locked || projectBusy}
                   file={active.file}
                   value={active.content}
                   openFiles={openFiles}
@@ -1404,49 +1261,15 @@ export function App(): React.JSX.Element {
               onKeyDown={resizeProblemsWithKeyboard}
               onPointerDown={beginProblemsResize}
             />
-            <section className={`problems ${problemsOpen ? "" : "collapsed"}`}>
-              <div className="problems-header">
-                <button
-                  aria-expanded={problemsOpen}
-                  title={problemsOpen ? t.hideProblems : t.showProblems}
-                  onClick={() => setProblemsOpen((value) => !value)}
-                >
-                  <span aria-hidden="true">{problemsOpen ? "⌄" : "›"}</span>
-                  {t.diagnostics}
-                  <strong>{diagnostics.length}</strong>
-                </button>
-                <div className="diagnostic-summary" aria-live="polite">
-                  {checking && <span className="checking">{t.checking}</span>}
-                  <span className="error-count">
-                    {errorCount} {t.errors}
-                  </span>
-                  <span className="warning-count">
-                    {warningCount} {t.warnings}
-                  </span>
-                </div>
-              </div>
-              {problemsOpen && (
-                <div className="problem-list">
-                  {diagnostics.length ? (
-                    diagnostics.map((item, index) => (
-                      <button
-                        className={index === diagnosticIndex ? "active" : ""}
-                        key={`${item.code}-${item.file}-${item.range.startLine}-${item.range.startColumn}-${index}`}
-                        onClick={() => void jumpTo(item, index)}
-                      >
-                        <b className={item.severity}>{item.code}</b>
-                        <span>{item.message}</span>
-                        <small>
-                          {item.file}:{item.range.startLine}:{item.range.startColumn}
-                        </small>
-                      </button>
-                    ))
-                  ) : (
-                    <p>{checking ? t.checking : t.noProblems}</p>
-                  )}
-                </div>
-              )}
-            </section>
+            <BottomPanel
+              t={t}
+              open={problemsOpen}
+              onToggle={() => setProblemsOpen((value) => !value)}
+              diagnostics={diagnostics}
+              selected={diagnosticIndex}
+              checking={checking}
+              onJump={(item, index) => void jumpTo(item, index)}
+            />
           </section>
 
           <div
@@ -1468,90 +1291,63 @@ export function App(): React.JSX.Element {
             aria-hidden={!deviceOpen}
           >
             {deviceOpen && (
-              <>
-                <div className="device-title">
-                  <h2>{t.devices}</h2>
-                  <span className={`state ${deviceState}`}>{deviceState}</span>
-                </div>
-                <div className="brick">
-                  <div className="brick-screen">
-                    EV3
-                    <br />
-                    <small>{deviceState}</small>
-                  </div>
-                  <div className="brick-buttons">◆</div>
-                </div>
-                <button className="wide" disabled={discovering} onClick={() => void discover()}>
-                  {discovering ? t.searching : t.discover}
-                </button>
-                {devices.length > 0 && (
-                  <select
-                    value={selectedDevice}
-                    onChange={(event) => setSelectedDevice(event.target.value)}
-                  >
-                    {devices.map((device) => (
-                      <option key={device.id} value={device.id}>
-                        {device.name} · {device.transport}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <label>
-                  {t.address}
-                  <input
-                    placeholder="192.168.0.42"
-                    value={wifiAddress}
-                    onChange={(event) => {
-                      setWifiAddress(event.target.value);
+              <ToolsPanel
+                tab={toolTab}
+                onTab={setToolTab}
+                locale={locale}
+                onClose={() => {
+                  controller.cancelWaiting();
+                  setDeviceOpen(false);
+                }}
+                connection={
+                  <DevicePanel
+                    t={t}
+                    locale={locale}
+                    state={execution}
+                    devices={devices}
+                    discovering={discovering}
+                    locked={controller.locked}
+                    mode={connectionMode}
+                    onMode={(mode) => {
+                      setConnectionMode(mode);
                       setSelectedDevice(undefined);
                     }}
+                    selected={selectedDevice}
+                    onSelect={setSelectedDevice}
+                    address={wifiAddress}
+                    onAddress={(address) => {
+                      setWifiAddress(address);
+                      setSelectedDevice(undefined);
+                    }}
+                    onDiscover={() => void discover()}
+                    onConnect={connect}
+                    onDisconnect={() => void controller.disconnect()}
+                    onCancel={() => controller.cancelWaiting()}
                   />
-                </label>
-                {!sessionId ? (
-                  <button
-                    className="primary wide"
-                    disabled={!selectedDevice && !wifiAddress.trim()}
-                    onClick={() => void connect()}
-                  >
-                    {t.connect}
-                  </button>
-                ) : (
-                  <button
-                    className="wide"
-                    onClick={() =>
-                      void window.kobrixa.device
-                        .disconnect(sessionId)
-                        .then(() => setSessionId(undefined))
-                    }
-                  >
-                    {t.disconnect}
-                  </button>
-                )}
-                <div className="device-actions">
-                  <button
-                    disabled={!sessionId || !buildId}
-                    onClick={() => void deviceAction("upload")}
-                  >
-                    {t.upload}
-                  </button>
-                  <button disabled={!sessionId} onClick={() => void deviceAction("run")}>
-                    {t.run}
-                  </button>
-                  <button disabled={!sessionId} onClick={() => void deviceAction("stop")}>
-                    {t.stop}
-                  </button>
-                  <button disabled={!sessionId} onClick={() => void deviceAction("delete")}>
-                    {t.remove}
-                  </button>
-                </div>
-                <p className="remote-path">{remotePath}</p>
-              </>
+                }
+                files={
+                  <RemoteFilesPanel
+                    controller={remoteFiles}
+                    state={remoteState}
+                    active={toolTab === "files"}
+                    locale={locale}
+                    locked={controller.locked}
+                    deployedPath={execution.deployed?.path}
+                    onConnect={() => setToolTab("connection")}
+                  />
+                }
+                activity={<ActivityPanel t={t} locale={locale} state={execution} />}
+              />
             )}
           </aside>
         </section>
       )}
       {newProjectOpen && (
-        <div className="modal-backdrop">
+        <Modal
+          onClose={() => {
+            setNewProjectOpen(false);
+          }}
+        >
           <form
             className="modal-card"
             role="dialog"
@@ -1582,10 +1378,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
       {pendingWorkspace && (
-        <div className="modal-backdrop">
+        <Modal
+          onClose={() => {
+            setPendingWorkspace(undefined);
+          }}
+        >
           <form
             className="modal-card"
             role="dialog"
@@ -1616,10 +1416,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
       {pendingCreate && (
-        <div className="modal-backdrop">
+        <Modal
+          onClose={() => {
+            if (!managingEntries) setPendingCreate(undefined);
+          }}
+        >
           <form
             className="modal-card"
             role="dialog"
@@ -1662,10 +1466,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
       {pendingMove && (
-        <div className="modal-backdrop">
+        <Modal
+          onClose={() => {
+            if (!managingEntries) setPendingMove(undefined);
+          }}
+        >
           <form
             className="modal-card"
             role="dialog"
@@ -1705,10 +1513,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
       {pendingTrash && (
-        <div className="modal-backdrop">
+        <Modal
+          onClose={() => {
+            if (!managingEntries) setPendingTrash(undefined);
+          }}
+        >
           <div
             className="modal-card"
             role="alertdialog"
@@ -1742,10 +1554,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
       {pendingCloseFile && (
-        <div className="modal-backdrop">
+        <Modal
+          onClose={() => {
+            if (!closingTab) setPendingCloseFile(undefined);
+          }}
+        >
           <div
             className="modal-card"
             role="alertdialog"
@@ -1784,7 +1600,7 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
       <footer>
         <div className="status-group">
@@ -1797,8 +1613,8 @@ export function App(): React.JSX.Element {
           )}
           {dirty && active?.content === active?.saved && <span className="dirty">●</span>}
         </div>
-        <span className="operation-status" role="status">
-          {checking ? t.checking : status}
+        <span className="operation-status" role="status" title={status}>
+          {locked ? t.phases[execution.phase] : checking ? t.checking : status}
         </span>
         <div className="status-group status-details">
           {active && (

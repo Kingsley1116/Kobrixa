@@ -1,11 +1,13 @@
 import type { DeviceDescriptor, DeviceTransport, Ev3Connection } from "./contracts.js";
 import { FramedConnection, frameMessage, parseFrame } from "./framing.js";
+import { DeviceOperationError } from "./errors.js";
 import { EV3DeviceSession } from "./session.js";
 
 export type MockResponder = (payload: Uint8Array) => Uint8Array | Promise<Uint8Array>;
 
 export class MockConnection extends FramedConnection implements Ev3Connection {
   closed = false;
+  private pending = new Set<(error: Error) => void>();
 
   constructor(private readonly responder: MockResponder) {
     super();
@@ -13,12 +15,28 @@ export class MockConnection extends FramedConnection implements Ev3Connection {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const reject of this.pending)
+      reject(new DeviceOperationError("connection", "Mock EV3 disconnected."));
   }
 
-  protected async exchangeFrame(frame: Uint8Array): Promise<Uint8Array> {
+  protected async exchangeFrame(frame: Uint8Array, signal: AbortSignal): Promise<Uint8Array> {
+    signal.throwIfAborted();
+    if (this.closed) throw new DeviceOperationError("connection", "Mock EV3 disconnected.");
     const request = parseFrame(frame);
-    const reply = await this.responder(request.payload);
-    return frameMessage(request.counter, reply);
+    let rejectPending!: (error: Error) => void;
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      rejectPending = reject;
+    });
+    const abort = (): void => rejectPending(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    this.pending.add(rejectPending);
+    try {
+      const reply = await Promise.race([this.responder(request.payload), interrupted]);
+      return frameMessage(request.counter, reply);
+    } finally {
+      signal.removeEventListener("abort", abort);
+      this.pending.delete(rejectPending);
+    }
   }
 
   protected async sendFrame(frame: Uint8Array): Promise<void> {

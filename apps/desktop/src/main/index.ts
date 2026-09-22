@@ -17,7 +17,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 980,
     minHeight: 650,
-    backgroundColor: "#101417",
+    backgroundColor: "#18212b",
     title: "Kobrixa",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),

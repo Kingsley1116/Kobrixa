@@ -5,6 +5,7 @@ import {
   BASIC_PLUS_KEYWORDS,
   formatBasicPlus,
 } from "@kobrixa/basic-plus/language";
+import type { Theme } from "./theme.js";
 import type { Diagnostic } from "../shared/api.js";
 
 let registered = false;
@@ -65,15 +66,32 @@ function registerLanguage(): void {
       ],
     },
   });
-  monaco.editor.defineTheme("kobrixa-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: [
-      { token: "ev3.namespace", foreground: "4EC9B0", fontStyle: "bold" },
-      { token: "function", foreground: "DCDCAA" },
-    ],
-    colors: {},
-  });
+  for (const theme of ["light", "dark"] as const) {
+    const dark = theme === "dark";
+    monaco.editor.defineTheme(`kobrixa-${theme}`, {
+      base: dark ? "vs-dark" : "vs",
+      inherit: true,
+      rules: [
+        { token: "keyword", foreground: dark ? "88ACFF" : "2457D6" },
+        { token: "ev3.namespace", foreground: dark ? "88ACFF" : "2457D6", fontStyle: "bold" },
+        { token: "function", foreground: dark ? "F2CA6A" : "875A0B" },
+        { token: "string", foreground: dark ? "EBA884" : "994622" },
+        { token: "number", foreground: dark ? "C6ACF1" : "7752A0" },
+        { token: "comment", foreground: dark ? "8998A7" : "68746B", fontStyle: "italic" },
+      ],
+      colors: {
+        "editor.background": dark ? "#18212b" : "#fdfaf4",
+        "editor.foreground": dark ? "#e6eaf0" : "#1e2933",
+        "editorLineNumber.foreground": dark ? "#697a8b" : "#91958f",
+        "editorLineNumber.activeForeground": dark ? "#88acff" : "#2457d6",
+        "editor.lineHighlightBackground": dark ? "#202c3a" : "#f0ede5",
+        "editor.selectionBackground": dark ? "#344a72" : "#cddbf8",
+        "editorCursor.foreground": dark ? "#88acff" : "#2457d6",
+        "editorWidget.background": dark ? "#222e3b" : "#fdfaf4",
+        "editorWidget.border": dark ? "#3a4857" : "#d7d1c7",
+      },
+    });
+  }
   monaco.languages.registerCompletionItemProvider("basic-plus", {
     triggerCharacters: ["."],
     provideCompletionItems: (model, position) => {
@@ -133,6 +151,9 @@ export interface EditorHandle {
 }
 
 interface EditorProps {
+  theme: Theme;
+  fontSize: number;
+  readOnly: boolean;
   file: string;
   value: string;
   openFiles: string[];
@@ -162,7 +183,19 @@ function toMonacoRange(range: Diagnostic["range"]): monaco.Range {
 }
 
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  { file, value, openFiles, diagnostics, focusTarget, ariaLabel, onChange, onCursorChange },
+  {
+    file,
+    value,
+    openFiles,
+    diagnostics,
+    focusTarget,
+    ariaLabel,
+    theme,
+    fontSize,
+    readOnly,
+    onChange,
+    onCursorChange,
+  },
   handleRef,
 ): React.JSX.Element {
   const container = useRef<HTMLDivElement>(null);
@@ -224,13 +257,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     if (!container.current) return undefined;
     const instance = monaco.editor.create(container.current, {
       model: null,
-      theme: "kobrixa-dark",
+      theme: `kobrixa-${theme}`,
+      readOnly,
       ariaLabel,
       automaticLayout: true,
       minimap: { enabled: false },
       fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace",
-      fontSize: 14,
-      lineHeight: 22,
+      fontSize,
+      lineHeight: Math.round((fontSize * 25) / 16),
       padding: { top: 16 },
       bracketPairColorization: { enabled: true },
       guides: { bracketPairs: true, indentation: true },
@@ -297,8 +331,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, [openFiles]);
 
   useEffect(() => {
-    editor.current?.updateOptions({ ariaLabel });
-  }, [ariaLabel]);
+    editor.current?.updateOptions({ ariaLabel, readOnly });
+  }, [ariaLabel, readOnly]);
+  useEffect(() => {
+    editor.current?.updateOptions({ fontSize, lineHeight: Math.round((fontSize * 25) / 16) });
+  }, [fontSize]);
+  useEffect(() => {
+    monaco.editor.setTheme(`kobrixa-${theme}`);
+  }, [theme]);
 
   useEffect(() => {
     const model = models.current.get(file);

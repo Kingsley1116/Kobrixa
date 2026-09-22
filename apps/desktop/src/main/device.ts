@@ -4,13 +4,16 @@ import path from "node:path";
 import type { WebContents } from "electron";
 import {
   DeviceOperationError,
+  managedPath,
+  remoteChild,
   UsbTransport,
   WiFiTransport,
   normalizeDeviceError,
   type DeviceDescriptor,
   type DeviceSession,
 } from "@kobrixa/device";
-import type { DeviceEvent } from "../shared/api.js";
+import { remoteFileOperation } from "./remote-files.js";
+import type { RemoteFileRequest, RemoteFileResult, DeviceEvent } from "../shared/api.js";
 import type { BuildService } from "./build.js";
 
 export function mergeDiscoveryResults(
@@ -40,6 +43,7 @@ export function deploymentTargets(
 
 export class DeviceService {
   readonly #sessions = new Map<string, DeviceSession>();
+  readonly #busy = new Map<string, AbortController>();
   readonly #usb = new UsbTransport();
   readonly #wifi = new WiFiTransport();
 
@@ -73,9 +77,10 @@ export class DeviceService {
 
   async disconnect(id: string): Promise<void> {
     const session = this.require(id);
+    this.#busy.get(id)?.abort();
     await session.disconnect();
     this.#sessions.delete(id);
-    this.send({ type: "state", state: "disconnected" });
+    this.send({ type: "state", state: "disconnected", sessionId: id });
   }
 
   upload(id: string, buildId: string, remotePath: string): Promise<void> {
@@ -112,6 +117,53 @@ export class DeviceService {
     return this.operation(id, (session, signal) => session.delete(remotePath, signal));
   }
 
+  async files(request: RemoteFileRequest): Promise<RemoteFileResult> {
+    try {
+      const target = managedPath(
+        request.path,
+        ["rename", "delete", "download"].includes(request.action),
+      );
+      if (request.action === "mkdir" || request.action === "rename")
+        remoteChild(
+          request.action === "mkdir" ? target : path.posix.dirname(target),
+          request.name ?? "",
+        );
+      return await this.operation(request.sessionId, async (session, signal) => {
+        const { dialog } = await import("electron");
+        return remoteFileOperation(
+          request,
+          session,
+          signal,
+          dialog,
+          (paths) =>
+            this.send({
+              type: "files-changed",
+              sessionId: request.sessionId,
+              requestId: request.requestId,
+              paths,
+            }),
+          (transferred, total) =>
+            this.send({
+              type: "file-progress",
+              sessionId: request.sessionId,
+              requestId: request.requestId,
+              transferred,
+              total,
+            }),
+        );
+      });
+    } catch (error) {
+      const normalized = normalizeDeviceError(error);
+      return {
+        ok: false,
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        category: normalized.category,
+        message: normalized.message,
+      };
+    }
+  }
+
   private async connectWith(
     connect: () => Promise<DeviceSession>,
     transport: string,
@@ -129,11 +181,15 @@ export class DeviceService {
     }
   }
 
-  private async operation(
+  private async operation<T>(
     id: string,
-    work: (session: DeviceSession, signal: AbortSignal) => Promise<void>,
-  ): Promise<void> {
+    work: (session: DeviceSession, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     const session = this.require(id);
+    if (this.#busy.has(id))
+      throw new DeviceOperationError("device", "Another EV3 operation is in progress.");
+    const controller = new AbortController();
+    this.#busy.set(id, controller);
     this.send({
       type: "state",
       state: "busy",
@@ -141,16 +197,30 @@ export class DeviceService {
       transport: session.descriptor.transport,
     });
     try {
-      await work(session, new AbortController().signal);
+      const result = await work(session, controller.signal);
+      controller.signal.throwIfAborted();
       this.send({
         type: "state",
         state: "connected",
         sessionId: id,
         transport: session.descriptor.transport,
       });
+      return result;
     } catch (error) {
-      this.report(error);
-      throw error;
+      const normalized = normalizeDeviceError(error);
+      if (["connection", "timeout", "protocol"].includes(normalized.category)) {
+        this.#sessions.delete(id);
+        await session.disconnect().catch(() => {});
+        this.send({
+          type: "state",
+          state: "disconnected",
+          sessionId: id,
+          message: normalized.message,
+        });
+      }
+      throw normalized;
+    } finally {
+      this.#busy.delete(id);
     }
   }
 

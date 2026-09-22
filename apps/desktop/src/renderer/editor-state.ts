@@ -1,15 +1,15 @@
 export const LAYOUT_DEFAULTS = {
   filesWidth: 220,
-  deviceWidth: 280,
+  deviceWidth: 360,
   problemsHeight: 180,
   filesOpen: true,
-  deviceOpen: true,
-  problemsOpen: true,
+  deviceOpen: false,
+  problemsOpen: false,
 } as const;
 
 export const LAYOUT_LIMITS = {
   filesWidth: { min: 176, max: 360 },
-  deviceWidth: { min: 240, max: 420 },
+  deviceWidth: { min: 320, max: 520 },
   problemsHeight: { min: 112 },
 } as const;
 

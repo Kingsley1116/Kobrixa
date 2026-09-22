@@ -115,6 +115,20 @@ export function registerIpc(
     language.diagnostics(id.parse(workspaceId), z.record(file, content).parse(overlays)),
   );
 
+  handle("device:files", (_event, request: unknown) =>
+    devices.files(
+      z
+        .object({
+          sessionId: id,
+          requestId: id,
+          action: z.enum(["list", "upload", "download", "mkdir", "rename", "delete"]),
+          path: file,
+          name: entryName.optional(),
+          locale: z.enum(["en", "zh-TW"]),
+        })
+        .parse(request),
+    ),
+  );
   handle("device:discover", () => devices.discover());
   handle("device:connect", (_event, target: unknown) => devices.connect(parseDescriptor(target)));
   handle("device:connect-wifi", (_event, address: unknown) =>

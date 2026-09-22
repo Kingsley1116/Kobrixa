@@ -35,6 +35,7 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },
   device: {
+    files: (request) => ipcRenderer.invoke("device:files", request),
     discover: () => ipcRenderer.invoke("device:discover"),
     connect: (descriptor) => ipcRenderer.invoke("device:connect", descriptor),
     connectWifi: (address) => ipcRenderer.invoke("device:connect-wifi", address),

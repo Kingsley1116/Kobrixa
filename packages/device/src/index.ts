@@ -6,3 +6,4 @@ export * from "./path.js";
 export * from "./session.js";
 export * from "./usb.js";
 export * from "./wifi.js";
+export * from "./files.js";

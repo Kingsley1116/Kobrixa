@@ -23,7 +23,7 @@ export class BuildService {
   async start(workspaceId: string, overlays: Record<string, string>): Promise<string> {
     const project = await this.workspaces.project(workspaceId, new Map(Object.entries(overlays)));
     const session = new BuildSession(new BasicPlusFrontend(), new EV3Backend(), (progress) => {
-      this.send({ type: "progress", workspaceId, progress });
+      this.send({ type: "progress", workspaceId, buildId: session.id, progress });
     });
     const record: BuildRecord = { session, artifacts: [] };
     this.#builds.set(session.id, record);

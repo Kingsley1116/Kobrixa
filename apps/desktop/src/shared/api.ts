@@ -5,7 +5,7 @@ import type {
   Diagnostic,
   ProjectManifest,
 } from "@kobrixa/compiler";
-import type { DeviceDescriptor, DeviceErrorCategory } from "@kobrixa/device";
+import type { DeviceDescriptor, DeviceErrorCategory, RemoteEntry } from "@kobrixa/device";
 
 export interface WorkspaceSummary {
   id: string;
@@ -31,14 +31,42 @@ export interface WorkspaceMutationResult {
 }
 
 export type BuildEvent =
-  | { type: "progress"; workspaceId: string; progress: BuildProgress }
+  | { type: "progress"; workspaceId: string; buildId: string; progress: BuildProgress }
   | { type: "complete"; workspaceId: string; buildId: string; result: CompileResult };
 
+export type RemoteFileRequest = {
+  sessionId: string;
+  requestId: string;
+  action: "list" | "upload" | "download" | "mkdir" | "rename" | "delete";
+  path: string;
+  name?: string | undefined;
+  locale: "en" | "zh-TW";
+};
+export type RemoteFileResult = {
+  sessionId: string;
+  requestId: string;
+} & (
+  | { ok: true; entries?: RemoteEntry[]; cancelled?: boolean }
+  | {
+      ok: false;
+      category: DeviceErrorCategory;
+      message: string;
+    }
+);
 export type DeviceEvent =
+  | { type: "files-changed"; sessionId: string; requestId: string; paths: string[] }
+  | {
+      type: "file-progress";
+      sessionId: string;
+      requestId: string;
+      transferred: number;
+      total: number;
+    }
   | {
       type: "state";
       state: "disconnected" | "connecting" | "connected" | "busy" | "error";
       sessionId?: string;
+      message?: string;
       transport?: string;
     }
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
@@ -74,6 +102,7 @@ export interface KobrixaApi {
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {
+    files(request: RemoteFileRequest): Promise<RemoteFileResult>;
     discover(): Promise<DeviceDescriptor[]>;
     connect(descriptor: DeviceDescriptor): Promise<string>;
     connectWifi(address: string): Promise<string>;
@@ -87,4 +116,4 @@ export interface KobrixaApi {
   };
 }
 
-export type { BuildArtifact, CompileResult, Diagnostic, DeviceDescriptor };
+export type { BuildArtifact, CompileResult, Diagnostic, DeviceDescriptor, RemoteEntry };
