@@ -13,11 +13,10 @@ type HidDevice = InstanceType<NodeHid["HID"]>;
 export function trimHidReply(data: Uint8Array): Uint8Array {
   const report = data[0] === 0 && data.length > 5 ? data.slice(1) : data;
   if (report.length < 2) return report;
-  const frameLength = new DataView(
-    report.buffer,
-    report.byteOffset,
-    report.byteLength,
-  ).getUint16(0, true);
+  const frameLength = new DataView(report.buffer, report.byteOffset, report.byteLength).getUint16(
+    0,
+    true,
+  );
   const totalLength = frameLength + 2;
   return totalLength <= report.length ? report.slice(0, totalLength) : report;
 }

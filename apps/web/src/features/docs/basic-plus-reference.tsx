@@ -200,9 +200,231 @@ function typeName(value: EV3ParameterType | EV3OperationSignature["returns"]): s
 type Localized = Record<DocsLocale, string>;
 const action = (zh: string, en: string): Localized => ({ "zh-TW": zh, en });
 type ParameterInfo = { name: string; description: Localized; example: string };
-const parameter = (name: string, zh: string, en: string, example: string): ParameterInfo => ({ name, description: action(zh, en), example });
+const parameter = (name: string, zh: string, en: string, example: string): ParameterInfo => ({
+  name,
+  description: action(zh, en),
+  example,
+});
 const parameterGlossary: Record<string, Omit<ParameterInfo, "name">> = {
-  ports: { description: action("要控制的馬達連接埠字串，例如 `A` 或 `AD`。", "Motor port string to control, such as `A` or `AD`."), example: "\"AD\"" }, speed: { description: action("馬達速度；負值代表反向。", "Motor speed; a negative value reverses direction."), example: "25" }, power: { description: action("馬達功率；負值代表反向。", "Motor power; a negative value reverses direction."), example: "25" }, brake: { description: action("動作完成時是否煞車。", "Whether to brake when the action ends."), example: "True" }, degrees: { description: action("馬達要轉動的角度。", "Motor rotation in degrees."), example: "360" }, rampUp: { description: action("加速階段的馬達角度。", "Motor rotation used for the acceleration ramp."), example: "60" }, rampDown: { description: action("減速階段的馬達角度。", "Motor rotation used for the deceleration ramp."), example: "60" }, turn: { description: action("兩顆馬達之間的轉向比例。", "Steering ratio between the two motors."), example: "0" }, leftSpeed: { description: action("同步組合中第一顆馬達的速度。", "Speed for the first motor in a synchronized pair."), example: "25" }, rightSpeed: { description: action("同步組合中第二顆馬達的速度。", "Speed for the second motor in a synchronized pair."), example: "25" }, port: { description: action("EV3 感測器連接埠，從 1 起算。", "EV3 sensor port, numbered from 1."), example: "1" }, mode: { description: action("感測器讀取模式。", "Sensor reading mode."), example: "0" }, valueIndex: { description: action("原始感測器資料通道索引。", "Raw sensor data channel index."), example: "0" }, deviceAddress: { description: action("I²C 裝置位址。", "I²C device address."), example: "2" }, register: { description: action("I²C 暫存器位址。", "I²C register address."), example: "0" }, length: { description: action("要讀取或寫入的資料長度。", "Amount of data to read or write."), example: "1" }, data: { description: action("要傳送、寫入或剖析的資料。", "Data to send, write, or parse."), example: "values" }, handle: { description: action("識別已開啟資源或資料結構的控制代號。", "Handle that identifies an open resource or data structure."), example: "handle" }, fileName: { description: action("EV3 上的檔案名稱或路徑。", "File name or path on the EV3."), example: "\"data.txt\"" }, text: { description: action("要讀取、轉換或寫入的來源文字。", "Source text to read, transform, or write."), example: "\"Hello\"" }, byte: { description: action("要讀取、寫入或處理的位元組值。", "Byte value to read, write, or process."), example: "42" }, mailboxName: { description: action("本機 mailbox 的名稱。", "Name of the local mailbox."), example: "\"status\"" }, target: { description: action("訊息要傳送到的 mailbox 或目標名稱。", "Mailbox or target name that receives the message."), example: "\"peer\"" }, message: { description: action("要傳送或驗證的文字訊息。", "Text message to send or verify."), example: "\"Hello\"" }, number: { description: action("作為運算或訊息內容傳入的數值。", "Number supplied as an operand or message payload."), example: "0" }, milliseconds: { description: action("等待的毫秒數。", "Number of milliseconds to wait."), example: "100" }, argumentIndex: { description: action("程式啟動參數的零起始索引。", "Zero-based index of a program start argument."), example: "0" }, color: { description: action("繪製或狀態燈使用的顏色；LCD 通常 0 為白、1 為黑。", "Color for drawing or the status LED; LCD normally uses 0 for white and 1 for black."), example: "1" }, x: { description: action("水平像素座標。", "Horizontal pixel coordinate."), example: "16" }, y: { description: action("垂直像素座標。", "Vertical pixel coordinate."), example: "48" }, width: { description: action("範圍寬度（像素）。", "Range width in pixels."), example: "42" }, height: { description: action("範圍高度（像素）。", "Range height in pixels."), example: "20" }, radius: { description: action("圓形半徑（像素）。", "Circle radius in pixels."), example: "20" }, font: { description: action("EV3 字型索引。", "EV3 font index."), example: "1" }, frequency: { description: action("音調頻率（Hz）。", "Tone frequency in Hz."), example: "440" }, duration: { description: action("播放或動作持續時間（毫秒）。", "Playback or action duration in milliseconds."), example: "200" }, volume: { description: action("EV3 喇叭音量。", "EV3 speaker volume."), example: "25" }, button: { description: action("要檢查的 EV3 按鍵名稱。", "Name of the EV3 button to check."), example: "\"Enter\"" }, mutexHandle: { description: action("由 `Thread.CreateMutex` 建立的 mutex 控制代號。", "Mutex handle created by `Thread.CreateMutex`."), example: "mutex" }, row: { description: action("要操作的 Row 控制代號或資料。", "Row handle or data to operate on."), example: "row" }, vector: { description: action("要操作的 Vector 資料。", "Vector data to operate on."), example: "values" }, index: { description: action("資料集合的零起始索引。", "Zero-based index in a data collection."), example: "0" }, size: { description: action("資料集合的目標大小。", "Target size of the data collection."), example: "4" }, initialValue: { description: action("新集合每個元素的初始數值。", "Initial value for each element in a new collection."), example: "0" }, left: { description: action("比較或運算的第一個值。", "First value in a comparison or operation."), example: "1" }, right: { description: action("比較或運算的第二個值。", "Second value in a comparison or operation."), example: "2" }, tolerance: { description: action("判定兩值接近時允許的誤差。", "Allowed difference when comparing near values."), example: "0.01" }, factor: { description: action("向量運算使用的倍率或係數。", "Factor used by the vector operation."), example: "2" }, value: { description: action("要設定、寫入或計算的數值。", "Numeric value to set, write, or calculate with."), example: "0" }, enabled: { description: action("控制這個操作的布林開關。", "Boolean switch controlling this operation."), example: "True" }, values: { description: action("提供給 API 的數值陣列。", "Numeric array supplied to the API."), example: "values" },
+  ports: {
+    description: action(
+      "要控制的馬達連接埠字串，例如 `A` 或 `AD`。",
+      "Motor port string to control, such as `A` or `AD`.",
+    ),
+    example: '"AD"',
+  },
+  speed: {
+    description: action(
+      "馬達速度；負值代表反向。",
+      "Motor speed; a negative value reverses direction.",
+    ),
+    example: "25",
+  },
+  power: {
+    description: action(
+      "馬達功率；負值代表反向。",
+      "Motor power; a negative value reverses direction.",
+    ),
+    example: "25",
+  },
+  brake: {
+    description: action("動作完成時是否煞車。", "Whether to brake when the action ends."),
+    example: "True",
+  },
+  degrees: {
+    description: action("馬達要轉動的角度。", "Motor rotation in degrees."),
+    example: "360",
+  },
+  rampUp: {
+    description: action("加速階段的馬達角度。", "Motor rotation used for the acceleration ramp."),
+    example: "60",
+  },
+  rampDown: {
+    description: action("減速階段的馬達角度。", "Motor rotation used for the deceleration ramp."),
+    example: "60",
+  },
+  turn: {
+    description: action("兩顆馬達之間的轉向比例。", "Steering ratio between the two motors."),
+    example: "0",
+  },
+  leftSpeed: {
+    description: action(
+      "同步組合中第一顆馬達的速度。",
+      "Speed for the first motor in a synchronized pair.",
+    ),
+    example: "25",
+  },
+  rightSpeed: {
+    description: action(
+      "同步組合中第二顆馬達的速度。",
+      "Speed for the second motor in a synchronized pair.",
+    ),
+    example: "25",
+  },
+  port: {
+    description: action("EV3 感測器連接埠，從 1 起算。", "EV3 sensor port, numbered from 1."),
+    example: "1",
+  },
+  mode: { description: action("感測器讀取模式。", "Sensor reading mode."), example: "0" },
+  valueIndex: {
+    description: action("原始感測器資料通道索引。", "Raw sensor data channel index."),
+    example: "0",
+  },
+  deviceAddress: { description: action("I²C 裝置位址。", "I²C device address."), example: "2" },
+  register: { description: action("I²C 暫存器位址。", "I²C register address."), example: "0" },
+  length: {
+    description: action("要讀取或寫入的資料長度。", "Amount of data to read or write."),
+    example: "1",
+  },
+  data: {
+    description: action("要傳送、寫入或剖析的資料。", "Data to send, write, or parse."),
+    example: "values",
+  },
+  handle: {
+    description: action(
+      "識別已開啟資源或資料結構的控制代號。",
+      "Handle that identifies an open resource or data structure.",
+    ),
+    example: "handle",
+  },
+  fileName: {
+    description: action("EV3 上的檔案名稱或路徑。", "File name or path on the EV3."),
+    example: '"data.txt"',
+  },
+  text: {
+    description: action(
+      "要讀取、轉換或寫入的來源文字。",
+      "Source text to read, transform, or write.",
+    ),
+    example: '"Hello"',
+  },
+  byte: {
+    description: action("要讀取、寫入或處理的位元組值。", "Byte value to read, write, or process."),
+    example: "42",
+  },
+  mailboxName: {
+    description: action("本機 mailbox 的名稱。", "Name of the local mailbox."),
+    example: '"status"',
+  },
+  target: {
+    description: action(
+      "訊息要傳送到的 mailbox 或目標名稱。",
+      "Mailbox or target name that receives the message.",
+    ),
+    example: '"peer"',
+  },
+  message: {
+    description: action("要傳送或驗證的文字訊息。", "Text message to send or verify."),
+    example: '"Hello"',
+  },
+  number: {
+    description: action(
+      "作為運算或訊息內容傳入的數值。",
+      "Number supplied as an operand or message payload.",
+    ),
+    example: "0",
+  },
+  milliseconds: {
+    description: action("等待的毫秒數。", "Number of milliseconds to wait."),
+    example: "100",
+  },
+  argumentIndex: {
+    description: action(
+      "程式啟動參數的零起始索引。",
+      "Zero-based index of a program start argument.",
+    ),
+    example: "0",
+  },
+  color: {
+    description: action(
+      "繪製或狀態燈使用的顏色；LCD 通常 0 為白、1 為黑。",
+      "Color for drawing or the status LED; LCD normally uses 0 for white and 1 for black.",
+    ),
+    example: "1",
+  },
+  x: { description: action("水平像素座標。", "Horizontal pixel coordinate."), example: "16" },
+  y: { description: action("垂直像素座標。", "Vertical pixel coordinate."), example: "48" },
+  width: { description: action("範圍寬度（像素）。", "Range width in pixels."), example: "42" },
+  height: { description: action("範圍高度（像素）。", "Range height in pixels."), example: "20" },
+  radius: { description: action("圓形半徑（像素）。", "Circle radius in pixels."), example: "20" },
+  font: { description: action("EV3 字型索引。", "EV3 font index."), example: "1" },
+  frequency: { description: action("音調頻率（Hz）。", "Tone frequency in Hz."), example: "440" },
+  duration: {
+    description: action(
+      "播放或動作持續時間（毫秒）。",
+      "Playback or action duration in milliseconds.",
+    ),
+    example: "200",
+  },
+  volume: { description: action("EV3 喇叭音量。", "EV3 speaker volume."), example: "25" },
+  button: {
+    description: action("要檢查的 EV3 按鍵名稱。", "Name of the EV3 button to check."),
+    example: '"Enter"',
+  },
+  mutexHandle: {
+    description: action(
+      "由 `Thread.CreateMutex` 建立的 mutex 控制代號。",
+      "Mutex handle created by `Thread.CreateMutex`.",
+    ),
+    example: "mutex",
+  },
+  row: {
+    description: action("要操作的 Row 控制代號或資料。", "Row handle or data to operate on."),
+    example: "row",
+  },
+  vector: {
+    description: action("要操作的 Vector 資料。", "Vector data to operate on."),
+    example: "values",
+  },
+  index: {
+    description: action("資料集合的零起始索引。", "Zero-based index in a data collection."),
+    example: "0",
+  },
+  size: {
+    description: action("資料集合的目標大小。", "Target size of the data collection."),
+    example: "4",
+  },
+  initialValue: {
+    description: action(
+      "新集合每個元素的初始數值。",
+      "Initial value for each element in a new collection.",
+    ),
+    example: "0",
+  },
+  left: {
+    description: action("比較或運算的第一個值。", "First value in a comparison or operation."),
+    example: "1",
+  },
+  right: {
+    description: action("比較或運算的第二個值。", "Second value in a comparison or operation."),
+    example: "2",
+  },
+  tolerance: {
+    description: action(
+      "判定兩值接近時允許的誤差。",
+      "Allowed difference when comparing near values.",
+    ),
+    example: "0.01",
+  },
+  factor: {
+    description: action("向量運算使用的倍率或係數。", "Factor used by the vector operation."),
+    example: "2",
+  },
+  value: {
+    description: action(
+      "要設定、寫入或計算的數值。",
+      "Numeric value to set, write, or calculate with.",
+    ),
+    example: "0",
+  },
+  enabled: {
+    description: action("控制這個操作的布林開關。", "Boolean switch controlling this operation."),
+    example: "True",
+  },
+  values: {
+    description: action("提供給 API 的數值陣列。", "Numeric array supplied to the API."),
+    example: "values",
+  },
 };
 function parameterByName(name: string): ParameterInfo {
   const item = parameterGlossary[name];
@@ -210,105 +432,784 @@ function parameterByName(name: string): ParameterInfo {
   return { name, ...item };
 }
 const operationParameterDescriptions: Record<string, Localized> = {
-  "Motor.GetCount.port": action("要讀取編碼器計數的單一馬達連接埠，例如 `A`。", "Single motor port whose encoder count is read, such as `A`."),
-  "Motor.GetSpeed.port": action("要讀取目前速度的單一馬達連接埠，例如 `A`。", "Single motor port whose current speed is read, such as `A`."),
-  "Sensor.ReadRaw.values": action("要讀回的原始數值個數；結果會依這個數量組成陣列。", "Number of raw values to read; it determines the size of the returned array."),
-  "Sensor.ReadRawValue.index": action("要取出的原始資料通道索引，從 0 起算。", "Zero-based raw-data channel index to return."),
-  "Sensor.SetMode.mode": action("要切換至的感測器模式代碼；切換後應等待感測器完成設定。", "Sensor mode code to select; wait for the sensor after changing it."),
-  "Sensor.CommunicateI2C.address": action("7 位元 I²C 裝置位址，範圍為 0–127。", "7-bit I²C device address, in the range 0–127."),
-  "Sensor.CommunicateI2C.writebytes": action("先寫入裝置的位元組數，最多 31 個。", "Number of bytes to write first, up to 31."),
-  "Sensor.CommunicateI2C.readbytes": action("接著要從裝置讀回的位元組數。", "Number of bytes to read back from the device."),
-  "Sensor.CommunicateI2C.writedata": action("I²C 寫入階段的資料陣列；只會使用 `writebytes` 指定的前幾個元素。", "Data array for the I²C write phase; only the first `writebytes` elements are used."),
-  "Sensor.ReadI2CRegisters.readbytes": action("從起始暫存器連續讀取的位元組數。", "Number of consecutive bytes to read from the starting register."),
-  "Sensor.WriteI2CRegisters.writebytes": action("從起始暫存器開始連續寫入的位元組數。", "Number of consecutive bytes to write starting at the register."),
-  "Sensor.WriteI2CRegisters.writedata": action("要依序寫入暫存器的資料陣列。", "Data array written to consecutive registers in order."),
-  "Sensor.SendUARTData.writebytes": action("要透過 UART 傳送的位元組數，最多 32 個。", "Number of bytes to send over UART, up to 32."),
-  "Sensor.SendUARTData.writedata": action("UART 傳送資料；只會使用 `writebytes` 指定的前幾個元素。", "UART payload; only the first `writebytes` elements are sent."),
-  "EV3File.WriteByte.data": action("要寫入檔案的一個位元組資料值。", "Single byte value to write to the file."),
-  "EV3File.WriteLine.text": action("要寫入檔案的一整行文字；此操作會附加換行。", "One line of text to write to the file; the operation appends its line ending."),
-  "EV3File.ReadNumberArray.size": action("要從檔案讀出的數值個數。", "Number of numeric values to read from the file."),
-  "EV3File.WriteNumberArray.size": action("要從資料陣列寫入檔案的數值個數。", "Number of numeric values to write from the data array."),
-  "EV3File.WriteNumberArray.data": action("包含待寫入數值的陣列；只會寫入前 `size` 個元素。", "Array containing values to write; only its first `size` elements are written."),
-  "EV3File.TableLookup.bytes_per_row": action("表格檔案中每一列的固定位元組寬度。", "Fixed byte width of each row in the table file."),
+  "Motor.GetCount.port": action(
+    "要讀取編碼器計數的單一馬達連接埠，例如 `A`。",
+    "Single motor port whose encoder count is read, such as `A`.",
+  ),
+  "Motor.GetSpeed.port": action(
+    "要讀取目前速度的單一馬達連接埠，例如 `A`。",
+    "Single motor port whose current speed is read, such as `A`.",
+  ),
+  "Sensor.ReadRaw.values": action(
+    "要讀回的原始數值個數；結果會依這個數量組成陣列。",
+    "Number of raw values to read; it determines the size of the returned array.",
+  ),
+  "Sensor.ReadRawValue.index": action(
+    "要取出的原始資料通道索引，從 0 起算。",
+    "Zero-based raw-data channel index to return.",
+  ),
+  "Sensor.SetMode.mode": action(
+    "要切換至的感測器模式代碼；切換後應等待感測器完成設定。",
+    "Sensor mode code to select; wait for the sensor after changing it.",
+  ),
+  "Sensor.CommunicateI2C.address": action(
+    "7 位元 I²C 裝置位址，範圍為 0–127。",
+    "7-bit I²C device address, in the range 0–127.",
+  ),
+  "Sensor.CommunicateI2C.writebytes": action(
+    "先寫入裝置的位元組數，最多 31 個。",
+    "Number of bytes to write first, up to 31.",
+  ),
+  "Sensor.CommunicateI2C.readbytes": action(
+    "接著要從裝置讀回的位元組數。",
+    "Number of bytes to read back from the device.",
+  ),
+  "Sensor.CommunicateI2C.writedata": action(
+    "I²C 寫入階段的資料陣列；只會使用 `writebytes` 指定的前幾個元素。",
+    "Data array for the I²C write phase; only the first `writebytes` elements are used.",
+  ),
+  "Sensor.ReadI2CRegisters.readbytes": action(
+    "從起始暫存器連續讀取的位元組數。",
+    "Number of consecutive bytes to read from the starting register.",
+  ),
+  "Sensor.WriteI2CRegisters.writebytes": action(
+    "從起始暫存器開始連續寫入的位元組數。",
+    "Number of consecutive bytes to write starting at the register.",
+  ),
+  "Sensor.WriteI2CRegisters.writedata": action(
+    "要依序寫入暫存器的資料陣列。",
+    "Data array written to consecutive registers in order.",
+  ),
+  "Sensor.SendUARTData.writebytes": action(
+    "要透過 UART 傳送的位元組數，最多 32 個。",
+    "Number of bytes to send over UART, up to 32.",
+  ),
+  "Sensor.SendUARTData.writedata": action(
+    "UART 傳送資料；只會使用 `writebytes` 指定的前幾個元素。",
+    "UART payload; only the first `writebytes` elements are sent.",
+  ),
+  "EV3File.WriteByte.data": action(
+    "要寫入檔案的一個位元組資料值。",
+    "Single byte value to write to the file.",
+  ),
+  "EV3File.WriteLine.text": action(
+    "要寫入檔案的一整行文字；此操作會附加換行。",
+    "One line of text to write to the file; the operation appends its line ending.",
+  ),
+  "EV3File.ReadNumberArray.size": action(
+    "要從檔案讀出的數值個數。",
+    "Number of numeric values to read from the file.",
+  ),
+  "EV3File.WriteNumberArray.size": action(
+    "要從資料陣列寫入檔案的數值個數。",
+    "Number of numeric values to write from the data array.",
+  ),
+  "EV3File.WriteNumberArray.data": action(
+    "包含待寫入數值的陣列；只會寫入前 `size` 個元素。",
+    "Array containing values to write; only its first `size` elements are written.",
+  ),
+  "EV3File.TableLookup.bytes_per_row": action(
+    "表格檔案中每一列的固定位元組寬度。",
+    "Fixed byte width of each row in the table file.",
+  ),
   "EV3File.TableLookup.row": action("要查找的零起始列索引。", "Zero-based row index to look up."),
-  "EV3File.TableLookup.column": action("該列內的零起始位元組偏移。", "Zero-based byte offset within that row."),
-  "Program.GetArgument.index": action("要讀取的零起始命令列參數索引。", "Zero-based command-line argument index to read."),
-  "Mailbox.SendNumber.number": action("要傳到指定 mailbox 的數值訊息。", "Numeric message sent to the specified mailbox."),
+  "EV3File.TableLookup.column": action(
+    "該列內的零起始位元組偏移。",
+    "Zero-based byte offset within that row.",
+  ),
+  "Program.GetArgument.index": action(
+    "要讀取的零起始命令列參數索引。",
+    "Zero-based command-line argument index to read.",
+  ),
+  "Mailbox.SendNumber.number": action(
+    "要傳到指定 mailbox 的數值訊息。",
+    "Numeric message sent to the specified mailbox.",
+  ),
   "Byte.NOT.value": action("要做位元反相的整數值。", "Integer value whose bits are inverted."),
-  "Byte.ToLogic.value": action("要轉成布林結果的數值；零為 False，非零為 True。", "Numeric value converted to Boolean; zero is False and non-zero is True."),
-  "Byte.BIT.value": action("要讀取其中一個位元的整數值。", "Integer value from which one bit is read."),
+  "Byte.ToLogic.value": action(
+    "要轉成布林結果的數值；零為 False，非零為 True。",
+    "Numeric value converted to Boolean; zero is False and non-zero is True.",
+  ),
+  "Byte.BIT.value": action(
+    "要讀取其中一個位元的整數值。",
+    "Integer value from which one bit is read.",
+  ),
   "Byte.BIT.index": action("要讀取的零起始位元位置。", "Zero-based bit position to read."),
   "Byte.SHL.value": action("要向左移位的整數值。", "Integer value shifted left."),
   "Byte.SHR.value": action("要向右移位的整數值。", "Integer value shifted right."),
-  "Text.GetCharacter.characterCode": action("要轉成單一字元的數字字碼。", "Numeric character code to convert into one character."),
+  "Text.GetCharacter.characterCode": action(
+    "要轉成單一字元的數字字碼。",
+    "Numeric character code to convert into one character.",
+  ),
   "Text.GetLength.text": action("要計算長度的來源文字。", "Source text whose length is returned."),
-  "Text.GetCharacterCode.character": action("要取得字碼的單一字元。", "Single character whose numeric code is returned."),
+  "Text.GetCharacterCode.character": action(
+    "要取得字碼的單一字元。",
+    "Single character whose numeric code is returned.",
+  ),
   "Text.IsSubText.text": action("要搜尋的完整來源文字。", "Full source text to search."),
-  "Text.IsSubText.subText": action("要在來源文字中尋找的文字片段。", "Text fragment to search for in the source text."),
+  "Text.IsSubText.subText": action(
+    "要在來源文字中尋找的文字片段。",
+    "Text fragment to search for in the source text.",
+  ),
   "Text.EndsWith.text": action("要檢查結尾的來源文字。", "Source text whose ending is checked."),
-  "Text.EndsWith.subText": action("預期出現在結尾的文字片段。", "Text fragment expected at the end."),
-  "Text.StartsWith.text": action("要檢查開頭的來源文字。", "Source text whose beginning is checked."),
-  "Text.StartsWith.subText": action("預期出現在開頭的文字片段。", "Text fragment expected at the start."),
+  "Text.EndsWith.subText": action(
+    "預期出現在結尾的文字片段。",
+    "Text fragment expected at the end.",
+  ),
+  "Text.StartsWith.text": action(
+    "要檢查開頭的來源文字。",
+    "Source text whose beginning is checked.",
+  ),
+  "Text.StartsWith.subText": action(
+    "預期出現在開頭的文字片段。",
+    "Text fragment expected at the start.",
+  ),
   "Text.GetIndexOf.text": action("要搜尋的完整來源文字。", "Full source text to search."),
-  "Text.GetIndexOf.subText": action("要找出位置的文字片段。", "Text fragment whose position is returned."),
-  "Text.ConvertToLowerCase.text": action("要轉成小寫的來源文字。", "Source text converted to lowercase."),
-  "Text.ConvertToUpperCase.text": action("要轉成大寫的來源文字。", "Source text converted to uppercase."),
-  "Text.GetSubText.start": action("要擷取文字的零起始開始位置。", "Zero-based starting position of the text to extract."),
-  "Text.GetSubText.length": action("從 `start` 開始要擷取的字元數。", "Number of characters to extract starting at `start`."),
-  "Text.GetSubTextToEnd.start": action("擷取到文字結尾前的零起始開始位置。", "Zero-based starting position for extraction through the end of the text."),
-  "Row.Init.value": action("新 Row 內每個元素的初始數值。", "Initial numeric value for every element of the new Row."),
-  "Row.Delete.handle": action("由 `Row.Init` 回傳、識別一維陣列的控制代號。", "Handle returned by `Row.Init` that identifies the one-dimensional array."),
-  "Row.Read.handle": action("由 `Row.Init` 回傳、要讀取的一維陣列控制代號。", "Handle returned by `Row.Init` for the one-dimensional array to read."),
-  "Row.Write.handle": action("由 `Row.Init` 回傳、要寫入的一維陣列控制代號。", "Handle returned by `Row.Init` for the one-dimensional array to write."),
-  "Row.Size.handle": action("由 `Row.Init` 回傳、要取得大小的一維陣列控制代號。", "Handle returned by `Row.Init` for the one-dimensional array whose size is returned."),
-  "Row.Resize.handle": action("由 `Row.Init` 回傳、要調整大小的一維陣列控制代號。", "Handle returned by `Row.Init` for the one-dimensional array to resize."),
-  "Row.Resize.size": action("調整後的一維陣列元素數。", "Number of elements in the resized one-dimensional array."),
-  "Row.Write.value": action("要寫入指定 Row 索引的數值或文字。", "Numeric or text value written at the specified Row index."),
-  "Vector.Init.value": action("新向量內每個元素的初始數值。", "Initial numeric value for every element of the new vector."),
-  "Vector.Data.data": action("以空白分隔的十進位數字文字，用來建立向量。", "Space-separated decimal-number text used to construct the vector."),
-  "Vector.Add.size": action("兩個輸入向量要相加的元素數。", "Number of elements added from the two input vectors."),
+  "Text.GetIndexOf.subText": action(
+    "要找出位置的文字片段。",
+    "Text fragment whose position is returned.",
+  ),
+  "Text.ConvertToLowerCase.text": action(
+    "要轉成小寫的來源文字。",
+    "Source text converted to lowercase.",
+  ),
+  "Text.ConvertToUpperCase.text": action(
+    "要轉成大寫的來源文字。",
+    "Source text converted to uppercase.",
+  ),
+  "Text.GetSubText.start": action(
+    "要擷取文字的零起始開始位置。",
+    "Zero-based starting position of the text to extract.",
+  ),
+  "Text.GetSubText.length": action(
+    "從 `start` 開始要擷取的字元數。",
+    "Number of characters to extract starting at `start`.",
+  ),
+  "Text.GetSubTextToEnd.start": action(
+    "擷取到文字結尾前的零起始開始位置。",
+    "Zero-based starting position for extraction through the end of the text.",
+  ),
+  "Row.Init.value": action(
+    "新 Row 內每個元素的初始數值。",
+    "Initial numeric value for every element of the new Row.",
+  ),
+  "Row.Delete.handle": action(
+    "由 `Row.Init` 回傳、識別一維陣列的控制代號。",
+    "Handle returned by `Row.Init` that identifies the one-dimensional array.",
+  ),
+  "Row.Read.handle": action(
+    "由 `Row.Init` 回傳、要讀取的一維陣列控制代號。",
+    "Handle returned by `Row.Init` for the one-dimensional array to read.",
+  ),
+  "Row.Write.handle": action(
+    "由 `Row.Init` 回傳、要寫入的一維陣列控制代號。",
+    "Handle returned by `Row.Init` for the one-dimensional array to write.",
+  ),
+  "Row.Size.handle": action(
+    "由 `Row.Init` 回傳、要取得大小的一維陣列控制代號。",
+    "Handle returned by `Row.Init` for the one-dimensional array whose size is returned.",
+  ),
+  "Row.Resize.handle": action(
+    "由 `Row.Init` 回傳、要調整大小的一維陣列控制代號。",
+    "Handle returned by `Row.Init` for the one-dimensional array to resize.",
+  ),
+  "Row.Resize.size": action(
+    "調整後的一維陣列元素數。",
+    "Number of elements in the resized one-dimensional array.",
+  ),
+  "Row.Write.value": action(
+    "要寫入指定 Row 索引的數值或文字。",
+    "Numeric or text value written at the specified Row index.",
+  ),
+  "Vector.Init.value": action(
+    "新向量內每個元素的初始數值。",
+    "Initial numeric value for every element of the new vector.",
+  ),
+  "Vector.Data.data": action(
+    "以空白分隔的十進位數字文字，用來建立向量。",
+    "Space-separated decimal-number text used to construct the vector.",
+  ),
+  "Vector.Add.size": action(
+    "兩個輸入向量要相加的元素數。",
+    "Number of elements added from the two input vectors.",
+  ),
   "Vector.Sort.size": action("要排序的向量元素數。", "Number of vector elements to sort."),
   "Vector.Multiply.rows": action("左矩陣的列數。", "Number of rows in the left matrix."),
   "Vector.Multiply.columns": action("右矩陣的欄數。", "Number of columns in the right matrix."),
-  "Vector.Multiply.k": action("左矩陣欄數、也是右矩陣列數的共同內部維度。", "Shared inner dimension: columns of A and rows of B."),
-  "Assert.Failed.message": action("斷言失敗時顯示的診斷訊息。", "Diagnostic message reported when the assertion fails."),
-  "Assert.Equal.a": action("要比較的第一個（實際或左側）值。", "First (actual or left-hand) value to compare."),
-  "Assert.Equal.b": action("要比較的第二個（預期或右側）值。", "Second (expected or right-hand) value to compare."),
+  "Vector.Multiply.k": action(
+    "左矩陣欄數、也是右矩陣列數的共同內部維度。",
+    "Shared inner dimension: columns of A and rows of B.",
+  ),
+  "Assert.Failed.message": action(
+    "斷言失敗時顯示的診斷訊息。",
+    "Diagnostic message reported when the assertion fails.",
+  ),
+  "Assert.Equal.a": action(
+    "要比較的第一個（實際或左側）值。",
+    "First (actual or left-hand) value to compare.",
+  ),
+  "Assert.Equal.b": action(
+    "要比較的第二個（預期或右側）值。",
+    "Second (expected or right-hand) value to compare.",
+  ),
 };
-function describeParameterForOperation(op: EV3OperationSignature, info: ParameterInfo): ParameterInfo {
+function describeParameterForOperation(
+  op: EV3OperationSignature,
+  info: ParameterInfo,
+): ParameterInfo {
   const description = operationParameterDescriptions[`${op.name}.${info.name}`];
   return description ? { ...info, description } : info;
 }
 Object.assign(parameterGlossary, {
-  upperBound: { description: action("隨機整數的包含上限。", "Inclusive upper bound for a random integer."), example: "100" }, command: { description: action("要交給 EV3 系統執行的命令文字。", "Command text for the EV3 system to execute."), example: "\"command\"" }, ledColor: { description: action("EV3 狀態燈的顏色值。", "Color value for the EV3 status LED."), example: "\"Green\"" }, ledMode: { description: action("EV3 狀態燈的顯示模式。", "Display mode for the EV3 status LED."), example: "\"On\"" }, writeLength: { description: action("I²C 傳送階段的位元組數。", "Number of bytes in the I²C write phase."), example: "1" }, readLength: { description: action("I²C 接收階段的位元組數。", "Number of bytes in the I²C read phase."), example: "1" }, payload: { description: action("要傳送給感測器的 I²C 或 UART 資料。", "I²C or UART data to send to the sensor."), example: "values" }, rawValue1: { description: action("第一個原始感測器值。", "First raw sensor value."), example: "0" }, rawValue2: { description: action("第二個原始感測器值。", "Second raw sensor value."), example: "0" }, rawValue3: { description: action("第三個原始感測器值。", "Third raw sensor value."), example: "0" }, soundFile: { description: action("EV3 上要播放的音效檔。", "Sound file to play on the EV3."), example: "\"sound\"" }, note: { description: action("要播放的音符名稱。", "Name of the note to play."), example: "\"C4\"" }, searchText: { description: action("要在來源文字中尋找的文字片段。", "Text fragment to look for in the source text."), example: "\"bot\"" }, sourceText: { description: action("要處理的來源文字。", "Source text to process."), example: "\"Kobrixa\"" }, subText: { description: action("要在來源文字中比對、尋找的文字片段。", "Text fragment compared with or searched for in source text."), example: "\"bot\"" }, startIndex: { description: action("文字或資料範圍的零起始開始位置。", "Zero-based start position of a text or data range."), example: "0" }, itemCount: { description: action("要讀取、寫入或擷取的項目數。", "Number of items to read, write, or extract."), example: "1" }, byteIndex: { description: action("要讀取的位元位置。", "Bit position to read."), example: "0" }, shiftCount: { description: action("位元要左移或右移的位數。", "Number of bit positions to shift."), example: "1" }, base: { description: action("資料格式或轉換使用的進位基底。", "Radix used by a data format or conversion."), example: "10" }, characterCode: { description: action("要轉為字元的字碼。", "Character code to convert into a character."), example: "65" }, rows: { description: action("左矩陣的列數。", "Number of rows in the left matrix."), example: "2" }, columns: { description: action("右矩陣的欄數。", "Number of columns in the right matrix."), example: "2" }, sharedSize: { description: action("兩矩陣相乘時共用的內部維度。", "Shared inner dimension for matrix multiplication."), example: "2" }, leftMatrix: { description: action("左側矩陣的展平數值陣列。", "Flattened numeric array for the left matrix."), example: "left" }, rightMatrix: { description: action("右側矩陣的展平數值陣列。", "Flattened numeric array for the right matrix."), example: "right" },
+  upperBound: {
+    description: action("隨機整數的包含上限。", "Inclusive upper bound for a random integer."),
+    example: "100",
+  },
+  command: {
+    description: action(
+      "要交給 EV3 系統執行的命令文字。",
+      "Command text for the EV3 system to execute.",
+    ),
+    example: '"command"',
+  },
+  ledColor: {
+    description: action("EV3 狀態燈的顏色值。", "Color value for the EV3 status LED."),
+    example: '"Green"',
+  },
+  ledMode: {
+    description: action("EV3 狀態燈的顯示模式。", "Display mode for the EV3 status LED."),
+    example: '"On"',
+  },
+  writeLength: {
+    description: action("I²C 傳送階段的位元組數。", "Number of bytes in the I²C write phase."),
+    example: "1",
+  },
+  readLength: {
+    description: action("I²C 接收階段的位元組數。", "Number of bytes in the I²C read phase."),
+    example: "1",
+  },
+  payload: {
+    description: action(
+      "要傳送給感測器的 I²C 或 UART 資料。",
+      "I²C or UART data to send to the sensor.",
+    ),
+    example: "values",
+  },
+  rawValue1: {
+    description: action("第一個原始感測器值。", "First raw sensor value."),
+    example: "0",
+  },
+  rawValue2: {
+    description: action("第二個原始感測器值。", "Second raw sensor value."),
+    example: "0",
+  },
+  rawValue3: {
+    description: action("第三個原始感測器值。", "Third raw sensor value."),
+    example: "0",
+  },
+  soundFile: {
+    description: action("EV3 上要播放的音效檔。", "Sound file to play on the EV3."),
+    example: '"sound"',
+  },
+  note: { description: action("要播放的音符名稱。", "Name of the note to play."), example: '"C4"' },
+  searchText: {
+    description: action(
+      "要在來源文字中尋找的文字片段。",
+      "Text fragment to look for in the source text.",
+    ),
+    example: '"bot"',
+  },
+  sourceText: {
+    description: action("要處理的來源文字。", "Source text to process."),
+    example: '"Kobrixa"',
+  },
+  subText: {
+    description: action(
+      "要在來源文字中比對、尋找的文字片段。",
+      "Text fragment compared with or searched for in source text.",
+    ),
+    example: '"bot"',
+  },
+  startIndex: {
+    description: action(
+      "文字或資料範圍的零起始開始位置。",
+      "Zero-based start position of a text or data range.",
+    ),
+    example: "0",
+  },
+  itemCount: {
+    description: action(
+      "要讀取、寫入或擷取的項目數。",
+      "Number of items to read, write, or extract.",
+    ),
+    example: "1",
+  },
+  byteIndex: { description: action("要讀取的位元位置。", "Bit position to read."), example: "0" },
+  shiftCount: {
+    description: action("位元要左移或右移的位數。", "Number of bit positions to shift."),
+    example: "1",
+  },
+  base: {
+    description: action(
+      "資料格式或轉換使用的進位基底。",
+      "Radix used by a data format or conversion.",
+    ),
+    example: "10",
+  },
+  characterCode: {
+    description: action("要轉為字元的字碼。", "Character code to convert into a character."),
+    example: "65",
+  },
+  rows: {
+    description: action("左矩陣的列數。", "Number of rows in the left matrix."),
+    example: "2",
+  },
+  columns: {
+    description: action("右矩陣的欄數。", "Number of columns in the right matrix."),
+    example: "2",
+  },
+  sharedSize: {
+    description: action(
+      "兩矩陣相乘時共用的內部維度。",
+      "Shared inner dimension for matrix multiplication.",
+    ),
+    example: "2",
+  },
+  leftMatrix: {
+    description: action("左側矩陣的展平數值陣列。", "Flattened numeric array for the left matrix."),
+    example: "left",
+  },
+  rightMatrix: {
+    description: action(
+      "右側矩陣的展平數值陣列。",
+      "Flattened numeric array for the right matrix.",
+    ),
+    example: "right",
+  },
 });
 Object.assign(parameterGlossary, {
-  effect: { description: action("EV3 狀態燈效果：`NORMAL`、`FLASH` 或 `PULSE`。", "EV3 LED effect: `NORMAL`, `FLASH`, or `PULSE`."), example: "\"NORMAL\"" }, commandline: { description: action("交給 EV3 Linux 命令殼執行的完整命令列。", "Full command line executed by the EV3 Linux command shell."), example: "\"ls\"" }, speed1: { description: action("兩馬達中較低連接埠字母馬達的速度。", "Speed for the motor with the lower port letter."), example: "25" }, speed2: { description: action("兩馬達中較高連接埠字母馬達的速度。", "Speed for the motor with the higher port letter."), example: "25" }, degrees1: { description: action("馬達加速階段的轉動角度。", "Rotation in the acceleration phase."), example: "60" }, degrees2: { description: action("馬達等速階段的轉動角度。", "Rotation in the constant-speed phase."), example: "360" }, degrees3: { description: action("馬達減速階段的轉動角度。", "Rotation in the deceleration phase."), example: "60" }, address: { description: action("I²C 裝置位址。", "I²C device address."), example: "2" }, writebytes: { description: action("傳送到感測器的位元組數。", "Number of bytes written to the sensor."), example: "1" }, readbytes: { description: action("從感測器讀取的位元組數。", "Number of bytes read from the sensor."), example: "1" }, writedata: { description: action("要傳送到感測器的 I²C 或 UART 資料。", "I²C or UART data to send to the sensor."), example: "values" }, registernumber: { description: action("I²C 暫存器編號。", "I²C register number."), example: "0" }, filename: { description: action("EV3 上的檔案名稱或路徑。", "File name or path on the EV3."), example: "\"data.txt\"" }, bytes_per_row: { description: action("表格每一列使用的位元組數。", "Number of bytes in each table row."), example: "4" }, row: { description: action("要查找的表格列索引。", "Table row index to look up."), example: "0" }, column: { description: action("要查找的表格欄偏移。", "Table column offset to look up."), example: "0" }, boxname: { description: action("本機 mailbox 的名稱。", "Name of the local mailbox."), example: "\"status\"" }, brickname: { description: action("目標 EV3 本體或 mailbox 端點名稱。", "Name of the target EV3 brick or mailbox endpoint."), example: "\"EV3\"" }, id: { description: action("建立 mailbox 時取得的 mailbox 控制代號。", "Mailbox handle returned when the mailbox was created."), example: "mailbox" }, milliSeconds: { description: action("程式要暫停的毫秒數。", "Number of milliseconds for the program to pause."), example: "100" }, maxNumber: { description: action("隨機整數可取的最大值。", "Largest possible random integer."), example: "100" }, number: { description: action("數學函式使用的輸入數值。", "Input number used by the mathematical function."), example: "2" }, angle: { description: action("以弧度表示的角度。", "Angle expressed in radians."), example: "1.57" }, sinValue: { description: action("介於 -1 與 1 的正弦值。", "Sine value between -1 and 1."), example: "0.5" }, cosValue: { description: action("介於 -1 與 1 的餘弦值。", "Cosine value between -1 and 1."), example: "0.5" }, tanValue: { description: action("要取得反正切的正切值。", "Tangent value used to obtain an arctangent."), example: "1" }, baseNumber: { description: action("冪次運算的底數。", "Base number for exponentiation."), example: "2" }, exponent: { description: action("冪次運算的指數。", "Exponent for exponentiation."), example: "3" }, number1: { description: action("比較或運算的第一個數值。", "First number in the comparison or operation."), example: "1" }, number2: { description: action("比較或運算的第二個數值。", "Second number in the comparison or operation."), example: "2" }, dividend: { description: action("要被除的數值。", "Number to be divided."), example: "7" }, divisor: { description: action("用來除的數值。", "Number that divides the dividend."), example: "3" }, a: { description: action("比較、位元運算或向量運算的第一個值。", "First value in a comparison, bitwise, or vector operation."), example: "1" }, b: { description: action("比較、位元運算或向量運算的第二個值。", "Second value in a comparison, bitwise, or vector operation."), example: "2" }, distance: { description: action("要移動的位元距離。", "Number of bit positions to shift."), example: "1" }, text1: { description: action("要串接的第一段文字。", "First text value to append."), example: "\"Kob\"" }, text2: { description: action("要串接的第二段文字。", "Second text value to append."), example: "\"rixa\"" }, character: { description: action("要取得字碼的單一字元。", "Single character whose code is returned."), example: "\"A\"" }, start: { description: action("文字範圍的零起始開始位置。", "Zero-based start position of a text range."), example: "0" }, mutex: { description: action("由 `Thread.CreateMutex` 建立的 mutex 控制代號。", "Mutex handle created by `Thread.CreateMutex`."), example: "mutex" }, A: { description: action("向量或矩陣運算的第一個資料陣列。", "First data array in a vector or matrix operation."), example: "left" }, B: { description: action("向量或矩陣運算的第二個資料陣列。", "Second data array in a vector or matrix operation."), example: "right" }, k: { description: action("矩陣相乘時共用的內部維度。", "Shared inner dimension for matrix multiplication."), example: "2" },
-  var1: { description: action("寫入第一個感測器原始讀值的變數。", "Variable that receives the first raw sensor value."), example: "raw1" }, var2: { description: action("寫入第二個感測器原始讀值的變數。", "Variable that receives the second raw sensor value."), example: "raw2" }, var3: { description: action("寫入第三個感測器原始讀值的變數。", "Variable that receives the third raw sensor value."), example: "raw3" },
+  effect: {
+    description: action(
+      "EV3 狀態燈效果：`NORMAL`、`FLASH` 或 `PULSE`。",
+      "EV3 LED effect: `NORMAL`, `FLASH`, or `PULSE`.",
+    ),
+    example: '"NORMAL"',
+  },
+  commandline: {
+    description: action(
+      "交給 EV3 Linux 命令殼執行的完整命令列。",
+      "Full command line executed by the EV3 Linux command shell.",
+    ),
+    example: '"ls"',
+  },
+  speed1: {
+    description: action(
+      "兩馬達中較低連接埠字母馬達的速度。",
+      "Speed for the motor with the lower port letter.",
+    ),
+    example: "25",
+  },
+  speed2: {
+    description: action(
+      "兩馬達中較高連接埠字母馬達的速度。",
+      "Speed for the motor with the higher port letter.",
+    ),
+    example: "25",
+  },
+  degrees1: {
+    description: action("馬達加速階段的轉動角度。", "Rotation in the acceleration phase."),
+    example: "60",
+  },
+  degrees2: {
+    description: action("馬達等速階段的轉動角度。", "Rotation in the constant-speed phase."),
+    example: "360",
+  },
+  degrees3: {
+    description: action("馬達減速階段的轉動角度。", "Rotation in the deceleration phase."),
+    example: "60",
+  },
+  address: { description: action("I²C 裝置位址。", "I²C device address."), example: "2" },
+  writebytes: {
+    description: action("傳送到感測器的位元組數。", "Number of bytes written to the sensor."),
+    example: "1",
+  },
+  readbytes: {
+    description: action("從感測器讀取的位元組數。", "Number of bytes read from the sensor."),
+    example: "1",
+  },
+  writedata: {
+    description: action(
+      "要傳送到感測器的 I²C 或 UART 資料。",
+      "I²C or UART data to send to the sensor.",
+    ),
+    example: "values",
+  },
+  registernumber: { description: action("I²C 暫存器編號。", "I²C register number."), example: "0" },
+  filename: {
+    description: action("EV3 上的檔案名稱或路徑。", "File name or path on the EV3."),
+    example: '"data.txt"',
+  },
+  bytes_per_row: {
+    description: action("表格每一列使用的位元組數。", "Number of bytes in each table row."),
+    example: "4",
+  },
+  row: { description: action("要查找的表格列索引。", "Table row index to look up."), example: "0" },
+  column: {
+    description: action("要查找的表格欄偏移。", "Table column offset to look up."),
+    example: "0",
+  },
+  boxname: {
+    description: action("本機 mailbox 的名稱。", "Name of the local mailbox."),
+    example: '"status"',
+  },
+  brickname: {
+    description: action(
+      "目標 EV3 本體或 mailbox 端點名稱。",
+      "Name of the target EV3 brick or mailbox endpoint.",
+    ),
+    example: '"EV3"',
+  },
+  id: {
+    description: action(
+      "建立 mailbox 時取得的 mailbox 控制代號。",
+      "Mailbox handle returned when the mailbox was created.",
+    ),
+    example: "mailbox",
+  },
+  milliSeconds: {
+    description: action("程式要暫停的毫秒數。", "Number of milliseconds for the program to pause."),
+    example: "100",
+  },
+  maxNumber: {
+    description: action("隨機整數可取的最大值。", "Largest possible random integer."),
+    example: "100",
+  },
+  number: {
+    description: action(
+      "數學函式使用的輸入數值。",
+      "Input number used by the mathematical function.",
+    ),
+    example: "2",
+  },
+  angle: {
+    description: action("以弧度表示的角度。", "Angle expressed in radians."),
+    example: "1.57",
+  },
+  sinValue: {
+    description: action("介於 -1 與 1 的正弦值。", "Sine value between -1 and 1."),
+    example: "0.5",
+  },
+  cosValue: {
+    description: action("介於 -1 與 1 的餘弦值。", "Cosine value between -1 and 1."),
+    example: "0.5",
+  },
+  tanValue: {
+    description: action("要取得反正切的正切值。", "Tangent value used to obtain an arctangent."),
+    example: "1",
+  },
+  baseNumber: {
+    description: action("冪次運算的底數。", "Base number for exponentiation."),
+    example: "2",
+  },
+  exponent: {
+    description: action("冪次運算的指數。", "Exponent for exponentiation."),
+    example: "3",
+  },
+  number1: {
+    description: action("比較或運算的第一個數值。", "First number in the comparison or operation."),
+    example: "1",
+  },
+  number2: {
+    description: action(
+      "比較或運算的第二個數值。",
+      "Second number in the comparison or operation.",
+    ),
+    example: "2",
+  },
+  dividend: { description: action("要被除的數值。", "Number to be divided."), example: "7" },
+  divisor: {
+    description: action("用來除的數值。", "Number that divides the dividend."),
+    example: "3",
+  },
+  a: {
+    description: action(
+      "比較、位元運算或向量運算的第一個值。",
+      "First value in a comparison, bitwise, or vector operation.",
+    ),
+    example: "1",
+  },
+  b: {
+    description: action(
+      "比較、位元運算或向量運算的第二個值。",
+      "Second value in a comparison, bitwise, or vector operation.",
+    ),
+    example: "2",
+  },
+  distance: {
+    description: action("要移動的位元距離。", "Number of bit positions to shift."),
+    example: "1",
+  },
+  text1: {
+    description: action("要串接的第一段文字。", "First text value to append."),
+    example: '"Kob"',
+  },
+  text2: {
+    description: action("要串接的第二段文字。", "Second text value to append."),
+    example: '"rixa"',
+  },
+  character: {
+    description: action("要取得字碼的單一字元。", "Single character whose code is returned."),
+    example: '"A"',
+  },
+  start: {
+    description: action("文字範圍的零起始開始位置。", "Zero-based start position of a text range."),
+    example: "0",
+  },
+  mutex: {
+    description: action(
+      "由 `Thread.CreateMutex` 建立的 mutex 控制代號。",
+      "Mutex handle created by `Thread.CreateMutex`.",
+    ),
+    example: "mutex",
+  },
+  A: {
+    description: action(
+      "向量或矩陣運算的第一個資料陣列。",
+      "First data array in a vector or matrix operation.",
+    ),
+    example: "left",
+  },
+  B: {
+    description: action(
+      "向量或矩陣運算的第二個資料陣列。",
+      "Second data array in a vector or matrix operation.",
+    ),
+    example: "right",
+  },
+  k: {
+    description: action(
+      "矩陣相乘時共用的內部維度。",
+      "Shared inner dimension for matrix multiplication.",
+    ),
+    example: "2",
+  },
+  var1: {
+    description: action(
+      "寫入第一個感測器原始讀值的變數。",
+      "Variable that receives the first raw sensor value.",
+    ),
+    example: "raw1",
+  },
+  var2: {
+    description: action(
+      "寫入第二個感測器原始讀值的變數。",
+      "Variable that receives the second raw sensor value.",
+    ),
+    example: "raw2",
+  },
+  var3: {
+    description: action(
+      "寫入第三個感測器原始讀值的變數。",
+      "Variable that receives the third raw sensor value.",
+    ),
+    example: "raw3",
+  },
 });
-function parameterInfo(op: EV3OperationSignature, value: EV3ParameterType, index: number): ParameterInfo {
+function parameterInfo(
+  op: EV3OperationSignature,
+  value: EV3ParameterType,
+  index: number,
+): ParameterInfo {
   const type = Array.isArray(value) ? value[0]! : value;
   const displayFields: Record<string, string[]> = {
-    "LCD.Pixel": ["color", "x", "y"], "LCD.Write": ["x", "y", "text"], "LCD.Text": ["color", "x", "y", "font", "text"], "LCD.Line": ["color", "x1", "y1", "x2", "y2"], "LCD.Circle": ["color", "x", "y", "radius"], "LCD.FillCircle": ["color", "x", "y", "radius"], "LCD.Rect": ["color", "x", "y", "width", "height"], "LCD.FillRect": ["color", "x", "y", "width", "height"], "LCD.InverseRect": ["x", "y", "width", "height"], "LCD.BmpFile": ["color", "x", "y", "fileName"],
+    "LCD.Pixel": ["color", "x", "y"],
+    "LCD.Write": ["x", "y", "text"],
+    "LCD.Text": ["color", "x", "y", "font", "text"],
+    "LCD.Line": ["color", "x1", "y1", "x2", "y2"],
+    "LCD.Circle": ["color", "x", "y", "radius"],
+    "LCD.FillCircle": ["color", "x", "y", "radius"],
+    "LCD.Rect": ["color", "x", "y", "width", "height"],
+    "LCD.FillRect": ["color", "x", "y", "width", "height"],
+    "LCD.InverseRect": ["x", "y", "width", "height"],
+    "LCD.BmpFile": ["color", "x", "y", "fileName"],
   };
   const displayField = displayFields[op.name]?.[index];
   if (displayField) {
-    const details: Record<string, Localized> = { color: action("繪製顏色；通常 0 為白、1 為黑。", "Drawing color; normally 0 is white and 1 is black."), x: action("左上角、像素或圓心的水平座標。", "Horizontal coordinate of the point, top-left corner, or centre."), y: action("左上角、像素或圓心的垂直座標。", "Vertical coordinate of the point, top-left corner, or centre."), x1: action("線段起點的水平座標。", "Line start horizontal coordinate."), y1: action("線段起點的垂直座標。", "Line start vertical coordinate."), x2: action("線段終點的水平座標。", "Line end horizontal coordinate."), y2: action("線段終點的垂直座標。", "Line end vertical coordinate."), width: action("矩形範圍的寬度（像素）。", "Rectangle width in pixels."), height: action("矩形範圍的高度（像素）。", "Rectangle height in pixels."), radius: action("圓形半徑（像素）。", "Circle radius in pixels."), font: action("EV3 字型索引。", "EV3 font index."), text: action("要顯示的文字或數值。", "Text or value to display."), fileName: action("EV3 上的 BMP 檔路徑。", "BMP path on the EV3.") };
-    const examples: Record<string, string> = { color: "1", x: "16", y: "48", x1: "8", y1: "18", x2: "165", y2: "18", width: "42", height: "20", radius: "20", font: "1", text: "\"Hello\"", fileName: "\"image\"" };
-    return { name: displayField, description: details[displayField]!, example: examples[displayField]! };
+    const details: Record<string, Localized> = {
+      color: action(
+        "繪製顏色；通常 0 為白、1 為黑。",
+        "Drawing color; normally 0 is white and 1 is black.",
+      ),
+      x: action(
+        "左上角、像素或圓心的水平座標。",
+        "Horizontal coordinate of the point, top-left corner, or centre.",
+      ),
+      y: action(
+        "左上角、像素或圓心的垂直座標。",
+        "Vertical coordinate of the point, top-left corner, or centre.",
+      ),
+      x1: action("線段起點的水平座標。", "Line start horizontal coordinate."),
+      y1: action("線段起點的垂直座標。", "Line start vertical coordinate."),
+      x2: action("線段終點的水平座標。", "Line end horizontal coordinate."),
+      y2: action("線段終點的垂直座標。", "Line end vertical coordinate."),
+      width: action("矩形範圍的寬度（像素）。", "Rectangle width in pixels."),
+      height: action("矩形範圍的高度（像素）。", "Rectangle height in pixels."),
+      radius: action("圓形半徑（像素）。", "Circle radius in pixels."),
+      font: action("EV3 字型索引。", "EV3 font index."),
+      text: action("要顯示的文字或數值。", "Text or value to display."),
+      fileName: action("EV3 上的 BMP 檔路徑。", "BMP path on the EV3."),
+    };
+    const examples: Record<string, string> = {
+      color: "1",
+      x: "16",
+      y: "48",
+      x1: "8",
+      y1: "18",
+      x2: "165",
+      y2: "18",
+      width: "42",
+      height: "20",
+      radius: "20",
+      font: "1",
+      text: '"Hello"',
+      fileName: '"image"',
+    };
+    return {
+      name: displayField,
+      description: details[displayField]!,
+      example: examples[displayField]!,
+    };
   }
   const directNames: Record<string, string[]> = {
-    "EV3.SetLEDColor": ["color", "effect"], "EV3.SystemCall": ["commandline"],
-    "Motor.Start": ["ports", "speed"], "Motor.StartPower": ["ports", "power"], "Motor.StartSteer": ["ports", "speed", "turn"], "Motor.StartSync": ["ports", "speed1", "speed2"], "Motor.Stop": ["ports", "brake"], "Motor.Move": ["ports", "speed", "degrees", "brake"], "Motor.MovePower": ["ports", "power", "degrees", "brake"], "Motor.Schedule": ["ports", "speed", "degrees1", "degrees2", "degrees3", "brake"], "Motor.SchedulePower": ["ports", "power", "degrees1", "degrees2", "degrees3", "brake"], "Motor.ScheduleSteer": ["ports", "speed", "turn", "degrees", "brake"], "Motor.ScheduleSync": ["ports", "speed1", "speed2", "degrees", "brake"], "Motor.MoveSteer": ["ports", "speed", "turn", "degrees", "brake"], "Motor.MoveSync": ["ports", "speed1", "speed2", "degrees", "brake"], "Motor.ResetCount": ["ports"], "Motor.IsBusy": ["ports"], "Motor.Wait": ["ports"], "Motor.Invert": ["ports"], "Motor.GetCount": ["port"], "Motor.GetSpeed": ["port"],
-    "Sensor.ReadPercent": ["port"], "Sensor.GetName": ["port"], "Sensor.GetType": ["port"], "Sensor.GetMode": ["port"], "Sensor.IsBusy": ["port"], "Sensor.ReadRaw": ["port", "values"], "Sensor.ReadRawValue": ["port", "index"], "Sensor.SetMode": ["port", "mode"], "Sensor.Wait": ["port"], "Sensor.CommunicateI2C": ["port", "address", "writebytes", "readbytes", "writedata"], "Sensor.ReadI2CRegister": ["port", "address", "registernumber"], "Sensor.ReadI2CRegisters": ["port", "address", "registernumber", "readbytes"], "Sensor.WriteI2CRegister": ["port", "address", "registernumber", "value"], "Sensor.WriteI2CRegisters": ["port", "address", "registernumber", "writebytes", "writedata"], "Sensor.SendUARTData": ["port", "writebytes", "writedata"],
-    "Speaker.Tone": ["volume", "frequency", "duration"], "Speaker.Play": ["volume", "soundFile"], "Speaker.Note": ["volume", "note", "duration"], "Button.IsPressed": ["button"],
-    "EV3File.OpenRead": ["filename"], "EV3File.OpenWrite": ["filename"], "EV3File.OpenAppend": ["filename"], "EV3File.Close": ["handle"], "EV3File.ReadLine": ["handle"], "EV3File.WriteLine": ["handle", "text"], "EV3File.ReadByte": ["handle"], "EV3File.WriteByte": ["handle", "data"], "EV3File.ConvertToNumber": ["text"], "EV3File.ReadNumberArray": ["handle", "size"], "EV3File.WriteNumberArray": ["handle", "size", "data"], "EV3File.TableLookup": ["filename", "bytes_per_row", "row", "column"],
-    "Mailbox.Create": ["boxname"], "Mailbox.CreateForNumber": ["boxname"], "Mailbox.Send": ["brickname", "boxname", "message"], "Mailbox.SendNumber": ["brickname", "boxname", "number"], "Mailbox.Receive": ["id"], "Mailbox.ReceiveNumber": ["id"], "Mailbox.IsAvailable": ["id"], "Mailbox.Connect": ["brickname"],
-    "Program.Delay": ["milliSeconds"], "Program.GetArgument": ["index"],
-    "Math.GetRandomNumber": ["maxNumber"], "Math.Abs": ["number"], "Math.Ceiling": ["number"], "Math.Floor": ["number"], "Math.NaturalLog": ["number"], "Math.Log": ["number"], "Math.Cos": ["angle"], "Math.Sin": ["angle"], "Math.Tan": ["angle"], "Math.ArcSin": ["sinValue"], "Math.ArcCos": ["cosValue"], "Math.ArcTan": ["tanValue"], "Math.GetDegrees": ["angle"], "Math.GetRadians": ["angle"], "Math.SquareRoot": ["number"], "Math.Round": ["number"], "Math.DoubleToDecimal": ["number"], "Math.Power": ["baseNumber", "exponent"], "Math.Max": ["number1", "number2"], "Math.Min": ["number1", "number2"], "Math.Remainder": ["dividend", "divisor"],
-    "Byte.NOT": ["value"], "Byte.ToLogic": ["value"], "Byte.AND_": ["a", "b"], "Byte.OR_": ["a", "b"], "Byte.XOR": ["a", "b"], "Byte.BIT": ["value", "index"], "Byte.SHL": ["value", "distance"], "Byte.SHR": ["value", "distance"], "Byte.H": ["value"], "Byte.B": ["value"], "Byte.L": ["value"], "Byte.ToHex": ["value"], "Byte.ToBinary": ["value"],
-    "Text.Append": ["text1", "text2"], "Text.GetLength": ["text"], "Text.GetCharacter": ["characterCode"], "Text.GetCharacterCode": ["character"], "Text.IsSubText": ["text", "subText"], "Text.EndsWith": ["text", "subText"], "Text.StartsWith": ["text", "subText"], "Text.GetSubText": ["text", "start", "length"], "Text.GetSubTextToEnd": ["text", "start"], "Text.GetIndexOf": ["text", "subText"], "Text.ConvertToLowerCase": ["text"], "Text.ConvertToUpperCase": ["text"],
-    "Thread.Lock": ["mutex"], "Thread.Unlock": ["mutex"], "Row.Init": ["size", "value"], "Row.Delete": ["handle"], "Row.Read": ["handle", "index"], "Row.Write": ["handle", "index", "value"], "Row.Size": ["handle"], "Row.Resize": ["handle", "size"], "Vector.Init": ["size", "value"], "Vector.Data": ["size", "data"], "Vector.Add": ["size", "A", "B"], "Vector.Sort": ["size", "A"], "Vector.Multiply": ["rows", "columns", "k", "A", "B"], "Assert.Failed": ["message"], "Assert.Equal": ["a", "b", "message"], "Assert.NotEqual": ["a", "b", "message"], "Assert.Less": ["a", "b", "message"], "Assert.Greater": ["a", "b", "message"], "Assert.LessEqual": ["a", "b", "message"], "Assert.GreaterEqual": ["a", "b", "message"], "Assert.Near": ["a", "b", "message"],
+    "EV3.SetLEDColor": ["color", "effect"],
+    "EV3.SystemCall": ["commandline"],
+    "Motor.Start": ["ports", "speed"],
+    "Motor.StartPower": ["ports", "power"],
+    "Motor.StartSteer": ["ports", "speed", "turn"],
+    "Motor.StartSync": ["ports", "speed1", "speed2"],
+    "Motor.Stop": ["ports", "brake"],
+    "Motor.Move": ["ports", "speed", "degrees", "brake"],
+    "Motor.MovePower": ["ports", "power", "degrees", "brake"],
+    "Motor.Schedule": ["ports", "speed", "degrees1", "degrees2", "degrees3", "brake"],
+    "Motor.SchedulePower": ["ports", "power", "degrees1", "degrees2", "degrees3", "brake"],
+    "Motor.ScheduleSteer": ["ports", "speed", "turn", "degrees", "brake"],
+    "Motor.ScheduleSync": ["ports", "speed1", "speed2", "degrees", "brake"],
+    "Motor.MoveSteer": ["ports", "speed", "turn", "degrees", "brake"],
+    "Motor.MoveSync": ["ports", "speed1", "speed2", "degrees", "brake"],
+    "Motor.ResetCount": ["ports"],
+    "Motor.IsBusy": ["ports"],
+    "Motor.Wait": ["ports"],
+    "Motor.Invert": ["ports"],
+    "Motor.GetCount": ["port"],
+    "Motor.GetSpeed": ["port"],
+    "Sensor.ReadPercent": ["port"],
+    "Sensor.GetName": ["port"],
+    "Sensor.GetType": ["port"],
+    "Sensor.GetMode": ["port"],
+    "Sensor.IsBusy": ["port"],
+    "Sensor.ReadRaw": ["port", "values"],
+    "Sensor.ReadRawValue": ["port", "index"],
+    "Sensor.SetMode": ["port", "mode"],
+    "Sensor.Wait": ["port"],
+    "Sensor.CommunicateI2C": ["port", "address", "writebytes", "readbytes", "writedata"],
+    "Sensor.ReadI2CRegister": ["port", "address", "registernumber"],
+    "Sensor.ReadI2CRegisters": ["port", "address", "registernumber", "readbytes"],
+    "Sensor.WriteI2CRegister": ["port", "address", "registernumber", "value"],
+    "Sensor.WriteI2CRegisters": ["port", "address", "registernumber", "writebytes", "writedata"],
+    "Sensor.SendUARTData": ["port", "writebytes", "writedata"],
+    "Speaker.Tone": ["volume", "frequency", "duration"],
+    "Speaker.Play": ["volume", "soundFile"],
+    "Speaker.Note": ["volume", "note", "duration"],
+    "Button.IsPressed": ["button"],
+    "EV3File.OpenRead": ["filename"],
+    "EV3File.OpenWrite": ["filename"],
+    "EV3File.OpenAppend": ["filename"],
+    "EV3File.Close": ["handle"],
+    "EV3File.ReadLine": ["handle"],
+    "EV3File.WriteLine": ["handle", "text"],
+    "EV3File.ReadByte": ["handle"],
+    "EV3File.WriteByte": ["handle", "data"],
+    "EV3File.ConvertToNumber": ["text"],
+    "EV3File.ReadNumberArray": ["handle", "size"],
+    "EV3File.WriteNumberArray": ["handle", "size", "data"],
+    "EV3File.TableLookup": ["filename", "bytes_per_row", "row", "column"],
+    "Mailbox.Create": ["boxname"],
+    "Mailbox.CreateForNumber": ["boxname"],
+    "Mailbox.Send": ["brickname", "boxname", "message"],
+    "Mailbox.SendNumber": ["brickname", "boxname", "number"],
+    "Mailbox.Receive": ["id"],
+    "Mailbox.ReceiveNumber": ["id"],
+    "Mailbox.IsAvailable": ["id"],
+    "Mailbox.Connect": ["brickname"],
+    "Program.Delay": ["milliSeconds"],
+    "Program.GetArgument": ["index"],
+    "Math.GetRandomNumber": ["maxNumber"],
+    "Math.Abs": ["number"],
+    "Math.Ceiling": ["number"],
+    "Math.Floor": ["number"],
+    "Math.NaturalLog": ["number"],
+    "Math.Log": ["number"],
+    "Math.Cos": ["angle"],
+    "Math.Sin": ["angle"],
+    "Math.Tan": ["angle"],
+    "Math.ArcSin": ["sinValue"],
+    "Math.ArcCos": ["cosValue"],
+    "Math.ArcTan": ["tanValue"],
+    "Math.GetDegrees": ["angle"],
+    "Math.GetRadians": ["angle"],
+    "Math.SquareRoot": ["number"],
+    "Math.Round": ["number"],
+    "Math.DoubleToDecimal": ["number"],
+    "Math.Power": ["baseNumber", "exponent"],
+    "Math.Max": ["number1", "number2"],
+    "Math.Min": ["number1", "number2"],
+    "Math.Remainder": ["dividend", "divisor"],
+    "Byte.NOT": ["value"],
+    "Byte.ToLogic": ["value"],
+    "Byte.AND_": ["a", "b"],
+    "Byte.OR_": ["a", "b"],
+    "Byte.XOR": ["a", "b"],
+    "Byte.BIT": ["value", "index"],
+    "Byte.SHL": ["value", "distance"],
+    "Byte.SHR": ["value", "distance"],
+    "Byte.H": ["value"],
+    "Byte.B": ["value"],
+    "Byte.L": ["value"],
+    "Byte.ToHex": ["value"],
+    "Byte.ToBinary": ["value"],
+    "Text.Append": ["text1", "text2"],
+    "Text.GetLength": ["text"],
+    "Text.GetCharacter": ["characterCode"],
+    "Text.GetCharacterCode": ["character"],
+    "Text.IsSubText": ["text", "subText"],
+    "Text.EndsWith": ["text", "subText"],
+    "Text.StartsWith": ["text", "subText"],
+    "Text.GetSubText": ["text", "start", "length"],
+    "Text.GetSubTextToEnd": ["text", "start"],
+    "Text.GetIndexOf": ["text", "subText"],
+    "Text.ConvertToLowerCase": ["text"],
+    "Text.ConvertToUpperCase": ["text"],
+    "Thread.Lock": ["mutex"],
+    "Thread.Unlock": ["mutex"],
+    "Row.Init": ["size", "value"],
+    "Row.Delete": ["handle"],
+    "Row.Read": ["handle", "index"],
+    "Row.Write": ["handle", "index", "value"],
+    "Row.Size": ["handle"],
+    "Row.Resize": ["handle", "size"],
+    "Vector.Init": ["size", "value"],
+    "Vector.Data": ["size", "data"],
+    "Vector.Add": ["size", "A", "B"],
+    "Vector.Sort": ["size", "A"],
+    "Vector.Multiply": ["rows", "columns", "k", "A", "B"],
+    "Assert.Failed": ["message"],
+    "Assert.Equal": ["a", "b", "message"],
+    "Assert.NotEqual": ["a", "b", "message"],
+    "Assert.Less": ["a", "b", "message"],
+    "Assert.Greater": ["a", "b", "message"],
+    "Assert.LessEqual": ["a", "b", "message"],
+    "Assert.GreaterEqual": ["a", "b", "message"],
+    "Assert.Near": ["a", "b", "message"],
   };
   const directName = directNames[op.name]?.[index];
   if (directName) return describeParameterForOperation(op, parameterByName(directName));
@@ -316,31 +1217,136 @@ function parameterInfo(op: EV3OperationSignature, value: EV3ParameterType, index
   if (sensorRaw) return describeParameterForOperation(op, parameterByName(sensorRaw));
   if (op.name.startsWith("Motor.")) {
     const method = op.name.split(".")[1] ?? "";
-    const names = method.includes("Power") ? ["ports", "power", "degrees", "brake"] : ["ports", "speed", "degrees", "brake"];
+    const names = method.includes("Power")
+      ? ["ports", "power", "degrees", "brake"]
+      : ["ports", "speed", "degrees", "brake"];
     const name = names[index] ?? `setting${index + 1}`;
-    const details: Record<string, Localized> = { ports: action("要控制的馬達連接埠字串，例如 `A` 或 `AD`。", "Motor port string to control, such as `A` or `AD`."), speed: action("馬達速度；負值代表反向。", "Motor speed; a negative value reverses direction."), power: action("馬達功率；負值代表反向。", "Motor power; a negative value reverses direction."), degrees: action("要移動的馬達角度。", "Motor rotation in degrees."), brake: action("動作完成時是否煞車。", "Whether to brake when the action ends.") };
-    return { name, description: details[name] ?? action("這個馬達操作所需的設定值。", "A setting required by this motor operation."), example: name === "ports" ? "\"AD\"" : name === "speed" || name === "power" ? "25" : name === "degrees" ? "360" : name === "brake" ? "True" : "60" };
+    const details: Record<string, Localized> = {
+      ports: action(
+        "要控制的馬達連接埠字串，例如 `A` 或 `AD`。",
+        "Motor port string to control, such as `A` or `AD`.",
+      ),
+      speed: action(
+        "馬達速度；負值代表反向。",
+        "Motor speed; a negative value reverses direction.",
+      ),
+      power: action(
+        "馬達功率；負值代表反向。",
+        "Motor power; a negative value reverses direction.",
+      ),
+      degrees: action("要移動的馬達角度。", "Motor rotation in degrees."),
+      brake: action("動作完成時是否煞車。", "Whether to brake when the action ends."),
+    };
+    return {
+      name,
+      description:
+        details[name] ??
+        action("這個馬達操作所需的設定值。", "A setting required by this motor operation."),
+      example:
+        name === "ports"
+          ? '"AD"'
+          : name === "speed" || name === "power"
+            ? "25"
+            : name === "degrees"
+              ? "360"
+              : name === "brake"
+                ? "True"
+                : "60",
+    };
   }
-  if (/^Motor[ABCD]+\./.test(op.name)) return parameter(op.name.includes("Power") ? "power" : "speed", op.name.includes("Power") ? "要套用的馬達功率。" : "要套用的馬達速度。", op.name.includes("Power") ? "Motor power to apply." : "Motor speed to apply.", "25");
+  if (/^Motor[ABCD]+\./.test(op.name))
+    return parameter(
+      op.name.includes("Power") ? "power" : "speed",
+      op.name.includes("Power") ? "要套用的馬達功率。" : "要套用的馬達速度。",
+      op.name.includes("Power") ? "Motor power to apply." : "Motor speed to apply.",
+      "25",
+    );
   if (op.name.startsWith("Sensor.")) {
-    const names = ["port", op.name.includes("I2C") ? "deviceAddress" : op.name.includes("Raw") ? "index" : "mode", "register", "length", "data"];
+    const names = [
+      "port",
+      op.name.includes("I2C") ? "deviceAddress" : op.name.includes("Raw") ? "index" : "mode",
+      "register",
+      "length",
+      "data",
+    ];
     const name = names[index] ?? `value${index + 1}`;
-    const details: Record<string, Localized> = { port: action("EV3 感測器連接埠，從 1 起算。", "EV3 sensor port, numbered from 1."), mode: action("感測器讀取模式。", "Sensor reading mode."), index: action("原始資料通道索引。", "Raw data channel index."), deviceAddress: action("I²C 裝置位址。", "I²C device address."), register: action("I²C 暫存器位址。", "I²C register address."), length: action("要讀取或寫入的資料長度。", "Amount of data to read or write."), data: action("要傳送的資料或位元組陣列。", "Data or byte array to send.") };
-    return { name, description: details[name] ?? action("感測器操作使用的數值。", "Value used by this sensor operation."), example: name === "port" ? "1" : name === "data" ? "0" : "0" };
+    const details: Record<string, Localized> = {
+      port: action("EV3 感測器連接埠，從 1 起算。", "EV3 sensor port, numbered from 1."),
+      mode: action("感測器讀取模式。", "Sensor reading mode."),
+      index: action("原始資料通道索引。", "Raw data channel index."),
+      deviceAddress: action("I²C 裝置位址。", "I²C device address."),
+      register: action("I²C 暫存器位址。", "I²C register address."),
+      length: action("要讀取或寫入的資料長度。", "Amount of data to read or write."),
+      data: action("要傳送的資料或位元組陣列。", "Data or byte array to send."),
+    };
+    return {
+      name,
+      description:
+        details[name] ?? action("感測器操作使用的數值。", "Value used by this sensor operation."),
+      example: name === "port" ? "1" : name === "data" ? "0" : "0",
+    };
   }
   if (op.name.startsWith("EV3File.")) {
-    const name = index === 0 ? (op.name.startsWith("EV3File.Open") ? "fileName" : "handle") : op.name.includes("WriteLine") ? "text" : op.name.includes("WriteNumberArray") ? "values" : "count";
-    return parameter(name, name === "fileName" ? "EV3 上的檔案名稱或路徑。" : name === "handle" ? "開啟檔案時取得的控制代號。" : name === "text" ? "要寫入檔案的一行文字。" : name === "values" ? "要寫入的數值陣列。" : "要讀取或處理的資料量。", name === "fileName" ? "File name or path on the EV3." : name === "handle" ? "Handle returned when the file was opened." : name === "text" ? "One line of text to write to the file." : name === "values" ? "Number array to write." : "Amount of data to read or process.", name === "fileName" ? "\"data.txt\"" : name === "handle" ? "handle" : name === "text" ? "\"Hello\"" : name === "values" ? "values" : "0");
+    const name =
+      index === 0
+        ? op.name.startsWith("EV3File.Open")
+          ? "fileName"
+          : "handle"
+        : op.name.includes("WriteLine")
+          ? "text"
+          : op.name.includes("WriteNumberArray")
+            ? "values"
+            : "count";
+    return parameter(
+      name,
+      name === "fileName"
+        ? "EV3 上的檔案名稱或路徑。"
+        : name === "handle"
+          ? "開啟檔案時取得的控制代號。"
+          : name === "text"
+            ? "要寫入檔案的一行文字。"
+            : name === "values"
+              ? "要寫入的數值陣列。"
+              : "要讀取或處理的資料量。",
+      name === "fileName"
+        ? "File name or path on the EV3."
+        : name === "handle"
+          ? "Handle returned when the file was opened."
+          : name === "text"
+            ? "One line of text to write to the file."
+            : name === "values"
+              ? "Number array to write."
+              : "Amount of data to read or process.",
+      name === "fileName"
+        ? '"data.txt"'
+        : name === "handle"
+          ? "handle"
+          : name === "text"
+            ? '"Hello"'
+            : name === "values"
+              ? "values"
+              : "0",
+    );
   }
-  throw new Error(`Basic Plus parameter specification is missing for ${op.name} parameter ${index + 1} (${type}).`);
+  throw new Error(
+    `Basic Plus parameter specification is missing for ${op.name} parameter ${index + 1} (${type}).`,
+  );
 }
-function signature(op: EV3OperationSignature) { return `${op.name}(${op.parameters.map((p, i) => `${parameterInfo(op, p, i).name}: ${typeName(p)}`).join(", ")})${op.returns === "void" ? "" : `: ${typeName(op.returns)}`}`; }
-function usage(op: EV3OperationSignature) { const call = `${op.name}(${op.parameters.map((p, i) => parameterInfo(op, p, i).example).join(", ")})`; return op.returns === "void" ? call : `result = ${call}`; }
-const undocumentedParameters = apiEntries.flatMap((operation) => operation.parameters.flatMap((value, index) => {
-  const info = parameterInfo(operation, value, index);
-  return /^value\d+$/.test(info.name) ? [`${operation.name} parameter ${index + 1}`] : [];
-}));
-if (undocumentedParameters.length) throw new Error(`Basic Plus parameters need names: ${undocumentedParameters.join(", ")}`);
+function signature(op: EV3OperationSignature) {
+  return `${op.name}(${op.parameters.map((p, i) => `${parameterInfo(op, p, i).name}: ${typeName(p)}`).join(", ")})${op.returns === "void" ? "" : `: ${typeName(op.returns)}`}`;
+}
+function usage(op: EV3OperationSignature) {
+  const call = `${op.name}(${op.parameters.map((p, i) => parameterInfo(op, p, i).example).join(", ")})`;
+  return op.returns === "void" ? call : `result = ${call}`;
+}
+const undocumentedParameters = apiEntries.flatMap((operation) =>
+  operation.parameters.flatMap((value, index) => {
+    const info = parameterInfo(operation, value, index);
+    return /^value\d+$/.test(info.name) ? [`${operation.name} parameter ${index + 1}`] : [];
+  }),
+);
+if (undocumentedParameters.length)
+  throw new Error(`Basic Plus parameters need names: ${undocumentedParameters.join(", ")}`);
 const exactDescriptions: Record<string, Localized> = {
   "LCD.Clear": action("清除 LCD 的繪圖緩衝區", "clears the LCD drawing buffer"),
   "LCD.Pixel": action(
@@ -814,13 +1820,15 @@ function ApiDetail({
             <dl>
               {operation.parameters.map((p, i) => {
                 const info = parameterInfo(operation, p, i);
-                return <div key={i}>
-                  <dt>{info.name}</dt>
-                  <dd>
-                    <code>{typeName(p)}</code>
-                    <span>{info.description[locale]}</span>
-                  </dd>
-                </div>;
+                return (
+                  <div key={i}>
+                    <dt>{info.name}</dt>
+                    <dd>
+                      <code>{typeName(p)}</code>
+                      <span>{info.description[locale]}</span>
+                    </dd>
+                  </div>
+                );
               })}
             </dl>
           ) : (

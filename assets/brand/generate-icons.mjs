@@ -26,20 +26,28 @@ await renderPng(32, path.join(webIcons, "favicon-32.png"));
 await renderPng(180, path.join(webIcons, "apple-touch-icon.png"));
 await renderPng(192, path.join(webIcons, "icon-192.png"));
 await renderPng(512, path.join(webIcons, "icon-512.png"));
-execFileSync("sips", [
-  "-s",
-  "format",
-  "ico",
-  path.join(desktopIcons, "png", "256x256.png"),
-  "--out",
-  path.join(desktopIcons, "kobrixa.ico"),
-], { stdio: "inherit" });
+execFileSync(
+  "sips",
+  [
+    "-s",
+    "format",
+    "ico",
+    path.join(desktopIcons, "png", "256x256.png"),
+    "--out",
+    path.join(desktopIcons, "kobrixa.ico"),
+  ],
+  { stdio: "inherit" },
+);
 await cp(path.join(desktopIcons, "kobrixa.ico"), path.join(webIcons, "favicon.ico"));
-execFileSync("sips", [
-  "-s",
-  "format",
-  "icns",
-  path.join(desktopIcons, "png", "512x512.png"),
-  "--out",
-  path.join(desktopIcons, "kobrixa.icns"),
-], { stdio: "inherit" });
+execFileSync(
+  "sips",
+  [
+    "-s",
+    "format",
+    "icns",
+    path.join(desktopIcons, "png", "512x512.png"),
+    "--out",
+    path.join(desktopIcons, "kobrixa.icns"),
+  ],
+  { stdio: "inherit" },
+);
