@@ -45,6 +45,30 @@ function nativeImage(codes, globalBytes = 8) {
   });
   return image;
 }
+
+test("native call descriptors align DATA32 after DATA8 and DATA16", () => {
+  // Inputs occupy byte 0 and word 2; the output DATA32 is at byte 4.
+  const image = nativeImage([
+    [0x09, 2, 3, 1, 7, 0x60, 0x0a],
+    [3, 0x80, 0x81, 0x42, 0x32, 0x40, 0x44, 0x36, 0x42, 0x48, 0x12, 0x44, 0x48, 0x44, 0x08, 0x0a],
+  ]);
+  image.writeUInt32LE(12, 36);
+  const result = new VM(decode(image)).run();
+  assert.equal(result.status, "ended", result.error);
+  assert.equal(Buffer.from(result.globals, "hex").readInt32LE(), 8);
+});
+
+test("native main OBJECT_END leaves a running worker alive", () => {
+  // Main starts object 2 and ends. The thread writes 7 and then ends itself.
+  const image = nativeImage([
+    [0x05, 2, 0x0a],
+    [0x3a, 7, 0x60, 0x0a],
+  ]);
+  image.writeUInt16LE(0, 34); // Object 2 is a thread, not a SUBCALL.
+  const result = new VM(decode(image), { quantum: 100 }).run();
+  assert.equal(result.status, "ended", result.error);
+  assert.equal(Buffer.from(result.globals, "hex").readInt32LE(), 7);
+});
 test("VM matches native narrowing, shifts, trigonometry and subcall exclusion", () => {
   // MOVE32_8 128 saturates to 127; MOVE8_32 -128 propagates NaN.
   const run = new VM(

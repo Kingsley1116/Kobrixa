@@ -13,6 +13,71 @@ EndFunction
 `;
 export const compilerFixtures = [
   {
+    name: "multiple array inputs and outputs use distinct native parameter slots",
+    source: `a[0] = 11
+b[0] = 22
+Read(a, b)
+Create(a, b)
+Read(a, b)
+Function Read(in number[] first, in number[] second)
+  LCD.Text(1, 0, 0, 1, first[0] + "," + second[0])
+EndFunction
+Function Create(out number[] first, out number[] second)
+  first[0] = 33
+  second[0] = 44
+EndFunction
+`,
+    texts: ["11,22", "33,44"],
+  },
+  {
+    name: "an array parameter and numeric return preserve both values",
+    source: `values[0] = 11
+LCD.Text(1, 0, 0, 1, "Result: " + Pick(values))
+Function Pick(in number[] items)
+  Return items[0] + 3
+EndFunction
+`,
+    texts: ["Result: 14"],
+  },
+  {
+    name: "sensor raw counts and vector dimensions accept computed number arguments",
+    source: `Read(2)
+Function Read(in number count)
+  raw = Sensor.ReadRaw(1, count)
+  first = Vector.Init(count, 1.5)
+  second = Vector.Data(count, "2 4")
+  total = Vector.Add(count, first, second)
+  sorted = Vector.Sort(count, total)
+  product = Vector.Multiply(1, 1, count, first, second)
+  LCD.Text(1, 0, 0, 1, "Size: " + Row.Size(raw))
+  LCD.Text(1, 0, 20, 1, sorted[0] + "," + sorted[1] + "," + product[0])
+EndFunction
+`,
+    texts: ["Size: 2", "3.5,5.5,9"],
+  },
+  {
+    name: "a worker continues after the main EV3 object ends",
+    source: `Thread.Run = Worker
+Sub Worker
+  Program.Delay(20)
+  LCD.Text(1, 0, 0, 1, "Worker finished")
+EndSub
+`,
+    texts: ["Worker finished"],
+  },
+  {
+    name: "Program.End stops a worker as well as main",
+    source: `Thread.Run = Worker
+Program.Delay(10)
+Program.End()
+Sub Worker
+  Program.Delay(1000)
+  LCD.Text(1, 0, 0, 1, "Must not run")
+EndSub
+`,
+    texts: [],
+  },
+  {
     name: "computed motor power preserves direction across signed-byte boundaries",
     source: `Drive(-160, 160)
 Drive(-128, 128)

@@ -133,6 +133,7 @@ class VM {
     this.files = new Map();
     this.handles = new Map();
     this.next = 1;
+    this.peakArrays = 0;
     this.trace = [];
     this.time = 1000;
     this.frames = [];
@@ -245,7 +246,7 @@ class VM {
       return {
         status: this.bounded
           ? "bounded"
-          : this.finished || !this.frames.length
+          : this.finished || !this.tasks.some((task) => task.frames.length)
             ? "ended"
             : "bounded",
         steps: this.steps,
@@ -299,7 +300,6 @@ class VM {
     if (n === "OBJECT_END") {
       const ended = this.frames.pop();
       this.activeObjects.delete(ended.i);
-      if (ended.i === 0) this.finished = true;
       return;
     }
     if (n === "PROGRAM_STOP") {
@@ -336,6 +336,8 @@ class VM {
         callee = this.start(id, { caller, args: a.slice(2) });
       let off = 0;
       callee.o.params.forEach((p, j) => {
+        const alignment = (p.d & 7) === 4 ? 1 : p.size;
+        off = Math.ceil(off / alignment) * alignment;
         if (p.d & 128) {
           const x = a[j + 2];
           const save = this.frames.pop();
@@ -362,6 +364,8 @@ class VM {
       let off = 0;
       if (ret)
         callee.o.params.forEach((p, j) => {
+          const alignment = (p.d & 7) === 4 ? 1 : p.size;
+          off = Math.ceil(off / alignment) * alignment;
           if (p.d & 64) {
             const dst = this.mem(ret.args[j]);
             callee.l.copy(dst.b, dst.off, off, off + p.size);
@@ -683,12 +687,17 @@ class VM {
       const size = { CREATE8: 1, CREATE16: 2, CREATE32: 4, CREATEF: 4 }[n.split(".")[1]],
         len = r(1);
       if (len < 0 || len > 10000) throw Error("invalid array size " + len);
-      const id = this.next++;
+      if (this.arrays.size >= (this.s.maxArrayHandles ?? Infinity))
+        throw Error("array handle limit exceeded");
+      let id = 1;
+      while (this.arrays.has(id) || this.handles.has(id)) id++;
+      this.next = Math.max(this.next, id + 1);
       this.arrays.set(id, {
         b: Buffer.alloc(size * len),
         size,
         t: n.endsWith("F") ? "PARF" : size === 1 ? "PAR8" : size === 2 ? "PAR16" : "PAR32",
       });
+      this.peakArrays = Math.max(this.peakArrays, this.arrays.size);
       w(2, id);
       return;
     }
@@ -713,7 +722,7 @@ class VM {
       return;
     }
     if (n === "ARRAY.DELETE") {
-      this.arrays.delete(r(1));
+      if (!this.arrays.delete(r(1))) throw Error("invalid array deletion " + r(1));
       return;
     }
     if (n === "ARRAY.WRITE_CONTENT" || n === "ARRAY.READ_CONTENT") {

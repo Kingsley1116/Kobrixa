@@ -1,4 +1,5 @@
 import type { BackendResult, CompilerBackend, Diagnostic } from "@kobrixa/compiler";
+import { getEV3Operation } from "@kobrixa/ir";
 import type {
   IRBasicBlock,
   IRFunction,
@@ -28,6 +29,7 @@ import {
 import { createRbf, inspectRbf, type RbfObject } from "./rbf.js";
 
 import { expandRecursiveCalls } from "./recursion.js";
+import { hasCallLocalArrays } from "./array-lifetime.js";
 
 const OBJECT_EPILOGUE = Symbol("object-epilogue");
 type Label = string | symbol;
@@ -78,14 +80,15 @@ function sizeOf(type: IRType): number {
 
 function callParameterSize(type: IRType): number {
   if (type.kind === "string") return STRING_BYTES;
-  if (type.kind === "array") return 2;
   return sizeOf(type);
 }
 
 function callParameterCode(variable: Pick<IRVariable, "type" | "direction">): number[] {
   const direction = variable.direction === "out" ? 0x40 : 0x80;
   if (variable.type.kind === "string") return [direction | 0x04, STRING_BYTES];
-  if (variable.type.kind === "array") return [direction | 0x01];
+  // Handles live in DATA32 slots throughout the IR backend. Passing two-byte
+  // handles would pack adjacent array parameters differently from that layout.
+  if (variable.type.kind === "array") return [direction | 0x02];
   if (variable.type.kind === "boolean") return [direction];
   return [direction | (variable.type.kind === "integer" ? 0x02 : 0x03)];
 }
@@ -154,6 +157,8 @@ class ObjectAssembler {
   readonly allocations = new Map<string, Allocation>();
   readonly diagnostics: Diagnostic[] = [];
   localBytes = 0;
+  readonly callLocalArrayHandles: number[] = [];
+  readonly reclaimLocalArrays: boolean;
 
   get isBackgroundThread(): boolean {
     return this.threadObjects.has(this.fn.name.toLocaleLowerCase("en-US"));
@@ -172,6 +177,7 @@ class ObjectAssembler {
     readonly timerBaselines: number | undefined,
     readonly runtimeDirectory?: string,
   ) {
+    this.reclaimLocalArrays = hasCallLocalArrays(fn);
     const parameters = orderedParameters(fn);
     const variables =
       fn.returnType.kind === "void"
@@ -223,6 +229,8 @@ class ObjectAssembler {
       this.terminator(block);
     }
     this.labels.set(OBJECT_EPILOGUE, this.bytes.length);
+    for (const handle of this.callLocalArrayHandles)
+      this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(handle));
     if (this.fn.name === "main") this.bytes.push(OP.OBJECT_END);
     else this.bytes.push(OP.RETURN, OP.OBJECT_END);
     for (const patch of this.patches) {
@@ -299,7 +307,22 @@ class ObjectAssembler {
         this.bytes.push(OP.ARRAY, ...lc(ARRAY.CREATE_F), ...lc(8), ...this.location(allocation));
         this.bytes.push(OP.ARRAY, ...lc(ARRAY.FILL), ...this.location(allocation), ...lcf(0));
       }
+      this.retainCallLocalArray(this.location(allocation), allocation);
     }
+  }
+
+  private retainCallLocalArray(handle: number[], allocation: Allocation): void {
+    if (
+      !this.reclaimLocalArrays ||
+      !this.fn.locals.some(
+        (local) => local.type.kind === "array" && this.allocationFor(local.name) === allocation,
+      )
+    )
+      return;
+    // Save the allocation itself: local aliases can subsequently be overwritten.
+    const saved = this.scratch(4);
+    this.bytes.push(OP.MOVE_16_32, ...handle, ...lv(saved));
+    this.callLocalArrayHandles.push(saved);
   }
 
   private stringArrayIndex(index: IRValue): number[] | undefined {
@@ -723,6 +746,7 @@ class ObjectAssembler {
       this.bytes.push(OP.ARRAY_WRITE, ...lv(result), ...lc(index), ...lv(value));
     }
     this.bytes.push(OP.MOVE_16_32, ...lv(result), ...this.location(target));
+    this.retainCallLocalArray(lv(result), target);
   }
 
   private fileName(value: IRValue): number[] | undefined {
@@ -1025,29 +1049,19 @@ class ObjectAssembler {
     instruction: Extract<IRInstruction, { op: "ev3-call" }>,
     target: Allocation | undefined,
   ): void {
-    const args = instruction.args.map((value) => this.parameter(value));
+    const signature = getEV3Operation(instruction.operation);
+    const args = instruction.args.map((value, index) => {
+      const expected = signature?.parameters[index];
+      const accepted = Array.isArray(expected) ? expected : [expected];
+      return accepted.includes("integer") && !accepted.includes("number")
+        ? this.integerParameter(value)
+        : this.parameter(value);
+    });
     if (args.some((value) => !value)) {
       this.diagnostics.push(
         diagnostic("EV31005", "Unable to encode an EV3 call argument.", instruction.span),
       );
       return;
-    }
-    // LCD coordinate/color/font operands are integers even when the source
-    // expression has floating-point storage. Keep text and VALUE's data float.
-    if (instruction.operation.startsWith("LCD.")) {
-      const nonInteger =
-        instruction.operation === "LCD.Text"
-          ? 4
-          : instruction.operation === "LCD.Write"
-            ? 2
-            : instruction.operation === "LCD.BmpFile"
-              ? 3
-              : instruction.operation === "LCD.Value"
-                ? 3
-                : -1;
-      for (let index = 0; index < args.length; index += 1) {
-        if (index !== nonInteger) args[index] = this.integerParameter(instruction.args[index]!);
-      }
     }
     const motorPercentageIndex =
       /^Motor[ABCD]{1,2}\.(SetPower|StartPower|SetSpeed|StartSpeed)$/.test(instruction.operation)
@@ -1065,14 +1079,8 @@ class ObjectAssembler {
             ].includes(instruction.operation)
           ? 1
           : -1;
-    // Native timing and motor operands are integer fields, including computed
-    // expressions stored as DATAF. Convert before encoding the instruction.
-    if (instruction.operation.startsWith("Motor") || instruction.operation === "Program.Delay") {
-      instruction.args.forEach((value, index) => {
-        if (index === motorPercentageIndex) args[index] = this.motorPercentage(value);
-        else if (this.typeOf(value)?.kind === "number") args[index] = this.integerParameter(value);
-      });
-    }
+    if (motorPercentageIndex >= 0)
+      args[motorPercentageIndex] = this.motorPercentage(instruction.args[motorPercentageIndex]!);
     const arg = (index: number): number[] => args[index]!;
     const floatArg = (index: number): number[] | undefined =>
       this.floatParameter(instruction.args[index]!);
@@ -3082,6 +3090,7 @@ class ObjectAssembler {
         this.addPatch(loop);
         this.markLabel(done);
         this.bytes.push(OP.MOVE_16_32, ...lv(handle), ...this.location(target));
+        this.retainCallLocalArray(lv(handle), target);
         return;
       }
       case "Sensor.ReadRawValue": {
@@ -3300,6 +3309,9 @@ class ObjectAssembler {
           this.bytes.push(OP.ARRAY_READ, ...lv(readHandle), ...lc(0), ...lv(value));
           this.unsignedByte(lv(value), this.location(target));
         } else this.i2cResultArray(readHandle, readBytes, target);
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(writeHandle));
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(readHandle));
+        if (payload !== undefined) this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(payload));
         return;
       }
       case "Sensor.WriteI2CRegister":
@@ -3353,6 +3365,9 @@ class ObjectAssembler {
           ...lc(0),
           ...lh(reply),
         );
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(handle));
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(reply));
+        if (payload !== undefined) this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(payload));
         return;
       }
       case "Sensor.SendUARTData": {
@@ -3367,6 +3382,7 @@ class ObjectAssembler {
         const data = this.copyRowToByteArray(instruction.args[2]!, bytes);
         if (data === undefined) break;
         this.bytes.push(OP.INPUT_WRITE, ...sensor.layer, ...sensor.port, ...lc(bytes), ...lh(data));
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(data));
         return;
       }
     }
