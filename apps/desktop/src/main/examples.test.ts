@@ -103,7 +103,8 @@ async function findExampleProjects(root: string, relative = ""): Promise<string[
   const children = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())
-      .map((entry) => findExampleProjects(root, path.join(relative, entry.name))),
+      // Example identifiers also appear in manifests and Markdown links, so use forward slashes.
+      .map((entry) => findExampleProjects(root, path.posix.join(relative, entry.name))),
   );
   return children.flat();
 }

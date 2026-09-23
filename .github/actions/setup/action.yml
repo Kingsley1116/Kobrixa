@@ -1,0 +1,19 @@
+name: Setup Kobrixa
+description: Install the pinned toolchain, native dependencies and workspace packages
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: pnpm-lock.yaml
+    - name: Install Linux native build dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
+    - run: pnpm install --frozen-lockfile
+      shell: bash

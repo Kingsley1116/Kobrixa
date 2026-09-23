@@ -4,33 +4,81 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: Upload development archives and checksums (7 days)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  quality:
+    name: Common checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm check:ci
+
+  platform:
+    name: Desktop (${{ matrix.platform }}-${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - os: windows-2025
+            platform: win32
+            arch: x64
+          - os: macos-26
+            platform: darwin
+            arch: arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 10.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
-      - run: pnpm check
-      - run: pnpm test
-      - run: pnpm build
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm build:core
+      - run: pnpm test:ci
+      - run: pnpm build:desktop
+      - run: pnpm package:archive
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
         with:
-          name: kobrixa-${{ matrix.os }}-development
-          path: apps/desktop/out/
+          name: Kobrixa-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: apps/desktop/out/release/*
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  result:
+    name: CI result
+    if: always()
+    needs: [quality, platform]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to succeed
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          PLATFORM: ${{ needs.platform.result }}
+        run: |
+          echo "Common checks: $QUALITY; desktop matrix: $PLATFORM" >> "$GITHUB_STEP_SUMMARY"
+          test "$QUALITY" = success && test "$PLATFORM" = success

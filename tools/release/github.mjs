@@ -1,0 +1,257 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  archiveName,
+  expectedAssets,
+  isMain,
+  parseVersion,
+  repositoryRoot,
+  validateVersions,
+  verifyChecksum,
+} from "./common.mjs";
+
+export function marker(tag, sha) {
+  return `<!-- kobrixa-release:${JSON.stringify({ tag, sha })} -->`;
+}
+
+export function assertDraft(release, tag, sha) {
+  assert.ok(release, "Release draft is missing");
+  assert.equal(release.draft, true, "Refusing to modify a published release");
+  assert.equal(release.tag_name, tag, "Release tag mismatch");
+  assert.ok(
+    release.body?.includes(marker(tag, sha)),
+    "Draft belongs to a different commit or was not created by this workflow",
+  );
+}
+
+export function failedChecks(results) {
+  return ["validate", "quality", "prepare", "platform"].filter(
+    (name) => results[name]?.result !== "success",
+  );
+}
+
+export function assertAssets(assets, version) {
+  const expected = expectedAssets(version).sort();
+  assert.deepEqual(
+    assets.map((asset) => asset.name).sort(),
+    expected,
+    "Release assets are missing, duplicated or unexpected",
+  );
+  for (const asset of assets)
+    assert.ok(asset.size > 0 && asset.state === "uploaded", `Incomplete asset: ${asset.name}`);
+}
+
+export function notes(tag, sha, status, generated = "") {
+  return `${marker(tag, sha)}\n\n${status}\n\nCommit: ${sha}\n\nUnsigned development applications / 未簽署開發版\n\n- Windows x64: extract the ZIP and launch kobrixa.exe.\n- macOS Apple Silicon: extract the ZIP and open Kobrixa.app. This build is not notarized.\n- Linux x64: extract the tar.gz and launch kobrixa.\n- Verify each archive against its accompanying SHA-256 file before use.\n- Intel Mac, installers and automatic updates are not included.\n\n${generated}`;
+}
+
+export async function prepareRelease(github, tag, sha) {
+  await github.assertTag(tag, sha);
+  const release = await github.getRelease(tag);
+  const body = notes(tag, sha, "建置中 / Building — incomplete, do not publish.");
+  if (release) {
+    assertDraft(release, tag, sha);
+    await github.edit(release.id, { name: `${tag} — 建置中`, body });
+  } else {
+    await github.create(tag, sha, body, parseVersion(tag.slice(1)).prerelease);
+  }
+}
+
+export async function uploadRelease(github, tag, sha, archive) {
+  await verifyChecksum(archive);
+  await github.assertTag(tag, sha);
+  assertDraft(await github.getRelease(tag), tag, sha);
+  await github.upload(tag, [archive, `${archive}.sha256`]);
+}
+
+export async function finalizeRelease(github, tag, sha, results) {
+  const failures = failedChecks(results);
+  if (failures.length) {
+    if (results.prepare?.result === "success") {
+      await github.assertTag(tag, sha);
+      const release = await github.getRelease(tag);
+      assertDraft(release, tag, sha);
+      await github.edit(release.id, {
+        name: `${tag} — 未完成`,
+        body: notes(
+          tag,
+          sha,
+          `未完成 / Incomplete: ${failures.join(", ")}. See workflow job summaries; rerun failed jobs.`,
+        ),
+      });
+    }
+    throw new Error(`Release checks did not succeed: ${failures.join(", ")}`);
+  }
+  await github.assertTag(tag, sha);
+  const release = await github.getRelease(tag);
+  assertDraft(release, tag, sha);
+  // Finalize can itself be rerun. Clear a previous ready status before any
+  // download or checksum operation that may now fail.
+  await github.edit(release.id, {
+    name: `${tag} — 建置中`,
+    body: notes(tag, sha, "驗證下載中 / Verifying downloaded assets — do not publish yet."),
+  });
+  assertAssets(release.assets, tag.slice(1));
+  const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-release-"));
+  try {
+    await github.download(tag, directory);
+    for (const name of expectedAssets(tag.slice(1)).filter((name) => !name.endsWith(".sha256"))) {
+      await verifyChecksum(path.join(directory, name));
+    }
+    const generated = await github.generateNotes(tag, sha);
+    // Recheck immediately before writing, including whether someone published the draft.
+    await github.assertTag(tag, sha);
+    assertDraft(await github.getRelease(tag), tag, sha);
+    await github.edit(release.id, {
+      name: `${tag} — 待發布`,
+      body: notes(
+        tag,
+        sha,
+        "待發布 / Ready for manual publication — all checks and checksums passed.",
+        generated,
+      ),
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+function command(args, input) {
+  return execFileSync("gh", args, {
+    encoding: "utf8",
+    input,
+    stdio: ["pipe", "pipe", "pipe"],
+    maxBuffer: 16 * 1024 * 1024,
+  });
+}
+
+export function createGithub(repo, execute = command) {
+  assert.match(repo, /^[\w.-]+\/[\w.-]+$/, "Invalid repository");
+  const prefix = `repos/${repo}`;
+  const api = (endpoint, method = "GET", body) => {
+    const output = execute(
+      ["api", `${prefix}/${endpoint}`, "--method", method, ...(body ? ["--input", "-"] : [])],
+      body ? JSON.stringify(body) : undefined,
+    );
+    return output.trim() ? JSON.parse(output) : null;
+  };
+  return {
+    async assertTag(tag, sha) {
+      assert.equal(
+        api(`commits/${encodeURIComponent(tag)}`).sha,
+        sha,
+        "Remote tag moved to a different commit",
+      );
+    },
+    async getRelease(tag) {
+      // The by-tag REST endpoint is for published releases. Listing with write
+      // access includes drafts and pagination also covers older release retries.
+      const pages = JSON.parse(
+        execute(["api", `${prefix}/releases?per_page=100`, "--paginate", "--slurp"]),
+      );
+      const matches = pages.flat().filter((release) => release.tag_name === tag);
+      assert.ok(matches.length <= 1, "Multiple releases exist for the same tag");
+      return matches[0] ?? null;
+    },
+    async create(tag, sha, body, prerelease) {
+      execute(
+        [
+          "release",
+          "create",
+          tag,
+          "--repo",
+          repo,
+          "--verify-tag",
+          "--target",
+          sha,
+          "--draft",
+          "--title",
+          `${tag} — 建置中`,
+          "--notes-file",
+          "-",
+          ...(prerelease ? ["--prerelease"] : []),
+        ],
+        body,
+      );
+    },
+    async edit(id, body) {
+      return api(`releases/${id}`, "PATCH", body);
+    },
+    async upload(tag, files) {
+      execute(["release", "upload", tag, ...files, "--repo", repo, "--clobber"]);
+    },
+    async download(tag, directory) {
+      execute(["release", "download", tag, "--repo", repo, "--dir", directory]);
+    },
+    async generateNotes(tag, sha) {
+      return api("releases/generate-notes", "POST", { tag_name: tag, target_commitish: sha }).body;
+    },
+    async jobs(runId, attempt) {
+      // A rerun must report this attempt, not stale failures from an earlier attempt.
+      const pages = JSON.parse(
+        execute([
+          "api",
+          `${prefix}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
+          "--paginate",
+          "--slurp",
+        ]),
+      );
+      return pages.flatMap((page) => page.jobs);
+    },
+  };
+}
+
+export function validateCommit(tag, sha, root = repositoryRoot) {
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  assert.equal(git(["rev-parse", "HEAD"]), sha, "Checkout is not the triggering commit");
+  assert.equal(
+    git(["rev-parse", `${tag}^{commit}`]),
+    sha,
+    "Tag does not point at the triggering commit",
+  );
+  git(["merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"]);
+}
+
+async function main() {
+  const tag = process.env.RELEASE_TAG;
+  const sha = process.env.RELEASE_SHA;
+  assert.match(sha ?? "", /^[a-f0-9]{40}$/, "Invalid release commit");
+  const { version } = await validateVersions(tag);
+  const action = process.argv[2];
+  if (action === "validate") {
+    validateCommit(tag, sha);
+    console.log(`Validated ${tag} at ${sha}`);
+    return;
+  }
+  const github = createGithub(process.env.GITHUB_REPOSITORY);
+  if (action === "prepare") await prepareRelease(github, tag, sha);
+  else if (action === "upload") {
+    const name = archiveName(version, process.env.TARGET_PLATFORM, process.env.TARGET_ARCH);
+    await uploadRelease(
+      github,
+      tag,
+      sha,
+      path.join(repositoryRoot, "apps/desktop/out/release", name),
+    );
+  } else if (action === "finalize") {
+    const results = JSON.parse(process.env.RELEASE_RESULTS || "{}");
+    const jobs = await github.jobs(process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT);
+    const summary = jobs
+      .filter((job) => job.name.startsWith("Release ("))
+      .map((job) => `- ${job.name}: ${job.conclusion ?? job.status}`)
+      .join("\n");
+    if (process.env.GITHUB_STEP_SUMMARY)
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Desktop Release\n\n${summary}\n\n`);
+    await finalizeRelease(github, tag, sha, results);
+  } else throw new Error(`Unknown release action: ${action}`);
+}
+
+if (isMain(import.meta)) await main();

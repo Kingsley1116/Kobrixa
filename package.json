@@ -9,6 +9,13 @@
   "scripts": {
     "dev": "pnpm -r --filter=!@kobrixa/desktop build && pnpm --filter @kobrixa/desktop dev",
     "build": "pnpm -r build",
+    "build:core": "pnpm -r --filter \"./packages/**\" --filter \"./frontends/**\" build",
+    "build:web": "pnpm --filter @kobrixa/web build",
+    "build:desktop": "pnpm --filter @kobrixa/desktop package",
+    "check:ci": "pnpm format:check && pnpm check && pnpm build:web",
+    "test:ci": "vitest run && pnpm test:bytecode && pnpm test:examples:audit && pnpm test:release",
+    "test:release": "node --test tools/release/*.test.mjs",
+    "package:archive": "node tools/release/archive.mjs",
     "check": "pnpm -r check && eslint .",
     "test": "pnpm -r test && pnpm test:bytecode",
     "test:hardware": "node tests/hardware/run.mjs",
@@ -23,6 +30,7 @@
     "test:bytecode": "tsc -b packages/backend-ev3/tsconfig.json frontends/basic-plus/tsconfig.json && node --test tests/bytecode/*.test.mjs"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@eslint/js": "^9.34.0",
     "@types/node": "^24.3.0",
     "eslint": "^9.34.0",

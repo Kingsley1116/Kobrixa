@@ -6,6 +6,36 @@
 
 安裝 Node.js 24 與 pnpm 10.15，執行 `pnpm install` 後使用 `pnpm dev`。`pnpm package` 會為目前作業系統產生未簽署的開發版應用程式。
 
+在 Debian／Ubuntu 上，請先安裝原生 USB 模組的建置依賴，再執行 `pnpm install` 或封裝：
+
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
+```
+
+### CI 與開發版下載
+
+**CI** workflow 會在 pull request、push 到 `main` 與手動執行時啟動。格式、lint、型別檢查及網站建置集中在 Ubuntu 執行一次；Ubuntu 24.04 x64、Windows 2025 x64、macOS 26 arm64 同時各自執行完整測試與桌面封裝。只有所有必要工作成功，`CI result` 才會通過。同一分支或 pull request 有新 commit 時，會取消舊的 CI 執行。
+
+使用 `pnpm check:ci` 執行共通檢查。依序執行 `pnpm build:core`、`pnpm test:ci`、`pnpm build:desktop`、`pnpm package:archive`，可在本機重現平台驗證。最後一個指令會建立目前作業系統與架構的壓縮包，在暫存目錄重新解壓，驗證完整檔案樹、權限、符號連結及封裝的 USB 模組，再寫入 SHA-256 校驗碼。各作業系統仍須安裝原生模組的建置依賴。
+
+一般 CI 不上傳應用程式。若要下載開發版，請手動執行 **CI** 並啟用 **upload_artifacts**；壓縮包與校驗碼會保留 7 天。既有 Actions 儲存配額不足仍會阻擋這項選用上傳；縮短保留天數不會刪除舊產物。Release 建置會直接使用 Release assets，不經 Actions artifacts。
+
+### 桌面 Release 草稿
+
+1. 將根目錄及所有 workspace 的 `package.json` 設為相同 SemVer 版本，必要時更新 lockfile，再將版本變更合併到 `main`。
+2. 為既有 commit 推送版本 tag，例如 `v0.1.0-v1-candidate.0`。**Desktop Release** workflow 會拒絕格式錯誤、套件版本不符或不屬於 `main` 歷史的 commit。
+3. 流程建立標示 **建置中 / Building** 的草稿，驗證 tag 指定的確切 commit，各平台直接上傳壓縮包與校驗碼到草稿。版本有預發行後綴時，草稿會標示為 prerelease。
+4. 所有檢查成功，且六個產物皆下載並通過校驗碼驗證後，草稿改為 **待發布 / Ready for manual publication**，附上來源 commit 與自動產生的版本紀錄。請檢閱後手動公開；流程不會自動發布。
+
+下載檔名為 `Kobrixa-<version>-win32-x64.zip`、`Kobrixa-<version>-darwin-arm64.zip` 與 `Kobrixa-<version>-linux-x64.tar.gz`，各附一個 `.sha256`。解壓後分別執行 `kobrixa.exe`、`Kobrixa.app` 或 `kobrixa`。這些是未簽署開發版，macOS 版未經公證；不包含 Intel Mac、安裝程式、程式碼簽署與自動更新。
+
+執行失敗時會保留未完成草稿，並在 workflow 摘要列出各平台結果。可為相同 tag 與 commit 重跑失敗工作，只替換相符的草稿產物。tag 被移動、草稿由手動建立或無法辨識、Release 已公開時，流程會拒絕更新。校驗碼或最終確認失敗也不會將草稿標示為待發布。請勿公開未完成草稿或移動發布 tag。同一 tag 的 Release 執行會序列化，不取消正在執行的工作。
+
+不需要新增 personal access token：一般 CI 只有倉庫讀取權限，Release 寫入工作使用具備 `contents: write` 的 `GITHUB_TOKEN`。網站部署與既有遠端產物維持現況。導入後使用下一個預定發布的版本 tag 驗證第一份真實草稿，不為測試流程另外公開測試版本。
+
+評估改善效果時，請比較 Actions 中第一次冷快取與後續暖快取執行的各工作耗時、總 runner 分鐘數及壓縮包大小，並使用相近的 commit 與相同 runner 平台，不預設固定加速比例。流程只依作業系統、架構與 lockfile 快取 pnpm store，不快取 `node_modules` 或已編譯的原生模組。
+
 編輯器與編譯器不需要雲端帳號或網路連線；Wi‑Fi 只用於與 EV3 通訊。
 
 ## USB
