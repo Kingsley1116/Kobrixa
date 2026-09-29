@@ -39,7 +39,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - run: pnpm check:ci
+      - run: pnpm check:common
+      - run: pnpm check:desktop
 
   prepare:
     needs: validate
@@ -84,7 +85,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: pnpm build:core
-      - run: pnpm test:ci
+      - run: pnpm test:desktop
       - run: pnpm build:desktop
       - run: pnpm package:archive
         env:

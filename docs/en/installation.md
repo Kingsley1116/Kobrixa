@@ -15,9 +15,16 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 
 ### CI and development downloads
 
-The **CI** workflow runs on pull requests, pushes to `main`, and manual dispatches. Common formatting, lint, type checks and the website build run once on Ubuntu. In parallel, Ubuntu 24.04 x64, Windows 2025 x64 and macOS 26 arm64 each run the full test suite and package the desktop application. `CI result` succeeds only when every required job succeeds. New commits cancel older CI runs for the same branch or pull request.
+The **CI** workflow runs on pull requests, pushes to `main`, and manual dispatches. Common formatting, root-config lint and CI-routing tests run once on Ubuntu. Product checks are selected from the complete Git diff:
 
-Run `pnpm check:ci` for common checks. Run `pnpm build:core`, `pnpm test:ci`, `pnpm build:desktop`, then `pnpm package:archive` to reproduce platform verification locally. The last command creates an archive for the host OS and architecture, extracts it into a temporary directory, verifies the complete file tree, permissions, symlinks and packaged USB modules, then writes a SHA-256 checksum. Native build dependencies remain necessary on each operating system.
+- `apps/web/` and `docs/` changes run website type/lint checks, frontend/IR and Worker tests, and the website build.
+- `apps/desktop/`, `examples/`, `tests/`, desktop tools and the desktop release workflow run desktop checks, core/desktop tests and packaging on Ubuntu 24.04 x64, Windows 2025 x64 and macOS 26 arm64. Website tests do not run in this matrix.
+- Shared packages, language frontends, assets, lockfiles, root configuration and CI tooling run both products. Unknown paths also run both. Root README/contribution/license-only changes run common checks.
+- Manual dispatch always runs both. Missing comparison history falls back to both. Renames and deletions include their original paths.
+
+`CI result` keeps the same required-check name. It accepts skipped product jobs only when the change detector explicitly marks them unaffected; failures, cancellations and unexpectedly skipped required jobs fail the gate. New commits cancel older CI runs for the same branch or pull request.
+
+Run `pnpm check:common` for common checks. For the website, run `pnpm check:web`, `pnpm test:web`, then `pnpm build:web`. For the desktop, run `pnpm check:desktop`, `pnpm build:core`, `pnpm test:desktop`, `pnpm build:desktop`, then `pnpm package:archive`. The archive command extracts the result into a temporary directory, verifies the complete file tree, permissions, symlinks and packaged USB modules, then writes a SHA-256 checksum. Native build dependencies remain necessary on each operating system. `pnpm check:ci` and `pnpm test:ci` remain available for full-repository local checks. Desktop tag releases use the common and desktop checks without running website builds/tests.
 
 Regular CI does not upload applications. To download a development build, manually run **CI** with **upload_artifacts** enabled. Archives and checksums are retained for 7 days. Existing Actions storage quota exhaustion can still block these optional uploads; retention changes do not remove old artifacts. Release builds use Release assets directly instead of Actions artifacts.
 

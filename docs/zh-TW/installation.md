@@ -15,9 +15,16 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 
 ### CI 與開發版下載
 
-**CI** workflow 會在 pull request、push 到 `main` 與手動執行時啟動。格式、lint、型別檢查及網站建置集中在 Ubuntu 執行一次；Ubuntu 24.04 x64、Windows 2025 x64、macOS 26 arm64 同時各自執行完整測試與桌面封裝。只有所有必要工作成功，`CI result` 才會通過。同一分支或 pull request 有新 commit 時，會取消舊的 CI 執行。
+**CI** workflow 會在 pull request、push 到 `main` 與手動執行時啟動。共通格式、根目錄設定的 lint 及 CI 分流測試在 Ubuntu 執行一次，產品檢查依完整 Git 差異分流：
 
-使用 `pnpm check:ci` 執行共通檢查。依序執行 `pnpm build:core`、`pnpm test:ci`、`pnpm build:desktop`、`pnpm package:archive`，可在本機重現平台驗證。最後一個指令會建立目前作業系統與架構的壓縮包，在暫存目錄重新解壓，驗證完整檔案樹、權限、符號連結及封裝的 USB 模組，再寫入 SHA-256 校驗碼。各作業系統仍須安裝原生模組的建置依賴。
+- `apps/web/` 與 `docs/` 變更：執行網站型別／lint、前端／IR 與 Worker 測試，以及網站建置。
+- `apps/desktop/`、`examples/`、`tests/`、桌面工具及桌面 release workflow 變更：在 Ubuntu 24.04 x64、Windows 2025 x64、macOS 26 arm64 執行桌面檢查、核心／桌面測試與封裝。此矩陣不執行網站測試。
+- 共用套件、語言前端、素材、鎖檔、根目錄設定與 CI 工具變更：兩邊都驗證。未識別路徑也會跑兩邊；只有根目錄 README、貢獻說明或授權文件變更時，只跑共通檢查。
+- 手動執行一律跑兩邊；比較歷史不可用時也跑兩邊。重新命名和刪除會計入原本路徑。
+
+`CI result` 保留原有必要檢查名稱。只有分流明確判定未受影響的產品工作可以跳過；失敗、取消，或必要工作意外跳過，都不會通過。同一分支或 pull request 有新 commit 時，會取消舊的 CI 執行。
+
+使用 `pnpm check:common` 執行共通檢查。網站依序執行 `pnpm check:web`、`pnpm test:web`、`pnpm build:web`。桌面依序執行 `pnpm check:desktop`、`pnpm build:core`、`pnpm test:desktop`、`pnpm build:desktop`、`pnpm package:archive`。封裝指令會在暫存目錄解壓產物，驗證完整檔案樹、權限、符號連結及 USB 模組，再寫入 SHA-256 校驗碼。各作業系統仍須安裝原生模組的建置依賴。`pnpm check:ci` 與 `pnpm test:ci` 仍保留為全倉庫本機檢查；桌面 tag 發布使用共通及桌面檢查，不執行網站建置／測試。
 
 一般 CI 不上傳應用程式。若要下載開發版，請手動執行 **CI** 並啟用 **upload_artifacts**；壓縮包與校驗碼會保留 7 天。既有 Actions 儲存配額不足仍會阻擋這項選用上傳；縮短保留天數不會刪除舊產物。Release 建置會直接使用 Release assets，不經 Actions artifacts。
 

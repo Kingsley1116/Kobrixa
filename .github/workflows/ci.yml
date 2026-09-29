@@ -19,6 +19,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect affected products
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.scope.outputs.web }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: scope
+        run: node tools/ci/changes.mjs
+
   quality:
     name: Common checks
     runs-on: ubuntu-24.04
@@ -28,9 +46,26 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - run: pnpm check:ci
+      - run: pnpm check:common
+
+  web:
+    name: Website
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm check:web
+      - run: pnpm test:web
+      - run: pnpm build:web
 
   platform:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     name: Desktop (${{ matrix.platform }}-${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -52,8 +87,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+      - run: pnpm check:desktop
       - run: pnpm build:core
-      - run: pnpm test:ci
+      - run: pnpm test:desktop
       - run: pnpm build:desktop
       - run: pnpm package:archive
         env:
@@ -71,14 +107,17 @@ jobs:
   result:
     name: CI result
     if: always()
-    needs: [quality, platform]
+    needs: [changes, quality, web, platform]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every check to succeed
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Require every affected product to succeed
         env:
-          QUALITY: ${{ needs.quality.result }}
-          PLATFORM: ${{ needs.platform.result }}
-        run: |
-          echo "Common checks: $QUALITY; desktop matrix: $PLATFORM" >> "$GITHUB_STEP_SUMMARY"
-          test "$QUALITY" = success && test "$PLATFORM" = success
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: node tools/ci/changes.mjs result

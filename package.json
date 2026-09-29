@@ -27,7 +27,13 @@
     "test:examples:audit": "node --test tools/check-new-example-results.test.mjs",
     "examples:parity:audit": "node tools/audit-new-examples.mjs --selection examples/clev3r-parity.json",
     "examples:coverage": "node tools/check-example-coverage.mjs",
-    "test:bytecode": "tsc -b packages/backend-ev3/tsconfig.json frontends/basic-plus/tsconfig.json && node --test tests/bytecode/*.test.mjs"
+    "test:bytecode": "tsc -b packages/backend-ev3/tsconfig.json frontends/basic-plus/tsconfig.json && node --test tests/bytecode/*.test.mjs",
+    "check:web": "pnpm --filter \"@kobrixa/web...\" -r check && eslint apps/web packages/ir",
+    "check:desktop": "pnpm --filter \"@kobrixa/desktop...\" -r check && eslint apps/desktop packages frontends tools tests assets",
+    "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing",
+    "test:web": "vitest run --project web --project @kobrixa/ir && pnpm --filter @kobrixa/web test:worker",
+    "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:examples:audit && pnpm test:release",
+    "test:ci-routing": "node --test tools/ci/*.test.mjs"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
