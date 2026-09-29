@@ -122,7 +122,7 @@ export function AudioSequenceDownload({
       )}
       {parts && validFileName(name) && (
         <details className="segment-details">
-          <summary>
+          <summary className="ui-disclosure">
             {t(
               `${parts.length} 個音檔・個別下載`,
               `${parts.length} audio files · individual downloads`,

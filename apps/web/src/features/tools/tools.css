@@ -1517,3 +1517,10 @@
   pointer-events: none;
   z-index: 5;
 }
+
+/* The filename and its extension share one outlined control. */
+.export-name input.ui-control {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}

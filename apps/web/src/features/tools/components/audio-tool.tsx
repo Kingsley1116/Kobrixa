@@ -1,3 +1,4 @@
+import type { GalleryEditorProps } from "../../../shared/gallery.js";
 import { useEffect, useRef, useState } from "react";
 import { convertAudio, convertAudioSequence, demoAudio } from "../lib/media-browser.js";
 import { MAX_DURATION, MAX_SAMPLES, sampleCount, SAMPLE_RATE } from "../lib/media.js";
@@ -21,7 +22,13 @@ import type { Translate } from "./tools-ui.js";
 
 type Source = { buffer: AudioBuffer; name: string; size: number; peaks: Float32Array };
 
-export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
+export function AudioTool({
+  t,
+  active,
+  onExport,
+  sourceLimit,
+  durationLimit,
+}: { t: Translate; active: boolean } & GalleryEditorProps) {
   const [source, setSource] = useState<Source>();
   const [settings, setSettings] = useState<AudioSettings>({ ...DEFAULT_AUDIO });
   const [name, setName] = useState("sound");
@@ -96,6 +103,8 @@ export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
     contexts.current.clear();
     let context: AudioContext | undefined;
     try {
+      if (sourceLimit && (file.size > sourceLimit || !/\.(mp3|wav|ogg)$/i.test(file.name)))
+        throw new Error();
       context = new AudioContext();
       contexts.current.add(context);
       const buffer = await context.decodeAudioData(await file.arrayBuffer());
@@ -140,7 +149,8 @@ export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
     settings.fadeOut >= 0 &&
     settings.fadeIn <= settings.end - settings.start &&
     settings.fadeOut <= settings.end - settings.start;
-  const valid = count > 0 && effectsValid;
+  const valid =
+    count > 0 && effectsValid && (!durationLimit || settings.end - settings.start <= durationLimit);
   const current =
     result?.source === source && result?.settings === settings && result?.mode === exportMode
       ? result
@@ -242,6 +252,13 @@ export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
     hasResult: Boolean(current),
     name,
   });
+  useEffect(() => {
+    onExport?.(
+      state === "ready" && !loadError && current
+        ? { kind: "audio", name, parts: current.parts }
+        : undefined,
+    );
+  }, [state, loadError, current, name, onExport]);
   return (
     <div className="studio-editor">
       <StudioWorkflow kind="audio" hasSource={Boolean(source)} state={state} t={t} />
@@ -461,6 +478,7 @@ export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
                         ? t("開始（秒）", "Start (seconds)")
                         : t("結束（秒）", "End (seconds)")}
                       <input
+                        className="ui-control"
                         type="number"
                         aria-invalid={!count}
                         aria-describedby={!count ? "audio-range-error" : "audio-range-hint"}
@@ -531,7 +549,7 @@ export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
                   )}
                 />
                 <details className="studio-advanced">
-                  <summary>{t("聲音修飾", "Sound finishing")}</summary>
+                  <summary className="ui-disclosure">{t("聲音修飾", "Sound finishing")}</summary>
                   {exportMode === "sequence" && (
                     <p className="control-hint">
                       {t(
@@ -540,8 +558,9 @@ export function AudioTool({ t, active }: { t: Translate; active: boolean }) {
                       )}
                     </p>
                   )}
-                  <label className="studio-check">
+                  <label className="studio-check ui-choice-label">
                     <input
+                      className="ui-choice"
                       type="checkbox"
                       checked={settings.normalize}
                       onChange={(e) => update({ normalize: e.target.checked })}

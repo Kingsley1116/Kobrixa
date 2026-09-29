@@ -387,6 +387,7 @@ export function Waveform({
           ←
         </button>
         <input
+          className="ui-range"
           type="range"
           aria-label={t("移動檢視範圍", "Move visible range")}
           min={0}

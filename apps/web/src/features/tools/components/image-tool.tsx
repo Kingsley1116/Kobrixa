@@ -1,3 +1,4 @@
+import type { GalleryEditorProps } from "../../../shared/gallery.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertImage, demoImage } from "../lib/media-browser.js";
 import { clamp, DEFAULT_IMAGE, imageGeometry } from "../lib/media-processing.js";
@@ -15,7 +16,12 @@ import {
 import { exportState } from "../lib/tools-state.js";
 import type { Translate } from "./tools-ui.js";
 
-export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
+export function ImageTool({
+  t,
+  active,
+  onExport,
+  sourceLimit,
+}: { t: Translate; active: boolean } & GalleryEditorProps) {
   const [source, setSource] = useState<{
     image: HTMLImageElement;
     url: string;
@@ -53,6 +59,7 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
     const url = URL.createObjectURL(file);
     urls.current.add(url);
     try {
+      if (sourceLimit && file.size > sourceLimit) throw new Error();
       if (!/^image\/(png|jpeg|webp)$/.test(file.type) && !/\.(png|jpe?g|webp)$/i.test(file.name))
         throw new Error();
       const image = new Image();
@@ -166,6 +173,13 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
     hasResult: Boolean(result),
     name,
   });
+  useEffect(() => {
+    onExport?.(
+      state === "ready" && !error && result
+        ? { kind: "image", name, parts: [result.bytes] }
+        : undefined,
+    );
+  }, [state, error, result, name, onExport]);
   return (
     <div className="studio-editor">
       <StudioWorkflow kind="image" hasSource={Boolean(source)} state={state} t={t} />
@@ -385,6 +399,7 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
                     key={mode}
                   >
                     <input
+                      className="ui-choice"
                       type="radio"
                       name="image-mode"
                       value={mode}
@@ -419,7 +434,9 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
                 </p>
               ) : null}
               <details className="threshold-guide">
-                <summary>{t("什麼是黑白閾值？", "What is a threshold?")}</summary>
+                <summary className="ui-disclosure">
+                  {t("什麼是黑白閾值？", "What is a threshold?")}
+                </summary>
                 <p>
                   {t(
                     "每個像素都有 0（黑）到 255（白）的亮度。低於閾值變黑，其餘變白；提高閾值，就有更多區域變黑。",
@@ -492,8 +509,9 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
                       )}
                 </p>
               </fieldset>
-              <label className="studio-check">
+              <label className="studio-check ui-choice-label">
                 <input
+                  className="ui-choice"
                   type="checkbox"
                   checked={settings.invert}
                   onChange={(e) => update({ invert: e.target.checked })}
@@ -501,11 +519,12 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
                 {t("反色（交換黑白）", "Invert black & white")}
               </label>
               <details className="studio-advanced">
-                <summary>{t("進階調整", "Fine-tune")}</summary>
+                <summary className="ui-disclosure">{t("進階調整", "Fine-tune")}</summary>
                 <div className="size-controls">
                   <label>
                     {t("寬度", "Width")}
                     <input
+                      className="ui-control"
                       type="number"
                       aria-invalid={!valid}
                       aria-describedby={
@@ -523,6 +542,7 @@ export function ImageTool({ t, active }: { t: Translate; active: boolean }) {
                   <label>
                     {t("高度", "Height")}
                     <input
+                      className="ui-control"
                       type="number"
                       aria-invalid={!valid}
                       aria-describedby={

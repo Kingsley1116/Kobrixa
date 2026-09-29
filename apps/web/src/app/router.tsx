@@ -1,3 +1,5 @@
+import { LegalPage } from "../features/legal/legal-page.js";
+import { GalleryPage } from "../features/gallery/gallery-page.js";
 import { useEffect } from "react";
 import { createBrowserRouter, useLocation, useOutletContext } from "react-router";
 import { FeaturesPage, DownloadPage } from "../features/product/product-pages.js";
@@ -7,7 +9,11 @@ import { DocsPage } from "../features/docs/docs-page.js";
 import { App } from "./app.js";
 import type { PageContext } from "./app.js";
 
-function Page({ page }: { page: "home" | "features" | "download" | "tools" | "docs" }) {
+function Page({
+  page,
+}: {
+  page: "home" | "features" | "download" | "tools" | "docs" | "gallery" | "terms" | "privacy";
+}) {
   const props = useOutletContext<PageContext>();
   const { pathname } = useLocation();
   useEffect(() => {
@@ -19,6 +25,11 @@ function Page({ page }: { page: "home" | "features" | "download" | "tools" | "do
   }, [page, props.locale]);
 
   switch (page) {
+    case "terms":
+    case "privacy":
+      return <LegalPage {...props} kind={page} />;
+    case "gallery":
+      return <GalleryPage {...props} />;
     case "features":
       return <FeaturesPage {...props} />;
     case "download":
@@ -40,6 +51,9 @@ export const router = createBrowserRouter([
       { path: "features", element: <Page page="features" /> },
       { path: "download", element: <Page page="download" /> },
       { path: "tools", element: <Page page="tools" /> },
+      { path: "terms", element: <Page page="terms" /> },
+      { path: "privacy", element: <Page page="privacy" /> },
+      { path: "gallery/*", element: <Page page="gallery" /> },
       { path: "docs/*", element: <Page page="docs" /> },
       { path: "*", element: <Page page="home" /> },
     ],

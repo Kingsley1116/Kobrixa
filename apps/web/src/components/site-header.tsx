@@ -2,13 +2,14 @@ import { Link, NavLink } from "react-router";
 import "./site-header.css";
 
 type Locale = "zh-TW" | "en";
-type Page = "home" | "features" | "docs" | "tools" | "download";
+type Page = "home" | "features" | "docs" | "tools" | "download" | "gallery" | "terms" | "privacy";
 const labels = {
   "zh-TW": {
     home: "首頁",
     features: "功能",
     docs: "文件",
     tools: "工具",
+    gallery: "素材庫",
     download: "下載",
     navigation: "主要導覽",
     language: "English",
@@ -19,6 +20,7 @@ const labels = {
     features: "Features",
     docs: "Docs",
     tools: "Tools",
+    gallery: "Gallery",
     download: "Download",
     navigation: "Main navigation",
     language: "繁中",
@@ -30,6 +32,7 @@ const links = [
   { key: "features", href: "/features" },
   { key: "docs", href: "/docs" },
   { key: "tools", href: "/tools" },
+  { key: "gallery", href: "/gallery" },
   { key: "download", href: "/download" },
 ] as const;
 

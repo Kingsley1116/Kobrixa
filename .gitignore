@@ -12,3 +12,15 @@
 *.log
 *.tsbuildinfo
 .DS_Store
+
+**/.wrangler
+**/.dev.vars
+**/.dev.vars.*
+!**/.dev.vars.example
+apps/web/worker-configuration.d.ts
+
+# Local credentials; only sanitized example templates may be committed.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example

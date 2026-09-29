@@ -3,6 +3,23 @@
   "name": "kobrixa-web",
   "compatibility_date": "2026-09-06",
   "workers_dev": true,
+  "main": "worker/index.ts",
+  "observability": { "enabled": true },
+  "vars": {
+    "SITE_ORIGIN": "https://kobrixa.com",
+    "GITHUB_CLIENT_ID": "Ov23livTiYuel1HpXqSL",
+    "GALLERY_ADMIN_IDS": "93391504",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kobrixa-gallery",
+      "database_id": "b91637b2-82ee-4132-b5f7-5653469fc764",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "kobrixa-gallery" }],
+  "triggers": { "crons": ["17 3 * * *"] },
   "routes": [
     {
       "pattern": "kobrixa.com",
@@ -11,6 +28,8 @@
   ],
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
     "not_found_handling": "single-page-application",
   },
 }

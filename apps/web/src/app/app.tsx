@@ -1,3 +1,4 @@
+import { SiteFooter } from "../components/site-footer.js";
 import { useEffect, useRef, useState } from "react";
 import { Outlet, ScrollRestoration, useLocation } from "react-router";
 
@@ -33,6 +34,7 @@ export function App() {
   return (
     <>
       <Outlet context={{ locale, onLocaleChange: setLocale } satisfies PageContext} />
+      <SiteFooter locale={locale} />
       <ScrollRestoration />
     </>
   );

@@ -1,0 +1,15 @@
+.policy-notice {
+  margin: 16px 0;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #526177;
+}
+.policy-notice a {
+  color: #2457d6;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.policy-notice a:focus-visible {
+  outline: 3px solid #86a7fb;
+  outline-offset: 3px;
+}

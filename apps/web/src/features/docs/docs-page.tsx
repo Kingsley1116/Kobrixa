@@ -220,7 +220,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
         </AppLink>
       </section>
       <details open={inSection("/docs/tutorial")}>
-        <summary>{t.course}</summary>
+        <summary className="ui-disclosure">{t.course}</summary>
         <AppLink className={`sidebar-parent ${active("/docs/tutorial")}`} href="/docs/tutorial">
           {t.overview}
         </AppLink>
@@ -236,7 +236,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
         ))}
       </details>
       <details open={inSection("/docs/reference/basic-plus")}>
-        <summary>{t.basicPlus}</summary>
+        <summary className="ui-disclosure">{t.basicPlus}</summary>
         <AppLink
           className={`sidebar-parent ${active("/docs/reference/basic-plus")}`}
           href="/docs/reference/basic-plus"
@@ -247,7 +247,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
           className="sidebar-syntax-group"
           open={activePath.startsWith("/docs/reference/basic-plus/syntax/")}
         >
-          <summary>{t.syntax}</summary>
+          <summary className="ui-disclosure">{t.syntax}</summary>
           {syntaxEntries.map((entry) => (
             <AppLink
               className={`sidebar-child ${active(`/docs/reference/basic-plus/syntax/${entry.slug}`)}`}
@@ -270,7 +270,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
               open={operations.some((operation) => activePath === apiRoute(operation))}
               key={category}
             >
-              <summary>{label}</summary>
+              <summary className="ui-disclosure">{label}</summary>
               {namespaces.map((namespace) => {
                 const members = operations.filter((operation) =>
                   operation.name.startsWith(`${namespace}.`),
@@ -281,7 +281,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
                     open={members.some((operation) => activePath === apiRoute(operation))}
                     key={namespace}
                   >
-                    <summary>{namespace}</summary>
+                    <summary className="ui-disclosure">{namespace}</summary>
                     {members.map((operation) => (
                       <AppLink
                         aria-label={operation.name}
@@ -308,7 +308,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
           )
         }
       >
-        <summary>{t.productDocs}</summary>
+        <summary className="ui-disclosure">{t.productDocs}</summary>
         {documents
           .filter((document) => document.category === "product")
           .map((document) => (
@@ -331,7 +331,7 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
           )
         }
       >
-        <summary>{t.technicalDocs}</summary>
+        <summary className="ui-disclosure">{t.technicalDocs}</summary>
         {documents
           .filter((document) => document.category === "technical")
           .map((document) => (

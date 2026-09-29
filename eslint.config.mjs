@@ -11,6 +11,8 @@ export default tseslint.config(
       "**/coverage/**",
       ".corepack/**",
       "node_modules/**",
+      "**/worker-configuration.d.ts",
+      "**/.wrangler/**",
     ],
   },
   js.configs.recommended,

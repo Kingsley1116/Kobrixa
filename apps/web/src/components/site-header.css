@@ -144,10 +144,12 @@
     width: 100%;
     margin: 0;
     min-height: 44px;
-    gap: 20px;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
   }
   .app-navbar-links a {
-    font-size: 12px;
+    font-size: clamp(10px, 3vw, 12px);
     padding: 0;
   }
 }

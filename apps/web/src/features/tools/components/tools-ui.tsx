@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { validFileName } from "../lib/tools-state.js";
 import type { ExportState } from "../lib/tools-state.js";
 export type Translate = (zh: string, en: string) => string;
@@ -75,6 +75,7 @@ export function Range({
         <label htmlFor={id}>{label}</label>
         <div className="number-unit">
           <input
+            className="ui-control"
             aria-label={label}
             aria-invalid={invalid}
             aria-describedby={description}
@@ -89,9 +90,15 @@ export function Range({
         </div>
       </div>
       <input
+        className="ui-range"
         id={id}
         aria-describedby={description}
         type="range"
+        style={
+          {
+            "--ui-progress": `${Number.isFinite(value) && max > min ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100)) : 0}%`,
+          } as CSSProperties
+        }
         min={min}
         max={max}
         step={step}
@@ -368,6 +375,7 @@ export function DownloadCard({
           {t("檔案名稱", "File name")}
           <div>
             <input
+              className="ui-control"
               aria-label={t("檔案名稱", "File name")}
               aria-invalid={!valid}
               aria-describedby={!valid ? `${id}-name-error` : undefined}
@@ -416,7 +424,9 @@ export function DownloadCard({
       )}
       {children}
       <details className="usage-details">
-        <summary>{t("如何在 Kobrixa 使用？", "How do I use this in Kobrixa?")}</summary>
+        <summary className="ui-disclosure">
+          {t("如何在 Kobrixa 使用？", "How do I use this in Kobrixa?")}
+        </summary>
         <p>
           {usageIntro ??
             t(

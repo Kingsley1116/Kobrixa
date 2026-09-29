@@ -1,3 +1,4 @@
+import { Select } from "../../components/ui/select.js";
 import { AppLink } from "../../components/app-link.js";
 import { useSearchParams } from "react-router";
 import { useEffect, useMemo, useState } from "react";
@@ -1737,23 +1738,24 @@ function Index({ locale }: { locale: DocsLocale }) {
           <label>
             <span>{c.search}</span>
             <input
+              className="ui-control"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Motor.Start"
             />
           </label>
-          <select
+          <Select
             value={category}
-            onChange={(event) => setCategory(event.target.value)}
-            aria-label={c.all}
-          >
-            <option value="all">{c.all}</option>
-            {Object.entries(labels).map(([key, label]) => (
-              <option value={key} key={key}>
-                {locale === "zh-TW" ? label[0] : label[1]}
-              </option>
-            ))}
-          </select>
+            onValueChange={setCategory}
+            label={c.all}
+            options={[
+              { value: "all", label: c.all },
+              ...Object.entries(labels).map(([key, label]) => ({
+                value: key,
+                label: locale === "zh-TW" ? label[0] : label[1],
+              })),
+            ]}
+          />
         </div>
         {rows.length ? (
           <div className="api-index-list">

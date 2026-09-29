@@ -57,13 +57,6 @@ const copy = {
       install: "閱讀安裝說明",
       status: "候選版 · 三平台硬體驗證中",
     },
-    footer: {
-      description: "一個獨立、開源的 EV3 程式開發環境。",
-      docs: "文件",
-      license: "Apache License 2.0",
-      trademark:
-        "LEGO、MINDSTORMS 與 EV3 是 LEGO Group 的商標。Kobrixa 與 LEGO Group 無隸屬、認可或贊助關係。",
-    },
   },
   en: {
     hero: {
@@ -134,13 +127,6 @@ const copy = {
       soon: "Coming soon",
       install: "Read installation guide",
       status: "Candidate · hardware validation in progress",
-    },
-    footer: {
-      description: "An independent, open-source programming environment for EV3.",
-      docs: "Documentation",
-      license: "Apache License 2.0",
-      trademark:
-        "LEGO, MINDSTORMS, and EV3 are trademarks of the LEGO Group. Kobrixa is not affiliated with, endorsed by, or sponsored by the LEGO Group.",
     },
   },
 } as const;
@@ -359,36 +345,6 @@ export function HomePage({
           </div>
         </section>
       </main>
-
-      <footer>
-        <div className="footer-brand">
-          <img className="brand-mark" src="/icons/kobrixa-mark.svg" alt="" aria-hidden="true" />
-          <div>
-            <strong>Kobrixa</strong>
-            <p>{t.footer.description}</p>
-          </div>
-        </div>
-        <div className="footer-links">
-          <AppLink href="/features">{locale === "zh-TW" ? "功能" : "Features"}</AppLink>
-          <AppLink href="/download">{locale === "zh-TW" ? "下載" : "Download"}</AppLink>
-          <AppLink href="/tools">{locale === "zh-TW" ? "工具" : "Tools"}</AppLink>
-          <AppLink href="/docs">{t.footer.docs}</AppLink>
-          <AppLink
-            href={`${github}/tree/main/docs/${locale === "zh-TW" ? "zh-TW" : "en"}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub {t.footer.docs} ↗
-          </AppLink>
-          <AppLink href={github} target="_blank" rel="noreferrer">
-            GitHub
-          </AppLink>
-          <AppLink href={`${github}/blob/main/LICENSE`} target="_blank" rel="noreferrer">
-            {t.footer.license}
-          </AppLink>
-        </div>
-        <p className="trademark">{t.footer.trademark}</p>
-      </footer>
     </>
   );
 }

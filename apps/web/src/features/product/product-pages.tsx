@@ -10,33 +10,6 @@ const github = "https://github.com/Kingsley1116/Kobrixa";
 const buildCommands = `git clone ${github}.git\ncd Kobrixa\npnpm install\npnpm dev`;
 const mediaCode =
   'LCD.Clear()\nLCD.BmpFile(1, 0, 0, "assets/deploy/kobrixa-mascot")\nLCD.Update()\nSpeaker.Play(35, "assets/deploy/kobrixa-chime")\nSpeaker.Wait()';
-function PageFooter({ locale }: { locale: Locale }) {
-  const zh = locale === "zh-TW";
-  return (
-    <div className="product-footer">
-      <AppLink className="product-footer-brand" href="/">
-        <img src="/icons/kobrixa-mark.svg" alt="" />
-        Kobrixa
-      </AppLink>
-      <p>
-        {zh
-          ? "獨立、開源的 EV3 程式開發環境。"
-          : "An independent, open-source programming environment for EV3."}
-      </p>
-      <div>
-        <AppLink href="/docs">{zh ? "文件" : "Docs"}</AppLink>
-        <AppLink href={`${github}/blob/main/LICENSE`} target="_blank" rel="noreferrer">
-          Apache-2.0 ↗
-        </AppLink>
-      </div>
-      <small>
-        {zh
-          ? "Kobrixa 與 LEGO Group 無隸屬、認可或贊助關係。"
-          : "Kobrixa is not affiliated with, endorsed by, or sponsored by the LEGO Group."}
-      </small>
-    </div>
-  );
-}
 export function FeaturesPage({ locale, onLocaleChange }: Props) {
   const t = (zh: string, en: string) => (locale === "zh-TW" ? zh : en);
   useEffect(() => {
@@ -221,7 +194,6 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
             {t("查看開發路線圖", "View the roadmap")} →
           </AppLink>
         </section>
-        <PageFooter locale={locale} />
       </main>
     </>
   );
@@ -415,7 +387,6 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
             {t("開啟工具", "Open tools")} →
           </AppLink>
         </div>
-        <PageFooter locale={locale} />
       </main>
     </>
   );
