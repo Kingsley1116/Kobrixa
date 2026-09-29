@@ -51,7 +51,8 @@ pnpm --filter @kobrixa/web build
 ## Community Gallery
 
 Production: [kobrixa.com/gallery](https://kobrixa.com/gallery). Deployed on
-2026-09-24 with Worker version `bff3c938-3341-4f10-8790-74a76933a7b1` (shared controls across Gallery, tools, and documentation).
+2026-09-29 with Worker version `0eb45157-e081-427c-9720-209091c8da3c` (redesigned shared footer and aligned legal-page layout), from Git commit `9475456`.
+Previous production version for rollback: `f0559852-25e0-4be9-8f15-a0c81cce59b7` (terms/privacy pages).
 Stable version before the shared-controls update for rollback: `3d686fa6-fe64-4f0a-a804-bada65ef3829`.
 Pre-Gallery website version: `ce816d79-1a24-4fd4-b5c2-f93ff63fab35`.
 

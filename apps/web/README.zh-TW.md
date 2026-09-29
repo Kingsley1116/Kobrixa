@@ -51,8 +51,9 @@ pnpm --filter @kobrixa/web build
 ## 社群素材庫（Gallery）
 
 正式網站：[kobrixa.com/gallery](https://kobrixa.com/gallery)。
-2026-09-24 部署的 Worker 版本為 `bff3c938-3341-4f10-8790-74a76933a7b1`
-（Gallery、工具及文件頁的共用控制項更新）。
+2026-09-29 部署的 Worker 版本為 `0eb45157-e081-427c-9720-209091c8da3c`
+（新版共用頁尾及法律頁對齊），來源 Git commit 為 `9475456`。
+本次更新前、可供回復的正式版本為 `f0559852-25e0-4be9-8f15-a0c81cce59b7`（條款與隱私頁）。
 共用控制項更新前、可供回復的穩定版本為 `3d686fa6-fe64-4f0a-a804-bada65ef3829`。
 加入 Gallery 前的網站版本為 `ce816d79-1a24-4fd4-b5c2-f93ff63fab35`。
 
