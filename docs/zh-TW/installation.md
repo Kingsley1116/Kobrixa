@@ -49,7 +49,7 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 **CI** workflow 會在 pull request、push 到 `main` 與手動執行時啟動。共通格式、根目錄設定的 lint 及 CI 分流測試在 Ubuntu 執行一次，產品檢查依完整 Git 差異分流：
 
 - `apps/web/` 與 `docs/` 變更：執行網站型別／lint、前端／IR 與 Worker 測試，以及網站建置。
-- `apps/desktop/`、`examples/`、`tests/`、桌面工具及桌面 release workflow 變更：在 Ubuntu 24.04 x64、Windows 2025 x64、macOS 26 arm64 執行桌面檢查、核心／桌面測試與封裝。此矩陣不執行網站測試。
+- `apps/desktop/`、`examples/`、`tests/`、桌面工具及桌面 release workflow 變更：在 Ubuntu 24.04 x64、Windows Server 2022 x64 (Visual Studio 2022)、macOS 26 arm64 執行桌面檢查、核心／桌面測試與封裝。此矩陣不執行網站測試。
 - 共用套件、語言前端、素材、鎖檔、根目錄設定與 CI 工具變更：兩邊都驗證。未識別路徑也會跑兩邊；只有根目錄 README、貢獻說明或授權文件變更時，只跑共通檢查。
 - 手動執行一律跑兩邊；比較歷史不可用時也跑兩邊。重新命名和刪除會計入原本路徑。
 

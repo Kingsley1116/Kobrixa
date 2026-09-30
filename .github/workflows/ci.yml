@@ -74,7 +74,8 @@ jobs:
           - os: ubuntu-24.04
             platform: linux
             arch: x64
-          - os: windows-2025
+          # Electron's pinned node-gyp does not support Visual Studio 2026 yet.
+          - os: windows-2022
             platform: win32
             arch: x64
           - os: macos-26

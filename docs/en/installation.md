@@ -49,7 +49,7 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 The **CI** workflow runs on pull requests, pushes to `main`, and manual dispatches. Common formatting, root-config lint and CI-routing tests run once on Ubuntu. Product checks are selected from the complete Git diff:
 
 - `apps/web/` and `docs/` changes run website type/lint checks, frontend/IR and Worker tests, and the website build.
-- `apps/desktop/`, `examples/`, `tests/`, desktop tools and the desktop release workflow run desktop checks, core/desktop tests and packaging on Ubuntu 24.04 x64, Windows 2025 x64 and macOS 26 arm64. Website tests do not run in this matrix.
+- `apps/desktop/`, `examples/`, `tests/`, desktop tools and the desktop release workflow run desktop checks, core/desktop tests and packaging on Ubuntu 24.04 x64, Windows Server 2022 x64 (Visual Studio 2022) and macOS 26 arm64. Website tests do not run in this matrix.
 - Shared packages, language frontends, assets, lockfiles, root configuration and CI tooling run both products. Unknown paths also run both. Root README/contribution/license-only changes run common checks.
 - Manual dispatch always runs both. Missing comparison history falls back to both. Renames and deletions include their original paths.
 
