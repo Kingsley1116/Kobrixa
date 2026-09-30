@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import type { Locale } from "../i18n/copy.js";
 import { selectVisible, updateSelection } from "./selection.js";
 import { focusableElements } from "./modal.js";
+import { Icon } from "./icon.js";
 
 export interface PickerOption<T extends string | number> {
   value: T;
@@ -339,7 +340,7 @@ export function Picker<T extends string | number>(props: PickerProps<T>): React.
                 ? `${selected.length} ${zh ? "項已選取" : "selected"}`
                 : (options.find((option) => option.value === props.value)?.label ?? label)}
             </span>
-            <span aria-hidden="true">⌄</span>
+            <Icon name="chevron-down" />
           </>
         )}
       </button>

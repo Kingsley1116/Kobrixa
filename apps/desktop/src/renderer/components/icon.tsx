@@ -11,6 +11,7 @@ export function Icon({
     | "device"
     | "code"
     | "arrow"
+    | "chevron-down"
     | "settings"
     | "language";
 }): React.JSX.Element {
@@ -27,6 +28,7 @@ export function Icon({
     device: "M6 3h12v18H6ZM9 6h6v5H9Zm1 10h4m-2-2v4",
     code: "m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16",
     arrow: "M4 12h16m-6-6 6 6-6 6",
+    "chevron-down": "m6 9 6 6 6-6",
   };
   return (
     <svg
