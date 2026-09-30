@@ -72,7 +72,12 @@ export async function prepareRelease(github, tag, sha, modes = unsigned) {
   const body = notes(tag, sha, "建置中 / Building — incomplete, do not publish.", "", modes);
   if (release) {
     assertDraft(release, tag, sha, modes);
-    await github.edit(release.id, { name: `${tag} — 建置中`, body });
+    await github.edit(release.id, {
+      tag_name: tag,
+      target_commitish: sha,
+      name: `${tag} — 建置中`,
+      body,
+    });
   } else {
     await github.create(tag, sha, body, parseVersion(tag.slice(1)).prerelease);
   }
@@ -93,6 +98,8 @@ export async function finalizeRelease(github, tag, sha, results, modes = unsigne
       const release = await github.getRelease(tag);
       assertDraft(release, tag, sha, modes);
       await github.edit(release.id, {
+        tag_name: tag,
+        target_commitish: sha,
         name: `${tag} — 未完成`,
         body: notes(
           tag,
@@ -111,6 +118,10 @@ export async function finalizeRelease(github, tag, sha, results, modes = unsigne
   // Finalize can itself be rerun. Clear a previous ready status before any
   // download or checksum operation that may now fail.
   await github.edit(release.id, {
+    // Omitting tag_name can turn a draft into an untagged release, breaking
+    // the download below. Preserve the verified identity on every update.
+    tag_name: tag,
+    target_commitish: sha,
     name: `${tag} — 建置中`,
     body: notes(
       tag,
@@ -132,6 +143,8 @@ export async function finalizeRelease(github, tag, sha, results, modes = unsigne
     await github.assertTag(tag, sha);
     assertDraft(await github.getRelease(tag), tag, sha, modes);
     await github.edit(release.id, {
+      tag_name: tag,
+      target_commitish: sha,
       name: `${tag} — 待發布`,
       body: notes(
         tag,

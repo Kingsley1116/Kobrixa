@@ -48,12 +48,14 @@ function mockGithub(existing = null) {
     async edit(id, fields) {
       assert.equal(id, release.id);
       calls.push("edit");
-      Object.assign(release, fields);
+      // GitHub can detach a draft from its tag when an update omits tag_name.
+      Object.assign(release, { tag_name: fields.tag_name ?? "untagged-fixture" }, fields);
     },
     async upload() {
       calls.push("upload");
     },
-    async download(_tag, directory) {
+    async download(actualTag, directory) {
+      assert.equal(release.tag_name, actualTag, "Release is no longer available by tag");
       calls.push("download");
       for (const { name } of assets.filter(({ name }) => !name.endsWith(".sha256"))) {
         const file = path.join(directory, name);
@@ -112,6 +114,25 @@ test("rejects moved tags before release mutation", async () => {
   };
   await assert.rejects(prepareRelease(github, tag, sha), /tag moved/);
   assert.deepEqual(github.calls, []);
+});
+
+test("preserves the tag and source commit across every draft status update", async () => {
+  const github = mockGithub();
+  await prepareRelease(github, tag, sha);
+  await prepareRelease(github, tag, sha);
+  assert.equal(github.release.tag_name, tag);
+  assert.equal(github.release.target_commitish, sha);
+  await assert.rejects(
+    finalizeRelease(github, tag, sha, { ...success, platform: { result: "failure" } }),
+    /did not succeed/,
+  );
+  assert.equal(github.release.tag_name, tag);
+  assert.equal(github.release.target_commitish, sha);
+  await finalizeRelease(github, tag, sha, success);
+  assert.equal(github.release.tag_name, tag);
+  assert.equal(github.release.target_commitish, sha);
+  assert.match(github.release.name, /待發布/);
+  assert.equal(github.release.draft, true);
 });
 
 test("missing, cancelled, failed and skipped checks cannot produce a ready draft", async () => {
