@@ -3,6 +3,7 @@
 Run `pnpm test:bytecode` from the repository root. This builds the compiler packages before Node's test runner executes the `*.test.mjs` files. The same suite is included in `pnpm test` and CI.
 
 - `compiler-regressions.test.mjs`: individually named source-to-RBF execution regressions.
+- `optimization.test.mjs`: optimized/unoptimized execution comparisons, function pruning and retained roots, nested threads, scalar copy forwarding, temporary/scratch-memory bounds, branch/loop liveness, deterministic output, and diagnostics in unused functions.
 - `array-lifetime.test.mjs`: repeated sensor polling under a 250-array budget, transfer-buffer cleanup, and preservation of arrays that escape a helper.
 - `example-bytecode.test.mjs`: literal-byte VM checks and all scenarios in the new-example and Clev3r-parity selection files.
 - `robot-bytecode.test.mjs`: project initialization, buttons, scheduling, gyro, camera, steering and odometry checks.
@@ -13,5 +14,7 @@ All tests run offline using the independent opcode schema in `fixtures/opcodes.j
 The VM's optional `maxArrayHandles` budget catches allocation leaks, reuses released handles, and rejects double deletion. The 250-array test budget is an upper bound derived from firmware `MAX_HANDLES`; a brick also uses handles for other memory pools and files. This is a resource regression check, not a full firmware memory model.
 
 Robot-control and movement tests compile the checked-in `fixtures/robot-control` project. They run by default without environment variables or external source files. Builds use temporary directories that are removed after compilation. Device operations use deterministic stubs.
+
+The robot fixture explicitly retains the movement and math helpers that tests invoke directly through the VM. Other optimizations remain enabled, and function IDs are resolved from the emitted listing.
 
 The report-producing CLI remains available through `tools/run-example-bytecode.mjs` and the existing `pnpm examples:audit` / `pnpm examples:parity:audit` commands. Those commands still accept external firmware tables and an output directory.

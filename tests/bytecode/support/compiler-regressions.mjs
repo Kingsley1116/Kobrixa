@@ -13,6 +13,19 @@ EndFunction
 `;
 export const compilerFixtures = [
   {
+    name: "computed delays keep their duration separate from the timer deadline",
+    source: `Time.Reset1()
+Wait(25)
+Wait(25)
+Wait(25)
+LCD.Text(1, 0, 0, 1, "Elapsed: " + Time.Get1())
+Function Wait(in number duration)
+  Program.Delay(duration)
+EndFunction
+`,
+    texts: ["Elapsed: 75"],
+  },
+  {
     name: "multiple array inputs and outputs use distinct native parameter slots",
     source: `a[0] = 11
 b[0] = 22
@@ -238,7 +251,7 @@ EndFunction
     texts: ["Result: 5"],
   },
 ];
-export async function runCompilerRegression(fixture, execute) {
+export async function runCompilerRegression(fixture, execute, backendOptions = {}) {
   const front = await new BasicPlusFrontend().compile(
     {
       root: "/audit",
@@ -258,7 +271,7 @@ export async function runCompilerRegression(fixture, execute) {
   );
   assert.deepEqual(front.diagnostics, [], fixture.name);
   assert.deepEqual(validateIR(front.ir), [], fixture.name);
-  const back = await new EV3Backend().compile(front.ir, new AbortController().signal);
+  const back = await new EV3Backend(backendOptions).compile(front.ir, new AbortController().signal);
   assert.deepEqual(back.diagnostics, [], fixture.name);
   const run = execute(back.rbf);
   assert.equal(run.status, "ended", fixture.name + ": " + run.error);

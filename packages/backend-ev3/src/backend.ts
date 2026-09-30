@@ -30,9 +30,10 @@ import { createRbf, inspectRbf, type RbfObject } from "./rbf.js";
 
 import { expandRecursiveCalls } from "./recursion.js";
 import { hasCallLocalArrays } from "./array-lifetime.js";
+import { patchJumps, type JumpPatch, type Label } from "./jumps.js";
+import { eliminateCopies, reachableFunctions, temporaryInterference } from "./optimization.js";
 
 const OBJECT_EPILOGUE = Symbol("object-epilogue");
-type Label = string | symbol;
 
 interface Allocation {
   offset: number;
@@ -43,12 +44,6 @@ interface Allocation {
 interface CallableFunction {
   fn: IRFunction;
   objectId: number;
-}
-
-interface Patch {
-  at: number;
-  after: number;
-  target: Label;
 }
 
 /** CLEV3R's standard string value capacity, including its terminating NUL. */
@@ -153,10 +148,12 @@ function buttonCode(value: IRValue): number | undefined {
 class ObjectAssembler {
   readonly bytes: number[] = [];
   readonly labels = new Map<Label, number>();
-  readonly patches: Patch[] = [];
+  readonly patches: JumpPatch[] = [];
   readonly allocations = new Map<string, Allocation>();
   readonly diagnostics: Diagnostic[] = [];
   localBytes = 0;
+  private scratchOffset = 0;
+  private scratchBase = 0;
   readonly callLocalArrayHandles: number[] = [];
   readonly reclaimLocalArrays: boolean;
 
@@ -175,6 +172,8 @@ class ObjectAssembler {
     readonly threadObjects: ReadonlyMap<string, number>,
     readonly mutexObjectId: number,
     readonly timerBaselines: number | undefined,
+    readonly optimize: boolean,
+    signal: AbortSignal,
     readonly runtimeDirectory?: string,
   ) {
     this.reclaimLocalArrays = hasCallLocalArrays(fn);
@@ -192,16 +191,41 @@ class ObjectAssembler {
             },
             ...fn.locals,
           ];
+    const interference = optimize
+      ? temporaryInterference(
+          fn,
+          new Map([...callables].map(([name, { fn }]) => [name, fn])),
+          signal,
+        )
+      : new Map<string, ReadonlySet<string>>();
+    const reusableSlots: Array<{ offset: number; kind: IRType["kind"]; names: string[] }> = [];
     for (const variable of variables) {
+      const name = variable.name.toLocaleLowerCase("en-US");
+      const conflicts = interference.get(name);
+      const slot =
+        conflicts &&
+        reusableSlots.find(
+          (candidate) =>
+            candidate.kind === variable.type.kind &&
+            candidate.names.every((other) => !conflicts.has(other)),
+        );
+      if (slot) {
+        this.allocations.set(name, { offset: slot.offset, type: variable.type, scope: "local" });
+        slot.names.push(name);
+        continue;
+      }
       const alignment = sizeOf(variable.type) >= 4 ? 4 : 1;
       this.localBytes = Math.ceil(this.localBytes / alignment) * alignment;
-      this.allocations.set(variable.name.toLocaleLowerCase("en-US"), {
+      this.allocations.set(name, {
         offset: this.localBytes,
         type: variable.type,
         scope: "local",
       });
+      if (conflicts)
+        reusableSlots.push({ offset: this.localBytes, kind: variable.type.kind, names: [name] });
       this.localBytes += sizeOf(variable.type);
     }
+    this.scratchOffset = this.scratchBase = this.localBytes;
   }
 
   assemble(signal: AbortSignal): Uint8Array {
@@ -222,11 +246,15 @@ class ObjectAssembler {
       if (this.hasLcdUpdateControl) this.bytes.push(OP.MOVE_32_32, ...lc(0), ...gv(4));
     }
     this.initializeArrays();
-    for (const block of this.fn.blocks) {
+    for (const [index, block] of this.fn.blocks.entries()) {
       signal.throwIfAborted();
       this.labels.set(block.id, this.bytes.length);
-      for (const instruction of block.instructions) this.instruction(instruction);
-      this.terminator(block);
+      for (const instruction of block.instructions) {
+        if (this.optimize) this.scratchOffset = this.scratchBase;
+        this.instruction(instruction);
+      }
+      if (this.optimize) this.scratchOffset = this.scratchBase;
+      this.terminator(block, this.fn.blocks[index + 1]?.id ?? OBJECT_EPILOGUE);
     }
     this.labels.set(OBJECT_EPILOGUE, this.bytes.length);
     for (const handle of this.callLocalArrayHandles)
@@ -241,10 +269,9 @@ class ObjectAssembler {
         );
         continue;
       }
-      const encoded = relativeOffset(target - patch.after);
-      this.bytes.splice(patch.at, encoded.length, ...encoded);
     }
-    return Uint8Array.from(this.bytes);
+    if (this.diagnostics.length) return Uint8Array.from(this.bytes);
+    return patchJumps(this.bytes, this.labels, this.patches, this.optimize, signal);
   }
 
   private parameter(value: IRValue): number[] | undefined {
@@ -323,6 +350,9 @@ class ObjectAssembler {
     const saved = this.scratch(4);
     this.bytes.push(OP.MOVE_16_32, ...handle, ...lv(saved));
     this.callLocalArrayHandles.push(saved);
+    // Cleanup reads this handle in the epilogue. Pin the region through this
+    // slot so instruction-scoped scratch reuse cannot overwrite it.
+    this.scratchBase = this.scratchOffset;
   }
 
   private stringArrayIndex(index: IRValue): number[] | undefined {
@@ -786,8 +816,9 @@ class ObjectAssembler {
   }
 
   private scratch(bytes: number): number {
-    const offset = Math.ceil(this.localBytes / 4) * 4;
-    this.localBytes = offset + bytes;
+    const offset = Math.ceil(this.scratchOffset / 4) * 4;
+    this.scratchOffset = offset + bytes;
+    this.localBytes = Math.max(this.localBytes, this.scratchOffset);
     return offset;
   }
 
@@ -2738,9 +2769,7 @@ class ObjectAssembler {
         this.bytes.push(OP.ARRAY_WRITE, ...gv(0), ...arg(0), ...lc(0));
         return;
       case "Program.Delay": {
-        const scratch = Math.ceil(this.localBytes / 4) * 4;
-        this.localBytes = scratch;
-        this.localBytes += 4;
+        const scratch = this.scratch(4);
         this.bytes.push(OP.TIMER_WAIT, ...arg(0), ...lv(scratch), OP.TIMER_READY, ...lv(scratch));
         return;
       }
@@ -3395,11 +3424,16 @@ class ObjectAssembler {
     );
   }
 
-  private terminator(block: IRBasicBlock): void {
+  private jump(target: Label, next: Label): void {
+    if (this.optimize && target === next) return;
+    this.bytes.push(OP.JR);
+    this.addPatch(target);
+  }
+
+  private terminator(block: IRBasicBlock, next: Label): void {
     const terminator = block.terminator;
     if (terminator.op === "stop") {
-      this.bytes.push(OP.JR);
-      this.addPatch(OBJECT_EPILOGUE);
+      this.jump(OBJECT_EPILOGUE, next);
       return;
     }
     if (terminator.op === "return") {
@@ -3442,8 +3476,7 @@ class ObjectAssembler {
           this.bytes.push(opcode, ...value, ...lv(result.offset));
         }
       }
-      this.bytes.push(OP.JR);
-      this.addPatch(OBJECT_EPILOGUE);
+      this.jump(OBJECT_EPILOGUE, next);
       return;
     }
     if (terminator.op === "jump") {
@@ -3453,16 +3486,29 @@ class ObjectAssembler {
       // A known target is a backwards edge because blocks are emitted in
       // source order, so yielding here preserves normal straight-line calls.
       if (this.isBackgroundThread && this.labels.has(terminator.target)) this.bytes.push(OP.SLEEP);
-      this.bytes.push(OP.JR);
-      this.addPatch(terminator.target);
+      this.jump(terminator.target, next);
       return;
+    }
+    if (this.optimize) {
+      if (terminator.condition.kind === "boolean") {
+        this.jump(terminator.condition.value ? terminator.whenTrue : terminator.whenFalse, next);
+        return;
+      }
+      if (terminator.whenTrue === terminator.whenFalse) {
+        this.jump(terminator.whenTrue, next);
+        return;
+      }
     }
     const condition = this.parameter(terminator.condition);
     if (!condition) return;
+    if (this.optimize && terminator.whenFalse === next) {
+      this.bytes.push(OP.JR_TRUE, ...condition);
+      this.addPatch(terminator.whenTrue);
+      return;
+    }
     this.bytes.push(OP.JR_FALSE, ...condition);
     this.addPatch(terminator.whenFalse);
-    this.bytes.push(OP.JR);
-    this.addPatch(terminator.whenTrue);
+    this.jump(terminator.whenTrue, next);
   }
 
   private addPatch(target: Label): void {
@@ -3472,11 +3518,54 @@ class ObjectAssembler {
   }
 }
 
+export interface EV3BackendOptions {
+  /** Disable all optimizations for output comparisons. */
+  optimize?: boolean;
+  /** Additional call-graph roots for tooling that invokes subcalls directly. */
+  retainFunctions?: readonly string[];
+}
+
 export class EV3Backend implements CompilerBackend {
   readonly id = "ev3-native" as const;
 
+  constructor(readonly options: EV3BackendOptions = {}) {}
+
   async compile(ir: KobrixaIR, signal: AbortSignal): Promise<BackendResult> {
-    ir = expandRecursiveCalls(ir);
+    signal.throwIfAborted();
+    const functions = new Map(ir.functions.map((fn) => [fn.name.toLocaleLowerCase("en-US"), fn]));
+    const retained = this.options.retainFunctions ?? [];
+    const diagnostics = retained
+      .filter((name) => !functions.has(name.toLocaleLowerCase("en-US")))
+      .map((name) => diagnostic("EV32003", `Unknown retained function '${name}'.`));
+    if (diagnostics.length) return { diagnostics };
+    if (this.options.optimize === false) return this.emit(expandRecursiveCalls(ir), signal, false);
+
+    // Check every source function before pruning or rewriting it. Reuse the
+    // actual lowerer, but discard code and avoid expanding unreachable recursion.
+    const checked = this.emit(ir, signal, false, true);
+    if (checked.diagnostics.length) return checked;
+    if (!functions.has(ir.program.entryFunction.toLocaleLowerCase("en-US")))
+      return {
+        diagnostics: [
+          diagnostic("EV32003", `Unknown entry function '${ir.program.entryFunction}'.`),
+        ],
+      };
+    const optimized = {
+      ...ir,
+      functions: reachableFunctions(ir, retained, signal).map((fn) =>
+        eliminateCopies(fn, functions, signal),
+      ),
+    };
+    return this.emit(expandRecursiveCalls(optimized), signal, true, false, ir);
+  }
+
+  private emit(
+    ir: KobrixaIR,
+    signal: AbortSignal,
+    optimize: boolean,
+    diagnosticsOnly = false,
+    storageIR = ir,
+  ): BackendResult {
     const diagnostics: Diagnostic[] = [];
     const objects: RbfObject[] = [];
     const listing: string[] = [];
@@ -3486,7 +3575,9 @@ export class EV3Backend implements CompilerBackend {
         { fn, objectId: index + 1 },
       ]),
     );
-    const hasMutexes = ir.functions.some((fn) =>
+    // Runtime support storage is based on the full input, keeping global
+    // offsets and initialization stable when unused functions are removed.
+    const hasMutexes = storageIR.functions.some((fn) =>
       fn.blocks.some((block) =>
         block.instructions.some(
           (instruction) =>
@@ -3495,7 +3586,7 @@ export class EV3Backend implements CompilerBackend {
         ),
       ),
     );
-    const hasLcdUpdateControl = ir.functions.some((fn) =>
+    const hasLcdUpdateControl = storageIR.functions.some((fn) =>
       fn.blocks.some((block) =>
         block.instructions.some(
           (instruction) =>
@@ -3516,7 +3607,7 @@ export class EV3Backend implements CompilerBackend {
       globalBytes += sizeOf(variable.type);
     }
     const mailboxAllocator = { next: 0 };
-    const hasTimers = ir.functions.some((fn) =>
+    const hasTimers = storageIR.functions.some((fn) =>
       fn.blocks.some((block) =>
         block.instructions.some(
           (instruction) =>
@@ -3552,10 +3643,13 @@ export class EV3Backend implements CompilerBackend {
         threadObjects,
         mutexObjectId,
         timerBaselines,
+        optimize,
+        signal,
         ir.program.runtimeDirectory,
       );
       const code = assembler.assemble(signal);
       diagnostics.push(...assembler.diagnostics);
+      if (diagnosticsOnly) continue;
       objects.push({
         // The main program is a VM thread. Every generated function is an
         // EV3 SUBCALL object and therefore needs its parameter descriptor
@@ -3575,12 +3669,14 @@ export class EV3Backend implements CompilerBackend {
         diagnostics.push(diagnostic("EV32030", `No thread Sub '${functionName}' was emitted.`));
         continue;
       }
+      if (diagnosticsOnly) continue;
       const code = Uint8Array.from([OP.CALL, ...lc(callable.objectId), ...lc(0), OP.OBJECT_END]);
       objects.push({ ownerObjectId: 0, triggerCount: 0, localBytes: 0, code });
       listing.push(
         `${objectId}\tthread:${functionName}\tlocals=0\t${[...code].map((byte) => byte.toString(16).padStart(2, "0")).join(" ")}`,
       );
     }
+    if (diagnosticsOnly) return { diagnostics };
     if (hasMutexes) {
       const write = [OP.ARRAY_WRITE, ...gv(0), ...lv(0), ...lc(1)];
       const code = Uint8Array.from([

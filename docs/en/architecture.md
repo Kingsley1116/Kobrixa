@@ -75,6 +75,10 @@ interface FrontendResult {
 
 `KobrixaIR` is versioned and typed. It carries declarations, primitive and aggregate types, functions, control-flow blocks, EV3 API calls, resource references, and source spans. Frontends must not inject raw backend bytecode. IR validation runs before backend lowering and rejects invalid control flow, unresolved symbols, unsupported types, and invalid EV3 operations.
 
+The EV3 backend optimizes native output by default: it omits jumps to the next block, simplifies literal boolean branches, uses the shortest valid relative-jump encoding, and reuses scratch memory between IR instructions. It also removes functions unreachable from the program entry or a reachable thread start before expanding recursion, forwards adjacent scalar temporary results to local destinations of the same type, and shares storage between same-type IR temporaries with non-overlapping lifetimes. Storage reuse requires a single pure definition that precedes every read on every path; arrays, named locals, parameters, call/API outputs, and values passed as output arguments keep independent slots. Input and output operands of one IR instruction never share a reusable slot.
+
+All source functions are lowered for diagnostics before pruning, so errors in unused functions are still reported. Global declarations and runtime support storage retain their layout and initialization. Values needed for array cleanup remain live through the function epilogue, and background-thread loop yields are preserved. `new EV3Backend({ optimize: false })` disables all optimizations for diagnostic comparisons. Tools that invoke subcalls directly can use `retainFunctions: ["helper"]` to keep additional functions and their call/thread dependencies without disabling optimization; names are case-insensitive and unknown names are errors in either mode. Both modes leave the input IR unchanged; the `.ir.json` artifact describes frontend output, while `.lst` records only emitted functions and support objects, their current object IDs, and local-memory sizes. Object IDs may change when functions are pruned.
+
 The public build result is:
 
 ```ts

@@ -21,9 +21,12 @@ export async function compileRobotFixture() {
       root: out,
       manifest: { ...loaded.project.manifest, outputDir: "build" },
     };
-    const build = await new BuildSession(new BasicPlusFrontend(), new EV3Backend()).compile(
-      project,
-    );
+    // These subcalls are exercised directly by the movement/robot tests even
+    // when the fixture's main object does not call them.
+    const backend = new EV3Backend({
+      retainFunctions: ["move_gyro", "move_time", "turn_gyro", "speed", "atan2_m90"],
+    });
+    const build = await new BuildSession(new BasicPlusFrontend(), backend).compile(project);
     assert.equal(build.success, true, JSON.stringify(build.diagnostics));
     assert.deepEqual(build.diagnostics, []);
     const rbf = await fs.readFile(build.artifacts.find((a) => a.kind === "rbf").path);
