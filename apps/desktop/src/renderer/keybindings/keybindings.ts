@@ -1,4 +1,5 @@
 import { COMMAND_LABELS } from "./command-labels.js";
+import { COMMAND_DESCRIPTIONS } from "./command-descriptions.js";
 import type { Locale } from "../i18n/copy.js";
 import {
   formatSequence,
@@ -56,6 +57,8 @@ export function appCommands(mac: boolean): KeyboardCommand[] {
 }
 export const commandLabel = (command: KeyboardCommand, locale: Locale): string =>
   COMMAND_LABELS[command.id]?.[locale === "zh-TW" ? 1 : 0] ?? command.label;
+export const commandDescription = (command: KeyboardCommand, locale: Locale): string =>
+  COMMAND_DESCRIPTIONS[command.id]?.[locale === "zh-TW" ? 1 : 0] ?? "";
 export function effectiveBindings(
   command: KeyboardCommand,
   overrides: KeybindingOverrides,

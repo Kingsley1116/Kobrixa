@@ -12,7 +12,8 @@ Object.defineProperty(document, "queryCommandSupported", {
 });
 import type * as Adapter from "./monaco-keybindings.js";
 import { COMMAND_LABELS } from "./command-labels.js";
-import { commandLabel } from "./keybindings.js";
+import { COMMAND_DESCRIPTIONS } from "./command-descriptions.js";
+import { commandDescription, commandLabel } from "./keybindings.js";
 let adapter: typeof Adapter;
 beforeAll(async () => {
   adapter = await import("./monaco-keybindings.js");
@@ -24,6 +25,22 @@ describe("Monaco 0.52.2 compatibility", () => {
         expect(COMMAND_LABELS[command.id], command.id).toBeDefined();
         expect(commandLabel(command, "zh-TW"), command.id).toMatch(/[\u3400-\u9fff]/);
         expect(commandLabel(command, "en"), command.id).not.toBe(command.id);
+      }
+    }
+  });
+  it("describes every real command in both languages, including unassigned commands", () => {
+    expect(Object.keys(COMMAND_DESCRIPTIONS).sort()).toEqual(Object.keys(COMMAND_LABELS).sort());
+    for (const mac of [true, false]) {
+      for (const command of adapter.editorCommandCatalog(mac)) {
+        expect(COMMAND_DESCRIPTIONS[command.id], command.id).toBeDefined();
+        for (const locale of ["en", "zh-TW"] as const) {
+          const description = commandDescription(command, locale);
+          expect(description.trim(), command.id).not.toBe("");
+          expect(description, command.id).not.toBe(commandLabel(command, locale));
+          expect(description, command.id).toMatch(
+            locale === "zh-TW" ? /[\u3400-\u9fff].*。$/ : /[a-z].*\.$/i,
+          );
+        }
       }
     }
   });

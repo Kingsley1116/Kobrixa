@@ -27,9 +27,9 @@ Open the Keyboard shortcuts category, or press **Mod+K**, then **Mod+S** within 
 
 Execution shortcuts use the same checks and save/build/device workflow as the toolbar. Hold-to-repeat does not start repeated operations. Unavailable commands do not bypass locks or dialogs.
 
-The list shows all IDE and bundled Monaco editor commands, including unassigned commands. Every command has a Traditional Chinese name in the Chinese interface. Expand a command name to see its English name, ID, applicability conditions and default shortcuts. IDE commands appear first; editor commands are sorted by their names in the current language.
+The list shows all IDE and bundled Monaco editor commands, including unassigned commands. Every command has an English and Traditional Chinese name and operation description. Descriptions appear below command names and in the shortcut editor, explaining the effect and any required command arguments or language providers. Expand a command name to see its English name, ID, applicability conditions and default shortcuts. IDE commands appear first; editor commands are sorted by their names in the current language.
 
-Search supports multiple keywords across Chinese and English names, command IDs and keys. Modifier aliases include `Cmd/Command/⌘`, `Ctrl/Control`, `Option/Alt/⌥`, `Shift/⇧` and platform-specific `Mod`. Combine searches with source (IDE or Editor) and status (Modified or Unassigned) filters. Unassigned includes intentionally unbound commands. Changing the interface language preserves your search and shortcut editing state.
+Search supports multiple keywords across Chinese and English names and descriptions, command IDs and keys. Modifier aliases include `Cmd/Command/⌘`, `Ctrl/Control`, `Option/Alt/⌥`, `Shift/⇧` and platform-specific `Mod`. Combine searches with source (IDE or Editor) and status (Modified or Unassigned) filters. Unassigned includes intentionally unbound commands. Changing the interface language preserves your search and shortcut editing state.
 
 **Search by shortcut** records the keys to look up. A single stroke matches either part of a shortcut; two strokes match the complete sequence in order. Recording does not run commands or change bindings. **Clear filters** returns to the full catalog.
 

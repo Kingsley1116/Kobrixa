@@ -213,6 +213,30 @@ app
       ),
       true,
     );
+    assert.equal(
+      await js(
+        'Array.from(document.querySelectorAll("[data-command-id]")).every(row=>/[\\u3400-\\u9fff]/.test(row.querySelector(".shortcut-description")?.textContent ?? ""))',
+      ),
+      true,
+    );
+    // Search descriptions in either language without losing the query on locale changes.
+    await js('searchShortcuts("磁碟")');
+    await until('document.querySelectorAll("[data-command-id]").length === 2');
+    assert.deepEqual(
+      await js(
+        'Array.from(document.querySelectorAll("[data-command-id]")).map(row=>row.dataset.commandId)',
+      ),
+      ["kobrixa.save", "kobrixa.saveAll"],
+    );
+    await js('smoke.settingsStore.set("locale","en")');
+    await until(
+      'document.querySelector(".shortcut-description").textContent.startsWith("Write the active file")',
+    );
+    assert.equal(await js('document.querySelector(".shortcut-search-line input").value'), "磁碟");
+    await js('searchShortcuts("DISK 磁碟")');
+    await until('document.querySelectorAll("[data-command-id]").length === 2');
+    await js('smoke.settingsStore.set("locale","zh-TW");searchShortcuts("")');
+    await until('document.querySelectorAll("[data-command-id]").length > 300');
     fs.writeFileSync(
       path.join(temporary, "shortcuts-zh-dark.png"),
       (await win.webContents.capturePage()).toPNG(),
@@ -261,6 +285,10 @@ app
         `document.querySelector('button[aria-label="Edit Save"]').focus();document.querySelector('button[aria-label="Edit Save"]').click()`,
       );
       await until('Boolean(document.querySelector(".shortcut-recorder"))');
+      assert.match(
+        await js('document.querySelector(".shortcut-recorder .shortcut-description").textContent'),
+        /active file.*disk/,
+      );
     };
     const resetCommand = async (id) => {
       await js(`document.querySelector('[data-command-id="${id}"] .more-button').click()`);

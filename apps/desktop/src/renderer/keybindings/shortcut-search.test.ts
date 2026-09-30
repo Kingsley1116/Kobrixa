@@ -22,8 +22,23 @@ const filter = (patch: Partial<ShortcutFilter>, overrides: KeybindingOverrides =
 describe("shortcut discovery", () => {
   it("searches Chinese, English and IDs together with multiple terms", () => {
     expect(filter({ query: "搜尋 find" })).toEqual(["actions.find"]);
-    expect(filter({ query: "  SAVE   儲存  " })).toEqual(["kobrixa.save", "kobrixa.saveAll"]);
+    expect(filter({ query: "  SAVE   儲存  " })).toEqual(
+      expect.arrayContaining(["kobrixa.save", "kobrixa.saveAll"]),
+    );
     expect(filter({ query: "actions.find" })).toEqual(["actions.find"]);
+  });
+  it("searches descriptions in either language and combines them with other filters", () => {
+    expect(filter({ query: "磁碟" })).toEqual(["kobrixa.save", "kobrixa.saveAll"]);
+    expect(filter({ query: "  DISK   磁碟 " })).toEqual(["kobrixa.save", "kobrixa.saveAll"]);
+    expect(filter({ query: "磁碟", status: "modified" }, { "kobrixa.save": [] })).toEqual([
+      "kobrixa.save",
+    ]);
+    expect(filter({ query: "磁碟", source: "editor" })).toEqual([]);
+    expect(
+      filterShortcuts(commands, {}, { ...EMPTY_SHORTCUT_FILTER, query: "磁碟" }, "en", true).map(
+        (command) => command.id,
+      ),
+    ).toEqual(["kobrixa.save", "kobrixa.saveAll"]);
   });
   it("normalizes platform modifiers without matching unrelated characters in command names", () => {
     for (const query of ["Cmd+S", "Command + S", "⌘S", "Mod+S", "meta s"])

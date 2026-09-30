@@ -1,6 +1,7 @@
 import { formatSequence, sequencesOverlap, type KeySequence } from "../../shared/keyboard.js";
 import {
   commandLabel,
+  commandDescription,
   effectiveBindings,
   type KeyboardCommand,
   type KeybindingOverrides,
@@ -112,6 +113,8 @@ export function filterShortcuts(
         [
           commandLabel(command, "zh-TW"),
           commandLabel(command, "en"),
+          commandDescription(command, "zh-TW"),
+          commandDescription(command, "en"),
           command.label,
           command.id,
           ...bindings.flatMap((keys) => [keys.join(" "), formatSequence(keys, mac)]),

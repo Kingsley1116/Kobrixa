@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   bindingProblem,
   commandLabel,
+  commandDescription,
   type KeyboardCommand,
   type KeySequence,
 } from "./keybindings.js";
@@ -195,8 +196,8 @@ export function ShortcutsPanel({
             type="search"
             aria-label={t("搜尋快捷鍵", "Search shortcuts")}
             placeholder={t(
-              `搜尋中英文命令、ID 或按鍵，例如 ${keyboard.mac ? "Command" : "Ctrl"} + S`,
-              `Search commands, IDs or keys, e.g. ${keyboard.mac ? "Command" : "Ctrl"} + S`,
+              `搜尋命令、說明、ID 或按鍵，例如 ${keyboard.mac ? "Command" : "Ctrl"} + S`,
+              `Search commands, descriptions, IDs or keys, e.g. ${keyboard.mac ? "Command" : "Ctrl"} + S`,
             )}
             value={filter.query}
             onChange={(event) => setFilter({ ...filter, query: event.target.value })}
@@ -309,6 +310,7 @@ export function ShortcutsPanel({
                     {bindingsView(uniqueSequences(command, {}))}
                   </div>
                 </details>
+                <p className="shortcut-description">{commandDescription(command, locale)}</p>
               </div>
               <div className="shortcut-keys" role="cell">
                 {bindingsView(bindings)}
@@ -376,6 +378,7 @@ export function ShortcutsPanel({
           titleId="shortcut-record-title"
           className="shortcut-recorder"
         >
+          <p className="shortcut-description">{commandDescription(editing.command, locale)}</p>
           {stack.length > 1 && (
             <p className="settings-hint">
               {t("完成或取消後，將返回：", "After applying or cancelling, return to: ")}
