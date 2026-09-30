@@ -56,7 +56,7 @@ void app.whenReady().then(() => {
         ...details.responseHeaders,
         "Content-Security-Policy": [
           MAIN_WINDOW_VITE_DEV_SERVER_URL
-            ? "default-src 'self' 'unsafe-inline' data: blob:; script-src 'self' 'unsafe-eval'; worker-src 'self' blob:"
+            ? "default-src 'self' 'unsafe-inline' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; worker-src 'self' blob:"
             : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; connect-src 'none'",
         ],
       },
