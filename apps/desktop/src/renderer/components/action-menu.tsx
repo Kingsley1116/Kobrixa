@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { focusFirstMenuItem, handleMenuKey } from "./menu-keyboard.js";
 
 export function ActionMenu({
   label,
@@ -14,7 +15,7 @@ export function ActionMenu({
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
-    root.current?.querySelector<HTMLButtonElement>("[role=menu] button:not(:disabled)")?.focus();
+    focusFirstMenuItem(root.current);
     const outside = (event: PointerEvent): void => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -29,28 +30,11 @@ export function ActionMenu({
         if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
+        if (!open) return;
+        handleMenuKey(event, root.current, () => {
           setOpen(false);
           trigger.current?.focus();
-        }
-        if (open && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-          event.preventDefault();
-          const items = [
-            ...(root.current?.querySelectorAll<HTMLButtonElement>(
-              "[role=menu] button:not(:disabled)",
-            ) ?? []),
-          ];
-          const index = items.indexOf(document.activeElement as HTMLButtonElement);
-          const next =
-            event.key === "Home"
-              ? 0
-              : event.key === "End"
-                ? items.length - 1
-                : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-          items[next]?.focus();
-        }
+        });
       }}
     >
       <button

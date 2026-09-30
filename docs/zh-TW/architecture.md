@@ -61,6 +61,8 @@ src/
 
 語言 worker 原始碼位於 `main/language`，Forge 仍將它輸出為與 `main.cjs` 同層的 `language-worker.cjs`。`styles/index.css` 明確保留工作台樣式先於快捷鍵樣式的載入順序。
 
+共用介面行為集中在 `renderer/components`：`Dialog` 以 `Modal` 為基礎，處理無障礙標題與表單送出，`DialogActions` 負責呼叫端提供的按鈕布局。驗證、忙碌狀態、初始焦點、關閉條件與焦點還原選項仍由各功能決定。`ClosableTab` 共用檔案／設定分頁呈現，`ResizeHandle` 管理滑鼠與鍵盤縮放及事件清理，`menu-keyboard` 提供操作選單與右鍵選單的鍵盤導覽。設定專用的 `SettingField`、`SettingSelect`、`SettingToggle` 留在 `renderer/settings`，統一關聯標籤與提示，不負責偏好保存。
+
 ## 專案 manifest
 
 每個專案使用 `kobrixa.json`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。

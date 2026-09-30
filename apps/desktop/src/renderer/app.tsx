@@ -1,3 +1,6 @@
+import { ResizeHandle } from "./components/resize-handle.js";
+import { ClosableTab } from "./components/closable-tab.js";
+import { Dialog, DialogActions } from "./components/dialog.js";
 import { useKeyboard } from "./keybindings/keyboard-state.js";
 import type { AppCommand } from "./keybindings/keybindings.js";
 import { FileWriteQueue, saveSnapshot } from "./workspace/save-coordinator.js";
@@ -49,7 +52,7 @@ import { Welcome } from "./workbench/welcome.js";
 import { Toolbar } from "./workbench/toolbar.js";
 import { DevicePanel } from "./device/device-panel.js";
 import { BottomPanel } from "./workbench/bottom-panel.js";
-import { Modal, isModalOpen, subscribeModals } from "./components/modal.js";
+import { isModalOpen, subscribeModals } from "./components/modal.js";
 import { settingsStore, useSettings } from "./settings/settings-state.js";
 import type { Settings } from "./settings/settings.js";
 import {
@@ -1153,91 +1156,10 @@ export function App(): React.JSX.Element {
     );
   }
 
-  function beginSidebarResize(
-    side: "files" | "device",
-    event: React.PointerEvent<HTMLDivElement>,
-  ): void {
-    event.currentTarget.focus();
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = side === "files" ? filesWidth : deviceWidth;
-    const limit = side === "files" ? LAYOUT_LIMITS.filesWidth : LAYOUT_LIMITS.deviceWidth;
-    const maximum = sidebarMaximum(side);
-    document.body.classList.add("is-resizing-horizontal");
-    const move = (pointerEvent: PointerEvent): void => {
-      const delta = pointerEvent.clientX - startX;
-      const next = clamp(startWidth + (side === "files" ? delta : -delta), limit.min, maximum);
-      if (side === "files") setFilesWidth(next);
-      else setDeviceWidth(next);
-    };
-    const finish = (): void => {
-      document.body.classList.remove("is-resizing-horizontal");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
-  }
-
-  function resizeSidebarWithKeyboard(
-    side: "files" | "device",
-    event: React.KeyboardEvent<HTMLDivElement>,
-  ): void {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const current = side === "files" ? filesWidth : deviceWidth;
-    const limit = side === "files" ? LAYOUT_LIMITS.filesWidth : LAYOUT_LIMITS.deviceWidth;
-    const delta = side === "files" ? direction * 16 : direction * -16;
-    const next = clamp(current + delta, limit.min, sidebarMaximum(side));
-    if (side === "files") setFilesWidth(next);
-    else setDeviceWidth(next);
-  }
-
   function problemsMaximum(): number {
     return Math.max(
       LAYOUT_LIMITS.problemsHeight.min,
       Math.floor((centerRef.current?.clientHeight ?? 640) * 0.45),
-    );
-  }
-
-  function beginProblemsResize(event: React.PointerEvent<HTMLDivElement>): void {
-    event.currentTarget.focus();
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = problemsHeight;
-    const maximum = problemsMaximum();
-    document.body.classList.add("is-resizing-vertical");
-    const move = (pointerEvent: PointerEvent): void =>
-      setProblemsHeight(
-        clamp(
-          startHeight + startY - pointerEvent.clientY,
-          LAYOUT_LIMITS.problemsHeight.min,
-          maximum,
-        ),
-      );
-    const finish = (): void => {
-      document.body.classList.remove("is-resizing-vertical");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
-  }
-
-  function resizeProblemsWithKeyboard(event: React.KeyboardEvent<HTMLDivElement>): void {
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    event.preventDefault();
-    setProblemsHeight((value) =>
-      clamp(
-        value + (event.key === "ArrowUp" ? 16 : -16),
-        LAYOUT_LIMITS.problemsHeight.min,
-        problemsMaximum(),
-      ),
     );
   }
 
@@ -1375,19 +1297,17 @@ export function App(): React.JSX.Element {
               </>
             )}
           </aside>
-          <div
-            className="resize-handle resize-files"
-            role="separator"
-            aria-label={t.resizeFiles}
-            aria-orientation="vertical"
-            aria-valuemin={LAYOUT_LIMITS.filesWidth.min}
-            aria-valuemax={sidebarMaximum("files")}
-            aria-valuenow={filesWidth}
-            aria-hidden={!filesOpen}
-            tabIndex={filesOpen ? 0 : -1}
-            onDoubleClick={() => setFilesWidth(LAYOUT_DEFAULTS.filesWidth)}
-            onKeyDown={(event) => resizeSidebarWithKeyboard("files", event)}
-            onPointerDown={(event) => beginSidebarResize("files", event)}
+          <ResizeHandle
+            className="resize-files"
+            axis="x"
+            direction={1}
+            label={t.resizeFiles}
+            min={LAYOUT_LIMITS.filesWidth.min}
+            max={sidebarMaximum("files")}
+            value={filesWidth}
+            visible={filesOpen}
+            defaultValue={LAYOUT_DEFAULTS.filesWidth}
+            onChange={setFilesWidth}
           />
 
           <section className={`center ${settingsActive ? "settings-active" : ""}`} ref={centerRef}>
@@ -1455,38 +1375,27 @@ export function App(): React.JSX.Element {
                 const selected = !settingsActive && tab.file === activeFile;
                 const tabDirty = tab.content !== tab.saved;
                 return (
-                  <div
-                    className={`tab ${selected ? "active" : ""}`}
+                  <ClosableTab
+                    active={selected}
                     key={tab.file}
                     ref={selected ? activeTabRef : undefined}
+                    title={tab.file}
+                    onSelect={() => {
+                      setSettingsActive(false);
+                      setActiveFile(tab.file);
+                      window.requestAnimationFrame(() => editorRef.current?.focus());
+                    }}
+                    closeDisabled={locked}
+                    closeLabel={`${t.closeTab}: ${tab.file}`}
+                    closeTitle={titleWithShortcut(t.closeTab, "closeTab")}
+                    onClose={() => requestCloseTab(tab.file)}
                   >
-                    <button
-                      className="tab-select"
-                      role="tab"
-                      aria-selected={selected}
-                      title={tab.file}
-                      onClick={() => {
-                        setSettingsActive(false);
-                        setActiveFile(tab.file);
-                        window.requestAnimationFrame(() => editorRef.current?.focus());
-                      }}
-                    >
-                      <span className="tab-kind">
-                        {tab.file.split(".").pop()?.toLocaleUpperCase("en-US")}
-                      </span>
-                      <span className="tab-name">{tab.file}</span>
-                      {tabDirty && <i aria-label={t.unsaved}>●</i>}
-                    </button>
-                    <button
-                      className="tab-close"
-                      disabled={locked}
-                      aria-label={`${t.closeTab}: ${tab.file}`}
-                      title={titleWithShortcut(t.closeTab, "closeTab")}
-                      onClick={() => requestCloseTab(tab.file)}
-                    >
-                      ×
-                    </button>
-                  </div>
+                    <span className="tab-kind">
+                      {tab.file.split(".").pop()?.toLocaleUpperCase("en-US")}
+                    </span>
+                    <span className="tab-name">{tab.file}</span>
+                    {tabDirty && <i aria-label={t.unsaved}>●</i>}
+                  </ClosableTab>
                 );
               })}
               {settingsTab}
@@ -1526,19 +1435,17 @@ export function App(): React.JSX.Element {
             </div>
 
             {settingsPage}
-            <div
-              className="resize-handle resize-problems"
-              role="separator"
-              aria-label={t.resizeProblems}
-              aria-orientation="horizontal"
-              aria-valuemin={LAYOUT_LIMITS.problemsHeight.min}
-              aria-valuemax={problemsMaximum()}
-              aria-valuenow={problemsHeight}
-              aria-hidden={!problemsOpen}
-              tabIndex={problemsOpen ? 0 : -1}
-              onDoubleClick={() => setProblemsHeight(LAYOUT_DEFAULTS.problemsHeight)}
-              onKeyDown={resizeProblemsWithKeyboard}
-              onPointerDown={beginProblemsResize}
+            <ResizeHandle
+              className="resize-problems"
+              axis="y"
+              direction={-1}
+              label={t.resizeProblems}
+              min={LAYOUT_LIMITS.problemsHeight.min}
+              max={problemsMaximum()}
+              value={problemsHeight}
+              visible={problemsOpen}
+              defaultValue={LAYOUT_DEFAULTS.problemsHeight}
+              onChange={setProblemsHeight}
             />
             <BottomPanel
               t={t}
@@ -1551,19 +1458,17 @@ export function App(): React.JSX.Element {
             />
           </section>
 
-          <div
-            className="resize-handle resize-device"
-            role="separator"
-            aria-label={t.resizeDevice}
-            aria-orientation="vertical"
-            aria-valuemin={LAYOUT_LIMITS.deviceWidth.min}
-            aria-valuemax={sidebarMaximum("device")}
-            aria-valuenow={deviceWidth}
-            aria-hidden={!deviceOpen}
-            tabIndex={deviceOpen ? 0 : -1}
-            onDoubleClick={() => setDeviceWidth(LAYOUT_DEFAULTS.deviceWidth)}
-            onKeyDown={(event) => resizeSidebarWithKeyboard("device", event)}
-            onPointerDown={(event) => beginSidebarResize("device", event)}
+          <ResizeHandle
+            className="resize-device"
+            axis="x"
+            direction={-1}
+            label={t.resizeDevice}
+            min={LAYOUT_LIMITS.deviceWidth.min}
+            max={sidebarMaximum("device")}
+            value={deviceWidth}
+            visible={deviceOpen}
+            defaultValue={LAYOUT_DEFAULTS.deviceWidth}
+            onChange={setDeviceWidth}
           />
           <aside
             className={`sidebar device-panel ${deviceOpen ? "" : "collapsed"}`}
@@ -1622,269 +1527,229 @@ export function App(): React.JSX.Element {
         </section>
       )}
       {newProjectOpen && (
-        <Modal
+        <Dialog
           onClose={() => {
             setNewProjectOpen(false);
           }}
+          title={t.newProject}
+          titleId="new-project-title"
+          onSubmit={() => {
+            void createProject();
+          }}
         >
-          <form
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="new-project-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void createProject();
-            }}
-          >
-            <h2 id="new-project-title">{t.newProject}</h2>
-            <label>
-              {t.projectName}
-              <input
-                autoFocus
-                maxLength={80}
-                value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
-              />
-              <small>{t.projectNameHint}</small>
-            </label>
-            <div className="modal-actions">
-              <button type="button" onClick={() => setNewProjectOpen(false)}>
-                {t.close}
-              </button>
-              <button className="primary" type="submit" disabled={!projectName.trim()}>
-                {t.create}
-              </button>
-            </div>
-          </form>
-        </Modal>
+          <label>
+            {t.projectName}
+            <input
+              data-modal-initial
+              maxLength={80}
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+            />
+            <small>{t.projectNameHint}</small>
+          </label>
+          <DialogActions>
+            <button type="button" onClick={() => setNewProjectOpen(false)}>
+              {t.close}
+            </button>
+            <button className="primary" type="submit" disabled={!projectName.trim()}>
+              {t.create}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
       {pendingWorkspace && (
-        <Modal
+        <Dialog
           onClose={() => {
             setPendingWorkspace(undefined);
           }}
+          title={t.chooseEntry}
+          titleId="entry-title"
+          onSubmit={() => {
+            void confirmEntry();
+          }}
         >
-          <form
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="entry-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void confirmEntry();
-            }}
-          >
-            <h2 id="entry-title">{t.chooseEntry}</h2>
-            <Picker<string>
-              locale={locale}
-              label={t.chooseEntry}
-              searchable
-              value={selectedEntry}
-              onChange={setSelectedEntry}
-              options={pendingWorkspace.entryCandidates.map((entry) => ({
-                value: entry,
-                label: entry,
-              }))}
-            />
-            <div className="modal-actions">
-              <button type="button" onClick={() => setPendingWorkspace(undefined)}>
-                {t.close}
-              </button>
-              <button className="primary" type="submit" disabled={!selectedEntry}>
-                {t.continue}
-              </button>
-            </div>
-          </form>
-        </Modal>
+          <Picker<string>
+            locale={locale}
+            label={t.chooseEntry}
+            searchable
+            value={selectedEntry}
+            onChange={setSelectedEntry}
+            options={pendingWorkspace.entryCandidates.map((entry) => ({
+              value: entry,
+              label: entry,
+            }))}
+          />
+          <DialogActions>
+            <button type="button" onClick={() => setPendingWorkspace(undefined)}>
+              {t.close}
+            </button>
+            <button className="primary" type="submit" disabled={!selectedEntry}>
+              {t.continue}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
       {pendingCreate && (
-        <Modal
+        <Dialog
           fallbackFocus={() => treeRef.current?.focus(pendingCreate.parent)}
           onClose={() => {
             if (!managingEntries) setPendingCreate(undefined);
           }}
+          title={pendingCreate.kind === "file" ? t.createFileTitle : t.createFolderTitle}
+          titleId="create-entry-title"
+          onSubmit={() => {
+            void confirmCreateEntry();
+          }}
         >
-          <form
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-entry-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void confirmCreateEntry();
-            }}
-          >
-            <h2 id="create-entry-title">
-              {pendingCreate.kind === "file" ? t.createFileTitle : t.createFolderTitle}
-            </h2>
-            <p className="modal-path">
-              {t.entryParent}: {pendingCreate.parent || workspace?.rootLabel}
-            </p>
-            <label>
-              {t.entryName}
-              <input
-                autoFocus
-                maxLength={255}
-                value={entryName}
-                onChange={(event) => setEntryName(event.target.value)}
-              />
-            </label>
-            <div className="modal-actions">
-              <button
-                type="button"
-                disabled={managingEntries}
-                onClick={() => setPendingCreate(undefined)}
-              >
-                {t.close}
-              </button>
-              <button
-                className="primary"
-                type="submit"
-                disabled={managingEntries || !entryName.trim()}
-              >
-                {t.createEntryAction}
-              </button>
-            </div>
-          </form>
-        </Modal>
+          <p className="modal-path">
+            {t.entryParent}: {pendingCreate.parent || workspace?.rootLabel}
+          </p>
+          <label>
+            {t.entryName}
+            <input
+              data-modal-initial
+              maxLength={255}
+              value={entryName}
+              onChange={(event) => setEntryName(event.target.value)}
+            />
+          </label>
+          <DialogActions>
+            <button
+              type="button"
+              disabled={managingEntries}
+              onClick={() => setPendingCreate(undefined)}
+            >
+              {t.close}
+            </button>
+            <button
+              className="primary"
+              type="submit"
+              disabled={managingEntries || !entryName.trim()}
+            >
+              {t.createEntryAction}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
       {pendingMove && (
-        <Modal
+        <Dialog
           fallbackFocus={() => treeRef.current?.focus(pendingMove)}
           onClose={() => {
             if (!managingEntries) setPendingMove(undefined);
           }}
+          title={t.moveTitle}
+          titleId="move-entry-title"
+          onSubmit={() => {
+            void confirmMoveEntry();
+          }}
         >
-          <form
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="move-entry-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void confirmMoveEntry();
-            }}
-          >
-            <h2 id="move-entry-title">{t.moveTitle}</h2>
-            <p className="modal-path">{pendingMove}</p>
-            <label>
-              {t.moveDestination}
-              <Picker<string>
-                locale={locale}
-                label={t.moveDestination}
-                searchable
-                value={moveDestination}
-                disabled={managingEntries}
-                onChange={setMoveDestination}
-                options={moveDestinations.map((directory) => ({
-                  value: directory,
-                  label: directory || workspace?.rootLabel || "/",
-                }))}
-              />
-            </label>
-            <div className="modal-actions">
-              <button
-                type="button"
-                disabled={managingEntries}
-                onClick={() => setPendingMove(undefined)}
-              >
-                {t.close}
-              </button>
-              <button className="primary" type="submit" disabled={managingEntries}>
-                {t.move}
-              </button>
-            </div>
-          </form>
-        </Modal>
+          <p className="modal-path">{pendingMove}</p>
+          <label>
+            {t.moveDestination}
+            <Picker<string>
+              locale={locale}
+              label={t.moveDestination}
+              searchable
+              value={moveDestination}
+              disabled={managingEntries}
+              onChange={setMoveDestination}
+              options={moveDestinations.map((directory) => ({
+                value: directory,
+                label: directory || workspace?.rootLabel || "/",
+              }))}
+            />
+          </label>
+          <DialogActions>
+            <button
+              type="button"
+              disabled={managingEntries}
+              onClick={() => setPendingMove(undefined)}
+            >
+              {t.close}
+            </button>
+            <button className="primary" type="submit" disabled={managingEntries}>
+              {t.move}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
       {pendingTrash && (
-        <Modal
+        <Dialog
           fallbackFocus={() => treeRef.current?.focus(pendingTrash)}
           onClose={() => {
             if (!managingEntries) setPendingTrash(undefined);
           }}
+          title={t.trashTitle}
+          titleId="trash-entry-title"
+          role="alertdialog"
+          descriptionId="trash-entry-description"
         >
-          <div
-            className="modal-card"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="trash-entry-title"
-            aria-describedby="trash-entry-description"
-          >
-            <h2 id="trash-entry-title">{t.trashTitle}</h2>
-            <p id="trash-entry-description" className="modal-description">
-              {t.trashBody(pendingTrash)}
-            </p>
-            {tabs.some(
-              (tab) => pathContains(pendingTrash, tab.file) && tab.content !== tab.saved,
-            ) && <p className="modal-warning">{t.trashDirty}</p>}
-            <div className="modal-actions">
-              <button
-                autoFocus
-                type="button"
-                disabled={managingEntries}
-                onClick={() => setPendingTrash(undefined)}
-              >
-                {t.close}
-              </button>
-              <button
-                className="danger"
-                type="button"
-                disabled={managingEntries}
-                onClick={() => void confirmTrashEntry()}
-              >
-                {t.trash}
-              </button>
-            </div>
-          </div>
-        </Modal>
+          <p id="trash-entry-description" className="modal-description">
+            {t.trashBody(pendingTrash)}
+          </p>
+          {tabs.some(
+            (tab) => pathContains(pendingTrash, tab.file) && tab.content !== tab.saved,
+          ) && <p className="modal-warning">{t.trashDirty}</p>}
+          <DialogActions>
+            <button
+              data-modal-initial
+              type="button"
+              disabled={managingEntries}
+              onClick={() => setPendingTrash(undefined)}
+            >
+              {t.close}
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={managingEntries}
+              onClick={() => void confirmTrashEntry()}
+            >
+              {t.trash}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
       {pendingCloseFile && (
-        <Modal
+        <Dialog
           onClose={() => {
             if (!closingTab) setPendingCloseFile(undefined);
           }}
+          title={t.unsavedTitle}
+          titleId="close-tab-title"
+          role="alertdialog"
+          descriptionId="close-tab-description"
         >
-          <div
-            className="modal-card"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="close-tab-title"
-            aria-describedby="close-tab-description"
-          >
-            <h2 id="close-tab-title">{t.unsavedTitle}</h2>
-            <p id="close-tab-description" className="modal-description">
-              {t.unsavedBody(pendingCloseFile)}
-            </p>
-            <div className="modal-actions three-actions">
-              <button
-                type="button"
-                disabled={closingTab}
-                onClick={() => setPendingCloseFile(undefined)}
-              >
-                {t.close}
-              </button>
-              <button
-                className="danger"
-                type="button"
-                disabled={closingTab}
-                onClick={() => void resolveTabClose("discard")}
-              >
-                {t.discardAndClose}
-              </button>
-              <button
-                autoFocus
-                className="primary"
-                type="button"
-                disabled={closingTab}
-                onClick={() => void resolveTabClose("save")}
-              >
-                {t.saveAndClose}
-              </button>
-            </div>
-          </div>
-        </Modal>
+          <p id="close-tab-description" className="modal-description">
+            {t.unsavedBody(pendingCloseFile)}
+          </p>
+          <DialogActions className="three-actions">
+            <button
+              type="button"
+              disabled={closingTab}
+              onClick={() => setPendingCloseFile(undefined)}
+            >
+              {t.close}
+            </button>
+            <button
+              className="danger"
+              type="button"
+              disabled={closingTab}
+              onClick={() => void resolveTabClose("discard")}
+            >
+              {t.discardAndClose}
+            </button>
+            <button
+              data-modal-initial
+              className="primary"
+              type="button"
+              disabled={closingTab}
+              onClick={() => void resolveTabClose("save")}
+            >
+              {t.saveAndClose}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
       <footer>
         <div className="status-group">

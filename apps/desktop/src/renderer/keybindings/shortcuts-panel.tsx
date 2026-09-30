@@ -1,3 +1,4 @@
+import { Dialog, DialogActions } from "../components/dialog.js";
 import { useMemo, useRef, useState } from "react";
 import {
   bindingProblem,
@@ -8,8 +9,8 @@ import {
 import { contextsOverlap } from "./monaco-keybindings.js";
 import type { KeyboardSettings } from "./keyboard-state.js";
 import type { Locale } from "../i18n/copy.js";
-import { Modal } from "../components/modal.js";
 import { ActionMenu } from "../components/action-menu.js";
+import { Picker } from "../components/picker.js";
 import { ShortcutKeys } from "./shortcut-keys.js";
 import { ShortcutRecorder } from "./shortcut-recorder.js";
 import {
@@ -205,34 +206,36 @@ export function ShortcutsPanel({
           </button>
         </div>
         <div className="shortcut-filter-line">
-          <label>
-            {t("來源", "Source")}
-            <select
-              aria-label={t("來源", "Source")}
+          <div className="shortcut-filter">
+            <label htmlFor="shortcut-source-filter">{t("來源", "Source")}</label>
+            <Picker<ShortcutFilter["source"]>
+              id="shortcut-source-filter"
+              locale={locale}
+              label={t("來源", "Source")}
               value={filter.source}
-              onChange={(event) =>
-                setFilter({ ...filter, source: event.target.value as ShortcutFilter["source"] })
-              }
-            >
-              <option value="all">{t("全部來源", "All sources")}</option>
-              <option value="workbench">IDE</option>
-              <option value="editor">{t("編輯器", "Editor")}</option>
-            </select>
-          </label>
-          <label>
-            {t("狀態", "Status")}
-            <select
-              aria-label={t("狀態", "Status")}
+              onChange={(source) => setFilter((current) => ({ ...current, source }))}
+              options={[
+                { value: "all", label: t("全部來源", "All sources") },
+                { value: "workbench", label: "IDE" },
+                { value: "editor", label: t("編輯器", "Editor") },
+              ]}
+            />
+          </div>
+          <div className="shortcut-filter">
+            <label htmlFor="shortcut-status-filter">{t("狀態", "Status")}</label>
+            <Picker<ShortcutFilter["status"]>
+              id="shortcut-status-filter"
+              locale={locale}
+              label={t("狀態", "Status")}
               value={filter.status}
-              onChange={(event) =>
-                setFilter({ ...filter, status: event.target.value as ShortcutFilter["status"] })
-              }
-            >
-              <option value="all">{t("全部狀態", "All statuses")}</option>
-              <option value="modified">{t("已修改", "Modified")}</option>
-              <option value="unassigned">{t("未設定", "Unassigned")}</option>
-            </select>
-          </label>
+              onChange={(status) => setFilter((current) => ({ ...current, status }))}
+              options={[
+                { value: "all", label: t("全部狀態", "All statuses") },
+                { value: "modified", label: t("已修改", "Modified") },
+                { value: "unassigned", label: t("未設定", "Unassigned") },
+              ]}
+            />
+          </div>
           {filter.keys.length > 0 && (
             <div className="shortcut-search-chip">
               <ShortcutKeys keys={filter.keys} mac={keyboard.mac} locale={locale} />
@@ -361,166 +364,159 @@ export function ShortcutsPanel({
         </div>
       )}
       {editing && (
-        <Modal onClose={closeEditor} fallbackFocus={() => search.current?.focus()}>
-          <section
-            className="modal-card shortcut-recorder"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="shortcut-record-title"
-          >
-            <h2 id="shortcut-record-title">
+        <Dialog
+          onClose={closeEditor}
+          fallbackFocus={() => search.current?.focus()}
+          title={
+            <>
               {editing.kind === "reset" ? t("還原：", "Reset: ") : ""}
               {commandLabel(editing.command, locale)}
-            </h2>
-            {stack.length > 1 && (
-              <p className="settings-hint">
-                {t("完成或取消後，將返回：", "After applying or cancelling, return to: ")}
-                {commandLabel(stack[stack.length - 2]!.command, locale)}
-              </p>
-            )}
-            <dl className="shortcut-comparison">
-              <div>
-                <dt>{t("目前按鍵", "Current")}</dt>
-                <dd>{bindingsView(uniqueSequences(editing.command, keyboard.overrides))}</dd>
-              </div>
-              <div>
-                <dt>{t("預設按鍵", "Default")}</dt>
-                <dd>{bindingsView(uniqueSequences(editing.command, {}))}</dd>
-              </div>
-            </dl>
-            {editing.kind === "reset" ? (
-              <>
-                {conflictView}
-                <div className="modal-actions">
-                  <button onClick={closeEditor}>{t("取消", "Cancel")}</button>
-                  <button className="primary" disabled={conflicts.length > 0} onClick={apply}>
-                    {t("還原", "Reset")}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <ShortcutRecorder
-                key={`${stack.length}-${editing.command.id}`}
-                keyboard={keyboard}
-                locale={locale}
-                initialMode={editing.mode}
-                initialKeys={editing.keys}
-                onChange={updateDraft}
-                onCancel={closeEditor}
-              >
-                {(state) => {
-                  const problem = bindingProblem(state.keys, keyboard.mac);
-                  return (
-                    <>
-                      {state.phase === "ready" && problem && (
-                        <p role="alert">
-                          {problem === "typing"
-                            ? t(
-                                "第一組請使用修飾鍵搭配文字鍵，或使用功能鍵。",
-                                "Use a modifier with a typing key, or a function key, for the first stroke.",
-                              )
-                            : t(
-                                "這組按鍵由系統保留或不支援。",
-                                "This shortcut is reserved by the system or unsupported.",
-                              )}
-                        </p>
-                      )}
-                      {state.phase === "ready" && conflictView}
-                      <div className="modal-actions">
-                        <button onClick={closeEditor}>
-                          {stack.length > 1
-                            ? t("取消並返回", "Cancel and return")
-                            : t("取消", "Cancel")}
-                        </button>
-                        <button
-                          className="primary"
-                          disabled={
-                            state.phase !== "ready" || Boolean(problem) || conflicts.length > 0
-                          }
-                          onClick={apply}
-                        >
-                          {t("套用", "Apply")}
-                        </button>
-                      </div>
-                    </>
-                  );
-                }}
-              </ShortcutRecorder>
-            )}
-          </section>
-        </Modal>
-      )}
-      {searching && (
-        <Modal onClose={() => setSearching(false)}>
-          <section
-            className="modal-card shortcut-recorder"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="shortcut-search-title"
-          >
-            <h2 id="shortcut-search-title">{t("按快捷鍵搜尋", "Search by shortcut")}</h2>
+            </>
+          }
+          titleId="shortcut-record-title"
+          className="shortcut-recorder"
+        >
+          {stack.length > 1 && (
             <p className="settings-hint">
-              {t(
-                "單組比對任一段按鍵；兩段比對完整順序。錄製時不會執行命令。",
-                "A single stroke matches either part of a shortcut; two strokes match the full sequence. Commands do not run while recording.",
-              )}
+              {t("完成或取消後，將返回：", "After applying or cancelling, return to: ")}
+              {commandLabel(stack[stack.length - 2]!.command, locale)}
             </p>
+          )}
+          <dl className="shortcut-comparison">
+            <div>
+              <dt>{t("目前按鍵", "Current")}</dt>
+              <dd>{bindingsView(uniqueSequences(editing.command, keyboard.overrides))}</dd>
+            </div>
+            <div>
+              <dt>{t("預設按鍵", "Default")}</dt>
+              <dd>{bindingsView(uniqueSequences(editing.command, {}))}</dd>
+            </div>
+          </dl>
+          {editing.kind === "reset" ? (
+            <>
+              {conflictView}
+              <DialogActions>
+                <button onClick={closeEditor}>{t("取消", "Cancel")}</button>
+                <button className="primary" disabled={conflicts.length > 0} onClick={apply}>
+                  {t("還原", "Reset")}
+                </button>
+              </DialogActions>
+            </>
+          ) : (
             <ShortcutRecorder
+              key={`${stack.length}-${editing.command.id}`}
               keyboard={keyboard}
               locale={locale}
-              initialMode={filter.keys.length === 2 ? 2 : 1}
-              initialKeys={filter.keys}
-              onChange={() => {}}
-              onCancel={() => setSearching(false)}
+              initialMode={editing.mode}
+              initialKeys={editing.keys}
+              onChange={updateDraft}
+              onCancel={closeEditor}
             >
-              {(state) => (
-                <div className="modal-actions">
-                  <button onClick={() => setSearching(false)}>{t("取消", "Cancel")}</button>
-                  <button
-                    className="primary"
-                    disabled={state.phase !== "ready"}
-                    onClick={() => {
-                      setFilter({ ...filter, keys: state.keys });
-                      setSearching(false);
-                    }}
-                  >
-                    {t("搜尋", "Search")}
-                  </button>
-                </div>
-              )}
+              {(state) => {
+                const problem = bindingProblem(state.keys, keyboard.mac);
+                return (
+                  <>
+                    {state.phase === "ready" && problem && (
+                      <p role="alert">
+                        {problem === "typing"
+                          ? t(
+                              "第一組請使用修飾鍵搭配文字鍵，或使用功能鍵。",
+                              "Use a modifier with a typing key, or a function key, for the first stroke.",
+                            )
+                          : t(
+                              "這組按鍵由系統保留或不支援。",
+                              "This shortcut is reserved by the system or unsupported.",
+                            )}
+                      </p>
+                    )}
+                    {state.phase === "ready" && conflictView}
+                    <DialogActions>
+                      <button onClick={closeEditor}>
+                        {stack.length > 1
+                          ? t("取消並返回", "Cancel and return")
+                          : t("取消", "Cancel")}
+                      </button>
+                      <button
+                        className="primary"
+                        disabled={
+                          state.phase !== "ready" || Boolean(problem) || conflicts.length > 0
+                        }
+                        onClick={apply}
+                      >
+                        {t("套用", "Apply")}
+                      </button>
+                    </DialogActions>
+                  </>
+                );
+              }}
             </ShortcutRecorder>
-          </section>
-        </Modal>
+          )}
+        </Dialog>
+      )}
+      {searching && (
+        <Dialog
+          onClose={() => setSearching(false)}
+          title={t("按快捷鍵搜尋", "Search by shortcut")}
+          titleId="shortcut-search-title"
+          className="shortcut-recorder"
+        >
+          <p className="settings-hint">
+            {t(
+              "單組比對任一段按鍵；兩段比對完整順序。錄製時不會執行命令。",
+              "A single stroke matches either part of a shortcut; two strokes match the full sequence. Commands do not run while recording.",
+            )}
+          </p>
+          <ShortcutRecorder
+            keyboard={keyboard}
+            locale={locale}
+            initialMode={filter.keys.length === 2 ? 2 : 1}
+            initialKeys={filter.keys}
+            onChange={() => {}}
+            onCancel={() => setSearching(false)}
+          >
+            {(state) => (
+              <DialogActions>
+                <button onClick={() => setSearching(false)}>{t("取消", "Cancel")}</button>
+                <button
+                  className="primary"
+                  disabled={state.phase !== "ready"}
+                  onClick={() => {
+                    setFilter({ ...filter, keys: state.keys });
+                    setSearching(false);
+                  }}
+                >
+                  {t("搜尋", "Search")}
+                </button>
+              </DialogActions>
+            )}
+          </ShortcutRecorder>
+        </Dialog>
       )}
       {resetting && (
-        <Modal onClose={() => setResetting(false)}>
-          <section
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="shortcuts-reset-title"
-          >
-            <h2 id="shortcuts-reset-title">{t("還原所有快捷鍵？", "Reset all shortcuts?")}</h2>
-            <p>
-              {t(
-                "將清除所有自訂按鍵與解除綁定設定。",
-                "This clears all custom bindings and unbound commands.",
-              )}
-            </p>
-            <div className="modal-actions">
-              <button onClick={() => setResetting(false)}>{t("取消", "Cancel")}</button>
-              <button
-                onClick={() => {
-                  keyboard.store.reset();
-                  setNotice("resetAll");
-                  setResetting(false);
-                }}
-              >
-                {t("還原", "Reset")}
-              </button>
-            </div>
-          </section>
-        </Modal>
+        <Dialog
+          onClose={() => setResetting(false)}
+          title={t("還原所有快捷鍵？", "Reset all shortcuts?")}
+          titleId="shortcuts-reset-title"
+        >
+          <p>
+            {t(
+              "將清除所有自訂按鍵與解除綁定設定。",
+              "This clears all custom bindings and unbound commands.",
+            )}
+          </p>
+          <DialogActions>
+            <button onClick={() => setResetting(false)}>{t("取消", "Cancel")}</button>
+            <button
+              onClick={() => {
+                keyboard.store.reset();
+                setNotice("resetAll");
+                setResetting(false);
+              }}
+            >
+              {t("還原", "Reset")}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
     </div>
   );

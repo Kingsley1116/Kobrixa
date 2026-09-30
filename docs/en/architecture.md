@@ -61,6 +61,8 @@ Tests live beside their modules; cross-process interaction tests stay in `apps/d
 
 The language worker source lives in `main/language`; Forge still emits `language-worker.cjs` beside `main.cjs`. `styles/index.css` explicitly preserves the workbench-before-shortcuts stylesheet order.
 
+Shared UI behavior lives in `renderer/components`: `Dialog` builds on `Modal` for accessible headings and form submission, while `DialogActions` lays out caller-owned buttons. Callers retain validation, busy state, initial focus, dismissal rules and focus restoration options. `ClosableTab` shares file/settings tab presentation, `ResizeHandle` owns pointer/keyboard resizing and listener cleanup, and `menu-keyboard` supplies navigation for action and context menus. Settings-specific `SettingField`, `SettingSelect` and `SettingToggle` stay in `renderer/settings`; they connect labels and hints without owning preference persistence.
+
 ## Project manifest
 
 Each project uses `kobrixa.json`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.

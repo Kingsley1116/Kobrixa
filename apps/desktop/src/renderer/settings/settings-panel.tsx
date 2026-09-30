@@ -1,3 +1,5 @@
+import { SettingSelect, SettingToggle } from "./setting-field.js";
+import { ClosableTab } from "../components/closable-tab.js";
 import type { KeyboardSettings } from "../keybindings/keyboard-state.js";
 import { ShortcutsPanel } from "../keybindings/shortcuts-panel.js";
 import { useEffect, useRef, useState } from "react";
@@ -139,26 +141,18 @@ export function SettingsTab({
 }): React.JSX.Element {
   const t = settingsCopy[locale];
   return (
-    <div className={`tab settings-tab ${active ? "active" : ""}`}>
-      <button
-        className="tab-select"
-        role="tab"
-        aria-selected={active}
-        aria-controls="settings-page"
-        onClick={onSelect}
-      >
-        <Icon name="settings" />
-        <span>{t.title}</span>
-      </button>
-      <button
-        className="tab-close"
-        aria-label={t.close}
-        title={[t.close, shortcut].filter(Boolean).join(" · ")}
-        onClick={onClose}
-      >
-        ×
-      </button>
-    </div>
+    <ClosableTab
+      className="settings-tab"
+      active={active}
+      controls="settings-page"
+      onSelect={onSelect}
+      onClose={onClose}
+      closeLabel={t.close}
+      closeTitle={[t.close, shortcut].filter(Boolean).join(" · ")}
+    >
+      <Icon name="settings" />
+      <span>{t.title}</span>
+    </ClosableTab>
   );
 }
 export function SettingsError({
@@ -221,25 +215,16 @@ export function SettingsPanel({
     label: string,
     hint?: string,
   ) => (
-    <div className="setting-row">
-      <div>
-        <label htmlFor={`setting-${key}`}>{label}</label>
-        {hint && <p id={`hint-${key}`}>{hint}</p>}
-      </div>
-      <button
-        id={`setting-${key}`}
-        type="button"
-        className="setting-switch"
-        role="switch"
-        aria-checked={settings[key]}
-        aria-label={label}
-        aria-describedby={hint ? `hint-${key}` : undefined}
-        onClick={() => onChange(key, !settings[key])}
-      >
-        <span aria-hidden="true" />
-        {settings[key] ? t.on : t.off}
-      </button>
-    </div>
+    <SettingToggle
+      id={`setting-${key}`}
+      label={label}
+      hint={hint}
+      hintId={`hint-${key}`}
+      checked={settings[key]}
+      onChange={(value) => onChange(key, value)}
+      onLabel={t.on}
+      offLabel={t.off}
+    />
   );
   return (
     <section
@@ -270,157 +255,121 @@ export function SettingsPanel({
         <div className="settings-content" ref={content}>
           <section hidden={category !== "appearance"} aria-labelledby="settings-appearance">
             <h2 id="settings-appearance">{t.appearance}</h2>
-            <div className="setting-row">
-              <label htmlFor="setting-locale">{t.language}</label>
-              <Picker
-                locale={settings.locale}
-                label={t.language}
-                id="setting-locale"
-                value={settings.locale}
-                onChange={(value) => onChange("locale", value)}
-                options={languageOptions}
-              />
-            </div>
-            <div className="setting-row">
-              <label htmlFor="setting-theme">{t.theme}</label>
-              <Picker<Settings["theme"]>
-                locale={settings.locale}
-                label={t.theme}
-                id="setting-theme"
-                value={settings.theme}
-                onChange={(value) => onChange("theme", value)}
-                options={[
-                  { value: "dark", label: t.dark },
-                  { value: "light", label: t.light },
-                ]}
-              />
-            </div>
-            <div className="setting-row">
-              <label htmlFor="setting-scale">{t.scale}</label>
-              <Picker
-                locale={settings.locale}
-                label={t.scale}
-                id="setting-scale"
-                value={settings.uiScale}
-                onChange={(value) => onChange("uiScale", value)}
-                options={UI_SCALES.map((value) => ({ value, label: `${value}%` }))}
-              />
-            </div>
-            <div className="setting-row">
-              <div>
-                <label htmlFor="setting-motion">{t.motion}</label>
-                <p id="motion-hint">{t.motionHint}</p>
-              </div>
-              <Picker<Settings["motion"]>
-                locale={settings.locale}
-                label={t.motion}
-                id="setting-motion"
-                describedBy="motion-hint"
-                value={settings.motion}
-                onChange={(value) => onChange("motion", value)}
-                options={[
-                  { value: "system", label: t.system },
-                  { value: "reduce", label: t.reduce },
-                ]}
-              />
-            </div>
+            <SettingSelect
+              locale={settings.locale}
+              label={t.language}
+              id="setting-locale"
+              value={settings.locale}
+              onChange={(value) => onChange("locale", value)}
+              options={languageOptions}
+            />
+            <SettingSelect<Settings["theme"]>
+              locale={settings.locale}
+              label={t.theme}
+              id="setting-theme"
+              value={settings.theme}
+              onChange={(value) => onChange("theme", value)}
+              options={[
+                { value: "dark", label: t.dark },
+                { value: "light", label: t.light },
+              ]}
+            />
+            <SettingSelect
+              locale={settings.locale}
+              label={t.scale}
+              id="setting-scale"
+              value={settings.uiScale}
+              onChange={(value) => onChange("uiScale", value)}
+              options={UI_SCALES.map((value) => ({ value, label: `${value}%` }))}
+            />
+            <SettingSelect<Settings["motion"]>
+              locale={settings.locale}
+              label={t.motion}
+              id="setting-motion"
+              hintId="motion-hint"
+              value={settings.motion}
+              onChange={(value) => onChange("motion", value)}
+              options={[
+                { value: "system", label: t.system },
+                { value: "reduce", label: t.reduce },
+              ]}
+              hint={t.motionHint}
+            />
           </section>
           <section hidden={category !== "editor"} aria-labelledby="settings-editor">
             <h2 id="settings-editor">{t.editor}</h2>
-            <div className="setting-row">
-              <label htmlFor="setting-codeSize">{t.codeSize}</label>
-              <Picker
-                locale={settings.locale}
-                label={t.codeSize}
-                id="setting-codeSize"
-                value={settings.codeSize}
-                onChange={(value) => onChange("codeSize", value)}
-                options={CODE_SIZES.map((value) => ({ value, label: `${value}px` }))}
-              />
-            </div>
-            <div className="setting-row">
-              <label htmlFor="setting-lineNumbers">{local("行號", "Line numbers")}</label>
-              <Picker
-                locale={settings.locale}
-                label={local("行號", "Line numbers")}
-                id="setting-lineNumbers"
-                value={settings.lineNumbers}
-                onChange={(value) => onChange("lineNumbers", value)}
-                options={[
-                  { value: "on", label: local("顯示", "On") },
-                  { value: "relative", label: local("相對行號", "Relative") },
-                  { value: "off", label: local("隱藏", "Off") },
-                ]}
-              />
-            </div>
+            <SettingSelect
+              locale={settings.locale}
+              label={t.codeSize}
+              id="setting-codeSize"
+              value={settings.codeSize}
+              onChange={(value) => onChange("codeSize", value)}
+              options={CODE_SIZES.map((value) => ({ value, label: `${value}px` }))}
+            />
+            <SettingSelect
+              locale={settings.locale}
+              label={local("行號", "Line numbers")}
+              id="setting-lineNumbers"
+              value={settings.lineNumbers}
+              onChange={(value) => onChange("lineNumbers", value)}
+              options={[
+                { value: "on", label: local("顯示", "On") },
+                { value: "relative", label: local("相對行號", "Relative") },
+                { value: "off", label: local("隱藏", "Off") },
+              ]}
+            />
             {toggle("minimap", local("程式碼縮圖", "Minimap"))}
-            <div className="setting-row">
-              <label htmlFor="setting-whitespace">{local("空白字元", "Whitespace")}</label>
-              <Picker
-                locale={settings.locale}
-                label={local("空白字元", "Whitespace")}
-                id="setting-whitespace"
-                value={settings.renderWhitespace}
-                onChange={(value) => onChange("renderWhitespace", value)}
-                options={[
-                  { value: "none", label: local("不顯示", "None") },
-                  { value: "selection", label: local("選取範圍", "Selection") },
-                  { value: "all", label: local("全部", "All") },
-                ]}
-              />
-            </div>
+            <SettingSelect
+              locale={settings.locale}
+              label={local("空白字元", "Whitespace")}
+              id="setting-whitespace"
+              value={settings.renderWhitespace}
+              onChange={(value) => onChange("renderWhitespace", value)}
+              options={[
+                { value: "none", label: local("不顯示", "None") },
+                { value: "selection", label: local("選取範圍", "Selection") },
+                { value: "all", label: local("全部", "All") },
+              ]}
+            />
             {toggle("formatOnPaste", local("貼上時格式化", "Format on paste"))}
             {toggle("wordWrap", t.wordWrap, t.wrapHint)}
-            <div className="setting-row">
-              <div>
-                <label htmlFor="setting-indent">{t.indent}</label>
-                <p id="indent-hint">{t.indentHint}</p>
-              </div>
-              <Picker<Settings["indentSize"]>
-                locale={settings.locale}
-                label={t.indent}
-                id="setting-indent"
-                describedBy="indent-hint"
-                value={settings.indentSize}
-                onChange={(value) => onChange("indentSize", value)}
-                options={([2, 4] as const).map((value) => ({
-                  value,
-                  label: `${value} ${t.spaces}`,
-                }))}
-              />
-            </div>
+            <SettingSelect<Settings["indentSize"]>
+              locale={settings.locale}
+              label={t.indent}
+              id="setting-indent"
+              hintId="indent-hint"
+              value={settings.indentSize}
+              onChange={(value) => onChange("indentSize", value)}
+              options={([2, 4] as const).map((value) => ({
+                value,
+                label: `${value} ${t.spaces}`,
+              }))}
+              hint={t.indentHint}
+            />
           </section>
           <section hidden={category !== "saving"} aria-labelledby="settings-saving">
             <h2 id="settings-saving">{t.saving}</h2>
-            <div className="setting-row">
-              <label htmlFor="setting-autoSave">{local("自動儲存", "Auto save")}</label>
-              <Picker
-                locale={settings.locale}
-                label={local("自動儲存", "Auto save")}
-                id="setting-autoSave"
-                value={settings.autoSave}
-                onChange={(value) => onChange("autoSave", value)}
-                options={[
-                  { value: "off", label: t.off },
-                  { value: "afterDelay", label: local("停止輸入後", "After delay") },
-                  { value: "onFocusChange", label: local("離開編輯器時", "On focus change") },
-                ]}
-              />
-            </div>
+            <SettingSelect
+              locale={settings.locale}
+              label={local("自動儲存", "Auto save")}
+              id="setting-autoSave"
+              value={settings.autoSave}
+              onChange={(value) => onChange("autoSave", value)}
+              options={[
+                { value: "off", label: t.off },
+                { value: "afterDelay", label: local("停止輸入後", "After delay") },
+                { value: "onFocusChange", label: local("離開編輯器時", "On focus change") },
+              ]}
+            />
             {settings.autoSave === "afterDelay" && (
-              <div className="setting-row">
-                <label htmlFor="setting-autoSaveDelay">
-                  {local("自動儲存延遲", "Auto save delay")}
-                </label>
-                <Picker
-                  locale={settings.locale}
-                  label={local("自動儲存延遲", "Auto save delay")}
-                  id="setting-autoSaveDelay"
-                  value={settings.autoSaveDelay}
-                  onChange={(value) => onChange("autoSaveDelay", value)}
-                  options={AUTO_SAVE_DELAYS.map((value) => ({ value, label: `${value} ms` }))}
-                />
-              </div>
+              <SettingSelect
+                locale={settings.locale}
+                label={local("自動儲存延遲", "Auto save delay")}
+                id="setting-autoSaveDelay"
+                value={settings.autoSaveDelay}
+                onChange={(value) => onChange("autoSaveDelay", value)}
+                options={AUTO_SAVE_DELAYS.map((value) => ({ value, label: `${value} ms` }))}
+              />
             )}
             {toggle(
               "formatOnSave",

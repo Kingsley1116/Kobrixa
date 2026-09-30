@@ -10,6 +10,7 @@ import {
   type PointerEvent,
 } from "react";
 import type { WorkspaceEntry } from "../../shared/api.js";
+import { focusFirstMenuItem, handleMenuKey } from "../components/menu-keyboard.js";
 import {
   buildFileTree,
   flattenFileTree,
@@ -144,10 +145,7 @@ export const ProjectTree = forwardRef<ProjectTreeHandle, ProjectTreeProps>(funct
   }, [selectedPath]);
 
   useEffect(() => {
-    if (menu)
-      window.requestAnimationFrame(() =>
-        menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus(),
-      );
+    if (menu) window.requestAnimationFrame(() => focusFirstMenuItem(menuRef.current));
   }, [menu]);
 
   function toggle(node: FileTreeNode): void {
@@ -212,34 +210,9 @@ export const ProjectTree = forwardRef<ProjectTreeHandle, ProjectTreeProps>(funct
     setMenu({ path: entryPath, x, y });
   }
 
-  function handleMenuKey(event: KeyboardEvent<HTMLDivElement>): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setMenu(undefined);
-      itemRefs.current.get(selectedPath)?.focus();
-      return;
-    }
-    if (
-      event.key !== "ArrowDown" &&
-      event.key !== "ArrowUp" &&
-      event.key !== "Home" &&
-      event.key !== "End"
-    )
-      return;
-    const buttons = [
-      ...(menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []),
-    ];
-    if (!buttons.length) return;
-    event.preventDefault();
-    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? buttons.length - 1
-          : (Math.max(0, current) + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) %
-            buttons.length;
-    buttons[next]?.focus();
+  function dismissMenu(): void {
+    setMenu(undefined);
+    itemRefs.current.get(selectedPath)?.focus();
   }
 
   function openKeyboardMenu(entryPath: string): void {
@@ -511,7 +484,7 @@ export const ProjectTree = forwardRef<ProjectTreeHandle, ProjectTreeProps>(funct
           ref={menuRef}
           role="menu"
           style={{ left: menu.x, top: menu.y }}
-          onKeyDown={handleMenuKey}
+          onKeyDown={(event) => handleMenuKey(event, menuRef.current, dismissMenu)}
           onPointerDown={(event) => event.stopPropagation()}
         >
           {menuNode.kind === "directory" && (

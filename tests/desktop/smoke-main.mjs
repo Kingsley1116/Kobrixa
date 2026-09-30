@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
+import { checkSharedComponents } from "./components-smoke.mjs";
 const [url, temporary] = process.argv.slice(2);
 const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
@@ -22,6 +23,7 @@ const files = {
 };
 const drafts = {};
 const writes = [];
+const mutations = [];
 let failNextWrite = false;
 let openCount = 0;
 let win;
@@ -45,6 +47,20 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     return workspace();
   }
   if (name === "read") return files[args[1]];
+  if (name === "createEntry") {
+    assert.equal(args[2], "file");
+    const file = args[1] ? `${args[1]}/${args[3]}` : args[3];
+    assert.equal(files[file], undefined);
+    files[file] = "";
+    mutations.push(name);
+    return { workspace: workspace(), removed: [], moved: {} };
+  }
+  if (name === "trashEntry") {
+    delete files[args[1]];
+    delete drafts[args[1]];
+    mutations.push(name);
+    return { workspace: workspace(), removed: [args[1]], moved: {} };
+  }
   if (name === "write") {
     await new Promise((r) => setTimeout(r, 150));
     if (failNextWrite) {
@@ -73,14 +89,16 @@ async function until(code) {
   throw Error("Timed out: " + code);
 }
 async function key(code, modifiers = []) {
+  // Electron names arrow key codes Up/Down/Left/Right (DOM uses Arrow*).
+  const keyCode = code.replace(/^Arrow/, "");
   // Native undo/redo requires foreground web-contents focus, even with synthetic input.
   if (process.platform === "darwin") app.focus({ steal: true });
   win.focus();
   win.webContents.focus();
   await pause(40);
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: code, modifiers });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   if (code === "Enter") win.webContents.sendInputEvent({ type: "char", keyCode: "\r", modifiers });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: code, modifiers });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
   await pause(80);
 }
 app
@@ -112,6 +130,7 @@ app
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");
     await pause(200);
+    await checkSharedComponents({ js, key, until, pause, mod, mutations });
     console.log("catalog", await js("smoke.editorCommandCatalog(true).length"));
     await key(",", [mod]);
     await until('!document.querySelector("#settings-page").hidden');
@@ -123,6 +142,52 @@ app
       (await win.webContents.capturePage()).toPNG(),
     );
     console.log("settings and shortcut chord pass");
+    // Shortcut filters use the same themed, keyboard-operable pickers as settings.
+    assert.equal(await js('document.querySelector(".shortcuts-panel select")'), null);
+    await js('document.querySelector("#shortcut-source-filter").focus()');
+    await key("Enter");
+    await key("ArrowDown");
+    await key("Enter");
+    assert.equal(await js("document.activeElement.id"), "shortcut-source-filter");
+    assert.equal(
+      await js(
+        `Array.from(document.querySelectorAll('[data-command-id]')).every(row=>row.dataset.commandId.startsWith('kobrixa.'))`,
+      ),
+      true,
+    );
+    await key("Tab");
+    assert.equal(await js("document.activeElement.id"), "shortcut-status-filter");
+    await key("Enter");
+    await key("ArrowDown");
+    await key("Enter");
+    await until('Boolean(document.querySelector(".shortcut-empty"))');
+    await key("Enter");
+    await key("End");
+    await key("Enter");
+    await js('document.querySelector("#shortcut-source-filter").focus()');
+    await key("Enter");
+    await key("End");
+    await key("Enter");
+    await until('document.querySelectorAll("[data-command-id]").length > 0');
+    assert.equal(
+      await js(
+        `Array.from(document.querySelectorAll('[data-command-id]')).every(row=>!row.dataset.commandId.startsWith('kobrixa.') && row.querySelector('.shortcut-status.unassigned'))`,
+      ),
+      true,
+    );
+    await key("Enter");
+    await key("Escape");
+    assert.equal(await js("document.activeElement.id"), "shortcut-source-filter");
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(button=>button.textContent==='Clear filters').click()`,
+    );
+    assert.equal(
+      await js(
+        'document.querySelector("#shortcut-source-filter").textContent.includes("All sources")',
+      ),
+      true,
+    );
+    console.log("shortcut source/status pickers, combined filters and keyboard focus pass");
     // Full-catalog localization and live language changes keep filters intact.
     await js(`window.searchShortcuts = (value) => {
       const input = document.querySelector('.shortcut-search-line input');
@@ -165,6 +230,22 @@ app
       path.join(temporary, "shortcuts-zh-light-small.png"),
       (await win.webContents.capturePage()).toPNG(),
     );
+    await js('document.querySelector("#shortcut-source-filter").click()');
+    await until('Boolean(document.querySelector(".picker-popup"))');
+    await pause(150);
+    assert.equal(
+      await js(`(() => {
+      const popup=document.querySelector('.picker-popup');
+      const rect=popup.getBoundingClientRect();
+      return rect.left>=0 && rect.right<=innerWidth && rect.top>=0 && rect.bottom<=innerHeight && popup.textContent.includes('全部來源');
+    })()`),
+      true,
+    );
+    fs.writeFileSync(
+      path.join(temporary, "shortcut-filter-zh-light-small.png"),
+      (await win.webContents.capturePage()).toPNG(),
+    );
+    await key("Escape");
     win.setSize(1420, 900);
     await js(
       'smoke.settingsStore.set("theme","dark");smoke.settingsStore.set("uiScale",100);smoke.settingsStore.set("locale","en")',

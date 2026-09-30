@@ -1,9 +1,10 @@
+import { Dialog, DialogActions } from "../components/dialog.js";
 import { useEffect, useRef, useState } from "react";
 import type { FileBatchSnapshot, RemoteEntry } from "../../shared/api.js";
 import type { Locale } from "../i18n/copy.js";
 import { ActionMenu } from "../components/action-menu.js";
 import { Icon } from "../components/icon.js";
-import { Modal, canFocus } from "../components/modal.js";
+import { canFocus } from "../components/modal.js";
 import {
   PROJECT_ROOT,
   protectedRemotePath,
@@ -301,50 +302,51 @@ function DeleteConfirmation({
   const submitted = useRef(false);
   const directories = batch.items.filter((item) => item.kind === "directory").length;
   return (
-    <Modal onClose={onClose} restoreFocus={false}>
-      <section
-        className="modal-card remote-delete-confirm"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="delete-title"
-        aria-describedby="delete-warning"
-      >
-        <header>
-          <h2 id="delete-title">{t.confirmDelete}</h2>
+    <Dialog
+      onClose={onClose}
+      restoreFocus={false}
+      title={t.confirmDelete}
+      titleId="delete-title"
+      className="remote-delete-confirm"
+      role="alertdialog"
+      descriptionId="delete-warning"
+      intro={
+        <>
           <p>{t.deleteCount(batch.items.length - directories, directories)}</p>
           <p className="modal-warning" id="delete-warning">
             {t.deleteWarning}
           </p>
-        </header>
-        <ul className="remote-delete-targets" aria-label={t.items} tabIndex={0}>
-          {batch.items.map((item) => (
-            <li key={item.id}>
-              <Icon name={item.kind === "directory" ? "folder" : "code"} />
-              <div>
-                <strong>{item.label.split("/").at(-1)}</strong>
-                <small>{`${path}/${item.label}`}</small>
-              </div>
-            </li>
-          ))}
-        </ul>
-        <footer className="modal-actions">
-          <button type="button" data-modal-initial onClick={onClose}>
-            {t.cancel}
-          </button>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => {
-              if (submitted.current) return;
-              submitted.current = true;
-              onExecute();
-            }}
-          >
-            {t.confirmDelete}
-          </button>
-        </footer>
-      </section>
-    </Modal>
+        </>
+      }
+    >
+      <ul className="remote-delete-targets" aria-label={t.items} tabIndex={0}>
+        {batch.items.map((item) => (
+          <li key={item.id}>
+            <Icon name={item.kind === "directory" ? "folder" : "code"} />
+            <div>
+              <strong>{item.label.split("/").at(-1)}</strong>
+              <small>{`${path}/${item.label}`}</small>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <DialogActions>
+        <button type="button" data-modal-initial onClick={onClose}>
+          {t.cancel}
+        </button>
+        <button
+          type="button"
+          className="danger"
+          onClick={() => {
+            if (submitted.current) return;
+            submitted.current = true;
+            onExecute();
+          }}
+        >
+          {t.confirmDelete}
+        </button>
+      </DialogActions>
+    </Dialog>
   );
 }
 function BatchConfirmation({
@@ -377,57 +379,54 @@ function BatchConfirmation({
       />
     );
   return (
-    <Modal onClose={onClose} restoreFocus={false}>
-      <form
-        className="modal-card remote-confirm"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="batch-title"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (submitted.current) return;
-          submitted.current = true;
-          onExecute(policy);
-        }}
-      >
-        <h2 id="batch-title">{t.review}</h2>
-        <p>
-          {batch.items.length} {t.items} · {t.bytesKnown}: {formatSize(size)}
-        </p>
-        <p>{t.merge}</p>
-        <ul className="remote-review-items">
-          {batch.items.map((item) => (
-            <li key={item.id}>
-              <span title={item.label}>{item.label}</span>
-              {item.conflict && <strong>{t.conflicts}</strong>}
-            </li>
-          ))}
-        </ul>
-        {!!conflicts.length && (
-          <label>
-            {t.conflicts} ({conflicts.length})
-            <Picker<"skip" | "replace">
-              locale={locale}
-              label={t.conflicts}
-              value={policy}
-              onChange={setPolicy}
-              options={[
-                { value: "skip", label: t.skip },
-                { value: "replace", label: t.replace },
-              ]}
-            />
-          </label>
-        )}
-        <div className="modal-actions">
-          <button type="button" data-modal-initial onClick={onClose}>
-            {t.cancel}
-          </button>
-          <button type="submit" className="primary">
-            {t.confirm}
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <Dialog
+      onClose={onClose}
+      restoreFocus={false}
+      title={t.review}
+      titleId="batch-title"
+      className="remote-confirm"
+      onSubmit={() => {
+        if (submitted.current) return;
+        submitted.current = true;
+        onExecute(policy);
+      }}
+    >
+      <p>
+        {batch.items.length} {t.items} · {t.bytesKnown}: {formatSize(size)}
+      </p>
+      <p>{t.merge}</p>
+      <ul className="remote-review-items">
+        {batch.items.map((item) => (
+          <li key={item.id}>
+            <span title={item.label}>{item.label}</span>
+            {item.conflict && <strong>{t.conflicts}</strong>}
+          </li>
+        ))}
+      </ul>
+      {!!conflicts.length && (
+        <label>
+          {t.conflicts} ({conflicts.length})
+          <Picker<"skip" | "replace">
+            locale={locale}
+            label={t.conflicts}
+            value={policy}
+            onChange={setPolicy}
+            options={[
+              { value: "skip", label: t.skip },
+              { value: "replace", label: t.replace },
+            ]}
+          />
+        </label>
+      )}
+      <DialogActions>
+        <button type="button" data-modal-initial onClick={onClose}>
+          {t.cancel}
+        </button>
+        <button type="submit" className="primary">
+          {t.confirm}
+        </button>
+      </DialogActions>
+    </Dialog>
   );
 }
 export function RemoteFilesPanel({
@@ -753,66 +752,60 @@ export function RemoteFilesPanel({
         />
       )}
       {form && (
-        <Modal
+        <Dialog
           onClose={() => {
             if (!state.busy) closeForm();
           }}
+          title={form.action === "mkdir" ? t.mkdir : t.rename}
+          titleId="remote-form-title"
+          className="remote-entry-form"
+          onSubmit={async () => {
+            if (busy || !name.trim()) return;
+            setFormError(undefined);
+            if (await controller.perform(form.action, form.path, locale, name)) {
+              closeForm();
+              const parent =
+                form.action === "mkdir"
+                  ? form.path
+                  : form.path.slice(0, form.path.lastIndexOf("/"));
+              const target = `${parent}/${name}`;
+              if (controller.getSnapshot().entries.some((entry) => entry.path === target)) {
+                setQuery("");
+                setSelected([target]);
+                focusAfterMutation.current = target;
+              }
+            } else setFormError(controller.getSnapshot().error?.message ?? t.generic);
+          }}
         >
-          <form
-            className="modal-card remote-entry-form"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="remote-form-title"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (busy || !name.trim()) return;
-              setFormError(undefined);
-              if (await controller.perform(form.action, form.path, locale, name)) {
-                closeForm();
-                const parent =
-                  form.action === "mkdir"
-                    ? form.path
-                    : form.path.slice(0, form.path.lastIndexOf("/"));
-                const target = `${parent}/${name}`;
-                if (controller.getSnapshot().entries.some((entry) => entry.path === target)) {
-                  setQuery("");
-                  setSelected([target]);
-                  focusAfterMutation.current = target;
-                }
-              } else setFormError(controller.getSnapshot().error?.message ?? t.generic);
-            }}
-          >
-            <h2 id="remote-form-title">{form.action === "mkdir" ? t.mkdir : t.rename}</h2>
-            <p className="remote-target">{form.path}</p>
-            <label>
-              {t.name}
-              <input
-                autoFocus
-                required
-                pattern="[A-Za-z0-9_. -]+"
-                value={name}
-                disabled={busy}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-            <p>{form.action === "mkdir" ? t.nameHint : t.renameHint}</p>
-            {formError && (
-              <div role="alert">
-                <strong>{t.failed}</strong>
-                <p>{t.generic}</p>
-                <pre>{formError}</pre>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button type="button" disabled={busy} onClick={closeForm}>
-                {t.cancel}
-              </button>
-              <button className="primary" type="submit" disabled={busy || !name.trim()}>
-                {t.apply}
-              </button>
+          <p className="remote-target">{form.path}</p>
+          <label>
+            {t.name}
+            <input
+              data-modal-initial
+              required
+              pattern="[A-Za-z0-9_. -]+"
+              value={name}
+              disabled={busy}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <p>{form.action === "mkdir" ? t.nameHint : t.renameHint}</p>
+          {formError && (
+            <div role="alert">
+              <strong>{t.failed}</strong>
+              <p>{t.generic}</p>
+              <pre>{formError}</pre>
             </div>
-          </form>
-        </Modal>
+          )}
+          <DialogActions>
+            <button type="button" disabled={busy} onClick={closeForm}>
+              {t.cancel}
+            </button>
+            <button className="primary" type="submit" disabled={busy || !name.trim()}>
+              {t.apply}
+            </button>
+          </DialogActions>
+        </Dialog>
       )}
     </div>
   );
