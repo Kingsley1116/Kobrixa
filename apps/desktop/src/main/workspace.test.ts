@@ -68,6 +68,17 @@ describe.sequential("workspace file management", () => {
     ]);
   });
 
+  it("only gives the diagnostics worker inputs for a registered workspace", async () => {
+    const { service, workspace } = await openService();
+    expect(() => service.projectInput("unknown")).toThrow("Unknown workspace");
+    expect(service.projectInput(workspace.id)).toEqual({ inputPath: root });
+    await service.selectEntry(workspace.id, "src/main.bp");
+    expect(service.projectInput(workspace.id)).toEqual({
+      inputPath: root,
+      selectedEntry: "src/main.bp",
+    });
+  });
+
   it("creates entries and rejects invalid names and collisions", async () => {
     const { service, workspace } = await openService();
     const created = await service.createEntry(workspace.id, "src", "file", "helper.bp");

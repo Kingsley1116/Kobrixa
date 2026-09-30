@@ -1,5 +1,7 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import * as monaco from "monaco-editor";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import {
   BASIC_PLUS_API_COMPLETIONS,
   BASIC_PLUS_KEYWORDS,
@@ -7,6 +9,12 @@ import {
 } from "@kobrixa/basic-plus/language";
 import type { Theme } from "./theme.js";
 import type { Diagnostic } from "../shared/api.js";
+
+// Without worker factories Monaco falls back to running worker tasks on the UI
+// thread. Vite bundles these for both the dev server and the packaged file URL.
+self.MonacoEnvironment = {
+  getWorker: (_workerId, label) => (label === "json" ? new JsonWorker() : new EditorWorker()),
+};
 
 let registered = false;
 function registerLanguage(): void {
@@ -212,6 +220,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const models = useRef(new Map<string, monaco.editor.ITextModel>());
   const viewStates = useRef(new Map<string, monaco.editor.ICodeEditorViewState>());
   const activeFile = useRef<string | undefined>(undefined);
+  const applyingValue = useRef(false);
   const onChangeRef = useRef(onChange);
   const onCursorChangeRef = useRef(onCursorChange);
   onChangeRef.current = onChange;
@@ -284,8 +293,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       detectIndentation: false,
       tabSize: indentSize,
       insertSpaces: true,
-      smoothScrolling: !reducedMotion,
-      cursorSmoothCaretAnimation: reducedMotion ? "off" : "on",
+      smoothScrolling: false,
+      cursorSmoothCaretAnimation: "off",
       renderWhitespace: "selection",
       renderValidationDecorations: "on",
       scrollBeyondLastLine: false,
@@ -296,6 +305,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     editor.current = instance;
     instance.focus();
     const contentSubscription = instance.onDidChangeModelContent(() => {
+      if (applyingValue.current) return;
       const currentFile = activeFile.current;
       if (currentFile) onChangeRef.current(currentFile, instance.getValue());
     });
@@ -353,8 +363,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useEffect(() => {
     editor.current?.updateOptions({
       wordWrap: wordWrap ? "on" : "off",
-      smoothScrolling: !reducedMotion,
-      cursorSmoothCaretAnimation: reducedMotion ? "off" : "on",
+      smoothScrolling: false,
+      cursorSmoothCaretAnimation: "off",
     });
     for (const model of models.current.values())
       model.updateOptions({ tabSize: indentSize, indentSize, insertSpaces: true });
@@ -363,9 +373,17 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     monaco.editor.setTheme(`kobrixa-${theme}`);
   }, [theme]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const model = models.current.get(file);
-    if (model && model.getValue() !== value) model.setValue(value);
+    if (!model || model.getValue() === value) return;
+    // Flush incoming content before the next input event. A passive effect can
+    // overwrite newer keystrokes and feed its stale value back into React.
+    applyingValue.current = true;
+    try {
+      model.setValue(value);
+    } finally {
+      applyingValue.current = false;
+    }
   }, [file, value]);
 
   useEffect(() => {
@@ -385,7 +403,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           })),
       );
     }
-  }, [diagnostics, file, openFiles]);
+  }, [diagnostics, file]);
 
   useEffect(() => {
     if (focusTarget?.file === file) reveal(focusTarget.range);

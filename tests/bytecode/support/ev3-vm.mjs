@@ -653,8 +653,10 @@ class VM {
         const reply = this.s.i2cReplies?.[this.i2cReads++];
         if (this.s.i2cReplies && (!reply || reply.length !== count))
           throw Error("I2C scenario size/exhaustion");
+        // Stock d_iic reverses replies for a positive RDLNG. Scenario bytes
+        // describe the device's wire order, not the firmware destination buffer.
         for (let j = 0; j < count; j++)
-          dst.b[dst.off + j] =
+          dst.b[dst.off + count - 1 - j] =
             reply?.[j] ??
             (this.s.i2cMemory
               ? (this.i2cMemory.get(key + (request[1] + j)) ?? 0)

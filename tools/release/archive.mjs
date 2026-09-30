@@ -62,6 +62,7 @@ export async function verifyApplication(directory, platform, version) {
   assert.equal(manifest.version, version, "Packaged version differs from release version");
   for (const required of [
     ".vite/build/main.cjs",
+    ".vite/build/language-worker.cjs",
     ".vite/build/preload.cjs",
     ".vite/renderer/main_window/index.html",
     "node_modules/node-hid/package.json",

@@ -33,6 +33,7 @@ async function fixture(t) {
   const app = path.join(root, "fixture-app");
   for (const file of [
     ".vite/build/main.cjs",
+    ".vite/build/language-worker.cjs",
     ".vite/build/preload.cjs",
     ".vite/renderer/main_window/index.html",
     "node_modules/node-hid/package.json",

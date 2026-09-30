@@ -5,6 +5,11 @@ import { app, dialog, shell } from "electron";
 import { loadProject, resolveInside, type SourceProject } from "@kobrixa/compiler";
 import type { WorkspaceEntry, WorkspaceMutationResult, WorkspaceSummary } from "../shared/api.js";
 
+export interface WorkspaceProjectInput {
+  inputPath: string;
+  selectedEntry?: string;
+}
+
 interface WorkspaceRecord {
   id: string;
   inputPath: string;
@@ -255,6 +260,11 @@ export class WorkspaceService {
       await mkdir(directory, { recursive: true });
       await writeFile(target, JSON.stringify({ file, content }), "utf8");
     }
+  }
+
+  projectInput(id: string): WorkspaceProjectInput {
+    const { inputPath, selectedEntry } = this.require(id);
+    return { inputPath, ...(selectedEntry ? { selectedEntry } : {}) };
   }
 
   async project(id: string, overlays: ReadonlyMap<string, string>): Promise<SourceProject> {

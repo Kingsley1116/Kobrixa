@@ -770,7 +770,10 @@ class ObjectAssembler {
     for (let index = 0; index < bytes; index += 1) {
       const byte = this.scratch(1);
       const value = this.scratch(4);
-      this.bytes.push(OP.ARRAY_READ, ...lv(readHandle), ...lc(index), ...lv(byte));
+      // Stock EV3 firmware reverses multi-byte I2C replies for positive RDLNG.
+      // Keep RDLNG positive for the handle-backed buffer resize, then expose
+      // bytes to BASIC PLUS in the device's original wire order.
+      this.bytes.push(OP.ARRAY_READ, ...lv(readHandle), ...lc(bytes - 1 - index), ...lv(byte));
       this.unsignedByte(lv(byte), lv(value));
       this.bytes.push(OP.MOVE_32_F, ...lv(value), ...lv(value));
       this.bytes.push(OP.ARRAY_WRITE, ...lv(result), ...lc(index), ...lv(value));

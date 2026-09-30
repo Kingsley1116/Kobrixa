@@ -1,0 +1,19 @@
+' Pixy2 LEGO I2C, input port 1, taught signature 2. No motor commands.
+port = 1
+signature = 2
+Sensor.Wait(port)
+While Buttons.GetClicks() <> "E"
+  DrawSample(port, signature)
+  Program.Delay(100)
+EndWhile
+
+Function DrawSample(in number cameraPort, in number cameraSignature)
+  reply = Sensor.ReadI2CRegisters(cameraPort, 1, 80 + cameraSignature, 5)
+  LCD.Clear()
+  LCD.Text(1, 0, 0, 1, "Pixy2 S" + cameraPort + " sig " + cameraSignature)
+  LCD.Text(1, 0, 20, 1, "Count: " + reply[0])
+  LCD.Text(1, 0, 40, 1, "X: " + reply[1] + " Y: " + reply[2])
+  LCD.Text(1, 0, 60, 1, "W: " + reply[3] + " H: " + reply[4])
+  LCD.Text(1, 0, 100, 1, "Enter: exit")
+  LCD.Update()
+EndFunction

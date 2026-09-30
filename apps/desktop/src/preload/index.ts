@@ -31,6 +31,7 @@ const api: KobrixaApi = {
     },
   },
   language: {
+    cancel: () => ipcRenderer.invoke("language:cancel"),
     diagnostics: (workspaceId, overlays) =>
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },

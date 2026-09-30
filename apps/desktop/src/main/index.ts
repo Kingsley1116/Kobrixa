@@ -64,6 +64,8 @@ void app.whenReady().then(() => {
   const renderer = () => mainWindow?.webContents;
   const builds = new BuildService(workspaces, renderer);
   const language = new LanguageService(workspaces);
+  app.on("before-quit", () => language.dispose());
+  app.on("window-all-closed", () => language.cancel());
   const devices = new DeviceService(builds, renderer);
   registerIpc(renderer, workspaces, builds, language, devices);
   app.on("activate", () => {

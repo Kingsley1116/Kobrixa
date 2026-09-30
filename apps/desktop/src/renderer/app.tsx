@@ -55,6 +55,7 @@ import { ToolsPanel, ActivityPanel, RemoteFilesPanel } from "./tools-panel.js";
 import { RemoteFilesController } from "./remote-files.js";
 import { isModalOpen } from "./modal.js";
 import { Picker } from "./picker.js";
+import { LiveDiagnostics } from "./live-diagnostics.js";
 
 import { copy } from "./copy.js";
 type Tab = { file: string; content: string; saved: string };
@@ -135,6 +136,17 @@ export function App(): React.JSX.Element {
   const [cursor, setCursor] = useState<CursorPosition>({ line: 1, column: 1 });
   const [diagnosticIndex, setDiagnosticIndex] = useState(-1);
   const [checking, setChecking] = useState(false);
+  const [liveChecker] = useState(
+    () =>
+      new LiveDiagnostics({
+        cancel: () => void window.kobrixa.language.cancel().catch(() => undefined),
+        check: (workspaceId, overlays) =>
+          window.kobrixa.language.diagnostics(workspaceId, overlays),
+        onDiagnostics: setLiveDiagnostics,
+        onChecking: setChecking,
+        onError: (error) => setStatus(error instanceof Error ? error.message : String(error)),
+      }),
+  );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectName, setProjectName] = useState("my-robot");
   const [pendingWorkspace, setPendingWorkspace] = useState<WorkspaceSummary>();
@@ -290,27 +302,9 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const workspaceId = workspace?.id;
-    if (!workspaceId) return undefined;
-    let current = true;
-    const timer = window.setTimeout(() => {
-      setChecking(true);
-      void window.kobrixa.language
-        .diagnostics(workspaceId, sourceOverlays)
-        .then((items) => {
-          if (current) setLiveDiagnostics(items);
-        })
-        .catch((error: unknown) => {
-          if (current) setStatus(error instanceof Error ? error.message : String(error));
-        })
-        .finally(() => {
-          if (current) setChecking(false);
-        });
-    }, 300);
-    return () => {
-      current = false;
-      window.clearTimeout(timer);
-    };
-  }, [sourceOverlays, workspace?.id]);
+    if (workspaceId) liveChecker.schedule(workspaceId, sourceOverlays);
+    return () => liveChecker.cancel();
+  }, [liveChecker, sourceOverlays, workspace?.id]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent): void => {
@@ -669,7 +663,7 @@ export function App(): React.JSX.Element {
 
   function updateActive(file: string, content: string): void {
     if (!workspace || controller.editingLocked) return;
-    setBuildDiagnostics([]);
+    setBuildDiagnostics((current) => (current.length ? [] : current));
     setTabs((value) => value.map((tab) => (tab.file === file ? { ...tab, content } : tab)));
     queueDraft(workspace.id, file, content);
   }

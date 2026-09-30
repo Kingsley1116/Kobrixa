@@ -5,6 +5,7 @@ Run `pnpm test:bytecode` from the repository root. This builds the compiler pack
 - `compiler-regressions.test.mjs`: individually named source-to-RBF execution regressions.
 - `optimization.test.mjs`: optimized/unoptimized execution comparisons, function pruning and retained roots, nested threads, scalar copy forwarding, temporary/scratch-memory bounds, branch/loop liveness, deterministic output, and diagnostics in unused functions.
 - `array-lifetime.test.mjs`: repeated sensor polling under a 250-array budget, transfer-buffer cleanup, and preservation of arrays that escape a helper.
+- `i2c-bytecode.test.mjs`: firmware reply reversal, Pixy2 signature/largest-block/RGB layouts, unsigned byte values, and single/full-buffer reads.
 - `example-bytecode.test.mjs`: literal-byte VM checks and all scenarios in the new-example and Clev3r-parity selection files.
 - `robot-bytecode.test.mjs`: project initialization, buttons, scheduling, gyro, camera, steering and odometry checks.
 - `movement-bytecode.test.mjs`: 5,460 steering combinations, nine repeated calls, two turns and four timed moves.

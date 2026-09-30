@@ -133,6 +133,7 @@ export interface KobrixaApi {
     onEvent(listener: (event: BuildEvent) => void): () => void;
   };
   language: {
+    cancel(): Promise<void>;
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {

@@ -114,6 +114,7 @@ export function registerIpc(
   handle("language:diagnostics", (_event, workspaceId: unknown, overlays: unknown) =>
     language.diagnostics(id.parse(workspaceId), z.record(file, content).parse(overlays)),
   );
+  handle("language:cancel", () => language.cancel());
 
   handle("device:files", (_event, request: unknown) =>
     devices.files(
