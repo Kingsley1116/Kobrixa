@@ -1,11 +1,10 @@
 # 語言支援政策
 
-> 狀態：`.bp` 規劃於 v1；其他前端均為 v1 之後的規劃。  
-> 語言：繁體中文 · [English](../en/language-support.md)
-
 ## 共通規則
 
 所有來源語言都透過前端編譯為已驗證的 `KobrixaIR`，再由同一個 EV3 後端產生原生 `.rbf`。前端不得靜默重新解釋不支援的功能，而必須產生穩定且可採取行動的編譯期診斷。
+
+Basic Plus 是目前唯一已實作的來源前端，專案 manifest 只接受 `language: "bp"`；Python、TypeScript 與 C++ 仍屬路線圖項目。桌面程式碼簽章用來驗證應用程式的發布身分，不改變編譯器接受的語言，也不代表使用者程式已通過硬體行為驗收。
 
 「盡可能完整」代表在語意能映射至 EV3 VM 時，廣泛接受原語言語法；不代表 Kobrixa 會在 `.rbf` 中嵌入完整 CPython、JavaScript、Node.js、瀏覽器、C++ 或作業系統 runtime。
 
@@ -59,8 +58,16 @@ Clean-room 前端的目標是與支援的舊版程式行為相容，包括：
 
 除法（`/`）即使使用整數運算元也會產生浮點結果，例如 `7 / 2` 為 `3.5`。同一函式的數值回傳分支共用推論出的表示方式；含浮點回傳分支時，整數分支會提升為浮點。整數與布林回傳值使用對應的 EV3 呼叫參數寬度；不相容的回傳型別會回報 `BP2010`。
 
-文字搜尋與擷取的位置從 1 起算。`Text.GetIndexOf` 找不到時回傳 0；`Text.GetSubText` 會將過長的擷取範圍限制於來源尾端，起點無效或長度不為正數時回傳空字串。搜尋成功的分支依照韌體的字串相等結果判斷。可執行案例與字節碼預期值請見[新增範例課程](../../examples/NEW-EXAMPLES.md)。
+文字搜尋與擷取的位置從 1 起算。`Text.GetIndexOf` 找不到時回傳 0；`Text.GetSubText` 會將過長的擷取範圍限制於來源尾端，起點無效或長度不為正數時回傳空字串。搜尋成功的分支依照韌體的字串相等結果判斷。可執行案例與字節碼預期值請見[新增範例課程](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/NEW-EXAMPLES.md)。
 
-## Example-driven runtime support / 範例驗證的執行支援
+## 範例驗證的執行支援
 
-See the [expanded curriculum](../../examples/CLEV3R-PARITY.md) and its bytecode audit. Recursive call groups support 32 simultaneous frames with an explicit overflow stop; native function objects are not reentrant. Mutex acquisition is serialized through a shared native subcall. Basic Plus trigonometric APIs use radians and convert to/from EV3 native degrees. Byte and I²C/file byte values preserve 0–255. Folder in the entry source selects internal or SD deployment and runtime paths.／請見擴充課程與字節碼稽核。遞迴群組支援同時 32 層，超限明確停止；原生函式物件不可重入。互斥鎖取得透過共用原生子呼叫序列化。三角函數使用弧度並轉換 EV3 的度數；Byte、I²C 與檔案位元組保留 0–255。入口 Folder 設定內建或 SD 部署與執行路徑。
+[擴充課程](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/CLEV3R-PARITY.md) 記錄以下行為的範例與字節碼預期值：
+
+- 遞迴群組支援同時 32 層，超限明確停止；原生函式物件不可重入。
+- 互斥鎖取得透過共用原生子呼叫序列化。
+- Basic Plus 三角函數使用弧度，並與 EV3 原生角度單位互相轉換。
+- Byte、I²C 與檔案位元組保留 0–255 範圍。
+- 入口來源的 `Folder` 設定內建或 SD 部署與執行路徑。
+
+自動編譯與字節碼檢查只驗證其涵蓋的項目；實體觀察結果與剩餘限制另記錄於[實機驗收文件](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md)。

@@ -1,11 +1,10 @@
 # Product specification
 
-> Status: Planning. This document describes the intended product, not shipped software.  
-> Language: English · [繁體中文](../zh-TW/product.md)
-
 ## Purpose
 
 Kobrixa IDE gives students and makers a dependable, understandable path from EV3 source code to a running robot. The product favors a short feedback loop, actionable errors, offline use, and predictable physical-device behavior over a broad collection of partially supported features.
+
+The current v1 candidate implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports and remote file management. Full platform support still depends on the physical-brick acceptance matrix. Release signing is integrated but requires production credentials and external verification before a download can be described as signed.
 
 ## Primary users
 
@@ -48,7 +47,17 @@ The editor and compiler must work offline. Wi-Fi is used for communication with 
 - Discover USB EV3 devices and connect to a user-supplied Wi-Fi address.
 - Display the active transport and connection state.
 - Upload, run, stop, and delete a program.
+- Browse remote files, transfer files or folders, and preview conflicts before batch transfers.
 - Time out stalled operations and distinguish permission, discovery, connection, protocol, transfer, and device errors.
+
+### Desktop distribution
+
+- Target Windows x64, macOS Apple Silicon and Linux x64 with extractable archives and SHA-256 files.
+- Use Apple Developer ID signing and notarization for enabled macOS releases. Windows remains explicitly unsigned until SignPath Foundation approval and successful signature verification.
+- Report each platform's actual signing status in its Release notes. An enabled signing failure leaves an incomplete draft for review.
+- Keep Release publication manual. Intel Mac packages, installers and automatic updates are outside the current delivery scope.
+
+See [installation and recovery](../en/installation.md) and the [code signing policy](../en/code-signing.md) for downloads and verification.
 
 ## Non-goals for v1
 
@@ -70,5 +79,6 @@ v1 is acceptable when all of the following are true:
 - Syntax and semantic failures identify the source file and line/column range.
 - Disconnecting a brick during upload produces a recoverable error and no false success state.
 - The application can be installed and used without a cloud account or continuous internet access.
+- Final downloads preserve their files, permissions, symlinks and native USB modules, and every advertised signature or notarization passes validation after extraction.
 
-Compatibility is behavioral, not byte-for-byte output equivalence. See the [language support policy](language-support.md) and [device support specification](device-support.md).
+Compatibility is behavioral, not byte-for-byte output equivalence. See the [language support policy](../en/language-support.md) and [device support specification](../en/device-support.md).

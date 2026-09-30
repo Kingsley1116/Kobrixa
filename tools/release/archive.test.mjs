@@ -39,6 +39,8 @@ async function fixture(t) {
     "node_modules/node-addon-api/package.json",
     "node_modules/pkg-prebuilds/package.json",
     "node_modules/node-hid/build/Release/HID.node",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.txt",
   ])
     await put(app, file);
   await put(app, "package.json", JSON.stringify({ version }));
@@ -113,6 +115,35 @@ test("rejects missing packages, wrong package versions and missing native USB fi
   await assert.rejects(packageArchive({ root }), /ENOENT/);
   await rm(directory, { recursive: true });
   await assert.rejects(packageArchive({ root }), /ENOENT/);
+});
+
+test("signed archives are verified again after extraction before a checksum can be published", async (t) => {
+  const { root } = await fixture(t);
+  const calls = [];
+  const modes = { macos: true, windows: true };
+  const archive = await packageArchive({
+    root,
+    modes,
+    verifySignature: (directory, _platform, actualVersion, actualModes) => {
+      calls.push(directory);
+      assert.equal(actualVersion, version);
+      assert.deepEqual(actualModes, modes);
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[0], calls[1]);
+  let checked = 0;
+  await assert.rejects(
+    packageArchive({
+      root,
+      modes,
+      verifySignature: () => {
+        if (++checked === 2) throw new Error("Extracted signature failed");
+      },
+    }),
+    /Extracted signature failed/,
+  );
+  await assert.rejects(readFile(`${archive}.sha256`), /ENOENT/);
 });
 
 test("rejects missing .vite entrypoints and lost executable permissions", async (t) => {

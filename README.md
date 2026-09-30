@@ -56,6 +56,8 @@ Node.js and TypeScript describe Kobrixa's implementation stack. C++ remains a se
 
 ## Documentation
 
+- [Code signing policy](docs/en/code-signing.md)
+
 - [Product specification](docs/en/product.md)
 - [Architecture and public contracts](docs/en/architecture.md)
 - [Language support policy](docs/en/language-support.md)

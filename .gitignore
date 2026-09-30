@@ -24,3 +24,10 @@ apps/web/worker-configuration.d.ts
 **/.env.*
 !**/.env.example
 !**/.env.*.example
+
+# Signing credentials stay in GitHub Secrets / temporary runner storage.
+*.p12
+*.pfx
+*.p8
+*.keychain
+*.keychain-db

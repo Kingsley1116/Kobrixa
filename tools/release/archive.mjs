@@ -4,6 +4,8 @@ import { lstat, mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { extractFile, listPackage } from "@electron/asar";
+import { signingModes } from "../../apps/desktop/signing.ts";
+import { verifySignedApplication } from "./signing.mjs";
 import {
   archiveName,
   isMain,
@@ -65,6 +67,8 @@ export async function verifyApplication(directory, platform, version) {
     "node_modules/node-hid/package.json",
     "node_modules/node-addon-api/package.json",
     "node_modules/pkg-prebuilds/package.json",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.txt",
   ]) {
     assert.ok(files.includes(required), `Missing packaged file: ${required}`);
   }
@@ -85,6 +89,9 @@ export async function packageArchive({
   platform = process.platform,
   arch = process.arch,
   execute = run,
+  modes = { macos: false, windows: false },
+  verificationEnv = process.env,
+  verifySignature = verifySignedApplication,
 } = {}) {
   const version = await readVersion(root);
   const name = archiveName(version, platform, arch);
@@ -94,6 +101,7 @@ export async function packageArchive({
   const directoryName = `Kobrixa-${platform}-${arch}`;
   const directory = path.join(output, directoryName);
   await verifyApplication(directory, platform, version);
+  await verifySignature(directory, platform, version, modes, verificationEnv);
   const before = await treeManifest(directory, platform);
   const releaseDirectory = path.join(output, "release");
   await mkdir(releaseDirectory, { recursive: true });
@@ -117,6 +125,7 @@ export async function packageArchive({
       "Archive changed files, symlinks or executable permissions",
     );
     await verifyApplication(restored, platform, version);
+    await verifySignature(restored, platform, version, modes, verificationEnv);
     await writeFile(`${archive}.sha256`, `${await sha256(archive)}  ${name}\n`);
     await verifyChecksum(archive);
   } finally {
@@ -130,5 +139,9 @@ if (isMain(import.meta)) {
   await packageArchive({
     platform: process.env.TARGET_PLATFORM || process.platform,
     arch: process.env.TARGET_ARCH || process.arch,
+    modes:
+      process.env.KOBRIXA_RELEASE_BUILD === "true"
+        ? signingModes()
+        : { macos: false, windows: false },
   });
 }

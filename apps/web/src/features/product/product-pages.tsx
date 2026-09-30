@@ -237,6 +237,9 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
               >
                 GitHub Releases ↗
               </AppLink>
+              <AppLink className="product-inline-link" href="/docs/reference/code-signing">
+                Code signing policy ↗
+              </AppLink>
             </div>
           </div>
           <aside className="release-card">

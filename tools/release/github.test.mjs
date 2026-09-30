@@ -12,6 +12,7 @@ import {
   failedChecks,
   finalizeRelease,
   marker,
+  notes,
   prepareRelease,
   uploadRelease,
   validateCommit,
@@ -161,6 +162,49 @@ test("corrupted downloads never mark a release ready", async () => {
   };
   await assert.rejects(finalizeRelease(github, tag, sha, success), /Checksum mismatch/);
   assert.match(github.release.name, /建置中/);
+});
+
+test("draft retries cannot change signing modes or claim verification before finalization", async () => {
+  const modes = { macos: true, windows: false };
+  const github = mockGithub();
+  await prepareRelease(github, tag, sha, modes);
+  assert.match(github.release.body, /not yet verified/);
+  assert.doesNotMatch(github.release.body, /已簽章並公證/);
+  await prepareRelease(github, tag, sha, modes);
+  const count = github.calls.length;
+  for (const changed of [
+    { macos: false, windows: false },
+    { macos: true, windows: true },
+  ]) {
+    await assert.rejects(prepareRelease(github, tag, sha, changed), /signing mode/);
+    await assert.rejects(finalizeRelease(github, tag, sha, success, changed), /signing mode/);
+  }
+  assert.equal(github.calls.length, count);
+  await finalizeRelease(github, tag, sha, success, modes);
+  assert.match(github.release.body, /已簽章並公證/);
+  assert.match(github.release.body, /Windows x64: Unsigned/);
+  assert.doesNotMatch(github.release.body, /Free code signing provided/);
+});
+
+test("signing rejection, timeout or cancellation leave signed drafts incomplete", async () => {
+  const modes = { macos: true, windows: true };
+  for (const result of ["failure", "timed_out", "cancelled"]) {
+    const github = mockGithub();
+    await prepareRelease(github, tag, sha, modes);
+    await assert.rejects(
+      finalizeRelease(github, tag, sha, { ...success, platform: { result } }, modes),
+    );
+    assert.match(github.release.name, /未完成/);
+    assert.doesNotMatch(
+      github.release.body,
+      /已驗證 SignPath 簽章|已簽章並公證|Free code signing provided/,
+    );
+    assert.ok(!github.calls.includes("download"));
+  }
+  const body = notes(tag, sha, "Ready", "", modes, true);
+  assert.match(body, /已驗證 SignPath 簽章及時間戳/);
+  assert.match(body, /Free code signing provided/);
+  assert.match(body, /Code signing policy/);
 });
 
 test("uploads verify checksums and refuse a published release", async (t) => {

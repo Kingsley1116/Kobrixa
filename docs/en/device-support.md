@@ -1,17 +1,16 @@
 # Device and platform support
 
-> Status: USB HID and Wi-Fi on three desktop platforms are planned for v1.  
-> Language: English · [繁體中文](../zh-TW/device-support.md)
-
 ## v1 support matrix
 
-| Platform | USB HID        | Wi-Fi          | Bluetooth |
-| -------- | -------------- | -------------- | --------- |
-| Windows  | Planned for v1 | Planned for v1 | Long-term |
-| macOS    | Planned for v1 | Planned for v1 | Long-term |
-| Linux    | Planned for v1 | Planned for v1 | Long-term |
+| Desktop target      | USB HID                                  | Wi-Fi                                    | Bluetooth       |
+| ------------------- | ---------------------------------------- | ---------------------------------------- | --------------- |
+| Windows x64         | Implemented; platform acceptance pending | Implemented; platform acceptance pending | Not implemented |
+| macOS Apple Silicon | Implemented; platform acceptance pending | Implemented; platform acceptance pending | Not implemented |
+| Linux x64           | Implemented; platform acceptance pending | Implemented; platform acceptance pending | Not implemented |
 
 Support is not considered shipped until automated transport tests and physical reference-brick tests pass on that platform.
+
+The shared USB and Wi-Fi transports already exist in `packages/device`. The [hardware acceptance record](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md) includes USB example runs and documents their limits; it does not complete the three-platform USB/Wi-Fi matrix. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
 
 ## USB
 
@@ -23,21 +22,25 @@ Support is not considered shipped until automated transport tests and physical r
 
 ## Wi-Fi
 
-- Accept an IPv4 or IPv6 address or a discovered compatible endpoint.
+- Connect to a user-supplied address or a discovered compatible endpoint. Discovery currently listens for IPv4 UDP advertisements on port 3015; manually entered addresses are passed to the TCP client.
 - Use the EV3-compatible TCP protocol and validate its handshake before creating a session.
 - Apply connect, read, write, and overall operation timeouts.
 - Treat an unexpected disconnect as recoverable and never report an incomplete upload as successful.
-- Do not expose the device service as a listening network server.
+- Open an outgoing TCP connection to the EV3 on port 5555. Discovery briefly binds a UDP listener; the application does not expose a remote device-control server.
 
 ## Operation behavior
 
 Discovery is read-only. Upload, run, stop, and delete require an explicit user action. The UI shows `disconnected`, `connecting`, `connected`, `busy`, or `error` and identifies the active transport.
 
-Upload writes to a temporary remote name when supported, verifies completion, and then finalizes the target. Cancellation closes the operation and leaves the session reusable when the underlying transport remains valid.
+Upload streams directly to the selected remote path and verifies the transferred length and firmware replies. It does not provide an atomic replacement of an existing remote file. Cancellation or a disconnect can leave a partial remote file; reconnect, inspect the destination and upload again. The transfer handle is closed when possible.
+
+The remote file browser also supports directory listing, downloads, folder creation, rename and deletion. Batch transfers preview conflicts before execution. Local downloads use a temporary file and commit only after a complete transfer; remote rename uses copy/verification/delete behavior because the EV3 firmware does not provide an atomic rename.
 
 Remote paths are normalized as EV3 paths. Parent traversal, embedded nulls, invalid lengths, and unsupported names are rejected before transport I/O.
 
 ## Required acceptance scenarios
+
+Use the [manual hardware tools](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md) with the fixtures and restrictions in the acceptance record. These checks require a connected brick and are excluded from ordinary CI.
 
 - Discover, connect, upload, run, stop, delete, and disconnect over USB on all three platforms.
 - Connect by address and perform the same lifecycle over Wi-Fi on all three platforms.

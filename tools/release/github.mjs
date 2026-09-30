@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { signingModes } from "../../apps/desktop/signing.ts";
 import {
   archiveName,
   expectedAssets,
@@ -13,17 +14,19 @@ import {
   verifyChecksum,
 } from "./common.mjs";
 
-export function marker(tag, sha) {
-  return `<!-- kobrixa-release:${JSON.stringify({ tag, sha })} -->`;
+const unsigned = { macos: false, windows: false };
+
+export function marker(tag, sha, modes = unsigned) {
+  return `<!-- kobrixa-release:${JSON.stringify({ tag, sha, signing: { macos: modes.macos, windows: modes.windows } })} -->`;
 }
 
-export function assertDraft(release, tag, sha) {
+export function assertDraft(release, tag, sha, modes = unsigned) {
   assert.ok(release, "Release draft is missing");
   assert.equal(release.draft, true, "Refusing to modify a published release");
   assert.equal(release.tag_name, tag, "Release tag mismatch");
   assert.ok(
-    release.body?.includes(marker(tag, sha)),
-    "Draft belongs to a different commit or was not created by this workflow",
+    release.body?.includes(marker(tag, sha, modes)),
+    "Draft has a different commit/signing mode or was not created by this workflow",
   );
 }
 
@@ -44,42 +47,59 @@ export function assertAssets(assets, version) {
     assert.ok(asset.size > 0 && asset.state === "uploaded", `Incomplete asset: ${asset.name}`);
 }
 
-export function notes(tag, sha, status, generated = "") {
-  return `${marker(tag, sha)}\n\n${status}\n\nCommit: ${sha}\n\nUnsigned development applications / 未簽署開發版\n\n- Windows x64: extract the ZIP and launch kobrixa.exe.\n- macOS Apple Silicon: extract the ZIP and open Kobrixa.app. This build is not notarized.\n- Linux x64: extract the tar.gz and launch kobrixa.\n- Verify each archive against its accompanying SHA-256 file before use.\n- Intel Mac, installers and automatic updates are not included.\n\n${generated}`;
+export function notes(tag, sha, status, generated = "", modes = unsigned, verified = false) {
+  const macos = !modes.macos
+    ? "Unsigned / 未簽章；not notarized / 未公證"
+    : verified
+      ? "Developer ID signed and notarized / 已簽章並公證"
+      : "Signing and notarization required; not yet verified / 待簽章及公證驗證";
+  const windows = !modes.windows
+    ? "Unsigned / 未簽章"
+    : verified
+      ? "SignPath signature and timestamp verified / 已驗證 SignPath 簽章及時間戳"
+      : "SignPath signing required; not yet verified / 待 SignPath 簽章驗證";
+  const policy = `https://github.com/Kingsley1116/Kobrixa/blob/${sha}/docs/en/code-signing.md`;
+  const attribution =
+    modes.windows && verified
+      ? "\nFree code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n"
+      : "";
+  return `${marker(tag, sha, modes)}\n\n${status}\n\nCommit: ${sha}\n\n- Windows x64: ${windows}. Extract the ZIP and launch kobrixa.exe.\n- macOS Apple Silicon: ${macos}. Extract the ZIP and open Kobrixa.app.\n- Linux x64: unsigned / 未簽章. Extract the tar.gz and launch kobrixa.\n- Verify each archive against its accompanying SHA-256 file before use.\n- Intel Mac, installers and automatic updates are not included.\n\n[Code signing policy / 程式碼簽章政策](${policy})\n${attribution}\n${generated}`;
 }
 
-export async function prepareRelease(github, tag, sha) {
+export async function prepareRelease(github, tag, sha, modes = unsigned) {
   await github.assertTag(tag, sha);
   const release = await github.getRelease(tag);
-  const body = notes(tag, sha, "建置中 / Building — incomplete, do not publish.");
+  const body = notes(tag, sha, "建置中 / Building — incomplete, do not publish.", "", modes);
   if (release) {
-    assertDraft(release, tag, sha);
+    assertDraft(release, tag, sha, modes);
     await github.edit(release.id, { name: `${tag} — 建置中`, body });
   } else {
     await github.create(tag, sha, body, parseVersion(tag.slice(1)).prerelease);
   }
 }
 
-export async function uploadRelease(github, tag, sha, archive) {
+export async function uploadRelease(github, tag, sha, archive, modes = unsigned) {
   await verifyChecksum(archive);
   await github.assertTag(tag, sha);
-  assertDraft(await github.getRelease(tag), tag, sha);
+  assertDraft(await github.getRelease(tag), tag, sha, modes);
   await github.upload(tag, [archive, `${archive}.sha256`]);
 }
 
-export async function finalizeRelease(github, tag, sha, results) {
+export async function finalizeRelease(github, tag, sha, results, modes = unsigned) {
   const failures = failedChecks(results);
   if (failures.length) {
     if (results.prepare?.result === "success") {
       await github.assertTag(tag, sha);
       const release = await github.getRelease(tag);
-      assertDraft(release, tag, sha);
+      assertDraft(release, tag, sha, modes);
       await github.edit(release.id, {
         name: `${tag} — 未完成`,
         body: notes(
           tag,
           sha,
           `未完成 / Incomplete: ${failures.join(", ")}. See workflow job summaries; rerun failed jobs.`,
+          "",
+          modes,
         ),
       });
     }
@@ -87,12 +107,18 @@ export async function finalizeRelease(github, tag, sha, results) {
   }
   await github.assertTag(tag, sha);
   const release = await github.getRelease(tag);
-  assertDraft(release, tag, sha);
+  assertDraft(release, tag, sha, modes);
   // Finalize can itself be rerun. Clear a previous ready status before any
   // download or checksum operation that may now fail.
   await github.edit(release.id, {
     name: `${tag} — 建置中`,
-    body: notes(tag, sha, "驗證下載中 / Verifying downloaded assets — do not publish yet."),
+    body: notes(
+      tag,
+      sha,
+      "驗證下載中 / Verifying downloaded assets — do not publish yet.",
+      "",
+      modes,
+    ),
   });
   assertAssets(release.assets, tag.slice(1));
   const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-release-"));
@@ -104,7 +130,7 @@ export async function finalizeRelease(github, tag, sha, results) {
     const generated = await github.generateNotes(tag, sha);
     // Recheck immediately before writing, including whether someone published the draft.
     await github.assertTag(tag, sha);
-    assertDraft(await github.getRelease(tag), tag, sha);
+    assertDraft(await github.getRelease(tag), tag, sha, modes);
     await github.edit(release.id, {
       name: `${tag} — 待發布`,
       body: notes(
@@ -112,6 +138,8 @@ export async function finalizeRelease(github, tag, sha, results) {
         sha,
         "待發布 / Ready for manual publication — all checks and checksums passed.",
         generated,
+        modes,
+        true,
       ),
     });
   } finally {
@@ -225,14 +253,17 @@ async function main() {
   const sha = process.env.RELEASE_SHA;
   assert.match(sha ?? "", /^[a-f0-9]{40}$/, "Invalid release commit");
   const { version } = await validateVersions(tag);
+  const modes = signingModes();
   const action = process.argv[2];
   if (action === "validate") {
     validateCommit(tag, sha);
+    if (process.env.GITHUB_OUTPUT)
+      await appendFile(process.env.GITHUB_OUTPUT, `signing=${JSON.stringify(modes)}\n`);
     console.log(`Validated ${tag} at ${sha}`);
     return;
   }
   const github = createGithub(process.env.GITHUB_REPOSITORY);
-  if (action === "prepare") await prepareRelease(github, tag, sha);
+  if (action === "prepare") await prepareRelease(github, tag, sha, modes);
   else if (action === "upload") {
     const name = archiveName(version, process.env.TARGET_PLATFORM, process.env.TARGET_ARCH);
     await uploadRelease(
@@ -240,6 +271,7 @@ async function main() {
       tag,
       sha,
       path.join(repositoryRoot, "apps/desktop/out/release", name),
+      modes,
     );
   } else if (action === "finalize") {
     const results = JSON.parse(process.env.RELEASE_RESULTS || "{}");
@@ -250,7 +282,7 @@ async function main() {
       .join("\n");
     if (process.env.GITHUB_STEP_SUMMARY)
       await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Desktop Release\n\n${summary}\n\n`);
-    await finalizeRelease(github, tag, sha, results);
+    await finalizeRelease(github, tag, sha, results, modes);
   } else throw new Error(`Unknown release action: ${action}`);
 }
 

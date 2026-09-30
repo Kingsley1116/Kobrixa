@@ -16,6 +16,4 @@ Requires an EV3 brick. Record firmware, transport, date, and observed result in 
 
 ## Source and license / 原始檔與授權
 
-`assets/source/kobrixa-mascot.png` is an original AI-generated source illustration; generated `.rgf` and `.rsf` files are independently produced by `tools/build-assets.mjs`. All files in this project are Apache-2.0 unless noted otherwise.
-
-The deployed RGF is a simplified robot drawn by the asset generator, not a conversion of the detailed source PNG.／實機部署的 RGF 是素材產生器繪製的簡化機器人，並非詳細 PNG 原稿的轉換。
+The `.rgf` robot image and `.rsf` chime are generated directly by [`tools/build-assets.mjs`](../../../tools/build-assets.mjs), using geometric drawing and synthesized audio. No source PNG is required. All files in this example are Apache-2.0 unless noted otherwise.／`.rgf` 機器人圖像與 `.rsf` 鈴聲由素材產生器直接繪製及合成，不需要 PNG 原稿。除另有註明外，此範例檔案皆採 Apache-2.0 授權。

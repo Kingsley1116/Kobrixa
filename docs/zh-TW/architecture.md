@@ -1,8 +1,5 @@
 # 架構與公共契約
 
-> 狀態：規劃中。以下介面是 v1 的實作契約。  
-> 語言：繁體中文 · [English](../en/architecture.md)
-
 ## 系統結構
 
 ```text
@@ -24,11 +21,13 @@ React renderer 只管理呈現狀態，不能直接存取 Node.js 或 Electron A
 ## 倉庫邊界
 
 - `apps/desktop`：Electron main 與 preload process、React renderer、Monaco 整合、本地化與使用流程。
+- `apps/web`：產品頁、雙語文件、素材庫介面及其 Cloudflare Worker。桌面編輯與編譯不依賴此服務。
 - `packages/compiler`：建置 session 協調與診斷彙整。
 - `packages/ir`：由語言前端和後端共用的版本化 IR 型別、驗證與序列化。
 - `packages/backend-ev3`：確定性的 EV3 VM lowering 與 `.rbf` 封裝。
 - `packages/device`：transport 中立的設備操作，以及 USB、Wi-Fi 實作。
 - `frontends/basic-plus`：clean-room lexer、parser、語意分析與 IR lowering。
+- `tools/release`：壓縮包檢查、簽章驗證與 GitHub Release 草稿管理。`.github/workflows/release.yml` 協調各平台原生建置。
 
 相依方向朝向共享契約。編譯器和設備 package 必須能被未來 Node.js CLI 使用，而不必匯入 Electron 桌面程式碼。
 
@@ -60,7 +59,7 @@ React renderer 只管理呈現狀態，不能直接存取 Node.js 或 Electron A
 
 ## 編譯器契約
 
-每個前端實作以下概念契約：
+前端契約定義於 [`packages/compiler/src/contracts.ts`](https://github.com/Kingsley1116/Kobrixa/blob/main/packages/compiler/src/contracts.ts)，目前只有 `bp` 已有實作：
 
 ```ts
 interface LanguageFrontend {
@@ -80,6 +79,7 @@ interface FrontendResult {
 
 ```ts
 interface CompileResult {
+  runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
   artifacts: BuildArtifact[];
@@ -94,15 +94,20 @@ interface Diagnostic {
 }
 
 interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing";
+  kind: "rbf" | "ir" | "listing" | "asset";
   path: string;
   sha256: string;
+  remotePath?: string;
 }
 ```
 
 公共結果的行、列從 1 起算。只有在沒有 error 診斷，且有效 `rbf` 已原子提交時，`success` 才為 true。失敗或取消後必須移除暫存輸出。
 
+`runtimeDirectory` 記錄入口來源的 `Folder` 目的地。素材成品的 `remotePath` 為專案相對路徑，部署時保留程式預期的素材位置。每個輸出檔透過同一檔案系統內的 rename 提交；整組輸出檔並非單一交易。
+
 ## 設備契約
+
+以下核心生命週期方法節錄自 [`packages/device/src/contracts.ts`](https://github.com/Kingsley1116/Kobrixa/blob/main/packages/device/src/contracts.ts)：
 
 ```ts
 interface DeviceTransport {
@@ -111,6 +116,8 @@ interface DeviceTransport {
 }
 
 interface DeviceSession {
+  readonly descriptor: DeviceDescriptor;
+  readonly connected: boolean;
   disconnect(): Promise<void>;
   upload(remotePath: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
   run(remotePath: string, signal: AbortSignal): Promise<void>;
@@ -120,6 +127,16 @@ interface DeviceSession {
 ```
 
 同一 session 同時只能有一個變更狀態的操作。Disconnect 必須具冪等性。每個操作都有有限逾時，並回傳結構化分類：`permission`、`not-found`、`connection`、`timeout`、`protocol`、`transfer`、`device`、`cancelled` 或 `internal`。UI 文字在設備層之外本地化。
+
+同一 session 另提供 `list`、`download`、`uploadStream`、`createDirectory` 與 `rename`，用於遠端檔案管理。串流傳輸回報進度；桌面 main process 協調批次操作預覽、覆寫確認與 session 獨占存取。
+
+## 桌面封裝與發布
+
+Electron Forge 將 renderer、main 與 preload 入口封裝至 `app.asar`，原生 `.node` 檔保留於解包目錄。封裝 hook 加入目標平台的 `node-hid` 預編譯檔、專案 `LICENSE` 與含版本資訊的 `THIRD-PARTY-NOTICES.txt`，並保留 Electron／Chromium 與 HIDAPI 授權檔。
+
+一般 CI 與本機封裝不需要憑證。Tag 發布先驗證 commit 與套件版本，將 macOS／Windows 簽章開關快照記錄於草稿，通過共通檢查與桌面測試後才執行簽章。macOS 對 `com.kobrixa.ide` 使用 Developer ID、Hardened Runtime 與公證；Windows 將保留一天的暫存產物送往 SignPath，只接受 `kobrixa.exe` 的變更。
+
+啟用簽章後，失敗會中止該平台。壓縮前與解壓後都驗證應用程式，包括簽章、檔案內容、執行權限、符號連結與原生模組，再產生 SHA-256。最終草稿包含三個壓縮包與三個校驗碼檔，等待維護者手動公開。憑證管理、核准與重跑規則見[程式碼簽章政策](../zh-TW/code-signing.md)。
 
 ## 狀態與安全規則
 

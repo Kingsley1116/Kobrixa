@@ -56,6 +56,8 @@ Node.js 與 TypeScript 是 Kobrixa 的內部實作技術；C++ 則仍是 TypeScr
 
 ## 文件
 
+- [Code signing policy／程式碼簽章政策](docs/zh-TW/code-signing.md)
+
 - [產品規格](docs/zh-TW/product.md)
 - [架構與公共契約](docs/zh-TW/architecture.md)
 - [語言支援政策](docs/zh-TW/language-support.md)

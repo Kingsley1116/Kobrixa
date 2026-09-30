@@ -1,8 +1,5 @@
 # Architecture and public contracts
 
-> Status: Planning. Interfaces are implementation contracts for v1.  
-> Language: English · [繁體中文](../zh-TW/architecture.md)
-
 ## System shape
 
 ```text
@@ -24,11 +21,13 @@ The React renderer owns presentation state only and has no direct access to Node
 ## Repository boundaries
 
 - `apps/desktop`: Electron main and preload processes, React renderer, Monaco integration, localization, and user workflows.
+- `apps/web`: product pages, bilingual documentation, Gallery UI and its Cloudflare Worker. Desktop editing and compilation do not depend on this service.
 - `packages/compiler`: build-session orchestration and diagnostic aggregation.
 - `packages/ir`: versioned IR types, validation, and serialization used by language frontends and backends.
 - `packages/backend-ev3`: deterministic EV3 VM lowering and `.rbf` packaging.
 - `packages/device`: transport-neutral device operations with USB and Wi-Fi implementations.
 - `frontends/basic-plus`: clean-room lexer, parser, semantic analysis, and IR lowering.
+- `tools/release`: archive validation, signing verification and GitHub Release draft management. `.github/workflows/release.yml` coordinates native platform builds.
 
 Dependencies point inward toward shared contracts. The compiler and device packages must be usable by a future Node.js CLI without importing Electron desktop code.
 
@@ -60,7 +59,7 @@ Contract:
 
 ## Compiler contracts
 
-Every frontend implements the conceptual contract:
+The frontend contract is defined in [`packages/compiler/src/contracts.ts`](https://github.com/Kingsley1116/Kobrixa/blob/main/packages/compiler/src/contracts.ts). Only `bp` currently has an implementation:
 
 ```ts
 interface LanguageFrontend {
@@ -80,6 +79,7 @@ The public build result is:
 
 ```ts
 interface CompileResult {
+  runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
   artifacts: BuildArtifact[];
@@ -94,15 +94,20 @@ interface Diagnostic {
 }
 
 interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing";
+  kind: "rbf" | "ir" | "listing" | "asset";
   path: string;
   sha256: string;
+  remotePath?: string;
 }
 ```
 
 Line and column numbers are one-based in public results. `success` is true only when no error diagnostic exists and a valid `rbf` artifact was committed atomically. Temporary output is removed after failure or cancellation.
 
+`runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program. Each output file is committed through a same-filesystem rename; this is not a transaction across the complete set of output files.
+
 ## Device contract
+
+The core lifecycle methods below are an excerpt from [`packages/device/src/contracts.ts`](https://github.com/Kingsley1116/Kobrixa/blob/main/packages/device/src/contracts.ts):
 
 ```ts
 interface DeviceTransport {
@@ -111,6 +116,8 @@ interface DeviceTransport {
 }
 
 interface DeviceSession {
+  readonly descriptor: DeviceDescriptor;
+  readonly connected: boolean;
   disconnect(): Promise<void>;
   upload(remotePath: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
   run(remotePath: string, signal: AbortSignal): Promise<void>;
@@ -120,6 +127,16 @@ interface DeviceSession {
 ```
 
 Only one operation may mutate a session at a time. Disconnect is idempotent. Every operation has a bounded timeout and returns a structured category: `permission`, `not-found`, `connection`, `timeout`, `protocol`, `transfer`, `device`, `cancelled`, or `internal`. UI text is localized outside the device layer.
+
+The same session also exposes `list`, `download`, `uploadStream`, `createDirectory` and `rename` for remote file management. Streaming transfers report progress; the desktop main process coordinates batch previews, overwrite confirmations and exclusive session access.
+
+## Desktop packaging and release
+
+Electron Forge bundles the renderer and main/preload entry points into `app.asar`, with native `.node` files unpacked. The packaging hook includes the target platform's `node-hid` prebuilds, the project `LICENSE` and versioned `THIRD-PARTY-NOTICES.txt`. Electron/Chromium and HIDAPI license files remain in the distribution.
+
+Ordinary CI and local packaging do not require credentials. Tag releases validate the commit and package versions, freeze the macOS/Windows signing switches in the draft, and require common checks and desktop tests before signing. macOS uses Developer ID, Hardened Runtime and notarization for `com.kobrixa.ide`; Windows sends a one-day temporary artifact to SignPath and accepts changes only to `kobrixa.exe`.
+
+Enabled signing fails closed. Applications are verified before archiving and after extraction, including signatures, file contents, executable permissions, symlinks and native modules. Only then are SHA-256 files generated. The final draft contains three archives and three checksum files, and remains unpublished until a maintainer publishes it. Credential handling, approval and retry behavior are defined in the [code signing policy](../en/code-signing.md).
 
 ## State and safety rules
 

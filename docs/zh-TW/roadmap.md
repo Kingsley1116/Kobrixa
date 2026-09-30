@@ -1,27 +1,29 @@
 # 路線圖
 
-> 狀態：規劃中；在實作資源確定前不指定日期。  
-> 語言：繁體中文 · [English](../en/roadmap.md)
+## 目前交付階段
 
-## Phase 0 — 基礎
+倉庫目前處於 v1 候選版階段。Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理，以及三平台壓縮包／Release 流程均已實作。正式簽章憑證與完整乾淨環境／實機矩陣仍是發布前須完成的項目。
 
-- 確認 Kobrixa 的商標、程式碼倉庫、套件註冊表、社群帳號與網域可用性。
-- 建立 Electron、React、TypeScript、Monaco 與 Node.js/pnpm workspace 骨架。
-- 鎖定 toolchain，建立 Windows、macOS、Linux CI。
-- 定義版本化 manifest、診斷、IR、成品與設備契約。
-- 加入文件連結與雙語一致性檢查。
+## Phase 0 — 已建立的基礎
 
-退出條件：三個平台都能建置空白的開發版或已簽署應用程式，且契約測試通過。
+- Electron、React、TypeScript 與 Monaco 使用鎖定版本的 Node.js／pnpm workspace。
+- Compiler、IR、backend 與 device package 共用版本化契約。
+- CI 依 Git 差異選擇網站或桌面檢查；桌面封裝目標為 Windows x64、macOS arm64 與 Linux x64。
+- 產品文件與教學提供英文及繁體中文版本。
 
-## v1 — Basic Plus 到原生 EV3
+公開發布前持續檢查相依套件授權、品牌／素材來源與雙語連結。自動建置不代表已取得商標權利，也不能取代上述檢查。
 
-- 實作 clean-room `.bp` 前端與行為相容測試套件。
-- 實作具型別 `KobrixaIR`、驗證、EV3 lowering 與確定性 `.rbf` 封裝。
-- 交付 Monaco 編輯、專案、建置、診斷與成品管理。
-- 在 Windows、macOS、Linux 交付 USB HID 與 Wi-Fi 上傳／執行／停止／刪除。
-- 發布範例、安裝說明、復原指引與 release 成品。
+## v1 — 發布驗收
 
-退出條件：[產品規格](product.md)與[設備規格](device-support.md)的所有條件都在參考硬體上通過。
+目前已實作 `.bp` → 已驗證 `KobrixaIR` → 原生 `.rbf`，並提供 Monaco 編輯、專案、診斷、素材部署與遠端檔案操作。接下來依序完成：
+
+1. 完成 Apple 會員及 Developer ID 憑證設定，驗證解壓後的 macOS 應用程式已簽章並公證。
+2. 完成原始碼／歷史／素材檢查與乾淨環境驗收，包括尚未完成的 USB／Wi-Fi 矩陣；檢閱確切 Release 草稿及六個產物。
+3. 手動公開倉庫與首個可使用版本：macOS 已簽章並公證，Windows 明確標示未簽章。
+4. 使用公開原始碼與版本申請 SignPath Foundation。核准取決於外部審核；延後或拒絕時維持 Windows 未簽章。
+5. 核准後設定允許的簽署範圍及人工核准 policy，在新版本啟用 Windows 簽章，再驗證回傳執行檔與最終下載包。
+
+退出條件：[產品規格](../zh-TW/product.md)與[設備規格](../zh-TW/device-support.md)的所有條件通過，且每項公開簽章聲明均有驗證證據。依[簽章政策](../zh-TW/code-signing.md)操作；啟用後不得靜默退回未簽章產物。
 
 ## v1.x — 強化
 

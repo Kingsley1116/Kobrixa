@@ -1,11 +1,10 @@
 # Language support policy
 
-> Status: `.bp` is planned for v1; all other frontends are post-v1 plans.  
-> Language: English · [繁體中文](../zh-TW/language-support.md)
-
 ## Shared rule
 
 All source languages compile through a frontend into validated `KobrixaIR`, then through the same EV3 backend into native `.rbf`. A frontend may not silently reinterpret an unsupported feature. It must emit a stable, actionable compile-time diagnostic.
+
+Basic Plus is the only implemented source frontend. The project manifest currently accepts `language: "bp"`; Python, TypeScript and C++ remain roadmap items. Desktop code signing authenticates the application distribution and does not change the languages accepted by the compiler or certify a program's hardware behavior.
 
 “As complete as practical” means broad source syntax acceptance where semantics can be represented on the EV3 VM. It does not mean that Kobrixa embeds the full CPython, JavaScript, Node.js, browser, C++, or operating-system runtime in `.rbf`.
 
@@ -59,8 +58,16 @@ An unsupported feature is an error, never a warning followed by altered executio
 
 Division (`/`) produces a floating-point result even with integer operands: `7 / 2` is `3.5`. All numeric return branches in a function share one inferred representation; a floating-point branch widens integer branches. Integer and Boolean returns use their matching EV3 call parameter widths. Incompatible return kinds report `BP2010`.
 
-Text search and slicing use one-based positions. `Text.GetIndexOf` returns zero for a missing match; `Text.GetSubText` truncates the requested length at the source end and returns empty text for an invalid start or nonpositive length. A successful search branches on the firmware string equality result. Executable cases and bytecode expectations are in the [new example curriculum](../../examples/NEW-EXAMPLES.md).
+Text search and slicing use one-based positions. `Text.GetIndexOf` returns zero for a missing match; `Text.GetSubText` truncates the requested length at the source end and returns empty text for an invalid start or nonpositive length. A successful search branches on the firmware string equality result. Executable cases and bytecode expectations are in the [new example curriculum](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/NEW-EXAMPLES.md).
 
-## Example-driven runtime support / 範例驗證的執行支援
+## Example-driven runtime support
 
-See the [expanded curriculum](../../examples/CLEV3R-PARITY.md) and its bytecode audit. Recursive call groups support 32 simultaneous frames with an explicit overflow stop; native function objects are not reentrant. Mutex acquisition is serialized through a shared native subcall. Basic Plus trigonometric APIs use radians and convert to/from EV3 native degrees. Byte and I²C/file byte values preserve 0–255. Folder in the entry source selects internal or SD deployment and runtime paths.／請見擴充課程與字節碼稽核。遞迴群組支援同時 32 層，超限明確停止；原生函式物件不可重入。互斥鎖取得透過共用原生子呼叫序列化。三角函數使用弧度並轉換 EV3 的度數；Byte、I²C 與檔案位元組保留 0–255。入口 Folder 設定內建或 SD 部署與執行路徑。
+The [expanded curriculum](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/CLEV3R-PARITY.md) records examples and bytecode expectations for these behaviors:
+
+- Recursive call groups support 32 simultaneous frames and stop explicitly on overflow; native function objects are not reentrant.
+- Mutex acquisition is serialized through a shared native subcall.
+- Basic Plus trigonometric APIs use radians and convert to/from EV3 native degrees.
+- Byte, I²C and file byte values preserve the 0–255 range.
+- `Folder` in the entry source selects internal or SD deployment and runtime paths.
+
+Automated compilation and bytecode checks establish only their tested properties. Physical observations and remaining limitations are recorded separately in the [hardware acceptance notes](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md).

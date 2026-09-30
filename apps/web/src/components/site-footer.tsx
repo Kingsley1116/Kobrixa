@@ -63,6 +63,9 @@ export function SiteFooter({ locale }: { locale: "zh-TW" | "en" }) {
                   <Link to="/docs">{zh ? "使用文件" : "Documentation"}</Link>
                 </li>
                 <li>
+                  <Link to="/docs/reference/code-signing">Code signing policy</Link>
+                </li>
+                <li>
                   <a href={`${github}/tree/main/docs/${locale}`} target="_blank" rel="noreferrer">
                     {zh ? "GitHub 文件" : "Docs on GitHub"}
                     <ExternalArrow />

@@ -19,6 +19,8 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      signing: ${{ steps.validate.outputs.signing }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,7 +29,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node tools/release/github.mjs validate
+      - id: validate
+        run: node tools/release/github.mjs validate
+        env:
+          MACOS_SIGNING_ENABLED: ${{ vars.MACOS_SIGNING_ENABLED }}
+          WINDOWS_SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED }}
 
   quality:
     name: Common checks
@@ -58,10 +64,11 @@ jobs:
       - run: node tools/release/github.mjs prepare
         env:
           GH_TOKEN: ${{ github.token }}
+          SIGNING_MODES: ${{ needs.validate.outputs.signing }}
 
   platform:
     name: Release (${{ matrix.platform }}-${{ matrix.arch }})
-    needs: prepare
+    needs: [validate, quality, prepare]
     strategy:
       fail-fast: false
       matrix:
@@ -69,16 +76,25 @@ jobs:
           - os: ubuntu-24.04
             platform: linux
             arch: x64
+            timeout: 30
           - os: windows-2025
             platform: win32
             arch: x64
+            timeout: 120
           - os: macos-26
             platform: darwin
             arch: arm64
+            timeout: 90
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout }}
     permissions:
       contents: write
+      actions: read
+    env:
+      SIGNING_MODES: ${{ needs.validate.outputs.signing }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+      SIGNPATH_CERTIFICATE_SUBJECT: ${{ vars.SIGNPATH_CERTIFICATE_SUBJECT }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,9 +102,63 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm build:core
       - run: pnpm test:desktop
+      - name: Import Apple certificate into a temporary keychain
+        if: matrix.platform == 'darwin' && fromJSON(needs.validate.outputs.signing).macos
+        run: node tools/release/macos-keychain.mjs setup
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      - name: Check SignPath configuration
+        id: signpath-config
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        run: node tools/release/signing.mjs preflight-windows
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
       - run: pnpm build:desktop
+        env:
+          KOBRIXA_RELEASE_BUILD: "true"
+          APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+      - name: Upload temporary unsigned Windows application
+        id: unsigned-windows
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-win32-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/desktop/out/Kobrixa-win32-x64/
+          include-hidden-files: true
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Request SignPath signing (manual approval, up to 60 minutes)
+        id: signpath
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-windows.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: apps/desktop/out/signed
+          parameters: |
+            version: ${{ toJSON(steps.signpath-config.outputs.version) }}
+      - name: Verify and accept the signed Windows executable
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        run: node tools/release/signing.mjs accept-windows
       - run: pnpm package:archive
         env:
+          KOBRIXA_RELEASE_BUILD: "true"
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
       - run: node tools/release/github.mjs upload
@@ -96,6 +166,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
+      - name: Remove temporary Apple keychain
+        if: always() && matrix.platform == 'darwin' && env.MACOS_KEYCHAIN_PATH != ''
+        run: node tools/release/macos-keychain.mjs cleanup
       - name: Report platform result
         if: always()
         shell: bash
@@ -123,3 +196,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_RESULTS: ${{ toJSON(needs) }}
+          SIGNING_MODES: ${{ needs.validate.outputs.signing }}

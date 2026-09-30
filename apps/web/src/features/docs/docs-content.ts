@@ -1,12 +1,14 @@
 import architectureEn from "../../../../../docs/en/architecture.md?raw";
 import deviceSupportEn from "../../../../../docs/en/device-support.md?raw";
 import installationEn from "../../../../../docs/en/installation.md?raw";
+import codeSigningEn from "../../../../../docs/en/code-signing.md?raw";
 import languageSupportEn from "../../../../../docs/en/language-support.md?raw";
 import productEn from "../../../../../docs/en/product.md?raw";
 import roadmapEn from "../../../../../docs/en/roadmap.md?raw";
 import architectureZh from "../../../../../docs/zh-TW/architecture.md?raw";
 import deviceSupportZh from "../../../../../docs/zh-TW/device-support.md?raw";
 import installationZh from "../../../../../docs/zh-TW/installation.md?raw";
+import codeSigningZh from "../../../../../docs/zh-TW/code-signing.md?raw";
 import languageSupportZh from "../../../../../docs/zh-TW/language-support.md?raw";
 import productZh from "../../../../../docs/zh-TW/product.md?raw";
 import roadmapZh from "../../../../../docs/zh-TW/roadmap.md?raw";
@@ -37,7 +39,13 @@ import capstoneZh from "../../../../../docs/tutorials/zh-TW/11-capstone.md?raw";
 
 export type DocsLocale = "zh-TW" | "en";
 export type DocumentSlug =
-  "product" | "installation" | "language-support" | "device-support" | "architecture" | "roadmap";
+  | "product"
+  | "installation"
+  | "code-signing"
+  | "language-support"
+  | "device-support"
+  | "architecture"
+  | "roadmap";
 
 export type DocumentEntry = {
   slug: DocumentSlug;
@@ -176,6 +184,16 @@ export function findTutorial(slug: string | undefined) {
 }
 
 export const documents: readonly DocumentEntry[] = [
+  {
+    slug: "code-signing",
+    category: "technical",
+    title: { "zh-TW": "簽章政策", en: "Code signing policy" },
+    summary: {
+      "zh-TW": "各平台簽章狀態、維護者責任與發布驗證。",
+      en: "Platform signing status, maintainer responsibilities and release verification.",
+    },
+    content: { "zh-TW": codeSigningZh, en: codeSigningEn },
+  },
   {
     slug: "product",
     category: "product",
