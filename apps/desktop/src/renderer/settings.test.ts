@@ -119,3 +119,40 @@ describe("application settings", () => {
     );
   });
 });
+
+it("persists editor and save preferences while keeping conservative upgrade defaults", () => {
+  const s = storage(),
+    store = new SettingsStore(() => s, "en");
+  expect(store.getSnapshot().values).toMatchObject({
+    lineNumbers: "on",
+    minimap: false,
+    renderWhitespace: "selection",
+    formatOnPaste: true,
+    autoSave: "off",
+    autoSaveDelay: 1000,
+    formatOnSave: false,
+  });
+  store.set("lineNumbers", "relative");
+  store.set("minimap", true);
+  store.set("renderWhitespace", "all");
+  store.set("formatOnPaste", false);
+  store.set("autoSave", "afterDelay");
+  store.set("autoSaveDelay", 2000);
+  store.set("formatOnSave", true);
+  expect(new SettingsStore(() => s, "en").getSnapshot().values).toMatchObject({
+    lineNumbers: "relative",
+    minimap: true,
+    renderWhitespace: "all",
+    formatOnPaste: false,
+    autoSave: "afterDelay",
+    autoSaveDelay: 2000,
+    formatOnSave: true,
+  });
+  s.setItem(SETTINGS_KEYS.autoSaveDelay, "0");
+  s.setItem(SETTINGS_KEYS.autoSave, "yes");
+  expect(readSettings(s, "en")).toMatchObject({
+    autoSave: "off",
+    autoSaveDelay: 1000,
+    lineNumbers: "relative",
+  });
+});

@@ -53,7 +53,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ir
       monaco-editor:
-        specifier: ^0.52.2
+        specifier: 0.52.2
         version: 0.52.2
       node-hid:
         specifier: ^3.2.0

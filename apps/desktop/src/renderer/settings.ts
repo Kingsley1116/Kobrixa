@@ -4,7 +4,15 @@ import { THEME_KEY, type Theme } from "./theme.js";
 
 export const UI_SCALES = [100, 110, 125] as const;
 export const CODE_SIZES = [14, 16, 18, 20, 24] as const;
+export const AUTO_SAVE_DELAYS = [500, 1000, 2000, 5000] as const;
 export interface Settings {
+  lineNumbers: "on" | "relative" | "off";
+  minimap: boolean;
+  renderWhitespace: "none" | "selection" | "all";
+  formatOnPaste: boolean;
+  autoSave: "off" | "afterDelay" | "onFocusChange";
+  autoSaveDelay: (typeof AUTO_SAVE_DELAYS)[number];
+  formatOnSave: boolean;
   locale: Locale;
   theme: Theme;
   uiScale: (typeof UI_SCALES)[number];
@@ -26,6 +34,13 @@ export interface SettingsSnapshot {
 }
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem">;
 export const SETTINGS_KEYS: Record<keyof Settings, string> = {
+  lineNumbers: "kobrixa.lineNumbers",
+  minimap: "kobrixa.minimap",
+  renderWhitespace: "kobrixa.renderWhitespace",
+  formatOnPaste: "kobrixa.formatOnPaste",
+  autoSave: "kobrixa.autoSave",
+  autoSaveDelay: "kobrixa.autoSaveDelay",
+  formatOnSave: "kobrixa.formatOnSave",
   locale: "kobrixa.locale",
   theme: THEME_KEY,
   uiScale: "kobrixa.uiScale",
@@ -38,6 +53,13 @@ export const SETTINGS_KEYS: Record<keyof Settings, string> = {
 };
 export function defaultSettings(language: string): Settings {
   return {
+    lineNumbers: "on",
+    minimap: false,
+    renderWhitespace: "selection",
+    formatOnPaste: true,
+    autoSave: "off",
+    autoSaveDelay: 1000,
+    formatOnSave: false,
     locale: language.toLowerCase().startsWith("zh") ? "zh-TW" : "en",
     theme: "dark",
     uiScale: 100,
@@ -59,6 +81,14 @@ export function readSettings(storage: Pick<Storage, "getItem">, language: string
     const raw = storage.getItem(SETTINGS_KEYS[key]);
     return options.find((option) => String(option) === raw) ?? fallback;
   };
+  result.lineNumbers = choice("lineNumbers", ["on", "relative", "off"], result.lineNumbers);
+  result.renderWhitespace = choice(
+    "renderWhitespace",
+    ["none", "selection", "all"],
+    result.renderWhitespace,
+  );
+  result.autoSave = choice("autoSave", ["off", "afterDelay", "onFocusChange"], result.autoSave);
+  result.autoSaveDelay = choice("autoSaveDelay", AUTO_SAVE_DELAYS, result.autoSaveDelay);
   result.locale = choice("locale", ["en", "zh-TW"], result.locale);
   result.theme = choice("theme", ["light", "dark"], result.theme);
   result.uiScale = choice("uiScale", UI_SCALES, result.uiScale);
@@ -66,7 +96,15 @@ export function readSettings(storage: Pick<Storage, "getItem">, language: string
   result.motion = choice("motion", ["system", "reduce"], result.motion);
   result.indentSize = choice("indentSize", [2, 4], result.indentSize);
   result.toolTab = choice("toolTab", ["connection", "files", "activity"], result.toolTab);
-  for (const key of ["wordWrap", "filesOpen", "deviceOpen", "problemsOpen"] as const) {
+  for (const key of [
+    "minimap",
+    "formatOnPaste",
+    "formatOnSave",
+    "wordWrap",
+    "filesOpen",
+    "deviceOpen",
+    "problemsOpen",
+  ] as const) {
     const raw = storage.getItem(SETTINGS_KEYS[key]);
     if (raw === "true" || raw === "false") result[key] = raw === "true";
   }

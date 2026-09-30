@@ -18,6 +18,7 @@
     "package:archive": "node tools/release/archive.mjs",
     "check": "pnpm -r check && eslint .",
     "test": "pnpm -r test && pnpm test:bytecode",
+    "test:desktop:smoke": "node tests/desktop/run-smoke.mjs",
     "test:hardware": "node tests/hardware/run.mjs",
     "assets:build": "node tools/build-assets.mjs",
     "format": "prettier --write .",

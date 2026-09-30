@@ -1,0 +1,44 @@
+// Sandboxed Electron preloads must use CommonJS.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { contextBridge, ipcRenderer } = require("electron");
+const call =
+  (name) =>
+  (...args) =>
+    ipcRenderer.invoke("smoke", name, args);
+contextBridge.exposeInMainWorld("kobrixa", {
+  keyboard: { updateContext: call("keyboard") },
+  workspace: {
+    open: call("open"),
+    create: call("open"),
+    selectEntry: call("open"),
+    read: call("read"),
+    write: call("write"),
+    saveDraft: call("draft"),
+    createEntry: call("createEntry"),
+    moveEntry: call("moveEntry"),
+    trashEntry: call("trashEntry"),
+  },
+  build: {
+    start: call("build"),
+    cancel: call("cancel"),
+    artifacts: async () => [],
+    onEvent: () => () => {},
+  },
+  language: { cancel: async () => {}, diagnostics: async () => [] },
+  device: {
+    onEvent: () => () => {},
+    discover: async () => [],
+    files: async () => ({ ok: true, entries: [] }),
+    prepareFiles: call("device"),
+    executeFiles: call("device"),
+    stopFiles: call("device"),
+    connect: call("device"),
+    connectWifi: call("device"),
+    disconnect: call("device"),
+    upload: call("device"),
+    deploy: call("device"),
+    run: call("device"),
+    stop: call("device"),
+    delete: call("device"),
+  },
+});

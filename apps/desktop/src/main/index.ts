@@ -1,3 +1,4 @@
+import { attachKeyboard } from "./keyboard.js";
 import path from "node:path";
 import { app, BrowserWindow, session, shell } from "electron";
 import { BuildService } from "./build.js";
@@ -27,6 +28,8 @@ function createWindow(): void {
       webSecurity: true,
     },
   });
+
+  attachKeyboard(mainWindow.webContents);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://education.lego.com/")) void shell.openExternal(url);

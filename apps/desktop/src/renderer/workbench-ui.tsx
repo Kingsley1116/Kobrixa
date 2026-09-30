@@ -1,3 +1,4 @@
+import type { AppCommand } from "./keybindings.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import kobrixaMark from "../../../../assets/brand/kobrixa-mark.svg";
 import type { DeviceDescriptor, Diagnostic } from "../shared/api.js";
@@ -195,6 +196,8 @@ export function Toolbar({
   t,
   locale,
   appearance,
+  shortcutHint,
+  onSaveAll,
   name,
   locked,
   canSave,
@@ -215,6 +218,8 @@ export function Toolbar({
   t: Copy;
   locale: Locale;
   appearance: ReactNode;
+  shortcutHint(command: AppCommand): string;
+  onSaveAll(): void;
   name: string | undefined;
   locked: boolean;
   canSave: boolean;
@@ -232,6 +237,8 @@ export function Toolbar({
   onCancel(): void;
   onDevice(): void;
 }): React.JSX.Element {
+  const hint = (label: string, command: AppCommand) =>
+    [label, shortcutHint(command)].filter(Boolean).join(" · ");
   return (
     <header className="topbar">
       <div className="brand">
@@ -243,14 +250,14 @@ export function Toolbar({
         {name ?? t.workspace}
       </div>
       <nav className="file-actions" aria-label={t.files}>
-        <button disabled={locked} title={t.newProject} onClick={onNew}>
+        <button disabled={locked} title={hint(t.newProject, "newProject")} onClick={onNew}>
           <Icon name="plus" />
         </button>
-        <button disabled={locked} title={t.open} onClick={onOpen}>
+        <button disabled={locked} title={hint(t.open, "openProject")} onClick={onOpen}>
           <Icon name="folder" />
         </button>
         {name && (
-          <button disabled={!canSave || locked} onClick={onSave}>
+          <button disabled={!canSave || locked} title={hint(t.save, "save")} onClick={onSave}>
             {t.save}
           </button>
         )}
@@ -261,7 +268,7 @@ export function Toolbar({
             <button
               className={`connection-chip ${state.session ? "is-connected" : ""}`}
               onClick={onDevice}
-              title={t.showDevice}
+              title={hint(t.showDevice, "device")}
             >
               <span className="status-dot" />
               EV3{" "}
@@ -269,16 +276,23 @@ export function Toolbar({
                 {state.session ? t.connectionStates.connected : t.connectionStates.disconnected}
               </span>
             </button>
-            <button className="primary run-button" disabled={deviceLocked} onClick={onRun}>
+            <button
+              className="primary run-button"
+              disabled={deviceLocked}
+              title={hint(t.runOnDevice, "run")}
+              onClick={onRun}
+            >
               <Icon name="play" />
               {t.runOnDevice}
             </button>
             {state.phase === "building" ? (
-              <button onClick={onCancel}>{t.cancel}</button>
+              <button title={hint(t.cancel, "stop")} onClick={onCancel}>
+                {t.cancel}
+              </button>
             ) : (
               <button
                 className="stop-button"
-                title={t.stop}
+                title={hint(t.stop, "stop")}
                 aria-label={t.stop}
                 disabled={!state.session || deviceLocked}
                 onClick={onStop}
@@ -287,7 +301,20 @@ export function Toolbar({
               </button>
             )}
             <ActionMenu label={t.advanced}>
-              <button role="menuitem" disabled={deviceLocked} onClick={onBuild}>
+              <button
+                role="menuitem"
+                disabled={locked}
+                title={hint(locale === "zh-TW" ? "全部儲存" : "Save all", "saveAll")}
+                onClick={onSaveAll}
+              >
+                {locale === "zh-TW" ? "全部儲存" : "Save all"}
+              </button>
+              <button
+                role="menuitem"
+                title={hint(t.build, "build")}
+                disabled={deviceLocked}
+                onClick={onBuild}
+              >
                 {t.build}
               </button>
               <button

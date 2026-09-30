@@ -1,6 +1,8 @@
+import type { KeyboardSettings } from "./keyboard-state.js";
+import { ShortcutsPanel } from "./shortcuts-panel.js";
 import { useEffect, useRef, useState } from "react";
 import type { Locale } from "./copy.js";
-import { CODE_SIZES, UI_SCALES, type Settings } from "./settings.js";
+import { AUTO_SAVE_DELAYS, CODE_SIZES, UI_SCALES, type Settings } from "./settings.js";
 import { Icon } from "./workbench-ui.js";
 import { Picker } from "./picker.js";
 const languageOptions: { value: Locale; label: string }[] = [
@@ -15,6 +17,8 @@ export const settingsCopy = {
     appearance: "General & appearance",
     editor: "Editor",
     layout: "Workspace layout",
+    shortcuts: "Keyboard shortcuts",
+    saving: "Saving",
     intro: "Changes take effect immediately and are saved on this computer.",
     theme: "Theme",
     dark: "Dark",
@@ -50,6 +54,8 @@ export const settingsCopy = {
     appearance: "一般與外觀",
     editor: "編輯器",
     layout: "工作區布局",
+    shortcuts: "快捷鍵",
+    saving: "儲存",
     intro: "調整立即生效，並自動保存在這台電腦。",
     theme: "主題",
     dark: "深色",
@@ -82,10 +88,12 @@ export function SettingsQuickControls({
   settings,
   onChange,
   onOpen,
+  shortcut,
 }: {
   settings: Settings;
   onChange: Change;
   onOpen(): void;
+  shortcut: string;
 }): React.JSX.Element {
   const t = settingsCopy[settings.locale];
   return (
@@ -108,7 +116,7 @@ export function SettingsQuickControls({
       <button
         className="settings-trigger"
         aria-label={t.title}
-        title={`${t.title} · Cmd/Ctrl+,`}
+        title={[t.title, shortcut].filter(Boolean).join(" · ")}
         onClick={onOpen}
       >
         <Icon name="settings" />
@@ -121,11 +129,13 @@ export function SettingsTab({
   active,
   onSelect,
   onClose,
+  shortcut,
 }: {
   locale: Locale;
   active: boolean;
   onSelect(): void;
   onClose(): void;
+  shortcut: string;
 }): React.JSX.Element {
   const t = settingsCopy[locale];
   return (
@@ -143,7 +153,7 @@ export function SettingsTab({
       <button
         className="tab-close"
         aria-label={t.close}
-        title={`${t.close} · Cmd/Ctrl+W`}
+        title={[t.close, shortcut].filter(Boolean).join(" · ")}
         onClick={onClose}
       >
         ×
@@ -173,7 +183,11 @@ export function SettingsPanel({
   active,
   saveError,
   onRetry,
+  keyboard,
+  requestedCategory,
 }: {
+  keyboard: KeyboardSettings;
+  requestedCategory: { category: "appearance" | "shortcuts"; request: number };
   settings: Settings;
   onChange: Change;
   onReset(): void;
@@ -182,7 +196,11 @@ export function SettingsPanel({
   onRetry(): void;
 }): React.JSX.Element {
   const t = settingsCopy[settings.locale];
-  const [category, setCategory] = useState<"appearance" | "editor" | "layout">("appearance");
+  const [category, setCategory] = useState<
+    "appearance" | "editor" | "saving" | "layout" | "shortcuts"
+  >("appearance");
+  const local = (zh: string, en: string) => (settings.locale === "zh-TW" ? zh : en);
+  useEffect(() => setCategory(requestedCategory.category), [requestedCategory]);
   const title = useRef<HTMLHeadingElement>(null);
   const content = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -192,7 +210,14 @@ export function SettingsPanel({
     content.current?.scrollTo({ top: 0 });
   }, [category]);
   const toggle = (
-    key: "wordWrap" | "filesOpen" | "deviceOpen" | "problemsOpen",
+    key:
+      | "wordWrap"
+      | "filesOpen"
+      | "deviceOpen"
+      | "problemsOpen"
+      | "minimap"
+      | "formatOnPaste"
+      | "formatOnSave",
     label: string,
     hint?: string,
   ) => (
@@ -232,7 +257,7 @@ export function SettingsPanel({
       {saveError && <SettingsError locale={settings.locale} onRetry={onRetry} />}
       <div className="settings-body">
         <nav className="settings-categories" aria-label={t.title}>
-          {(["appearance", "editor", "layout"] as const).map((value) => (
+          {(["appearance", "editor", "saving", "layout", "shortcuts"] as const).map((value) => (
             <button
               key={value}
               aria-current={category === value ? "page" : undefined}
@@ -313,6 +338,38 @@ export function SettingsPanel({
                 options={CODE_SIZES.map((value) => ({ value, label: `${value}px` }))}
               />
             </div>
+            <div className="setting-row">
+              <label htmlFor="setting-lineNumbers">{local("行號", "Line numbers")}</label>
+              <Picker
+                locale={settings.locale}
+                label={local("行號", "Line numbers")}
+                id="setting-lineNumbers"
+                value={settings.lineNumbers}
+                onChange={(value) => onChange("lineNumbers", value)}
+                options={[
+                  { value: "on", label: local("顯示", "On") },
+                  { value: "relative", label: local("相對行號", "Relative") },
+                  { value: "off", label: local("隱藏", "Off") },
+                ]}
+              />
+            </div>
+            {toggle("minimap", local("程式碼縮圖", "Minimap"))}
+            <div className="setting-row">
+              <label htmlFor="setting-whitespace">{local("空白字元", "Whitespace")}</label>
+              <Picker
+                locale={settings.locale}
+                label={local("空白字元", "Whitespace")}
+                id="setting-whitespace"
+                value={settings.renderWhitespace}
+                onChange={(value) => onChange("renderWhitespace", value)}
+                options={[
+                  { value: "none", label: local("不顯示", "None") },
+                  { value: "selection", label: local("選取範圍", "Selection") },
+                  { value: "all", label: local("全部", "All") },
+                ]}
+              />
+            </div>
+            {toggle("formatOnPaste", local("貼上時格式化", "Format on paste"))}
             {toggle("wordWrap", t.wordWrap, t.wrapHint)}
             <div className="setting-row">
               <div>
@@ -332,6 +389,52 @@ export function SettingsPanel({
                 }))}
               />
             </div>
+          </section>
+          <section hidden={category !== "saving"} aria-labelledby="settings-saving">
+            <h2 id="settings-saving">{t.saving}</h2>
+            <div className="setting-row">
+              <label htmlFor="setting-autoSave">{local("自動儲存", "Auto save")}</label>
+              <Picker
+                locale={settings.locale}
+                label={local("自動儲存", "Auto save")}
+                id="setting-autoSave"
+                value={settings.autoSave}
+                onChange={(value) => onChange("autoSave", value)}
+                options={[
+                  { value: "off", label: t.off },
+                  { value: "afterDelay", label: local("停止輸入後", "After delay") },
+                  { value: "onFocusChange", label: local("離開編輯器時", "On focus change") },
+                ]}
+              />
+            </div>
+            {settings.autoSave === "afterDelay" && (
+              <div className="setting-row">
+                <label htmlFor="setting-autoSaveDelay">
+                  {local("自動儲存延遲", "Auto save delay")}
+                </label>
+                <Picker
+                  locale={settings.locale}
+                  label={local("自動儲存延遲", "Auto save delay")}
+                  id="setting-autoSaveDelay"
+                  value={settings.autoSaveDelay}
+                  onChange={(value) => onChange("autoSaveDelay", value)}
+                  options={AUTO_SAVE_DELAYS.map((value) => ({ value, label: `${value} ms` }))}
+                />
+              </div>
+            )}
+            {toggle(
+              "formatOnSave",
+              local("儲存時格式化", "Format on save"),
+              local(
+                "套用到手動儲存、全部儲存與編譯／執行前儲存。自動儲存只保存內容。",
+                "Applies to manual saves, Save all and saves before building/running. Auto save only saves the contents.",
+              ),
+            )}
+          </section>
+          <section hidden={category !== "shortcuts"}>
+            {category === "shortcuts" && active && (
+              <ShortcutsPanel keyboard={keyboard} locale={settings.locale} />
+            )}
           </section>
           <section hidden={category !== "layout"} aria-labelledby="settings-layout">
             <h2 id="settings-layout">{t.layout}</h2>

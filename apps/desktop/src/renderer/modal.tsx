@@ -2,6 +2,13 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 const scopes: HTMLElement[] = [];
+const modalListeners = new Set<() => void>();
+export const subscribeModals = (listener: () => void): (() => void) => {
+  modalListeners.add(listener);
+  return () => {
+    modalListeners.delete(listener);
+  };
+};
 const previousInert = new Map<HTMLElement, boolean>();
 export const isModalOpen = (): boolean => scopes.length > 0;
 
@@ -55,6 +62,7 @@ export function Modal({
     document.body.append(host);
     scopes.push(host);
     syncBackground();
+    modalListeners.forEach((listener) => listener());
     const initial = () => {
       const preferred = host.querySelector<HTMLElement>("[data-modal-initial], [autofocus]");
       (canFocus(preferred) ? preferred : (focusableElements(host)[0] ?? root.current))?.focus();
@@ -69,6 +77,7 @@ export function Modal({
       scopes.splice(scopes.indexOf(host), 1);
       host.remove();
       syncBackground();
+      modalListeners.forEach((listener) => listener());
       if (restoreFocus) {
         if (previous !== document.body && canFocus(previous)) previous.focus();
         else fallback.current?.();

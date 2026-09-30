@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
 
 const api: KobrixaApi = {
+  keyboard: { updateContext: (context) => ipcRenderer.invoke("keyboard:context", context) },
   workspace: {
     open: () => ipcRenderer.invoke("workspace:open"),
     create: (name) => ipcRenderer.invoke("workspace:create", name),

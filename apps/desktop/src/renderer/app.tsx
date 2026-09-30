@@ -1,3 +1,7 @@
+import { useKeyboard } from "./keyboard-state.js";
+import type { AppCommand } from "./keybindings.js";
+import { FileWriteQueue, saveSnapshot } from "./save-coordinator.js";
+import { formatSource } from "./editor-format.js";
 import {
   useEffect,
   useMemo,
@@ -53,7 +57,7 @@ import {
 } from "./settings-panel.js";
 import { ToolsPanel, ActivityPanel, RemoteFilesPanel } from "./tools-panel.js";
 import { RemoteFilesController } from "./remote-files.js";
-import { isModalOpen } from "./modal.js";
+import { isModalOpen, subscribeModals } from "./modal.js";
 import { Picker } from "./picker.js";
 import { LiveDiagnostics } from "./live-diagnostics.js";
 
@@ -79,6 +83,10 @@ export function App(): React.JSX.Element {
   } = settings;
   const t = copy[locale];
   const st = settingsCopy[locale];
+  const [settingsCategory, setSettingsCategory] = useState<{
+    category: "appearance" | "shortcuts";
+    request: number;
+  }>({ category: "appearance", request: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsActive, setSettingsActive] = useState(false);
   const setToolTab = (
@@ -122,8 +130,30 @@ export function App(): React.JSX.Element {
   const [projectBusy, setProjectBusy] = useState(false);
   const projectBusyRef = useRef(false);
   useEffect(() => controller.attach(), [controller]);
-  const [workspace, setWorkspace] = useState<WorkspaceSummary>();
-  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [workspace, setWorkspaceState] = useState<WorkspaceSummary>();
+  const workspaceStateRef = useRef(workspace);
+  const setWorkspace = (
+    value:
+      | WorkspaceSummary
+      | undefined
+      | ((previous: WorkspaceSummary | undefined) => WorkspaceSummary | undefined),
+  ): void => {
+    const next = typeof value === "function" ? value(workspaceStateRef.current) : value;
+    workspaceStateRef.current = next;
+    setWorkspaceState(next);
+  };
+  const [tabs, setTabsState] = useState<Tab[]>([]);
+  const tabsRef = useRef(tabs);
+  const setTabs = (value: Tab[] | ((previous: Tab[]) => Tab[])): void => {
+    const next = typeof value === "function" ? value(tabsRef.current) : value;
+    tabsRef.current = next;
+    setTabsState(next);
+  };
+  const [writeQueue] = useState(() => new FileWriteQueue());
+  const latestDrafts = useRef(new Map<string, string>());
+  const autoSaveFailures = useRef(new Map<string, string>());
+  const autoSaveTimers = useRef(new Map<string, { content: string; timer: number }>());
+  const focusSaves = useRef(new Set<string>());
   const [activeFile, setActiveFile] = useState<string>();
   const [liveDiagnostics, setLiveDiagnostics] = useState<Diagnostic[]>([]);
   const [buildDiagnostics, setBuildDiagnostics] = useState<Diagnostic[]>([]);
@@ -160,7 +190,12 @@ export function App(): React.JSX.Element {
   const [pendingMove, setPendingMove] = useState<string>();
   const [moveDestination, setMoveDestination] = useState("");
   const [pendingTrash, setPendingTrash] = useState<string>();
-  const [managingEntries, setManagingEntries] = useState(false);
+  const [managingEntries, setManagingEntriesState] = useState(false);
+  const managingEntriesRef = useRef(false);
+  const setManagingEntries = (value: boolean): void => {
+    managingEntriesRef.current = value;
+    setManagingEntriesState(value);
+  };
   const editorRef = useRef<EditorHandle>(null);
   const treeRef = useRef<ProjectTreeHandle>(null);
   const workspaceRef = useRef<HTMLElement>(null);
@@ -171,7 +206,9 @@ export function App(): React.JSX.Element {
   const draftWrites = useRef(new Map<string, Promise<void>>());
   const active = tabs.find((tab) => tab.file === activeFile);
   const dirty = tabs.some((tab) => tab.content !== tab.saved);
+  const auxiliaryModalOpen = useSyncExternalStore(subscribeModals, isModalOpen);
   const modalOpen = Boolean(
+    auxiliaryModalOpen ||
     newProjectOpen ||
     pendingWorkspace ||
     pendingCloseFile ||
@@ -306,69 +343,98 @@ export function App(): React.JSX.Element {
     return () => liveChecker.cancel();
   }, [liveChecker, sourceOverlays, workspace?.id]);
 
+  const keyboard = useKeyboard(runCommand, modalOpen);
+  const titleWithShortcut = (label: string, command: AppCommand): string =>
+    [label, keyboard.hint(command)].filter(Boolean).join(" · ");
+
   useEffect(() => {
-    const listener = (event: KeyboardEvent): void => {
-      if (modalOpen || isModalOpen()) return;
-      const modifier = event.metaKey || event.ctrlKey;
-      const key = event.key.toLocaleLowerCase("en-US");
-      const consume = (): void => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-      if (modifier && key === ",") {
-        consume();
-        openSettings();
-        return;
+    const enabled =
+      workspace &&
+      settings.autoSave === "afterDelay" &&
+      !locked &&
+      !projectBusy &&
+      !managingEntries &&
+      !modalOpen;
+    const dirtyTabs = enabled ? tabs.filter((tab) => tab.content !== tab.saved) : [];
+    for (const [file, scheduled] of autoSaveTimers.current) {
+      if (!dirtyTabs.some((tab) => tab.file === file && tab.content === scheduled.content)) {
+        window.clearTimeout(scheduled.timer);
+        autoSaveTimers.current.delete(file);
       }
-      if (settingsActive && modifier && key === "w") {
-        consume();
-        closeSettings();
-        return;
-      }
-      if (event.ctrlKey && key === "tab") {
-        consume();
-        cycleTabs(event.shiftKey ? -1 : 1);
-        return;
-      }
+    }
+    if (!enabled) return;
+    for (const tab of dirtyTabs) {
       if (
-        settingsActive &&
-        ((modifier && key === "s") || (event.altKey && event.shiftKey && key === "f"))
-      ) {
-        consume();
-        return;
-      }
-      if (locked || projectBusy || managingEntries) {
-        if (
-          ((event.metaKey || event.ctrlKey) && ["s", "w"].includes(event.key.toLowerCase())) ||
-          (event.altKey && event.shiftKey && event.key.toLowerCase() === "f")
-        ) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-        return;
-      }
-      if (modifier && key === "s") {
-        consume();
-        void saveActive();
-      } else if (modifier && key === "w" && activeFile) {
-        consume();
-        requestCloseTab(activeFile);
-      } else if (modifier && key === "j") {
-        consume();
-        setProblemsOpen((value) => !value);
-      } else if (modifier && key === "b") {
-        consume();
-        setFilesOpen((value) => !value);
-      } else if (event.key === "F8") {
-        consume();
-        void navigateDiagnostics(event.shiftKey ? -1 : 1);
-      } else if (event.altKey && event.shiftKey && key === "f") {
-        consume();
-        void editorRef.current?.format();
-      }
+        autoSaveTimers.current.has(tab.file) ||
+        autoSaveFailures.current.get(draftKey(workspace.id, tab.file)) === tab.content
+      )
+        continue;
+      const timer = window.setTimeout(() => {
+        autoSaveTimers.current.delete(tab.file);
+        void autoSaveFile(tab.file);
+      }, settings.autoSaveDelay);
+      autoSaveTimers.current.set(tab.file, { content: tab.content, timer });
+    }
+  }, [
+    tabs,
+    workspace?.id,
+    settings.autoSave,
+    settings.autoSaveDelay,
+    locked,
+    projectBusy,
+    managingEntries,
+    modalOpen,
+  ]);
+  useEffect(() => {
+    return () => {
+      for (const scheduled of autoSaveTimers.current.values()) window.clearTimeout(scheduled.timer);
+      autoSaveTimers.current.clear();
     };
-    window.addEventListener("keydown", listener, true);
-    return () => window.removeEventListener("keydown", listener, true);
+  }, [workspace?.id, settings.autoSave, settings.autoSaveDelay]);
+  const previousActive = useRef<{
+    workspaceId: string | undefined;
+    file: string | undefined;
+    settings: boolean;
+  }>({ workspaceId: undefined, file: undefined, settings: false });
+  useEffect(() => {
+    const previous = previousActive.current;
+    previousActive.current = {
+      workspaceId: workspace?.id,
+      file: activeFile,
+      settings: settingsActive,
+    };
+    if (
+      previous.workspaceId === workspace?.id &&
+      previous.file &&
+      (previous.file !== activeFile || (!previous.settings && settingsActive))
+    )
+      requestFocusSave(previous.file);
+    if (
+      !locked &&
+      !projectBusy &&
+      !managingEntries &&
+      !modalOpen &&
+      settings.autoSave === "onFocusChange"
+    ) {
+      for (const file of focusSaves.current) void autoSaveFile(file);
+      focusSaves.current.clear();
+    }
+  }, [
+    activeFile,
+    settingsActive,
+    workspace?.id,
+    locked,
+    projectBusy,
+    managingEntries,
+    modalOpen,
+    settings.autoSave,
+  ]);
+  useEffect(() => {
+    const blur = () => {
+      if (activeFile) requestFocusSave(activeFile);
+    };
+    window.addEventListener("blur", blur);
+    return () => window.removeEventListener("blur", blur);
   });
 
   useEffect(
@@ -395,7 +461,23 @@ export function App(): React.JSX.Element {
     const previous = draftWrites.current.get(key) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(() => window.kobrixa.workspace.saveDraft(workspaceId, file, content));
+      .then(() =>
+        writeQueue.enqueue(workspaceId, file, () => {
+          const tab =
+            workspaceStateRef.current?.id === workspaceId
+              ? tabsRef.current.find((tab) => tab.file === file)
+              : undefined;
+          const draft =
+            content === undefined
+              ? undefined
+              : tab
+                ? tab.content === tab.saved
+                  ? undefined
+                  : tab.content
+                : (latestDrafts.current.get(key) ?? content);
+          return window.kobrixa.workspace.saveDraft(workspaceId, file, draft);
+        }),
+      );
     draftWrites.current.set(key, next);
     next.then(
       () => {
@@ -410,6 +492,7 @@ export function App(): React.JSX.Element {
 
   function queueDraft(workspaceId: string, file: string, content: string): void {
     const key = draftKey(workspaceId, file);
+    latestDrafts.current.set(key, content);
     const previous = pendingDrafts.current.get(key);
     if (previous) window.clearTimeout(previous.timer);
     const timer = window.setTimeout(() => {
@@ -439,6 +522,7 @@ export function App(): React.JSX.Element {
       ...pending.map((item) => enqueueDraftWrite(item.workspaceId, item.file, item.content)),
       ...draftWrites.current.values(),
     ]);
+    await writeQueue.idle();
   }
 
   function removeWorkspaceDraft(file: string): void {
@@ -480,7 +564,10 @@ export function App(): React.JSX.Element {
         if (!saved) return;
       } else {
         await settleDraft(workspace.id, file);
-        await window.kobrixa.workspace.saveDraft(workspace.id, file, undefined);
+        await writeQueue.enqueue(workspace.id, file, () =>
+          window.kobrixa.workspace.saveDraft(workspace.id, file, undefined),
+        );
+        latestDrafts.current.delete(draftKey(workspace.id, file));
         removeWorkspaceDraft(file);
       }
       closeTab(file);
@@ -542,6 +629,10 @@ export function App(): React.JSX.Element {
   }
 
   async function loadWorkspace(selected: WorkspaceSummary): Promise<void> {
+    await writeQueue.idle();
+    focusSaves.current.clear();
+    for (const scheduled of autoSaveTimers.current.values()) window.clearTimeout(scheduled.timer);
+    autoSaveTimers.current.clear();
     controller.setWorkspace(selected.id);
     setWorkspace(selected);
     setTabs([]);
@@ -637,23 +728,98 @@ export function App(): React.JSX.Element {
     }
   }
 
-  async function saveTab(file: string): Promise<boolean> {
-    if (!workspace) return false;
-    const tab = tabs.find((item) => item.file === file);
-    if (!tab) return false;
+  async function saveTab(file: string, automatic = false): Promise<boolean> {
+    const current = workspaceStateRef.current;
+    if (!current) return false;
+    const workspaceId = current.id;
+    const read = () => {
+      if (workspaceStateRef.current?.id !== workspaceId) return undefined;
+      const tab = tabsRef.current.find((tab) => tab.file === file);
+      if (tab) return tab;
+      const content = workspaceStateRef.current.drafts[file];
+      return content === undefined ? undefined : { content, saved: "" };
+    };
+    if (!read()) return false;
     try {
-      await settleDraft(workspace.id, file);
-      await window.kobrixa.workspace.write(workspace.id, file, tab.content);
-      setTabs((value) =>
-        value.map((item) => (item.file === file ? { ...item, saved: item.content } : item)),
+      await settleDraft(workspaceId, file);
+      await writeQueue.enqueue(workspaceId, file, () =>
+        saveSnapshot({
+          read,
+          format:
+            !automatic && settingsStore.getSnapshot().values.formatOnSave
+              ? (content) =>
+                  formatSource(file, content, settingsStore.getSnapshot().values.indentSize)
+              : undefined,
+          apply: (before, after) => {
+            editorRef.current?.applySavedFormat(file, before, after);
+            setTabs((tabs) =>
+              tabs.map((tab) => (tab.file === file ? { ...tab, content: after } : tab)),
+            );
+            latestDrafts.current.set(draftKey(workspaceId, file), after);
+            setWorkspace((current) =>
+              current?.id === workspaceId && file in current.drafts
+                ? { ...current, drafts: { ...current.drafts, [file]: after } }
+                : current,
+            );
+            queueDraft(workspaceId, file, after);
+          },
+          write: (content) => window.kobrixa.workspace.write(workspaceId, file, content),
+          commit: (content) => {
+            if (workspaceStateRef.current?.id !== workspaceId) return;
+            setTabs((tabs) =>
+              tabs.map((tab) => (tab.file === file ? { ...tab, saved: content } : tab)),
+            );
+            removeWorkspaceDraft(file);
+            // A formatting-generated draft timer must not resurrect an already saved buffer.
+            if (read()?.content === content) {
+              const pending = pendingDrafts.current.get(draftKey(workspaceId, file));
+              if (pending) window.clearTimeout(pending.timer);
+              pendingDrafts.current.delete(draftKey(workspaceId, file));
+            }
+          },
+          retainDraft: async (content) => {
+            if (content !== undefined)
+              latestDrafts.current.set(draftKey(workspaceId, file), content);
+            else latestDrafts.current.delete(draftKey(workspaceId, file));
+            await window.kobrixa.workspace.saveDraft(workspaceId, file, content);
+          },
+        }),
       );
-      removeWorkspaceDraft(file);
+      autoSaveFailures.current.delete(draftKey(workspaceId, file));
       setStatus(t.savedStatus);
       return true;
     } catch (error) {
+      if (automatic)
+        autoSaveFailures.current.set(draftKey(workspaceId, file), read()?.content ?? "");
       report(error);
       return false;
     }
+  }
+
+  async function autoSaveFile(file: string): Promise<void> {
+    if (
+      settingsStore.getSnapshot().values.autoSave === "off" ||
+      controller.editingLocked ||
+      projectBusyRef.current ||
+      managingEntriesRef.current ||
+      modalOpen ||
+      isModalOpen()
+    )
+      return;
+    const tab = tabsRef.current.find((tab) => tab.file === file);
+    if (tab && tab.content !== tab.saved) await saveTab(file, true);
+  }
+  function requestFocusSave(file: string): void {
+    if (settingsStore.getSnapshot().values.autoSave !== "onFocusChange") return;
+    if (
+      controller.editingLocked ||
+      projectBusyRef.current ||
+      managingEntriesRef.current ||
+      modalOpen ||
+      isModalOpen()
+    )
+      focusSaves.current.add(file);
+    else void autoSaveFile(file);
   }
 
   async function saveActive(): Promise<void> {
@@ -762,6 +928,7 @@ export function App(): React.JSX.Element {
     setManagingEntries(true);
     setStatus(t.managingFiles);
     try {
+      await flushAllDrafts();
       const result = await window.kobrixa.workspace.createEntry(
         workspace.id,
         pendingCreate.parent,
@@ -842,14 +1009,79 @@ export function App(): React.JSX.Element {
   }
 
   async function saveAllChanges(): Promise<void> {
-    if (!workspace) return;
+    const current = workspaceStateRef.current;
+    if (!current) return;
     await flushAllDrafts();
-    for (const [file, content] of filesToSave(workspace.drafts, tabs)) {
-      await window.kobrixa.workspace.write(workspace.id, file, content);
-      setTabs((current) =>
-        current.map((tab) => (tab.file === file ? { ...tab, saved: content } : tab)),
-      );
-      removeWorkspaceDraft(file);
+    for (const [file] of filesToSave(workspaceStateRef.current?.drafts ?? {}, tabsRef.current)) {
+      if (!(await saveTab(file)))
+        throw new Error(
+          locale === "zh-TW"
+            ? "儲存失敗，已停止後續操作。"
+            : "Saving failed; the operation was stopped.",
+        );
+    }
+  }
+
+  function runCommand(command: AppCommand): void {
+    if (modalOpen || isModalOpen()) return;
+    if (command === "settings" || command === "shortcuts") {
+      if (command === "shortcuts")
+        setSettingsCategory((value) => ({ category: "shortcuts", request: value.request + 1 }));
+      openSettings();
+      return;
+    }
+    if (command === "closeTab" && settingsActive) {
+      closeSettings();
+      return;
+    }
+    if (command === "nextTab" || command === "previousTab") {
+      cycleTabs(command === "nextTab" ? 1 : -1);
+      return;
+    }
+    if (command === "stop" && execution.phase === "building") {
+      void controller.cancelBuild();
+      return;
+    }
+    if (command === "files" || command === "problems" || command === "device") {
+      if (command === "files") setFilesOpen((value) => !value);
+      else if (command === "problems") setProblemsOpen((value) => !value);
+      else setDeviceOpen((value) => !value);
+      return;
+    }
+    if (command === "nextProblem" || command === "previousProblem") {
+      if (!settingsActive) void navigateDiagnostics(command === "nextProblem" ? 1 : -1);
+      return;
+    }
+    if (controller.editingLocked || projectBusyRef.current || managingEntriesRef.current) return;
+    switch (command) {
+      case "newProject":
+        setProjectName("my-robot");
+        setNewProjectOpen(true);
+        break;
+      case "openProject":
+        void openProject();
+        break;
+      case "save":
+        void saveActive();
+        break;
+      case "saveAll":
+        void saveAllChanges().catch(report);
+        break;
+      case "closeTab":
+        if (activeFile) requestCloseTab(activeFile);
+        break;
+      case "format":
+        if (!settingsActive && activeFile) void editorRef.current?.format().catch(report);
+        break;
+      case "build":
+        requestExecution(false);
+        break;
+      case "run":
+        requestExecution(true);
+        break;
+      case "stop":
+        if (execution.session && !controller.locked) void controller.stop();
+        break;
     }
   }
 
@@ -1016,6 +1248,8 @@ export function App(): React.JSX.Element {
   const settingsPage = (
     <SettingsPanel
       settings={settings}
+      keyboard={keyboard}
+      requestedCategory={settingsCategory}
       onChange={(key, value) => settingsStore.set(key, value)}
       onReset={settingsStore.resetLayout}
       active={settingsActive}
@@ -1029,6 +1263,7 @@ export function App(): React.JSX.Element {
       active={settingsActive}
       onSelect={openSettings}
       onClose={closeSettings}
+      shortcut={keyboard.hint("closeTab")}
     />
   );
   return (
@@ -1036,11 +1271,14 @@ export function App(): React.JSX.Element {
       <Toolbar
         t={t}
         locale={locale}
+        shortcutHint={keyboard.hint}
+        onSaveAll={() => runCommand("saveAll")}
         appearance={
           <SettingsQuickControls
             settings={settings}
             onChange={(key, value) => settingsStore.set(key, value)}
             onOpen={openSettings}
+            shortcut={keyboard.hint("settings")}
           />
         }
         deviceLocked={controller.locked || managingEntries || projectBusy || modalOpen}
@@ -1048,19 +1286,16 @@ export function App(): React.JSX.Element {
         locked={locked || managingEntries || projectBusy || modalOpen}
         canSave={Boolean(!settingsActive && active && active.content !== active.saved)}
         state={execution}
-        onNew={() => {
-          setProjectName("my-robot");
-          setNewProjectOpen(true);
-        }}
-        onOpen={() => void openProject()}
-        onSave={() => void saveActive()}
-        onRun={() => requestExecution(true)}
-        onBuild={() => requestExecution(false)}
-        onStop={() => void controller.stop()}
+        onNew={() => runCommand("newProject")}
+        onOpen={() => runCommand("openProject")}
+        onSave={() => runCommand("save")}
+        onRun={() => runCommand("run")}
+        onBuild={() => runCommand("build")}
+        onStop={() => runCommand("stop")}
         onUpload={() => void controller.upload()}
         onRunUploaded={() => void controller.runDeployed()}
         onDelete={() => void controller.deleteDeployed()}
-        onCancel={() => void controller.cancelBuild()}
+        onCancel={() => runCommand("stop")}
         onDevice={() => {
           setToolTab("connection");
           setDeviceOpen(true);
@@ -1155,8 +1390,8 @@ export function App(): React.JSX.Element {
             <div className="editor-toolbar">
               <button
                 aria-pressed={filesOpen}
-                title={filesOpen ? t.hideFiles : t.showFiles}
-                onClick={() => setFilesOpen((value) => !value)}
+                title={titleWithShortcut(filesOpen ? t.hideFiles : t.showFiles, "files")}
+                onClick={() => runCommand("files")}
               >
                 <span aria-hidden="true">☰</span>
                 {t.files}
@@ -1167,8 +1402,8 @@ export function App(): React.JSX.Element {
               <div className="editor-tools">
                 <button
                   disabled={settingsActive || !active || locked}
-                  title={`${t.format} · Shift+Alt/Option+F`}
-                  onClick={() => void editorRef.current?.format()}
+                  title={titleWithShortcut(t.format, "format")}
+                  onClick={() => runCommand("format")}
                 >
                   {t.format}
                 </button>
@@ -1176,8 +1411,8 @@ export function App(): React.JSX.Element {
                   className="icon-button"
                   disabled={settingsActive || !diagnostics.length}
                   aria-label={t.previousProblem}
-                  title={`${t.previousProblem} · Shift+F8`}
-                  onClick={() => void navigateDiagnostics(-1)}
+                  title={titleWithShortcut(t.previousProblem, "previousProblem")}
+                  onClick={() => runCommand("previousProblem")}
                 >
                   ↑
                 </button>
@@ -1185,23 +1420,26 @@ export function App(): React.JSX.Element {
                   className="icon-button"
                   disabled={settingsActive || !diagnostics.length}
                   aria-label={t.nextProblem}
-                  title={`${t.nextProblem} · F8`}
-                  onClick={() => void navigateDiagnostics(1)}
+                  title={titleWithShortcut(t.nextProblem, "nextProblem")}
+                  onClick={() => runCommand("nextProblem")}
                 >
                   ↓
                 </button>
                 <button
                   aria-pressed={problemsOpen}
-                  title={problemsOpen ? t.hideProblems : t.showProblems}
-                  onClick={() => setProblemsOpen((value) => !value)}
+                  title={titleWithShortcut(
+                    problemsOpen ? t.hideProblems : t.showProblems,
+                    "problems",
+                  )}
+                  onClick={() => runCommand("problems")}
                 >
                   {t.diagnostics}
                   {diagnostics.length > 0 && <strong>{diagnostics.length}</strong>}
                 </button>
                 <button
                   aria-pressed={deviceOpen}
-                  title={deviceOpen ? t.hideDevice : t.showDevice}
-                  onClick={() => setDeviceOpen((value) => !value)}
+                  title={titleWithShortcut(deviceOpen ? t.hideDevice : t.showDevice, "device")}
+                  onClick={() => runCommand("device")}
                 >
                   EV3
                 </button>
@@ -1239,7 +1477,7 @@ export function App(): React.JSX.Element {
                       className="tab-close"
                       disabled={locked}
                       aria-label={`${t.closeTab}: ${tab.file}`}
-                      title={`${t.closeTab} · Mod+W`}
+                      title={titleWithShortcut(t.closeTab, "closeTab")}
                       onClick={() => requestCloseTab(tab.file)}
                     >
                       ×
@@ -1261,11 +1499,14 @@ export function App(): React.JSX.Element {
                   key={workspace.id}
                   ref={editorRef}
                   theme={theme}
+                  editorOptions={settings}
+                  onEditorReady={keyboard.bindEditor}
+                  onBlur={requestFocusSave}
                   fontSize={codeSize}
                   wordWrap={settings.wordWrap}
                   indentSize={settings.indentSize}
                   reducedMotion={reducedMotion}
-                  readOnly={locked || projectBusy}
+                  readOnly={locked || projectBusy || managingEntries}
                   file={active.file}
                   value={active.content}
                   openFiles={openFiles}

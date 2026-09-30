@@ -1,3 +1,4 @@
+import type { Settings } from "./settings.js";
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
@@ -155,6 +156,7 @@ export interface EditorFocusTarget {
 }
 
 export interface EditorHandle {
+  applySavedFormat(file: string, before: string, after: string): void;
   focus(): void;
   format(): Promise<void>;
   reveal(range: Diagnostic["range"]): void;
@@ -162,6 +164,9 @@ export interface EditorHandle {
 }
 
 interface EditorProps {
+  editorOptions?: Pick<Settings, "lineNumbers" | "minimap" | "renderWhitespace" | "formatOnPaste">;
+  onEditorReady?(editor: monaco.editor.IStandaloneCodeEditor): () => void;
+  onBlur?(file: string): void;
   theme: Theme;
   fontSize: number;
   wordWrap: boolean;
@@ -200,6 +205,9 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   {
     file,
     value,
+    editorOptions,
+    onEditorReady,
+    onBlur,
     openFiles,
     diagnostics,
     focusTarget,
@@ -221,6 +229,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const viewStates = useRef(new Map<string, monaco.editor.ICodeEditorViewState>());
   const activeFile = useRef<string | undefined>(undefined);
   const applyingValue = useRef(false);
+  const onBlurRef = useRef(onBlur);
+  onBlurRef.current = onBlur;
   const onChangeRef = useRef(onChange);
   const onCursorChangeRef = useRef(onCursorChange);
   onChangeRef.current = onChange;
@@ -239,6 +249,20 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useImperativeHandle(
     handleRef,
     () => ({
+      applySavedFormat: (file, before, after) => {
+        const model = models.current.get(file);
+        if (!model || model.getValue() !== before || before === after) return;
+        const edits = [{ range: model.getFullModelRange(), text: after }];
+        if (editor.current?.getModel() === model) {
+          editor.current.pushUndoStop();
+          editor.current.executeEdits("kobrixa.formatOnSave", edits);
+          editor.current.pushUndoStop();
+        } else {
+          model.pushStackElement();
+          model.pushEditOperations(null, edits, () => null);
+          model.pushStackElement();
+        }
+      },
       focus: () => editor.current?.focus(),
       format: async () => {
         await editor.current?.getAction("editor.action.formatDocument")?.run();
@@ -303,6 +327,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       overviewRulerBorder: false,
     });
     editor.current = instance;
+    const disposeKeyboard = onEditorReady?.(instance);
+    const blurSubscription = onBlur
+      ? instance.onDidBlurEditorWidget(() => {
+          const file = activeFile.current;
+          if (file) onBlurRef.current?.(file);
+        })
+      : undefined;
     instance.focus();
     const contentSubscription = instance.onDidChangeModelContent(() => {
       if (applyingValue.current) return;
@@ -313,6 +344,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       onCursorChangeRef.current({ line: position.lineNumber, column: position.column }),
     );
     return () => {
+      disposeKeyboard?.();
+      blurSubscription?.dispose();
       contentSubscription.dispose();
       cursorSubscription.dispose();
       instance.dispose();
@@ -354,6 +387,19 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     }
   }, [openFiles]);
 
+  useEffect(() => {
+    editor.current?.updateOptions({
+      lineNumbers: editorOptions?.lineNumbers ?? "on",
+      minimap: { enabled: editorOptions?.minimap ?? false },
+      renderWhitespace: editorOptions?.renderWhitespace ?? "selection",
+      formatOnPaste: editorOptions?.formatOnPaste ?? true,
+    });
+  }, [
+    editorOptions?.lineNumbers,
+    editorOptions?.minimap,
+    editorOptions?.renderWhitespace,
+    editorOptions?.formatOnPaste,
+  ]);
   useEffect(() => {
     editor.current?.updateOptions({ ariaLabel, readOnly });
   }, [ariaLabel, readOnly]);

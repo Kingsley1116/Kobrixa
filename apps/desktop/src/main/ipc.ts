@@ -1,3 +1,5 @@
+import { setKeyboardContext } from "./keyboard.js";
+import { validStroke } from "../shared/keyboard.js";
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { isIP } from "node:net";
 import { z } from "zod";
@@ -66,6 +68,18 @@ export function registerIpc(
     });
   };
 
+  handle("keyboard:context", (event, value: unknown) => {
+    const context = z
+      .object({
+        editorFocused: z.boolean(),
+        capturing: z.boolean(),
+        chordPending: z.boolean(),
+        managedKeys: z.array(z.string().max(80).refine(validStroke)).max(1000),
+      })
+      .strict()
+      .parse(value);
+    setKeyboardContext(event.sender, context);
+  });
   handle("workspace:open", () => workspaces.open());
   handle("workspace:create", (_event, name: unknown) =>
     workspaces.create(z.string().min(1).max(80).parse(name)),

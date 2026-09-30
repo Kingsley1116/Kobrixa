@@ -34,6 +34,8 @@ The editor and compiler must work offline. Wi-Fi is used for communication with 
 - Provide syntax highlighting, bracket matching, go-to-diagnostic, basic completion, and formatting for supported `.bp` syntax.
 - Show build and device status without hiding detailed diagnostics.
 
+[Keyboard shortcuts and settings](keyboard-settings.md)
+
 ### Build
 
 - Validate the manifest before compiling.

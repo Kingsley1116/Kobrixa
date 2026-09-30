@@ -36,6 +36,7 @@ function setup() {
   let sequence = 0;
   const calls: string[] = [];
   const api = {
+    keyboard: { updateContext: vi.fn(async () => undefined) },
     build: {
       onEvent: vi.fn((listener) => {
         buildListener = listener;

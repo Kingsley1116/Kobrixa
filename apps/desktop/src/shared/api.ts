@@ -1,3 +1,4 @@
+import type { KeyboardContext } from "./keyboard.js";
 import type {
   BuildArtifact,
   BuildProgress,
@@ -106,6 +107,7 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  keyboard: { updateContext(context: KeyboardContext): Promise<void> };
   workspace: {
     open(): Promise<WorkspaceSummary | undefined>;
     create(name: string): Promise<WorkspaceSummary | undefined>;
