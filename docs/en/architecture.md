@@ -31,6 +31,36 @@ The React renderer owns presentation state only and has no direct access to Node
 
 Dependencies point inward toward shared contracts. The compiler and device packages must be usable by a future Node.js CLI without importing Electron desktop code.
 
+## Desktop source layout
+
+`apps/desktop/src` separates process boundaries first, then groups files by feature:
+
+```text
+src/
+├─ main/                 # Electron startup and IPC composition
+│  ├─ device/            # EV3 sessions, remote files and batch transfers
+│  ├─ language/          # Diagnostics service, worker and protocol
+│  ├─ window/            # Native window keyboard coordination
+│  └─ workspace/         # Local projects, builds and example validation
+├─ preload/              # contextBridge entry point
+├─ shared/               # Cross-process API types and keyboard contracts
+└─ renderer/             # React entry point and App composition
+   ├─ components/       # Reusable menus, icons, dialogs and selection controls
+   ├─ device/           # EV3 panels and remote file state and controls
+   ├─ editor/           # Monaco, formatting and live diagnostics
+   ├─ execution/        # Build/deploy/run state and version labels
+   ├─ i18n/             # Shared UI copy and locale types
+   ├─ keybindings/      # Command catalog, recording, search and Monaco adapter
+   ├─ settings/         # Preferences, persistence, themes and settings page
+   ├─ styles/           # Style entry point, workbench and shortcut styles
+   ├─ workbench/        # Toolbar, welcome page, diagnostics panel and layout state
+   └─ workspace/        # File tree, recovery drafts and save coordination
+```
+
+Tests live beside their modules; cross-process interaction tests stay in `apps/desktop/tests` and `tests/desktop`. Feature-specific copy stays with its feature, while shared copy belongs in `i18n`. Reusable `components` do not depend on feature modules. Import components directly from their files instead of a large UI export collection. `main/index.ts`, `main/ipc.ts` and `renderer/app.tsx` compose the features; `shared` never imports process implementations.
+
+The language worker source lives in `main/language`; Forge still emits `language-worker.cjs` beside `main.cjs`. `styles/index.css` explicitly preserves the workbench-before-shortcuts stylesheet order.
+
 ## Project manifest
 
 Each project uses `kobrixa.json`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.

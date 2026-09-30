@@ -1,7 +1,7 @@
-import { useKeyboard } from "./keyboard-state.js";
-import type { AppCommand } from "./keybindings.js";
-import { FileWriteQueue, saveSnapshot } from "./save-coordinator.js";
-import { formatSource } from "./editor-format.js";
+import { useKeyboard } from "./keybindings/keyboard-state.js";
+import type { AppCommand } from "./keybindings/keybindings.js";
+import { FileWriteQueue, saveSnapshot } from "./workspace/save-coordinator.js";
+import { formatSource } from "./editor/editor-format.js";
 import {
   useEffect,
   useMemo,
@@ -22,7 +22,7 @@ import {
   type CursorPosition,
   type EditorFocusTarget,
   type EditorHandle,
-} from "./editor.js";
+} from "./editor/editor.js";
 import {
   LAYOUT_DEFAULTS,
   LAYOUT_LIMITS,
@@ -31,7 +31,7 @@ import {
   clamp,
   nextDiagnosticIndex,
   tabCloseDisposition,
-} from "./editor-state.js";
+} from "./workbench/workbench-state.js";
 import {
   buildFileTree,
   expandAncestors,
@@ -41,27 +41,31 @@ import {
   pathParent,
   remapTreePaths,
   selectionAfterRemoval,
-} from "./file-tree.js";
-import { ProjectTree, type ProjectTreeHandle } from "./project-tree.js";
+} from "./workspace/file-tree.js";
+import { ProjectTree, type ProjectTreeHandle } from "./workspace/project-tree.js";
 
-import { ExecutionController, filesToSave } from "./execution.js";
-import { Welcome, Toolbar, DevicePanel, BottomPanel, Modal } from "./workbench-ui.js";
-import { settingsStore, useSettings } from "./settings-state.js";
-import type { Settings } from "./settings.js";
+import { ExecutionController, filesToSave } from "./execution/execution.js";
+import { Welcome } from "./workbench/welcome.js";
+import { Toolbar } from "./workbench/toolbar.js";
+import { DevicePanel } from "./device/device-panel.js";
+import { BottomPanel } from "./workbench/bottom-panel.js";
+import { Modal, isModalOpen, subscribeModals } from "./components/modal.js";
+import { settingsStore, useSettings } from "./settings/settings-state.js";
+import type { Settings } from "./settings/settings.js";
 import {
   SettingsPanel,
   SettingsQuickControls,
   SettingsTab,
   SettingsError,
   settingsCopy,
-} from "./settings-panel.js";
-import { ToolsPanel, ActivityPanel, RemoteFilesPanel } from "./tools-panel.js";
-import { RemoteFilesController } from "./remote-files.js";
-import { isModalOpen, subscribeModals } from "./modal.js";
-import { Picker } from "./picker.js";
-import { LiveDiagnostics } from "./live-diagnostics.js";
+} from "./settings/settings-panel.js";
+import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
+import { RemoteFilesPanel } from "./device/remote-files-panel.js";
+import { RemoteFilesController } from "./device/remote-files.js";
+import { Picker } from "./components/picker.js";
+import { LiveDiagnostics } from "./editor/live-diagnostics.js";
 
-import { copy } from "./copy.js";
+import { copy } from "./i18n/copy.js";
 type Tab = { file: string; content: string; saved: string };
 type PendingDraft = { workspaceId: string; file: string; content: string; timer: number };
 type PendingCreate = { kind: WorkspaceEntry["kind"]; parent: string };

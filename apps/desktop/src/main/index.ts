@@ -1,11 +1,11 @@
-import { attachKeyboard } from "./keyboard.js";
+import { attachKeyboard } from "./window/keyboard.js";
 import path from "node:path";
 import { app, BrowserWindow, session, shell } from "electron";
-import { BuildService } from "./build.js";
-import { DeviceService } from "./device.js";
+import { BuildService } from "./workspace/build.js";
+import { DeviceService } from "./device/device.js";
 import { registerIpc } from "./ipc.js";
-import { LanguageService } from "./language.js";
-import { WorkspaceService } from "./workspace.js";
+import { LanguageService } from "./language/language.js";
+import { WorkspaceService } from "./workspace/workspace.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;

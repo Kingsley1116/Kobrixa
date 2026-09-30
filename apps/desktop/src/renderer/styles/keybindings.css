@@ -1,0 +1,376 @@
+/* Shortcut preferences: complete catalog with progressive command details. */
+.shortcuts-panel {
+  container-type: inline-size;
+}
+.shortcut-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+}
+.shortcut-heading > button {
+  flex-shrink: 0;
+}
+.shortcut-filters {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.shortcut-search-line,
+.shortcut-filter-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.shortcut-search-line > input {
+  flex: 1;
+  min-width: 160px;
+}
+.shortcut-filters input[type="search"],
+.shortcut-filters select {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+}
+.shortcut-filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.shortcut-filters input:focus-visible,
+.shortcut-filters select:focus-visible,
+.shortcut-command summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.shortcut-count {
+  margin-left: auto;
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.shortcut-search-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shortcut-search-chip > button {
+  padding: 2px 6px;
+}
+.shortcut-notice {
+  min-height: 1.5em;
+  margin: 8px 0;
+  color: var(--accent);
+  font-size: var(--font-small);
+}
+.shortcut-list {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.8fr) minmax(125px, 1.3fr) auto auto auto;
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-table-head {
+  color: var(--muted);
+  font-size: var(--font-small);
+  padding-top: 6px;
+}
+.shortcut-command {
+  min-width: 0;
+}
+.shortcut-command summary {
+  cursor: pointer;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.shortcut-command summary::marker {
+  color: var(--muted);
+  font-size: 0.8em;
+}
+.shortcut-details {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.shortcut-details code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.shortcut-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  min-width: 0;
+}
+.shortcut-sequence,
+.shortcut-stroke-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.shortcut-stroke {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.shortcut-stroke kbd {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-small);
+  line-height: 1.3;
+}
+.shortcut-then {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.shortcut-source,
+.shortcut-status,
+.shortcut-unassigned {
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.shortcut-status {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.shortcut-status.custom {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.shortcut-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.shortcut-actions > button {
+  white-space: nowrap;
+}
+.shortcut-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 36px 16px;
+}
+.shortcut-recorder {
+  width: min(660px, calc(100vw - 40px));
+}
+.shortcut-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.shortcut-comparison > div {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+.shortcut-comparison dt {
+  color: var(--muted);
+  font-size: var(--font-small);
+  margin-bottom: 8px;
+}
+.shortcut-comparison dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shortcut-capture {
+  display: grid;
+  gap: 14px;
+}
+.shortcut-mode {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.shortcut-mode legend {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.shortcut-mode label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+}
+.shortcut-mode input[type="radio"] {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.shortcut-record-output {
+  display: flex;
+  min-height: 108px;
+  padding: 18px;
+  gap: 14px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: center;
+}
+.shortcut-record-output.recording {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+.shortcut-record-output .shortcut-stroke kbd {
+  font-size: var(--font-ui);
+  padding: 6px 9px;
+}
+.shortcut-record-progress {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.shortcut-capture > button {
+  justify-self: center;
+}
+.shortcut-conflicts {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+.shortcut-conflicts h3 {
+  margin: 0 0 8px;
+  font-size: var(--font-ui);
+}
+.shortcut-conflicts > p {
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.shortcut-conflicts ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+}
+.shortcut-conflicts li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.shortcut-conflicts li > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+.shortcut-conflicts li > div:first-child span {
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.shortcut-conflict-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@container (max-width: 760px) {
+  .shortcut-list {
+    grid-template-columns: minmax(140px, 1.4fr) minmax(100px, 1fr) auto;
+  }
+  .shortcut-table-head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .shortcut-command {
+    grid-column: 1;
+  }
+  .shortcut-keys {
+    grid-column: 2 / -1;
+  }
+  .shortcut-source {
+    grid-column: 1;
+  }
+  .shortcut-status {
+    justify-self: start;
+  }
+  .shortcut-actions {
+    grid-column: 3;
+  }
+  .shortcut-heading {
+    flex-wrap: wrap;
+  }
+}
+@container (max-width: 420px) {
+  .shortcut-list {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .shortcut-command,
+  .shortcut-keys {
+    grid-column: 1 / -1;
+  }
+  .shortcut-actions {
+    grid-column: 1 / -1;
+  }
+  .shortcut-search-line > button {
+    width: 100%;
+  }
+}
+@media (max-height: 760px) {
+  .settings-page:has(.shortcuts-panel) .settings-heading {
+    padding: 10px 20px;
+  }
+  .settings-page:has(.shortcuts-panel) .settings-heading h1 {
+    font-size: calc(18px * var(--ui-scale));
+  }
+  .settings-page:has(.shortcuts-panel) .settings-heading p,
+  .shortcuts-panel .shortcut-heading .settings-hint {
+    display: none;
+  }
+  .shortcuts-panel .shortcut-heading {
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .shortcuts-panel .shortcut-heading h2 {
+    margin-bottom: 0;
+  }
+  .shortcuts-panel .shortcut-filters {
+    padding: 10px;
+    gap: 8px;
+  }
+  .shortcuts-panel .shortcut-notice:empty {
+    min-height: 0;
+    margin: 4px 0;
+  }
+}

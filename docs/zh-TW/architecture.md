@@ -31,6 +31,36 @@ React renderer 只管理呈現狀態，不能直接存取 Node.js 或 Electron A
 
 相依方向朝向共享契約。編譯器和設備 package 必須能被未來 Node.js CLI 使用，而不必匯入 Electron 桌面程式碼。
 
+## 桌面原始碼目錄
+
+`apps/desktop/src` 先依程序邊界分層，再按功能分組：
+
+```text
+src/
+├─ main/                 # Electron 啟動與 IPC 組裝
+│  ├─ device/            # EV3 連線、遠端檔案與批次傳輸
+│  ├─ language/          # 診斷服務、worker 與訊息協定
+│  ├─ window/            # 原生視窗鍵盤協調
+│  └─ workspace/         # 本機專案、編譯與範例驗證
+├─ preload/              # contextBridge 入口
+├─ shared/               # 跨程序 API 型別與鍵盤契約
+└─ renderer/             # React 入口與 App 組裝
+   ├─ components/       # 通用選單、圖示、對話框與選取元件
+   ├─ device/           # EV3 面板、遠端檔案狀態與操作介面
+   ├─ editor/           # Monaco、格式化與即時診斷
+   ├─ execution/        # 編譯／部署／執行狀態與版本顯示
+   ├─ i18n/             # 共用介面文案與語系型別
+   ├─ keybindings/      # 命令目錄、錄製、搜尋與 Monaco 適配
+   ├─ settings/         # 偏好設定、保存、主題與設定頁
+   ├─ styles/           # 樣式入口、工作台與快捷鍵樣式
+   ├─ workbench/        # 工具列、歡迎頁、診斷面板與布局狀態
+   └─ workspace/        # 檔案樹、草稿與儲存協調
+```
+
+測試與對應模組放在同一目錄；跨程序操作測試留在 `apps/desktop/tests` 與 `tests/desktop`。功能內的文案留在所屬功能，共用文案才放入 `i18n`。`components` 不依賴功能模組；需要共用元件時直接匯入其檔案，不透過大型 UI 匯出集合。`main/index.ts`、`main/ipc.ts` 與 `renderer/app.tsx` 負責組裝各功能，`shared` 不匯入程序端實作。
+
+語言 worker 原始碼位於 `main/language`，Forge 仍將它輸出為與 `main.cjs` 同層的 `language-worker.cjs`。`styles/index.css` 明確保留工作台樣式先於快捷鍵樣式的載入順序。
+
 ## 專案 manifest
 
 每個專案使用 `kobrixa.json`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。

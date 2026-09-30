@@ -17,7 +17,7 @@ const server = await createServer({
 let exitCode = 1;
 try {
   await build({
-    entryPoints: [path.join(root, "apps/desktop/src/main/keyboard.ts")],
+    entryPoints: [path.join(root, "apps/desktop/src/main/window/keyboard.ts")],
     outfile: path.join(temporary, "keyboard.cjs"),
     bundle: true,
     platform: "node",

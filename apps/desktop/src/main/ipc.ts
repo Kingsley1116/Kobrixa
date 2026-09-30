@@ -1,12 +1,12 @@
-import { setKeyboardContext } from "./keyboard.js";
+import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { isIP } from "node:net";
 import { z } from "zod";
-import type { BuildService } from "./build.js";
-import type { DeviceService } from "./device.js";
-import type { LanguageService } from "./language.js";
-import type { WorkspaceService } from "./workspace.js";
+import type { BuildService } from "./workspace/build.js";
+import type { DeviceService } from "./device/device.js";
+import type { LanguageService } from "./language/language.js";
+import type { WorkspaceService } from "./workspace/workspace.js";
 
 const id = z.string().uuid();
 const file = z
