@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { build } from "esbuild";
@@ -17,7 +18,7 @@ describe("LanguageService background checks", () => {
   beforeAll(async () => {
     workerRoot = await mkdtemp(path.join(tmpdir(), "kobrixa-language-worker-"));
     await build({
-      entryPoints: [new URL("./language-worker.ts", import.meta.url).pathname],
+      entryPoints: [fileURLToPath(new URL("./language-worker.ts", import.meta.url))],
       outfile: path.join(workerRoot, "worker.cjs"),
       bundle: true,
       platform: "node",
