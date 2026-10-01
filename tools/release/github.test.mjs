@@ -4,7 +4,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { expectedAssets, sha256 } from "./common.mjs";
+import { targets, sha256 } from "./common.mjs";
+import { targetAssets, writeUpdateMetadata } from "./update-assets.mjs";
+const expectedAssets = (version, modes) =>
+  targets.flatMap(({ platform, arch }) => targetAssets(version, platform, arch, modes));
 import {
   assertAssets,
   assertDraft,
@@ -24,10 +27,14 @@ const sha = "a".repeat(40);
 const success = Object.fromEntries(
   ["validate", "quality", "prepare", "platform"].map((key) => [key, { result: "success" }]),
 );
-function mockGithub(existing = null) {
+function mockGithub(existing = null, modes = { macos: false, windows: false }) {
   let release = existing;
   const calls = [];
-  const assets = expectedAssets(version).map((name) => ({ name, size: 1, state: "uploaded" }));
+  const assets = expectedAssets(version, modes).map((name) => ({
+    name,
+    size: 1,
+    state: "uploaded",
+  }));
   return {
     calls,
     get release() {
@@ -62,6 +69,10 @@ function mockGithub(existing = null) {
         await writeFile(file, "archive fixture");
         await writeFile(`${file}.sha256`, `${await sha256(file)}  ${name}\n`);
       }
+      for (const { platform, arch } of targets.filter(
+        (item) => item.platform !== "darwin" || modes.macos,
+      ))
+        await writeUpdateMetadata(directory, version, platform, arch);
     },
     async generateNotes() {
       return "Generated changes";
@@ -152,7 +163,7 @@ test("missing, cancelled, failed and skipped checks cannot produce a ready draft
   assert.deepEqual(github.calls, []);
 });
 
-test("requires exactly six complete assets, verifies downloaded bytes and leaves a ready draft", async () => {
+test("requires every complete archive, installer and metadata asset, verifies downloaded bytes and leaves a ready draft", async () => {
   const github = mockGithub();
   await prepareRelease(github, tag, sha);
   const assets = github.release.assets;
@@ -187,7 +198,7 @@ test("corrupted downloads never mark a release ready", async () => {
 
 test("draft retries cannot change signing modes or claim verification before finalization", async () => {
   const modes = { macos: true, windows: false };
-  const github = mockGithub();
+  const github = mockGithub(null, modes);
   await prepareRelease(github, tag, sha, modes);
   assert.match(github.release.body, /not yet verified/);
   assert.doesNotMatch(github.release.body, /已簽章並公證/);

@@ -67,15 +67,18 @@ describe("main-process device lock", () => {
       owner,
     );
     expect(plan.phase).toBe("ready");
+    expect(h.service.busy).toBe(true);
     await expect(h.service.run(h.id, `${ROOT}/a`)).rejects.toThrow("in progress");
     await expect(h.service.executeFiles(plan, "replace", 2)).rejects.toThrow("expired");
     await h.service.stopFiles(plan, 1);
+    expect(h.service.busy).toBe(false);
     await expect(h.service.run(h.id, `${ROOT}/a`)).resolves.toBeUndefined();
     expect(h.session.delete).not.toHaveBeenCalled();
   });
   it("reserves the session for the entire deployment, including gaps between files", async () => {
     const h = await setup();
     const deployment = h.service.deploy(h.id, "build", ROOT);
+    expect(h.service.busy).toBe(true);
     const response = await h.service.files({
       action: "list",
       path: ROOT,
@@ -88,6 +91,7 @@ describe("main-process device lock", () => {
     await expect(h.service.run(h.id, `${ROOT}/main.rbf`)).rejects.toThrow("in progress");
     h.files.resolve([]);
     await deployment;
+    expect(h.service.busy).toBe(false);
     expect(
       (
         await h.service.files({

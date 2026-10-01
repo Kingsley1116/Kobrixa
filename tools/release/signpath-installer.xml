@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters><parameter name="version" /><parameter name="release-version" /></parameters>
+  <zip-file>
+    <pe-file path="setup.exe" product-name="Kobrixa" product-version="${release-version}" file-version="${version}">
+      <authenticode-sign hash-algorithm="sha256" description="Kobrixa IDE installer" description-url="https://kobrixa.com" />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

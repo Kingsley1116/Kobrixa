@@ -36,6 +36,8 @@ async function fixture(t) {
     ".vite/build/language-worker.cjs",
     ".vite/build/preload.cjs",
     ".vite/renderer/main_window/index.html",
+    "node_modules/electron-updater/out/main.js",
+    "node_modules/electron-updater/package.json",
     "node_modules/node-hid/package.json",
     "node_modules/node-addon-api/package.json",
     "node_modules/pkg-prebuilds/package.json",
@@ -50,6 +52,15 @@ async function fixture(t) {
     process.platform === "darwin" ? "Kobrixa.app/Contents/Resources" : "resources",
   );
   await mkdir(resources, { recursive: true });
+  await put(
+    resources,
+    "app-update.yml",
+    JSON.stringify({
+      provider: "generic",
+      url: "https://github.com/Kingsley1116/Kobrixa/releases/download/",
+    }),
+  );
+  await put(resources, "kobrixa-update.json", JSON.stringify({ signedMac: false }));
   await createPackageWithOptions(app, path.join(resources, "app.asar"), { unpack: "**/*.node" });
   const executable = await put(
     directory,
@@ -59,6 +70,20 @@ async function fixture(t) {
         ? "kobrixa.exe"
         : "kobrixa",
   );
+  const header = Buffer.alloc(128);
+  if (process.platform === "darwin") {
+    header.writeUInt32LE(0xfeedfacf, 0);
+    header.writeUInt32LE(0x0100000c, 4);
+  } else if (process.platform === "linux") {
+    Buffer.from("7f454c460201", "hex").copy(header);
+    header.writeUInt16LE(62, 18);
+  } else {
+    header.write("MZ");
+    header.writeUInt32LE(64, 60);
+    header.writeUInt32LE(0x00004550, 64);
+    header.writeUInt16LE(0x8664, 68);
+  }
+  await writeFile(executable, header);
   await chmod(executable, 0o755);
   await put(directory, ".hidden-resource", "must survive archiving");
   if (process.platform !== "win32")
@@ -166,4 +191,22 @@ test("rejects missing .vite entrypoints and lost executable permissions", async 
     verifyApplication(directory, process.platform, version),
     /Missing packaged file/,
   );
+});
+
+test("rejects a renamed binary of the wrong architecture and external symlinks", async (t) => {
+  const { directory, executable } = await fixture(t);
+  const header = await readFile(executable);
+  header.writeUInt16LE(
+    0,
+    process.platform === "darwin" ? 4 : process.platform === "linux" ? 18 : 68,
+  );
+  await writeFile(executable, header);
+  await assert.rejects(
+    verifyApplication(directory, process.platform, version),
+    /Expected (arm64|x64)/,
+  );
+  if (process.platform !== "win32") {
+    await symlink(executable, path.join(directory, "absolute-link"));
+    await assert.rejects(treeManifest(directory, process.platform), /Non-portable/);
+  }
 });

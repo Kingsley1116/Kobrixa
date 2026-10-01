@@ -81,7 +81,7 @@ jobs:
           - os: windows-2022
             platform: win32
             arch: x64
-            timeout: 120
+            timeout: 180
           - os: macos-26
             platform: darwin
             arch: arm64
@@ -121,6 +121,7 @@ jobs:
           SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
       - run: pnpm build:desktop
         env:
           KOBRIXA_RELEASE_BUILD: "true"
@@ -157,11 +158,56 @@ jobs:
       - name: Verify and accept the signed Windows executable
         if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
         run: node tools/release/signing.mjs accept-windows
+      - name: Smoke test the packaged application
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:desktop:packaged
+          else
+            pnpm test:desktop:packaged
+          fi
+      - run: pnpm package:installers
+      - name: Stage Windows installer for signing
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        run: node tools/release/signing.mjs stage-installer
+      - name: Upload temporary unsigned Windows installer
+        id: unsigned-installer
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-installer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/desktop/out/unsigned-installer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Sign final Windows installer
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: apps/desktop/out/signed-installer
+          parameters: |
+            version: ${{ toJSON(steps.signpath-config.outputs.version) }}
+            release-version: ${{ toJSON(steps.signpath-config.outputs.release-version) }}
+      - name: Verify signed Windows installer
+        if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
+        run: node tools/release/signing.mjs accept-installer
       - run: pnpm package:archive
         env:
           KOBRIXA_RELEASE_BUILD: "true"
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
+      - run: pnpm package:updates
+        env:
+          KOBRIXA_RELEASE_BUILD: "true"
       - run: node tools/release/github.mjs upload
         env:
           GH_TOKEN: ${{ github.token }}

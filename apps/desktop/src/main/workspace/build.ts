@@ -13,6 +13,10 @@ interface BuildRecord {
 }
 
 export class BuildService {
+  private activeBuilds = 0;
+  get busy(): boolean {
+    return this.activeBuilds > 0;
+  }
   readonly #builds = new Map<string, BuildRecord>();
 
   constructor(
@@ -27,10 +31,16 @@ export class BuildService {
     });
     const record: BuildRecord = { session, artifacts: [] };
     this.#builds.set(session.id, record);
-    void session.compile(project).then((result) => {
-      record.artifacts = result.artifacts;
-      this.send({ type: "complete", workspaceId, buildId: session.id, result });
-    });
+    this.activeBuilds++;
+    void session
+      .compile(project)
+      .then((result) => {
+        record.artifacts = result.artifacts;
+        this.send({ type: "complete", workspaceId, buildId: session.id, result });
+      })
+      .finally(() => {
+        this.activeBuilds--;
+      });
     return session.id;
   }
 

@@ -6,6 +6,20 @@ const call =
   (...args) =>
     ipcRenderer.invoke("smoke", name, args);
 contextBridge.exposeInMainWorld("kobrixa", {
+  updates: {
+    getState: call("updateState"),
+    setPreferences: call("updatePreferences"),
+    check: call("updateCheck"),
+    prepareInstall: call("updatePrepare"),
+    cancelInstall: call("updateCancel"),
+    install: call("updateInstall"),
+    openRelease: call("updateOpen"),
+    onState: (listener) => {
+      const handler = (_event, value) => listener(value);
+      ipcRenderer.on("updates:state", handler);
+      return () => ipcRenderer.removeListener("updates:state", handler);
+    },
+  },
   keyboard: { updateContext: call("keyboard") },
   workspace: {
     open: call("open"),

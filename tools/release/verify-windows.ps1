@@ -1,7 +1,9 @@
 param(
   [Parameter(Mandatory = $true)][string]$ApplicationPath,
   [Parameter(Mandatory = $true)][string]$ExpectedSubject,
-  [Parameter(Mandatory = $true)][string]$ExpectedVersion
+  [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+  [switch]$Installer,
+  [string]$ReleaseVersion
 )
 $ErrorActionPreference = 'Stop'
 $signature = Get-AuthenticodeSignature -LiteralPath $ApplicationPath
@@ -9,10 +11,11 @@ if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature: $($s
 if ($signature.SignerCertificate.Subject -cne $ExpectedSubject) { throw 'Unexpected signing certificate subject' }
 if ($null -eq $signature.TimeStamperCertificate) { throw 'Trusted timestamp is missing' }
 $metadata = (Get-Item -LiteralPath $ApplicationPath).VersionInfo
-if ($metadata.ProductName -cne 'Kobrixa' -or $metadata.OriginalFilename -cne 'kobrixa.exe') {
+if ($metadata.ProductName -cne 'Kobrixa' -or (-not $Installer -and $metadata.OriginalFilename -cne 'kobrixa.exe')) {
   throw 'Unexpected executable product metadata'
 }
-if ($metadata.ProductVersion -cne $ExpectedVersion -or $metadata.FileVersion -cne $ExpectedVersion) {
+$expectedProductVersion = if ($Installer) { $ReleaseVersion } else { $ExpectedVersion }
+if ($metadata.ProductVersion -cne $expectedProductVersion -or $metadata.FileVersion -cne $ExpectedVersion) {
   throw 'Executable version differs from the release version'
 }
 # The Windows runner includes the SDK. /pa verifies the Authenticode chain and

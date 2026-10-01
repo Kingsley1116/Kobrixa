@@ -1,3 +1,5 @@
+import { targetAssets, verifyTargetAssets } from "./update-assets.mjs";
+import { targets } from "./common.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFile, mkdtemp, rm } from "node:fs/promises";
@@ -5,8 +7,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { signingModes } from "../../apps/desktop/signing.ts";
 import {
-  archiveName,
-  expectedAssets,
   isMain,
   parseVersion,
   repositoryRoot,
@@ -36,8 +36,10 @@ export function failedChecks(results) {
   );
 }
 
-export function assertAssets(assets, version) {
-  const expected = expectedAssets(version).sort();
+export function assertAssets(assets, version, modes = unsigned) {
+  const expected = targets
+    .flatMap(({ platform, arch }) => targetAssets(version, platform, arch, modes))
+    .sort();
   assert.deepEqual(
     assets.map((asset) => asset.name).sort(),
     expected,
@@ -63,7 +65,7 @@ export function notes(tag, sha, status, generated = "", modes = unsigned, verifi
     modes.windows && verified
       ? "\nFree code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n"
       : "";
-  return `${marker(tag, sha, modes)}\n\n${status}\n\nCommit: ${sha}\n\n- Windows x64: ${windows}. Extract the ZIP and launch kobrixa.exe.\n- macOS Apple Silicon: ${macos}. Extract the ZIP and open Kobrixa.app.\n- Linux x64: unsigned / 未簽章. Extract the tar.gz and launch kobrixa.\n- Verify each archive against its accompanying SHA-256 file before use.\n- Intel Mac, installers and automatic updates are not included.\n\n[Code signing policy / 程式碼簽章政策](${policy})\n${attribution}\n${generated}`;
+  return `${marker(tag, sha, modes)}\n\n${status}\n\nCommit: ${sha}\n\n- Windows x64: ${windows}. Use the per-user setup.exe for automatic updates; ZIP builds offer manual downloads.\n- macOS Apple Silicon: ${macos}. Install the DMG. Automatic updates require a signed build.\n- Linux x64: unsigned / 未簽章. Use AppImage for automatic updates; tar.gz builds offer manual downloads.\n- Optional: verify your download against its accompanying SHA-256 file. The checksum file is not required for installation. / SHA-256 驗證為選用，安裝不需要下載校驗碼檔案。\n- Automatic downloads use public GitHub Releases; installation requires explicit confirmation. This and future desktop releases include the updater. Intel Mac is not included.\n\n[Code signing policy / 程式碼簽章政策](${policy})\n${attribution}\n${generated}`;
 }
 
 export async function prepareRelease(github, tag, sha, modes = unsigned) {
@@ -131,13 +133,12 @@ export async function finalizeRelease(github, tag, sha, results, modes = unsigne
       modes,
     ),
   });
-  assertAssets(release.assets, tag.slice(1));
+  assertAssets(release.assets, tag.slice(1), modes);
   const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-release-"));
   try {
     await github.download(tag, directory);
-    for (const name of expectedAssets(tag.slice(1)).filter((name) => !name.endsWith(".sha256"))) {
-      await verifyChecksum(path.join(directory, name));
-    }
+    for (const { platform, arch } of targets)
+      await verifyTargetAssets(directory, tag.slice(1), platform, arch, modes);
     const generated = await github.generateNotes(tag, sha);
     // Recheck immediately before writing, including whether someone published the draft.
     await github.assertTag(tag, sha);
@@ -278,13 +279,15 @@ async function main() {
   const github = createGithub(process.env.GITHUB_REPOSITORY);
   if (action === "prepare") await prepareRelease(github, tag, sha, modes);
   else if (action === "upload") {
-    const name = archiveName(version, process.env.TARGET_PLATFORM, process.env.TARGET_ARCH);
-    await uploadRelease(
-      github,
+    const directory = path.join(repositoryRoot, "apps/desktop/out/release");
+    const platform = process.env.TARGET_PLATFORM,
+      arch = process.env.TARGET_ARCH;
+    await verifyTargetAssets(directory, version, platform, arch, modes);
+    await github.assertTag(tag, sha);
+    assertDraft(await github.getRelease(tag), tag, sha, modes);
+    await github.upload(
       tag,
-      sha,
-      path.join(repositoryRoot, "apps/desktop/out/release", name),
-      modes,
+      targetAssets(version, platform, arch, modes).map((name) => path.join(directory, name)),
     );
   } else if (action === "finalize") {
     const results = JSON.parse(process.env.RELEASE_RESULTS || "{}");

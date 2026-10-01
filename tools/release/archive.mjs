@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readlink,
+  readFile,
+  open,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { extractFile, listPackage } from "@electron/asar";
@@ -25,7 +35,13 @@ export async function treeManifest(root, platform) {
     const full = path.join(root, relative);
     const stat = await lstat(full);
     if (stat.isSymbolicLink()) {
-      entries[relative] = { link: await readlink(full) };
+      const link = await readlink(full);
+      const target = path.relative(root, path.resolve(path.dirname(full), link));
+      assert.ok(
+        !path.isAbsolute(link) && target !== ".." && !target.startsWith(`..${path.sep}`),
+        `Non-portable packaged symlink: ${relative}`,
+      );
+      entries[relative] = { link };
     } else if (stat.isDirectory()) {
       for (const entry of (await readdir(full)).sort())
         await visit(path.posix.join(relative, entry));
@@ -56,15 +72,45 @@ export async function verifyApplication(directory, platform, version) {
   const executableStat = await lstat(executable);
   assert.ok(executableStat.size > 0, "Packaged executable is empty");
   if (platform !== "win32") assert.ok(executableStat.mode & 0o111, "Executable permission missing");
+  const handle = await open(executable, "r");
+  try {
+    const header = Buffer.alloc(64);
+    await handle.read(header, 0, header.length, 0);
+    if (platform === "darwin") {
+      assert.equal(header.readUInt32LE(0), 0xfeedfacf, "Expected 64-bit Mach-O executable");
+      assert.equal(header.readUInt32LE(4), 0x0100000c, "Expected arm64 executable");
+    } else if (platform === "linux") {
+      assert.equal(
+        header.subarray(0, 6).toString("hex"),
+        "7f454c460201",
+        "Expected little-endian ELF64 executable",
+      );
+      assert.equal(header.readUInt16LE(18), 62, "Expected x64 executable");
+    } else {
+      assert.equal(header.subarray(0, 2).toString(), "MZ", "Expected Windows executable");
+      const pe = Buffer.alloc(6);
+      await handle.read(pe, 0, pe.length, header.readUInt32LE(60));
+      assert.equal(pe.readUInt32LE(0), 0x00004550, "Expected PE executable");
+      assert.equal(pe.readUInt16LE(4), 0x8664, "Expected x64 executable");
+    }
+  } finally {
+    await handle.close();
+  }
   const asar = path.join(resources, "app.asar");
   const files = listPackage(asar).map((name) => name.replaceAll("\\", "/").replace(/^\//, ""));
   const manifest = JSON.parse(extractFile(asar, "package.json").toString());
   assert.equal(manifest.version, version, "Packaged version differs from release version");
+  assert.ok(
+    !files.some((name) => name.startsWith("node_modules/monaco-editor/")),
+    "Bundled editor dependencies must not be collected again",
+  );
   for (const required of [
     ".vite/build/main.cjs",
     ".vite/build/language-worker.cjs",
     ".vite/build/preload.cjs",
     ".vite/renderer/main_window/index.html",
+    "node_modules/electron-updater/out/main.js",
+    "node_modules/electron-updater/package.json",
     "node_modules/node-hid/package.json",
     "node_modules/node-addon-api/package.json",
     "node_modules/pkg-prebuilds/package.json",
@@ -73,6 +119,19 @@ export async function verifyApplication(directory, platform, version) {
   ]) {
     assert.ok(files.includes(required), `Missing packaged file: ${required}`);
   }
+  const updateConfig = JSON.parse(await readFile(path.join(resources, "app-update.yml"), "utf8"));
+  assert.equal(updateConfig.provider, "generic", "Unexpected update provider");
+  assert.equal(
+    updateConfig.url,
+    "https://github.com/Kingsley1116/Kobrixa/releases/download/",
+    "Unexpected update source",
+  );
+  assert.equal(
+    typeof JSON.parse(await readFile(path.join(resources, "kobrixa-update.json"), "utf8"))
+      .signedMac,
+    "boolean",
+    "Missing update capability marker",
+  );
   const nativeFiles = files.filter(
     (name) => name.startsWith("node_modules/node-hid/") && name.endsWith(".node"),
   );

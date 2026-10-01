@@ -1,3 +1,4 @@
+import { checkUpdates } from "./updates-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { app, BrowserWindow, ipcMain } from "electron";
 import fs from "node:fs";
@@ -62,7 +63,45 @@ const workspace = () => ({
   entryCandidates: ["main.bp"],
   drafts: { ...drafts },
 });
+let updateState = {
+  revision: 0,
+  currentVersion: "1.0.0",
+  preferences: { enabled: true, channel: "stable" },
+  supported: true,
+  phase: "idle",
+};
+let updateInstallCount = 0;
+let updateBusy = false;
+const sendUpdate = (patch) => {
+  updateState = { ...updateState, ...patch, revision: updateState.revision + 1 };
+  win.webContents.send("updates:state", updateState);
+};
 ipcMain.handle("smoke", async (_e, name, args) => {
+  if (name === "updateState") return updateState;
+  if (name === "updatePreferences") {
+    sendUpdate({ preferences: args[0] });
+    return updateState;
+  }
+  if (name === "updateCheck") {
+    sendUpdate({ phase: "current" });
+    return;
+  }
+  if (name === "updatePrepare") {
+    if (updateBusy) throw new Error("busy");
+    sendUpdate({ phase: "preparing" });
+    return;
+  }
+  if (name === "updateCancel") {
+    sendUpdate({ phase: "ready" });
+    return;
+  }
+  if (name === "updateInstall") {
+    updateInstallCount++;
+    sendUpdate({ phase: "error", error: "install-failed" });
+    return;
+  }
+  if (name === "updateOpen") return;
+
   if (name === "languageCancel") {
     language.cancel();
     return;
@@ -195,6 +234,27 @@ app
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");
     await pause(200);
+    if (process.env.KOBRIXA_SMOKE_UPDATES_ONLY) {
+      await checkUpdates({
+        js,
+        key,
+        until,
+        pause,
+        win,
+        temporary,
+        update: sendUpdate,
+        setBusy: (value) => {
+          updateBusy = value;
+        },
+        failWrite: () => {
+          failNextWrite = true;
+        },
+        installed: () => updateInstallCount,
+        files,
+      });
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_COMPLETION_ONLY) {
       await js(
         "window.languageCommand=(command,line,column,...args)=>ed._commandService.executeCommand(command,ed.getModel().uri,new smoke.monaco.Position(line,column),...args);void 0",
@@ -629,6 +689,23 @@ app
       win,
       key,
       mod,
+    });
+    await checkUpdates({
+      js,
+      key,
+      until,
+      pause,
+      win,
+      temporary,
+      update: sendUpdate,
+      setBusy: (value) => {
+        updateBusy = value;
+      },
+      failWrite: () => {
+        failNextWrite = true;
+      },
+      installed: () => updateInstallCount,
+      files,
     });
     console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);

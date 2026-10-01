@@ -46,6 +46,9 @@ export function deploymentTargets(
 export class DeviceService {
   readonly #sessions = new Map<string, DeviceSession>();
   readonly #busy = new Map<string, AbortController>();
+  get busy(): boolean {
+    return this.#busy.size > 0;
+  }
   readonly #usb = new UsbTransport();
   readonly #wifi = new WiFiTransport();
   private batches: FileBatchManager | undefined;

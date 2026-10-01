@@ -92,10 +92,20 @@ jobs:
       - run: pnpm build:core
       - run: pnpm test:desktop
       - run: pnpm build:desktop
+      - name: Smoke test the packaged application
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:desktop:packaged
+          else
+            pnpm test:desktop:packaged
+          fi
+      - run: pnpm package:installers
       - run: pnpm package:archive
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
+      - run: pnpm package:updates
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
         with:

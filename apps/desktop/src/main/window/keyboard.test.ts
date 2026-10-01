@@ -26,12 +26,26 @@ describe("native keyboard bridge", () => {
       {} as Parameters<typeof registerIpc>[2],
       {} as Parameters<typeof registerIpc>[3],
       {} as Parameters<typeof registerIpc>[4],
+      {} as Parameters<typeof registerIpc>[5],
+      {} as Parameters<typeof registerIpc>[6],
     );
     attachKeyboard(trusted);
     const update = handlers.get("keyboard:context")!;
     const event = { sender: trusted, senderFrame: contents.mainFrame };
     expect(() => update({ ...event, senderFrame: {} }, KEYBOARD_DEFAULT)).toThrow("untrusted");
     expect(() => update({ ...event, sender: { id: 8 } }, KEYBOARD_DEFAULT)).toThrow("untrusted");
+    for (const [channel, handler] of handlers) {
+      if (!channel.startsWith("updates:")) continue;
+      expect(() => handler({ ...event, senderFrame: {} })).toThrow("untrusted");
+      expect(() => handler({ ...event, sender: { id: 8 } })).toThrow("untrusted");
+    }
+    expect(() =>
+      handlers.get("updates:preferences")!(event, {
+        enabled: true,
+        channel: "stable",
+        url: "https://example.com",
+      }),
+    ).toThrow();
     for (const invalid of [
       { ...KEYBOARD_DEFAULT, editorFocused: "yes" },
       { ...KEYBOARD_DEFAULT, managedKeys: ["Ctrl+bogus"] },

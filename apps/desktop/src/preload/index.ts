@@ -1,7 +1,22 @@
+import type { UpdateState } from "../shared/updates.js";
 import { contextBridge, ipcRenderer } from "electron";
 import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
 
 const api: KobrixaApi = {
+  updates: {
+    getState: () => ipcRenderer.invoke("updates:state"),
+    setPreferences: (value) => ipcRenderer.invoke("updates:preferences", value),
+    check: () => ipcRenderer.invoke("updates:check"),
+    prepareInstall: () => ipcRenderer.invoke("updates:prepare"),
+    cancelInstall: () => ipcRenderer.invoke("updates:cancel"),
+    install: () => ipcRenderer.invoke("updates:install"),
+    openRelease: () => ipcRenderer.invoke("updates:open"),
+    onState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: UpdateState) => listener(value);
+      ipcRenderer.on("updates:state", handler);
+      return () => ipcRenderer.removeListener("updates:state", handler);
+    },
+  },
   keyboard: { updateContext: (context) => ipcRenderer.invoke("keyboard:context", context) },
   workspace: {
     open: () => ipcRenderer.invoke("workspace:open"),

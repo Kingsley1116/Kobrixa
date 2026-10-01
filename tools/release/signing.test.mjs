@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { macSigningConfig, signingModes, windowsVersion } from "../../apps/desktop/signing.ts";
 import {
   acceptSignedWindows,
+  acceptSignedInstaller,
   runVerification,
   signPathConfiguration,
   verifySignedApplication,
@@ -87,6 +88,7 @@ test("SignPath preflight requires every credential, policy and expected publishe
     "SIGNPATH_SIGNING_POLICY_SLUG",
     "SIGNPATH_ARTIFACT_CONFIGURATION_SLUG",
     "SIGNPATH_CERTIFICATE_SUBJECT",
+    "SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG",
   ];
   const env = Object.fromEntries(names.map((name) => [name, "configured"]));
   assert.deepEqual(signPathConfiguration(env), env);
@@ -218,4 +220,40 @@ test("temporary Apple keychain is cleaned after success or failed certificate im
     /import rejected/,
   );
   assert.equal(calls.filter((args) => args[0] === "delete-keychain").length, 2);
+});
+
+test("final installer is replaced only after file set and signature verification", async (t) => {
+  const root = await temporary(t);
+  const original = path.join(root, "original.exe");
+  const signed = path.join(root, "signed");
+  const destination = path.join(root, "final.exe");
+  await mkdir(signed);
+  await writeFile(original, "unsigned");
+  await writeFile(path.join(signed, "setup.exe"), "unsigned");
+  await assert.rejects(
+    acceptSignedInstaller(original, signed, destination, version, winEnv, () => "valid"),
+    /unchanged/,
+  );
+  await writeFile(path.join(signed, "setup.exe"), "signed");
+  await writeFile(path.join(signed, "extra.exe"), "unexpected");
+  await assert.rejects(
+    acceptSignedInstaller(original, signed, destination, version, winEnv, () => "valid"),
+    /Unexpected/,
+  );
+  await rm(path.join(signed, "extra.exe"));
+  await assert.rejects(
+    acceptSignedInstaller(original, signed, destination, version, winEnv, () => {
+      throw new Error("Bad certificate");
+    }),
+    /Bad certificate/,
+  );
+  await assert.rejects(readFile(destination), /ENOENT/);
+  const calls = [];
+  await acceptSignedInstaller(original, signed, destination, version, winEnv, (...args) => {
+    calls.push(args);
+    return "valid";
+  });
+  assert.ok(calls[0][1].includes("-Installer"));
+  assert.ok(calls[0][1].includes(version));
+  assert.equal(await readFile(destination, "utf8"), "signed");
 });

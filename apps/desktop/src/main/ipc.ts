@@ -1,3 +1,4 @@
+import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
@@ -51,6 +52,8 @@ export function registerIpc(
   builds: BuildService,
   language: LanguageService,
   devices: DeviceService,
+  updates: UpdateService,
+  operationGate: UpdateOperationGate,
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -64,10 +67,26 @@ export function registerIpc(
   ): void => {
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
+      if (/^(workspace|device|build):/.test(channel))
+        return operationGate.run(channel, () => action(event, ...args));
       return action(event, ...args);
     });
   };
 
+  handle("updates:state", () => updates.getState());
+  handle("updates:preferences", (_event, value: unknown) =>
+    updates.setPreferences(
+      z
+        .object({ enabled: z.boolean(), channel: z.enum(["stable", "preview"]) })
+        .strict()
+        .parse(value),
+    ),
+  );
+  handle("updates:check", () => updates.check());
+  handle("updates:prepare", () => updates.prepareInstall());
+  handle("updates:cancel", () => updates.cancelInstall());
+  handle("updates:install", () => updates.install());
+  handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z
       .object({

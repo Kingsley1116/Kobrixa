@@ -1,7 +1,7 @@
 {
   "name": "kobrixa",
   "private": true,
-  "version": "0.1.0-v1-candidate.2",
+  "version": "0.1.0-v1-candidate.3",
   "packageManager": "pnpm@10.15.0",
   "engines": {
     "node": ">=24.0.0"
@@ -34,7 +34,10 @@
     "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing",
     "test:web": "vitest run --project web --project @kobrixa/ir && pnpm --filter @kobrixa/web test:worker",
     "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:examples:audit && pnpm test:release",
-    "test:ci-routing": "node --test tools/ci/*.test.mjs"
+    "test:ci-routing": "node --test tools/ci/*.test.mjs",
+    "package:installers": "pnpm --filter @kobrixa/desktop make",
+    "package:updates": "node tools/release/update-assets.mjs",
+    "test:desktop:packaged": "node tests/desktop/packaged-smoke.mjs"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",

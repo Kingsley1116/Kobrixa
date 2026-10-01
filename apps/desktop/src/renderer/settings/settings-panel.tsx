@@ -1,3 +1,5 @@
+import { UpdatesPanel } from "../updates/updates.js";
+import type { UpdateState } from "../../shared/updates.js";
 import { SettingSelect, SettingToggle } from "./setting-field.js";
 import { ClosableTab } from "../components/closable-tab.js";
 import type { KeyboardSettings } from "../keybindings/keyboard-state.js";
@@ -14,6 +16,7 @@ const languageOptions: { value: Locale; label: string }[] = [
 export const settingsCopy = {
   en: {
     title: "Settings",
+    updates: "Updates",
     close: "Close settings",
     language: "Language",
     appearance: "General & appearance",
@@ -51,6 +54,7 @@ export const settingsCopy = {
   },
   "zh-TW": {
     title: "設定",
+    updates: "更新",
     close: "關閉設定",
     language: "語言",
     appearance: "一般與外觀",
@@ -179,9 +183,15 @@ export function SettingsPanel({
   onRetry,
   keyboard,
   requestedCategory,
+  updates,
+  updateBusy,
+  onInstallUpdate,
 }: {
+  updates: UpdateState | undefined;
+  updateBusy: boolean;
+  onInstallUpdate(): void;
   keyboard: KeyboardSettings;
-  requestedCategory: { category: "appearance" | "shortcuts"; request: number };
+  requestedCategory: { category: "appearance" | "shortcuts" | "updates"; request: number };
   settings: Settings;
   onChange: Change;
   onReset(): void;
@@ -191,7 +201,7 @@ export function SettingsPanel({
 }): React.JSX.Element {
   const t = settingsCopy[settings.locale];
   const [category, setCategory] = useState<
-    "appearance" | "editor" | "saving" | "layout" | "shortcuts"
+    "appearance" | "editor" | "saving" | "layout" | "shortcuts" | "updates"
   >("appearance");
   const local = (zh: string, en: string) => (settings.locale === "zh-TW" ? zh : en);
   useEffect(() => setCategory(requestedCategory.category), [requestedCategory]);
@@ -242,17 +252,28 @@ export function SettingsPanel({
       {saveError && <SettingsError locale={settings.locale} onRetry={onRetry} />}
       <div className="settings-body">
         <nav className="settings-categories" aria-label={t.title}>
-          {(["appearance", "editor", "saving", "layout", "shortcuts"] as const).map((value) => (
-            <button
-              key={value}
-              aria-current={category === value ? "page" : undefined}
-              onClick={() => setCategory(value)}
-            >
-              {t[value]}
-            </button>
-          ))}
+          {(["appearance", "editor", "saving", "layout", "shortcuts", "updates"] as const).map(
+            (value) => (
+              <button
+                key={value}
+                aria-current={category === value ? "page" : undefined}
+                onClick={() => setCategory(value)}
+              >
+                {t[value]}
+              </button>
+            ),
+          )}
         </nav>
         <div className="settings-content" ref={content}>
+          <section hidden={category !== "updates"} aria-labelledby="settings-updates">
+            <h2 id="settings-updates">{t.updates}</h2>
+            <UpdatesPanel
+              state={updates}
+              locale={settings.locale}
+              busy={updateBusy}
+              onInstall={onInstallUpdate}
+            />
+          </section>
           <section hidden={category !== "appearance"} aria-labelledby="settings-appearance">
             <h2 id="settings-appearance">{t.appearance}</h2>
             <SettingSelect

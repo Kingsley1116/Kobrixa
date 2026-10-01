@@ -1,3 +1,4 @@
+import { useUpdates } from "./updates/updates.js";
 import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
 import { ResizeHandle } from "./components/resize-handle.js";
@@ -75,6 +76,11 @@ type PendingDraft = { workspaceId: string; file: string; content: () => string; 
 type PendingCreate = { kind: WorkspaceEntry["kind"]; parent: string };
 
 export function App(): React.JSX.Element {
+  const updates = useUpdates();
+  const [updatePreparing, setUpdatePreparing] = useState(false);
+  const [confirmUpdate, setConfirmUpdate] = useState(false);
+  const [dismissedUpdate, setDismissedUpdate] = useState<string>();
+  const updatePreparingRef = useRef(false);
   const { values: settings, saveError, reducedMotion } = useSettings();
   const {
     locale,
@@ -92,7 +98,7 @@ export function App(): React.JSX.Element {
   const t = copy[locale];
   const st = settingsCopy[locale];
   const [settingsCategory, setSettingsCategory] = useState<{
-    category: "appearance" | "shortcuts";
+    category: "appearance" | "shortcuts" | "updates";
     request: number;
   }>({ category: "appearance", request: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -124,7 +130,7 @@ export function App(): React.JSX.Element {
   ): void => settingsStore.set("problemsHeight", value);
   const [controller] = useState(() => new ExecutionController(window.kobrixa));
   const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
-  const locked = controller.editingLocked;
+  const locked = controller.editingLocked || updatePreparing;
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
@@ -881,6 +887,7 @@ export function App(): React.JSX.Element {
       workspaceStateRef.current.files === current.files &&
       documents.revision === revision &&
       !controller.editingLocked &&
+      !updatePreparingRef.current &&
       !projectBusyRef.current &&
       !managingEntriesRef.current;
     if (!editable() || analysisSession.getCurrent() !== snapshot)
@@ -1118,7 +1125,56 @@ export function App(): React.JSX.Element {
     }
   }
 
+  const updateBusy =
+    controller.locked || managingEntries || projectBusy || remoteState.busy || updatePreparing;
+  function requestUpdate(): void {
+    if (updateBusy) return;
+    if (dirty || Object.keys(workspaceStateRef.current?.drafts ?? {}).length)
+      setConfirmUpdate(true);
+    else void installUpdate();
+  }
+  async function installUpdate(): Promise<void> {
+    if (
+      updatePreparingRef.current ||
+      controller.locked ||
+      managingEntries ||
+      projectBusy ||
+      remoteState.busy
+    )
+      return;
+    updatePreparingRef.current = true;
+    setUpdatePreparing(true);
+    setConfirmUpdate(false);
+    try {
+      await window.kobrixa.updates.prepareInstall();
+      await saveAllChanges();
+      await flushAllDrafts();
+      if (
+        documents.getSnapshot().some((tab) => tab.dirty) ||
+        Object.keys(workspaceStateRef.current?.drafts ?? {}).length
+      )
+        throw new Error(
+          locale === "zh-TW"
+            ? "內容仍有未儲存的變更，更新已取消。"
+            : "Unsaved changes remain; the update was cancelled.",
+        );
+      await window.kobrixa.updates.install();
+    } catch (error) {
+      await window.kobrixa.updates.cancelInstall().catch(() => undefined);
+      report(error);
+      updatePreparingRef.current = false;
+      setUpdatePreparing(false);
+    }
+  }
+  useEffect(() => {
+    if (updates?.phase === "error") {
+      updatePreparingRef.current = false;
+      setUpdatePreparing(false);
+    }
+  }, [updates?.phase]);
+
   function runCommand(command: AppCommand): void {
+    if (updatePreparingRef.current) return;
     if (modalOpen || isModalOpen()) return;
     if (command === "settings" || command === "shortcuts") {
       if (command === "shortcuts")
@@ -1263,6 +1319,9 @@ export function App(): React.JSX.Element {
   const settingsPage = (
     <SettingsPanel
       settings={settings}
+      updates={updates}
+      updateBusy={updateBusy}
+      onInstallUpdate={requestUpdate}
       keyboard={keyboard}
       requestedCategory={settingsCategory}
       onChange={(key, value) => settingsStore.set(key, value)}
@@ -1296,7 +1355,9 @@ export function App(): React.JSX.Element {
             shortcut={keyboard.hint("settings")}
           />
         }
-        deviceLocked={controller.locked || managingEntries || projectBusy || modalOpen}
+        deviceLocked={
+          updatePreparing || controller.locked || managingEntries || projectBusy || modalOpen
+        }
         name={workspace?.name}
         locked={locked || managingEntries || projectBusy || modalOpen}
         canSave={Boolean(!settingsActive && active && active.dirty)}
@@ -1316,6 +1377,66 @@ export function App(): React.JSX.Element {
           setDeviceOpen(true);
         }}
       />
+      {updates &&
+        ["ready", "manual"].includes(updates.phase) &&
+        dismissedUpdate !== `${updates.version}:${updates.phase}` && (
+          <aside className="update-notice" role="status">
+            <span>
+              {locale === "zh-TW"
+                ? `新版本 ${updates.version} 已${updates.phase === "ready" ? "下載" : "推出"}。`
+                : `Version ${updates.version} is ${updates.phase === "ready" ? "ready to install" : "available"}.`}
+            </span>
+            <button
+              disabled={updateBusy}
+              onClick={() => {
+                if (updates.phase === "ready") requestUpdate();
+                else void window.kobrixa.updates.openRelease().catch(report);
+              }}
+            >
+              {locale === "zh-TW"
+                ? updates.phase === "ready"
+                  ? "重新啟動並更新"
+                  : "下載新版"
+                : updates.phase === "ready"
+                  ? "Restart and update"
+                  : "Download update"}
+            </button>
+            <button
+              onClick={() => {
+                setSettingsCategory((previous) => ({
+                  category: "updates",
+                  request: previous.request + 1,
+                }));
+                openSettings();
+              }}
+            >
+              {locale === "zh-TW" ? "更新設定" : "Update settings"}
+            </button>
+            <button onClick={() => setDismissedUpdate(`${updates.version}:${updates.phase}`)}>
+              {locale === "zh-TW" ? "稍後" : "Later"}
+            </button>
+          </aside>
+        )}
+      {confirmUpdate && (
+        <Dialog
+          title={locale === "zh-TW" ? "儲存並更新" : "Save and update"}
+          onClose={() => setConfirmUpdate(false)}
+        >
+          <p>
+            {locale === "zh-TW"
+              ? "更新將重新啟動 Kobrixa。請先儲存所有未儲存的變更。"
+              : "Updating will restart Kobrixa. Save all unsaved changes first."}
+          </p>
+          <DialogActions>
+            <button data-modal-initial onClick={() => setConfirmUpdate(false)}>
+              {locale === "zh-TW" ? "取消" : "Cancel"}
+            </button>
+            <button onClick={() => void installUpdate()}>
+              {locale === "zh-TW" ? "儲存全部並更新" : "Save all and update"}
+            </button>
+          </DialogActions>
+        </Dialog>
+      )}
       {saveError && !settingsActive && (
         <SettingsError locale={locale} onRetry={settingsStore.save} />
       )}
@@ -1583,7 +1704,7 @@ export function App(): React.JSX.Element {
                     state={execution}
                     devices={devices}
                     discovering={discovering}
-                    locked={controller.locked}
+                    locked={updatePreparing || controller.locked}
                     mode={connectionMode}
                     onMode={(mode) => {
                       setConnectionMode(mode);
@@ -1608,7 +1729,7 @@ export function App(): React.JSX.Element {
                     state={remoteState}
                     active={toolTab === "files"}
                     locale={locale}
-                    locked={controller.locked}
+                    locked={updatePreparing || controller.locked}
                     deployedPath={execution.deployed?.path}
                     onConnect={() => setToolTab("connection")}
                   />

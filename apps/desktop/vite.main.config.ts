@@ -4,7 +4,7 @@ export default defineConfig({
   build: {
     sourcemap: true,
     rollupOptions: {
-      external: ["node-hid"],
+      external: ["node-hid", "electron-updater"],
       output: { entryFileNames: "main.cjs" },
     },
   },

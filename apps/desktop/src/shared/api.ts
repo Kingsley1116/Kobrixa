@@ -1,3 +1,4 @@
+import type { UpdatesApi } from "./updates.js";
 import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
 import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
 import type { LanguageSyncRequest, LanguageSyncReply } from "./language-sync.js";
@@ -110,6 +111,7 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  updates: UpdatesApi;
   keyboard: { updateContext(context: KeyboardContext): Promise<void> };
   workspace: {
     open(): Promise<WorkspaceSummary | undefined>;
