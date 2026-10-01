@@ -1,13 +1,19 @@
+import { completionWidget } from "./completion-widget.js";
+import type { CompletionSession } from "./completion-session.js";
+import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
+import { basicPlusMonarch, basicPlusThemeRules } from "./basic-plus-language.js";
+import type { Documents, DocumentBuffer } from "./documents.js";
+import type { AnalysisSession } from "./analysis-session.js";
+import { ModelSnapshots } from "./model-snapshots.js";
+import { BasicPlusSemanticTokens } from "./semantic-tokens.js";
+import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
+import { bindWorkspaceEdits, renameSnapshot, validateTextEdits } from "./workspace-edits.js";
 import type { Settings } from "../settings/settings.js";
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import {
-  BASIC_PLUS_API_COMPLETIONS,
-  BASIC_PLUS_KEYWORDS,
-  formatBasicPlus,
-} from "@kobrixa/basic-plus/language";
+import { formatBasicPlus } from "@kobrixa/basic-plus/language";
 import type { Theme } from "../settings/theme.js";
 import type { Diagnostic } from "../../shared/api.js";
 
@@ -45,49 +51,13 @@ function registerLanguage(): void {
         /^\s*(?:Else\s*$|ElseIf\b|EndIf\b|EndWhile\b|EndFor\b|EndSub\b|EndFunction\b|EndModule\b)/i,
     },
   });
-  const ev3Namespaces = [
-    ...new Set(BASIC_PLUS_API_COMPLETIONS.map((item) => item.label.split(".")[0]!)),
-  ];
-  monaco.languages.setMonarchTokensProvider("basic-plus", {
-    ignoreCase: true,
-    keywords: [...BASIC_PLUS_KEYWORDS],
-    ev3Namespaces,
-    tokenizer: {
-      root: [
-        [/[ \t\r]+/, "white"],
-        [/'[^\n]*/, "comment"],
-        [/[A-Za-z_]\w*(?=\s*\()/, { cases: { "@keywords": "keyword", "@default": "function" } }],
-        [
-          /[A-Za-z_]\w*/,
-          {
-            cases: {
-              "@keywords": "keyword",
-              "@ev3Namespaces": "ev3.namespace",
-              "@default": "identifier",
-            },
-          },
-        ],
-        [/(?:\d+\.\d*|\.\d+|\d+)/, "number"],
-        [/"(?:[^"]|"")*"/, "string"],
-        [/"[^\n]*$/, "string.invalid"],
-        [/[=<>+\-*/%]+/, "operator"],
-        [/[()[\],.:]/, "delimiter"],
-      ],
-    },
-  });
+  monaco.languages.setMonarchTokensProvider("basic-plus", basicPlusMonarch);
   for (const theme of ["light", "dark"] as const) {
     const dark = theme === "dark";
     monaco.editor.defineTheme(`kobrixa-${theme}`, {
       base: dark ? "vs-dark" : "vs",
       inherit: true,
-      rules: [
-        { token: "keyword", foreground: dark ? "88ACFF" : "2457D6" },
-        { token: "ev3.namespace", foreground: dark ? "88ACFF" : "2457D6", fontStyle: "bold" },
-        { token: "function", foreground: dark ? "F2CA6A" : "875A0B" },
-        { token: "string", foreground: dark ? "EBA884" : "994622" },
-        { token: "number", foreground: dark ? "C6ACF1" : "7752A0" },
-        { token: "comment", foreground: dark ? "8998A7" : "68746B", fontStyle: "italic" },
-      ],
+      rules: basicPlusThemeRules(dark),
       colors: {
         "editor.background": dark ? "#18212b" : "#fdfaf4",
         "editor.foreground": dark ? "#e6eaf0" : "#1e2933",
@@ -101,39 +71,6 @@ function registerLanguage(): void {
       },
     });
   }
-  monaco.languages.registerCompletionItemProvider("basic-plus", {
-    triggerCharacters: ["."],
-    provideCompletionItems: (model, position) => {
-      const beforeCursor = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
-      const prefix = beforeCursor.match(/[A-Za-z_][\w.]*$/)?.[0] ?? "";
-      const range = new monaco.Range(
-        position.lineNumber,
-        position.column - prefix.length,
-        position.lineNumber,
-        position.column,
-      );
-      const keywordSuggestions = prefix.includes(".")
-        ? []
-        : BASIC_PLUS_KEYWORDS.map((label) => ({
-            label,
-            kind: monaco.languages.CompletionItemKind.Keyword,
-            insertText: label,
-            range,
-          }));
-      const apiSuggestions = BASIC_PLUS_API_COMPLETIONS.map((completion) => ({
-        label: completion.label,
-        kind: monaco.languages.CompletionItemKind.Method,
-        insertText: completion.insertText,
-        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-        detail: completion.signature,
-        documentation: {
-          value: `**${completion.signature}**\n\n${completion.documentation}`,
-        },
-        range,
-      }));
-      return { suggestions: [...keywordSuggestions, ...apiSuggestions] };
-    },
-  });
   monaco.languages.registerDocumentFormattingEditProvider("basic-plus", {
     provideDocumentFormattingEdits: (model, options) => [
       {
@@ -163,10 +100,20 @@ export interface EditorHandle {
   remapFiles(moved: Readonly<Record<string, string>>): void;
 }
 
+export interface EditorAnalysis {
+  analysis: BasicPlusProjectAnalysis;
+  overlays: Record<string, string>;
+}
+
 interface EditorProps {
+  documents: Documents;
+  analysisSession: AnalysisSession;
+  completionSession?: CompletionSession;
   editorOptions?: Pick<Settings, "lineNumbers" | "minimap" | "renderWhitespace" | "formatOnPaste">;
   onEditorReady?(editor: monaco.editor.IStandaloneCodeEditor): () => void;
   onBlur?(file: string): void;
+  onOpenLocation?(file: string, range: Diagnostic["range"]): Promise<boolean>;
+  onWorkspaceEdit?(snapshot: EditorAnalysis, apply: () => Record<string, string>): Promise<void>;
   theme: Theme;
   fontSize: number;
   wordWrap: boolean;
@@ -174,17 +121,21 @@ interface EditorProps {
   reducedMotion: boolean;
   readOnly: boolean;
   file: string;
-  value: string;
   openFiles: string[];
   diagnostics: Diagnostic[];
   focusTarget: EditorFocusTarget | undefined;
   ariaLabel: string;
-  onChange(file: string, value: string): void;
+  onChange(file: string): void;
   onCursorChange(position: CursorPosition): void;
 }
 
+let modelSequence = 0;
 function modelUri(file: string): monaco.Uri {
-  return monaco.Uri.from({ scheme: "kobrixa", path: `/${file}` });
+  return monaco.Uri.from({
+    scheme: "kobrixa",
+    path: `/${file}`,
+    query: `model=${++modelSequence}`,
+  });
 }
 
 function languageFor(file: string): string {
@@ -204,10 +155,14 @@ function toMonacoRange(range: Diagnostic["range"]): monaco.Range {
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   {
     file,
-    value,
+    documents,
+    analysisSession,
+    completionSession,
     editorOptions,
     onEditorReady,
     onBlur,
+    onOpenLocation,
+    onWorkspaceEdit,
     openFiles,
     diagnostics,
     focusTarget,
@@ -223,12 +178,79 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   },
   handleRef,
 ): React.JSX.Element {
+  const [modelSnapshots] = useState(() => new ModelSnapshots());
+  const [semanticTokens] = useState(() => new BasicPlusSemanticTokens());
   const container = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
   const models = useRef(new Map<string, monaco.editor.ITextModel>());
   const viewStates = useRef(new Map<string, monaco.editor.ICodeEditorViewState>());
   const activeFile = useRef<string | undefined>(undefined);
   const applyingValue = useRef(false);
+  const composing = useRef(false);
+  const suggestions = useRef<ReturnType<typeof completionWidget> | undefined>(undefined);
+  const features = useRef<BasicPlusLanguageFeatures | undefined>(undefined);
+  const modelSubscriptions = useRef(new Map<monaco.editor.ITextModel, monaco.IDisposable>());
+  const currentProps = useRef({ readOnly, onOpenLocation, onWorkspaceEdit });
+  currentProps.current = { readOnly, onOpenLocation, onWorkspaceEdit };
+  const buffers = useRef(new Map<monaco.editor.ITextModel, DocumentBuffer>());
+  const fileFor = (model: monaco.editor.ITextModel): string | undefined =>
+    [...models.current].find(([, item]) => item === model)?.[0];
+  const ensureModel = (file: string, content: string): monaco.editor.ITextModel => {
+    const existing = models.current.get(file);
+    if (existing) {
+      const buffer = buffers.current.get(existing);
+      if (buffer) documents.bind(file, buffer);
+      return existing;
+    }
+    const model = monaco.editor.createModel(content, languageFor(file), modelUri(file));
+    models.current.set(file, model);
+    modelSnapshots.bind(model, file, content);
+    const snapshot = analysisSession.getCurrent();
+    if (snapshot?.analysis.index.sources[file] === content) modelSnapshots.accept(model, snapshot);
+    semanticTokens.bind(model, file);
+    const buffer: DocumentBuffer = {
+      getValue: () => model.getValue(undefined, true),
+      getValueLength: () => model.getValueLength(undefined, true),
+      getVersionId: () => model.getVersionId(),
+      getAlternativeVersionId: () => model.getAlternativeVersionId(),
+      setValue: (value) => {
+        applyingValue.current = true;
+        try {
+          model.setValue(value);
+        } finally {
+          applyingValue.current = false;
+        }
+      },
+    };
+    buffers.current.set(model, buffer);
+    documents.bind(file, buffer);
+    modelSubscriptions.current.set(
+      model,
+      model.onDidChangeContent(() => {
+        if (applyingValue.current) return;
+        features.current?.update(undefined);
+        const currentFile = fileFor(model);
+        if (currentFile) {
+          documents.changed(currentFile);
+          onChangeRef.current(currentFile);
+        }
+      }),
+    );
+    completionSession?.bind(file, model);
+    return model;
+  };
+  const disposeModel = (file: string, model: monaco.editor.ITextModel) => {
+    completionSession?.unbind(file, model);
+    documents.unbind(file);
+    buffers.current.delete(model);
+    models.current.delete(file);
+    viewStates.current.delete(file);
+    modelSubscriptions.current.get(model)?.dispose();
+    modelSubscriptions.current.delete(model);
+    modelSnapshots.unbind(model);
+    semanticTokens.unbind(model);
+    model.dispose();
+  };
   const onBlurRef = useRef(onBlur);
   onBlurRef.current = onBlur;
   const onChangeRef = useRef(onChange);
@@ -251,7 +273,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     () => ({
       applySavedFormat: (file, before, after) => {
         const model = models.current.get(file);
-        if (!model || model.getValue() !== before || before === after) return;
+        if (!model || model.getValue(undefined, true) !== before || before === after) return;
         const edits = [{ range: model.getFullModelRange(), text: after }];
         if (editor.current?.getModel() === model) {
           editor.current.pushUndoStop();
@@ -269,6 +291,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       },
       reveal,
       remapFiles: (moved) => {
+        features.current?.update(undefined);
         const instance = editor.current;
         const currentFile = activeFile.current;
         if (instance && currentFile) {
@@ -278,8 +301,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         for (const [source, target] of Object.entries(moved)) {
           const model = models.current.get(source);
           if (model) {
+            documents.unbind(source);
             models.current.delete(source);
             models.current.set(target, model);
+            completionSession?.unbind(source, model);
+            completionSession?.bind(target, model);
+            modelSnapshots.remap(model, target);
+            semanticTokens.bind(model, target);
             monaco.editor.setModelLanguage(model, languageFor(target));
           }
           const state = viewStates.current.get(source);
@@ -297,8 +325,83 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useEffect(() => {
     registerLanguage();
     if (!container.current) return undefined;
+    const semanticRegistration = monaco.languages.registerDocumentSemanticTokensProvider(
+      { language: "basic-plus", scheme: "kobrixa" },
+      semanticTokens,
+    );
+    const languageFeatures = new BasicPlusLanguageFeatures({
+      fileFor,
+      ensureModel,
+      completionSymbols: (model, position) => {
+        const file = fileFor(model);
+        const symbols = file && completionSession?.symbols(file, position);
+        if (!symbols) completionSession?.request();
+        return symbols || undefined;
+      },
+      isCurrent: (model, file, snapshot) =>
+        analysisSession.getCurrent() === snapshot &&
+        modelSnapshots.isCurrent(model, file, snapshot),
+      refreshCompletions: (model, position) => suggestions.current?.refresh(model, position),
+      canEdit: () => !currentProps.current.readOnly && !editor.current?.getRawOptions().readOnly,
+    });
+    features.current = languageFeatures;
+    languageFeatures.register();
+    let mounted = true;
+    const detachEdits = bindWorkspaceEdits(async (edit) => {
+      const snapshot = renameSnapshot(edit);
+      const validate = () => {
+        if (
+          !mounted ||
+          currentProps.current.readOnly ||
+          editor.current?.getRawOptions().readOnly ||
+          !snapshot ||
+          analysisSession.getCurrent() !== snapshot
+        )
+          throw new Error("The workspace changed while preparing the rename. Try again.");
+        const groups = validateTextEdits(edit, (resource) =>
+          [...models.current.values()].find((model) => model.uri.toString() === resource),
+        );
+        for (const model of groups.keys()) {
+          const file = fileFor(model);
+          if (
+            !file ||
+            normalizeSource(snapshot.analysis.index.sources[file] ?? "") !==
+              normalizeSource(model.getValue())
+          )
+            throw new Error("A source file changed while preparing the rename.");
+        }
+        return groups;
+      };
+      validate();
+      if (!currentProps.current.onWorkspaceEdit)
+        throw new Error("Workspace editing is unavailable.");
+      await currentProps.current.onWorkspaceEdit(snapshot!, () => {
+        const groups = validate();
+        const changes: Record<string, string> = {};
+        applyingValue.current = true;
+        try {
+          for (const [model, edits] of groups) {
+            model.pushStackElement();
+            model.pushEditOperations(null, edits, () => null);
+            model.pushStackElement();
+            changes[fileFor(model)!] = model.getValue(undefined, true);
+          }
+        } finally {
+          applyingValue.current = false;
+        }
+        languageFeatures.update(undefined);
+        return changes;
+      });
+      return { isApplied: true, ariaSummary: `${edit.edits.length} occurrences renamed.` };
+    });
+    const detachCompletion = completionSession?.subscribe(() => {
+      const snapshot = analysisSession.getCurrent();
+      if (snapshot) completionSession.enrich(snapshot.analysis.index.symbols);
+      languageFeatures.refreshCompletion();
+    });
     const instance = monaco.editor.create(container.current, {
       model: null,
+      "semanticHighlighting.enabled": true,
       theme: `kobrixa-${theme}`,
       readOnly,
       ariaLabel,
@@ -326,7 +429,43 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       stickyScroll: { enabled: true, maxLineCount: 3 },
       overviewRulerBorder: false,
     });
+    const opener = monaco.editor.registerEditorOpener({
+      openCodeEditor: async (_source, resource, selection) => {
+        const model = [...models.current.values()].find(
+          (model) => model.uri.toString() === resource.toString(),
+        );
+        const file = model && fileFor(model);
+        if (!file || !currentProps.current.onOpenLocation) return false;
+        const range =
+          selection && "startLineNumber" in selection
+            ? {
+                startLine: selection.startLineNumber,
+                startColumn: selection.startColumn,
+                endLine: selection.endLineNumber,
+                endColumn: selection.endColumn,
+              }
+            : {
+                startLine: selection?.lineNumber ?? 1,
+                startColumn: selection?.column ?? 1,
+                endLine: selection?.lineNumber ?? 1,
+                endColumn: selection?.column ?? 1,
+              };
+        return currentProps.current.onOpenLocation(file, range);
+      },
+    });
     editor.current = instance;
+    if (completionSession)
+      suggestions.current = completionWidget(
+        instance,
+        () => composing.current,
+        () => completionSession.request(),
+      );
+    const compositionStart = instance.onDidCompositionStart?.(() => {
+      composing.current = true;
+    });
+    const compositionEnd = instance.onDidCompositionEnd?.(() => {
+      composing.current = false;
+    });
     const disposeKeyboard = onEditorReady?.(instance);
     const blurSubscription = onBlur
       ? instance.onDidBlurEditorWidget(() => {
@@ -335,22 +474,27 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         })
       : undefined;
     instance.focus();
-    const contentSubscription = instance.onDidChangeModelContent(() => {
-      if (applyingValue.current) return;
-      const currentFile = activeFile.current;
-      if (currentFile) onChangeRef.current(currentFile, instance.getValue());
-    });
     const cursorSubscription = instance.onDidChangeCursorPosition(({ position }) =>
       onCursorChangeRef.current({ line: position.lineNumber, column: position.column }),
     );
     return () => {
+      compositionStart?.dispose();
+      compositionEnd?.dispose();
       disposeKeyboard?.();
       blurSubscription?.dispose();
-      contentSubscription.dispose();
+      mounted = false;
+      opener.dispose();
+      detachEdits();
+      suggestions.current?.dispose();
+      suggestions.current = undefined;
+      detachCompletion?.();
+      languageFeatures.dispose();
+      features.current = undefined;
       cursorSubscription.dispose();
+      semanticRegistration.dispose();
+      semanticTokens.dispose();
       instance.dispose();
-      for (const model of models.current.values()) model.dispose();
-      models.current.clear();
+      for (const [file, model] of models.current) disposeModel(file, model);
       viewStates.current.clear();
     };
   }, []);
@@ -363,11 +507,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       const state = instance.saveViewState();
       if (state) viewStates.current.set(previousFile, state);
     }
-    let model = models.current.get(file);
-    if (!model) {
-      model = monaco.editor.createModel(value, languageFor(file), modelUri(file));
-      models.current.set(file, model);
-    }
+    const model = ensureModel(file, documents.reader(file)());
     model.updateOptions({ tabSize: indentSize, indentSize, insertSpaces: true });
     activeFile.current = file;
     instance.setModel(model);
@@ -379,11 +519,22 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 
   useEffect(() => {
     const open = new Set(openFiles);
+    // Retain models used by Peek and workspace edits while their source exists.
+    // A fresh snapshot reconciles closed files changed externally or removed.
     for (const [modelFile, model] of models.current) {
       if (open.has(modelFile)) continue;
-      models.current.delete(modelFile);
-      viewStates.current.delete(modelFile);
-      model.dispose();
+      const source = analysisSession.getCurrent()?.analysis.index.sources[modelFile];
+      if (source === undefined) {
+        disposeModel(modelFile, model);
+      } else if (modelSnapshots.source(model) !== source) {
+        applyingValue.current = true;
+        try {
+          model.setValue(source);
+          modelSnapshots.bind(model, modelFile, source);
+        } finally {
+          applyingValue.current = false;
+        }
+      }
     }
   }, [openFiles]);
 
@@ -419,18 +570,51 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     monaco.editor.setTheme(`kobrixa-${theme}`);
   }, [theme]);
 
-  useLayoutEffect(() => {
-    const model = models.current.get(file);
-    if (!model || model.getValue() === value) return;
-    // Flush incoming content before the next input event. A passive effect can
-    // overwrite newer keystrokes and feed its stale value back into React.
-    applyingValue.current = true;
-    try {
-      model.setValue(value);
-    } finally {
-      applyingValue.current = false;
-    }
-  }, [file, value]);
+  useEffect(() => {
+    const update = (
+      snapshot: EditorAnalysis | undefined,
+      event: "result" | "invalidate" | "reset" | "failure",
+    ) => {
+      if (event === "result" && snapshot) {
+        const open = new Set(documents.getOpenFiles());
+        for (const [modelFile, model] of models.current) {
+          if (open.has(modelFile)) {
+            if (snapshot.overlays[modelFile] === snapshot.analysis.index.sources[modelFile])
+              modelSnapshots.accept(model, snapshot);
+            continue;
+          }
+          const source = snapshot.analysis.index.sources[modelFile];
+          if (source === undefined) disposeModel(modelFile, model);
+          else {
+            if (modelSnapshots.source(model) !== source)
+              buffers.current.get(model)?.setValue(source);
+            modelSnapshots.accept(model, snapshot);
+          }
+        }
+        semanticTokens.update(
+          snapshot.analysis.tokensByFile,
+          snapshot.analysis.index.sources,
+          modelSnapshots.versions(snapshot),
+        );
+      } else if (event === "reset") semanticTokens.update(undefined);
+      else if (event === "failure") semanticTokens.fail();
+      if (snapshot) completionSession?.enrich(snapshot.analysis.index.symbols);
+      features.current?.update(snapshot);
+    };
+    update(analysisSession.getCurrent(), "result");
+    return analysisSession.subscribe(update);
+  }, [analysisSession, semanticTokens]);
+
+  useEffect(
+    () =>
+      documents.onChange(() => {
+        for (const [modelFile, model] of models.current) {
+          const buffer = buffers.current.get(model);
+          if (buffer) documents.bind(modelFile, buffer);
+        }
+      }),
+    [documents],
+  );
 
   useEffect(() => {
     for (const [modelFile, model] of models.current) {

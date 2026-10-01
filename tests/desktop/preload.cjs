@@ -24,7 +24,13 @@ contextBridge.exposeInMainWorld("kobrixa", {
     artifacts: async () => [],
     onEvent: () => () => {},
   },
-  language: { cancel: async () => {}, diagnostics: async () => [] },
+  language: {
+    completionSync: call("completionSync"),
+    sync: call("languageSync"),
+    cancel: call("languageCancel"),
+    analyze: call("analyze"),
+    diagnostics: async () => [],
+  },
   device: {
     onEvent: () => () => {},
     discover: async () => [],

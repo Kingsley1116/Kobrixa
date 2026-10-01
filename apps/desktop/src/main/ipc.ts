@@ -125,6 +125,59 @@ export function registerIpc(
   handle("build:cancel", (_event, buildId: unknown) => builds.cancel(id.parse(buildId)));
   handle("build:artifacts", (_event, buildId: unknown) => builds.artifacts(id.parse(buildId)));
 
+  handle("language:completion-sync", (_event, workspaceId: unknown, request: unknown) =>
+    language.completionSync(
+      id.parse(workspaceId),
+      z
+        .object({
+          session: z.string().min(1).max(100),
+          revision: z.number().int().positive(),
+          baseRevision: z.number().int().nonnegative().nullable(),
+          refresh: z.boolean(),
+          updates: z.array(
+            z.discriminatedUnion("kind", [
+              z.object({
+                kind: z.literal("reset"),
+                file,
+                document: z.object({ version: z.number().int().nonnegative(), text: content }),
+              }),
+              z.object({ kind: z.literal("remove"), file }),
+              z.object({
+                kind: z.literal("edit"),
+                file,
+                before: z.number().int().nonnegative(),
+                version: z.number().int().positive(),
+                changes: z.array(
+                  z.object({
+                    offset: z.number().int().nonnegative(),
+                    length: z.number().int().nonnegative(),
+                    text: content,
+                  }),
+                ),
+              }),
+            ]),
+          ),
+        })
+        .parse(request),
+    ),
+  );
+  handle("language:analyze", (_event, workspaceId: unknown, overlays: unknown) =>
+    language.analyze(id.parse(workspaceId), z.record(file, content).parse(overlays)),
+  );
+  handle("language:sync", (_event, workspaceId: unknown, update: unknown) =>
+    language.sync(
+      id.parse(workspaceId),
+      z
+        .object({
+          session: z.string().min(1).max(100),
+          revision: z.number().int().positive(),
+          baseRevision: z.number().int().nonnegative().nullable(),
+          analysisBase: z.number().int().positive().nullable(),
+          overlays: z.object({ set: z.record(file, content), removed: z.array(file) }),
+        })
+        .parse(update),
+    ),
+  );
   handle("language:diagnostics", (_event, workspaceId: unknown, overlays: unknown) =>
     language.diagnostics(id.parse(workspaceId), z.record(file, content).parse(overlays)),
   );

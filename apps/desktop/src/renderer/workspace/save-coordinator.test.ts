@@ -75,7 +75,13 @@ describe("save snapshots", () => {
     const write = vi.fn(),
       apply = vi.fn();
     const save = saveSnapshot({
-      read: () => ({ content, saved: "" }),
+      // The document store exposes a live getter, not a frozen text snapshot.
+      read: () => ({
+        get content() {
+          return content;
+        },
+        saved: "",
+      }),
       format: async () => {
         await gate.promise;
         return "formatted";

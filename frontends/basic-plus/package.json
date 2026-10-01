@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./language": "./dist/language.js"
+    "./language": "./dist/language.js",
+    "./intelligence": "./dist/intelligence.js"
   },
   "files": [
     "dist"

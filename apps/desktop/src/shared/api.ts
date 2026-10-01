@@ -1,3 +1,6 @@
+import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
+import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
+import type { LanguageSyncRequest, LanguageSyncReply } from "./language-sync.js";
 import type { KeyboardContext } from "./keyboard.js";
 import type {
   BuildArtifact,
@@ -135,6 +138,15 @@ export interface KobrixaApi {
     onEvent(listener: (event: BuildEvent) => void): () => void;
   };
   language: {
+    completionSync(
+      workspaceId: string,
+      request: CompletionSyncRequest,
+    ): Promise<CompletionSyncReply>;
+    sync(workspaceId: string, request: LanguageSyncRequest): Promise<LanguageSyncReply>;
+    analyze(
+      workspaceId: string,
+      overlays: Record<string, string>,
+    ): Promise<BasicPlusProjectAnalysis>;
     cancel(): Promise<void>;
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };

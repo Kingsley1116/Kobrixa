@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => {
   const model = {
     getValue: vi.fn(() => "LCD.Clear()"),
     setValue: vi.fn(() => contentListener()),
+    getLanguageId: vi.fn(() => "basic-plus"),
+    getVersionId: vi.fn(() => 1),
+    getAlternativeVersionId: vi.fn(() => 1),
+    getValueLength: vi.fn(() => model.getValue().length),
+    onDidChangeContent: vi.fn(() => ({ dispose: vi.fn() })),
     updateOptions: vi.fn(),
     dispose: vi.fn(),
   };
@@ -36,11 +41,18 @@ vi.mock("monaco-editor", () => ({
     register: vi.fn(),
     setLanguageConfiguration: vi.fn(),
     setMonarchTokensProvider: vi.fn(),
-    registerCompletionItemProvider: vi.fn(),
+    registerDocumentSemanticTokensProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerCompletionItemProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerHoverProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerSignatureHelpProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerDefinitionProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerReferenceProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerRenameProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerDocumentFormattingEditProvider: vi.fn(),
   },
   editor: {
     create: mocks.create,
+    registerEditorOpener: vi.fn(() => ({ dispose: vi.fn() })),
     createModel: vi.fn(() => mocks.model),
     defineTheme: vi.fn(),
     setTheme: vi.fn(),
@@ -51,6 +63,8 @@ vi.mock("monaco-editor/esm/vs/editor/editor.worker?worker", () => ({ default: cl
 vi.mock("monaco-editor/esm/vs/language/json/json.worker?worker", () => ({ default: class {} }));
 
 import { Editor } from "./editor.js";
+import { Documents } from "./documents.js";
+import { AnalysisSession } from "./analysis-session.js";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -71,7 +85,14 @@ const props = {
   reducedMotion: false,
   readOnly: false,
   file: "main.bp",
-  value: "LCD.Clear()",
+  documents: new Documents(),
+  analysisSession: new AnalysisSession(new Documents(), {
+    analyze: vi.fn(),
+    cancel: vi.fn(),
+    diagnostics: vi.fn(),
+    checking: vi.fn(),
+    error: vi.fn(),
+  }),
   openFiles: ["main.bp"],
   diagnostics,
   focusTarget: undefined,
@@ -82,6 +103,8 @@ const props = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  props.documents = new Documents();
+  props.documents.replace([{ file: "main.bp", content: "LCD.Clear()", saved: "LCD.Clear()" }]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
@@ -94,7 +117,7 @@ afterEach(async () => {
 });
 
 it("does not rewrite markers, content, or view state on Enter and Backspace rerenders", async () => {
-  mocks.model.getValue.mockReturnValue(props.value);
+  mocks.model.getValue.mockReturnValue("LCD.Clear()");
   await act(async () => root.render(createElement(Editor, props)));
   expect(mocks.setModelMarkers).toHaveBeenCalledTimes(1);
   mocks.setModelMarkers.mockClear();
@@ -102,9 +125,7 @@ it("does not rewrite markers, content, or view state on Enter and Backspace rere
   for (const value of ["LCD.Clear()\n", "LCD.Clear()", "LCD.Clear()\n\n"]) {
     mocks.model.getValue.mockReturnValue(value);
     // App produces a new openFiles array when tab contents change.
-    await act(async () =>
-      root.render(createElement(Editor, { ...props, value, openFiles: ["main.bp"] })),
-    );
+    await act(async () => root.render(createElement(Editor, { ...props, openFiles: ["main.bp"] })));
   }
   expect(mocks.setModelMarkers).not.toHaveBeenCalled();
   expect(mocks.model.setValue).not.toHaveBeenCalled();
@@ -117,22 +138,23 @@ it("does not rewrite markers, content, or view state on Enter and Backspace rere
     }),
   );
 
-  await act(async () =>
-    root.render(createElement(Editor, { ...props, value: "LCD.Clear()\n\n", diagnostics: [] })),
-  );
+  await act(async () => root.render(createElement(Editor, { ...props, diagnostics: [] })));
   expect(mocks.setModelMarkers).toHaveBeenCalledExactlyOnceWith(mocks.model, "kobrixa", []);
 });
 
 it("applies diagnostics when a file is opened and still accepts external content changes", async () => {
-  mocks.model.getValue.mockReturnValue(props.value);
+  mocks.model.getValue.mockReturnValue("LCD.Clear()");
   await act(async () => root.render(createElement(Editor, props)));
   mocks.setModelMarkers.mockClear();
+  props.documents.replace([
+    ...props.documents.getSnapshot(),
+    { file: "other.bp", content: "LCD.Update()", saved: "LCD.Update()" },
+  ]);
   await act(async () =>
     root.render(
       createElement(Editor, {
         ...props,
         file: "other.bp",
-        value: "LCD.Update()",
         openFiles: ["main.bp", "other.bp"],
       }),
     ),
@@ -140,9 +162,13 @@ it("applies diagnostics when a file is opened and still accepts external content
   expect(mocks.setModelMarkers).toHaveBeenCalledTimes(2);
   expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", []);
   props.onChange.mockClear();
-  await act(async () =>
-    root.render(createElement(Editor, { ...props, file: "other.bp", value: "LCD.Clear()\n\n" })),
-  );
+  await act(async () => {
+    props.documents.replace(
+      props.documents
+        .getSnapshot()
+        .map((tab) => (tab.file === "other.bp" ? { ...tab, content: "LCD.Clear()\n\n" } : tab)),
+    );
+  });
   expect(mocks.model.setValue).toHaveBeenLastCalledWith("LCD.Clear()\n\n");
   expect(props.onChange).not.toHaveBeenCalled();
 });

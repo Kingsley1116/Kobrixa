@@ -13,7 +13,7 @@ import {
   type KobrixaIR,
   type SourceSpan,
 } from "@kobrixa/ir";
-import path from "node:path";
+import { canonical, functionSymbols, resolveVariable } from "./symbols.js";
 import type { Expression, FunctionDeclaration, Statement } from "./ast.js";
 
 interface LoweredValue {
@@ -63,10 +63,6 @@ function inferredFunctionReturnType(declaration: FunctionDeclaration): IRType {
         types.length > 0 && types.every((type) => type.kind === "integer") ? "integer" : "number",
     };
   return types[0] ?? { kind: "number" };
-}
-
-function canonical(name: string): string {
-  return name.toLocaleLowerCase("en-US");
 }
 
 function textualBoolean(value: string): boolean | undefined {
@@ -724,25 +720,16 @@ class FunctionBuilder {
     span: SourceSpan,
     forceGlobal = false,
   ): IRVariable {
-    const key = canonical(name);
-    const existing = this.variables.get(key);
-    if (existing) {
-      if (type.kind === "number" && existing.type.kind === "integer")
-        existing.type = { kind: "number" };
-      return existing;
-    }
-    const global = this.globals.get(key);
-    if (global) {
-      if (type.kind === "number" && global.type.kind === "integer")
-        global.type = { kind: "number" };
-      return global;
-    }
-    if (forceGlobal || this.globalScope) {
-      const variable = this.addVariable(key, type, "global", span);
-      this.globals.set(key, variable);
-      return variable;
-    }
-    return this.addVariable(key, type, "local", span);
+    const variable = resolveVariable(
+      name,
+      this.variables,
+      this.globals,
+      forceGlobal || this.globalScope,
+      (key, scope) => this.addVariable(key, type, scope, span),
+    );
+    if (type.kind === "number" && variable.type.kind === "integer")
+      variable.type = { kind: "number" };
+    return variable;
   }
 
   private addVariable(
@@ -817,24 +804,15 @@ export function lowerProgram(
   declarations: FunctionDeclaration[],
   sourceFiles: string[],
 ): { ir: KobrixaIR; diagnostics: Diagnostic[] } {
-  const known = new Map<string, FunctionDeclaration>();
   const diagnostics: Diagnostic[] = [];
-  for (const declaration of declarations) {
+  for (const declaration of declarations)
     if (declaration.kind === "function")
       declaration.returnType = inferredFunctionReturnType(declaration);
-    const key = canonical(declaration.name);
-    if (known.has(key))
-      diagnostics.push(
-        toDiagnostic("BP2001", `Duplicate function '${declaration.name}'.`, declaration.span),
-      );
-    known.set(key, declaration);
-    const moduleName = path.posix.basename(
-      declaration.span.file,
-      path.posix.extname(declaration.span.file),
+  const known = functionSymbols(declarations, (declaration) => {
+    diagnostics.push(
+      toDiagnostic("BP2001", `Duplicate function '${declaration.name}'.`, declaration.span),
     );
-    const qualified = canonical(`${moduleName}.${declaration.name}`);
-    if (!known.has(qualified)) known.set(qualified, declaration);
-  }
+  });
   const functions: IRFunction[] = [];
   const globals = new Map<string, IRVariable>();
   const globalLabels = new Set(

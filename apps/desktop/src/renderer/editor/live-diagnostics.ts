@@ -1,15 +1,15 @@
 import type { Diagnostic } from "../../shared/api.js";
 
-interface DiagnosticsCallbacks {
+interface DiagnosticsCallbacks<T> {
   cancel(): void;
-  check(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
-  onDiagnostics(items: Diagnostic[]): void;
+  check(workspaceId: string, overlays: Record<string, string>): Promise<T>;
+  onDiagnostics(items: T): void;
   onChecking(checking: boolean): void;
   onError(error: unknown): void;
 }
 
 /** Keep at most one IPC check in flight and only check the latest settled edit. */
-export class LiveDiagnostics {
+export class LiveDiagnostics<T = Diagnostic[]> {
   private revision = 0;
   private running = false;
   private checking = false;
@@ -18,14 +18,21 @@ export class LiveDiagnostics {
   private pending:
     { revision: number; workspaceId: string; overlays: Record<string, string> } | undefined;
 
-  constructor(private readonly callbacks: DiagnosticsCallbacks) {}
+  constructor(private readonly callbacks: DiagnosticsCallbacks<T>) {}
 
-  schedule(workspaceId: string, overlays: Record<string, string>): void {
+  schedule(
+    workspaceId: string,
+    overlays: Record<string, string> | (() => Record<string, string>),
+  ): void {
     this.cancel();
     const revision = this.revision;
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      this.pending = { revision, workspaceId, overlays };
+      this.pending = {
+        revision,
+        workspaceId,
+        overlays: typeof overlays === "function" ? overlays() : overlays,
+      };
       void this.run();
     }, 500);
   }

@@ -32,6 +32,11 @@ const api: KobrixaApi = {
     },
   },
   language: {
+    completionSync: (workspaceId, request) =>
+      ipcRenderer.invoke("language:completion-sync", workspaceId, request),
+    sync: (workspaceId, request) => ipcRenderer.invoke("language:sync", workspaceId, request),
+    analyze: (workspaceId, overlays) =>
+      ipcRenderer.invoke("language:analyze", workspaceId, overlays),
     cancel: () => ipcRenderer.invoke("language:cancel"),
     diagnostics: (workspaceId, overlays) =>
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),

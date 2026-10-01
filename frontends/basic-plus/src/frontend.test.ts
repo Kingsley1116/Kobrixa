@@ -135,7 +135,7 @@ describe("BasicPlusFrontend", () => {
     );
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.parsed.functions[0]?.parameters).toEqual([
+    expect(result.parsed.functions[0]?.parameters).toMatchObject([
       { name: "value", direction: "in", type: { kind: "number" } },
       { name: "text", direction: "out", type: { kind: "string" } },
       { name: "samples", direction: "in", type: { kind: "array", element: "number" } },

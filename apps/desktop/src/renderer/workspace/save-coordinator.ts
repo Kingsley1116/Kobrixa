@@ -29,15 +29,17 @@ export async function saveSnapshot(options: {
 }): Promise<void> {
   const snapshot = options.read();
   if (!snapshot) return;
-  let content = snapshot.content;
+  // Readers may expose a lazy Monaco buffer. Capture the text before any await.
+  const before = snapshot.content;
+  let content = before;
   try {
     if (options.format) {
       content = await options.format(content);
-      if (options.read()?.content !== snapshot.content)
+      if (options.read()?.content !== before)
         throw new Error(
           "Contents changed during formatting. Save again. / 格式化時內容已變更，請再次儲存。",
         );
-      if (content !== snapshot.content) options.apply(snapshot.content, content);
+      if (content !== before) options.apply(before, content);
     }
     await options.write(content);
   } catch (error) {

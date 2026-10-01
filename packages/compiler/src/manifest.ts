@@ -24,6 +24,29 @@ export interface ProjectLoadResult {
   candidates?: string[];
 }
 
+/** Optional long-lived source cache for editor analysis. Discovery and path
+ * validation still run on every load, so deletions and symlink changes are seen. */
+export class ProjectSourceCache {
+  private readonly files = new Map<string, { stamp: string; content: string }>();
+  readonly readFiles: string[] = [];
+  begin(): void {
+    this.readFiles.length = 0;
+  }
+  retain(paths: Set<string>): void {
+    for (const file of this.files.keys()) if (!paths.has(file)) this.files.delete(file);
+  }
+  async read(file: string): Promise<string> {
+    const stat = await lstat(file, { bigint: true });
+    const stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+    const cached = this.files.get(file);
+    if (cached?.stamp === stamp) return cached.content;
+    const content = await readFile(file, "utf8");
+    this.files.set(file, { stamp, content });
+    this.readFiles.push(file);
+    return content;
+  }
+}
+
 function isInside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return (
@@ -77,6 +100,7 @@ async function loadSources(
   root: string,
   manifest: ProjectManifest,
   overlays: ReadonlyMap<string, string>,
+  cache?: ProjectSourceCache,
 ): Promise<SourceFile[]> {
   const entry = await resolveInside(root, manifest.entry);
   await lstat(entry);
@@ -91,24 +115,32 @@ async function loadSources(
     })),
   ]);
   for (const overlayPath of overlays.keys()) {
-    if (overlayPath.toLocaleLowerCase("en-US").endsWith(".bp"))
+    if (/\.(bp|bpi|bpm)$/i.test(overlayPath))
       sourcePaths.add(overlayPath.replaceAll(path.sep, "/"));
   }
-  return Promise.all(
+  const paths = new Set<string>();
+  cache?.begin();
+  const sources = await Promise.all(
     [...sourcePaths].sort().map(async (sourcePath) => {
       const absolute = await resolveInside(root, sourcePath);
+      paths.add(absolute);
       return {
         path: sourcePath,
-        content: overlays.get(sourcePath) ?? (await readFile(absolute, "utf8")),
+        content:
+          overlays.get(sourcePath) ??
+          (cache ? await cache.read(absolute) : await readFile(absolute, "utf8")),
       };
     }),
   );
+  cache?.retain(paths);
+  return sources;
 }
 
 export async function loadProject(
   inputPath: string,
   overlays: ReadonlyMap<string, string> = new Map(),
   selectedEntry?: string,
+  sourceCache?: ProjectSourceCache,
 ): Promise<ProjectLoadResult> {
   const diagnostics: Diagnostic[] = [];
   try {
@@ -182,7 +214,7 @@ export async function loadProject(
         absolutePath: await resolveInside(root, assetPath),
       })),
     );
-    const sources = await loadSources(root, manifest, overlays);
+    const sources = await loadSources(root, manifest, overlays, sourceCache);
     if (diagnostics.length) return { diagnostics, implicit };
     return {
       project: { root: await realpath(root), manifest, sources, assets: assetFiles },

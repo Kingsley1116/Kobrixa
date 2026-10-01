@@ -1,20 +1,31 @@
+import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { app, BrowserWindow, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
+import { checkLanguageFeatures } from "./language-features-smoke.mjs";
+import { checkHighlighting } from "./highlighting-smoke.mjs";
+import { checkEditorPerformance } from "./performance-smoke.mjs";
 import { checkSharedComponents } from "./components-smoke.mjs";
 const [url, temporary] = process.argv.slice(2);
 const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
 );
+const { LanguageService } = await import(pathToFileURL(path.join(temporary, "language.cjs")).href);
+const languageRoot = path.join(temporary, "language-project");
+fs.mkdirSync(languageRoot);
+const language = new LanguageService({
+  projectInput: () => ({ inputPath: path.join(languageRoot, "main.bp") }),
+});
+app.on("will-quit", () => language.dispose());
 const mod = process.platform === "darwin" ? "meta" : "control";
 const storedMod = process.platform === "darwin" ? "Meta" : "Ctrl";
 app.setPath("userData", path.join(temporary, "profile"));
 const timeout = setTimeout(() => {
   console.error("Electron smoke test timed out");
   app.exit(1);
-}, 90000);
+}, 120000);
 app.on("will-quit", () => clearTimeout(timeout));
 const files = {
   "main.bp": "If True Then\nLCD.Clear()\nEndIf\n",
@@ -24,6 +35,20 @@ const files = {
 const drafts = {};
 const writes = [];
 const mutations = [];
+let analysisRequests = 0;
+const syncMetrics = [];
+const diskContents = new Map();
+function payloadBytes(value) {
+  if (ArrayBuffer.isView(value)) return value.byteLength;
+  if (typeof value === "string") return Buffer.byteLength(value);
+  if (typeof value === "number") return 8;
+  if (value && typeof value === "object")
+    return Object.entries(value).reduce(
+      (bytes, [key, item]) => bytes + Buffer.byteLength(key) + payloadBytes(item),
+      0,
+    );
+  return 1;
+}
 let failNextWrite = false;
 let openCount = 0;
 let win;
@@ -38,6 +63,40 @@ const workspace = () => ({
   drafts: { ...drafts },
 });
 ipcMain.handle("smoke", async (_e, name, args) => {
+  if (name === "languageCancel") {
+    language.cancel();
+    return;
+  }
+  if (name === "analyze" || name === "languageSync" || name === "completionSync") {
+    if (name !== "completionSync") analysisRequests++;
+    for (const file of diskContents.keys())
+      if (!(file in files)) {
+        fs.unlinkSync(path.join(languageRoot, file));
+        diskContents.delete(file);
+      }
+    for (const [file, content] of Object.entries(files))
+      if (/\.(bp|bpi|bpm)$/i.test(file) && diskContents.get(file) !== content) {
+        fs.writeFileSync(path.join(languageRoot, file), content);
+        diskContents.set(file, content);
+      }
+    if (name === "completionSync") return language.completionSync(args[0], args[1]);
+    if (name === "languageSync") {
+      const started = performance.now();
+      const reply = await language.sync(args[0], args[1]);
+      syncMetrics.push({
+        ms: performance.now() - started,
+        requestBytes: JSON.stringify(args[1]).length,
+        responseBytes: payloadBytes(reply),
+        sentFiles: Object.keys(args[1].overlays.set),
+        removed: args[1].overlays.removed,
+        changedSources: reply.kind === "result" ? Object.keys(reply.patch.index.sources.set) : [],
+        changedTokens: reply.kind === "result" ? Object.keys(reply.patch.tokensByFile.set) : [],
+        reset: reply.kind === "result" && reply.patch.base === null,
+      });
+      return reply;
+    }
+    return language.analyze(args[0], args[1]);
+  }
   if (name === "keyboard") {
     setKeyboardContext(win.webContents, args[0]);
     return;
@@ -80,7 +139,13 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   throw new Error("Unexpected smoke API: " + name);
 });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const js = (code) => win.webContents.executeJavaScript(code);
+const js = async (code) => {
+  try {
+    return await win.webContents.executeJavaScript(code);
+  } catch (error) {
+    throw new Error(`Renderer script failed: ${code.slice(0, 500)}`, { cause: error });
+  }
+};
 async function until(code) {
   for (let i = 0; i < 100; i++) {
     if (await js(code)) return;
@@ -130,6 +195,34 @@ app
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");
     await pause(200);
+    if (process.env.KOBRIXA_SMOKE_COMPLETION_ONLY) {
+      await js(
+        "window.languageCommand=(command,line,column,...args)=>ed._commandService.executeCommand(command,ed.getModel().uri,new smoke.monaco.Position(line,column),...args);void 0",
+      );
+      await checkCompletionPerformance({ js, until, pause, key, temporary });
+      app.exit(0);
+      return;
+    }
+    if (process.env.KOBRIXA_SMOKE_PERFORMANCE_ONLY) {
+      await js(
+        "window.languageCommand=(command,line,column,...args)=>ed._commandService.executeCommand(command,ed.getModel().uri,new smoke.monaco.Position(line,column),...args);void 0",
+      );
+      await checkEditorPerformance({
+        js,
+        until,
+        pause,
+        temporary,
+        analysisCount: () => analysisRequests,
+        syncMetrics,
+        files,
+        win,
+        key,
+        mod,
+      });
+      app.exit(0);
+      return;
+    }
+    await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
     console.log("catalog", await js("smoke.editorCommandCatalog(true).length"));
     await key(",", [mod]);
@@ -513,7 +606,31 @@ app
     assert.equal(await js('Boolean(document.querySelector(".tab.active i[aria-label]"))'), true);
     assert.equal(JSON.parse(files["kobrixa.json"]).name, "changed");
     console.log("failed save retains latest dirty buffer and recovery draft pass");
-    console.log("PASS", JSON.stringify({ writes: writes.length, drafts }));
+    await checkLanguageFeatures({
+      js,
+      key,
+      until,
+      pause,
+      mod,
+      files,
+      drafts,
+      writes,
+      win,
+      temporary,
+    });
+    await checkEditorPerformance({
+      js,
+      until,
+      pause,
+      temporary,
+      analysisCount: () => analysisRequests,
+      syncMetrics,
+      files,
+      win,
+      key,
+      mod,
+    });
+    console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);
   })
   .catch((error) => {

@@ -12,10 +12,17 @@ export type Expression =
       right: Expression;
       span: SourceSpan;
     }
-  | { kind: "call"; name: string; args: Expression[]; span: SourceSpan };
+  | { kind: "call"; name: string; args: Expression[]; nameSpan?: SourceSpan; span: SourceSpan };
 
 export type Statement =
-  | { kind: "assign"; name: string; global?: boolean; value: Expression; span: SourceSpan }
+  | {
+      kind: "assign";
+      name: string;
+      global?: boolean;
+      value: Expression;
+      nameSpan?: SourceSpan;
+      span: SourceSpan;
+    }
   | {
       kind: "array-assign";
       array: Expression;
@@ -23,9 +30,15 @@ export type Statement =
       value: Expression;
       span: SourceSpan;
     }
-  | { kind: "declaration"; name: string; type: IRType; span: SourceSpan }
+  | { kind: "declaration"; name: string; type: IRType; nameSpan?: SourceSpan; span: SourceSpan }
   | { kind: "call"; call: Extract<Expression, { kind: "call" }>; span: SourceSpan }
-  | { kind: "thread-run"; functionName: string; span: SourceSpan }
+  | {
+      kind: "thread-run";
+      functionName: string;
+      nameSpan?: SourceSpan;
+      operationSpan?: SourceSpan;
+      span: SourceSpan;
+    }
   | {
       kind: "if";
       branches: Array<{ condition: Expression; body: Statement[] }>;
@@ -36,6 +49,7 @@ export type Statement =
   | {
       kind: "for";
       variable: string;
+      nameSpan?: SourceSpan;
       start: Expression;
       end: Expression;
       step: Expression;
@@ -45,15 +59,17 @@ export type Statement =
   | { kind: "return"; value?: Expression; span: SourceSpan }
   | { kind: "break"; span: SourceSpan }
   | { kind: "continue"; span: SourceSpan }
-  | { kind: "goto"; label: string; span: SourceSpan }
-  | { kind: "label"; label: string; span: SourceSpan }
-  | { kind: "property"; name: string; span: SourceSpan };
+  | { kind: "goto"; label: string; nameSpan?: SourceSpan; span: SourceSpan }
+  | { kind: "label"; label: string; nameSpan?: SourceSpan; span: SourceSpan }
+  | { kind: "property"; name: string; nameSpan?: SourceSpan; span: SourceSpan };
 
 export interface FunctionDeclaration {
   kind: "sub" | "function";
   name: string;
+  nameSpan?: SourceSpan;
   parameters: Array<{
     name: string;
+    nameSpan?: SourceSpan;
     direction: "in" | "out";
     type: IRType;
   }>;

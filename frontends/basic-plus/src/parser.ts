@@ -57,7 +57,7 @@ class Parser {
         );
         if (path)
           includes.push({
-            kind: start.text.toLocaleLowerCase("en-US") as "include" | "import",
+            kind: start.text.toLowerCase() as "include" | "import",
             path: String(path.value),
             span: mergeSpan(start.span, path.span),
           });
@@ -118,7 +118,7 @@ class Parser {
 
   private parseFunction(): FunctionDeclaration | undefined {
     const start = this.take();
-    const kind = start.text.toLocaleLowerCase("en-US") as "sub" | "function";
+    const kind = start.text.toLowerCase() as "sub" | "function";
     const name = this.takeKind("identifier", "BP1011", `${kind} expects a name.`);
     if (!name) return undefined;
     const parameters: FunctionDeclaration["parameters"] = [];
@@ -126,10 +126,10 @@ class Parser {
       while (!this.isText(")") && !this.is("eof") && !this.is("newline")) {
         let direction: "in" | "out" = "in";
         if (this.keyword("in") || this.keyword("out"))
-          direction = this.take().text.toLocaleLowerCase("en-US") as "in" | "out";
+          direction = this.take().text.toLowerCase() as "in" | "out";
         let type: FunctionDeclaration["parameters"][number]["type"] = { kind: "number" };
         if (this.keyword("number") || this.keyword("string")) {
-          const element = this.take().text.toLocaleLowerCase("en-US") as "number" | "string";
+          const element = this.take().text.toLowerCase() as "number" | "string";
           type = { kind: element };
           if (this.match("[")) {
             this.expect("]", "BP1015", "Expected ']' in array parameter type.");
@@ -137,7 +137,8 @@ class Parser {
           }
         }
         const parameter = this.takeKind("identifier", "BP1012", "Expected a parameter name.");
-        if (parameter) parameters.push({ name: parameter.text, direction, type });
+        if (parameter)
+          parameters.push({ name: parameter.text, nameSpan: parameter.span, direction, type });
         if (!this.match(",")) break;
       }
       this.expect(")", "BP1013", "Expected ')' after parameters.");
@@ -148,7 +149,14 @@ class Parser {
     const end = this.current();
     if (!this.keyword(endKeyword)) this.error("BP1014", `Expected ${endKeyword}.`, end.span);
     else this.skipLine();
-    return { kind, name: name.text, parameters, body, span: mergeSpan(start.span, end.span) };
+    return {
+      kind,
+      name: name.text,
+      nameSpan: name.span,
+      parameters,
+      body,
+      span: mergeSpan(start.span, end.span),
+    };
   }
 
   private parseBlock(stops: string[]): Statement[] {
@@ -181,7 +189,7 @@ class Parser {
       const keyword = this.take();
       this.skipLine();
       return {
-        kind: keyword.text.toLocaleLowerCase("en-US") as "break" | "continue",
+        kind: keyword.text.toLowerCase() as "break" | "continue",
         span: keyword.span,
       };
     }
@@ -198,7 +206,12 @@ class Parser {
       const label = this.takeKind("identifier", "BP1020", "Goto expects a label.");
       this.skipLine();
       return label
-        ? { kind: "goto", label: label.text, span: mergeSpan(start.span, label.span) }
+        ? {
+            kind: "goto",
+            label: label.text,
+            nameSpan: label.span,
+            span: mergeSpan(start.span, label.span),
+          }
         : undefined;
     }
     if (this.keyword("property")) {
@@ -206,12 +219,17 @@ class Parser {
       const name = this.takeKind("identifier", "BP1021", "Property expects a name.");
       this.skipLine();
       return name
-        ? { kind: "property", name: name.text, span: mergeSpan(start.span, name.span) }
+        ? {
+            kind: "property",
+            name: name.text,
+            nameSpan: name.span,
+            span: mergeSpan(start.span, name.span),
+          }
         : undefined;
     }
     if (this.keyword("number") || this.keyword("string")) {
       const typeToken = this.take();
-      const element = typeToken.text.toLocaleLowerCase("en-US") as "number" | "string";
+      const element = typeToken.text.toLowerCase() as "number" | "string";
       const type = this.match("[")
         ? (this.expect("]", "BP1024", "Expected ']' in array declaration."),
           {
@@ -222,7 +240,13 @@ class Parser {
       const name = this.takeKind("identifier", "BP1025", "Expected a variable name.");
       this.skipLine();
       return name
-        ? { kind: "declaration", name: name.text, type, span: mergeSpan(start.span, name.span) }
+        ? {
+            kind: "declaration",
+            name: name.text,
+            nameSpan: name.span,
+            type,
+            span: mergeSpan(start.span, name.span),
+          }
         : undefined;
     }
     if (this.keyword("dim")) this.take();
@@ -235,9 +259,14 @@ class Parser {
       }
       if (this.match(":")) {
         this.skipLine();
-        return { kind: "label", label: name.text, span: mergeSpan(start.span, name.span) };
+        return {
+          kind: "label",
+          label: name.text,
+          nameSpan: name.span,
+          span: mergeSpan(start.span, name.span),
+        };
       }
-      if (name.text.toLocaleLowerCase("en-US") === "thread.run" && this.match("=")) {
+      if (name.text.toLowerCase() === "thread.run" && this.match("=")) {
         const functionName = this.takeKind(
           "identifier",
           "BP1029",
@@ -248,11 +277,13 @@ class Parser {
           ? {
               kind: "thread-run",
               functionName: functionName.text,
+              nameSpan: functionName.span,
+              operationSpan: name.span,
               span: mergeSpan(start.span, functionName.span),
             }
           : undefined;
       }
-      if (name.text.toLocaleLowerCase("en-US") === "f.start" && this.match("=")) {
+      if (name.text.toLowerCase() === "f.start" && this.match("=")) {
         this.takeKind("identifier", "BP1029", "F.Start expects a Sub name.");
         this.skipLine();
         return undefined;
@@ -264,6 +295,7 @@ class Parser {
           ? {
               kind: "assign",
               name: name.text,
+              nameSpan: name.span,
               ...(global ? { global: true } : {}),
               value,
               span: mergeSpan(start.span, value.span),
@@ -314,6 +346,7 @@ class Parser {
         return {
           kind: "assign",
           name: name.text,
+          nameSpan: name.span,
           ...(global ? { global: true } : {}),
           value,
           span: mergeSpan(start.span, right.span),
@@ -337,6 +370,7 @@ class Parser {
         return {
           kind: "assign",
           name: name.text,
+          nameSpan: name.span,
           ...(global ? { global: true } : {}),
           value,
           span: value.span,
@@ -419,6 +453,7 @@ class Parser {
       ? {
           kind: "for",
           variable: variable.text,
+          nameSpan: variable.span,
           start: from,
           end: to,
           step,
@@ -433,7 +468,7 @@ class Parser {
     if (!left) return undefined;
     for (;;) {
       const token = this.current();
-      const operator = token.text === "!=" ? "<>" : token.text.toLocaleLowerCase("en-US");
+      const operator = token.text === "!=" ? "<>" : token.text.toLowerCase();
       const precedence = binaryPrecedence.get(operator);
       if (precedence === undefined || precedence < minimum) break;
       this.take();
@@ -452,7 +487,7 @@ class Parser {
 
   private parsePrefix(): Expression | undefined {
     const token = this.current();
-    const lower = token.text.toLocaleLowerCase("en-US");
+    const lower = token.text.toLowerCase();
     if (token.text === "-" || lower === "not") {
       this.take();
       const value = this.parseExpression(6);
@@ -521,7 +556,13 @@ class Parser {
     }
     const end = this.current();
     this.expect(")", "BP1043", "Expected ')' after arguments.");
-    return { kind: "call", name: name.text, args, span: mergeSpan(name.span, end.span) };
+    return {
+      kind: "call",
+      name: name.text,
+      nameSpan: name.span,
+      args,
+      span: mergeSpan(name.span, end.span),
+    };
   }
 
   private falseExpression(span: SourceSpan): Expression {
@@ -543,7 +584,9 @@ class Parser {
   }
 
   private isText(text: string): boolean {
-    return this.current().text.toLocaleLowerCase("en-US") === text.toLocaleLowerCase("en-US");
+    // Grammar words and identifiers are ASCII. Locale negotiation per keyword
+    // dominates parsing in Electron; ordinary case folding has identical semantics.
+    return this.current().text.toLowerCase() === text.toLowerCase();
   }
 
   private keyword(text: string): boolean {

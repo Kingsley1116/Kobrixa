@@ -1,0 +1,31 @@
+import { expect, it, vi } from "vitest";
+import type { editor } from "monaco-editor";
+import { emptyAnalysis } from "../../shared/language-sync.js";
+import { ModelSnapshots } from "./model-snapshots.js";
+
+it("binds accepted snapshots to exact model identities, paths and versions without reading text", () => {
+  let version = 1;
+  const read = vi.fn(() => "value = 1");
+  const model = { getVersionId: () => version, getValue: read } as unknown as editor.ITextModel;
+  const versions = new ModelSnapshots();
+  const analysis = emptyAnalysis();
+  analysis.index.sources["main.bp"] = "value = 1";
+  const snapshot = { analysis, overlays: analysis.index.sources };
+  versions.bind(model, "main.bp", "value = 1");
+  versions.accept(model, snapshot);
+  expect(versions.isCurrent(model, "main.bp", snapshot)).toBe(true);
+  expect(versions.isCurrent(model, "main.bp", { ...snapshot })).toBe(false);
+  expect(versions.versions(snapshot).get(model)).toBe(1);
+  version++;
+  expect(versions.isCurrent(model, "main.bp", snapshot)).toBe(false);
+  expect(versions.source(model)).toBeUndefined();
+  versions.remap(model, "new.bp");
+  expect(versions.isCurrent(model, "new.bp", snapshot)).toBe(false);
+  analysis.index.sources["new.bp"] = "value = 1";
+  versions.accept(model, snapshot);
+  expect(versions.isCurrent(model, "main.bp", snapshot)).toBe(false);
+  expect(versions.isCurrent(model, "new.bp", snapshot)).toBe(true);
+  versions.unbind(model);
+  expect(versions.versions(snapshot).size).toBe(0);
+  expect(read).not.toHaveBeenCalled();
+});
