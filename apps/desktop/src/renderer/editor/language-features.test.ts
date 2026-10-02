@@ -40,6 +40,7 @@ function model(file: string, initial: string) {
       version++;
     },
     getVersionId: () => version,
+    getOptions: () => ({ tabSize: 2 }),
     getLineContent: (line: number) => value.split("\n")[line - 1]!,
     getValueInRange: (range: { startLineNumber: number; startColumn: number; endColumn: number }) =>
       value
@@ -112,6 +113,41 @@ function setup(sources: Record<string, string>) {
   };
 }
 afterEach(() => vi.useRealTimers());
+
+it.each([2, 4])(
+  "accepts closing completions with %i-space indentation in one edit",
+  async (tabSize) => {
+    const spaces = " ".repeat(tabSize);
+    const { features, main, position } = setup({
+      "main.bp": `If True\n${spaces}While True\n${spaces.repeat(2)}EndWh`,
+    });
+    vi.spyOn(main, "getOptions").mockReturnValue({ tabSize } as editor.TextModelResolvedOptions);
+    const list = await features.completions(main, position(3, tabSize * 2 + 6), token);
+    const item = list.suggestions.find((item) => item.label === "EndWhile")!;
+    expect(item.range).toMatchObject({
+      startLineNumber: 3,
+      startColumn: 1,
+      endLineNumber: 3,
+      endColumn: tabSize * 2 + 6,
+    });
+    expect(item.insertText).toBe(spaces + "EndWhile");
+    expect(item.filterText).toBe(spaces.repeat(2) + "EndWhile");
+  },
+);
+
+it("indents a closing completion at column one and preserves text before non-leading completions", async () => {
+  const { features, main, position } = setup({ "main.bp": "If True\n  While True\nEndWh" });
+  const closing = (await features.completions(main, position(3, 6), token)).suggestions.find(
+    (item) => item.label === "EndWhile",
+  )!;
+  expect(closing.insertText).toBe("  EndWhile");
+  main.setValue("If True\n  value = EndWh");
+  const other = (await features.completions(main, position(2, 16), token)).suggestions.find(
+    (item) => item.label === "EndWhile",
+  )!;
+  expect(other.insertText).toBe("EndWhile");
+  expect(other.range).toMatchObject({ startColumn: 11 });
+});
 
 it("returns cross-file locations and signatures using the worker index", async () => {
   const { features, main, models, position } = setup({

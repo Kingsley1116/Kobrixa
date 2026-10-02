@@ -18,6 +18,7 @@ export async function checkEditorPerformance(context) {
   await pause(250);
   assert((await js("smoke.metrics.appRenders")) > 0, "App render probe must be active");
   const beforeAnalysis = analysisCount();
+  const beforeTypingVersion = await js("ed.getModel().getAlternativeVersionId()");
   const metrics = await js(`(async()=>{
     const model=ed.getModel(), read=model.getValue, write=model.setValue;
     const metrics={appRenders:0,textReads:0,contentResets:0,highlightLosses:0,durations:[],frames:[],lines:model.getLineCount()};
@@ -31,7 +32,7 @@ export async function checkEditorPerformance(context) {
         const started=performance.now();
         const text=i===20||i===40 ? "\\n' " : "x";
         if(text.includes("\\n"))shifted++;
-        ed.trigger('performance-smoke','type',{text});
+        ed.trigger('keyboard','type',{text});
         metrics.durations.push(performance.now()-started);
         if(perfColor(6+shifted,10)!=="rgb(220, 220, 170)")metrics.highlightLosses++;
         await new Promise(resolve=>requestAnimationFrame(resolve));
@@ -74,8 +75,11 @@ export async function checkEditorPerformance(context) {
   await pause(2000);
   assert.equal(analysisCount(), beforeAnalysis + 1, "one settled analysis after typing");
   assert.equal(await js("perfColor(8,10)"), "rgb(220, 220, 170)");
-  await js("ed.trigger('performance-smoke','undo',null)");
-  assert.equal(await js("ed.getValue()"), source, "one undo restores the typed batch");
+  // Keyboard input retains Monaco's native undo boundaries around line breaks.
+  await js(
+    `for(let i=0;i<60 && ed.getModel().getAlternativeVersionId() !== ${beforeTypingVersion};i++)ed.trigger('performance-smoke','undo',null);void 0`,
+  );
+  assert.equal(await js("ed.getValue()"), source, "native undo restores the typed batch");
   console.log("large-document input performance", JSON.stringify(measured));
   await js("delete window.perfColor");
   await checkInteractionPerformance(context);

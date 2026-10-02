@@ -1,6 +1,11 @@
 import type { BasicPlusSymbol } from "@kobrixa/basic-plus";
 import * as monaco from "monaco-editor";
-import { BASIC_PLUS_API_COMPLETIONS, BASIC_PLUS_KEYWORDS } from "@kobrixa/basic-plus/language";
+import {
+  BASIC_PLUS_API_COMPLETIONS,
+  BASIC_PLUS_KEYWORDS,
+  BASIC_PLUS_INDENTATION_RULES,
+} from "@kobrixa/basic-plus/language";
+import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import {
   editingContext,
   occurrenceAt,
@@ -212,16 +217,53 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
         }
       }
     }
-    if (!prefix.includes("."))
+    if (!prefix.includes(".")) {
+      const line = model.getLineContent(position.lineNumber);
+      const leading = before.slice(0, range.startColumn - 1);
+      let closingIndent: string | undefined;
       for (const label of BASIC_PLUS_KEYWORDS)
-        if (label.toLowerCase().startsWith(normalized))
-          suggestions.push({
+        if (label.toLowerCase().startsWith(normalized)) {
+          const item: monaco.languages.CompletionItem = {
             label,
             range,
             insertText: label,
             kind: monaco.languages.CompletionItemKind.Keyword,
             sortText: `2-${label}`,
-          });
+          };
+          if (
+            /^[\t ]*$/.test(leading) &&
+            BASIC_PLUS_INDENTATION_RULES.decreaseIndentPattern.test(label) &&
+            !BASIC_PLUS_INDENTATION_RULES.decreaseIndentPattern.test(line)
+          ) {
+            // Suggestions bypass Monaco's typing indentation. Include whitespace
+            // in the same completion edit so acceptance and undo stay atomic.
+            // All closing/branch candidates at this position have the same depth.
+            closingIndent ??=
+              basicPlusRangeFormattingEdits(
+                {
+                  getLineContent: (number) =>
+                    number === position.lineNumber
+                      ? leading + label + line.slice(range.endColumn - 1)
+                      : model.getLineContent(number),
+                },
+                range,
+                model.getOptions(),
+                token,
+              )[0]?.text ?? leading;
+            if (closingIndent !== leading) {
+              item.range = new monaco.Range(
+                position.lineNumber,
+                1,
+                position.lineNumber,
+                range.endColumn,
+              );
+              item.insertText = closingIndent + label;
+              item.filterText = leading + label;
+            }
+          }
+          suggestions.push(item);
+        }
+    }
     for (const api of BASIC_PLUS_API_COMPLETIONS)
       if (api.label.toLowerCase().startsWith(normalized))
         suggestions.push({

@@ -49,6 +49,7 @@ vi.mock("monaco-editor", () => ({
     registerReferenceProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerRenameProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerDocumentFormattingEditProvider: vi.fn(),
+    registerDocumentRangeFormattingEditProvider: vi.fn(),
   },
   editor: {
     create: mocks.create,
@@ -135,6 +136,7 @@ it("does not rewrite markers, content, or view state on Enter and Backspace rere
     expect.objectContaining({
       cursorSmoothCaretAnimation: "off",
       smoothScrolling: false,
+      autoIndent: "full",
     }),
   );
 

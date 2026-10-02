@@ -1,4 +1,6 @@
 import { EV3_OPERATION_CATALOG, type EV3ParameterKind, type IRPrimitiveType } from "@kobrixa/ir";
+import { basicPlusLineIndentation } from "./indentation.js";
+export { BASIC_PLUS_INDENTATION_RULES, basicPlusLineIndentation } from "./indentation.js";
 
 export const BASIC_PLUS_KEYWORDS = [
   "And",
@@ -99,22 +101,9 @@ export function formatBasicPlus(source: string, options: { indentSize?: 2 | 4 } 
   return `${lines
     .map((raw) => {
       const line = raw.trim();
-      const lower = line.toLocaleLowerCase("en-US");
-      if (
-        /^(else|elseif\b|endif\b|endwhile\b|endfor\b|endsub\b|endfunction\b|endmodule\b)/.test(
-          lower,
-        )
-      ) {
-        indent = Math.max(0, indent - 1);
-      }
-      const formatted = line ? `${indentation.repeat(indent)}${line}` : "";
-      if (
-        /^(if\b.*\bthen\s*$|else\s*$|elseif\b.*\bthen\s*$|while\b|for\b|sub\b|function\b|module\b)/.test(
-          lower,
-        )
-      ) {
-        indent += 1;
-      }
+      const state = basicPlusLineIndentation(line, indent);
+      const formatted = line ? `${indentation.repeat(state.indent)}${line}` : "";
+      indent = state.nextIndent;
       return formatted;
     })
     .join("\n")

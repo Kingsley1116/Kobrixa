@@ -91,7 +91,7 @@ export async function checkInteractionPerformance({
   const paste = "LCD.Clear()\n".repeat(2000);
   await js(`window.stageApplied=smoke.metrics.applied.length;window.stageStart=performance.now();window.pasteFrames=[];window.lastFrame=performance.now();
     window.frameProbe=()=>{const now=performance.now();pasteFrames.push(now-lastFrame);lastFrame=now;window.frameId=requestAnimationFrame(frameProbe)};window.frameId=requestAnimationFrame(frameProbe);
-    ed.setPosition({lineNumber:2,column:1});ed.pushUndoStop();const pasteStart=performance.now();ed.trigger('performance-smoke','paste',{text:${JSON.stringify(paste)}});window.pasteMs=performance.now()-pasteStart;ed.pushUndoStop();void 0;`);
+    ed.setPosition({lineNumber:2,column:1});ed.pushUndoStop();const pasteStart=performance.now();ed.trigger('keyboard','paste',{text:${JSON.stringify(paste)}});window.pasteMs=performance.now()-pasteStart;ed.pushUndoStop();void 0;`);
   await until("smoke.metrics.applied.length > stageApplied");
   const pasteResult =
     await js(`({inputMs:pasteMs,completeMs:smoke.metrics.applied.at(-1).time-stageStart,frames:pasteFrames,

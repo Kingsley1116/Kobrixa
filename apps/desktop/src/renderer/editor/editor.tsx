@@ -13,7 +13,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import { formatBasicPlus } from "@kobrixa/basic-plus/language";
+import { BASIC_PLUS_INDENTATION_RULES, formatBasicPlus } from "@kobrixa/basic-plus/language";
+import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
 import type { Diagnostic } from "../../shared/api.js";
 
@@ -44,12 +45,7 @@ function registerLanguage(): void {
       { open: "[", close: "]" },
       { open: '"', close: '"' },
     ],
-    indentationRules: {
-      increaseIndentPattern:
-        /^\s*(?:If\b.*\bThen\s*$|Else\s*$|ElseIf\b.*\bThen\s*$|While\b|For\b|Sub\b|Function\b|Module\b)/i,
-      decreaseIndentPattern:
-        /^\s*(?:Else\s*$|ElseIf\b|EndIf\b|EndWhile\b|EndFor\b|EndSub\b|EndFunction\b|EndModule\b)/i,
-    },
+    indentationRules: BASIC_PLUS_INDENTATION_RULES,
   });
   monaco.languages.setMonarchTokensProvider("basic-plus", basicPlusMonarch);
   for (const theme of ["light", "dark"] as const) {
@@ -78,6 +74,9 @@ function registerLanguage(): void {
         text: formatBasicPlus(model.getValue(), { indentSize: options.tabSize === 4 ? 4 : 2 }),
       },
     ],
+  });
+  monaco.languages.registerDocumentRangeFormattingEditProvider("basic-plus", {
+    provideDocumentRangeFormattingEdits: basicPlusRangeFormattingEdits,
   });
 }
 
@@ -418,6 +417,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       lineNumbersMinChars: 3,
       wordWrap: wordWrap ? "on" : "off",
       detectIndentation: false,
+      autoIndent: "full",
       tabSize: indentSize,
       insertSpaces: true,
       smoothScrolling: false,

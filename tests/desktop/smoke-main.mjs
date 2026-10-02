@@ -1,4 +1,5 @@
 import { checkUpdates } from "./updates-smoke.mjs";
+import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { app, BrowserWindow, ipcMain } from "electron";
 import fs from "node:fs";
@@ -234,6 +235,11 @@ app
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");
     await pause(200);
+    if (process.env.KOBRIXA_SMOKE_INDENTATION_ONLY) {
+      await checkIndentation({ js, key, until, win });
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_UPDATES_ONLY) {
       await checkUpdates({
         js,
@@ -666,6 +672,7 @@ app
     assert.equal(await js('Boolean(document.querySelector(".tab.active i[aria-label]"))'), true);
     assert.equal(JSON.parse(files["kobrixa.json"]).name, "changed");
     console.log("failed save retains latest dirty buffer and recovery draft pass");
+    await checkIndentation({ js, key, until, win });
     await checkLanguageFeatures({
       js,
       key,
