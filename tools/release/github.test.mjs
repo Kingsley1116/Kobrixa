@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -30,7 +30,9 @@ const success = Object.fromEntries(
 function mockGithub(existing = null, modes = { macos: false, windows: false }) {
   let release = existing;
   const calls = [];
-  const assets = expectedAssets(version, modes).map((name) => ({
+  let checksumManifest;
+  const assets = expectedAssets(version, modes).map((name, id) => ({
+    id,
     name,
     size: 1,
     state: "uploaded",
@@ -58,17 +60,39 @@ function mockGithub(existing = null, modes = { macos: false, windows: false }) {
       // GitHub can detach a draft from its tag when an update omits tag_name.
       Object.assign(release, { tag_name: fields.tag_name ?? "untagged-fixture" }, fields);
     },
-    async upload() {
+    async upload(actualTag, files) {
       calls.push("upload");
+      for (const file of files.filter((file) => path.basename(file) === "SHA256SUMS.txt")) {
+        checksumManifest = await readFile(file, "utf8");
+        if (!release.assets.some((asset) => asset.name === "SHA256SUMS.txt"))
+          release.assets.push({
+            id: 100,
+            name: "SHA256SUMS.txt",
+            size: checksumManifest.length,
+            state: "uploaded",
+          });
+      }
+    },
+    async downloadChecksums(actualTag, directory) {
+      await writeFile(path.join(directory, "SHA256SUMS.txt"), checksumManifest);
+    },
+    async deleteAsset(id) {
+      calls.push("delete");
+      release.assets = release.assets.filter((asset) => asset.id !== id);
     },
     async download(actualTag, directory) {
       assert.equal(release.tag_name, actualTag, "Release is no longer available by tag");
       calls.push("download");
-      for (const { name } of assets.filter(({ name }) => !name.endsWith(".sha256"))) {
+      for (const { name } of release.assets.filter(
+        ({ name }) => !name.endsWith(".sha256") && name !== "SHA256SUMS.txt",
+      )) {
         const file = path.join(directory, name);
         await writeFile(file, "archive fixture");
-        await writeFile(`${file}.sha256`, `${await sha256(file)}  ${name}\n`);
+        if (release.assets.some((asset) => asset.name === `${name}.sha256`))
+          await writeFile(`${file}.sha256`, `${await sha256(file)}  ${name}\n`);
       }
+      if (checksumManifest)
+        await writeFile(path.join(directory, "SHA256SUMS.txt"), checksumManifest);
       for (const { platform, arch } of targets.filter(
         (item) => item.platform !== "darwin" || modes.macos,
       ))
@@ -167,8 +191,9 @@ test("requires every complete archive, installer and metadata asset, verifies do
   const github = mockGithub();
   await prepareRelease(github, tag, sha);
   const assets = github.release.assets;
-  assert.throws(() => assertAssets(assets.slice(1), version));
-  assert.throws(() => assertAssets([...assets, assets[0]], version));
+  assertAssets(assets, version, undefined, true);
+  assert.throws(() => assertAssets(assets.slice(1), version, undefined, true));
+  assert.throws(() => assertAssets([...assets, assets[0]], version, undefined, true));
   assert.throws(() =>
     assertAssets(
       assets.map((item) => ({ ...item, state: "new" })),
@@ -302,4 +327,34 @@ test("validates annotated tags and rejects commits outside main history or misma
   );
   git("tag", "v9.0.0");
   assert.throws(() => validateCommit("v9.0.0", git("rev-parse", "HEAD"), root));
+});
+
+test("finalization consolidates checksums and resumes interrupted sidecar cleanup", async () => {
+  const github = mockGithub();
+  await prepareRelease(github, tag, sha);
+  const remove = github.deleteAsset;
+  let deletions = 0;
+  github.deleteAsset = async (id) => {
+    if (++deletions === 2) throw new Error("interrupted cleanup");
+    await remove(id);
+  };
+  await assert.rejects(finalizeRelease(github, tag, sha, success), /interrupted cleanup/);
+  assert.match(github.release.name, /建置中/);
+  github.deleteAsset = remove;
+  await finalizeRelease(github, tag, sha, success);
+  assertAssets(github.release.assets, version);
+  assert.equal(github.release.assets.length, 8);
+  assert.ok(!github.release.assets.some((asset) => asset.name.endsWith(".sha256")));
+  await finalizeRelease(github, tag, sha, success);
+  assertAssets(github.release.assets, version);
+});
+
+test("a corrupted uploaded manifest preserves sidecars and never becomes ready", async () => {
+  const github = mockGithub();
+  await prepareRelease(github, tag, sha);
+  github.downloadChecksums = async (_, directory) =>
+    writeFile(path.join(directory, "SHA256SUMS.txt"), "damaged");
+  await assert.rejects(finalizeRelease(github, tag, sha, success), /manifest mismatch/);
+  assert.ok(!github.calls.includes("delete"));
+  assert.match(github.release.name, /建置中/);
 });

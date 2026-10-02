@@ -14,25 +14,25 @@ Choose a published version from [GitHub Releases](https://github.com/Kingsley111
 
 ### SHA-256 verification (optional)
 
-SHA-256 verification is optional and is not required to install or use Kobrixa. To check that a download is intact, also download its matching `.sha256` file into the same directory. Replace `<version>` in these examples with the downloaded version.
+SHA-256 verification is optional and is not required to install or use Kobrixa. To check that a download is intact, also download `SHA256SUMS.txt` from the same release into the same directory. Older releases use individual `.sha256` files instead. Replace `<version>` in these examples with the downloaded version.
 
-In PowerShell on Windows, compare the computed hash with the first field of the checksum file:
+In PowerShell on Windows, compare the computed hash with the first field of the matching filename’s line:
 
 ```powershell
 Get-FileHash -Algorithm SHA256 'Kobrixa-<version>-win32-x64-setup.exe'
-Get-Content 'Kobrixa-<version>-win32-x64-setup.exe.sha256'
+Select-String -Path 'SHA256SUMS.txt' -SimpleMatch '  Kobrixa-<version>-win32-x64-setup.exe'
 ```
 
 On macOS:
 
 ```sh
-shasum -a 256 -c 'Kobrixa-<version>-darwin-arm64.dmg.sha256'
+grep -F '  Kobrixa-<version>-darwin-arm64.dmg' SHA256SUMS.txt | shasum -a 256 -c -
 ```
 
 On Linux:
 
 ```sh
-sha256sum -c 'Kobrixa-<version>-linux-x64.AppImage.sha256'
+sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
 Checksums confirm that a download matches the release file; code signatures establish publisher identity. This optional step concerns manual verification of your download. The updater still verifies the updates it downloads automatically.
@@ -40,6 +40,8 @@ Checksums confirm that a download matches the release file; code signatures esta
 ## Automatic updates
 
 Windows installations and Linux AppImages can download updates automatically and install after confirmation. Automatic installation on macOS requires valid Apple signatures on both the installed and target versions. Unsigned macOS builds notify you of new releases and provide the download page; update using the installation steps above.
+
+Mac versions that only recognize the old ordinary ZIP (including candidate.3) cannot discover a DMG-only release. Install the first release with this change manually once; its updater recognizes DMG-only releases.
 
 Settings → Updates shows the installed version, progress and check results. Background checks run 30 seconds after startup and every six hours. Stable releases are the default. You can disable background checks or opt into preview releases, including `v1-candidate`. Switching back to stable never downgrades your app. When no stable release exists, the settings page explains that preview updates are optional. “Check for updates” still downloads an available update when background checks are disabled.
 
@@ -77,10 +79,10 @@ Regular CI does not upload applications. To download a development build, manual
 
 1. Set the same SemVer version in the root and every workspace `package.json`, update the lockfile when needed, and merge the version change into `main`.
 2. Push an existing commit's version tag, such as `v0.1.0-v1-candidate.0`. The **Desktop Release** workflow rejects malformed tags, mismatched package versions and commits outside `main` history.
-3. The workflow prepares a **建置中 / Building** draft and verifies the exact tagged commit. Each platform uploads its archive and checksum directly to that draft. A prerelease suffix marks the draft as a prerelease.
+3. The workflow prepares a **建置中 / Building** draft and verifies the exact tagged commit. Each platform uploads its selected downloads and temporary checksums directly to that draft. A prerelease suffix marks the draft as a prerelease.
 4. After all checks succeed and all archives, installers and update metadata are downloaded and verified, the draft becomes **待發布 / Ready for manual publication**, with the source commit and generated release notes. Review it and publish manually; the workflow never publishes automatically.
 
-Final assets include the three original archives, a Windows NSIS installer, Linux AppImage, macOS DMG and update ZIP, and a `.sha256` for each download. Windows/Linux update metadata is included; only signed macOS releases advertise `latest-mac.yml`. Signing defaults off. Enabled macOS releases require Developer ID signing and notarization; enabled Windows releases require an approved SignPath signature and timestamp. Linux remains unsigned. Intel Mac packages are not included. Packaged license notices, native modules, file contents, symlinks and executable permissions are checked before and after archiving; enabled signatures are verified at both stages. See the [code signing policy](../en/code-signing.md) for credentials, approval and privacy details.
+Final assets include Windows NSIS and ZIP, Linux AppImage and tar.gz, macOS DMG, and one `SHA256SUMS.txt` covering every application download. Only signed macOS releases include an update ZIP; the ordinary macOS ZIP is no longer published. Unsigned releases have eight assets; signed macOS releases have ten. Per-file checksums are temporary draft assets: finalization verifies them, uploads and reads back the combined manifest, then removes the individual checksum files. Interrupted finalization can be rerun. Windows/Linux update metadata is included; only signed macOS releases advertise `latest-mac.yml`. Signing defaults off. Enabled macOS releases require Developer ID signing and notarization; enabled Windows releases require an approved SignPath signature and timestamp. Linux remains unsigned. Intel Mac packages are not included. Packaged license notices, native modules, file contents, symlinks and executable permissions are checked before and after archiving; enabled signatures are verified at both stages. See the [code signing policy](../en/code-signing.md) for credentials, approval and privacy details.
 
 Prepare Apple credentials first and publish the initial Windows version as explicitly unsigned. After the repository and a usable release are public, apply to SignPath Foundation and enable Windows signing only after approval. Enabled signing failures never fall back to unsigned artifacts. A signing request rejected or not approved within 60 minutes leaves an incomplete draft. The draft records its signing modes; reruns cannot mix different modes under the same tag.
 

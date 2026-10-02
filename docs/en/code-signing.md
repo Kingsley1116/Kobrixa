@@ -17,7 +17,7 @@ Windows signing through SignPath Foundation is planned and subject to approval. 
 
 Only validated tags on `main` history can use release signing. Common checks and desktop tests must pass first. Pull requests, ordinary CI and `pnpm package` do not need signing credentials. Enabling a platform requires all of its configuration: missing credentials, rejected/expired certificates, failed notarization, invalid signatures, a rejected signing request or a timeout fail that platform. There is no automatic unsigned fallback.
 
-The workflow creates the three original archives plus NSIS, AppImage, DMG and update ZIP downloads, each with a SHA-256 file. Windows/Linux metadata is always included; macOS metadata is included only for signed releases. The result remains a draft for manual publication. Signed applications are verified before archiving and again after extraction. Pending/incomplete drafts describe signing as unverified; only a successful finalized draft claims verification.
+The workflow publishes Windows NSIS/ZIP, Linux AppImage/tar.gz and macOS DMG, with one SHA256SUMS.txt. Only signed macOS releases add an update ZIP; ordinary macOS ZIP archives are omitted. Individual checksum files are temporary draft assets consolidated during finalization. Windows/Linux metadata is always included; macOS metadata is included only for signed releases. The result remains a draft for manual publication. Signed applications are verified before archiving and again after extraction. Pending/incomplete drafts describe signing as unverified; only a successful finalized draft claims verification.
 
 ## Publication review
 
@@ -26,7 +26,7 @@ Before the first public release, the maintainer must review the exact commit and
 1. Inspect tracked files and reachable Git history for credentials and private data. Check the final archives too; ignoring a file does not remove it from history or old artifacts.
 2. Confirm redistribution rights for source, examples and media. Check the packaged project `LICENSE`, `THIRD-PARTY-NOTICES.txt` and upstream Electron/Chromium/HIDAPI notices.
 3. Complete production macOS signing/notarization and browser-download verification. Record the outstanding platform and EV3 acceptance results using the [device support checklist](../en/device-support.md).
-4. Confirm that the draft contains all platform archives, installers, matching SHA-256 files and the metadata required by its signing modes; check the intended commit and each platform’s signing status.
+4. Confirm that the draft contains all platform archives, installers, a matching SHA256SUMS.txt and the metadata required by its signing modes; check the intended commit and each platform’s signing status.
 5. Make the repository public and publish the Release as separate manual operations. Keep Windows explicitly unsigned until SignPath approval; account verification, payment, application and signing approvals remain the owner's responsibility.
 
 ## Set up macOS

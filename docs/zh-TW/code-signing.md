@@ -17,7 +17,7 @@ GitHub repository **Variables** 中的 `MACOS_SIGNING_ENABLED`、`WINDOWS_SIGNIN
 
 只有通過 tag 與 `main` 歷史驗證、共通檢查與桌面測試的 Release 才執行簽章。PR、一般 CI 與 `pnpm package` 不需要簽章憑證。啟用某平台後，缺少設定、憑證過期或遭拒、公證失敗、簽章無效、請求被拒或逾時，都必須讓該平台失敗；不會自動改用未簽章版本。
 
-流程保留三個原有壓縮包，新增 NSIS、AppImage、DMG 及更新用 ZIP，每個下載檔皆附 SHA-256。Windows／Linux 一律提供更新資訊，macOS 僅已簽章版本提供。產物保留為草稿供人工公開。已簽章程式在壓縮前、解壓後皆驗證。建置中或未完成草稿只標示待驗證，全部成功後才宣稱已驗證簽章。
+流程發布 Windows NSIS／ZIP、Linux AppImage／tar.gz、macOS DMG，以及單一 SHA256SUMS.txt。macOS 僅已簽章版本加上更新 ZIP，不再發布普通 ZIP。個別校驗檔僅暫存於草稿，在最後驗證時合併。Windows／Linux 一律提供更新資訊，macOS 僅已簽章版本提供。產物保留為草稿供人工公開。已簽章程式在壓縮前、解壓後皆驗證。建置中或未完成草稿只標示待驗證，全部成功後才宣稱已驗證簽章。
 
 ## 首次公開前檢查
 
@@ -26,7 +26,7 @@ GitHub repository **Variables** 中的 `MACOS_SIGNING_ENABLED`、`WINDOWS_SIGNIN
 1. 檢查受追蹤檔案、可達的 Git 歷史及最終壓縮包是否含憑證與私人資料。忽略檔案不會移除歷史或舊產物中的內容。
 2. 確認原始碼、範例與媒體的再散布權利，檢查封裝內的專案 `LICENSE`、`THIRD-PARTY-NOTICES.txt` 及上游 Electron／Chromium／HIDAPI 授權聲明。
 3. 完成正式 macOS 簽章／公證與瀏覽器下載驗證，依[設備支援驗收清單](../zh-TW/device-support.md)記錄尚待完成的平台與 EV3 結果。
-4. 確認草稿包含各平台壓縮包、安裝包、相符的 SHA-256，以及簽章模式所需的更新資訊；使用預定的 commit，並逐平台核對簽章狀態。
+4. 確認草稿包含各平台壓縮包、安裝包、相符的 SHA256SUMS.txt，以及簽章模式所需的更新資訊；使用預定的 commit，並逐平台核對簽章狀態。
 5. 將倉庫改公開與 Release 發布作為兩個獨立人工操作。SignPath 核准前維持 Windows 明確標示未簽章；帳號身分驗證、付款、申請及簽章核准由擁有者完成。
 
 ## 設定 macOS

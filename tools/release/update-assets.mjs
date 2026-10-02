@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 const parse = JSON.parse;
 const stringify = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -16,16 +16,16 @@ import {
 } from "./common.mjs";
 import { signingModes } from "../../apps/desktop/signing.ts";
 
-export function installerNames(version, platform, arch) {
+export function installerNames(version, platform, arch, modes = { macos: false }) {
   return [
-    updateArtifactName(version, platform, arch),
+    ...(platform !== "darwin" || modes.macos ? [updateArtifactName(version, platform, arch)] : []),
     ...(platform === "darwin" ? [`Kobrixa-${version}-${platform}-${arch}.dmg`] : []),
   ];
 }
 export function targetAssets(version, platform, arch, modes = { macos: false, windows: false }) {
   const archives = [
-    archiveName(version, platform, arch),
-    ...installerNames(version, platform, arch),
+    ...(platform === "darwin" ? [] : [archiveName(version, platform, arch)]),
+    ...installerNames(version, platform, arch, modes),
   ];
   return [
     ...archives.flatMap((name) => [name, `${name}.sha256`]),
@@ -73,7 +73,18 @@ export async function verifyTargetAssets(directory, version, platform, arch, mod
 }
 export async function prepareUpdateAssets(version, platform, arch, modes, root = repositoryRoot) {
   const out = path.join(root, "apps/desktop/out");
-  for (const name of installerNames(version, platform, arch)) {
+  await mkdir(path.join(out, "release"), { recursive: true });
+  // Remove obsolete local Mac outputs when changing signing modes or upgrading the pipeline.
+  if (platform === "darwin") {
+    for (const name of [
+      archiveName(version, platform, arch),
+      ...(!modes.macos ? [updateArtifactName(version, platform, arch)] : []),
+    ]) {
+      await rm(path.join(out, "release", name), { force: true });
+      await rm(path.join(out, "release", `${name}.sha256`), { force: true });
+    }
+  }
+  for (const name of installerNames(version, platform, arch, modes)) {
     const file = path.join(out, "release", name);
     await cp(path.join(out, "installers", name), file);
     await writeFile(`${file}.sha256`, `${await sha256(file)}  ${name}\n`);

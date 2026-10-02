@@ -4,11 +4,12 @@ import { readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { repositoryRoot, readVersion } from "./common.mjs";
 import { updateArtifactName } from "../../apps/desktop/src/shared/updates.ts";
-import { windowsVersion } from "../../apps/desktop/signing.ts";
+import { signingModes, windowsVersion } from "../../apps/desktop/signing.ts";
 const desktop = path.join(repositoryRoot, "apps/desktop");
 const version = await readVersion(),
   platform = process.platform,
   arch = process.arch;
+const modes = process.env.KOBRIXA_RELEASE_BUILD === "true" ? signingModes() : { macos: false };
 const output = path.join(desktop, "out/installers");
 await rm(output, { recursive: true, force: true });
 const target =
@@ -21,7 +22,11 @@ await build({
     ...(platform === "darwin" ? ["Kobrixa.app"] : []),
   ),
   targets: target.createTarget(
-    platform === "darwin" ? ["dmg", "zip"] : [platform === "win32" ? "nsis" : "AppImage"],
+    platform === "darwin"
+      ? modes.macos
+        ? ["dmg", "zip"]
+        : ["dmg"]
+      : [platform === "win32" ? "nsis" : "AppImage"],
   ),
   config: {
     publish: null, // Never infer a provider from CI tokens or rewrite the signed app's resources.

@@ -178,7 +178,7 @@ Electron Forge bundles the renderer and main/preload entry points into `app.asar
 
 Ordinary CI and local packaging do not require credentials. Tag releases validate the commit and package versions, freeze the macOS/Windows signing switches in the draft, and require common checks and desktop tests before signing. macOS uses Developer ID, Hardened Runtime and notarization for `com.kobrixa.ide`; Windows sends a one-day temporary artifact to SignPath and accepts changes only to `kobrixa.exe`.
 
-Enabled signing fails closed. Applications are verified before archiving and after extraction, including signatures, file contents, executable permissions, symlinks and native modules. Only then are SHA-256 files generated. The final draft contains three archives and three checksum files, and remains unpublished until a maintainer publishes it. Credential handling, approval and retry behavior are defined in the [code signing policy](../en/code-signing.md).
+Enabled signing fails closed. Applications are verified before archiving and after extraction, including signatures, file contents, executable permissions, symlinks and native modules. Only then are SHA-256 files generated. The final draft contains Windows NSIS/ZIP, Linux AppImage/tar.gz, macOS DMG, update metadata and one SHA256SUMS.txt (plus an update ZIP for signed macOS), and remains unpublished until a maintainer publishes it. Credential handling, approval and retry behavior are defined in the [code signing policy](../en/code-signing.md).
 
 ## State and safety rules
 

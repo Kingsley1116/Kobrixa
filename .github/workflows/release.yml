@@ -167,6 +167,8 @@ jobs:
             pnpm test:desktop:packaged
           fi
       - run: pnpm package:installers
+        env:
+          KOBRIXA_RELEASE_BUILD: "true"
       - name: Stage Windows installer for signing
         if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
         run: node tools/release/signing.mjs stage-installer

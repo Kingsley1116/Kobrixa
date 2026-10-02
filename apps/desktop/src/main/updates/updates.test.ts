@@ -43,6 +43,20 @@ function fixture(options: { reason?: "development"; preferences?: UpdatePreferen
 }
 afterEach(() => vi.useRealTimers());
 describe("release selection", () => {
+  it("finds DMG-only Mac releases and still supports legacy ZIP releases", () => {
+    for (const suffix of ["dmg", "zip"]) {
+      const candidate = release("2.0.0", {
+        assets: [{ name: `Kobrixa-2.0.0-darwin-arm64.${suffix}`, size: 1, state: "uploaded" }],
+      });
+      expect(selectRelease([candidate], "1.0.0", stable, "darwin", "arm64")).toMatchObject({
+        version: "2.0.0",
+        automatic: false,
+      });
+      expect(selectRelease([candidate], "1.0.0", stable, "darwin", "x64")).toBeUndefined();
+      candidate.assets[0]!.size = 0;
+      expect(selectRelease([candidate], "1.0.0", stable, "darwin", "arm64")).toBeUndefined();
+    }
+  });
   it("sorts SemVer instead of publication order and respects stable and custom preview tags", () => {
     const releases = [
       release("1.2.0"),

@@ -53,7 +53,9 @@ export function selectRelease(
       names.has(updateMetadataName(platform)) &&
       names.has(updateArtifactName(version, platform, arch));
     const archive = `Kobrixa-${version}-${platform}-${arch}.${platform === "linux" ? "tar.gz" : "zip"}`;
-    if (!automatic && !names.has(archive)) continue;
+    const manualInstaller = `Kobrixa-${version}-darwin-${arch}.dmg`;
+    if (!automatic && !names.has(archive) && !(platform === "darwin" && names.has(manualInstaller)))
+      continue;
     const tag = encodeURIComponent(release.tag_name);
     return {
       version,

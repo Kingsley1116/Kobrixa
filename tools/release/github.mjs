@@ -2,7 +2,7 @@ import { targetAssets, verifyTargetAssets } from "./update-assets.mjs";
 import { targets } from "./common.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { signingModes } from "../../apps/desktop/signing.ts";
@@ -12,6 +12,7 @@ import {
   repositoryRoot,
   validateVersions,
   verifyChecksum,
+  sha256,
 } from "./common.mjs";
 
 const unsigned = { macos: false, windows: false };
@@ -36,13 +37,24 @@ export function failedChecks(results) {
   );
 }
 
-export function assertAssets(assets, version, modes = unsigned) {
-  const expected = targets
+export function assertAssets(assets, version, modes = unsigned, staging = false) {
+  let expected = targets
     .flatMap(({ platform, arch }) => targetAssets(version, platform, arch, modes))
     .sort();
+  if (staging) {
+    // A retry may see a manifest plus only some sidecars after interrupted cleanup.
+    if (assets.some((asset) => asset.name === "SHA256SUMS.txt")) {
+      expected = expected.filter(
+        (name) => !name.endsWith(".sha256") || assets.some((asset) => asset.name === name),
+      );
+      expected.push("SHA256SUMS.txt");
+    }
+  } else {
+    expected = [...expected.filter((name) => !name.endsWith(".sha256")), "SHA256SUMS.txt"];
+  }
   assert.deepEqual(
     assets.map((asset) => asset.name).sort(),
-    expected,
+    expected.sort(),
     "Release assets are missing, duplicated or unexpected",
   );
   for (const asset of assets)
@@ -65,7 +77,7 @@ export function notes(tag, sha, status, generated = "", modes = unsigned, verifi
     modes.windows && verified
       ? "\nFree code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n"
       : "";
-  return `${marker(tag, sha, modes)}\n\n${status}\n\nCommit: ${sha}\n\n- Windows x64: ${windows}. Use the per-user setup.exe for automatic updates; ZIP builds offer manual downloads.\n- macOS Apple Silicon: ${macos}. Install the DMG. Automatic updates require a signed build.\n- Linux x64: unsigned / 未簽章. Use AppImage for automatic updates; tar.gz builds offer manual downloads.\n- Optional: verify your download against its accompanying SHA-256 file. The checksum file is not required for installation. / SHA-256 驗證為選用，安裝不需要下載校驗碼檔案。\n- Automatic downloads use public GitHub Releases; installation requires explicit confirmation. This and future desktop releases include the updater. Intel Mac is not included.\n\n[Code signing policy / 程式碼簽章政策](${policy})\n${attribution}\n${generated}`;
+  return `${marker(tag, sha, modes)}\n\n${status}\n\nCommit: ${sha}\n\n- Windows x64: ${windows}. Use the per-user setup.exe for automatic updates; ZIP builds offer manual downloads.\n- macOS Apple Silicon: ${macos}. Install the DMG. Automatic updates require a signed build.\n- Linux x64: unsigned / 未簽章. Use AppImage for automatic updates; tar.gz builds offer manual downloads.\n- Optional: verify your download against SHA256SUMS.txt. The checksum file is not required for installation. / SHA256SUMS.txt 提供所有下載檔的 SHA-256；驗證為選用，安裝不需要下載校驗碼檔案。\n- Automatic downloads use public GitHub Releases; installation requires explicit confirmation. This and future desktop releases include the updater. Intel Mac is not included.\n\n[Code signing policy / 程式碼簽章政策](${policy})\n${attribution}\n${generated}`;
 }
 
 export async function prepareRelease(github, tag, sha, modes = unsigned) {
@@ -133,12 +145,45 @@ export async function finalizeRelease(github, tag, sha, results, modes = unsigne
       modes,
     ),
   });
-  assertAssets(release.assets, tag.slice(1), modes);
+  assertAssets(release.assets, tag.slice(1), modes, true);
   const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-release-"));
   try {
     await github.download(tag, directory);
     for (const { platform, arch } of targets)
       await verifyTargetAssets(directory, tag.slice(1), platform, arch, modes);
+    const payloads = targets
+      .flatMap(({ platform, arch }) => targetAssets(tag.slice(1), platform, arch, modes))
+      .filter((name) => !name.endsWith(".sha256") && !name.endsWith(".yml"))
+      .sort();
+    const checksumFile = path.join(directory, "SHA256SUMS.txt");
+    await writeFile(
+      checksumFile,
+      (
+        await Promise.all(
+          payloads.map(async (name) => `${await sha256(path.join(directory, name))}  ${name}\n`),
+        )
+      ).join(""),
+    );
+    await github.assertTag(tag, sha);
+    assertDraft(await github.getRelease(tag), tag, sha, modes);
+    await github.upload(tag, [checksumFile]);
+    // Read back uploaded bytes before removing the temporary per-file checksums.
+    const verifiedDirectory = await mkdtemp(path.join(tmpdir(), "kobrixa-checksums-"));
+    try {
+      await github.downloadChecksums(tag, verifiedDirectory);
+      assert.equal(
+        await readFile(path.join(verifiedDirectory, "SHA256SUMS.txt"), "utf8"),
+        await readFile(checksumFile, "utf8"),
+        "Uploaded checksum manifest mismatch",
+      );
+    } finally {
+      await rm(verifiedDirectory, { recursive: true, force: true });
+    }
+    for (const asset of release.assets.filter((asset) => asset.name.endsWith(".sha256"))) {
+      assertDraft(await github.getRelease(tag), tag, sha, modes);
+      await github.deleteAsset(asset.id);
+    }
+    assertAssets((await github.getRelease(tag)).assets, tag.slice(1), modes);
     const generated = await github.generateNotes(tag, sha);
     // Recheck immediately before writing, including whether someone published the draft.
     await github.assertTag(tag, sha);
@@ -224,6 +269,22 @@ export function createGithub(repo, execute = command) {
     },
     async upload(tag, files) {
       execute(["release", "upload", tag, ...files, "--repo", repo, "--clobber"]);
+    },
+    async downloadChecksums(tag, directory) {
+      execute([
+        "release",
+        "download",
+        tag,
+        "--repo",
+        repo,
+        "--dir",
+        directory,
+        "--pattern",
+        "SHA256SUMS.txt",
+      ]);
+    },
+    async deleteAsset(id) {
+      return api(`releases/assets/${id}`, "DELETE");
     },
     async download(tag, directory) {
       execute(["release", "download", tag, "--repo", repo, "--dir", directory]);

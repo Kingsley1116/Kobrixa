@@ -14,25 +14,25 @@
 
 ### SHA-256 校驗（選用）
 
-SHA-256 校驗是選用步驟，不影響安裝與使用。若想確認下載檔案是否完整，可另行下載同名 `.sha256` 檔，與安裝檔放在同一目錄，並將以下範例中的 `<version>` 換成下載版本。
+SHA-256 校驗是選用步驟，不影響安裝與使用。若想確認下載檔案是否完整，可另行下載同一 Release 的 `SHA256SUMS.txt`，與安裝檔放在同一目錄（舊版本仍使用個別 `.sha256` 檔），並將以下範例中的 `<version>` 換成下載版本。
 
 Windows PowerShell：計算雜湊，與校驗碼檔的第一欄比較。
 
 ```powershell
 Get-FileHash -Algorithm SHA256 'Kobrixa-<version>-win32-x64-setup.exe'
-Get-Content 'Kobrixa-<version>-win32-x64-setup.exe.sha256'
+Select-String -Path 'SHA256SUMS.txt' -SimpleMatch '  Kobrixa-<version>-win32-x64-setup.exe'
 ```
 
 macOS：
 
 ```sh
-shasum -a 256 -c 'Kobrixa-<version>-darwin-arm64.dmg.sha256'
+grep -F '  Kobrixa-<version>-darwin-arm64.dmg' SHA256SUMS.txt | shasum -a 256 -c -
 ```
 
 Linux：
 
 ```sh
-sha256sum -c 'Kobrixa-<version>-linux-x64.AppImage.sha256'
+sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
 校驗碼可檢查下載內容是否與發行檔一致；發行者身分依程式碼簽章驗證。此處的選用步驟是手動校驗下載檔案，updater 仍會自動驗證其下載的更新。
@@ -46,6 +46,8 @@ Windows 安裝版與 Linux AppImage 可自動下載新版，並在確認後安�
 下載完成後可選「稍後」，一般退出不安裝；只有「重新啟動並更新」才啟動安裝。未儲存內容須先選「儲存全部並更新」，儲存失敗會保留草稿並停止安裝。編譯、設備傳輸、專案／設備檔案操作進行時不能重啟更新。重啟後重新開啟原專案即可繼續，既有設定與草稿資料位置保持不變。
 
 更新來源固定為本倉庫公開的 GitHub Releases，不內嵌存取 token。倉庫仍私有或離線時，設定頁顯示無法存取；不會影響編輯。來源公開、各平台產物完整且版本已人工公開後才可下載。下載／校驗失敗可重試；安裝未完成時可從 Releases 重新下載安裝，專案與使用者資料不刪除。開發模式不連線檢查更新。
+
+僅識別舊普通 ZIP 的 Mac 版本（包括 candidate.3）無法偵測只有 DMG 的新版。請手動安裝首次採用此變更的版本一次；新版更新器可識別只有 DMG 的 Release。
 
 ## 開發版
 
@@ -80,7 +82,7 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 3. 流程建立標示 **建置中 / Building** 的草稿，驗證 tag 指定的確切 commit，各平台直接上傳壓縮包、安裝包、更新資訊與校驗碼到草稿。版本有預發行後綴時，草稿會標示為 prerelease。
 4. 所有檢查成功，且所有壓縮包、安裝包與更新資訊皆下載並通過驗證後，草稿改為 **待發布 / Ready for manual publication**，附上來源 commit 與自動產生的版本紀錄。請檢閱後手動公開；流程不會自動發布。
 
-最終產物包含三個原有壓縮包、Windows NSIS 安裝程式、Linux AppImage、macOS DMG 與更新用 ZIP，以及每個下載檔的 `.sha256`。另有 Windows／Linux 更新 metadata；僅已簽章 macOS 版本提供 `latest-mac.yml`。簽章預設關閉；啟用 macOS 後須通過 Developer ID 簽章與公證，啟用 Windows 後須通過已核准的 SignPath 簽章與時間戳驗證。Linux 維持未簽章，目前不提供 Intel Mac 套件。封裝前後都檢查授權聲明、原生模組、檔案內容、符號連結與執行權限，並在啟用時驗證簽章。憑證、核准與隱私說明見[程式碼簽章政策](../zh-TW/code-signing.md)。
+最終產物包含 Windows NSIS 與 ZIP、Linux AppImage 與 tar.gz、macOS DMG，以及涵蓋所有應用程式下載檔的單一 `SHA256SUMS.txt`。macOS 僅已簽章版本提供更新 ZIP，不再發布普通 ZIP。未簽章版本共八個附件；啟用 macOS 簽章後共十個。個別校驗檔僅暫存於草稿：最後驗證後合併、上傳並讀回驗證，再移除個別校驗檔；中斷後可重跑。另有 Windows／Linux 更新 metadata；僅已簽章 macOS 版本提供 `latest-mac.yml`。簽章預設關閉；啟用 macOS 後須通過 Developer ID 簽章與公證，啟用 Windows 後須通過已核准的 SignPath 簽章與時間戳驗證。Linux 維持未簽章，目前不提供 Intel Mac 套件。封裝前後都檢查授權聲明、原生模組、檔案內容、符號連結與執行權限，並在啟用時驗證簽章。憑證、核准與隱私說明見[程式碼簽章政策](../zh-TW/code-signing.md)。
 
 先完成 Apple 憑證設定，第一個 Windows 版本明確標示未簽章。倉庫與可使用的版本公開後，再申請 SignPath Foundation，核准後才啟用 Windows 簽章。啟用後失敗不會改用未簽章產物；簽章請求被拒或等待人工核准超過 60 分鐘時保留未完成草稿。草稿記錄簽章模式，相同 tag 的重跑不得混用不同模式。
 

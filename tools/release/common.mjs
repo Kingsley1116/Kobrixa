@@ -72,7 +72,19 @@ export async function sha256(file) {
 
 export async function verifyChecksum(file) {
   const expected = `${await sha256(file)}  ${path.basename(file)}\n`;
-  if ((await readFile(`${file}.sha256`, "utf8")) !== expected) {
+  let checksum;
+  try {
+    checksum = await readFile(`${file}.sha256`, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const manifest = await readFile(path.join(path.dirname(file), "SHA256SUMS.txt"), "utf8");
+    checksum = manifest
+      .split("\n")
+      .filter((line) => line.endsWith(`  ${path.basename(file)}`))
+      .map((line) => `${line}\n`)
+      .join("");
+  }
+  if (checksum !== expected) {
     throw new Error(`Checksum mismatch: ${path.basename(file)}`);
   }
 }

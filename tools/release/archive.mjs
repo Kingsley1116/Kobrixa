@@ -152,6 +152,7 @@ export async function packageArchive({
   modes = { macos: false, windows: false },
   verificationEnv = process.env,
   verifySignature = verifySignedApplication,
+  archiveDirectory,
 } = {}) {
   const version = await readVersion(root);
   const name = archiveName(version, platform, arch);
@@ -163,7 +164,7 @@ export async function packageArchive({
   await verifyApplication(directory, platform, version);
   await verifySignature(directory, platform, version, modes, verificationEnv);
   const before = await treeManifest(directory, platform);
-  const releaseDirectory = path.join(output, "release");
+  const releaseDirectory = archiveDirectory ?? path.join(output, "release");
   await mkdir(releaseDirectory, { recursive: true });
   const archive = path.join(releaseDirectory, name);
   // Remove only this target's previous generated files, never a published release.
@@ -196,12 +197,23 @@ export async function packageArchive({
 }
 
 if (isMain(import.meta)) {
-  await packageArchive({
-    platform: process.env.TARGET_PLATFORM || process.platform,
-    arch: process.env.TARGET_ARCH || process.arch,
-    modes:
-      process.env.KOBRIXA_RELEASE_BUILD === "true"
-        ? signingModes()
-        : { macos: false, windows: false },
-  });
+  const platform = process.env.TARGET_PLATFORM || process.platform;
+  // Keep archive round-trip/signature verification, but never publish the redundant Mac ZIP.
+  const temporaryArchive =
+    platform === "darwin"
+      ? await mkdtemp(path.join(tmpdir(), "kobrixa-mac-verification-"))
+      : undefined;
+  try {
+    await packageArchive({
+      platform,
+      arch: process.env.TARGET_ARCH || process.arch,
+      archiveDirectory: temporaryArchive,
+      modes:
+        process.env.KOBRIXA_RELEASE_BUILD === "true"
+          ? signingModes()
+          : { macos: false, windows: false },
+    });
+  } finally {
+    if (temporaryArchive) await rm(temporaryArchive, { recursive: true, force: true });
+  }
 }
