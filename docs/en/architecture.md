@@ -63,6 +63,12 @@ The language worker source lives in `main/language`; Forge still emits `language
 
 Shared UI behavior lives in `renderer/components`: `Dialog` builds on `Modal` for accessible headings and form submission, while `DialogActions` lays out caller-owned buttons. Callers retain validation, busy state, initial focus, dismissal rules and focus restoration options. `ClosableTab` shares file/settings tab presentation, `ResizeHandle` owns pointer/keyboard resizing and listener cleanup, and `menu-keyboard` supplies navigation for action and context menus. Settings-specific `SettingField`, `SettingSelect` and `SettingToggle` stay in `renderer/settings`; they connect labels and hints without owning preference persistence.
 
+## Multiple project sessions
+
+`ProjectSessions` owns documents and view state by workspace ID; `EditorModels` retains Monaco models and undo history across visible editor remounts, disposing them when a project closes. Background projects retain automatic saving and recovery draft queues, while language analysis and completion serve only the active project. `ExecutionController` separates the selected project from the operation owner, preserving per-project diagnostics and build versions alongside one shared EV3 connection and deployed version.
+
+The main process deduplicates real project roots and exposes `workspace.restoreSession`, `workspace.saveSession` and `workspace.close`. A validated, versioned `workspace-session.json` in user data is written atomically and stores input paths, entry selection, project/file order and editor positions; renderers submit only registered workspace IDs. Recovery drafts keep their existing format. The quit handshake waits for all drafts and session state to be written and keeps the window open on failure. Restart restores neither undo history nor device connections or execution commands.
+
 ## Project manifest
 
 Each project uses `kobrixa.json`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.

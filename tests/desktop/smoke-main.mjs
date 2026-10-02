@@ -1,3 +1,4 @@
+import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
@@ -18,7 +19,9 @@ const { LanguageService } = await import(pathToFileURL(path.join(temporary, "lan
 const languageRoot = path.join(temporary, "language-project");
 fs.mkdirSync(languageRoot);
 const language = new LanguageService({
-  projectInput: () => ({ inputPath: path.join(languageRoot, "main.bp") }),
+  projectInput: (id) => ({
+    inputPath: path.join(fixtures.get(id)?.root ?? languageRoot, "main.bp"),
+  }),
 });
 app.on("will-quit", () => language.dispose());
 const mod = process.platform === "darwin" ? "meta" : "control";
@@ -35,11 +38,29 @@ const files = {
   "kobrixa.json": '{"name":"test"}',
 };
 const drafts = {};
+const firstId = "00000000-0000-4000-8000-000000000001";
+let nextOpenId = firstId;
+const fixtures = new Map([[firstId, { name: "Keyboard test", files, drafts, root: languageRoot }]]);
+for (const number of [2, 3]) {
+  const id = `00000000-0000-4000-8000-00000000000${number}`;
+  const root = path.join(temporary, `project-${number}`);
+  fs.mkdirSync(root);
+  fixtures.set(id, {
+    name: `Project ${number}`,
+    files: { "main.bp": `value = ${number}\n`, "second.bp": "LCD.Clear()\n" },
+    drafts: {},
+    root,
+  });
+}
+let savedSession = { projects: [] };
+let closeReply;
+let failDraft = false;
+let backgroundBuild;
+
 const writes = [];
 const mutations = [];
 let analysisRequests = 0;
 const syncMetrics = [];
-const diskContents = new Map();
 function payloadBytes(value) {
   if (ArrayBuffer.isView(value)) return value.byteLength;
   if (typeof value === "string") return Buffer.byteLength(value);
@@ -54,16 +75,20 @@ function payloadBytes(value) {
 let failNextWrite = false;
 let openCount = 0;
 let win;
-const workspace = () => ({
-  id: "00000000-0000-4000-8000-000000000001",
-  name: "Keyboard test",
-  rootLabel: "Keyboard test",
-  files: Object.keys(files),
-  entries: Object.keys(files).map((path) => ({ path, kind: "file" })),
-  implicit: true,
-  entryCandidates: ["main.bp"],
-  drafts: { ...drafts },
-});
+const workspace = (id = firstId) => {
+  const project = fixtures.get(id);
+  return {
+    id,
+    name: project.name,
+    rootLabel: project.name,
+    locationLabel: project.root,
+    files: Object.keys(project.files),
+    entries: Object.keys(project.files).map((path) => ({ path, kind: "file" })),
+    implicit: true,
+    entryCandidates: ["main.bp"],
+    drafts: { ...project.drafts },
+  };
+};
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -78,6 +103,35 @@ const sendUpdate = (patch) => {
   win.webContents.send("updates:state", updateState);
 };
 ipcMain.handle("smoke", async (_e, name, args) => {
+  const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
+  if (name === "restoreSession")
+    return {
+      ...savedSession,
+      workspaces: savedSession.projects.map((view) => workspace(view.workspaceId)),
+      issues: [],
+    };
+  if (name === "saveSession") {
+    savedSession = structuredClone(args[0]);
+    return;
+  }
+  if (name === "closeProject") return;
+  if (name === "finishClose") {
+    closeReply = args;
+    return;
+  }
+  if (name === "build") {
+    backgroundBuild = { workspaceId: args[0], buildId: "background" };
+    return "background";
+  }
+  if (name === "cancel") {
+    win.webContents.send("build:event", {
+      type: "complete",
+      ...backgroundBuild,
+      result: { success: false, diagnostics: [], artifacts: [] },
+    });
+    return;
+  }
+
   if (name === "updateState") return updateState;
   if (name === "updatePreferences") {
     sendUpdate({ preferences: args[0] });
@@ -108,6 +162,9 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     return;
   }
   if (name === "analyze" || name === "languageSync" || name === "completionSync") {
+    const files = fixture.files;
+    const languageRoot = fixture.root;
+    const diskContents = (fixture.diskContents ??= new Map());
     if (name !== "completionSync") analysisRequests++;
     for (const file of diskContents.keys())
       if (!(file in files)) {
@@ -143,9 +200,12 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   }
   if (name === "open") {
     openCount++;
-    return workspace();
+    return workspace(nextOpenId);
   }
-  if (name === "read") return files[args[1]];
+  if (name === "read") {
+    if (!(args[1] in fixture.files)) throw new Error("Missing file");
+    return fixture.files[args[1]];
+  }
   if (name === "createEntry") {
     assert.equal(args[2], "file");
     const file = args[1] ? `${args[1]}/${args[3]}` : args[3];
@@ -166,14 +226,15 @@ ipcMain.handle("smoke", async (_e, name, args) => {
       failNextWrite = false;
       throw new Error("Simulated source write failure");
     }
-    files[args[1]] = args[2];
-    delete drafts[args[1]];
+    fixture.files[args[1]] = args[2];
+    delete fixture.drafts[args[1]];
     writes.push({ file: args[1], content: args[2] });
     return;
   }
   if (name === "draft") {
-    if (args[2] === undefined) delete drafts[args[1]];
-    else drafts[args[1]] = args[2];
+    if (failDraft) throw new Error("Simulated draft write failure");
+    if (args[2] === undefined) delete fixture.drafts[args[1]];
+    else fixture.drafts[args[1]] = args[2];
     return;
   }
   throw new Error("Unexpected smoke API: " + name);
@@ -231,10 +292,52 @@ app
     await js(
       'localStorage.clear(); smoke.settingsStore.set("locale","en"); smoke.keybindingsStore.reset()',
     );
+    await until("!document.querySelector('.empty[role=status]')");
     await key("o", [mod]);
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");
     await pause(200);
+    const projectsContext = {
+      js,
+      key,
+      until,
+      pause,
+      win,
+      mod,
+      temporary,
+      fixtures,
+      update: sendUpdate,
+      installed: () => updateInstallCount,
+      choose: (id) => {
+        nextOpenId = id;
+      },
+      session: () => savedSession,
+      failWrite: () => {
+        failNextWrite = true;
+      },
+      setFailDraft: (value) => {
+        failDraft = value;
+      },
+      closeReply: () => closeReply,
+      resetCloseReply: () => {
+        closeReply = undefined;
+      },
+      completeBuild: () =>
+        win.webContents.send("build:event", {
+          type: "complete",
+          ...backgroundBuild,
+          result: {
+            success: true,
+            diagnostics: [],
+            artifacts: [{ kind: "rbf", path: "/tmp/build/program.rbf", sha256: "smoke" }],
+          },
+        }),
+    };
+    if (process.env.KOBRIXA_SMOKE_PROJECTS_ONLY) {
+      await checkProjects(projectsContext);
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_INDENTATION_ONLY) {
       await checkIndentation({ js, key, until, win });
       app.exit(0);
@@ -714,6 +817,7 @@ app
       installed: () => updateInstallCount,
       files,
     });
+    await checkProjects(projectsContext);
     console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);
   })

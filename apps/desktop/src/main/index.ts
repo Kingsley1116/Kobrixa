@@ -8,6 +8,7 @@ import { DeviceService } from "./device/device.js";
 import { registerIpc } from "./ipc.js";
 import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
+import { CloseHandshake } from "./window/close.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -20,8 +21,12 @@ app.setPath(
 );
 let updates: UpdateService | undefined;
 let mainWindow: BrowserWindow | undefined;
+let quitting = false;
+let closeHandshake: CloseHandshake | undefined;
+let rendererCanFlush = false;
 
 function createWindow(): void {
+  rendererCanFlush = false;
   mainWindow = new BrowserWindow({
     width: 1420,
     height: 900,
@@ -38,11 +43,31 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.on("close", (event) => {
-    if (updates?.preparing) event.preventDefault();
+  const window = mainWindow;
+  const handshake = new CloseHandshake(
+    (id) => window.webContents.send("workspace:before-close", id),
+    () => {
+      if (quitting) app.quit();
+      else window.close();
+    },
+  );
+  closeHandshake = handshake;
+  window.on("close", (event) => {
+    if (updates?.installing || handshake.ready || window.webContents.isCrashed()) return;
+    // Before the renderer subscribes it cannot have editable buffers to flush.
+    if (!rendererCanFlush && !updates?.preparing) return;
+    event.preventDefault();
+    if (!updates?.preparing) handshake.request();
   });
-  mainWindow.webContents.on("render-process-gone", () => updates?.cancelInstall());
-  mainWindow.webContents.on("did-start-loading", () => updates?.cancelInstall());
+  window.webContents.on("render-process-gone", () => {
+    updates?.cancelInstall();
+    handshake.reset();
+  });
+  window.webContents.on("did-start-loading", () => {
+    rendererCanFlush = false;
+    updates?.cancelInstall();
+    handshake.reset();
+  });
   attachKeyboard(mainWindow.webContents);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -85,6 +110,9 @@ void app.whenReady().then(async () => {
       event.preventDefault();
       return;
     }
+    quitting = true;
+  });
+  app.on("will-quit", () => {
     updates?.dispose();
     language.dispose();
   });
@@ -95,7 +123,21 @@ void app.whenReady().then(async () => {
     renderer,
     () => operationGate.busy || builds.busy || devices.busy,
   );
-  registerIpc(renderer, workspaces, builds, language, devices, updates, operationGate);
+  registerIpc(
+    renderer,
+    workspaces,
+    builds,
+    language,
+    devices,
+    updates,
+    operationGate,
+    (id, ready) => {
+      if (closeHandshake?.finish(id, ready) && !ready) quitting = false;
+    },
+    () => {
+      rendererCanFlush = true;
+    },
+  );
   createWindow();
   updates.start();
   app.on("activate", () => {

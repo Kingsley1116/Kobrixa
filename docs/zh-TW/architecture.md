@@ -63,6 +63,12 @@ src/
 
 共用介面行為集中在 `renderer/components`：`Dialog` 以 `Modal` 為基礎，處理無障礙標題與表單送出，`DialogActions` 負責呼叫端提供的按鈕布局。驗證、忙碌狀態、初始焦點、關閉條件與焦點還原選項仍由各功能決定。`ClosableTab` 共用檔案／設定分頁呈現，`ResizeHandle` 管理滑鼠與鍵盤縮放及事件清理，`menu-keyboard` 提供操作選單與右鍵選單的鍵盤導覽。設定專用的 `SettingField`、`SettingSelect`、`SettingToggle` 留在 `renderer/settings`，統一關聯標籤與提示，不負責偏好保存。
 
+## 多專案工作階段
+
+`ProjectSessions` 依專案 ID 管理文件與編輯位置，`EditorModels` 保留 Monaco model 與復原歷史；可見編輯器卸載時解除綁定，關閉專案才釋放 model。背景專案沿用自動儲存與草稿佇列，語言分析與補全僅服務目前專案。`ExecutionController` 分開目前編輯專案與作業所屬專案，將診斷及最新編譯版本歸屬原專案，並保留全域 EV3 連線與單一部署版本。
+
+主程序以實體根目錄去重，並透過 `workspace.restoreSession`、`workspace.saveSession`、`workspace.close` 管理註冊與工作階段。`workspace-session.json` 位於使用者資料目錄，使用版本化驗證與原子寫入，保存來源路徑、入口選擇、專案／檔案順序及編輯位置；renderer 僅用已註冊 ID 提交狀態。草稿沿用原有格式。退出握手等待所有草稿與狀態寫入，失敗則保持視窗開啟；重新啟動不恢復復原歷史、設備連線或執行指令。
+
 ## 專案 manifest
 
 每個專案使用 `kobrixa.json`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。

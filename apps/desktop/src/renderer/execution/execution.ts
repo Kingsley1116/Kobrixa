@@ -44,6 +44,7 @@ export interface BuildVersion {
   time: number;
 }
 export interface ExecutionState {
+  operationWorkspaceId?: string | undefined;
   phase: Phase;
   fileBusy?: boolean;
   session?: { id: string; name: string; transport: string } | undefined;
@@ -71,9 +72,15 @@ class Cancelled extends Error {}
 /** One serialized operation, with build events correlated even before start() resolves. */
 export class ExecutionController {
   private state: ExecutionState = { phase: "idle", diagnostics: [], logs: [] };
+  private snapshot = this.state;
+  private operationWorkspaceId: string | undefined;
+  private projects = new Map<
+    string,
+    Pick<ExecutionState, "successfulBuild" | "diagnostics" | "logs" | "error">
+  >();
   private listeners = new Set<() => void>();
   private unsubscribe: Array<() => void> = [];
-  private workspaceId?: string;
+  private workspaceId: string | undefined;
   private generation = 0;
   private logId = 0;
   private working = false;
@@ -81,7 +88,7 @@ export class ExecutionController {
   private waitingBuild: WaitingBuild | undefined;
 
   constructor(private api: KobrixaApi) {}
-  getSnapshot = (): ExecutionState => this.state;
+  getSnapshot = (): ExecutionState => this.snapshot;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -135,6 +142,12 @@ export class ExecutionController {
   get editingLocked(): boolean {
     return this.working || Boolean(this.pendingRun);
   }
+  editingLockedFor(id: string | undefined): boolean {
+    return Boolean(id && this.editingLocked && this.operationWorkspaceId === id);
+  }
+  private project(id: string | undefined = this.operationWorkspaceId ?? this.workspaceId) {
+    return (id && this.projects.get(id)) || { diagnostics: [], logs: [] };
+  }
   async withFiles<T>(work: () => Promise<T>, detail: string): Promise<T> {
     if (this.locked) throw new Error("Another EV3 operation is in progress.");
     this.update({ fileBusy: true });
@@ -155,14 +168,37 @@ export class ExecutionController {
       this.update({ fileBusy: false });
     }
   }
+  private publish(): void {
+    const project = this.project(this.workspaceId);
+    this.snapshot = {
+      ...this.state,
+      successfulBuild: undefined,
+      error: undefined,
+      ...project,
+      deployed:
+        this.state.deployed?.workspaceId === this.workspaceId ? this.state.deployed : undefined,
+      phase: this.editingLocked ? this.state.phase : project.error ? "error" : "idle",
+      operationWorkspaceId: this.operationWorkspaceId,
+    };
+    this.listeners.forEach((listener) => listener());
+  }
   private update(patch: Partial<ExecutionState>): void {
     this.state = { ...this.state, ...patch };
-    this.listeners.forEach((listener) => listener());
+    const id = this.operationWorkspaceId ?? this.workspaceId;
+    if (id) {
+      const project = { ...this.project(id) };
+      if ("successfulBuild" in patch) project.successfulBuild = patch.successfulBuild;
+      if ("diagnostics" in patch) project.diagnostics = patch.diagnostics!;
+      if ("logs" in patch) project.logs = patch.logs!;
+      if ("error" in patch) project.error = patch.error;
+      this.projects.set(id, project);
+    }
+    this.publish();
   }
   private log(message: Message, detail?: string, failed = false): void {
     this.update({
       logs: [
-        ...this.state.logs.slice(-99),
+        ...this.project().logs.slice(-99),
         { id: ++this.logId, time: Date.now(), message, detail, failed },
       ],
     });
@@ -171,31 +207,36 @@ export class ExecutionController {
     this.update({ phase });
     this.log(phase);
   }
-  setWorkspace(id: string): void {
+  setWorkspace(id: string | undefined): void {
     if (id === this.workspaceId) return;
-    this.generation++;
-    this.pendingRun = undefined;
-    this.waitingBuild?.reject(new Cancelled());
-    if (this.waitingBuild?.id) void this.api.build.cancel(this.waitingBuild.id).catch(() => {});
     this.workspaceId = id;
-    this.update({
-      phase: "idle",
-      successfulBuild: undefined,
-      deployed: undefined,
-      diagnostics: [],
-      logs: [],
-      error: undefined,
-      activeBuildId: undefined,
-    });
+    this.publish();
   }
-  invalidateBuild(): void {
-    this.update({ successfulBuild: undefined });
+  forgetWorkspace(id: string): void {
+    if (this.editingLockedFor(id)) throw new Error("Project operation is in progress.");
+    this.projects.delete(id);
+    if (this.state.deployed?.workspaceId === id)
+      this.state = { ...this.state, deployed: undefined };
+    this.publish();
+  }
+  invalidateBuild(id = this.workspaceId): void {
+    if (!id) return;
+    this.projects.set(id, { ...this.project(id), successfulBuild: undefined, diagnostics: [] });
+    this.publish();
+  }
+  clearDiagnostics(id: string): void {
+    const project = this.project(id);
+    if (!project.diagnostics.length) return;
+    this.projects.set(id, { ...project, diagnostics: [] });
+    this.publish();
   }
   cancelWaiting(): void {
     if (!this.pendingRun) return;
     this.pendingRun = undefined;
     if (this.state.phase === "awaitingDevice") this.update({ phase: "idle" });
     this.log("cancelled");
+    if (!this.working) this.operationWorkspaceId = undefined;
+    this.publish();
   }
   async cancelBuild(): Promise<void> {
     const waiting = this.waitingBuild;
@@ -214,7 +255,7 @@ export class ExecutionController {
     if (
       !waiting ||
       event.workspaceId !== waiting.workspaceId ||
-      event.workspaceId !== this.workspaceId
+      event.workspaceId !== this.operationWorkspaceId
     )
       return;
     if (!waiting.id) {
@@ -283,9 +324,13 @@ export class ExecutionController {
   private assertCurrent(generation: number): void {
     if (generation !== this.generation) throw new Cancelled();
   }
-  private async perform(work: (generation: number) => Promise<void>): Promise<void> {
+  private async perform(
+    work: (generation: number) => Promise<void>,
+    owner = this.workspaceId,
+  ): Promise<void> {
     if (this.working) return;
     this.working = true;
+    this.operationWorkspaceId = owner;
     const generation = this.generation;
     this.update({ error: undefined });
     try {
@@ -310,13 +355,15 @@ export class ExecutionController {
       }
     } finally {
       this.working = false;
-      this.update({});
+      this.operationWorkspaceId = this.pendingRun?.workspaceId;
+      this.publish();
     }
   }
   async run(request: ExecutionRequest): Promise<void> {
     if (this.locked || request.workspaceId !== this.workspaceId) return;
     if (!this.state.session) {
       this.pendingRun = request;
+      this.operationWorkspaceId = request.workspaceId;
       this.update({ error: undefined });
       this.phase("awaitingDevice");
       return;
@@ -339,7 +386,7 @@ export class ExecutionController {
         this.assertCurrent(generation);
         await this.runVersion(generation);
       }
-    });
+    }, request.workspaceId);
   }
   async connect(target: DeviceDescriptor | string): Promise<void> {
     if (this.working || this.state.session) return;
@@ -362,13 +409,13 @@ export class ExecutionController {
         deployed: undefined,
       });
       this.log("connected");
-    });
+    }, this.pendingRun?.workspaceId ?? this.workspaceId);
     const pending = this.pendingRun;
     // Connection failures clear the intent: retries never run a robot unexpectedly.
     this.pendingRun = undefined;
-    if (pending && this.state.session && pending.workspaceId === this.workspaceId)
-      await this.run(pending);
-    else this.update({});
+    this.operationWorkspaceId = undefined;
+    if (pending && this.state.session) await this.buildAndMaybeRun(pending, true);
+    else this.publish();
   }
   async disconnect(): Promise<void> {
     const session = this.state.session;
@@ -398,7 +445,12 @@ export class ExecutionController {
   }
   private async runVersion(generation: number): Promise<void> {
     const { session, deployed } = this.state;
-    if (!session || !deployed || deployed.sessionId !== session.id)
+    if (
+      !session ||
+      !deployed ||
+      deployed.sessionId !== session.id ||
+      deployed.workspaceId !== this.operationWorkspaceId
+    )
       throw new Error("Upload a program to this EV3 first.");
     this.phase("running");
     await this.api.device.run(session.id, deployed.path);
@@ -406,12 +458,14 @@ export class ExecutionController {
     this.log("runSent");
   }
   async upload(): Promise<void> {
-    const version = this.state.successfulBuild;
-    if (this.locked || !version || !this.state.session) return;
+    const version = this.snapshot.successfulBuild;
+    if (this.locked || !version || version.workspaceId !== this.workspaceId || !this.state.session)
+      return;
     await this.perform((generation) => this.deploy(version, generation));
   }
   async runDeployed(): Promise<void> {
-    if (this.locked || !this.state.deployed) return;
+    if (this.locked || !this.state.deployed || this.state.deployed.workspaceId !== this.workspaceId)
+      return;
     await this.perform((generation) => this.runVersion(generation));
   }
   async stop(): Promise<void> {
@@ -426,7 +480,7 @@ export class ExecutionController {
   }
   async deleteDeployed(): Promise<void> {
     const { session, deployed } = this.state;
-    if (this.locked || !session || !deployed) return;
+    if (this.locked || !session || !deployed || deployed.workspaceId !== this.workspaceId) return;
     await this.perform(async (generation) => {
       this.phase("deleting");
       await this.api.device.delete(session.id, deployed.path);

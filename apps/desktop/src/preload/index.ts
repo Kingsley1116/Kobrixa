@@ -19,6 +19,17 @@ const api: KobrixaApi = {
   },
   keyboard: { updateContext: (context) => ipcRenderer.invoke("keyboard:context", context) },
   workspace: {
+    restoreSession: () => ipcRenderer.invoke("workspace:restore-session"),
+    saveSession: (state) => ipcRenderer.invoke("workspace:save-session", state),
+    close: (workspaceId) => ipcRenderer.invoke("workspace:close", workspaceId),
+    onBeforeClose: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, requestId: string) => listener(requestId);
+      ipcRenderer.on("workspace:before-close", handler);
+      void ipcRenderer.invoke("workspace:renderer-ready").catch(() => undefined);
+      return () => ipcRenderer.removeListener("workspace:before-close", handler);
+    },
+    finishClose: (requestId, ready) =>
+      ipcRenderer.invoke("workspace:finish-close", requestId, ready),
     open: () => ipcRenderer.invoke("workspace:open"),
     create: (name) => ipcRenderer.invoke("workspace:create", name),
     selectEntry: (workspaceId, entry) =>

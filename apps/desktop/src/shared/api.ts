@@ -16,12 +16,39 @@ export interface WorkspaceSummary {
   id: string;
   name: string;
   rootLabel: string;
+  /** Display-only location; filesystem access still uses the registered id. */
+  locationLabel?: string;
   files: string[];
   entries: WorkspaceEntry[];
   manifest?: ProjectManifest;
   implicit: boolean;
   entryCandidates: string[];
   drafts: Record<string, string>;
+}
+
+export interface EditorLocation {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  scrollTop: number;
+  scrollLeft: number;
+}
+export interface WorkspaceView {
+  workspaceId: string;
+  files: string[];
+  activeFile?: string | undefined;
+  selectedTreePath: string;
+  expandedTreePaths: string[];
+  locations: Record<string, EditorLocation>;
+}
+export interface WorkspaceSessionState {
+  projects: WorkspaceView[];
+  activeWorkspaceId?: string | undefined;
+}
+export interface RestoredWorkspaceSession extends WorkspaceSessionState {
+  workspaces: WorkspaceSummary[];
+  issues: string[];
 }
 
 export interface WorkspaceEntry {
@@ -114,6 +141,11 @@ export interface KobrixaApi {
   updates: UpdatesApi;
   keyboard: { updateContext(context: KeyboardContext): Promise<void> };
   workspace: {
+    restoreSession(): Promise<RestoredWorkspaceSession>;
+    saveSession(state: WorkspaceSessionState): Promise<void>;
+    close(workspaceId: string): Promise<void>;
+    onBeforeClose(listener: (requestId: string) => void): () => void;
+    finishClose(requestId: string, ready: boolean): Promise<void>;
     open(): Promise<WorkspaceSummary | undefined>;
     create(name: string): Promise<WorkspaceSummary | undefined>;
     selectEntry(workspaceId: string, entry: string): Promise<WorkspaceSummary>;

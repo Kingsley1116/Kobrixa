@@ -217,7 +217,8 @@ export class UpdateOperationGate {
     const service = this.service();
     if (
       service?.installing ||
-      (service?.preparing && !["workspace:write", "workspace:save-draft"].includes(channel))
+      (service?.preparing &&
+        !["workspace:write", "workspace:save-draft", "workspace:save-session"].includes(channel))
     )
       throw new Error("busy");
     this.active++;

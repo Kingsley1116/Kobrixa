@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app, dialog, shell } from "electron";
 import { loadProject, resolveInside, type SourceProject } from "@kobrixa/compiler";
@@ -7,7 +7,14 @@ import type {
   WorkspaceEntry,
   WorkspaceMutationResult,
   WorkspaceSummary,
+  WorkspaceSessionState,
+  RestoredWorkspaceSession,
 } from "../../shared/api.js";
+import {
+  storedWorkspaceSessionSchema,
+  workspaceSessionSchema,
+  workspaceViewSchema,
+} from "../../shared/workspace-session.js";
 
 export interface WorkspaceProjectInput {
   inputPath: string;
@@ -44,10 +51,74 @@ export class WorkspaceService {
   readonly #records = new Map<string, WorkspaceRecord>();
   readonly #userDataPath: () => string;
   readonly #trashItem: (target: string) => Promise<void>;
+  private sessionWrites: Promise<void> = Promise.resolve();
 
   constructor(dependencies: WorkspaceDependencies = {}) {
     this.#userDataPath = dependencies.userDataPath ?? (() => app.getPath("userData"));
     this.#trashItem = dependencies.trashItem ?? ((target) => shell.trashItem(target));
+  }
+
+  async restoreSession(): Promise<RestoredWorkspaceSession> {
+    await this.sessionWrites;
+    const result: RestoredWorkspaceSession = { projects: [], workspaces: [], issues: [] };
+    let stored;
+    try {
+      stored = storedWorkspaceSessionSchema.parse(
+        JSON.parse(
+          await readFile(path.join(this.#userDataPath(), "workspace-session.json"), "utf8"),
+        ),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        result.issues.push("Unable to restore the previous session. / 無法恢復上次的工作狀態。");
+      return result;
+    }
+    for (const view of stored.projects) {
+      try {
+        const workspace = await this.register(view.inputPath, view.selectedEntry);
+        if (result.workspaces.some((item) => item.id === workspace.id)) continue;
+        result.workspaces.push(workspace);
+        result.projects.push(workspaceViewSchema.parse({ ...view, workspaceId: workspace.id }));
+        if (view.workspaceId === stored.activeWorkspaceId) result.activeWorkspaceId = workspace.id;
+      } catch {
+        result.issues.push(`Unable to reopen / 無法重新開啟：${view.inputPath}`);
+      }
+    }
+    result.activeWorkspaceId ??= result.workspaces[0]?.id;
+    return result;
+  }
+
+  saveSession(value: WorkspaceSessionState): Promise<void> {
+    const state = workspaceSessionSchema.parse(value);
+    const projects = state.projects.map((view) => {
+      const record = this.require(view.workspaceId);
+      return {
+        ...view,
+        inputPath: record.inputPath,
+        ...(record.selectedEntry ? { selectedEntry: record.selectedEntry } : {}),
+      };
+    });
+    if (new Set(projects.map((item) => item.workspaceId)).size !== projects.length)
+      return Promise.reject(new Error("Duplicate workspace in session."));
+    if (
+      state.activeWorkspaceId &&
+      !projects.some((item) => item.workspaceId === state.activeWorkspaceId)
+    )
+      return Promise.reject(new Error("Active workspace is not open."));
+    const content = JSON.stringify({ version: 1, ...state, projects });
+    const write = this.sessionWrites
+      .catch(() => undefined)
+      .then(async () => {
+        await mkdir(this.#userDataPath(), { recursive: true });
+        await this.atomicWrite(path.join(this.#userDataPath(), "workspace-session.json"), content);
+      });
+    this.sessionWrites = write.catch(() => undefined);
+    return write;
+  }
+
+  close(id: string): void {
+    this.require(id);
+    this.#records.delete(id);
   }
 
   async open(): Promise<WorkspaceSummary | undefined> {
@@ -282,13 +353,28 @@ export class WorkspaceService {
     return result.project;
   }
 
-  private async register(inputPath: string): Promise<WorkspaceSummary> {
+  private async register(inputPath: string, selectedEntry?: string): Promise<WorkspaceSummary> {
+    inputPath = await realpath(inputPath);
     const loaded = await loadProject(inputPath);
     const statRoot =
-      loaded.project?.root ?? (path.extname(inputPath) ? path.dirname(inputPath) : inputPath);
-    const record: WorkspaceRecord = { id: randomUUID(), inputPath, root: statRoot };
+      loaded.project?.root ??
+      ((await lstat(inputPath)).isDirectory() ? inputPath : path.dirname(inputPath));
+    const root = await realpath(statRoot);
+    const existing = [...this.#records.values()].find((record) => record.root === root);
+    if (existing) return this.summary(existing);
+    const record: WorkspaceRecord = {
+      id: randomUUID(),
+      inputPath,
+      root,
+      ...(selectedEntry ? { selectedEntry } : {}),
+    };
     this.#records.set(record.id, record);
-    return this.summary(record);
+    try {
+      return await this.summary(record);
+    } catch (error) {
+      this.#records.delete(record.id);
+      throw error;
+    }
   }
 
   private async summary(record: WorkspaceRecord): Promise<WorkspaceSummary> {
@@ -301,6 +387,7 @@ export class WorkspaceService {
       id: record.id,
       name: manifest?.name ?? path.basename(record.root),
       rootLabel: path.basename(record.root),
+      locationLabel: record.root,
       files,
       entries,
       ...(manifest ? { manifest } : {}),

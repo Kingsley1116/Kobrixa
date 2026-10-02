@@ -8,6 +8,8 @@ Coverage includes the complete Chinese command catalog, bilingual search, langua
 
 The renderer fixtures in `apps/desktop/tests` are development-only and excluded by desktop packaging. This test does not replace platform packaging or the EV3 hardware matrix.
 
+`projects-smoke.mjs` exercises three projects with identical relative filenames: tab switching, keyboard focus, retained undo/redo, cursor and scrolling, delayed writes, background and focus-change automatic saving, background builds, failed close-save, cancel/discard, recovery after reload, and saving inactive projects before updating. It also verifies that a failed quit-time draft flush keeps the window open. Run just these scenarios with `KOBRIXA_SMOKE_PROJECTS_ONLY=1 pnpm test:desktop:smoke`. The packaged smoke test additionally seeds three real projects, types immediately before quitting, and checks draft recovery after restarting the actual packaged main/preload/renderer.
+
 `components-smoke.mjs` also exercises shared UI components in the real application: form submission and Tab trapping, unsaved-tab and delete confirmations, focus restoration, closable file/settings tabs, settings labels and keyboard controls, menu navigation across disabled items, and resizing all three panels with bounds, reset, blur, cancellation and hidden-panel cleanup.
 
 `highlighting-smoke.mjs` verifies real Monarch tokenization and semantic token rendering with a cross-file project, Dark+/Light+ colors on the existing backgrounds, dependency edits, undo, unterminated-string recovery, and JSON isolation. Screenshots are retained with the other artifacts when `KOBRIXA_SMOKE_KEEP_ARTIFACTS=1`.

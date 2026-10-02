@@ -31,6 +31,8 @@ The editor and compiler must work offline. Wi-Fi is used for communication with 
 
 - Open a folder, a `kobrixa.json` project, or a standalone `.bp` file.
 - Edit multiple project files without losing unsaved work.
+- Switch between project tabs while retaining file tabs, drafts, cursor and scroll positions, and undo history for the current app session. Arrow keys and Home/End navigate the project tab strip.
+- Edit other projects during a build or upload while EV3 operations remain serialized. Closing a project offers save, discard and cancel; quitting retains the session so projects and drafts reopen automatically.
 - Provide syntax highlighting, bracket matching, go-to-diagnostic, basic completion, and formatting for supported `.bp` syntax.
 - Show build and device status without hiding detailed diagnostics.
 

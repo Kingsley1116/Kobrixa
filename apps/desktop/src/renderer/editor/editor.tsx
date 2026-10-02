@@ -1,3 +1,4 @@
+import { EditorModels } from "./editor-models.js";
 import { completionWidget } from "./completion-widget.js";
 import type { CompletionSession } from "./completion-session.js";
 import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
@@ -92,6 +93,7 @@ export interface EditorFocusTarget {
 }
 
 export interface EditorHandle {
+  captureView(): void;
   applySavedFormat(file: string, before: string, after: string): void;
   focus(): void;
   format(): Promise<void>;
@@ -105,6 +107,9 @@ export interface EditorAnalysis {
 }
 
 interface EditorProps {
+  retainedModels?: EditorModels;
+  focusOnMount?: boolean;
+  onViewChange?(): void;
   documents: Documents;
   analysisSession: AnalysisSession;
   completionSession?: CompletionSession;
@@ -154,6 +159,9 @@ function toMonacoRange(range: Diagnostic["range"]): monaco.Range {
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   {
     file,
+    retainedModels,
+    focusOnMount = true,
+    onViewChange,
     documents,
     analysisSession,
     completionSession,
@@ -181,8 +189,21 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const [semanticTokens] = useState(() => new BasicPlusSemanticTokens());
   const container = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
-  const models = useRef(new Map<string, monaco.editor.ITextModel>());
-  const viewStates = useRef(new Map<string, monaco.editor.ICodeEditorViewState>());
+  const [ownedModels] = useState(() => retainedModels ?? new EditorModels());
+  const models = useRef(ownedModels.models);
+  const viewStates = useRef(ownedModels.views);
+  const viewChanged = useRef(onViewChange);
+  viewChanged.current = onViewChange;
+  const captureView = () => {
+    if (
+      activeFile.current &&
+      editor.current?.getModel() &&
+      !editor.current.getModel()!.isDisposed()
+    ) {
+      ownedModels.capture(activeFile.current, editor.current);
+      viewChanged.current?.();
+    }
+  };
   const activeFile = useRef<string | undefined>(undefined);
   const applyingValue = useRef(false);
   const composing = useRef(false);
@@ -196,12 +217,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     [...models.current].find(([, item]) => item === model)?.[0];
   const ensureModel = (file: string, content: string): monaco.editor.ITextModel => {
     const existing = models.current.get(file);
-    if (existing) {
-      const buffer = buffers.current.get(existing);
-      if (buffer) documents.bind(file, buffer);
+    if (existing && buffers.current.has(existing)) {
+      documents.bind(file, buffers.current.get(existing)!);
       return existing;
     }
-    const model = monaco.editor.createModel(content, languageFor(file), modelUri(file));
+    const model = existing ?? monaco.editor.createModel(content, languageFor(file), modelUri(file));
     models.current.set(file, model);
     modelSnapshots.bind(model, file, content);
     const snapshot = analysisSession.getCurrent();
@@ -264,12 +284,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     const validated = model.validateRange(toMonacoRange(range));
     instance.setSelection(validated);
     instance.revealRangeInCenter(validated, monaco.editor.ScrollType.Smooth);
-    instance.focus();
+    if (focusOnMount) instance.focus();
   };
 
   useImperativeHandle(
     handleRef,
     () => ({
+      captureView,
       applySavedFormat: (file, before, after) => {
         const model = models.current.get(file);
         if (!model || model.getValue(undefined, true) !== before || before === after) return;
@@ -290,6 +311,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       },
       reveal,
       remapFiles: (moved) => {
+        ownedModels.remap(moved);
         features.current?.update(undefined);
         const instance = editor.current;
         const currentFile = activeFile.current;
@@ -474,10 +496,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         })
       : undefined;
     instance.focus();
-    const cursorSubscription = instance.onDidChangeCursorPosition(({ position }) =>
-      onCursorChangeRef.current({ line: position.lineNumber, column: position.column }),
-    );
+    const cursorSubscription = instance.onDidChangeCursorPosition(({ position }) => {
+      onCursorChangeRef.current({ line: position.lineNumber, column: position.column });
+      captureView();
+    });
+    const scrollSubscription = instance.onDidScrollChange(captureView);
     return () => {
+      captureView();
+      scrollSubscription.dispose();
       compositionStart?.dispose();
       compositionEnd?.dispose();
       disposeKeyboard?.();
@@ -494,8 +520,17 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       semanticRegistration.dispose();
       semanticTokens.dispose();
       instance.dispose();
-      for (const [file, model] of models.current) disposeModel(file, model);
-      viewStates.current.clear();
+      for (const [file, model] of models.current) {
+        completionSession?.unbind(file, model);
+        documents.unbind(file);
+        modelSubscriptions.current.get(model)?.dispose();
+        modelSnapshots.unbind(model);
+      }
+      buffers.current.clear();
+      modelSubscriptions.current.clear();
+      activeFile.current = undefined;
+      editor.current = undefined;
+      if (!retainedModels) ownedModels.dispose();
     };
   }, []);
 
@@ -507,12 +542,34 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       const state = instance.saveViewState();
       if (state) viewStates.current.set(previousFile, state);
     }
+    captureView();
+    const restoredLocation = ownedModels.locations[file];
+    for (const openFile of documents.getOpenFiles()) {
+      if (models.current.has(openFile)) ensureModel(openFile, documents.reader(openFile)());
+    }
     const model = ensureModel(file, documents.reader(file)());
     model.updateOptions({ tabSize: indentSize, indentSize, insertSpaces: true });
+    const savedState = viewStates.current.get(file);
     activeFile.current = file;
     instance.setModel(model);
-    const savedState = viewStates.current.get(file);
     if (savedState) instance.restoreViewState(savedState);
+    else {
+      const location = restoredLocation;
+      if (location) {
+        instance.setSelection(
+          new monaco.Selection(
+            location.line,
+            location.column,
+            location.endLine,
+            location.endColumn,
+          ),
+        );
+        instance.setScrollPosition({
+          scrollTop: location.scrollTop,
+          scrollLeft: location.scrollLeft,
+        });
+      }
+    }
     const position = instance.getPosition();
     if (position) onCursorChangeRef.current({ line: position.lineNumber, column: position.column });
   }, [file]);

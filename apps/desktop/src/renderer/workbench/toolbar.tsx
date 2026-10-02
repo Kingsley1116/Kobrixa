@@ -15,6 +15,7 @@ export function Toolbar({
   onSaveAll,
   name,
   locked,
+  projectLocked = locked,
   canSave,
   deviceLocked,
   state,
@@ -37,6 +38,7 @@ export function Toolbar({
   onSaveAll(): void;
   name: string | undefined;
   locked: boolean;
+  projectLocked?: boolean;
   canSave: boolean;
   deviceLocked: boolean;
   state: ExecutionState;
@@ -65,10 +67,10 @@ export function Toolbar({
         {name ?? t.workspace}
       </div>
       <nav className="file-actions" aria-label={t.files}>
-        <button disabled={locked} title={hint(t.newProject, "newProject")} onClick={onNew}>
+        <button disabled={projectLocked} title={hint(t.newProject, "newProject")} onClick={onNew}>
           <Icon name="plus" />
         </button>
-        <button disabled={locked} title={hint(t.open, "openProject")} onClick={onOpen}>
+        <button disabled={projectLocked} title={hint(t.open, "openProject")} onClick={onOpen}>
           <Icon name="folder" />
         </button>
         {name && (

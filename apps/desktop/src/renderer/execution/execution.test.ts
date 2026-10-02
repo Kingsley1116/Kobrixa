@@ -202,7 +202,7 @@ describe("execution flow", () => {
     await build;
     expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("current");
   });
-  it("clears project versions and ignores late completion after switching workspace", async () => {
+  it("keeps a background build running and restores its result when returning", async () => {
     const h = setup();
     h.api.build.start.mockResolvedValueOnce("old");
     const build = h.controller.build(h.request);
@@ -212,6 +212,47 @@ describe("execution flow", () => {
     await build;
     expect(h.controller.getSnapshot().successfulBuild).toBeUndefined();
     expect(h.controller.getSnapshot().diagnostics).toEqual([]);
+    h.controller.setWorkspace("w1");
+    expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("old");
+    expect(h.api.build.cancel).not.toHaveBeenCalled();
+  });
+  it("finishes upload and run for A while B is selected, and never exposes A's deployed command to B", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    const upload = deferred<void>();
+    h.api.device.deploy.mockImplementationOnce(() => upload.promise);
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("uploading"));
+    h.controller.setWorkspace("w2");
+    expect(h.controller.editingLockedFor("w1")).toBe(true);
+    expect(h.controller.editingLockedFor("w2")).toBe(false);
+    expect(() => h.controller.forgetWorkspace("w1")).toThrow("in progress");
+    upload.resolve();
+    await run;
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+    expect(h.controller.getSnapshot().deployed).toBeUndefined();
+    await h.controller.runDeployed();
+    await h.controller.deleteDeployed();
+    await h.controller.upload();
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+    expect(h.api.device.delete).not.toHaveBeenCalled();
+    h.controller.setWorkspace("w1");
+    expect(h.controller.getSnapshot().deployed?.workspaceId).toBe("w1");
+  });
+  it("cancels a background build and retains diagnostics on its owning project", async () => {
+    const h = setup();
+    h.api.build.start.mockResolvedValueOnce("background");
+    const build = h.controller.build(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().activeBuildId).toBe("background"));
+    h.controller.setWorkspace("w2");
+    await h.controller.cancelBuild();
+    h.emitBuild({ type: "complete", workspaceId: "w1", buildId: "background", result: failure });
+    await build;
+    expect(h.api.build.cancel).toHaveBeenCalledWith("background");
+    expect(h.controller.getSnapshot().diagnostics).toEqual([]);
+    h.controller.setWorkspace("w1");
+    expect(h.controller.getSnapshot().diagnostics).toEqual(failure.diagnostics);
+    expect(h.controller.getSnapshot().successfulBuild).toBeUndefined();
   });
   it("ignores an old session disconnect but clears a current disconnected session", async () => {
     const h = setup();
@@ -249,7 +290,7 @@ describe("execution flow", () => {
     expect(h.controller.getSnapshot().session?.id).toBe("s1");
     expect(h.controller.locked).toBe(false);
   });
-  it("does not restore a stale build when the start response arrives after project replacement", async () => {
+  it("routes an early completion to the background owner even before start resolves", async () => {
     const h = setup();
     const started = deferred<string>();
     h.api.build.start.mockImplementationOnce(() => started.promise);
@@ -259,10 +300,12 @@ describe("execution flow", () => {
     h.emitBuild({ type: "complete", workspaceId: "w1", buildId: "late", result: failure });
     started.resolve("late");
     await build;
-    expect(h.api.build.cancel).toHaveBeenCalledWith("late");
+    expect(h.api.build.cancel).not.toHaveBeenCalled();
     expect(h.controller.getSnapshot().diagnostics).toEqual([]);
     expect(h.controller.getSnapshot().successfulBuild).toBeUndefined();
     expect(h.controller.getSnapshot().activeBuildId).toBeUndefined();
+    h.controller.setWorkspace("w1");
+    expect(h.controller.getSnapshot().diagnostics).toEqual(failure.diagnostics);
   });
   it("never reports run success from a command completed after disconnection", async () => {
     const h = setup();

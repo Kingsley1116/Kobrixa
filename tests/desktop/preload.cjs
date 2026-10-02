@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld("kobrixa", {
   },
   keyboard: { updateContext: call("keyboard") },
   workspace: {
+    restoreSession: call("restoreSession"),
+    saveSession: call("saveSession"),
+    close: call("closeProject"),
+    finishClose: call("finishClose"),
+    onBeforeClose: (listener) => {
+      const handler = (_event, id) => listener(id);
+      ipcRenderer.on("workspace:before-close", handler);
+      return () => ipcRenderer.removeListener("workspace:before-close", handler);
+    },
     open: call("open"),
     create: call("open"),
     selectEntry: call("open"),
@@ -36,7 +45,11 @@ contextBridge.exposeInMainWorld("kobrixa", {
     start: call("build"),
     cancel: call("cancel"),
     artifacts: async () => [],
-    onEvent: () => () => {},
+    onEvent: (listener) => {
+      const handler = (_event, event) => listener(event);
+      ipcRenderer.on("build:event", handler);
+      return () => ipcRenderer.removeListener("build:event", handler);
+    },
   },
   language: {
     completionSync: call("completionSync"),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
@@ -25,6 +25,28 @@ const executable = path.join(
 await writeFile(
   path.join(profile, "updates.json"),
   JSON.stringify({ enabled: false, channel: "stable" }),
+);
+const projectIds = [1, 2, 3].map((n) => `00000000-0000-4000-8000-00000000000${n}`);
+const inputPaths = projectIds.map((_, i) => path.join(profile, `project-${i + 1}`));
+for (const inputPath of inputPaths) {
+  await mkdir(inputPath);
+  await writeFile(path.join(inputPath, "main.bp"), "LCD.Clear()\n");
+}
+await writeFile(
+  path.join(profile, "workspace-session.json"),
+  JSON.stringify({
+    version: 1,
+    projects: projectIds.map((workspaceId, index) => ({
+      workspaceId,
+      inputPath: inputPaths[index],
+      files: ["main.bp"],
+      activeFile: "main.bp",
+      selectedTreePath: "main.bp",
+      expandedTreePaths: [""],
+      locations: {},
+    })),
+    activeWorkspaceId: projectIds[1],
+  }),
 );
 
 async function launch(check) {
@@ -115,7 +137,12 @@ async function launch(check) {
     await until(() =>
       js('Boolean(window.kobrixa?.updates && document.querySelector(".settings-trigger"))'),
     );
-    await check(js);
+    await until(() =>
+      js(
+        'document.querySelectorAll(".project-tab").length === 3 && Boolean(document.querySelector(".monaco-editor textarea"))',
+      ),
+    );
+    await check(js, send);
     const browser = await connect(endpoint);
     // The browser can exit before delivering a response to this command.
     await browser("Browser.close", {}, false);
@@ -133,7 +160,7 @@ async function launch(check) {
 }
 
 try {
-  await launch(async (js) => {
+  await launch(async (js, send) => {
     const state = await js("window.kobrixa.updates.getState()");
     assert.equal(state.currentVersion, version);
     assert.notEqual(state.reason, "development");
@@ -144,20 +171,47 @@ try {
     await js('document.querySelector(".settings-trigger").click()');
     await pause(250);
     assert.equal(await js('Boolean(document.querySelector("#settings-updates"))'), true);
+    await js('document.querySelector(".settings-tab .tab-close").click()');
+    for (let i = 0; i < 50 && (await js('document.querySelector(".editor-stage").hidden')); i++)
+      await pause(20);
+    await send("Page.bringToFront");
+    await js('document.querySelector(".monaco-editor textarea").focus()');
+    // Quit immediately after typing, before the 400 ms draft debounce.
+    await send("Input.insertText", { text: "' shutdown recovery\n" });
+    await js("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    assert.match(
+      await js('document.querySelector(".view-lines").textContent'),
+      /shutdown.recovery/,
+    );
   });
+  const persisted = JSON.parse(
+    await readFile(path.join(profile, "workspace-session.json"), "utf8"),
+  );
+  assert.equal(persisted.projects.length, 3);
+  assert.equal(
+    persisted.projects.find((item) => item.workspaceId === persisted.activeWorkspaceId).inputPath,
+    await realpath(inputPaths[1]),
+  );
+  assert.equal(await readFile(path.join(inputPaths[1], "main.bp"), "utf8"), "LCD.Clear()\n");
   await launch(async (js) => {
     assert.deepEqual((await js("window.kobrixa.updates.getState()")).preferences, {
       enabled: false,
       channel: "preview",
     });
     assert.equal(await js('localStorage.getItem("kobrixa-packaged-smoke")'), "retained");
+    await pause(250);
+    assert.match(
+      await js('document.querySelector(".view-lines").textContent'),
+      /shutdown.recovery/,
+    );
+    assert.equal(await js('document.querySelectorAll(".project-tab .dirty").length'), 1);
   });
   assert.deepEqual(JSON.parse(await readFile(path.join(profile, "updates.json"), "utf8")), {
     enabled: false,
     channel: "preview",
   });
   console.log(
-    "Packaged application: shipped runtime loads, update IPC works, normal quit and profile persistence pass.",
+    "Packaged application: shipped runtime, update IPC, three-project restore and immediate-quit draft recovery pass.",
   );
 } finally {
   await rm(profile, { recursive: true, force: true });

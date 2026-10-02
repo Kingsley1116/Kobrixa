@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => {
       return { dispose: vi.fn() };
     }),
     getValue: model.getValue,
+    getModel: vi.fn(),
+    onDidScrollChange: vi.fn(() => ({ dispose: vi.fn() })),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     saveViewState: vi.fn(),
     setModel: vi.fn(),

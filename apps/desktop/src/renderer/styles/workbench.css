@@ -2688,3 +2688,76 @@ footer {
   background: var(--raised);
   box-shadow: 0 4px 20px #0003;
 }
+
+/* One header contains project tabs and notices without stealing the editor's grid row. */
+.app-shell,
+.app-shell.has-settings-error {
+  grid-template-rows: auto minmax(0, 1fr) calc(30px * var(--ui-scale));
+}
+.workbench-header {
+  min-width: 0;
+}
+.project-tabs {
+  display: flex;
+  overflow-x: auto;
+  min-width: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  gap: 3px;
+}
+.project-tab {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 2px solid transparent;
+  max-width: 320px;
+}
+.project-tab.active {
+  border-bottom-color: var(--accent);
+  background: var(--editor);
+}
+.project-tab-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+}
+.project-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-tab-close {
+  border: 0;
+  background: transparent;
+  padding: 4px 7px;
+  margin-right: 3px;
+}
+.project-phase {
+  color: var(--accent);
+  font-size: var(--font-small);
+  white-space: nowrap;
+}
+.project-operation,
+.session-issues {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 18px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-small);
+}
+.session-issues {
+  color: var(--warning);
+}
+.session-issues > span {
+  flex: 1;
+  white-space: pre-line;
+  overflow: auto;
+  max-height: 100px;
+}

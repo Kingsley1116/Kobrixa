@@ -8,6 +8,7 @@ import type { BuildService } from "./workspace/build.js";
 import type { DeviceService } from "./device/device.js";
 import type { LanguageService } from "./language/language.js";
 import type { WorkspaceService } from "./workspace/workspace.js";
+import { workspaceSessionSchema } from "../shared/workspace-session.js";
 
 const id = z.string().uuid();
 const file = z
@@ -54,6 +55,8 @@ export function registerIpc(
   devices: DeviceService,
   updates: UpdateService,
   operationGate: UpdateOperationGate,
+  finishClose: (requestId: string, ready: boolean) => void = () => {},
+  rendererReady: () => void = () => {},
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -100,6 +103,17 @@ export function registerIpc(
     setKeyboardContext(event.sender, context);
   });
   handle("workspace:open", () => workspaces.open());
+  handle("workspace:renderer-ready", rendererReady);
+  handle("workspace:restore-session", () => workspaces.restoreSession());
+  handle("workspace:save-session", (_event, state: unknown) =>
+    workspaces.saveSession(workspaceSessionSchema.parse(state)),
+  );
+  handle("workspace:close", (_event, workspaceId: unknown) =>
+    workspaces.close(id.parse(workspaceId)),
+  );
+  handle("workspace:finish-close", (_event, requestId: unknown, ready: unknown) =>
+    finishClose(id.parse(requestId), z.boolean().parse(ready)),
+  );
   handle("workspace:create", (_event, name: unknown) =>
     workspaces.create(z.string().min(1).max(80).parse(name)),
   );
