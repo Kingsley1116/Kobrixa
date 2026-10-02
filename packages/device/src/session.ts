@@ -59,15 +59,31 @@ function systemStatusMessage(status: number): string {
 export class EV3DeviceSession implements DeviceSession {
   connected = true;
   #operation: Promise<unknown> | undefined;
+  private readonly disconnectListeners = new Set<(error: Error) => void>();
+  private readonly unsubscribeConnection: (() => void) | undefined;
+  private closed = false;
 
   constructor(
     readonly descriptor: DeviceDescriptor,
     private readonly connection: Ev3Connection,
-  ) {}
+  ) {
+    this.unsubscribeConnection = connection.onDisconnect?.((error) => {
+      this.connected = false;
+      for (const listener of this.disconnectListeners) listener(error);
+    });
+  }
+
+  onDisconnect(listener: (error: Error) => void): () => void {
+    this.disconnectListeners.add(listener);
+    return () => this.disconnectListeners.delete(listener);
+  }
 
   async disconnect(): Promise<void> {
-    if (!this.connected) return;
+    if (this.closed) return;
+    this.closed = true;
     this.connected = false;
+    this.unsubscribeConnection?.();
+    this.disconnectListeners.clear();
     await this.connection.close();
   }
 

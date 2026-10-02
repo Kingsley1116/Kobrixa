@@ -153,14 +153,15 @@ describe("execution flow", () => {
     expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("b1");
     expect(h.controller.getSnapshot().diagnostics).toEqual(failure.diagnostics);
   });
-  it("does not send run after a partial upload failure and clears deployment", async () => {
+  it("does not run after a partial upload failure, but leaves connection ownership to the service", async () => {
     const h = setup();
     await h.controller.connect(usb);
-    h.api.device.deploy.mockRejectedValueOnce(new Error("Cable removed"));
+    h.api.device.deploy.mockRejectedValueOnce(new Error("EV3 rejected the upload"));
     await h.controller.run(h.request);
     expect(h.api.device.run).not.toHaveBeenCalled();
     expect(h.controller.getSnapshot().deployed).toBeUndefined();
-    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.controller.getSnapshot().session?.id).toBe("s1");
+    expect(h.api.device.disconnect).not.toHaveBeenCalled();
   });
   it("serializes double clicks, including the saving stage", async () => {
     const h = setup();
@@ -338,6 +339,131 @@ describe("execution flow", () => {
     await h.controller.run(h.request);
     await h.controller.deleteDeployed();
     expect(h.api.device.delete).toHaveBeenCalledWith("s1", "/robot/demo.rbf");
+    expect(h.controller.getSnapshot().deployed).toBeUndefined();
+  });
+});
+
+describe("USB recovery state", () => {
+  const waiting = {
+    type: "usb-recovery",
+    state: "waiting",
+    previousSessionId: "s1",
+    descriptor: usb,
+  } as const;
+  const recovered = {
+    type: "usb-recovery",
+    state: "restored",
+    previousSessionId: "s1",
+    sessionId: "s3",
+    descriptor: usb,
+    deployment: "verified",
+    buildId: "b1",
+  } as const;
+
+  it("restores a verified uploaded version without automatically running or blocking local builds", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    await h.controller.run(h.request);
+    h.emitDevice(waiting);
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.controller.getSnapshot().deployed).toBeUndefined();
+    expect(h.controller.getSnapshot().recovery?.state).toBe("waiting");
+    expect(h.controller.getSnapshot().phase).toBe("idle");
+    expect(h.controller.locked).toBe(false);
+    await h.controller.run(h.request);
+    await h.controller.runDeployed();
+    await h.controller.stop();
+    await h.controller.upload();
+    expect(h.api.device.run).toHaveBeenCalledTimes(1);
+    await h.controller.build(h.request);
+    expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("b2");
+    h.emitDevice({ ...waiting, state: "connecting" });
+    h.emitDevice(recovered);
+    expect(h.controller.getSnapshot().deployed).toMatchObject({ buildId: "b1", sessionId: "s3" });
+    expect(h.api.device.run).toHaveBeenCalledTimes(1);
+    await h.controller.runDeployed();
+    expect(h.api.device.run).toHaveBeenLastCalledWith("s3", "/robot/demo.rbf");
+  });
+
+  it("keeps a pure local build running across unplug and reconnect", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    const saved = deferred<void>();
+    h.request.saveAll.mockReturnValueOnce(saved.promise);
+    const build = h.controller.build(h.request);
+    h.emitDevice(waiting);
+    h.emitDevice({ ...recovered, deployment: "none" });
+    saved.resolve();
+    await build;
+    expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("b1");
+    expect(h.api.build.cancel).not.toHaveBeenCalled();
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().session?.id).toBe("s3");
+  });
+
+  it("does not resume a Run chain interrupted while building or deploying", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    const upload = deferred<void>();
+    h.api.device.deploy.mockReturnValueOnce(upload.promise);
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("uploading"));
+    h.emitDevice(waiting);
+    h.emitDevice(recovered);
+    upload.resolve();
+    await run;
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.api.device.disconnect).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().deployed).toBeUndefined();
+    expect(h.controller.getSnapshot().session?.id).toBe("s3");
+    expect(h.controller.locked).toBe(false);
+  });
+
+  it("cancels a Run build without cancelling a replacement session", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.build.start.mockResolvedValueOnce("pending");
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().activeBuildId).toBe("pending"));
+    h.emitDevice(waiting);
+    h.emitDevice(recovered);
+    await run;
+    expect(h.api.build.cancel).toHaveBeenCalledWith("pending");
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().session?.id).toBe("s3");
+  });
+
+  it("ignores a restored event arriving after cancellation and stale old-session events", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.emitDevice(waiting);
+    const cancelled = deferred<void>();
+    h.api.device.disconnect.mockReturnValueOnce(cancelled.promise);
+    const cancellation = h.controller.disconnect();
+    h.emitDevice(recovered);
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.controller.getSnapshot().recovery).toBeUndefined();
+    cancelled.resolve();
+    await cancellation;
+    await h.controller.connect("192.168.0.2");
+    h.emitDevice(waiting);
+    h.emitDevice(recovered);
+    expect(h.controller.getSnapshot().session?.id).toBe("s2");
+  });
+
+  it("does not restore changed files or a closed project's uploaded version", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    await h.controller.run(h.request);
+    h.emitDevice(waiting);
+    h.emitDevice({ ...recovered, deployment: "changed" });
+    expect(h.controller.getSnapshot().deployed).toBeUndefined();
+    expect(h.controller.getSnapshot().connectionNotice).toBe("upload-required");
+    await h.controller.runDeployed();
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+    h.emitDevice({ ...waiting, previousSessionId: "s3" });
+    h.controller.forgetWorkspace("w1");
+    h.emitDevice({ ...recovered, previousSessionId: "s3", sessionId: "s4" });
     expect(h.controller.getSnapshot().deployed).toBeUndefined();
   });
 });

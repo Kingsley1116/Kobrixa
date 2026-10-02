@@ -90,12 +90,18 @@ export function Toolbar({
               <span className="status-dot" />
               EV3{" "}
               <span className="connection-label">
-                {state.session ? t.connectionStates.connected : t.connectionStates.disconnected}
+                {state.recovery
+                  ? state.recovery.state === "waiting"
+                    ? t.connectionStates.waiting
+                    : t.connectionStates.reconnecting
+                  : state.session
+                    ? t.connectionStates.connected
+                    : t.connectionStates.disconnected}
               </span>
             </button>
             <button
               className="primary run-button"
-              disabled={deviceLocked}
+              disabled={deviceLocked || Boolean(state.recovery)}
               title={hint(t.runOnDevice, "run")}
               onClick={onRun}
             >

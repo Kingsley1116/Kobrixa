@@ -118,6 +118,21 @@ void app.whenReady().then(async () => {
   });
   app.on("window-all-closed", () => language.cancel());
   const devices = new DeviceService(builds, renderer);
+  app.on("will-quit", () => {
+    void devices.reset();
+  });
+  app.on("web-contents-created", (_event, contents) => {
+    if (contents.getType() !== "window") return;
+    contents.on("destroyed", () => {
+      void devices.reset();
+    });
+    contents.on("render-process-gone", () => {
+      void devices.reset();
+    });
+    contents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+      if (isMainFrame) void devices.reset();
+    });
+  });
   const operationGate = new UpdateOperationGate(() => updates);
   updates = await createUpdateService(
     renderer,

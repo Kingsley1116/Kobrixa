@@ -35,6 +35,7 @@ export type TransferProgress = (transferred: number, total: number) => void;
 export interface DeviceSession {
   readonly descriptor: DeviceDescriptor;
   readonly connected: boolean;
+  onDisconnect?(listener: (error: Error) => void): () => void;
   disconnect(): Promise<void>;
   upload(remotePath: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
   list(directory: string, signal: AbortSignal): Promise<RemoteEntry[]>;
@@ -59,6 +60,7 @@ export interface DeviceSession {
 }
 
 export interface Ev3Connection {
+  onDisconnect?(listener: (error: Error) => void): () => void;
   exchange(payload: Uint8Array, signal: AbortSignal, timeoutMs?: number): Promise<Uint8Array>;
   transmit(payload: Uint8Array, signal: AbortSignal): Promise<void>;
   close(): Promise<void>;

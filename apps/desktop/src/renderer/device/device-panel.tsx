@@ -49,26 +49,41 @@ export function DevicePanel({
           <Icon name="device" />
         </div>
         <div>
-          <strong>{state.session?.name ?? "LEGO MINDSTORMS"}</strong>
+          <strong>{state.session?.name ?? state.recovery?.name ?? "LEGO MINDSTORMS"}</strong>
           <span>{state.session ? state.session.transport.toUpperCase() : "EV3"}</span>
         </div>
       </div>
       <div className={`connection-banner ${state.session ? "is-connected" : ""}`}>
         <span className="status-dot" />
-        {state.session
-          ? t.connectionStates.connected
-          : state.phase === "connecting"
-            ? t.connectionStates.connecting
-            : t.connectionStates.disconnected}
+        {state.recovery
+          ? state.recovery.state === "waiting"
+            ? t.connectionStates.waiting
+            : t.connectionStates.reconnecting
+          : state.session
+            ? t.connectionStates.connected
+            : state.phase === "connecting"
+              ? t.connectionStates.connecting
+              : t.connectionStates.disconnected}
       </div>
-      <p className="panel-hint">{state.session ? t.connectionReady : t.connectionHint}</p>
+      <p className="panel-hint">
+        {state.recovery ? t.recoveryHint : state.session ? t.connectionReady : t.connectionHint}
+      </p>
+      {state.connectionNotice && (
+        <p className="panel-hint" role="status">
+          {state.connectionNotice === "manual-required" ? t.manualReconnect : t.uploadRequired}
+        </p>
+      )}
       {state.phase === "awaitingDevice" && (
         <div className="pending-run">
           <p>{t.connectionRequired}</p>
           <button onClick={onCancel}>{t.cancel}</button>
         </div>
       )}
-      {!state.session ? (
+      {state.recovery ? (
+        <button className="wide" onClick={onDisconnect}>
+          {t.cancelRecovery}
+        </button>
+      ) : !state.session ? (
         <>
           <div className="connection-method" role="group" aria-label={t.mode}>
             <button
@@ -141,7 +156,9 @@ export function DevicePanel({
               "deleting",
               "disconnecting",
               "idle",
-            ].includes(state.error.phase)
+            ].includes(state.error.phase) &&
+            !state.recovery &&
+            !state.session
               ? t.reconnectHint
               : t.errorHint}
           </p>

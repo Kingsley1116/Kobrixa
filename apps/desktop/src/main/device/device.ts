@@ -1,22 +1,41 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { WebContents } from "electron";
 import {
   DeviceOperationError,
   managedPath,
+  REMOTE_PROJECT_ROOT,
   remoteChild,
   UsbTransport,
   WiFiTransport,
   normalizeDeviceError,
   type DeviceDescriptor,
   type DeviceSession,
+  type RemoteEntry,
 } from "@kobrixa/device";
 import { remoteFileOperation } from "./remote-files.js";
 import { FileBatchManager } from "./file-batch.js";
 import type { FileBatchRequest, FileBatchRef, FileBatchSnapshot } from "../../shared/api.js";
 import type { RemoteFileRequest, RemoteFileResult, DeviceEvent } from "../../shared/api.js";
 import type { BuildService } from "../workspace/build.js";
+
+interface Deployment {
+  buildId: string;
+  files: Array<{ path: string; size: number; checksum: string }>;
+}
+interface Recovery {
+  id: string;
+  descriptor: DeviceDescriptor;
+  deployment: Deployment | undefined;
+  controller: AbortController;
+  attempt: number;
+  working: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+  candidate?: DeviceSession;
+}
+const connectionFailure = (error: unknown): boolean =>
+  ["connection", "timeout", "protocol"].includes(normalizeDeviceError(error).category);
 
 export function mergeDiscoveryResults(
   settled: PromiseSettledResult<DeviceDescriptor[]>[],
@@ -46,8 +65,13 @@ export function deploymentTargets(
 export class DeviceService {
   readonly #sessions = new Map<string, DeviceSession>();
   readonly #busy = new Map<string, AbortController>();
+  readonly #subscriptions = new Map<string, () => void>();
+  readonly #deployments = new Map<string, Deployment>();
+  readonly #recoveries = new Map<string, Recovery>();
+  readonly #recovered = new Map<string, string>();
+  private generation = 0;
   get busy(): boolean {
-    return this.#busy.size > 0;
+    return this.#busy.size > 0 || [...this.#recoveries.values()].some((item) => item.working);
   }
   readonly #usb = new UsbTransport();
   readonly #wifi = new WiFiTransport();
@@ -83,32 +107,63 @@ export class DeviceService {
   }
 
   async disconnect(id: string): Promise<void> {
-    const session = this.require(id);
-    this.#busy.get(id)?.abort();
-    await session.disconnect();
+    // Follow completed recoveries too: cancellation IPC may arrive just after
+    // the replacement session was published.
+    while (this.#recovered.has(id)) id = this.#recovered.get(id)!;
+    const recovery = this.#recoveries.get(id);
+    if (recovery) this.cancelRecovery(recovery);
+    const session = this.#sessions.get(id);
+    this.#subscriptions.get(id)?.();
+    this.#subscriptions.delete(id);
     this.#sessions.delete(id);
+    this.#deployments.delete(id);
+    this.#busy.get(id)?.abort();
+    await session?.disconnect().catch(() => {});
     this.send({ type: "state", state: "disconnected", sessionId: id });
   }
 
+  async reset(): Promise<void> {
+    this.generation++;
+    for (const recovery of this.#recoveries.values()) this.cancelRecovery(recovery);
+    const ids = [...this.#sessions.keys()];
+    this.#recovered.clear();
+    await Promise.all(ids.map((id) => this.disconnect(id)));
+  }
+
   upload(id: string, buildId: string, remotePath: string): Promise<void> {
-    return this.operation(id, async (session, signal) =>
-      session.upload(remotePath, await this.builds.artifactBytes(buildId), signal),
-    );
+    return this.operation(id, async (session, signal) => {
+      this.#deployments.delete(id);
+      await session.upload(remotePath, await this.builds.artifactBytes(buildId), signal);
+    });
   }
 
   deploy(id: string, buildId: string, remoteDirectory: string): Promise<void> {
     return this.operation(id, async (session, signal) => {
+      this.#deployments.delete(id);
+      const deployment: Deployment = { buildId, files: [] };
       const files = await this.builds.deployableArtifacts(buildId);
       for (const file of deploymentTargets(files, remoteDirectory)) {
         try {
-          await session.upload(file.remotePath, await readFile(file.path), signal);
+          const bytes = await readFile(file.path);
+          signal.throwIfAborted();
+          await session.upload(file.remotePath, bytes, signal);
+          deployment.files.push({
+            path: file.remotePath,
+            size: bytes.length,
+            checksum: createHash("md5").update(bytes).digest("hex"),
+          });
         } catch (error) {
+          const normalized = normalizeDeviceError(error, "transfer");
           throw new DeviceOperationError(
-            "transfer",
+            normalized.category,
             `Unable to deploy '${file.remotePath}': ${error instanceof Error ? error.message : String(error)}`,
+            normalized.recoverable,
+            { cause: error },
           );
         }
       }
+      signal.throwIfAborted();
+      if (this.#sessions.get(id) === session) this.#deployments.set(id, deployment);
     });
   }
 
@@ -121,7 +176,10 @@ export class DeviceService {
   }
 
   delete(id: string, remotePath: string): Promise<void> {
-    return this.operation(id, (session, signal) => session.delete(remotePath, signal));
+    return this.operation(id, (session, signal) => {
+      this.invalidateDeployment(id, [remotePath]);
+      return session.delete(remotePath, signal);
+    });
   }
 
   async files(request: RemoteFileRequest): Promise<RemoteFileResult> {
@@ -212,15 +270,23 @@ export class DeviceService {
     connect: () => Promise<DeviceSession>,
     transport: string,
   ): Promise<string> {
+    const reset = this.reset();
+    const generation = this.generation;
+    await reset;
+    if (generation !== this.generation)
+      throw new DeviceOperationError("cancelled", "Connection cancelled.");
     this.send({ type: "state", state: "connecting", transport });
     try {
       const session = await connect();
-      const id = randomUUID();
-      this.#sessions.set(id, session);
+      if (generation !== this.generation || !session.connected) {
+        await session.disconnect().catch(() => {});
+        throw new DeviceOperationError("cancelled", "Connection cancelled.");
+      }
+      const id = this.register(session);
       this.send({ type: "state", state: "connected", sessionId: id, transport });
       return id;
     } catch (error) {
-      this.report(error);
+      if (generation === this.generation) this.report(error);
       throw error;
     }
   }
@@ -234,6 +300,11 @@ export class DeviceService {
       throw new DeviceOperationError("device", "Another EV3 operation is in progress.");
     const controller = new AbortController();
     this.#busy.set(id, controller);
+    let aborted!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      aborted = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", aborted, { once: true });
+    });
     this.send({
       type: "state",
       state: "busy",
@@ -241,7 +312,7 @@ export class DeviceService {
       transport: session.descriptor.transport,
     });
     try {
-      const result = await work(session, controller.signal);
+      const result = await Promise.race([work(session, controller.signal), cancelled]);
       controller.signal.throwIfAborted();
       this.send({
         type: "state",
@@ -252,20 +323,188 @@ export class DeviceService {
       return result;
     } catch (error) {
       const normalized = normalizeDeviceError(error);
-      if (["connection", "timeout", "protocol"].includes(normalized.category)) {
-        this.#sessions.delete(id);
-        await session.disconnect().catch(() => {});
-        this.send({
-          type: "state",
-          state: "disconnected",
-          sessionId: id,
-          message: normalized.message,
-        });
-      }
+      if (connectionFailure(normalized)) await this.lost(id, session, normalized);
       throw normalized;
     } finally {
+      controller.signal.removeEventListener("abort", aborted);
       this.#busy.delete(id);
     }
+  }
+
+  private register(session: DeviceSession): string {
+    const id = randomUUID();
+    this.#sessions.set(id, session);
+    const unsubscribe = session.onDisconnect?.((error) => {
+      void this.lost(id, session, error);
+    });
+    if (unsubscribe) this.#subscriptions.set(id, unsubscribe);
+    return id;
+  }
+
+  private async lost(id: string, session: DeviceSession, error: Error): Promise<void> {
+    if (this.#sessions.get(id) !== session) return;
+    this.#sessions.delete(id);
+    this.#subscriptions.get(id)?.();
+    this.#subscriptions.delete(id);
+    const deployment = this.#deployments.get(id);
+    this.#deployments.delete(id);
+    this.#busy.get(id)?.abort(error);
+    let recovery: Recovery | undefined;
+    if (session.descriptor.transport === "usb") {
+      if (session.descriptor.serialNumber?.trim()) {
+        recovery = {
+          id,
+          descriptor: session.descriptor,
+          deployment,
+          controller: new AbortController(),
+          attempt: 0,
+          working: false,
+        };
+        this.#recoveries.set(id, recovery);
+        this.recoveryEvent(recovery, "waiting");
+      } else {
+        this.send({
+          type: "usb-recovery",
+          state: "unavailable",
+          previousSessionId: id,
+          descriptor: session.descriptor,
+        });
+      }
+    } else {
+      this.send({ type: "state", state: "disconnected", sessionId: id, message: error.message });
+    }
+    await session.disconnect().catch(() => {});
+    if (recovery) void this.recover(recovery);
+  }
+
+  private recoveryEvent(
+    recovery: Recovery,
+    state: "waiting" | "connecting" | "cancelled" | "unavailable",
+  ): void {
+    this.send({
+      type: "usb-recovery",
+      state,
+      previousSessionId: recovery.id,
+      descriptor: recovery.descriptor,
+    });
+  }
+
+  private cancelRecovery(recovery: Recovery, unavailable = false): void {
+    this.#recoveries.delete(recovery.id);
+    clearTimeout(recovery.timer);
+    recovery.controller.abort();
+    void recovery.candidate?.disconnect().catch(() => {});
+    this.recoveryEvent(recovery, unavailable ? "unavailable" : "cancelled");
+  }
+
+  private async recover(recovery: Recovery): Promise<void> {
+    const current = () => this.#recoveries.get(recovery.id) === recovery;
+    if (!current()) return;
+    recovery.working = true;
+    const signal = recovery.controller.signal;
+    let candidate: DeviceSession | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let transferred = false;
+    try {
+      const devices = await this.#usb.discover(signal);
+      if (!current()) return;
+      const matches = devices.filter(
+        (item) => item.serialNumber?.trim() === recovery.descriptor.serialNumber?.trim(),
+      );
+      if (matches.length > 1) {
+        this.cancelRecovery(recovery, true);
+        return;
+      }
+      if (!matches.length) return;
+      if (!matches[0]!.metadata?.path) {
+        this.cancelRecovery(recovery, true);
+        return;
+      }
+      this.recoveryEvent(recovery, "connecting");
+      candidate = await this.#usb.connect(matches[0]!, signal);
+      recovery.candidate = candidate;
+      if (!current()) return;
+      let failure: Error | undefined;
+      unsubscribe = candidate.onDisconnect?.((error) => {
+        failure = error;
+      });
+      let verified = false;
+      try {
+        // A read-only round trip verifies the replacement handle even when no
+        // uploaded version is available. Never send run/stop during recovery.
+        const root = await candidate.list(REMOTE_PROJECT_ROOT, signal);
+        if (recovery.deployment) {
+          const listings = new Map<string, RemoteEntry[]>([[REMOTE_PROJECT_ROOT, root]]);
+          verified = true;
+          for (const file of recovery.deployment.files) {
+            const directory = path.posix.dirname(file.path);
+            if (!listings.has(directory))
+              listings.set(directory, await candidate.list(directory, signal));
+            const entry = listings.get(directory)!.find((item) => item.path === file.path);
+            if (
+              entry?.kind !== "file" ||
+              entry.size !== file.size ||
+              entry.checksum?.toLowerCase() !== file.checksum
+            ) {
+              verified = false;
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        if (connectionFailure(error)) throw error;
+        verified = false;
+      }
+      if (failure) throw failure;
+      if (!candidate.connected)
+        throw new DeviceOperationError("connection", "USB connection lost.");
+      if (!current()) return;
+      unsubscribe?.();
+      unsubscribe = undefined;
+      const id = this.register(candidate);
+      transferred = true;
+      this.#recoveries.delete(recovery.id);
+      this.#recovered.set(recovery.id, id);
+      if (verified && recovery.deployment) this.#deployments.set(id, recovery.deployment);
+      this.send({
+        type: "usb-recovery",
+        state: "restored",
+        previousSessionId: recovery.id,
+        sessionId: id,
+        descriptor: candidate.descriptor,
+        deployment: recovery.deployment ? (verified ? "verified" : "changed") : "none",
+        ...(verified && recovery.deployment ? { buildId: recovery.deployment.buildId } : {}),
+      });
+    } catch {
+      // Keep waiting quietly. Permission/open failures can be transient while
+      // the OS is still enumerating a reinserted device.
+    } finally {
+      unsubscribe?.();
+      if (!transferred) await candidate?.disconnect().catch(() => {});
+      delete recovery.candidate;
+      recovery.working = false;
+      if (current()) {
+        this.recoveryEvent(recovery, "waiting");
+        const delay = [1000, 2000, 5000][Math.min(recovery.attempt++, 2)]!;
+        recovery.timer = setTimeout(() => void this.recover(recovery), delay);
+        recovery.timer.unref?.();
+      }
+    }
+  }
+
+  private invalidateDeployment(id: string, paths: string[]): void {
+    const deployment = this.#deployments.get(id);
+    if (
+      deployment?.files.some((file) =>
+        paths.some(
+          (target) =>
+            file.path === target ||
+            file.path.startsWith(`${target}/`) ||
+            target.startsWith(`${path.posix.dirname(file.path)}/`),
+        ),
+      )
+    )
+      this.#deployments.delete(id);
   }
 
   private require(id: string): DeviceSession {
@@ -287,6 +526,7 @@ export class DeviceService {
   }
 
   private send(event: DeviceEvent): void {
+    if (event.type === "files-changed") this.invalidateDeployment(event.sessionId, event.paths);
     const renderer = this.renderer();
     if (renderer && !renderer.isDestroyed?.()) renderer.send("device:event", event);
   }

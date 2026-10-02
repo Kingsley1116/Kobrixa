@@ -21,6 +21,13 @@ export const copy = {
     connectionHint: "Choose how to connect. Your program stays on this computer until you run it.",
     connectionRequired: "Connect an EV3 to continue this run.",
     connectionReady: "Connected and ready to receive your program.",
+    recoveryHint:
+      "Plug the same EV3 back in to reconnect automatically. You can keep editing and building. Programs will not restart automatically.",
+    cancelRecovery: "Cancel reconnection",
+    manualReconnect:
+      "This EV3 cannot be identified uniquely. Find and select it to reconnect manually.",
+    uploadRequired:
+      "Reconnected. The uploaded program or its assets could not be verified. Upload again to enable Run uploaded version.",
     uploadLatest: "Upload successful build",
     runUploaded: "Run uploaded version",
     deleteUploaded: "Delete uploaded program",
@@ -71,6 +78,8 @@ export const copy = {
     },
     connectionStates: {
       disconnected: "Not connected",
+      waiting: "Waiting for USB",
+      reconnecting: "Reconnecting and checking program",
       connected: "Connected",
       connecting: "Connecting",
       busy: "Busy",
@@ -184,6 +193,11 @@ export const copy = {
     connectionHint: "選擇連線方式；執行前，程式會保留在這部電腦上。",
     connectionRequired: "連接 EV3 後，將接續這次執行。",
     connectionReady: "已連線，可以上傳你的程式。",
+    recoveryHint: "插回同一台 EV3 即會自動重連，期間可繼續編輯和建置。程式不會自動重新執行。",
+    cancelRecovery: "取消自動重連",
+    manualReconnect: "無法唯一識別這台 EV3，請搜尋並選擇裝置以手動重連。",
+    uploadRequired:
+      "已恢復連線，但無法確認已上傳程式與素材一致。請重新上傳以啟用「執行已上傳版本」。",
     uploadLatest: "上傳成功建置",
     runUploaded: "執行已上傳版本",
     deleteUploaded: "刪除已上傳程式",
@@ -234,6 +248,8 @@ export const copy = {
     },
     connectionStates: {
       disconnected: "未連線",
+      waiting: "等待 USB 插回",
+      reconnecting: "正在重連並校驗程式",
       connected: "已連線",
       connecting: "連線中",
       busy: "忙碌中",

@@ -131,10 +131,10 @@ describe("main-process device lock", () => {
       ).ok,
     ).toBe(false);
     expect(h.events).toContainEqual({
-      type: "state",
-      state: "disconnected",
-      sessionId: h.id,
-      message: "Cable removed",
+      type: "usb-recovery",
+      state: "unavailable",
+      previousSessionId: h.id,
+      descriptor: h.session.descriptor,
     });
     await expect(h.service.stop(h.id)).rejects.toThrow("Unknown or disconnected");
   });

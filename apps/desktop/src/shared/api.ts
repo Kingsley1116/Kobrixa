@@ -119,6 +119,21 @@ export interface FileBatchSnapshot extends FileBatchRef {
   progress?: { transferred: number; total: number } | undefined;
 }
 export type DeviceEvent =
+  | {
+      type: "usb-recovery";
+      state: "waiting" | "connecting" | "cancelled" | "unavailable";
+      previousSessionId: string;
+      descriptor: DeviceDescriptor;
+    }
+  | {
+      type: "usb-recovery";
+      state: "restored";
+      previousSessionId: string;
+      sessionId: string;
+      descriptor: DeviceDescriptor;
+      deployment: "verified" | "changed" | "none";
+      buildId?: string;
+    }
   | { type: "file-batch"; snapshot: FileBatchSnapshot }
   | { type: "files-changed"; sessionId: string; requestId: string; paths: string[] }
   | {

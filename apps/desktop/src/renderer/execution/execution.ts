@@ -2,6 +2,7 @@ import type {
   BuildEvent,
   CompileResult,
   DeviceDescriptor,
+  DeviceEvent,
   Diagnostic,
   KobrixaApi,
 } from "../../shared/api.js";
@@ -47,6 +48,15 @@ export interface ExecutionState {
   operationWorkspaceId?: string | undefined;
   phase: Phase;
   fileBusy?: boolean;
+  recovery?:
+    | {
+        sessionId: string;
+        name: string;
+        state: "waiting" | "connecting";
+        deployed?: BuildVersion | undefined;
+      }
+    | undefined;
+  connectionNotice?: "manual-required" | "upload-required" | undefined;
   session?: { id: string; name: string; transport: string } | undefined;
   successfulBuild?: BuildVersion | undefined;
   deployed?: (BuildVersion & { sessionId: string }) | undefined;
@@ -84,6 +94,7 @@ export class ExecutionController {
   private generation = 0;
   private logId = 0;
   private working = false;
+  private deviceWork = false;
   private pendingRun: ExecutionRequest | undefined;
   private waitingBuild: WaitingBuild | undefined;
 
@@ -97,6 +108,10 @@ export class ExecutionController {
     this.unsubscribe = [
       this.api.build.onEvent((event) => this.onBuildEvent(event)),
       this.api.device.onEvent((event) => {
+        if (event.type === "usb-recovery") {
+          this.onRecovery(event);
+          return;
+        }
         if (event.type === "files-changed" && event.sessionId === this.state.deployed?.sessionId) {
           const folder = this.state.deployed.path.slice(
             0,
@@ -118,16 +133,7 @@ export class ExecutionController {
           event.sessionId === this.state.session?.id &&
           event.sessionId
         ) {
-          this.generation++;
-          this.waitingBuild?.reject(new Error("EV3 disconnected."));
-          this.pendingRun = undefined;
-          this.update({
-            session: undefined,
-            deployed: undefined,
-            phase: "error",
-            error: { phase: this.state.phase, detail: event.message ?? "EV3 disconnected." },
-          });
-          this.log("disconnected", undefined, true);
+          this.connectionLost(event.message ?? "EV3 disconnected.", false);
         }
       }),
     ];
@@ -135,6 +141,60 @@ export class ExecutionController {
       this.unsubscribe.forEach((stop) => stop());
       this.unsubscribe = [];
     };
+  }
+  private connectionLost(detail: string, recovering: boolean): void {
+    const localBuild = this.working && !this.deviceWork;
+    const interrupted = this.deviceWork || Boolean(this.state.fileBusy);
+    if (!localBuild) this.generation++;
+    if (this.deviceWork && this.waitingBuild) {
+      this.waitingBuild.reject(new Error(detail));
+      if (this.waitingBuild.id) void this.api.build.cancel(this.waitingBuild.id).catch(() => {});
+    }
+    this.pendingRun = undefined;
+    this.update({
+      session: undefined,
+      deployed: undefined,
+      ...(!localBuild && (interrupted || !recovering)
+        ? ({ phase: "error", error: { phase: this.state.phase, detail } } as const)
+        : {}),
+    });
+    this.log("disconnected", undefined, interrupted || !recovering);
+  }
+  private onRecovery(event: Extract<DeviceEvent, { type: "usb-recovery" }>): void {
+    const active = event.previousSessionId === this.state.session?.id;
+    const waiting = event.previousSessionId === this.state.recovery?.sessionId;
+    if (!active && !waiting) return;
+    if (event.state === "waiting" || event.state === "connecting") {
+      const deployed = active ? this.state.deployed : this.state.recovery?.deployed;
+      if (active) this.connectionLost("EV3 disconnected during the operation.", true);
+      this.update({
+        recovery: {
+          sessionId: event.previousSessionId,
+          name: event.descriptor.name,
+          state: event.state,
+          deployed,
+        },
+        connectionNotice: undefined,
+      });
+    } else if (event.state === "restored") {
+      const deployed = this.state.recovery?.deployed;
+      const verified =
+        event.deployment === "verified" && deployed && deployed.buildId === event.buildId;
+      this.update({
+        recovery: undefined,
+        session: { id: event.sessionId, name: event.descriptor.name, transport: "usb" },
+        deployed: verified ? { ...deployed, sessionId: event.sessionId } : undefined,
+        connectionNotice:
+          event.deployment === "changed" || (deployed && !verified) ? "upload-required" : undefined,
+      });
+      this.log("connected");
+    } else {
+      if (active) this.connectionLost("EV3 disconnected.", false);
+      this.update({
+        recovery: undefined,
+        connectionNotice: event.state === "unavailable" ? "manual-required" : undefined,
+      });
+    }
   }
   get locked(): boolean {
     return this.editingLocked || Boolean(this.state.fileBusy);
@@ -149,7 +209,8 @@ export class ExecutionController {
     return (id && this.projects.get(id)) || { diagnostics: [], logs: [] };
   }
   async withFiles<T>(work: () => Promise<T>, detail: string): Promise<T> {
-    if (this.locked) throw new Error("Another EV3 operation is in progress.");
+    if (this.locked || this.state.recovery)
+      throw new Error("Another EV3 operation is in progress.");
     this.update({ fileBusy: true });
     const generation = this.generation;
     try {
@@ -217,6 +278,8 @@ export class ExecutionController {
     this.projects.delete(id);
     if (this.state.deployed?.workspaceId === id)
       this.state = { ...this.state, deployed: undefined };
+    if (this.state.recovery?.deployed?.workspaceId === id)
+      this.state = { ...this.state, recovery: { ...this.state.recovery, deployed: undefined } };
     this.publish();
   }
   invalidateBuild(id = this.workspaceId): void {
@@ -327,9 +390,11 @@ export class ExecutionController {
   private async perform(
     work: (generation: number) => Promise<void>,
     owner = this.workspaceId,
+    usesDevice = false,
   ): Promise<void> {
     if (this.working) return;
     this.working = true;
+    this.deviceWork = usesDevice;
     this.operationWorkspaceId = owner;
     const generation = this.generation;
     this.update({ error: undefined });
@@ -345,22 +410,18 @@ export class ExecutionController {
       } else {
         const phase = this.state.phase;
         const detail = error instanceof Error ? error.message : String(error);
-        if (["uploading", "running", "stopping", "deleting", "disconnecting"].includes(phase)) {
-          const session = this.state.session;
-          this.update({ session: undefined, deployed: undefined });
-          if (session) void this.api.device.disconnect(session.id).catch(() => {});
-        }
         this.update({ phase: "error", error: { phase, detail } });
         this.log(phase, detail, true);
       }
     } finally {
       this.working = false;
+      this.deviceWork = false;
       this.operationWorkspaceId = this.pendingRun?.workspaceId;
       this.publish();
     }
   }
   async run(request: ExecutionRequest): Promise<void> {
-    if (this.locked || request.workspaceId !== this.workspaceId) return;
+    if (this.locked || this.state.recovery || request.workspaceId !== this.workspaceId) return;
     if (!this.state.session) {
       this.pendingRun = request;
       this.operationWorkspaceId = request.workspaceId;
@@ -375,21 +436,27 @@ export class ExecutionController {
     await this.buildAndMaybeRun(request, false);
   }
   private async buildAndMaybeRun(request: ExecutionRequest, run: boolean): Promise<void> {
-    await this.perform(async (generation) => {
-      this.phase("saving");
-      await request.saveAll();
-      this.assertCurrent(generation);
-      const version = await this.compile(request);
-      this.assertCurrent(generation);
-      if (run) {
-        await this.deploy(version, generation);
+    await this.perform(
+      async (generation) => {
+        this.phase("saving");
+        await request.saveAll();
         this.assertCurrent(generation);
-        await this.runVersion(generation);
-      }
-    }, request.workspaceId);
+        const version = await this.compile(request);
+        this.assertCurrent(generation);
+        if (run) {
+          await this.deploy(version, generation);
+          this.assertCurrent(generation);
+          await this.runVersion(generation);
+        }
+      },
+      request.workspaceId,
+      run,
+    );
   }
   async connect(target: DeviceDescriptor | string): Promise<void> {
     if (this.working || this.state.session) return;
+    if (this.state.recovery) await this.disconnect();
+    this.update({ connectionNotice: undefined });
     await this.perform(async (generation) => {
       this.phase("connecting");
       const id =
@@ -418,12 +485,19 @@ export class ExecutionController {
     else this.publish();
   }
   async disconnect(): Promise<void> {
+    const recovery = this.state.recovery;
+    if (recovery) {
+      // Clear synchronously so an in-flight restored event cannot be adopted.
+      this.update({ recovery: undefined, connectionNotice: undefined });
+      await this.api.device.disconnect(recovery.sessionId);
+      return;
+    }
     const session = this.state.session;
     if (this.locked || !session) return;
     await this.perform(async (generation) => {
       this.phase("disconnecting");
       // Clear before the backend event so an intentional disconnect is not an error.
-      this.update({ session: undefined, deployed: undefined });
+      this.update({ session: undefined, deployed: undefined, connectionNotice: undefined });
       await this.api.device.disconnect(session.id);
       this.assertCurrent(generation);
       this.log("disconnected");
@@ -433,7 +507,7 @@ export class ExecutionController {
     const session = this.state.session;
     if (!session) throw new Error("EV3 disconnected.");
     this.phase("uploading");
-    this.update({ deployed: undefined });
+    this.update({ deployed: undefined, connectionNotice: undefined });
     await this.api.device.deploy(
       session.id,
       version.buildId,
@@ -461,33 +535,42 @@ export class ExecutionController {
     const version = this.snapshot.successfulBuild;
     if (this.locked || !version || version.workspaceId !== this.workspaceId || !this.state.session)
       return;
-    await this.perform((generation) => this.deploy(version, generation));
+    await this.perform((generation) => this.deploy(version, generation), this.workspaceId, true);
   }
   async runDeployed(): Promise<void> {
     if (this.locked || !this.state.deployed || this.state.deployed.workspaceId !== this.workspaceId)
       return;
-    await this.perform((generation) => this.runVersion(generation));
+    await this.perform((generation) => this.runVersion(generation), this.workspaceId, true);
   }
   async stop(): Promise<void> {
     const session = this.state.session;
     if (this.locked || !session) return;
-    await this.perform(async (generation) => {
-      this.phase("stopping");
-      await this.api.device.stop(session.id);
-      this.assertCurrent(generation);
-      this.log("stopped");
-    });
+    await this.perform(
+      async (generation) => {
+        this.phase("stopping");
+        await this.api.device.stop(session.id);
+        this.assertCurrent(generation);
+        this.log("stopped");
+      },
+      this.workspaceId,
+      true,
+    );
   }
   async deleteDeployed(): Promise<void> {
     const { session, deployed } = this.state;
     if (this.locked || !session || !deployed || deployed.workspaceId !== this.workspaceId) return;
-    await this.perform(async (generation) => {
-      this.phase("deleting");
-      await this.api.device.delete(session.id, deployed.path);
-      this.assertCurrent(generation);
-      this.update({ deployed: undefined });
-      this.log("deleted");
-    });
+    await this.perform(
+      async (generation) => {
+        this.phase("deleting");
+        this.update({ deployed: undefined });
+        await this.api.device.delete(session.id, deployed.path);
+        this.assertCurrent(generation);
+        this.update({ deployed: undefined });
+        this.log("deleted");
+      },
+      this.workspaceId,
+      true,
+    );
   }
 }
 
