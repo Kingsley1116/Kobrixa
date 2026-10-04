@@ -1,6 +1,7 @@
 import { AppLink } from "../../components/app-link.js";
 import { useEffect, useState } from "react";
 import { SiteHeader } from "../../components/site-header.js";
+import { DiagnosticShowcase } from "./diagnostic-showcase.js";
 import metadata from "../../../../../package.json" with { type: "json" };
 import "./product-pages.css";
 
@@ -179,6 +180,7 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
             ))}
           </div>
         </section>
+        <DiagnosticShowcase locale={locale} />
         <section className="product-roadmap">
           <div>
             <p className="product-eyebrow">WHAT’S NEXT</p>

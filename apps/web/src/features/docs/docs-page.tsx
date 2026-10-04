@@ -436,6 +436,35 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
             </AppLink>
           </div>
         </section>
+        <section
+          className="reference-entry diagnostic-entry"
+          aria-labelledby="diagnostic-entry-title"
+        >
+          <div>
+            <p className="eyebrow">
+              {locale === "zh-TW" ? "診斷解說與 Quick Fix" : "Diagnostic explanations & Quick Fix"}
+            </p>
+            <h2 id="diagnostic-entry-title">
+              {locale === "zh-TW" ? "遇到程式錯誤？" : "Stuck on a code error?"}
+            </h2>
+            <p>
+              {locale === "zh-TW"
+                ? "用診斷代碼查找原因與範例。IDE 內可離線閱讀完整解說；有確定的修正方式時，選取 Quick Fix 即可套用，也能一步復原。"
+                : "Look up a diagnostic code for causes and examples. Read full explanations offline in the IDE; choose a Quick Fix when an unambiguous correction is available, with one-step Undo."}
+            </p>
+            <div className="diagnostic-entry-links">
+              <AppLink className="text-link" href={`/docs/diagnostics?lang=${locale}`}>
+                {locale === "zh-TW" ? "查閱錯誤索引 →" : "Browse the diagnostic index →"}
+              </AppLink>
+              <AppLink
+                className="text-link"
+                href={`/docs/reference/keyboard-settings?lang=${locale}`}
+              >
+                {locale === "zh-TW" ? "操作與快捷鍵 →" : "Controls and shortcuts →"}
+              </AppLink>
+            </div>
+          </div>
+        </section>
         <section className="course-map">
           <div className="course-map-header">
             <div>

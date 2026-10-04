@@ -1,5 +1,6 @@
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
+import { DIAGNOSTIC_HELP } from "@kobrixa/compiler/diagnostic-help";
 
 type Locale = "zh-TW" | "en";
 
@@ -22,11 +23,12 @@ const copy = {
       cards: [
         [
           "離線也能專心做",
-          "編輯與建置都在你的電腦上完成；網路只在你選擇以 Wi-Fi 連接 EV3 時才需要。",
+          "編輯、建置與完整診斷解說都在你的電腦上完成，不需要雲端帳號或持續網路連線。",
         ],
         [
           "讀得懂的診斷",
-          "從語法到裝置連線，Kobrixa 將問題標示在該看的位置，並保留可採取行動的細節。",
+          `${DIAGNOSTIC_HELP.length} 個診斷代碼提供中英雙語離線解說。遇到可確定修正的語法問題，可選取 Quick Fix，並隨時復原。`,
+          "/docs/diagnostics?lang=zh-TW",
         ],
         ["為實體機器人而建", "將支援的 Basic Plus 程式編譯為原生 EV3 .rbf，然後上傳、執行、停止。"],
       ],
@@ -74,11 +76,12 @@ const copy = {
       cards: [
         [
           "Stay focused offline",
-          "Editing and builds happen on your computer. A network is only needed when you choose to connect to an EV3 over Wi-Fi.",
+          "Editing, builds and full diagnostic explanations happen on your computer, without a cloud account or a continuous internet connection.",
         ],
         [
           "Diagnostics that make sense",
-          "From syntax to device connections, Kobrixa puts issues where you need them and keeps the details actionable.",
+          `${DIAGNOSTIC_HELP.length} diagnostic codes have offline explanations in English and Traditional Chinese. Choose a Quick Fix for supported, unambiguous syntax errors, then undo it whenever needed.`,
+          "/docs/diagnostics?lang=en",
         ],
         [
           "Made for physical robots",
@@ -251,11 +254,16 @@ export function HomePage({
             {locale === "zh-TW" ? "探索全部功能 →" : "Explore all features →"}
           </AppLink>
           <div className="feature-grid">
-            {t.features.cards.map(([title, body], index) => (
+            {t.features.cards.map(([title, body, href], index) => (
               <article className="feature-card" key={title}>
                 <span className={`feature-number feature-${index + 1}`}>0{index + 1}</span>
                 <h3>{title}</h3>
                 <p>{body}</p>
+                {href && (
+                  <AppLink className="feature-diagnostics-link" href={href}>
+                    {locale === "zh-TW" ? "查閱錯誤索引 →" : "Browse the diagnostic index →"}
+                  </AppLink>
+                )}
               </article>
             ))}
           </div>

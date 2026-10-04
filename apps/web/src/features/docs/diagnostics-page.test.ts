@@ -81,6 +81,22 @@ afterEach(async () => {
 });
 
 describe("diagnostic documentation", () => {
+  it.each([
+    ["en", "Keyboard shortcuts and settings", "Diagnostic index"],
+    ["zh-TW", "快捷鍵與設定", "錯誤索引"],
+  ])("opens the Quick Fix guide and footer index in %s", async (locale, guideTitle, indexTitle) => {
+    await render(`/docs?lang=${locale}`);
+    await click(query('.diagnostic-entry a[href*="keyboard-settings"]'));
+    expect(router.state.location.pathname).toBe("/docs/reference/keyboard-settings");
+    expect(router.state.location.search).toBe(`?lang=${locale}`);
+    expect(query("h1").textContent).toBe(guideTitle);
+    expect(query("#content").textContent).toContain("Quick Fix");
+
+    await click(query('footer a[href^="/docs/diagnostics"]'));
+    expect(router.state.location.search).toBe(`?lang=${locale}`);
+    expect(query("h1").textContent).toBe(indexTitle);
+  });
+
   it("lists every code and filters by code, translated title, keyword, and family", async () => {
     await render("/docs/diagnostics?lang=en");
     expect(query("h1").textContent).toBe("Diagnostic index");

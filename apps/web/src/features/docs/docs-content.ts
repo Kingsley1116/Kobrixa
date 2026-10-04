@@ -1,6 +1,7 @@
 import architectureEn from "../../../../../docs/en/architecture.md?raw";
 import deviceSupportEn from "../../../../../docs/en/device-support.md?raw";
 import installationEn from "../../../../../docs/en/installation.md?raw";
+import keyboardSettingsEn from "../../../../../docs/en/keyboard-settings.md?raw";
 import codeSigningEn from "../../../../../docs/en/code-signing.md?raw";
 import languageSupportEn from "../../../../../docs/en/language-support.md?raw";
 import productEn from "../../../../../docs/en/product.md?raw";
@@ -8,6 +9,7 @@ import roadmapEn from "../../../../../docs/en/roadmap.md?raw";
 import architectureZh from "../../../../../docs/zh-TW/architecture.md?raw";
 import deviceSupportZh from "../../../../../docs/zh-TW/device-support.md?raw";
 import installationZh from "../../../../../docs/zh-TW/installation.md?raw";
+import keyboardSettingsZh from "../../../../../docs/zh-TW/keyboard-settings.md?raw";
 import codeSigningZh from "../../../../../docs/zh-TW/code-signing.md?raw";
 import languageSupportZh from "../../../../../docs/zh-TW/language-support.md?raw";
 import productZh from "../../../../../docs/zh-TW/product.md?raw";
@@ -41,6 +43,7 @@ export type DocsLocale = "zh-TW" | "en";
 export type DocumentSlug =
   | "product"
   | "installation"
+  | "keyboard-settings"
   | "code-signing"
   | "language-support"
   | "device-support"
@@ -213,6 +216,16 @@ export const documents: readonly DocumentEntry[] = [
       en: "Development setup, USB/Wi-Fi connection, and recoverable situations.",
     },
     content: { "zh-TW": installationZh, en: installationEn },
+  },
+  {
+    slug: "keyboard-settings",
+    category: "product",
+    title: { "zh-TW": "快捷鍵與設定", en: "Keyboard shortcuts and settings" },
+    summary: {
+      "zh-TW": "編輯器操作、診斷解說、Quick Fix、儲存與復原設定。",
+      en: "Editor controls, diagnostic explanations, Quick Fix, saving and recovery preferences.",
+    },
+    content: { "zh-TW": keyboardSettingsZh, en: keyboardSettingsEn },
   },
   {
     slug: "language-support",

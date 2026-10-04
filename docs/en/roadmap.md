@@ -15,7 +15,7 @@ Continue reviewing dependency licenses, brand/asset provenance and bilingual lin
 
 ## v1 — release acceptance
 
-The implemented path is `.bp` → validated `KobrixaIR` → native `.rbf`, with Monaco editing, projects, diagnostics, asset deployment and remote file operations. The remaining rollout order is:
+The implemented path is `.bp` → validated `KobrixaIR` → native `.rbf`, with Monaco editing, projects, bilingual offline diagnostic explanations, user-selected Quick Fix with Undo, asset deployment and remote file operations. The online [diagnostic index](/docs/diagnostics?lang=en) shares explanations with the IDE; Quick Fix offers only unambiguous syntax corrections. The remaining rollout order is:
 
 1. Complete Apple enrollment and Developer ID credentials, then verify a signed and notarized macOS archive after extraction.
 2. Complete source/history/asset review and clean-machine checks, including the outstanding USB/Wi-Fi matrix. Review the exact Release draft and its six assets.

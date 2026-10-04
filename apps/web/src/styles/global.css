@@ -369,6 +369,18 @@ h2 {
 .feature-card:nth-child(2) p {
   color: #e7edff;
 }
+.feature-diagnostics-link {
+  display: inline-block;
+  margin-top: 0.75rem;
+  color: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.feature-diagnostics-link:focus-visible {
+  outline-color: currentColor;
+}
 .flow-section {
   display: grid;
   grid-template-columns: 0.9fr 1.1fr;
@@ -1154,6 +1166,12 @@ h2 {
   margin: 0.6rem 0;
   font-size: 1.4rem;
   letter-spacing: -0.04em;
+}
+.diagnostic-entry-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  margin-top: 1.25rem;
 }
 .reference-entry p:not(.eyebrow) {
   max-width: 35rem;

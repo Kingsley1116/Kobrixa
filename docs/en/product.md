@@ -17,7 +17,7 @@ Advanced language tooling, classroom fleet management, and cloud collaboration a
 ## v1 user journey
 
 1. Create a project or open a compatible `.bp` program.
-2. Edit with syntax highlighting, completion for supported EV3 APIs, and inline diagnostics.
+2. Edit with syntax highlighting, completion for supported EV3 APIs, and inline diagnostics; read bilingual explanations and select an applicable Quick Fix.
 3. Build locally into a native `.rbf` artifact.
 4. Discover and connect to an EV3 over USB HID or Wi-Fi.
 5. Upload, run, stop, or remove the program.
@@ -35,6 +35,8 @@ The editor and compiler must work offline. Wi-Fi is used for communication with 
 - Edit other projects during a build or upload while EV3 operations remain serialized. Closing a project offers save, discard and cancel; quitting retains the session so projects and drafts reopen automatically.
 - Provide syntax highlighting, bracket matching, go-to-diagnostic, basic completion, and formatting for supported `.bp` syntax.
 - Show build and device status without hiding detailed diagnostics.
+- Explain every diagnostic code offline in English and Traditional Chinese, including causes, repair steps and the original message. The online [diagnostic index](/docs/diagnostics?lang=en) provides code-based lookup.
+- Offer Quick Fix for unambiguous syntax gaps: an array-type `]`, a line-ending `)`, `For` `=` or `To`, and unfinished blocks at the end of a file. Apply only after explicit selection, with one-step Undo and normal draft/saving preferences. Ambiguous or stale diagnostics do not directly modify code.
 
 [Keyboard shortcuts and settings](keyboard-settings.md)
 

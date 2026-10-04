@@ -15,7 +15,7 @@
 
 ## v1 — 發布驗收
 
-目前已實作 `.bp` → 已驗證 `KobrixaIR` → 原生 `.rbf`，並提供 Monaco 編輯、專案、診斷、素材部署與遠端檔案操作。接下來依序完成：
+目前已實作 `.bp` → 已驗證 `KobrixaIR` → 原生 `.rbf`，並提供 Monaco 編輯、專案、雙語離線診斷解說、由使用者選取且可用 Undo 復原的 Quick Fix、素材部署與遠端檔案操作。官網[錯誤索引](/docs/diagnostics?lang=zh-TW)與 IDE 共用解說內容；Quick Fix 僅提供可確定的語法修正。接下來依序完成：
 
 1. 完成 Apple 會員及 Developer ID 憑證設定，驗證解壓後的 macOS 應用程式已簽章並公證。
 2. 完成原始碼／歷史／素材檢查與乾淨環境驗收，包括尚未完成的 USB／Wi-Fi 矩陣；檢閱確切 Release 草稿及六個產物。
