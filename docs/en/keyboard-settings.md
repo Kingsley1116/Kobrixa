@@ -60,9 +60,34 @@ Auto save only saves modified, open files and does not format them. When enabled
 
 Source writes and recovery drafts are serialized. Input typed during a write stays unsaved until that newer content reaches disk. Project switches and file moves/deletions wait for pending writes; compilation still saves recovered drafts even if their files are not open. Failed automatic saves are reported rather than retried in a loop; edit the file or save manually to try again. Existing draft recovery and the unsaved-tab confirmation remain available.
 
+## External changes and local history
+
+By default, while the window is visible, Kobrixa checks open projects for external changes about every two seconds and when returning to the application. Changed, added and deleted source/JSON files update the project tree and language analysis. Checks wait during file management and operations that lock that project.
+
+A clean open file reloads automatically, keeping its editor view and making the replacement undoable. If both the editor and disk changed, a banner pauses automatic saving for that file. **Compare changes** shows the disk version alongside your edits. Choose **Use disk version**, explicitly **Save local version**, or close the comparison to keep working. Saving checks the disk revision again; a newer external edit requires another comparison. Save all, build and run stop when a required file has an unresolved conflict. A deleted open file keeps its contents and can be explicitly recreated; its recovery draft survives restarting the app. Older recovery drafts without a recorded disk version also require review before saving.
+
+Choose **Local history** above the editor to preview earlier contents. **Restore to editor** applies an undoable edit and follows your normal saving settings, including automatic saving. It does not bypass a conflict or force a disk write. History is stored in the application's local user-data directory, outside the project, and persists across restarts. Kobrixa records saves and the before/after versions of external changes it observes; edits made and replaced between checks cannot be recovered by this feature.
+
+History defaults to up to 50 versions per file for 30 days, with a 50 MiB limit per workspace. Versions larger than 2 MiB are not recorded by default. Identical consecutive contents are deduplicated and older versions can be removed sooner when limits are reached. Renaming or moving a file inside Kobrixa carries its history with it. External renames appear as deletion and addition. Local history is not a replacement for a separate project backup.
+
+Adjust these preferences in **Settings → Files & history**. They are shared by all projects on this computer and persist across restarts. Changes apply after saving successfully; a failed save keeps the previous preference active and offers a retry.
+
+| Setting                               | Options                | Default   |
+| ------------------------------------- | ---------------------- | --------- |
+| External change detection             | On / off               | On        |
+| External change check interval        | 1, 2, 5 or 10 seconds  | 2 seconds |
+| Automatically reload external changes | On / off               | On        |
+| Record local history                  | On / off               | On        |
+| History retention                     | 7, 30 or 90 days       | 30 days   |
+| Versions per file                     | 20, 50, 100 or 200     | 50        |
+| Maximum snapshot size                 | 1, 2, 5 or 10 MiB      | 2 MiB     |
+| History capacity per workspace        | 20, 50, 100 or 200 MiB | 50 MiB    |
+
+Disabling external change detection stops background and focus checks; saving still checks for conflicting disk changes. With automatic reload off, changed open files keep their editor contents and show a comparison prompt even when clean. Re-enabling reload does not dismiss an existing conflict. Disabling local history stops new snapshots while existing versions remain available under the retention limits. Retention settings remain editable while recording is off; lower age, version-count or workspace-capacity limits take effect on the next history operation and may remove older versions. The snapshot size limit applies only to newly recorded versions: oversized snapshots are skipped without deleting existing larger versions.
+
 ## Search and reset settings
 
-All settings groups general, editor, saving, layout, EV3 and update preferences. Search combines Chinese and English names, descriptions, setting IDs and multiple keywords. Searching selects all categories; select a category to narrow the results. Modified only compares the saved preference with its default, so a system theme's current appearance does not change its modified status.
+All settings groups general, editor, saving, files and history, layout, EV3 and update preferences. Search combines Chinese and English names, descriptions, setting IDs and multiple keywords. Searching selects all categories; select a category to narrow the results. Modified only compares the saved preference with its default, so a system theme's current appearance does not change its modified status.
 
 Each setting shows its default; modified settings can be reset individually. If resetting removes a filtered row, focus returns to search. Dependent settings remain searchable with an explanation of their requirements, such as selecting After delay before adjusting the auto-save delay. Keyboard shortcuts keep their own search and reset interface.
 

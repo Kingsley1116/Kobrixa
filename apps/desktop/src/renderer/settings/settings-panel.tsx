@@ -16,6 +16,7 @@ import {
   type SettingsCategory,
 } from "./settings-catalog.js";
 import { useDevicePreferences } from "./device-settings.js";
+import type { FilePreferencesState } from "./file-settings.js";
 import type { Theme } from "./theme.js";
 import type { UpdatePreferences } from "../../shared/updates.js";
 import { Icon } from "../components/icon.js";
@@ -200,7 +201,9 @@ export function SettingsPanel({
   updateBusy,
   onInstallUpdate,
   reducedMotion,
+  filePreferences,
 }: {
+  filePreferences: FilePreferencesState;
   updates: UpdateState | undefined;
   updateBusy: boolean;
   onInstallUpdate(): void;
@@ -247,10 +250,12 @@ export function SettingsPanel({
     settings,
     defaults,
     device: device.value,
+    files: filePreferences.value,
     updates: updates?.preferences,
     reducedMotion,
     onChange,
     onDeviceChange: device.change,
+    onFileChange: filePreferences.change,
     onUpdateChange: (patch) => {
       void changeUpdates(patch);
     },
@@ -300,6 +305,7 @@ export function SettingsPanel({
     const resetDisabled =
       loading ||
       (entry.source === "device" && device.busy) ||
+      (entry.source === "files" && filePreferences.busy) ||
       (entry.source === "updates" &&
         (updateSaving || updates?.phase === "preparing" || updates?.phase === "installing"));
     const disabled = Boolean(reason) || resetDisabled;
@@ -453,6 +459,19 @@ export function SettingsPanel({
           </button>
         </div>
       )}
+      {filePreferences.error && (
+        <div role="alert" className="settings-save-error" data-preferences-error="files">
+          <span>
+            {local(
+              "檔案與歷史設定載入或保存失敗，既有值仍有效。",
+              "Could not load or save file and history preferences. Existing values remain active.",
+            )}
+          </span>
+          <button disabled={filePreferences.busy} onClick={filePreferences.retry}>
+            {t.retry}
+          </button>
+        </div>
+      )}
       <div className="settings-body">
         <nav className="settings-categories" aria-label={t.title}>
           {(
@@ -461,6 +480,7 @@ export function SettingsPanel({
               "appearance",
               "editor",
               "saving",
+              "fileHistory",
               "layout",
               "device",
               "shortcuts",
@@ -506,6 +526,14 @@ export function SettingsPanel({
                         {local(
                           "設備參數成功保存後生效；連線偏好立即套用。",
                           "Device parameters take effect after saving successfully; connection preferences apply immediately.",
+                        )}
+                      </p>
+                    )}
+                    {group === "fileHistory" && (
+                      <p className="settings-hint">
+                        {local(
+                          "設定成功保存後生效，適用於這部電腦的所有專案。降低保留上限會在下次歷史操作清理較早版本。",
+                          "Changes take effect after saving successfully and apply to every project on this computer. Lower retention limits are enforced at the next history operation.",
                         )}
                       </p>
                     )}

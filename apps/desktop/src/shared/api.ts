@@ -1,3 +1,16 @@
+import type { FilePreferences } from "./file-preferences.js";
+import type {
+  LocalHistoryEntry,
+  WorkspaceFileSnapshot,
+  WorkspaceRefreshResult,
+  WorkspaceWriteResult,
+} from "./workspace-files.js";
+export type {
+  LocalHistoryEntry,
+  WorkspaceFileSnapshot,
+  WorkspaceRefreshResult,
+  WorkspaceWriteResult,
+} from "./workspace-files.js";
 import type { DevicePreferences } from "./device-preferences.js";
 import type { UpdatesApi } from "./updates.js";
 import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
@@ -36,6 +49,7 @@ export interface WorkspaceSummary {
   implicit: boolean;
   entryCandidates: string[];
   drafts: Record<string, string>;
+  draftRevisions?: Record<string, string | null>;
 }
 
 export interface EditorLocation {
@@ -168,6 +182,8 @@ export interface KobrixaApi {
   updates: UpdatesApi;
   keyboard: { updateContext(context: KeyboardContext): Promise<void> };
   workspace: {
+    getPreferences(): Promise<FilePreferences>;
+    setPreferences(patch: Partial<FilePreferences>): Promise<FilePreferences>;
     restoreSession(): Promise<RestoredWorkspaceSession>;
     saveSession(state: WorkspaceSessionState): Promise<void>;
     close(workspaceId: string): Promise<void>;
@@ -177,8 +193,25 @@ export interface KobrixaApi {
     create(name: string): Promise<WorkspaceSummary | undefined>;
     selectEntry(workspaceId: string, entry: string): Promise<WorkspaceSummary>;
     read(workspaceId: string, file: string): Promise<string>;
-    write(workspaceId: string, file: string, content: string): Promise<void>;
-    saveDraft(workspaceId: string, file: string, content: string | undefined): Promise<void>;
+    readFile(workspaceId: string, file: string): Promise<WorkspaceFileSnapshot>;
+    refresh(
+      workspaceId: string,
+      known: Record<string, string | null>,
+    ): Promise<WorkspaceRefreshResult>;
+    write(
+      workspaceId: string,
+      file: string,
+      content: string,
+      expectedRevision: string | null,
+    ): Promise<WorkspaceWriteResult>;
+    history(workspaceId: string, file: string): Promise<LocalHistoryEntry[]>;
+    historyContent(workspaceId: string, file: string, entryId: string): Promise<string>;
+    saveDraft(
+      workspaceId: string,
+      file: string,
+      content: string | undefined,
+      baseRevision?: string | null,
+    ): Promise<void>;
     createEntry(
       workspaceId: string,
       parent: string,

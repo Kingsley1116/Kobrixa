@@ -1,9 +1,11 @@
 import type { WorkspaceSummary, WorkspaceView, WorkspaceSessionState } from "../../shared/api.js";
 import { Documents } from "../editor/documents.js";
 import { EditorModels } from "../editor/editor-models.js";
+import { FileVersions } from "./file-versions.js";
 
 export class ProjectSession {
   readonly documents = new Documents();
+  readonly files = new FileVersions();
   readonly editor: EditorModels;
   view: WorkspaceView;
   unsubscribe: () => void = () => {};
@@ -22,6 +24,7 @@ export class ProjectSession {
   }
   get dirty(): boolean {
     return (
+      this.files.conflicts.size > 0 ||
       this.documents.getSnapshot().some((tab) => tab.dirty) ||
       Object.keys(this.workspace.drafts).length > 0
     );

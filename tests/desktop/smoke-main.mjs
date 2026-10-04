@@ -4,6 +4,7 @@ import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkMonitor, createMonitorFixture } from "./monitor-smoke.mjs";
+import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -90,8 +91,10 @@ const workspace = (id = firstId) => {
     implicit: true,
     entryCandidates: ["main.bp"],
     drafts: { ...project.drafts },
+    draftRevisions: { ...project.draftRevisions },
   };
 };
+const fileHistory = createFileHistoryFixture(fixtures, workspace);
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -114,6 +117,7 @@ let devicePreferences = {
 };
 ipcMain.handle("smoke", async (_e, name, args) => {
   if (monitor.handles(name)) return monitor.handle(name, args);
+  if (fileHistory.handles(name)) return fileHistory.handle(name, args);
   const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
   if (name === "restoreSession")
     return {
@@ -242,15 +246,21 @@ ipcMain.handle("smoke", async (_e, name, args) => {
       failNextWrite = false;
       throw new Error("Simulated source write failure");
     }
-    fixture.files[args[1]] = args[2];
-    delete fixture.drafts[args[1]];
-    writes.push({ file: args[1], content: args[2] });
-    return;
+    const result = fileHistory.write(...args);
+    if (result.status === "saved") writes.push({ file: args[1], content: args[2] });
+    return result;
   }
   if (name === "draft") {
     if (failDraft) throw new Error("Simulated draft write failure");
-    if (args[2] === undefined) delete fixture.drafts[args[1]];
-    else fixture.drafts[args[1]] = args[2];
+    await fileHistory.beforeDraft(args);
+    fixture.draftRevisions ??= {};
+    if (args[2] === undefined) {
+      delete fixture.drafts[args[1]];
+      delete fixture.draftRevisions[args[1]];
+    } else {
+      fixture.drafts[args[1]] = args[2];
+      fixture.draftRevisions[args[1]] = args[3];
+    }
     return;
   }
   throw new Error("Unexpected smoke API: " + name);
@@ -362,6 +372,16 @@ app
       },
     };
     const monitorContext = { js, key, until, pause, win, temporary, monitor };
+    const fileHistoryContext = {
+      ...projectsContext,
+      fileHistory,
+      analysisCount: () => analysisRequests,
+    };
+    if (process.env.KOBRIXA_SMOKE_FILES_ONLY) {
+      await checkFileHistory(fileHistoryContext);
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_MONITOR_ONLY) {
       await checkMonitor(monitorContext);
       app.exit(0);
@@ -430,6 +450,11 @@ app
       app.exit(0);
       return;
     }
+    const fileCheckOpenCount = openCount;
+    const fileCheckWriteCount = writes.length;
+    await checkFileHistory(fileHistoryContext);
+    openCount = fileCheckOpenCount;
+    writes.splice(fileCheckWriteCount);
     await checkMonitor(monitorContext);
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });

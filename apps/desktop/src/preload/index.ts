@@ -19,6 +19,8 @@ const api: KobrixaApi = {
   },
   keyboard: { updateContext: (context) => ipcRenderer.invoke("keyboard:context", context) },
   workspace: {
+    getPreferences: () => ipcRenderer.invoke("workspace:preferences"),
+    setPreferences: (patch) => ipcRenderer.invoke("workspace:set-preferences", patch),
     restoreSession: () => ipcRenderer.invoke("workspace:restore-session"),
     saveSession: (state) => ipcRenderer.invoke("workspace:save-session", state),
     close: (workspaceId) => ipcRenderer.invoke("workspace:close", workspaceId),
@@ -35,10 +37,15 @@ const api: KobrixaApi = {
     selectEntry: (workspaceId, entry) =>
       ipcRenderer.invoke("workspace:select-entry", workspaceId, entry),
     read: (workspaceId, file) => ipcRenderer.invoke("workspace:read", workspaceId, file),
-    write: (workspaceId, file, content) =>
-      ipcRenderer.invoke("workspace:write", workspaceId, file, content),
-    saveDraft: (workspaceId, file, content) =>
-      ipcRenderer.invoke("workspace:save-draft", workspaceId, file, content),
+    readFile: (workspaceId, file) => ipcRenderer.invoke("workspace:read-file", workspaceId, file),
+    refresh: (workspaceId, known) => ipcRenderer.invoke("workspace:refresh", workspaceId, known),
+    write: (workspaceId, file, content, expectedRevision) =>
+      ipcRenderer.invoke("workspace:write", workspaceId, file, content, expectedRevision),
+    history: (workspaceId, file) => ipcRenderer.invoke("workspace:history", workspaceId, file),
+    historyContent: (workspaceId, file, entryId) =>
+      ipcRenderer.invoke("workspace:history-content", workspaceId, file, entryId),
+    saveDraft: (workspaceId, file, content, baseRevision) =>
+      ipcRenderer.invoke("workspace:save-draft", workspaceId, file, content, baseRevision),
     createEntry: (workspaceId, parent, kind, name) =>
       ipcRenderer.invoke("workspace:create-entry", workspaceId, parent, kind, name),
     moveEntry: (workspaceId, source, target) =>

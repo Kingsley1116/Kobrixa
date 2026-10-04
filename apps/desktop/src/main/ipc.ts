@@ -1,3 +1,4 @@
+import { filePreferencesPatchSchema } from "./workspace/preferences.js";
 import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
@@ -30,6 +31,10 @@ const entryName = z
   .max(255)
   .refine((value) => !value.includes("\0"));
 const content = z.string().max(8 * 1024 * 1024);
+const fileRevision = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/)
+  .nullable();
 const descriptor = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -106,6 +111,10 @@ export function registerIpc(
       .parse(value);
     setKeyboardContext(event.sender, context);
   });
+  handle("workspace:preferences", () => workspaces.getPreferences());
+  handle("workspace:set-preferences", (_event, patch: unknown) =>
+    workspaces.setPreferences(filePreferencesPatchSchema.parse(patch)),
+  );
   handle("workspace:open", () => workspaces.open());
   handle("workspace:renderer-ready", rendererReady);
   handle("workspace:restore-session", () => workspaces.restoreSession());
@@ -127,16 +136,44 @@ export function registerIpc(
   handle("workspace:read", (_event, workspaceId: unknown, sourceFile: unknown) =>
     workspaces.read(id.parse(workspaceId), file.parse(sourceFile)),
   );
-  handle("workspace:write", (_event, workspaceId: unknown, sourceFile: unknown, source: unknown) =>
-    workspaces.write(id.parse(workspaceId), file.parse(sourceFile), content.parse(source)),
+  handle("workspace:read-file", (_event, workspaceId: unknown, sourceFile: unknown) =>
+    workspaces.readFile(id.parse(workspaceId), file.parse(sourceFile)),
+  );
+  handle("workspace:refresh", (_event, workspaceId: unknown, known: unknown) =>
+    workspaces.refresh(
+      id.parse(workspaceId),
+      z
+        .record(file, fileRevision)
+        .refine((value) => Object.keys(value).length <= 10000)
+        .parse(known),
+    ),
+  );
+  handle(
+    "workspace:write",
+    (_event, workspaceId: unknown, sourceFile: unknown, source: unknown, expected: unknown) =>
+      workspaces.write(
+        id.parse(workspaceId),
+        file.parse(sourceFile),
+        content.parse(source),
+        fileRevision.parse(expected),
+      ),
+  );
+  handle("workspace:history", (_event, workspaceId: unknown, sourceFile: unknown) =>
+    workspaces.history(id.parse(workspaceId), file.parse(sourceFile)),
+  );
+  handle(
+    "workspace:history-content",
+    (_event, workspaceId: unknown, sourceFile: unknown, entryId: unknown) =>
+      workspaces.historyContent(id.parse(workspaceId), file.parse(sourceFile), id.parse(entryId)),
   );
   handle(
     "workspace:save-draft",
-    (_event, workspaceId: unknown, sourceFile: unknown, source: unknown) =>
+    (_event, workspaceId: unknown, sourceFile: unknown, source: unknown, baseRevision: unknown) =>
       workspaces.saveDraft(
         id.parse(workspaceId),
         file.parse(sourceFile),
         z.union([content, z.undefined()]).parse(source),
+        fileRevision.optional().parse(baseRevision),
       ),
   );
   handle(

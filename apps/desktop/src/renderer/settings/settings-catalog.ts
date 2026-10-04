@@ -9,6 +9,11 @@ import {
   type DevicePreferences,
 } from "../../shared/device-preferences.js";
 import type { UpdatePreferences } from "../../shared/updates.js";
+import {
+  DEFAULT_FILE_PREFERENCES,
+  FILE_PREFERENCE_CHOICES,
+  type FilePreferences,
+} from "../../shared/file-preferences.js";
 
 export type Text = readonly [zh: string, en: string];
 export const localText = (text: Text, locale: Locale): string => text[locale === "zh-TW" ? 0 : 1];
@@ -16,6 +21,7 @@ export const CATEGORY_LABELS = {
   appearance: ["一般與外觀", "General & appearance"],
   editor: ["編輯器", "Editor"],
   saving: ["儲存", "Saving"],
+  fileHistory: ["檔案與歷史", "Files & history"],
   layout: ["工作區布局", "Workspace layout"],
   device: ["EV3 與執行", "EV3 & execution"],
   updates: ["更新", "Updates"],
@@ -26,10 +32,12 @@ export interface CatalogContext {
   settings: Settings;
   defaults: Settings;
   device: DevicePreferences | undefined;
+  files: FilePreferences | undefined;
   updates: UpdatePreferences | undefined;
   reducedMotion: boolean;
   onChange<K extends keyof Settings>(key: K, value: Settings[K]): void;
   onDeviceChange(patch: Partial<DevicePreferences>): void;
+  onFileChange(patch: Partial<FilePreferences>): void;
   onUpdateChange(patch: Partial<UpdatePreferences>): void;
 }
 export interface SettingDefinition {
@@ -39,7 +47,7 @@ export interface SettingDefinition {
   label: Text;
   hint: Text;
   keywords?: string;
-  source: "app" | "device" | "updates";
+  source: "app" | "device" | "files" | "updates";
   options?: readonly { value: string | number; label: Text }[];
   read(context: CatalogContext): SettingValue | undefined;
   defaultValue(context: CatalogContext): SettingValue;
@@ -99,6 +107,31 @@ const device = <K extends keyof DevicePreferences>(
       }
     : {}),
 });
+const files = <K extends keyof FilePreferences>(
+  key: K,
+  label: Text,
+  hint: Text,
+  extra: Partial<Pick<SettingDefinition, "options" | "disabled" | "keywords">> = {},
+): SettingDefinition => ({
+  id: `files.${key}`,
+  controlId: `setting-${key}`,
+  source: "files",
+  category: "fileHistory",
+  label,
+  hint,
+  ...extra,
+  read: (context) => context.files?.[key],
+  defaultValue: () => DEFAULT_FILE_PREFERENCES[key],
+  change: (context, value) => context.onFileChange({ [key]: value }),
+});
+const externalChangesDisabled = (context: CatalogContext): Text | undefined =>
+  context.files?.externalChangesEnabled === false
+    ? ["啟用外部變更偵測後可調整。", "Enable external change detection to adjust this."]
+    : undefined;
+const retentionHint: Text = [
+  "降低上限會在下次讀取或寫入歷史時移除超出限制的版本。停止新增版本後仍適用。",
+  "Lower limits remove excess versions the next time history is read or written. Limits still apply when new versions are disabled.",
+];
 const enabledHint: Text = ["調整立即套用到編輯器。", "Changes apply to the editor immediately."];
 export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
   app(
@@ -341,6 +374,96 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
       "套用到手動儲存、全部儲存與編譯／執行前儲存。自動儲存只保存內容。",
       "Applies to manual saves, Save all and saves before building/running. Auto save only saves the contents.",
     ],
+  ),
+  files(
+    "externalChangesEnabled",
+    ["外部變更偵測", "External change detection"],
+    [
+      "定期檢查其他程式對專案的修改；返回視窗時也會檢查。關閉後，儲存前仍會檢查版本衝突。",
+      "Check for project changes from other programs periodically and when returning to the window. Saves still check for version conflicts when detection is off.",
+    ],
+    { keywords: "watch disk polling 外部 磁碟 偵測" },
+  ),
+  files(
+    "externalChangeInterval",
+    ["外部變更檢查間隔", "External change check interval"],
+    [
+      "專案視窗顯示時的檢查間隔；較長間隔可減少磁碟讀取。",
+      "How often to check while the window is visible. Longer intervals reduce disk reads.",
+    ],
+    {
+      options: seconds(FILE_PREFERENCE_CHOICES.externalChangeInterval),
+      disabled: externalChangesDisabled,
+      keywords: "polling refresh 輪詢 更新",
+    },
+  ),
+  files(
+    "externalChangeAutoReload",
+    ["自動載入外部變更", "Automatically reload external changes"],
+    [
+      "只自動更新沒有未儲存修改的檔案。關閉時，所有外部變更都先顯示比較提示；未儲存的修改始終保留。",
+      "Automatically update files without unsaved edits. When off, external changes require review first. Unsaved edits are always kept.",
+    ],
+    { disabled: externalChangesDisabled, keywords: "reload compare 重新載入 比較" },
+  ),
+  files(
+    "localHistoryEnabled",
+    ["記錄本機歷史", "Record local history"],
+    [
+      "保留檔案較早的內容，供比較與還原。關閉只停止新增版本，既有歷史仍可瀏覽並受保留限制管理。",
+      "Keep earlier file contents for comparison and restore. Turning off stops new versions; existing history remains available and subject to retention limits.",
+    ],
+    { keywords: "snapshot recovery backup 快照 復原 備份" },
+  ),
+  files("localHistoryDays", ["歷史保留天數", "History retention days"], retentionHint, {
+    options: options(
+      FILE_PREFERENCE_CHOICES.localHistoryDays,
+      FILE_PREFERENCE_CHOICES.localHistoryDays.map((value) => [`${value} 天`, `${value} days`]),
+    ),
+    keywords: "retention age 期限 保存",
+  }),
+  files("localHistoryVersions", ["每個檔案的版本上限", "Versions per file"], retentionHint, {
+    options: options(
+      FILE_PREFERENCE_CHOICES.localHistoryVersions,
+      FILE_PREFERENCE_CHOICES.localHistoryVersions.map((value) => [
+        `${value} 個版本`,
+        `${value} versions`,
+      ]),
+    ),
+    keywords: "history count 歷史 數量",
+  }),
+  files(
+    "localHistorySnapshotMiB",
+    ["單一版本大小上限", "Maximum version size"],
+    [
+      "超過上限的檔案仍可儲存，但不會新增歷史版本。此上限只適用於新版本，不會移除既有的較大版本。",
+      "Larger files can still be saved, but no history version is added. This limit applies to new versions and does not remove existing larger versions.",
+    ],
+    {
+      options: options(
+        FILE_PREFERENCE_CHOICES.localHistorySnapshotMiB,
+        FILE_PREFERENCE_CHOICES.localHistorySnapshotMiB.map((value) => [
+          `${value} MiB`,
+          `${value} MiB`,
+        ]),
+      ),
+      keywords: "snapshot bytes history 快照 容量 歷史",
+    },
+  ),
+  files(
+    "localHistoryWorkspaceMiB",
+    ["每個工作區的歷史容量", "History storage per workspace"],
+    retentionHint,
+    {
+      options: options(
+        FILE_PREFERENCE_CHOICES.localHistoryWorkspaceMiB,
+        FILE_PREFERENCE_CHOICES.localHistoryWorkspaceMiB.map((value) => [
+          `${value} MiB`,
+          `${value} MiB`,
+        ]),
+      ),
+      keywords: "disk quota space 磁碟 容量 配額",
+    },
   ),
   app(
     "filesOpen",

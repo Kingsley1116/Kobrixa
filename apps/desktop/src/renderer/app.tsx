@@ -1,5 +1,8 @@
 import { ProjectSessions, type ProjectSession } from "./workspace/project-sessions.js";
 import { ProjectTabs } from "./workspace/project-tabs.js";
+import { FileConflictDialog, LocalHistoryDialog } from "./workspace/file-review-dialog.js";
+import type { LocalHistoryEntry, WorkspaceFileSnapshot } from "../shared/workspace-files.js";
+import "./workspace/file-changes.css";
 import { useUpdates } from "./updates/updates.js";
 import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
@@ -56,6 +59,7 @@ import { DevicePanel } from "./device/device-panel.js";
 import { BottomPanel } from "./workbench/bottom-panel.js";
 import { isModalOpen, subscribeModals } from "./components/modal.js";
 import { settingsStore, useSettings } from "./settings/settings-state.js";
+import { useFilePreferences } from "./settings/file-settings.js";
 import type { Settings } from "./settings/settings.js";
 import {
   SettingsPanel,
@@ -80,9 +84,27 @@ import { copy } from "./i18n/copy.js";
 type Tab = DocumentTab;
 type PendingDraft = { workspaceId: string; file: string; content: () => string; timer: number };
 type PendingCreate = { kind: WorkspaceEntry["kind"]; parent: string };
+type FileReview = {
+  workspaceId: string;
+  file: string;
+  snapshot: WorkspaceFileSnapshot;
+  error?: string;
+};
+type HistoryReview = {
+  workspaceId: string;
+  file: string;
+  entries: LocalHistoryEntry[];
+  loading: boolean;
+  selectedId?: string;
+  selectedContent?: string;
+  error?: string;
+};
 
 export function App(): React.JSX.Element {
   const updates = useUpdates();
+  const filePreferences = useFilePreferences();
+  const filePreferencesRef = useRef(filePreferences.value);
+  filePreferencesRef.current = filePreferences.value;
   const [updatePreparing, setUpdatePreparing] = useState(false);
   const [confirmUpdate, setConfirmUpdate] = useState(false);
   const [dismissedUpdate, setDismissedUpdate] = useState<string>();
@@ -204,6 +226,14 @@ export function App(): React.JSX.Element {
     documents.replace(typeof value === "function" ? value(documents.getSnapshot()) : value);
   };
   const [writeQueue] = useState(() => new FileWriteQueue());
+  const [fileReview, setFileReview] = useState<FileReview>();
+  const [fileReviewBusy, setFileReviewBusy] = useState(false);
+  const [historyReview, setHistoryReview] = useState<HistoryReview>();
+  const historyRequest = useRef(0);
+  const refreshFilesRef = useRef<() => Promise<void>>(async () => {});
+  const refreshingFiles = useRef(false);
+  const refreshErrors = useRef(new Set<string>());
+  const refreshInvalidations = useRef(new Set<string>());
   const latestDrafts = useRef(new Map<string, string>());
   const autoSaveFailures = useRef(new Map<string, string>());
   const autoSaveTimers = useRef(new Map<string, { revision: number; timer: number }>());
@@ -340,6 +370,7 @@ export function App(): React.JSX.Element {
     scheduleSessionSave();
   }, [activeFile, selectedTreePath, expandedTreePaths, projects]);
   const active = tabs.find((tab) => tab.file === activeFile);
+  const activeConflict = active && activeSession?.files.conflicts.get(active.file);
   const dirty = tabs.some((tab) => tab.dirty);
   const auxiliaryModalOpen = useSyncExternalStore(subscribeModals, isModalOpen);
   const modalOpen = Boolean(
@@ -350,7 +381,9 @@ export function App(): React.JSX.Element {
     pendingCloseProject ||
     pendingCreate ||
     pendingMove ||
-    pendingTrash,
+    pendingTrash ||
+    fileReview ||
+    historyReview,
   );
   const diagnostics = useMemo(() => {
     const seen = new Set<string>();
@@ -470,6 +503,127 @@ export function App(): React.JSX.Element {
 
   useEffect(() => analysisSession.attach(), [analysisSession]);
 
+  refreshFilesRef.current = async () => {
+    const preferences = filePreferencesRef.current;
+    if (
+      !preferences?.externalChangesEnabled ||
+      refreshingFiles.current ||
+      !sessionReady.current ||
+      document.hidden ||
+      updatePreparingRef.current ||
+      closingProjectRef.current ||
+      projectBusyRef.current ||
+      managingEntriesRef.current
+    )
+      return;
+    refreshingFiles.current = true;
+    try {
+      for (const project of sessions.getSnapshot()) {
+        if (preferences !== filePreferencesRef.current) break;
+        const id = project.workspace.id;
+        if (controller.editingLockedFor(id)) continue;
+        const generation = project.files.generation;
+        try {
+          const result = await window.kobrixa.workspace.refresh(id, project.files.known());
+          if (
+            preferences !== filePreferencesRef.current ||
+            sessions.get(id) !== project ||
+            generation !== project.files.generation ||
+            controller.editingLockedFor(id) ||
+            managingEntriesRef.current ||
+            closingProjectRef.current ||
+            updatePreparingRef.current
+          ) {
+            // The service has observed these changes even if this reply's file snapshots
+            // are stale. Preserve closed-dependency invalidation for the next refresh.
+            if (result.changed && sessions.get(id) === project)
+              refreshInvalidations.current.add(id);
+            continue;
+          }
+          refreshErrors.current.delete(id);
+          let changed = false;
+          for (const [file, snapshot] of Object.entries(result.files)) {
+            const tab = project.documents.getSnapshot().find((item) => item.file === file);
+            const draft = project.workspace.drafts[file];
+            const local =
+              tab ??
+              (draft === undefined
+                ? undefined
+                : {
+                    content: draft,
+                    saved: project.files.baseline(file)?.content ?? "",
+                  });
+            const action = project.files.observe(
+              file,
+              snapshot,
+              local,
+              preferences.externalChangeAutoReload,
+            );
+            if (action === "unchanged") continue;
+            changed = true;
+            if (action === "reload" && snapshot.content !== null) {
+              if (tab) replaceFileText(project, file, snapshot.content, snapshot.content);
+              removeWorkspaceDraft(file, id);
+              void settleDraft(id, file)
+                .then(() => enqueueDraftWrite(id, file, snapshot.content!))
+                .catch(report);
+            } else if (local) {
+              queueDraft(id, file, local.content);
+            }
+          }
+          const previous = project.workspace;
+          const next = result.workspace;
+          const treeChanged =
+            JSON.stringify([previous.entries, previous.manifest, previous.entryCandidates]) !==
+            JSON.stringify([next.entries, next.manifest, next.entryCandidates]);
+          if (changed || result.changed || treeChanged || refreshInvalidations.current.has(id)) {
+            refreshInvalidations.current.delete(id);
+            project.workspace = {
+              ...next,
+              drafts: project.workspace.drafts,
+              draftRevisions: project.workspace.draftRevisions ?? {},
+              // A new identity also invalidates analysis for closed dependency changes.
+              files: [...next.files],
+            };
+            sessions.changed();
+            controller.clearDiagnostics(id);
+            if (sessions.activeId === id) setBuildDiagnostics([]);
+          }
+        } catch (error) {
+          if (
+            preferences === filePreferencesRef.current &&
+            sessions.get(id) === project &&
+            !refreshErrors.current.has(id)
+          ) {
+            refreshErrors.current.add(id);
+            report(error);
+          }
+        }
+      }
+    } finally {
+      refreshingFiles.current = false;
+    }
+  };
+  useEffect(() => {
+    if (!filePreferences.value?.externalChangesEnabled) return;
+    const refresh = () => {
+      void refreshFilesRef.current();
+    };
+    refresh();
+    const timer = window.setInterval(refresh, filePreferences.value.externalChangeInterval);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [
+    filePreferences.value?.externalChangesEnabled,
+    filePreferences.value?.externalChangeInterval,
+    filePreferences.value?.externalChangeAutoReload,
+  ]);
+
   const keyboard = useKeyboard(runCommand, modalOpen);
   const titleWithShortcut = (label: string, command: AppCommand): string =>
     [label, keyboard.hint(command)].filter(Boolean).join(" · ");
@@ -487,7 +641,7 @@ export function App(): React.JSX.Element {
         const id = project.workspace.id;
         if (!enabled || controller.editingLockedFor(id)) continue;
         for (const tab of project.documents.getSnapshot()) {
-          if (!tab.dirty) continue;
+          if (!tab.dirty || project.files.conflicts.has(tab.file)) continue;
           const key = draftKey(id, tab.file);
           wanted.add(key);
           const revision = project.documents.version(tab.file);
@@ -621,11 +775,16 @@ export function App(): React.JSX.Element {
             content === undefined
               ? undefined
               : tab
-                ? tab.content === tab.saved
+                ? tab.content === tab.saved && !sessions.get(workspaceId)?.files.conflicts.has(file)
                   ? undefined
                   : tab.content
                 : (latestDrafts.current.get(key) ?? content);
-          return window.kobrixa.workspace.saveDraft(workspaceId, file, draft);
+          return window.kobrixa.workspace.saveDraft(
+            workspaceId,
+            file,
+            draft,
+            sessions.get(workspaceId)?.files.baseline(file)?.revision,
+          );
         }),
       );
     draftWrites.current.set(key, next);
@@ -680,7 +839,11 @@ export function App(): React.JSX.Element {
       .flatMap((project) =>
         project.documents
           .getSnapshot()
-          .filter((tab) => tab.dirty && !pendingKeys.has(draftKey(project.workspace.id, tab.file)))
+          .filter(
+            (tab) =>
+              (tab.dirty || project.files.conflicts.has(tab.file)) &&
+              !pendingKeys.has(draftKey(project.workspace.id, tab.file)),
+          )
           .map((tab) => enqueueDraftWrite(project.workspace.id, tab.file, tab.content)),
       );
     await Promise.all([
@@ -697,9 +860,177 @@ export function App(): React.JSX.Element {
     const project = sessions.get(workspaceId);
     if (!project || !(file in project.workspace.drafts)) return;
     const drafts = { ...project.workspace.drafts };
+    const draftRevisions = { ...project.workspace.draftRevisions };
     delete drafts[file];
-    project.workspace = { ...project.workspace, drafts };
+    delete draftRevisions[file];
+    project.workspace = { ...project.workspace, drafts, draftRevisions };
     sessions.changed();
+  }
+
+  function replaceFileText(
+    project: ProjectSession,
+    file: string,
+    content: string,
+    saved?: string,
+  ): void {
+    const before = project.documents.getSnapshot().find((tab) => tab.file === file);
+    if (!before) return;
+    const oldContent = before.content;
+    const oldSaved = before.saved;
+    if (sessions.active === project) editorRef.current?.applySavedFormat(file, oldContent, content);
+    else project.editor.format(file, oldContent, content);
+    project.documents.replace(
+      project.documents
+        .getSnapshot()
+        .map((tab) => (tab.file === file ? { file, content, saved: saved ?? oldSaved } : tab)),
+    );
+  }
+
+  function beginFileReview(project: ProjectSession, file: string): void {
+    const snapshot = project.files.conflicts.get(file);
+    if (!snapshot) return;
+    historyRequest.current++;
+    setHistoryReview(undefined);
+    setFileReview({ workspaceId: project.workspace.id, file, snapshot });
+  }
+
+  async function resolveFileReview(action: "reload" | "save"): Promise<void> {
+    if (!fileReview || fileReviewBusy) return;
+    const review = fileReview;
+    const project = sessions.get(review.workspaceId);
+    if (!project || controller.editingLockedFor(review.workspaceId)) return;
+    setFileReviewBusy(true);
+    try {
+      if (action === "save") {
+        if (await saveTab(review.file, false, review.workspaceId, review.snapshot))
+          setFileReview(undefined);
+        return;
+      }
+      const snapshot = await window.kobrixa.workspace.readFile(review.workspaceId, review.file);
+      if (sessions.get(review.workspaceId) !== project) return;
+      if (snapshot.revision !== review.snapshot.revision || snapshot.content === null) {
+        project.files.reject(review.file, snapshot);
+        sessions.changed();
+        setFileReview({
+          ...review,
+          snapshot,
+          error:
+            locale === "zh-TW"
+              ? "磁碟檔案再次變更，請檢查最新版本後再選擇。"
+              : "The file changed again on disk. Review the latest version before choosing.",
+        });
+        return;
+      }
+      await settleDraft(review.workspaceId, review.file);
+      await writeQueue.enqueue(review.workspaceId, review.file, async () => {
+        project.files.accept(review.file, snapshot);
+        replaceFileText(project, review.file, snapshot.content!, snapshot.content!);
+        await window.kobrixa.workspace.saveDraft(review.workspaceId, review.file, undefined);
+        latestDrafts.current.delete(draftKey(review.workspaceId, review.file));
+        removeWorkspaceDraft(review.file, review.workspaceId);
+      });
+      sessions.changed();
+      setFileReview(undefined);
+    } catch (error) {
+      setFileReview({ ...review, error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setFileReviewBusy(false);
+    }
+  }
+
+  async function openHistory(): Promise<void> {
+    const project = sessions.active;
+    if (!project || !activeFile) return;
+    const file = activeFile,
+      workspaceId = project.workspace.id;
+    const request = ++historyRequest.current;
+    setHistoryReview({ workspaceId, file, entries: [], loading: true });
+    try {
+      const entries = await window.kobrixa.workspace.history(workspaceId, file);
+      if (request !== historyRequest.current || sessions.get(workspaceId) !== project) return;
+      const first = entries[0];
+      if (!first) {
+        setHistoryReview({ workspaceId, file, entries, loading: false });
+        return;
+      }
+      const content = await window.kobrixa.workspace.historyContent(workspaceId, file, first.id);
+      if (request !== historyRequest.current || sessions.get(workspaceId) !== project) return;
+      setHistoryReview({
+        workspaceId,
+        file,
+        entries,
+        loading: false,
+        selectedId: first.id,
+        selectedContent: content,
+      });
+    } catch (error) {
+      if (request === historyRequest.current)
+        setHistoryReview({
+          workspaceId,
+          file,
+          entries: [],
+          loading: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+    }
+  }
+
+  async function selectHistory(id: string): Promise<void> {
+    if (!historyReview) return;
+    const review = historyReview;
+    const request = ++historyRequest.current;
+    setHistoryReview({
+      workspaceId: review.workspaceId,
+      file: review.file,
+      entries: review.entries,
+      selectedId: id,
+      loading: true,
+    });
+    try {
+      const content = await window.kobrixa.workspace.historyContent(
+        review.workspaceId,
+        review.file,
+        id,
+      );
+      if (request === historyRequest.current)
+        setHistoryReview({
+          workspaceId: review.workspaceId,
+          file: review.file,
+          entries: review.entries,
+          selectedId: id,
+          selectedContent: content,
+          loading: false,
+        });
+    } catch (error) {
+      if (request === historyRequest.current)
+        setHistoryReview({
+          workspaceId: review.workspaceId,
+          file: review.file,
+          entries: review.entries,
+          selectedId: id,
+          loading: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+    }
+  }
+
+  function restoreHistory(): void {
+    if (!historyReview || historyReview.loading || historyReview.selectedContent === undefined)
+      return;
+    const project = sessions.get(historyReview.workspaceId);
+    if (!project || controller.editingLockedFor(project.workspace.id)) return;
+    const { file, selectedContent } = historyReview;
+    replaceFileText(project, file, selectedContent);
+    queueDraft(project.workspace.id, file, selectedContent);
+    controller.clearDiagnostics(project.workspace.id);
+    historyRequest.current++;
+    setHistoryReview(undefined);
+    setStatus(
+      locale === "zh-TW"
+        ? "歷史版本已還原到編輯器，可使用復原撤銷。"
+        : "Version restored to the editor. Undo is available.",
+    );
+    window.requestAnimationFrame(() => editorRef.current?.focus());
   }
 
   function closeTab(file: string): void {
@@ -709,6 +1040,7 @@ export function App(): React.JSX.Element {
       activeFile,
     );
     setTabs((current) => current.filter((tab) => tab.file !== file));
+    sessions.active?.files.forget(file);
     setActiveFile(nextActive);
     if (focusTarget?.file === file) setFocusTarget(undefined);
   }
@@ -717,7 +1049,9 @@ export function App(): React.JSX.Element {
     if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
     const tab = tabs.find((item) => item.file === file);
     if (!tab) return;
-    const disposition = tabCloseDisposition(tab.content !== tab.saved);
+    const disposition = tabCloseDisposition(
+      tab.content !== tab.saved || Boolean(sessions.active?.files.conflicts.has(file)),
+    );
     if (disposition === "prompt") setPendingCloseFile(file);
     else closeTab(file);
   }
@@ -862,11 +1196,16 @@ export function App(): React.JSX.Element {
       selected.files[0];
     const files = view ? view.files : first ? [first] : [];
     const opened: Tab[] = [];
-    for (const file of [...new Set(files)]) {
+    for (const file of [...new Set([...files, ...Object.keys(selected.drafts)])]) {
       try {
-        if (!selected.files.includes(file)) throw new Error("File is missing.");
-        const saved = await window.kobrixa.workspace.read(selected.id, file);
-        opened.push({ file, content: selected.drafts[file] ?? saved, saved });
+        const snapshot = await window.kobrixa.workspace.readFile(selected.id, file);
+        const draft = selected.drafts[file];
+        project.files.recover(file, snapshot, draft, selected.draftRevisions?.[file]);
+        if (snapshot.content === null && draft === undefined) throw new Error("File is missing.");
+        if (files.includes(file) || project.files.conflicts.has(file)) {
+          const saved = snapshot.content ?? "";
+          opened.push({ file, content: draft ?? saved, saved });
+        }
       } catch {
         setSessionIssues((issues) => [
           ...issues,
@@ -1049,9 +1388,22 @@ export function App(): React.JSX.Element {
       return;
     }
     try {
-      const saved = await window.kobrixa.workspace.read(current.id, file);
+      const snapshot = await window.kobrixa.workspace.readFile(current.id, file);
       if (workspaceStateRef.current?.id !== current.id) return;
-      const content = workspaceStateRef.current.drafts[file] ?? saved;
+      // Another navigation may have opened (and edited) this file while the read waited.
+      // Its baseline belongs to that buffer; a later refresh will reconcile this read.
+      if (!replaceTabs && tabsRef.current.some((tab) => tab.file === file)) {
+        setActiveFile(file);
+        return;
+      }
+      const draft = workspaceStateRef.current.drafts[file];
+      if (snapshot.content === null && draft === undefined)
+        throw new Error(locale === "zh-TW" ? "檔案已不存在。" : "The file no longer exists.");
+      const saved = snapshot.content ?? "";
+      const content = draft ?? saved;
+      sessions
+        .get(current.id)
+        ?.files.recover(file, snapshot, draft, workspaceStateRef.current.draftRevisions?.[file]);
       setTabs((value) =>
         replaceTabs
           ? [{ file, content, saved }]
@@ -1069,6 +1421,7 @@ export function App(): React.JSX.Element {
     file: string,
     automatic = false,
     workspaceId = workspaceStateRef.current?.id,
+    reviewed?: WorkspaceFileSnapshot,
   ): Promise<boolean> {
     const project = sessions.get(workspaceId);
     if (!project || !workspaceId) return false;
@@ -1083,8 +1436,26 @@ export function App(): React.JSX.Element {
       return content === undefined ? undefined : { content, saved: "" };
     };
     if (!read()) return false;
+    if (project.files.conflicts.has(file) && !reviewed) {
+      if (!automatic) beginFileReview(project, file);
+      return false;
+    }
+    let warning: string | undefined;
     try {
       await settleDraft(workspaceId, file);
+      if (!project.files.baseline(file)) {
+        const snapshot = await window.kobrixa.workspace.readFile(workspaceId, file);
+        project.files.recover(
+          file,
+          snapshot,
+          read()?.content,
+          project.workspace.draftRevisions?.[file],
+        );
+        if (project.files.conflicts.has(file) && !reviewed) {
+          if (!automatic) beginFileReview(project, file);
+          return false;
+        }
+      }
       await writeQueue.enqueue(workspaceId, file, () =>
         saveSnapshot({
           read,
@@ -1108,7 +1479,46 @@ export function App(): React.JSX.Element {
               };
             queueDraft(workspaceId, file, after);
           },
-          write: (content) => window.kobrixa.workspace.write(workspaceId, file, content),
+          write: async (content) => {
+            if (project.files.conflicts.has(file) && !reviewed) {
+              if (!automatic) beginFileReview(project, file);
+              throw new Error("Review external changes before saving.");
+            }
+            // The exact version shown in the comparison is the only version approved.
+            const baseline = reviewed ?? project.files.baseline(file);
+            if (!baseline) throw new Error("Missing file baseline.");
+            const result = await window.kobrixa.workspace.write(
+              workspaceId,
+              file,
+              content,
+              baseline.revision,
+            );
+            if (result.status === "conflict") {
+              project.files.reject(file, result.snapshot);
+              sessions.changed();
+              if (!automatic)
+                setFileReview({
+                  workspaceId,
+                  file,
+                  snapshot: result.snapshot,
+                  ...(reviewed
+                    ? {
+                        error:
+                          locale === "zh-TW"
+                            ? "磁碟檔案再次變更，請檢查最新版本後再選擇。"
+                            : "The file changed again on disk. Review the latest version before choosing.",
+                      }
+                    : {}),
+                });
+              throw new Error(
+                locale === "zh-TW"
+                  ? "檔案在外部已變更，本機修改已保留。"
+                  : "The file changed externally. Your edits have been kept.",
+              );
+            }
+            warning = result.warning;
+            project.files.accept(file, result.snapshot);
+          },
           commit: (content) => {
             replaceTabs((tabs) =>
               tabs.map((tab) => (tab.file === file ? { ...tab, saved: content } : tab)),
@@ -1124,17 +1534,29 @@ export function App(): React.JSX.Element {
             if (content !== undefined)
               latestDrafts.current.set(draftKey(workspaceId, file), content);
             else latestDrafts.current.delete(draftKey(workspaceId, file));
-            await window.kobrixa.workspace.saveDraft(workspaceId, file, content);
+            await window.kobrixa.workspace.saveDraft(
+              workspaceId,
+              file,
+              content,
+              project.files.baseline(file)?.revision,
+            );
           },
         }),
       );
       autoSaveFailures.current.delete(draftKey(workspaceId, file));
-      if (sessions.activeId === workspaceId) setStatus(t.savedStatus);
+      sessions.changed();
+      if (sessions.activeId === workspaceId) setStatus(warning ?? t.savedStatus);
       return true;
     } catch (error) {
       if (automatic)
         autoSaveFailures.current.set(draftKey(workspaceId, file), read()?.content ?? "");
-      report(error);
+      if (!project.files.conflicts.has(file)) report(error);
+      else if (sessions.activeId === workspaceId)
+        setStatus(
+          locale === "zh-TW"
+            ? "檔案在外部已變更，請先比較變更。"
+            : "The file changed externally. Compare changes before saving.",
+        );
       return false;
     }
   }
@@ -1152,6 +1574,7 @@ export function App(): React.JSX.Element {
       isModalOpen()
     )
       return;
+    if (sessions.get(id)?.files.conflicts.has(file)) return;
     const tab = sessions
       .get(id)
       ?.documents.getSnapshot()
@@ -1212,7 +1635,9 @@ export function App(): React.JSX.Element {
         Object.keys(snapshot.analysis.index.sources).map(async (file) => {
           if (!current!.files.includes(file))
             throw new Error("A source file was moved or removed.");
-          const disk = await window.kobrixa.workspace.read(current!.id, file);
+          const diskSnapshot = await window.kobrixa.workspace.readFile(current!.id, file);
+          if (diskSnapshot.content === null) throw new Error(`'${file}' no longer exists.`);
+          const disk = diskSnapshot.content;
           const tab = initialTabs.find((tab) => tab.file === file);
           const content = tab?.content ?? current!.drafts[file] ?? disk;
           if (
@@ -1220,6 +1645,9 @@ export function App(): React.JSX.Element {
             (tab && normalizeSource(disk) !== normalizeSource(tab.saved))
           )
             throw new Error(`'${file}' changed since analysis. Reopen the file before renaming.`);
+          if (sessions.active?.files.conflicts.has(file))
+            throw new Error(`'${file}' has unresolved external changes.`);
+          sessions.get(current!.id)?.files.accept(file, diskSnapshot);
           return [file, disk];
         }),
       ),
@@ -1281,6 +1709,7 @@ export function App(): React.JSX.Element {
   function applyMoveMutation(result: WorkspaceMutationResult, refreshedManifest?: string): void {
     const { moved } = result;
     editorRef.current?.remapFiles(moved);
+    sessions.get(result.workspace.id)?.files.remap(moved);
     setWorkspace(result.workspace);
     setTabs((current) =>
       current.map((tab) => {
@@ -1320,11 +1749,15 @@ export function App(): React.JSX.Element {
     try {
       await flushDrafts();
       const result = await window.kobrixa.workspace.moveEntry(workspace.id, source, target);
-      const refreshedManifest =
+      const manifestSnapshot =
         buildEntryMovesWith(source) && !workspace.implicit
-          ? await window.kobrixa.workspace.read(workspace.id, "kobrixa.json").catch(() => undefined)
+          ? await window.kobrixa.workspace
+              .readFile(workspace.id, "kobrixa.json")
+              .catch(() => undefined)
           : undefined;
-      applyMoveMutation(result, refreshedManifest);
+      if (manifestSnapshot)
+        sessions.get(workspace.id)?.files.accept("kobrixa.json", manifestSnapshot);
+      applyMoveMutation(result, manifestSnapshot?.content ?? undefined);
       setStatus(t.ready);
       return true;
     } catch (error) {
@@ -1396,6 +1829,7 @@ export function App(): React.JSX.Element {
       await flushDrafts();
       const result = await window.kobrixa.workspace.trashEntry(workspace.id, pendingTrash);
       const removed = new Set(result.removed);
+      for (const file of removed) sessions.get(workspace.id)?.files.forget(file);
       const remainingTabs = tabs.filter((tab) => !removed.has(tab.file));
       const nextActive = activeFileAfterRemoval(
         tabs.map((tab) => tab.file),
@@ -1431,7 +1865,12 @@ export function App(): React.JSX.Element {
   async function saveProjectChanges(id: string, automatic = false): Promise<void> {
     const project = sessions.get(id);
     if (!project) return;
-    for (const [file] of filesToSave(project.workspace.drafts, project.documents.getSnapshot())) {
+    for (const file of new Set([
+      ...filesToSave(project.workspace.drafts, project.documents.getSnapshot()).map(
+        ([file]) => file,
+      ),
+      ...project.files.conflicts.keys(),
+    ])) {
       if (!(await saveTab(file, automatic, id)))
         throw new Error(
           locale === "zh-TW"
@@ -1651,6 +2090,7 @@ export function App(): React.JSX.Element {
 
   const settingsPage = (
     <SettingsPanel
+      filePreferences={filePreferences}
       reducedMotion={reducedMotion}
       settings={settings}
       updates={updates}
@@ -1945,6 +2385,13 @@ export function App(): React.JSX.Element {
               </div>
               <div className="editor-tools">
                 <button
+                  className="local-history-trigger"
+                  disabled={settingsActive || !active || locked}
+                  onClick={() => void openHistory()}
+                >
+                  {locale === "zh-TW" ? "本機歷史" : "Local history"}
+                </button>
+                <button
                   disabled={settingsActive || !active || locked}
                   title={titleWithShortcut(t.format, "format")}
                   onClick={() => runCommand("format")}
@@ -2015,13 +2462,45 @@ export function App(): React.JSX.Element {
                     </span>
                     <span className="tab-name">{tab.file}</span>
                     {tabDirty && <i aria-label={t.unsaved}>●</i>}
+                    {activeSession?.files.conflicts.has(tab.file) && (
+                      <span
+                        className="file-conflict-mark"
+                        aria-label={
+                          locale === "zh-TW" ? "外部變更待處理" : "External changes need review"
+                        }
+                      >
+                        !
+                      </span>
+                    )}
                   </ClosableTab>
                 );
               })}
               {settingsTab}
             </div>
 
-            <div className="editor-stage" hidden={settingsActive}>
+            <div
+              className={`editor-stage ${activeConflict ? "file-change-stage" : ""}`}
+              hidden={settingsActive}
+            >
+              {activeConflict && active && (
+                <div className="file-change-banner" role="status">
+                  <span>
+                    {activeConflict.content === null
+                      ? locale === "zh-TW"
+                        ? "檔案已在外部刪除，編輯器內容已保留。"
+                        : "File deleted outside Kobrixa. Editor contents are preserved."
+                      : locale === "zh-TW"
+                        ? "檔案已在外部變更，此檔案的自動儲存已暫停。"
+                        : "File changed outside Kobrixa. Automatic saving is paused for this file."}
+                  </span>
+                  <button
+                    disabled={locked}
+                    onClick={() => beginFileReview(activeSession!, active.file)}
+                  >
+                    {locale === "zh-TW" ? "比較變更" : "Compare changes"}
+                  </button>
+                </div>
+              )}
               {locked && (
                 <div className="editor-lock" role="status">
                   {t.phases[execution.phase]} <span>{t.locked}</span>
@@ -2424,11 +2903,66 @@ export function App(): React.JSX.Element {
           </DialogActions>
         </Dialog>
       )}
+      {fileReview && (
+        <FileConflictDialog
+          locale={locale}
+          resolvedTheme={resolvedTheme}
+          file={fileReview.file}
+          localContent={
+            sessions
+              .get(fileReview.workspaceId)
+              ?.documents.getSnapshot()
+              .find((tab) => tab.file === fileReview.file)?.content ??
+            sessions.get(fileReview.workspaceId)?.workspace.drafts[fileReview.file] ??
+            ""
+          }
+          diskContent={fileReview.snapshot.content}
+          busy={fileReviewBusy}
+          error={fileReview.error}
+          onClose={() => {
+            if (!fileReviewBusy) setFileReview(undefined);
+          }}
+          onReload={() => void resolveFileReview("reload")}
+          onKeepLocal={() => void resolveFileReview("save")}
+        />
+      )}
+      {historyReview && (
+        <LocalHistoryDialog
+          locale={locale}
+          resolvedTheme={resolvedTheme}
+          preferences={filePreferences.value}
+          file={historyReview.file}
+          currentContent={
+            sessions
+              .get(historyReview.workspaceId)
+              ?.documents.getSnapshot()
+              .find((tab) => tab.file === historyReview.file)?.content ?? ""
+          }
+          entries={historyReview.entries}
+          selectedId={historyReview.selectedId}
+          selectedContent={historyReview.selectedContent}
+          loading={historyReview.loading}
+          busy={false}
+          error={historyReview.error}
+          onSelect={(id) => void selectHistory(id)}
+          onRestore={restoreHistory}
+          onClose={() => {
+            historyRequest.current++;
+            setHistoryReview(undefined);
+          }}
+        />
+      )}
       <footer>
         <div className="status-group">
           {active ? (
-            <span className={active.dirty ? "dirty" : ""}>
-              {active.dirty ? `● ${t.unsaved}` : `✓ ${t.saved}`}
+            <span className={active.dirty || activeConflict ? "dirty" : ""}>
+              {activeConflict
+                ? locale === "zh-TW"
+                  ? "! 外部變更待處理"
+                  : "! Review external changes"
+                : active.dirty
+                  ? `● ${t.unsaved}`
+                  : `✓ ${t.saved}`}
             </span>
           ) : (
             <span>{workspace ? t.ready : "Kobrixa"}</span>
