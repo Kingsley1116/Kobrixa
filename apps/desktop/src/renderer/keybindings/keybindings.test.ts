@@ -3,6 +3,7 @@ import {
   appCommands,
   bindingConflicts,
   bindingProblem,
+  commandAvailableInInput,
   effectiveBindings,
   KEYBINDINGS_KEY,
   KeybindingsStore,
@@ -66,6 +67,25 @@ describe("keyboard bindings", () => {
     });
     restored.reset();
     expect(restored.getSnapshot().overrides).toEqual({});
+  });
+  it("offers remappable project navigation commands in workbench input fields", () => {
+    for (const mac of [false, true]) {
+      const commands = appCommands(mac);
+      const quickOpen = commands.find((command) => command.id === "kobrixa.quickOpen")!;
+      const search = commands.find((command) => command.id === "kobrixa.search")!;
+      expect(quickOpen.defaults[0]?.keys).toEqual([`${mac ? "Meta" : "Ctrl"}+KeyP`]);
+      expect(search.defaults[0]?.keys).toEqual([`${mac ? "Meta" : "Ctrl"}+Shift+KeyF`]);
+      expect(effectiveBindings(quickOpen, { "kobrixa.quickOpen": [["Alt+KeyP"]] })).toEqual([
+        { keys: ["Alt+KeyP"], when: "editorFocus" },
+      ]);
+      expect(effectiveBindings(search, { "kobrixa.search": [] })).toEqual([]);
+    }
+    expect(commandAvailableInInput("kobrixa.quickOpen")).toBe(true);
+    expect(commandAvailableInInput("kobrixa.search")).toBe(true);
+    expect(commandAvailableInInput("kobrixa.settings")).toBe(true);
+    expect(commandAvailableInInput("kobrixa.shortcuts")).toBe(true);
+    expect(commandAvailableInInput("kobrixa.run")).toBe(false);
+    expect(commandAvailableInInput("kobrixa.closeTab")).toBe(false);
   });
   it("recovers valid entries from damaged storage and survives write failure", () => {
     expect(readOverrides("invalid")).toEqual({});

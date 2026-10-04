@@ -1204,6 +1204,10 @@ export const COMMAND_DESCRIPTIONS: Record<string, readonly [en: string, zh: stri
     "Save and compile the project, then deploy and start it on the connected EV3.",
     "保存並編譯專案，再部署到已連線的 EV3 上執行。",
   ],
+  "kobrixa.quickOpen": [
+    "Find a project file by name or path and open it, optionally at a specified line and column.",
+    "依檔名或路徑尋找並開啟專案檔案，可指定跳轉的行號與欄號。",
+  ],
   "kobrixa.save": [
     "Write the active file to disk, applying format on save when enabled.",
     "將目前檔案寫入磁碟；啟用儲存時格式化時會先整理格式。",
@@ -1215,6 +1219,10 @@ export const COMMAND_DESCRIPTIONS: Record<string, readonly [en: string, zh: stri
   "kobrixa.settings": [
     "Open the settings tab to adjust appearance, editor behavior, saving and workspace layout.",
     "開啟設定分頁，調整外觀、編輯器、儲存方式與工作區布局。",
+  ],
+  "kobrixa.search": [
+    "Search text across the active project's editable files, including unsaved changes.",
+    "搜尋目前專案的可編輯檔案內容，包含尚未儲存的修改。",
   ],
   "kobrixa.shortcuts": [
     "Open the keyboard shortcuts category to search commands and edit their bindings.",

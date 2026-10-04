@@ -5,6 +5,7 @@ import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkMonitor, createMonitorFixture } from "./monitor-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
+import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
 import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -19,6 +20,9 @@ const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
 );
 const { LanguageService } = await import(pathToFileURL(path.join(temporary, "language.cjs")).href);
+const searchHelpers = await import(
+  pathToFileURL(path.join(temporary, "workspace-search.cjs")).href
+);
 const languageRoot = path.join(temporary, "language-project");
 fs.mkdirSync(languageRoot);
 const language = new LanguageService({
@@ -95,6 +99,7 @@ const workspace = (id = firstId) => {
   };
 };
 const fileHistory = createFileHistoryFixture(fixtures, workspace);
+const search = createSearchFixture(fixtures, searchHelpers);
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -117,7 +122,9 @@ let devicePreferences = {
 };
 ipcMain.handle("smoke", async (_e, name, args) => {
   if (monitor.handles(name)) return monitor.handle(name, args);
+  if (name === "readFile") search.beforeRead(args);
   if (fileHistory.handles(name)) return fileHistory.handle(name, args);
+  if (name === "search") return search.handle(args);
   const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
   if (name === "restoreSession")
     return {
@@ -377,6 +384,12 @@ app
       fileHistory,
       analysisCount: () => analysisRequests,
     };
+    const searchContext = { ...projectsContext, search, writes };
+    if (process.env.KOBRIXA_SMOKE_SEARCH_ONLY) {
+      await checkWorkspaceSearch(searchContext);
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_FILES_ONLY) {
       await checkFileHistory(fileHistoryContext);
       app.exit(0);
@@ -883,6 +896,7 @@ app
       installed: () => updateInstallCount,
       files,
     });
+    await checkWorkspaceSearch(searchContext);
     await checkProjects(projectsContext);
     console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);

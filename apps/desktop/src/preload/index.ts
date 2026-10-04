@@ -33,6 +33,7 @@ const api: KobrixaApi = {
     finishClose: (requestId, ready) =>
       ipcRenderer.invoke("workspace:finish-close", requestId, ready),
     open: () => ipcRenderer.invoke("workspace:open"),
+    search: (workspaceId, request) => ipcRenderer.invoke("workspace:search", workspaceId, request),
     create: (name) => ipcRenderer.invoke("workspace:create", name),
     selectEntry: (workspaceId, entry) =>
       ipcRenderer.invoke("workspace:select-entry", workspaceId, entry),

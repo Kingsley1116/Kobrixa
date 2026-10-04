@@ -41,6 +41,11 @@ import type {
 import { LocalHistory } from "./history.js";
 import { FilePreferencesStore } from "./preferences.js";
 import type { FilePreferences } from "../../shared/file-preferences.js";
+import type {
+  WorkspaceSearchRequest,
+  WorkspaceSearchResult,
+} from "../../shared/workspace-search.js";
+import { isIgnoredWorkspacePath, searchWorkspace, workspaceSearchLimits } from "./search.js";
 
 export interface WorkspaceProjectInput {
   inputPath: string;
@@ -240,6 +245,18 @@ export class WorkspaceService {
 
   readFile(id: string, file: string): Promise<WorkspaceFileSnapshot> {
     return this.serial(id, async (record) => this.observe(record, file));
+  }
+
+  async search(id: string, request: WorkspaceSearchRequest): Promise<WorkspaceSearchResult> {
+    const record = this.require(id);
+    const result = await searchWorkspace(
+      record.root,
+      request,
+      workspaceSearchLimits,
+      !record.singleFile,
+    );
+    this.require(id);
+    return result;
   }
 
   refresh(id: string, known: Record<string, string | null>): Promise<WorkspaceRefreshResult> {
@@ -814,11 +831,7 @@ export class WorkspaceService {
   }
 
   private isIgnored(entryPath: string, outputDirectory: string): boolean {
-    const parts = entryPath.split("/");
-    return (
-      parts.some((part) => part.startsWith(".") || part === "assets" || part === "node_modules") ||
-      containsPath(outputDirectory, entryPath)
-    );
+    return isIgnoredWorkspacePath(entryPath, outputDirectory);
   }
 
   private validateDirectory(summary: WorkspaceSummary, value: string): string {

@@ -100,7 +100,7 @@ export interface LocalHistoryDialogProps extends CommonProps {
 let reviewSequence = 0;
 
 /** Separate models avoid disturbing the live editor, its undo stack, or language services. */
-function FileDiff({
+export function FileDiff({
   file,
   original,
   modified,

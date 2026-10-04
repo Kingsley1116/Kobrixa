@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld("kobrixa", {
     selectEntry: call("open"),
     read: call("read"),
     readFile: call("readFile"),
+    search: call("search"),
     write: call("write"),
     refresh: call("refresh"),
     history: call("history"),

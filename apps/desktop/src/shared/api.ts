@@ -1,4 +1,12 @@
 import type { FilePreferences } from "./file-preferences.js";
+import type { WorkspaceSearchRequest, WorkspaceSearchResult } from "./workspace-search.js";
+export type {
+  WorkspaceSearchFile,
+  WorkspaceSearchMatch,
+  WorkspaceSearchOptions,
+  WorkspaceSearchRequest,
+  WorkspaceSearchResult,
+} from "./workspace-search.js";
 import type {
   LocalHistoryEntry,
   WorkspaceFileSnapshot,
@@ -190,6 +198,7 @@ export interface KobrixaApi {
     onBeforeClose(listener: (requestId: string) => void): () => void;
     finishClose(requestId: string, ready: boolean): Promise<void>;
     open(): Promise<WorkspaceSummary | undefined>;
+    search(workspaceId: string, request: WorkspaceSearchRequest): Promise<WorkspaceSearchResult>;
     create(name: string): Promise<WorkspaceSummary | undefined>;
     selectEntry(workspaceId: string, entry: string): Promise<WorkspaceSummary>;
     read(workspaceId: string, file: string): Promise<string>;

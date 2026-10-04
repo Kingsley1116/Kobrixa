@@ -9,6 +9,7 @@ import {
 import {
   appCommandId,
   bindingHint,
+  commandAvailableInInput,
   effectiveBindings,
   KeybindingsStore,
   WorkbenchKeyDispatcher,
@@ -154,9 +155,7 @@ export function useKeyboard(run: (command: AppCommand) => void, blocked: boolean
         event.target instanceof HTMLElement &&
         Boolean(event.target.closest("input, textarea, [contenteditable=true]"));
       const available = editable
-        ? bindings.filter((binding) =>
-            ["kobrixa.settings", "kobrixa.shortcuts"].includes(binding.command),
-          )
+        ? bindings.filter((binding) => commandAvailableInInput(binding.command))
         : bindings;
       if (validStroke(stroke) && dispatcher.dispatch(stroke, available)) {
         event.preventDefault();

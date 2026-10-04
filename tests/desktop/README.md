@@ -8,6 +8,12 @@ Coverage includes the complete Chinese command catalog, bilingual search, langua
 
 The renderer fixtures in `apps/desktop/tests` are development-only and excluded by desktop packaging. This test does not replace platform packaging or the EV3 hardware matrix.
 
+## Project search and quick open acceptance
+
+`KOBRIXA_SMOKE_SEARCH_ONLY=1 node tests/desktop/run-smoke.mjs` runs the actual quick-open dialog, Search panel and replacement preview in isolated projects. These cases also run in the full smoke suite. The fixture uses the production literal matcher through the sandboxed preload and can hold specific replies to verify stale-query and project-switch handling.
+
+Coverage includes native Mod+P and Mod+Shift+F shortcuts, keyboard filtering/selection/Escape, line/column jumps and cursor restoration, unopened files, unsaved buffers and unopened recovered drafts, case and whole-word controls, exact match selection after emoji, literal replacement previews with no source writes when auto save is off, per-file undo and delayed replies. Edits invalidate an open preview; an external change discovered while applying must leave every replacement target untouched and return keyboard focus to the dialog. `KOBRIXA_SMOKE_KEEP_ARTIFACTS=1` retains English dark and Traditional Chinese light screenshots, including search and quick open at 980×650 and 125% scale. Filesystem traversal, response limits and path restrictions are checked separately by the workspace service tests.
+
 ## EV3 monitor acceptance
 
 `KOBRIXA_SMOKE_MONITOR_ONLY=1 pnpm test:desktop:smoke` runs the actual monitor UI against an isolated device fixture. The full smoke suite also includes these cases. Coverage includes four-tab keyboard navigation, battery/program state, empty/initializing/unknown/error ports, negative motor angles, one/three/eight-channel readings with unavailable values, stopped-only mode changes, busy/error retention, off-tab/hidden-window/closed-panel sampling pauses, delayed old replies during USB session replacement, and at most one outstanding sample. It checks that sample updates neither rerender the App nor add activity entries, retain the Monaco model and focus, and permit typing and undo.

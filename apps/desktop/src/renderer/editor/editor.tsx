@@ -18,6 +18,7 @@ import { BASIC_PLUS_INDENTATION_RULES, formatBasicPlus } from "@kobrixa/basic-pl
 import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
 import type { Diagnostic } from "../../shared/api.js";
+import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
 
 // Without worker factories Monaco falls back to running worker tasks on the UI
 // thread. Vite bundles these for both the dev server and the packaged file URL.
@@ -95,6 +96,7 @@ export interface EditorFocusTarget {
 export interface EditorHandle {
   captureView(): void;
   applySavedFormat(file: string, before: string, after: string): void;
+  replaceMatches(files: WorkspaceSearchFile[], replacement: string): Record<string, string>;
   focus(): void;
   format(): Promise<void>;
   reveal(range: Diagnostic["range"]): void;
@@ -291,6 +293,62 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     handleRef,
     () => ({
       captureView,
+      replaceMatches: (files, replacement) => {
+        if (currentProps.current.readOnly) throw new Error("The editor is read-only.");
+        const prepared = files.map((file) => {
+          // A closed model may have been created by Peek before the file changed on disk.
+          const existing = models.current.get(file.path);
+          if (existing && !documents.getOpenFiles().includes(file.path)) {
+            applyingValue.current = true;
+            try {
+              if (existing.getValue(undefined, true) !== file.content)
+                existing.setValue(file.content);
+            } finally {
+              applyingValue.current = false;
+            }
+          }
+          const model = ensureModel(file.path, file.content);
+          if (model.getValue(undefined, true) !== file.content)
+            throw new Error("A file changed since the replacement preview. Search again.");
+          const bom = file.content.startsWith("\uFEFF") ? 1 : 0;
+          let end = 0;
+          const edits = file.matches.map((match) => {
+            if (
+              match.start < end ||
+              match.start < bom ||
+              match.end > file.content.length ||
+              match.end <= match.start
+            )
+              throw new Error("Invalid replacement range.");
+            end = match.end;
+            const start = model.getPositionAt(match.start - bom);
+            const finish = model.getPositionAt(match.end - bom);
+            return {
+              range: new monaco.Range(
+                start.lineNumber,
+                start.column,
+                finish.lineNumber,
+                finish.column,
+              ),
+              text: replacement,
+            };
+          });
+          return { file: file.path, model, edits };
+        });
+        const changes: Record<string, string> = {};
+        applyingValue.current = true;
+        try {
+          for (const { file, model, edits } of prepared) {
+            model.pushStackElement();
+            model.pushEditOperations(null, edits, () => null);
+            model.pushStackElement();
+            changes[file] = model.getValue(undefined, true);
+          }
+        } finally {
+          applyingValue.current = false;
+        }
+        return changes;
+      },
       applySavedFormat: (file, before, after) => {
         const model = models.current.get(file);
         if (!model || model.getValue(undefined, true) !== before || before === after) return;

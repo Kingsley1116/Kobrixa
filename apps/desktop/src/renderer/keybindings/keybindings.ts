@@ -27,6 +27,8 @@ export const KEYBINDINGS_KEY = "kobrixa.keybindings.v1";
 export const appCommandInfo = {
   newProject: "Mod+Shift+KeyN",
   openProject: "Mod+KeyO",
+  quickOpen: "Mod+KeyP",
+  search: "Mod+Shift+KeyF",
   save: "Mod+KeyS",
   saveAll: "Mod+Shift+KeyS",
   closeTab: "Mod+KeyW",
@@ -46,6 +48,8 @@ export const appCommandInfo = {
 } as const;
 export type AppCommand = keyof typeof appCommandInfo;
 export const appCommandId = (id: AppCommand): string => `kobrixa.${id}`;
+export const commandAvailableInInput = (id: string): boolean =>
+  ["kobrixa.settings", "kobrixa.shortcuts", "kobrixa.quickOpen", "kobrixa.search"].includes(id);
 export function appCommands(mac: boolean): KeyboardCommand[] {
   return Object.entries(appCommandInfo).map(([id, binding]) => ({
     id: `kobrixa.${id}`,

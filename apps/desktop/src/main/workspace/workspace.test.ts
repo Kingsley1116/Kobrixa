@@ -180,6 +180,28 @@ describe.sequential("workspace file management", () => {
     });
   });
 
+  it("searches registered workspaces without writing history or replacing dirty overlays", async () => {
+    const { service, workspace } = await openService();
+    await service.readFile(workspace.id, "src/main.bp");
+    const previousHistory = await service.history(workspace.id, "src/main.bp");
+    await writeFile(path.join(root, "src/main.bp"), "external motor");
+    await writeFile(path.join(root, "src/lib/closed.bpi"), "closed motor");
+    const request = {
+      query: "motor",
+      caseSensitive: false,
+      wholeWord: true,
+      overlays: { "src/main.bp": "unsaved motor motor" },
+    };
+    const result = await service.search(workspace.id, request);
+    expect(result).toMatchObject({ matchCount: 3, truncated: false, skipped: [] });
+    expect(result.files.map((file) => file.path)).toEqual(["src/lib/closed.bpi", "src/main.bp"]);
+    expect(await service.history(workspace.id, "src/main.bp")).toEqual(previousHistory);
+    expect(await readFile(path.join(root, "src/main.bp"), "utf8")).toBe("external motor");
+    await expect(service.search("unknown", request)).rejects.toThrow("Unknown workspace");
+    service.close(workspace.id);
+    await expect(service.search(workspace.id, request)).rejects.toThrow("Unknown workspace");
+  });
+
   it("creates entries and rejects invalid names and collisions", async () => {
     const { service, workspace } = await openService();
     const created = await service.createEntry(workspace.id, "src", "file", "helper.bp");

@@ -1,0 +1,117 @@
+section.modal-card.quick-open-dialog {
+  position: relative;
+  width: min(640px, 100%);
+  padding: 20px;
+  overflow: hidden;
+}
+.quick-open-dialog h2 {
+  margin: 0 40px 16px 0;
+  font-size: calc(17px * var(--ui-scale));
+}
+.quick-open-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.quick-open-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 24px;
+  cursor: pointer;
+}
+.quick-open-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.quick-open-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.quick-open-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 12px 0 8px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.quick-open-content > ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 -8px;
+  max-height: min(390px, calc(100dvh - 280px));
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.quick-open-content li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  min-width: 0;
+}
+.quick-open-content li:hover {
+  background: var(--hover);
+}
+.quick-open-content li[aria-selected="true"] {
+  background: var(--selection);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.quick-open-file {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.quick-open-name,
+.quick-open-directory {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-open-directory,
+.quick-open-badge {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.quick-open-badge {
+  flex-shrink: 0;
+}
+.quick-open-file mark {
+  color: var(--accent);
+  background: transparent;
+  font-weight: 700;
+}
+.quick-open-empty {
+  margin: 14px 0;
+  color: var(--muted);
+}
+.quick-open-help {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+@media (max-width: 480px) {
+  section.modal-card.quick-open-dialog {
+    padding: 16px;
+  }
+  .quick-open-dialog input {
+    font-size: var(--font-small);
+  }
+  .quick-open-content li {
+    gap: 8px;
+  }
+}

@@ -13,7 +13,14 @@ const workspaceId = "01a105ef-2540-78c2-a13e-e255f0b4b1a6";
 const entryId = "a1b2c3d4-1234-4567-89ab-123456789abc";
 const revision = "a".repeat(64);
 const sourceFile = "src/main.bp";
+const searchRequest = {
+  query: "motor",
+  caseSensitive: false,
+  wholeWord: true,
+  overlays: { [sourceFile]: "dirty motor" },
+};
 const requests = [
+  { channel: "workspace:search", method: "search", args: [searchRequest] },
   { channel: "workspace:read-file", method: "readFile", args: [sourceFile] },
   { channel: "workspace:refresh", method: "refresh", args: [{ [sourceFile]: revision }] },
   { channel: "workspace:history", method: "history", args: [sourceFile] },
@@ -30,6 +37,7 @@ describe("workspace file IPC", () => {
     getPreferences: vi.fn(),
     setPreferences: vi.fn(),
     readFile: vi.fn(),
+    search: vi.fn(),
     refresh: vi.fn(),
     history: vi.fn(),
     historyContent: vi.fn(),
@@ -74,7 +82,7 @@ describe("workspace file IPC", () => {
     for (const request of requests) {
       const handler = handlers.get(request.channel)!;
       expect(() => handler(event, "unknown", ...request.args)).toThrow();
-      if (request.method !== "refresh") {
+      if (request.method !== "refresh" && request.method !== "search") {
         for (const invalidFile of [undefined, null, "", "bad\0.bp", "x".repeat(1025)]) {
           expect(() =>
             handler(event, workspaceId, invalidFile, ...request.args.slice(1)),
@@ -87,6 +95,33 @@ describe("workspace file IPC", () => {
       expect(() => historyContent(event, workspaceId, sourceFile, invalidId)).toThrow();
     }
     for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled();
+  });
+
+  it("validates literal search options and confines bounded overlay payloads", () => {
+    const search = handlers.get("workspace:search")!;
+    for (const invalid of [
+      undefined,
+      null,
+      [],
+      { ...searchRequest, query: "x".repeat(1025) },
+      { ...searchRequest, caseSensitive: "false" },
+      { ...searchRequest, wholeWord: undefined },
+      { ...searchRequest, regex: true },
+      { ...searchRequest, overlays: { "../outside.bp": "motor" } },
+      { ...searchRequest, overlays: { "/outside.bp": "motor" } },
+      { ...searchRequest, overlays: { [sourceFile]: null } },
+      {
+        ...searchRequest,
+        overlays: Object.fromEntries(
+          Array.from({ length: 5001 }, (_, index) => [`${index}.bp`, ""]),
+        ),
+      },
+    ]) {
+      expect(() => search(event, workspaceId, invalid)).toThrow();
+    }
+    expect(service.search).not.toHaveBeenCalled();
+    search(event, workspaceId, searchRequest);
+    expect(service.search).toHaveBeenCalledWith(workspaceId, searchRequest);
   });
 
   it("requires a valid expected revision for writes and preserves explicit missing-file null", () => {

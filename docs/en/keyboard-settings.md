@@ -10,6 +10,8 @@ Open the Keyboard shortcuts category, or press **Mod+K**, then **Mod+S** within 
 | ------------------------------ | ------------------------- |
 | New project                    | Mod+Shift+N               |
 | Open project                   | Mod+O                     |
+| Quick open a project file      | Mod+P                     |
+| Search in project              | Mod+Shift+F               |
 | Save                           | Mod+S                     |
 | Save all                       | Mod+Shift+S               |
 | Close active file/settings tab | Mod+W                     |
@@ -40,6 +42,14 @@ Conflicts show the affected commands, their shortcuts and whether the conflict i
 Each row's **More actions** menu contains **Unbind** and **Reset shortcut**. Unbinding leaves other ways to run the command available. Resetting an individual command requires resolving conflicting custom bindings first. **Reset all** restores every command after confirmation. Status labels distinguish Default, Custom, Unassigned and Unbound.
 
 System-reserved shortcuts and unmodified text-entry keys cannot be assigned as the first stroke. Editor shortcuts apply within the editor; ordinary settings/search fields retain their text editing behavior. Individual keycaps have full-name tooltips, and toolbar hints reflect the current bindings.
+
+## Quick open and project search
+
+Press **Mod+P** to filter files in the active project by name or path. Add `:line` or `:line:column` to jump directly to a position, such as `main:20:5`. Use the arrow keys to choose a result, **Enter** to open it, and **Escape** to return without opening a file. Opening an existing tab preserves its unsaved contents and undo history. The shortcut can be changed in Keyboard shortcuts.
+
+Press **Mod+Shift+F** to search the active project's Basic Plus (`.bp`, `.bpi`, `.bpm`) and JSON files. The Search panel includes files that are not open, unsaved editor contents and recovered drafts. Searches use literal text; **Match case** and **Whole word** narrow the results. Each result shows its file, line and matching text. Select a result to open the file and select the match. **Refresh search** repeats the search after external changes. Switching projects clears the query; delayed replies from an earlier query or project cannot replace the current results.
+
+Enter replacement text and choose **Preview replacement** to review the affected files before applying. Replacement text is literal, including characters such as `$`. Applying a preview opens affected files as modified editor tabs and follows the normal saving preferences. With auto save off, it does not save source files until you save them. Undo is available separately in each affected file. If a file changes after the preview, refresh the search and review a new preview before replacing it. Replacement is unavailable when results are incomplete; refine the query or inspect the skipped files. Search skips generated output, hidden paths, assets, dependencies, symbolic links, and files larger than 1 MiB. Each scan is limited to 2,000 matches, 5,000 files, and 16 MiB of file and editor content.
 
 ## Editor preferences
 

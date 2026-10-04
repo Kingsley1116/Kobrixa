@@ -1,5 +1,12 @@
 import { ProjectSessions, type ProjectSession } from "./workspace/project-sessions.js";
 import { ProjectTabs } from "./workspace/project-tabs.js";
+import { QuickOpen } from "./workspace/quick-open.js";
+import { SearchPanel } from "./workspace/search-panel.js";
+import {
+  isSearchableFile,
+  type WorkspaceSearchFile,
+  type WorkspaceSearchMatch,
+} from "../shared/workspace-search.js";
 import { FileConflictDialog, LocalHistoryDialog } from "./workspace/file-review-dialog.js";
 import type { LocalHistoryEntry, WorkspaceFileSnapshot } from "../shared/workspace-files.js";
 import "./workspace/file-changes.css";
@@ -131,6 +138,9 @@ export function App(): React.JSX.Element {
   }>({ category: "appearance", request: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsActive, setSettingsActive] = useState(false);
+  const [sidebarMode, setSidebarMode] = useState<"files" | "search">("files");
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
+  const [quickOpenWorkspace, setQuickOpenWorkspace] = useState<string>();
   const setToolTab = (
     value: Settings["toolTab"] | ((previous: Settings["toolTab"]) => Settings["toolTab"]),
   ): void => settingsStore.set("toolTab", value);
@@ -316,6 +326,7 @@ export function App(): React.JSX.Element {
   const centerRef = useRef<HTMLElement>(null);
   const activeTabRef = useRef<HTMLDivElement>(null);
   const focusRequest = useRef(0);
+  const fileOpenRequest = useRef({ target: "", generation: 0, sequence: 0 });
   const pendingDrafts = useRef(new Map<string, PendingDraft>());
   const draftWrites = useRef(new Map<string, Promise<void>>());
   const viewRef = useRef({
@@ -383,7 +394,8 @@ export function App(): React.JSX.Element {
     pendingMove ||
     pendingTrash ||
     fileReview ||
-    historyReview,
+    historyReview ||
+    (workspace && quickOpenWorkspace === workspace.id),
   );
   const diagnostics = useMemo(() => {
     const seen = new Set<string>();
@@ -1380,21 +1392,32 @@ export function App(): React.JSX.Element {
     current: WorkspaceSummary,
     file: string,
     replaceTabs = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const target = `${current.id}\0${file}`;
+    if (fileOpenRequest.current.target !== target) {
+      fileOpenRequest.current.target = target;
+      fileOpenRequest.current.generation += 1;
+    }
+    const generation = fileOpenRequest.current.generation;
+    const request = ++fileOpenRequest.current.sequence;
     setSettingsActive(false);
     const existing = !replaceTabs && tabsRef.current.find((tab) => tab.file === file);
     if (existing) {
       setActiveFile(file);
-      return;
+      return true;
     }
     try {
       const snapshot = await window.kobrixa.workspace.readFile(current.id, file);
-      if (workspaceStateRef.current?.id !== current.id) return;
+      if (
+        workspaceStateRef.current?.id !== current.id ||
+        generation !== fileOpenRequest.current.generation
+      )
+        return false;
       // Another navigation may have opened (and edited) this file while the read waited.
       // Its baseline belongs to that buffer; a later refresh will reconcile this read.
       if (!replaceTabs && tabsRef.current.some((tab) => tab.file === file)) {
         setActiveFile(file);
-        return;
+        return request === fileOpenRequest.current.sequence;
       }
       const draft = workspaceStateRef.current.drafts[file];
       if (snapshot.content === null && draft === undefined)
@@ -1412,8 +1435,10 @@ export function App(): React.JSX.Element {
             : [...value, { file, content, saved }],
       );
       setActiveFile(file);
+      return request === fileOpenRequest.current.sequence;
     } catch (error) {
       report(error);
+      return false;
     }
   }
 
@@ -1602,7 +1627,7 @@ export function App(): React.JSX.Element {
   async function openLocation(file: string, range: Diagnostic["range"]): Promise<boolean> {
     const current = workspaceStateRef.current;
     if (!current?.files.includes(file)) return false;
-    await openFile(current, file);
+    if (!(await openFile(current, file))) return false;
     if (
       workspaceStateRef.current?.id !== current.id ||
       !tabsRef.current.some((tab) => tab.file === file)
@@ -1610,6 +1635,130 @@ export function App(): React.JSX.Element {
       return false;
     setFocusTarget({ file, range, requestId: ++focusRequest.current });
     return true;
+  }
+
+  async function openQuickFile(
+    file: string,
+    position?: { line: number; column: number },
+  ): Promise<void> {
+    const current = workspaceStateRef.current;
+    if (!current) return;
+    if (!position) setFocusTarget(undefined);
+    if (!(await openFile(current, file))) return;
+    if (workspaceStateRef.current?.id !== current.id || !documents.getOpenFiles().includes(file))
+      return;
+    if (position)
+      setFocusTarget({
+        file,
+        range: {
+          startLine: position.line,
+          startColumn: position.column,
+          endLine: position.line,
+          endColumn: position.column,
+        },
+        requestId: ++focusRequest.current,
+      });
+    window.requestAnimationFrame(() => editorRef.current?.focus());
+  }
+
+  async function openSearchResult(
+    file: WorkspaceSearchFile,
+    match: WorkspaceSearchMatch,
+  ): Promise<boolean> {
+    const current = workspaceStateRef.current;
+    if (!current) return false;
+    if (!(await openFile(current, file.path))) return false;
+    if (workspaceStateRef.current?.id !== current.id) return false;
+    const tab = documents.getSnapshot().find((tab) => tab.file === file.path);
+    // Navigation must not select an obsolete range after an external edit.
+    if (!tab || tab.content !== file.content) return false;
+    const bom = file.content.startsWith("\uFEFF") ? 1 : 0;
+    setFocusTarget({
+      file: file.path,
+      requestId: ++focusRequest.current,
+      range: {
+        startLine: match.startLine,
+        startColumn: Math.max(1, match.startColumn - (match.startLine === 1 ? bom : 0)),
+        endLine: match.endLine,
+        endColumn: Math.max(1, match.endColumn - (match.endLine === 1 ? bom : 0)),
+      },
+    });
+    window.requestAnimationFrame(() => editorRef.current?.focus());
+    return true;
+  }
+
+  async function replaceSearchResults(
+    files: WorkspaceSearchFile[],
+    replacement: string,
+  ): Promise<void> {
+    const project = sessions.active;
+    if (!project || !files.length) return;
+    const current = project.workspace;
+    const changed = () =>
+      new Error(
+        locale === "zh-TW"
+          ? "檔案或專案在預覽後已變更，請關閉預覽並重新搜尋。"
+          : "A file or project changed since the preview. Close it and search again.",
+      );
+    const editable = () =>
+      sessions.active === project &&
+      !controller.editingLockedFor(current.id) &&
+      !updatePreparingRef.current &&
+      !closingProjectRef.current &&
+      !projectBusyRef.current &&
+      !managingEntriesRef.current;
+    if (!editable()) throw changed();
+    // Closing every editor tab should not make a project-wide replacement unavailable.
+    if (!editorRef.current) {
+      await openFile(current, files[0]!.path);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    }
+    const revision = documents.revision;
+    const fileGeneration = project.files.generation;
+    const snapshots = new Map<string, WorkspaceFileSnapshot>();
+    for (const file of files) {
+      if (!editable() || documents.revision !== revision || !isSearchableFile(file.path))
+        throw changed();
+      const snapshot = await window.kobrixa.workspace.readFile(current.id, file.path);
+      const tab = documents.getSnapshot().find((tab) => tab.file === file.path);
+      const draft = project.workspace.drafts[file.path];
+      const baseline = project.files.baseline(file.path);
+      if (
+        snapshot.content === null ||
+        snapshot.revision !== file.revision ||
+        project.files.conflicts.has(file.path) ||
+        (baseline && baseline.revision !== snapshot.revision) ||
+        (!tab &&
+          draft !== undefined &&
+          project.workspace.draftRevisions?.[file.path] !== snapshot.revision) ||
+        (tab?.content ?? draft ?? snapshot.content) !== file.content
+      )
+        throw changed();
+      snapshots.set(file.path, snapshot);
+    }
+    if (
+      !editable() ||
+      documents.revision !== revision ||
+      project.files.generation !== fileGeneration ||
+      !editorRef.current
+    )
+      throw changed();
+    // No await between the last validation and the first edit. The editor validates
+    // every model before applying separate undo stops to each affected file.
+    const changes = editorRef.current.replaceMatches(files, replacement);
+    for (const [file, snapshot] of snapshots) project.files.accept(file, snapshot);
+    setTabs((previous) => {
+      const next = previous.map((tab) =>
+        changes[tab.file] === undefined ? tab : { ...tab, content: changes[tab.file]! },
+      );
+      for (const [file, content] of Object.entries(changes))
+        if (!next.some((tab) => tab.file === file))
+          next.push({ file, content, saved: snapshots.get(file)!.content! });
+      return next;
+    });
+    setBuildDiagnostics([]);
+    controller.clearDiagnostics(current.id);
+    for (const [file, content] of Object.entries(changes)) queueDraft(current.id, file, content);
   }
 
   async function applyWorkspaceEdit(
@@ -1961,6 +2110,17 @@ export function App(): React.JSX.Element {
       else setDeviceOpen((value) => !value);
       return;
     }
+    if (command === "quickOpen" || command === "search") {
+      if (!workspace || projectBusyRef.current || managingEntriesRef.current) return;
+      setSettingsActive(false);
+      if (command === "quickOpen") setQuickOpenWorkspace(workspace.id);
+      else {
+        setFilesOpen(true);
+        setSidebarMode("search");
+        setSearchFocusRequest((value) => value + 1);
+      }
+      return;
+    }
     if (command === "nextProblem" || command === "previousProblem") {
       if (!settingsActive) void navigateDiagnostics(command === "nextProblem" ? 1 : -1);
       return;
@@ -2116,6 +2276,16 @@ export function App(): React.JSX.Element {
   );
   return (
     <main className={`app-shell ${saveError && !settingsActive ? "has-settings-error" : ""}`}>
+      {workspace && quickOpenWorkspace === workspace.id && (
+        <QuickOpen
+          locale={locale}
+          files={[...new Set([...workspace.files, ...Object.keys(workspace.drafts), ...openFiles])]}
+          activeFile={activeFile}
+          recentFiles={[...openFiles].reverse()}
+          onOpen={(file, position) => void openQuickFile(file, position)}
+          onClose={() => setQuickOpenWorkspace(undefined)}
+        />
+      )}
       <div className="workbench-header">
         <Toolbar
           t={t}
@@ -2322,40 +2492,99 @@ export function App(): React.JSX.Element {
           >
             {filesOpen && (
               <>
-                <h2>{t.files}</h2>
-                <ProjectTree
-                  ref={treeRef}
-                  activeFile={activeFile}
-                  buildEntry={workspace.manifest?.entry}
-                  busy={managingEntries || locked || projectBusy}
-                  copy={{
-                    treeLabel: t.fileTree,
-                    newFile: t.newFile,
-                    newFolder: t.newFolder,
-                    moreActions: t.moreActions,
-                    rename: t.rename,
-                    move: t.move,
-                    trash: t.trash,
-                    expand: t.expand,
-                    collapse: t.collapse,
-                  }}
-                  entries={workspace.entries}
-                  expandedPaths={expandedTreePaths}
-                  rootLabel={workspace.rootLabel}
-                  selectedPath={selectedTreePath}
-                  onCreate={beginCreateEntry}
-                  onExpandedPaths={setExpandedTreePaths}
-                  onMove={async (source, target) => {
-                    await moveManagedEntry(source, target);
-                  }}
-                  onMoveRequest={requestMoveEntry}
-                  onOpenFile={(file) => void openFile(workspace, file)}
-                  onRename={renameManagedEntry}
-                  onSelectedPath={setSelectedTreePath}
-                  onTrash={setPendingTrash}
-                />
+                <div
+                  className="files-navigation"
+                  role="group"
+                  aria-label={locale === "zh-TW" ? "專案導覽" : "Project navigation"}
+                >
+                  <button
+                    aria-pressed={sidebarMode === "files"}
+                    onClick={() => setSidebarMode("files")}
+                  >
+                    {t.files}
+                  </button>
+                  <button
+                    aria-pressed={sidebarMode === "search"}
+                    title={titleWithShortcut(
+                      locale === "zh-TW" ? "跨檔案搜尋" : "Search in project",
+                      "search",
+                    )}
+                    onClick={() => runCommand("search")}
+                  >
+                    {locale === "zh-TW" ? "搜尋" : "Search"}
+                  </button>
+                  <button
+                    className="quick-open-trigger"
+                    title={titleWithShortcut(
+                      locale === "zh-TW" ? "快速開啟檔案" : "Quick open",
+                      "quickOpen",
+                    )}
+                    aria-label={locale === "zh-TW" ? "快速開啟檔案" : "Quick open"}
+                    onClick={() => runCommand("quickOpen")}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      aria-hidden="true"
+                    >
+                      <circle cx="10" cy="10" r="6" />
+                      <path d="m15 15 6 6" />
+                    </svg>
+                  </button>
+                </div>
+                {sidebarMode === "files" && (
+                  <ProjectTree
+                    ref={treeRef}
+                    activeFile={activeFile}
+                    buildEntry={workspace.manifest?.entry}
+                    busy={managingEntries || locked || projectBusy}
+                    copy={{
+                      treeLabel: t.fileTree,
+                      newFile: t.newFile,
+                      newFolder: t.newFolder,
+                      moreActions: t.moreActions,
+                      rename: t.rename,
+                      move: t.move,
+                      trash: t.trash,
+                      expand: t.expand,
+                      collapse: t.collapse,
+                    }}
+                    entries={workspace.entries}
+                    expandedPaths={expandedTreePaths}
+                    rootLabel={workspace.rootLabel}
+                    selectedPath={selectedTreePath}
+                    onCreate={beginCreateEntry}
+                    onExpandedPaths={setExpandedTreePaths}
+                    onMove={async (source, target) => {
+                      await moveManagedEntry(source, target);
+                    }}
+                    onMoveRequest={requestMoveEntry}
+                    onOpenFile={(file) => void openFile(workspace, file)}
+                    onRename={renameManagedEntry}
+                    onSelectedPath={setSelectedTreePath}
+                    onTrash={setPendingTrash}
+                  />
+                )}
               </>
             )}
+            <SearchPanel
+              key={workspace.id}
+              workspace={workspace}
+              documents={documents}
+              active={filesOpen && sidebarMode === "search"}
+              focusRequest={searchFocusRequest}
+              locale={locale}
+              resolvedTheme={resolvedTheme}
+              readOnly={locked || projectBusy || managingEntries}
+              onOpen={openSearchResult}
+              onReplace={replaceSearchResults}
+              onClose={() => {
+                setSidebarMode("files");
+                window.requestAnimationFrame(() => editorRef.current?.focus());
+              }}
+            />
           </aside>
           <ResizeHandle
             className="resize-files"

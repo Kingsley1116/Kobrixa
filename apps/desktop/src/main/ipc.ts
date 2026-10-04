@@ -11,6 +11,7 @@ import type { DeviceService } from "./device/device.js";
 import type { LanguageService } from "./language/language.js";
 import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
+import { workspaceSearchRequestSchema } from "./workspace/search.js";
 
 const id = z.string().uuid();
 const inputPort = z.number().int().min(0).max(3);
@@ -116,6 +117,9 @@ export function registerIpc(
     workspaces.setPreferences(filePreferencesPatchSchema.parse(patch)),
   );
   handle("workspace:open", () => workspaces.open());
+  handle("workspace:search", (_event, workspaceId: unknown, request: unknown) =>
+    workspaces.search(id.parse(workspaceId), workspaceSearchRequestSchema.parse(request)),
+  );
   handle("workspace:renderer-ready", rendererReady);
   handle("workspace:restore-session", () => workspaces.restoreSession());
   handle("workspace:save-session", (_event, state: unknown) =>
