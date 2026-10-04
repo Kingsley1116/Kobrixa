@@ -49,6 +49,10 @@ export async function withTimeout<T>(
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<T> {
+  if (signal.aborted)
+    throw new DeviceOperationError("cancelled", "Operation cancelled.", true, {
+      cause: signal.reason,
+    });
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(new DeviceOperationError("timeout", "Operation timed out.")),

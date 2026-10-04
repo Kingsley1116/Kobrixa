@@ -70,7 +70,13 @@ export function DevicePanel({
       </p>
       {state.connectionNotice && (
         <p className="panel-hint" role="status">
-          {state.connectionNotice === "manual-required" ? t.manualReconnect : t.uploadRequired}
+          {state.connectionNotice === "retry-exhausted"
+            ? locale === "zh-TW"
+              ? "已達自動重連次數上限，請手動重新連線。"
+              : "Automatic reconnect attempts exhausted. Please reconnect manually."
+            : state.connectionNotice === "manual-required"
+              ? t.manualReconnect
+              : t.uploadRequired}
         </p>
       )}
       {state.phase === "awaitingDevice" && (

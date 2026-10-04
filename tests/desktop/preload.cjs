@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld("kobrixa", {
     diagnostics: async () => [],
   },
   device: {
+    getPreferences: call("devicePreferences"),
+    setPreferences: call("setDevicePreferences"),
     onEvent: () => () => {},
     discover: async () => [],
     files: async () => ({ ok: true, entries: [] }),

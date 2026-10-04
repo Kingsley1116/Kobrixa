@@ -54,6 +54,8 @@ function setup() {
       artifacts: vi.fn(),
     },
     device: {
+      getPreferences: vi.fn(),
+      setPreferences: vi.fn(),
       files: vi.fn(),
       prepareFiles: vi.fn(),
       executeFiles: vi.fn(),
@@ -359,6 +361,22 @@ describe("USB recovery state", () => {
     deployment: "verified",
     buildId: "b1",
   } as const;
+
+  it("clears exhausted recovery and requires manual reconnect without starting the robot", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.emitDevice(waiting);
+    h.emitDevice({ ...waiting, state: "exhausted" });
+    expect(h.controller.getSnapshot()).toMatchObject({
+      recovery: undefined,
+      session: undefined,
+      connectionNotice: "retry-exhausted",
+    });
+    expect(h.controller.locked).toBe(false);
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    h.emitDevice(recovered);
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+  });
 
   it("restores a verified uploaded version without automatically running or blocking local builds", async () => {
     const h = setup();

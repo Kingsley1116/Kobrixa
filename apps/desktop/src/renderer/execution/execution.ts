@@ -56,7 +56,7 @@ export interface ExecutionState {
         deployed?: BuildVersion | undefined;
       }
     | undefined;
-  connectionNotice?: "manual-required" | "upload-required" | undefined;
+  connectionNotice?: "manual-required" | "upload-required" | "retry-exhausted" | undefined;
   session?: { id: string; name: string; transport: string } | undefined;
   successfulBuild?: BuildVersion | undefined;
   deployed?: (BuildVersion & { sessionId: string }) | undefined;
@@ -192,7 +192,12 @@ export class ExecutionController {
       if (active) this.connectionLost("EV3 disconnected.", false);
       this.update({
         recovery: undefined,
-        connectionNotice: event.state === "unavailable" ? "manual-required" : undefined,
+        connectionNotice:
+          event.state === "exhausted"
+            ? "retry-exhausted"
+            : event.state === "unavailable"
+              ? "manual-required"
+              : undefined,
       });
     }
   }

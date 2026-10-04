@@ -85,10 +85,10 @@ export function App(): React.JSX.Element {
   const [confirmUpdate, setConfirmUpdate] = useState(false);
   const [dismissedUpdate, setDismissedUpdate] = useState<string>();
   const updatePreparingRef = useRef(false);
-  const { values: settings, saveError, reducedMotion } = useSettings();
+  const { values: settings, saveError, reducedMotion, resolvedTheme } = useSettings();
   const {
     locale,
-    theme,
+    connectionMode,
     uiScale,
     codeSize,
     toolTab,
@@ -154,7 +154,8 @@ export function App(): React.JSX.Element {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
   }, [remoteFiles, execution.session?.id, execution.deployed?.path]);
   useEffect(() => window.kobrixa.device.onEvent(remoteFiles.onEvent), [remoteFiles]);
-  const [connectionMode, setConnectionMode] = useState<"usb" | "wifi">("usb");
+  const setConnectionMode = (mode: Settings["connectionMode"]) =>
+    settingsStore.set("connectionMode", mode);
   const connectionModeRef = useRef(connectionMode);
   connectionModeRef.current = connectionMode;
   const [projectBusy, setProjectBusy] = useState(false);
@@ -204,7 +205,10 @@ export function App(): React.JSX.Element {
   const [devices, setDevices] = useState<DeviceDescriptor[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<string>();
-  const [wifiAddress, setWifiAddress] = useState("");
+  const [wifiAddress, setWifiAddress] = useState(() => settingsStore.getWifiAddress());
+  useEffect(() => {
+    setSelectedDevice(undefined);
+  }, [connectionMode]);
   const [focusTarget, setFocusTarget] = useState<EditorFocusTarget>();
   const [cursorStore] = useState(() => new CursorStore());
   const [diagnosticIndex, setDiagnosticIndex] = useState(-1);
@@ -427,7 +431,14 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     setBuildDiagnostics(execution.diagnostics);
-    if (execution.diagnostics.some((item) => item.severity === "error")) {
+    const policy = settingsStore.getSnapshot().values.revealDiagnostics;
+    if (
+      policy !== "never" &&
+      execution.diagnostics.some(
+        (item) =>
+          item.severity === "error" || (policy === "warnings" && item.severity === "warning"),
+      )
+    ) {
       setProblemsOpen(true);
     }
   }, [execution.diagnostics]);
@@ -438,9 +449,9 @@ export function App(): React.JSX.Element {
       setToolTab("connection");
     }
     if (execution.error && !execution.fileBusy) {
-      if (execution.error.phase === "building" && execution.diagnostics.length)
-        setProblemsOpen(true);
-      else {
+      if (execution.error.phase === "building" && execution.diagnostics.length) {
+        if (settingsStore.getSnapshot().values.revealDiagnostics !== "never") setProblemsOpen(true);
+      } else if (settingsStore.getSnapshot().values.revealDeviceErrors) {
         setDeviceOpen(true);
         setToolTab("activity");
       }
@@ -1578,8 +1589,15 @@ export function App(): React.JSX.Element {
       (device) => device.id === selectedDevice && device.transport === connectionMode,
     );
     if (descriptor) void controller.connect(descriptor);
-    else if (connectionMode === "wifi" && wifiAddress.trim())
-      void controller.connect(wifiAddress.trim());
+    else if (connectionMode === "wifi" && wifiAddress.trim()) {
+      const address = wifiAddress.trim();
+      const previous = controller.getSnapshot().session?.id;
+      void controller.connect(address).then(() => {
+        const session = controller.getSnapshot().session;
+        if (session?.transport === "wifi" && session.id !== previous)
+          settingsStore.rememberAddress(address);
+      });
+    }
   }
 
   function report(error: unknown): void {
@@ -1622,6 +1640,7 @@ export function App(): React.JSX.Element {
 
   const settingsPage = (
     <SettingsPanel
+      reducedMotion={reducedMotion}
       settings={settings}
       updates={updates}
       updateBusy={updateBusy}
@@ -1654,6 +1673,7 @@ export function App(): React.JSX.Element {
           onSaveAll={() => runCommand("saveAll")}
           appearance={
             <SettingsQuickControls
+              resolvedTheme={resolvedTheme}
               settings={settings}
               onChange={(key, value) => settingsStore.set(key, value)}
               onOpen={openSettings}
@@ -2003,7 +2023,7 @@ export function App(): React.JSX.Element {
                   focusOnMount={focusEditorOnMount.current}
                   onViewChange={scheduleSessionSave}
                   ref={editorRef}
-                  theme={theme}
+                  theme={resolvedTheme}
                   editorOptions={settings}
                   onEditorReady={keyboard.bindEditor}
                   onBlur={(file) => requestFocusSave(file, workspace.id)}

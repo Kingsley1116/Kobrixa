@@ -25,10 +25,12 @@ export function completionWidget(
     "editor.contrib.suggestController",
   );
   let requested = false;
+  let automatic = true;
   let preferred: string | undefined;
   const subscriptions = controller
     ? [
         controller.model.onDidTrigger((event) => {
+          if (event.auto && !automatic) return;
           requested = true;
           if (!event.auto) manual();
         }),
@@ -54,6 +56,15 @@ export function completionWidget(
       ]
     : [];
   return {
+    setAutomaticSuggestions(enabled: boolean): void {
+      if (automatic === enabled) return;
+      automatic = enabled;
+      if (!enabled) {
+        requested = false;
+        preferred = undefined;
+        instance.trigger("settings", "hideSuggestWidget", undefined);
+      }
+    },
     refresh(model: editor.ITextModel, position: Position): void {
       const cursor = instance.getPosition();
       if (
@@ -72,7 +83,7 @@ export function completionWidget(
         getComputedStyle(widget).visibility !== "hidden";
       // An empty automatic list may hide itself. Keep the user's request alive
       // until Escape, blur, or a cursor move, so newly indexed names can appear.
-      if (!visible && !requested) return;
+      if ((!automatic || !visible) && !requested) return;
       const focused = visible && controller.widget.value.getFocusedItem();
       preferred = focused ? key(focused.item.completion) : undefined;
       controller.triggerSuggest(undefined, false, undefined);

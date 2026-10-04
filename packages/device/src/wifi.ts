@@ -100,6 +100,11 @@ class TcpConnection extends FramedConnection {
   }
 }
 
+export interface WiFiConnectOptions {
+  connectTimeoutMs?: number;
+  handshakeTimeoutMs?: number;
+}
+
 export class WiFiTransport implements DeviceTransport {
   async discover(signal: AbortSignal): Promise<DeviceDescriptor[]> {
     return withTimeout(
@@ -130,33 +135,75 @@ export class WiFiTransport implements DeviceTransport {
     );
   }
 
-  async connect(target: DeviceDescriptor, signal: AbortSignal): Promise<EV3DeviceSession> {
+  async connect(
+    target: DeviceDescriptor,
+    signal: AbortSignal,
+    options: WiFiConnectOptions = {},
+  ): Promise<EV3DeviceSession> {
     if (!target.address)
       throw new DeviceOperationError("connection", "A Wi-Fi address is required.");
     const socket = await withTimeout(
-      () =>
+      (bounded) =>
         new Promise<net.Socket>((resolve, reject) => {
-          const client = net.createConnection({ host: target.address, port: EV3_PORT });
-          client.once("connect", () => resolve(client));
-          client.once("error", reject);
+          bounded.throwIfAborted();
+          const client = net.createConnection({ host: target.address!, port: EV3_PORT });
+          const cleanup = () => {
+            bounded.removeEventListener("abort", aborted);
+            client.removeListener("connect", connected);
+            client.removeListener("error", failed);
+            client.removeListener("close", closed);
+          };
+          const failed = (error: Error) => {
+            cleanup();
+            client.destroy();
+            reject(error);
+          };
+          const aborted = () => failed(bounded.reason);
+          const closed = () =>
+            failed(new DeviceOperationError("connection", "EV3 closed the connection."));
+          const connected = () => {
+            cleanup();
+            resolve(client);
+          };
+          client.once("connect", connected);
+          client.once("error", failed);
+          client.once("close", closed);
+          bounded.addEventListener("abort", aborted, { once: true });
         }),
       signal,
-      5000,
+      options.connectTimeoutMs ?? 5000,
     );
     try {
-      const serial = target.serialNumber ?? "";
-      socket.write(`GET /target?sn=${serial} VMTP1.0\r\nProtocol: EV3\r\n\r\n`);
       const accepted = await withTimeout(
         (bounded) =>
           new Promise<boolean>((resolve, reject) => {
-            const onData = (data: Buffer): void =>
+            bounded.throwIfAborted();
+            const cleanup = () => {
+              socket.removeListener("data", onData);
+              socket.removeListener("error", onError);
+              socket.removeListener("close", onClose);
+              bounded.removeEventListener("abort", onAbort);
+            };
+            const onData = (data: Buffer) => {
+              cleanup();
               resolve(data.toString("ascii").includes("Accept:EV340"));
-            const onAbort = (): void => reject(bounded.reason);
+            };
+            const onError = (error: Error) => {
+              cleanup();
+              reject(error);
+            };
+            const onAbort = () => onError(bounded.reason);
+            const onClose = () =>
+              onError(new DeviceOperationError("connection", "EV3 closed the handshake."));
             socket.once("data", onData);
+            socket.once("error", onError);
+            socket.once("close", onClose);
             bounded.addEventListener("abort", onAbort, { once: true });
+            const serial = target.serialNumber ?? "";
+            socket.write(`GET /target?sn=${serial} VMTP1.0\r\nProtocol: EV3\r\n\r\n`);
           }),
         signal,
-        3000,
+        options.handshakeTimeoutMs ?? 3000,
       );
       if (!accepted)
         throw new DeviceOperationError("protocol", "EV3 rejected the Wi-Fi handshake.");

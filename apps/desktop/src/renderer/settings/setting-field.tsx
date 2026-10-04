@@ -67,11 +67,13 @@ export function SettingToggle({
   onChange,
   onLabel,
   offLabel,
+  disabled,
 }: FieldProps & {
   checked: boolean;
   onChange(checked: boolean): void;
   onLabel: string;
   offLabel: string;
+  disabled?: boolean;
 }): React.JSX.Element {
   const descriptionId = hint ? (hintId ?? `${id}-hint`) : undefined;
   return (
@@ -81,6 +83,7 @@ export function SettingToggle({
         type="button"
         className="setting-switch"
         role="switch"
+        disabled={disabled}
         aria-checked={checked}
         aria-label={label}
         aria-describedby={descriptionId}

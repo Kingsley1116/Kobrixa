@@ -6,7 +6,18 @@ import type { KeyboardSettings } from "../keybindings/keyboard-state.js";
 import { ShortcutsPanel } from "../keybindings/shortcuts-panel.js";
 import { useEffect, useRef, useState } from "react";
 import type { Locale } from "../i18n/copy.js";
-import { AUTO_SAVE_DELAYS, CODE_SIZES, UI_SCALES, type Settings } from "./settings.js";
+import { defaultSettings, type Settings } from "./settings.js";
+import {
+  CATEGORY_LABELS,
+  filterSettings,
+  localText,
+  type CatalogContext,
+  type SettingDefinition,
+  type SettingsCategory,
+} from "./settings-catalog.js";
+import { useDevicePreferences } from "./device-settings.js";
+import type { Theme } from "./theme.js";
+import type { UpdatePreferences } from "../../shared/updates.js";
 import { Icon } from "../components/icon.js";
 import { Picker } from "../components/picker.js";
 const languageOptions: { value: Locale; label: string }[] = [
@@ -24,7 +35,7 @@ export const settingsCopy = {
     layout: "Workspace layout",
     shortcuts: "Keyboard shortcuts",
     saving: "Saving",
-    intro: "Changes take effect immediately and are saved on this computer.",
+    intro: "Preferences are saved automatically and shared by all projects on this computer.",
     theme: "Theme",
     dark: "Dark",
     light: "Light",
@@ -62,7 +73,7 @@ export const settingsCopy = {
     layout: "工作區布局",
     shortcuts: "快捷鍵",
     saving: "儲存",
-    intro: "調整立即生效，並自動保存在這台電腦。",
+    intro: "設定適用於本機所有專案，變更會自動保存。",
     theme: "主題",
     dark: "深色",
     light: "淺色",
@@ -92,11 +103,13 @@ export const settingsCopy = {
 type Change = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 export function SettingsQuickControls({
   settings,
+  resolvedTheme,
   onChange,
   onOpen,
   shortcut,
 }: {
   settings: Settings;
+  resolvedTheme: Theme;
   onChange: Change;
   onOpen(): void;
   shortcut: string;
@@ -113,11 +126,11 @@ export function SettingsQuickControls({
         onChange={(value) => onChange("locale", value)}
       />
       <button
-        aria-label={settings.theme === "dark" ? t.light : t.dark}
-        title={settings.theme === "dark" ? t.light : t.dark}
-        onClick={() => onChange("theme", settings.theme === "dark" ? "light" : "dark")}
+        aria-label={resolvedTheme === "dark" ? t.light : t.dark}
+        title={resolvedTheme === "dark" ? t.light : t.dark}
+        onClick={() => onChange("theme", resolvedTheme === "dark" ? "light" : "dark")}
       >
-        <Icon name={settings.theme === "dark" ? "sun" : "moon"} />
+        <Icon name={resolvedTheme === "dark" ? "sun" : "moon"} />
       </button>
       <button
         className="settings-trigger"
@@ -186,6 +199,7 @@ export function SettingsPanel({
   updates,
   updateBusy,
   onInstallUpdate,
+  reducedMotion,
 }: {
   updates: UpdateState | undefined;
   updateBusy: boolean;
@@ -198,44 +212,162 @@ export function SettingsPanel({
   active: boolean;
   saveError: boolean;
   onRetry(): void;
+  reducedMotion: boolean;
 }): React.JSX.Element {
   const t = settingsCopy[settings.locale];
-  const [category, setCategory] = useState<
-    "appearance" | "editor" | "saving" | "layout" | "shortcuts" | "updates"
-  >("appearance");
   const local = (zh: string, en: string) => (settings.locale === "zh-TW" ? zh : en);
-  useEffect(() => setCategory(requestedCategory.category), [requestedCategory]);
+  const [category, setCategory] = useState<SettingsCategory | "all" | "shortcuts">("appearance");
+  const [query, setQuery] = useState("");
+  const [modified, setModified] = useState(false);
+  const [defaults] = useState(() => defaultSettings(navigator.language));
+  const device = useDevicePreferences();
+  const [updateSaving, setUpdateSaving] = useState(false);
+  const [updateError, setUpdateError] = useState(false);
+  const updateFlight = useRef(false);
+  const failedUpdate = useRef<Partial<UpdatePreferences>>(undefined);
+  const updateValues = useRef(updates?.preferences);
+  updateValues.current = updates?.preferences;
+  const changeUpdates = async (patch: Partial<UpdatePreferences>) => {
+    if (updateFlight.current || !updateValues.current) return;
+    updateFlight.current = true;
+    setUpdateSaving(true);
+    setUpdateError(false);
+    failedUpdate.current = patch;
+    try {
+      await window.kobrixa.updates.setPreferences({ ...updateValues.current, ...patch });
+      failedUpdate.current = undefined;
+    } catch {
+      setUpdateError(true);
+    } finally {
+      updateFlight.current = false;
+      setUpdateSaving(false);
+    }
+  };
+  const context: CatalogContext = {
+    settings,
+    defaults,
+    device: device.value,
+    updates: updates?.preferences,
+    reducedMotion,
+    onChange,
+    onDeviceChange: device.change,
+    onUpdateChange: (patch) => {
+      void changeUpdates(patch);
+    },
+  };
+  useEffect(() => {
+    setCategory(requestedCategory.category);
+    setQuery("");
+    setModified(false);
+  }, [requestedCategory]);
   const title = useRef<HTMLHeadingElement>(null);
   const content = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (active) title.current?.focus({ preventScroll: true });
   }, [active]);
   useEffect(() => {
     content.current?.scrollTo({ top: 0 });
-  }, [category]);
-  const toggle = (
-    key:
-      | "wordWrap"
-      | "filesOpen"
-      | "deviceOpen"
-      | "problemsOpen"
-      | "minimap"
-      | "formatOnPaste"
-      | "formatOnSave",
-    label: string,
-    hint?: string,
-  ) => (
-    <SettingToggle
-      id={`setting-${key}`}
-      label={label}
-      hint={hint}
-      hintId={`hint-${key}`}
-      checked={settings[key]}
-      onChange={(value) => onChange(key, value)}
-      onLabel={t.on}
-      offLabel={t.off}
-    />
+  }, [category, query, modified]);
+  const entries = filterSettings(context, query, modified).filter(
+    (entry) => category === "all" || entry.category === category,
   );
+  const searching = Boolean(query.trim() || modified);
+  const labelValue = (entry: SettingDefinition, value: string | number | boolean) =>
+    typeof value === "boolean"
+      ? value
+        ? t.on
+        : t.off
+      : localText(
+          entry.options?.find((option) => option.value === value)?.label ?? [
+            String(value),
+            String(value),
+          ],
+          settings.locale,
+        );
+  const reset = (entry: SettingDefinition) => {
+    // Focus a stable control before modified-only filtering can remove this row.
+    if (modified) search.current?.focus();
+    else document.getElementById(entry.controlId)?.focus();
+    entry.change(context, entry.defaultValue(context));
+  };
+  const row = (entry: SettingDefinition) => {
+    const value = entry.read(context);
+    const defaultValue = entry.defaultValue(context);
+    const changed = value !== undefined && value !== defaultValue;
+    const reason = entry.disabled?.(context);
+    const loading = value === undefined;
+    const resetDisabled =
+      loading ||
+      (entry.source === "device" && device.busy) ||
+      (entry.source === "updates" &&
+        (updateSaving || updates?.phase === "preparing" || updates?.phase === "installing"));
+    const disabled = Boolean(reason) || resetDisabled;
+    const motionOverride =
+      reducedMotion && ["kobrixa.cursorBlinking", "kobrixa.smoothScrolling"].includes(entry.id);
+    const hint = [
+      localText(entry.hint, settings.locale),
+      ...(reason ? [localText(reason, settings.locale)] : []),
+      ...(motionOverride
+        ? [local("目前減少動態效果已生效。", "Reduced motion is currently active.")]
+        : []),
+      ...(loading ? [local("正在載入設定…", "Loading preferences…")] : []),
+    ].join(" ");
+    const hintId = entry.id === "kobrixa.motion" ? "motion-hint" : `${entry.controlId}-hint`;
+    return (
+      <div
+        className={`setting-entry${changed ? " is-modified" : ""}`}
+        key={entry.id}
+        data-setting-id={entry.id}
+      >
+        {entry.options ? (
+          <SettingSelect
+            id={entry.controlId}
+            locale={settings.locale}
+            label={localText(entry.label, settings.locale)}
+            hint={hint}
+            hintId={hintId}
+            value={(value ?? defaultValue) as string | number}
+            disabled={disabled}
+            options={entry.options.map((option) => ({
+              value: option.value,
+              label: localText(option.label, settings.locale),
+            }))}
+            onChange={(next) => entry.change(context, next)}
+          />
+        ) : (
+          <SettingToggle
+            id={entry.controlId}
+            label={localText(entry.label, settings.locale)}
+            hint={hint}
+            hintId={hintId}
+            checked={value === true}
+            disabled={disabled}
+            onChange={(next) => entry.change(context, next)}
+            onLabel={t.on}
+            offLabel={t.off}
+          />
+        )}
+        <div className="setting-footer">
+          <span>
+            {local("預設：", "Default: ")}
+            {labelValue(entry, defaultValue)}
+            {changed ? local(" · 已修改", " · Modified") : ""}
+          </span>
+          {changed && (
+            <button
+              type="button"
+              disabled={resetDisabled}
+              aria-label={`${local("還原", "Reset")} ${localText(entry.label, settings.locale)}`}
+              onClick={() => reset(entry)}
+            >
+              {local("還原預設", "Reset to default")}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
   return (
     <section
       className="settings-page"
@@ -248,175 +380,156 @@ export function SettingsPanel({
           {t.title}
         </h1>
         <p>{t.intro}</p>
+        <div className="settings-search">
+          <input
+            ref={search}
+            type="search"
+            value={query}
+            aria-label={local("搜尋設定", "Search settings")}
+            placeholder={local("搜尋設定（支援中英文）", "Search settings in English or Chinese")}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setCategory("all");
+            }}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={modified}
+              onChange={(event) => {
+                setModified(event.target.checked);
+                setCategory("all");
+              }}
+            />
+            {local("只看已修改", "Modified only")}
+          </label>
+          {searching && (
+            <button
+              onClick={() => {
+                setQuery("");
+                setModified(false);
+                search.current?.focus();
+              }}
+            >
+              {local("清除條件", "Clear filters")}
+            </button>
+          )}
+        </div>
+        {category !== "shortcuts" && (
+          <p role="status">
+            {local(`顯示 ${entries.length} 項設定`, `${entries.length} settings`)}
+          </p>
+        )}
       </header>
       {saveError && <SettingsError locale={settings.locale} onRetry={onRetry} />}
+      {device.error && (
+        <div role="alert" className="settings-save-error">
+          <span>
+            {local(
+              "設備設定載入或保存失敗，既有值仍有效。",
+              "Could not load or save device preferences. Existing values remain active.",
+            )}
+          </span>
+          <button disabled={device.busy} onClick={device.retry}>
+            {t.retry}
+          </button>
+        </div>
+      )}
+      {updateError && (
+        <div role="alert" className="settings-save-error">
+          <span>
+            {local(
+              "更新偏好保存失敗，既有值仍有效。",
+              "Could not save update preferences. Existing values remain active.",
+            )}
+          </span>
+          <button
+            disabled={updateSaving}
+            onClick={() => {
+              if (failedUpdate.current) void changeUpdates(failedUpdate.current);
+            }}
+          >
+            {t.retry}
+          </button>
+        </div>
+      )}
       <div className="settings-body">
         <nav className="settings-categories" aria-label={t.title}>
-          {(["appearance", "editor", "saving", "layout", "shortcuts", "updates"] as const).map(
-            (value) => (
-              <button
-                key={value}
-                aria-current={category === value ? "page" : undefined}
-                onClick={() => setCategory(value)}
-              >
-                {t[value]}
-              </button>
-            ),
-          )}
+          {(
+            [
+              "all",
+              "appearance",
+              "editor",
+              "saving",
+              "layout",
+              "device",
+              "shortcuts",
+              "updates",
+            ] as const
+          ).map((value) => (
+            <button
+              key={value}
+              aria-current={category === value ? "page" : undefined}
+              onClick={() => setCategory(value)}
+            >
+              {value === "all"
+                ? local("全部設定", "All settings")
+                : value === "shortcuts"
+                  ? t.shortcuts
+                  : localText(CATEGORY_LABELS[value], settings.locale)}
+            </button>
+          ))}
         </nav>
         <div className="settings-content" ref={content}>
-          <section hidden={category !== "updates"} aria-labelledby="settings-updates">
-            <h2 id="settings-updates">{t.updates}</h2>
-            <UpdatesPanel
-              state={updates}
-              locale={settings.locale}
-              busy={updateBusy}
-              onInstall={onInstallUpdate}
-            />
-          </section>
-          <section hidden={category !== "appearance"} aria-labelledby="settings-appearance">
-            <h2 id="settings-appearance">{t.appearance}</h2>
-            <SettingSelect
-              locale={settings.locale}
-              label={t.language}
-              id="setting-locale"
-              value={settings.locale}
-              onChange={(value) => onChange("locale", value)}
-              options={languageOptions}
-            />
-            <SettingSelect<Settings["theme"]>
-              locale={settings.locale}
-              label={t.theme}
-              id="setting-theme"
-              value={settings.theme}
-              onChange={(value) => onChange("theme", value)}
-              options={[
-                { value: "dark", label: t.dark },
-                { value: "light", label: t.light },
-              ]}
-            />
-            <SettingSelect
-              locale={settings.locale}
-              label={t.scale}
-              id="setting-scale"
-              value={settings.uiScale}
-              onChange={(value) => onChange("uiScale", value)}
-              options={UI_SCALES.map((value) => ({ value, label: `${value}%` }))}
-            />
-            <SettingSelect<Settings["motion"]>
-              locale={settings.locale}
-              label={t.motion}
-              id="setting-motion"
-              hintId="motion-hint"
-              value={settings.motion}
-              onChange={(value) => onChange("motion", value)}
-              options={[
-                { value: "system", label: t.system },
-                { value: "reduce", label: t.reduce },
-              ]}
-              hint={t.motionHint}
-            />
-          </section>
-          <section hidden={category !== "editor"} aria-labelledby="settings-editor">
-            <h2 id="settings-editor">{t.editor}</h2>
-            <SettingSelect
-              locale={settings.locale}
-              label={t.codeSize}
-              id="setting-codeSize"
-              value={settings.codeSize}
-              onChange={(value) => onChange("codeSize", value)}
-              options={CODE_SIZES.map((value) => ({ value, label: `${value}px` }))}
-            />
-            <SettingSelect
-              locale={settings.locale}
-              label={local("行號", "Line numbers")}
-              id="setting-lineNumbers"
-              value={settings.lineNumbers}
-              onChange={(value) => onChange("lineNumbers", value)}
-              options={[
-                { value: "on", label: local("顯示", "On") },
-                { value: "relative", label: local("相對行號", "Relative") },
-                { value: "off", label: local("隱藏", "Off") },
-              ]}
-            />
-            {toggle("minimap", local("程式碼縮圖", "Minimap"))}
-            <SettingSelect
-              locale={settings.locale}
-              label={local("空白字元", "Whitespace")}
-              id="setting-whitespace"
-              value={settings.renderWhitespace}
-              onChange={(value) => onChange("renderWhitespace", value)}
-              options={[
-                { value: "none", label: local("不顯示", "None") },
-                { value: "selection", label: local("選取範圍", "Selection") },
-                { value: "all", label: local("全部", "All") },
-              ]}
-            />
-            {toggle("formatOnPaste", local("貼上時格式化", "Format on paste"))}
-            {toggle("wordWrap", t.wordWrap, t.wrapHint)}
-            <SettingSelect<Settings["indentSize"]>
-              locale={settings.locale}
-              label={t.indent}
-              id="setting-indent"
-              hintId="indent-hint"
-              value={settings.indentSize}
-              onChange={(value) => onChange("indentSize", value)}
-              options={([2, 4] as const).map((value) => ({
-                value,
-                label: `${value} ${t.spaces}`,
-              }))}
-              hint={t.indentHint}
-            />
-          </section>
-          <section hidden={category !== "saving"} aria-labelledby="settings-saving">
-            <h2 id="settings-saving">{t.saving}</h2>
-            <SettingSelect
-              locale={settings.locale}
-              label={local("自動儲存", "Auto save")}
-              id="setting-autoSave"
-              value={settings.autoSave}
-              onChange={(value) => onChange("autoSave", value)}
-              options={[
-                { value: "off", label: t.off },
-                { value: "afterDelay", label: local("停止輸入後", "After delay") },
-                { value: "onFocusChange", label: local("離開編輯器時", "On focus change") },
-              ]}
-            />
-            {settings.autoSave === "afterDelay" && (
-              <SettingSelect
-                locale={settings.locale}
-                label={local("自動儲存延遲", "Auto save delay")}
-                id="setting-autoSaveDelay"
-                value={settings.autoSaveDelay}
-                onChange={(value) => onChange("autoSaveDelay", value)}
-                options={AUTO_SAVE_DELAYS.map((value) => ({ value, label: `${value} ms` }))}
-              />
-            )}
-            {toggle(
-              "formatOnSave",
-              local("儲存時格式化", "Format on save"),
-              local(
-                "套用到手動儲存、全部儲存與編譯／執行前儲存。自動儲存只保存內容。",
-                "Applies to manual saves, Save all and saves before building/running. Auto save only saves the contents.",
-              ),
-            )}
-          </section>
-          <section hidden={category !== "shortcuts"}>
-            {category === "shortcuts" && active && (
-              <ShortcutsPanel keyboard={keyboard} locale={settings.locale} />
-            )}
-          </section>
-          <section hidden={category !== "layout"} aria-labelledby="settings-layout">
-            <h2 id="settings-layout">{t.layout}</h2>
-            <p className="settings-hint">{t.layoutHint}</p>
-            {toggle("filesOpen", t.files)}
-            {toggle("deviceOpen", t.device)}
-            {toggle("problemsOpen", t.problems)}
-            <div className="settings-reset">
-              <button onClick={onReset}>{t.reset}</button>
-              <p>{t.resetHint}</p>
-            </div>
-          </section>
+          {category === "shortcuts" ? (
+            active && <ShortcutsPanel keyboard={keyboard} locale={settings.locale} />
+          ) : (
+            <>
+              {entries.length === 0 && (
+                <p className="settings-empty">
+                  {local(
+                    "沒有符合的設定。試試其他關鍵字，或清除條件。",
+                    "No matching settings. Try another keyword or clear the filters.",
+                  )}
+                </p>
+              )}
+              {(Object.keys(CATEGORY_LABELS) as SettingsCategory[]).map((group) => {
+                const groupEntries = entries.filter((entry) => entry.category === group);
+                if (!groupEntries.length && category !== group) return null;
+                return (
+                  <section key={group} aria-labelledby={`settings-${group}`}>
+                    <h2 id={`settings-${group}`}>
+                      {localText(CATEGORY_LABELS[group], settings.locale)}
+                    </h2>
+                    {group === "device" && (
+                      <p className="settings-hint">
+                        {local(
+                          "設備參數成功保存後生效；連線偏好立即套用。",
+                          "Device parameters take effect after saving successfully; connection preferences apply immediately.",
+                        )}
+                      </p>
+                    )}
+                    {groupEntries.map(row)}
+                    {group === "layout" && !searching && (
+                      <div className="settings-reset">
+                        <button onClick={onReset}>{t.reset}</button>
+                        <p>{t.resetHint}</p>
+                      </div>
+                    )}
+                    {group === "updates" && category === "updates" && !searching && (
+                      <UpdatesPanel
+                        state={updates}
+                        locale={settings.locale}
+                        busy={updateBusy}
+                        onInstall={onInstallUpdate}
+                        showPreferences={false}
+                      />
+                    )}
+                  </section>
+                );
+              })}
+            </>
+          )}
         </div>
       </div>
     </section>

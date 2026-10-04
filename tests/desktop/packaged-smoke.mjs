@@ -167,9 +167,23 @@ try {
     assert.equal(state.phase, "idle");
     assert.deepEqual(state.preferences, { enabled: false, channel: "stable" });
     await js('window.kobrixa.updates.setPreferences({enabled:false,channel:"preview"})');
+    assert.equal((await js("window.kobrixa.device.getPreferences()")).usbAutoReconnect, true);
+    await js(
+      "window.kobrixa.device.setPreferences({usbRetryInterval:2000,usbRetryLimit:3,wifiConnectTimeout:10000})",
+    );
+    assert.equal(
+      await js(
+        "window.kobrixa.device.setPreferences({wifiConnectTimeout:0}).then(()=>false,()=>true)",
+      ),
+      true,
+    );
     await js('localStorage.setItem("kobrixa-packaged-smoke", "retained")');
     await js('document.querySelector(".settings-trigger").click()');
     await pause(250);
+    await js(
+      'Array.from(document.querySelectorAll(".settings-categories button")).find(button => button.textContent === "Updates" || button.textContent === "更新").click()',
+    );
+    await pause(100);
     assert.equal(await js('Boolean(document.querySelector("#settings-updates"))'), true);
     await js('document.querySelector(".settings-tab .tab-close").click()');
     for (let i = 0; i < 50 && (await js('document.querySelector(".editor-stage").hidden')); i++)
@@ -199,6 +213,10 @@ try {
       channel: "preview",
     });
     assert.equal(await js('localStorage.getItem("kobrixa-packaged-smoke")'), "retained");
+    const devicePreferences = await js("window.kobrixa.device.getPreferences()");
+    assert.equal(devicePreferences.usbRetryInterval, 2000);
+    assert.equal(devicePreferences.usbRetryLimit, 3);
+    assert.equal(devicePreferences.wifiConnectTimeout, 10000);
     await pause(250);
     assert.match(
       await js('document.querySelector(".view-lines").textContent'),
@@ -211,7 +229,7 @@ try {
     channel: "preview",
   });
   console.log(
-    "Packaged application: shipped runtime, update IPC, three-project restore and immediate-quit draft recovery pass.",
+    "Packaged application: shipped runtime, device preference validation/persistence, update IPC, three-project restore and immediate-quit draft recovery pass.",
   );
 } finally {
   await rm(profile, { recursive: true, force: true });

@@ -1,3 +1,5 @@
+import { DevicePreferencesStore } from "./preferences.js";
+import type { DevicePreferences } from "../../shared/device-preferences.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -30,6 +32,7 @@ interface Recovery {
   deployment: Deployment | undefined;
   controller: AbortController;
   attempt: number;
+  preferences: DevicePreferences;
   working: boolean;
   timer?: ReturnType<typeof setTimeout>;
   candidate?: DeviceSession;
@@ -81,7 +84,24 @@ export class DeviceService {
   constructor(
     private readonly builds: BuildService,
     private readonly renderer: () => WebContents | undefined,
+    private readonly preferences = new DevicePreferencesStore(),
   ) {}
+
+  getPreferences = (): DevicePreferences => this.preferences.get();
+  setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences> {
+    return this.preferences.set(patch, (next) => {
+      if (!next.usbAutoReconnect)
+        for (const recovery of this.#recoveries.values()) this.cancelRecovery(recovery);
+    });
+  }
+
+  private wifiOptions() {
+    const value = this.getPreferences();
+    return {
+      connectTimeoutMs: value.wifiConnectTimeout,
+      handshakeTimeoutMs: value.wifiHandshakeTimeout,
+    };
+  }
 
   async discover(signal = new AbortController().signal): Promise<DeviceDescriptor[]> {
     const settled = await Promise.allSettled([
@@ -92,8 +112,14 @@ export class DeviceService {
   }
 
   connect(descriptor: DeviceDescriptor, signal = new AbortController().signal): Promise<string> {
-    const transport = descriptor.transport === "usb" ? this.#usb : this.#wifi;
-    return this.connectWith(() => transport.connect(descriptor, signal), descriptor.transport);
+    const options = this.wifiOptions();
+    return this.connectWith(
+      () =>
+        descriptor.transport === "usb"
+          ? this.#usb.connect(descriptor, signal)
+          : this.#wifi.connect(descriptor, signal, options),
+      descriptor.transport,
+    );
   }
 
   connectWifi(address: string, signal = new AbortController().signal): Promise<string> {
@@ -103,7 +129,8 @@ export class DeviceService {
       transport: "wifi",
       address,
     };
-    return this.connectWith(() => this.#wifi.connect(descriptor, signal), "wifi");
+    const options = this.wifiOptions();
+    return this.connectWith(() => this.#wifi.connect(descriptor, signal, options), "wifi");
   }
 
   async disconnect(id: string): Promise<void> {
@@ -351,13 +378,14 @@ export class DeviceService {
     this.#busy.get(id)?.abort(error);
     let recovery: Recovery | undefined;
     if (session.descriptor.transport === "usb") {
-      if (session.descriptor.serialNumber?.trim()) {
+      if (this.getPreferences().usbAutoReconnect && session.descriptor.serialNumber?.trim()) {
         recovery = {
           id,
           descriptor: session.descriptor,
           deployment,
           controller: new AbortController(),
           attempt: 0,
+          preferences: this.getPreferences(),
           working: false,
         };
         this.#recoveries.set(id, recovery);
@@ -379,7 +407,7 @@ export class DeviceService {
 
   private recoveryEvent(
     recovery: Recovery,
-    state: "waiting" | "connecting" | "cancelled" | "unavailable",
+    state: "waiting" | "connecting" | "cancelled" | "unavailable" | "exhausted",
   ): void {
     this.send({
       type: "usb-recovery",
@@ -401,6 +429,7 @@ export class DeviceService {
     const current = () => this.#recoveries.get(recovery.id) === recovery;
     if (!current()) return;
     recovery.working = true;
+    recovery.attempt++;
     const signal = recovery.controller.signal;
     let candidate: DeviceSession | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -484,10 +513,20 @@ export class DeviceService {
       delete recovery.candidate;
       recovery.working = false;
       if (current()) {
-        this.recoveryEvent(recovery, "waiting");
-        const delay = [1000, 2000, 5000][Math.min(recovery.attempt++, 2)]!;
-        recovery.timer = setTimeout(() => void this.recover(recovery), delay);
-        recovery.timer.unref?.();
+        const { usbRetryLimit, usbRetryInterval } = recovery.preferences;
+        if (usbRetryLimit !== "unlimited" && recovery.attempt >= usbRetryLimit) {
+          this.#recoveries.delete(recovery.id);
+          recovery.controller.abort();
+          this.recoveryEvent(recovery, "exhausted");
+        } else {
+          this.recoveryEvent(recovery, "waiting");
+          const delay =
+            usbRetryInterval === "backoff"
+              ? [1000, 2000, 5000][Math.min(recovery.attempt - 1, 2)]!
+              : usbRetryInterval;
+          recovery.timer = setTimeout(() => void this.recover(recovery), delay);
+          recovery.timer.unref?.();
+        }
       }
     }
   }

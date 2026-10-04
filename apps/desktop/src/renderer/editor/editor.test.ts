@@ -176,3 +176,34 @@ it("applies diagnostics when a file is opened and still accepts external content
   expect(mocks.model.setValue).toHaveBeenLastCalledWith("LCD.Clear()\n\n");
   expect(props.onChange).not.toHaveBeenCalled();
 });
+
+it("updates visual and input preferences without replacing the editor, model or view", async () => {
+  const { defaultSettings } = await import("../settings/settings.js");
+  const settings = defaultSettings("en");
+  await act(async () => root.render(createElement(Editor, { ...props, editorOptions: settings })));
+  mocks.model.setValue.mockClear();
+  mocks.instance.saveViewState.mockClear();
+  await act(async () =>
+    root.render(
+      createElement(Editor, {
+        ...props,
+        editorOptions: {
+          ...settings,
+          cursorStyle: "block",
+          autoSuggestions: false,
+          lineHeight: "relaxed",
+        },
+      }),
+    ),
+  );
+  expect(mocks.instance.updateOptions).toHaveBeenCalledWith(
+    expect.objectContaining({
+      cursorStyle: "block",
+      lineHeight: 29,
+      suggestOnTriggerCharacters: false,
+    }),
+  );
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(mocks.model.setValue).not.toHaveBeenCalled();
+  expect(mocks.instance.saveViewState).not.toHaveBeenCalled();
+});

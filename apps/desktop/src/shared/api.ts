@@ -1,3 +1,4 @@
+import type { DevicePreferences } from "./device-preferences.js";
 import type { UpdatesApi } from "./updates.js";
 import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
 import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
@@ -121,7 +122,7 @@ export interface FileBatchSnapshot extends FileBatchRef {
 export type DeviceEvent =
   | {
       type: "usb-recovery";
-      state: "waiting" | "connecting" | "cancelled" | "unavailable";
+      state: "waiting" | "connecting" | "cancelled" | "unavailable" | "exhausted";
       previousSessionId: string;
       descriptor: DeviceDescriptor;
     }
@@ -200,6 +201,8 @@ export interface KobrixaApi {
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {
+    getPreferences(): Promise<DevicePreferences>;
+    setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences>;
     files(request: RemoteFileRequest): Promise<RemoteFileResult>;
     prepareFiles(request: FileBatchRequest): Promise<FileBatchSnapshot>;
     executeFiles(ref: FileBatchRef, policy: "skip" | "replace"): Promise<FileBatchSnapshot>;

@@ -156,3 +156,43 @@ it("persists editor and save preferences while keeping conservative upgrade defa
     lineNumbers: "relative",
   });
 });
+
+it("round-trips advanced editor and workflow settings and resets one field", () => {
+  const s = storage();
+  const store = new SettingsStore(() => s, "en");
+  store.set("theme", "system");
+  store.set("cursorStyle", "block");
+  store.set("lineHeight", "relaxed");
+  store.set("autoSuggestions", false);
+  store.set("connectionMode", "wifi");
+  store.set("revealDiagnostics", "warnings");
+  store.set("revealDeviceErrors", false);
+  expect(new SettingsStore(() => s, "en").getSnapshot().values).toMatchObject({
+    theme: "system",
+    cursorStyle: "block",
+    lineHeight: "relaxed",
+    autoSuggestions: false,
+    connectionMode: "wifi",
+    revealDiagnostics: "warnings",
+    revealDeviceErrors: false,
+  });
+  store.reset("cursorStyle");
+  expect(store.getSnapshot().values).toMatchObject({
+    cursorStyle: "line",
+    theme: "system",
+    lineHeight: "relaxed",
+  });
+});
+it("only remembers successful addresses when opted in and clears them when disabled", () => {
+  const s = storage();
+  const store = new SettingsStore(() => s, "en");
+  store.rememberAddress("192.168.0.42");
+  expect(store.getWifiAddress()).toBe("");
+  store.set("rememberWifiAddress", true);
+  store.rememberAddress("192.168.0.42");
+  expect(new SettingsStore(() => s, "en").getWifiAddress()).toBe("192.168.0.42");
+  store.set("rememberWifiAddress", false);
+  expect(store.getWifiAddress()).toBe("");
+  store.set("rememberWifiAddress", true);
+  expect(new SettingsStore(() => s, "en").getWifiAddress()).toBe("");
+});

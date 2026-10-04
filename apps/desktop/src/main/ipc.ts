@@ -1,3 +1,4 @@
+import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
@@ -254,6 +255,10 @@ export function registerIpc(
   );
   handle("device:files-stop", (event, ref: unknown) =>
     devices.stopFiles(batchRef.parse(ref), event.sender.id),
+  );
+  handle("device:preferences", () => devices.getPreferences());
+  handle("device:set-preferences", (_event, patch: unknown) =>
+    devices.setPreferences(devicePreferencesPatchSchema.parse(patch)),
   );
   handle("device:discover", () => devices.discover());
   handle("device:connect", (_event, target: unknown) => devices.connect(parseDescriptor(target)));

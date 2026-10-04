@@ -9,7 +9,7 @@ import { ModelSnapshots } from "./model-snapshots.js";
 import { BasicPlusSemanticTokens } from "./semantic-tokens.js";
 import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
 import { bindWorkspaceEdits, renameSnapshot, validateTextEdits } from "./workspace-edits.js";
-import type { Settings } from "../settings/settings.js";
+import { editorOptions as resolveEditorOptions, type EditorSettings } from "./editor-options.js";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
@@ -113,7 +113,7 @@ interface EditorProps {
   documents: Documents;
   analysisSession: AnalysisSession;
   completionSession?: CompletionSession;
-  editorOptions?: Pick<Settings, "lineNumbers" | "minimap" | "renderWhitespace" | "formatOnPaste">;
+  editorOptions?: EditorSettings;
   onEditorReady?(editor: monaco.editor.IStandaloneCodeEditor): () => void;
   onBlur?(file: string): void;
   onOpenLocation?(file: string, range: Diagnostic["range"]): Promise<boolean>;
@@ -427,28 +427,16 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       readOnly,
       ariaLabel,
       automaticLayout: true,
-      minimap: { enabled: false },
       fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace",
-      fontSize,
-      lineHeight: Math.round((fontSize * 25) / 16),
       padding: { top: 16 },
-      bracketPairColorization: { enabled: true },
-      guides: { bracketPairs: true, indentation: true },
       glyphMargin: true,
-      folding: true,
       lineNumbersMinChars: 3,
-      wordWrap: wordWrap ? "on" : "off",
       detectIndentation: false,
       autoIndent: "full",
       tabSize: indentSize,
       insertSpaces: true,
-      smoothScrolling: false,
-      cursorSmoothCaretAnimation: "off",
-      renderWhitespace: "selection",
       renderValidationDecorations: "on",
-      scrollBeyondLastLine: false,
-      formatOnPaste: true,
-      stickyScroll: { enabled: true, maxLineCount: 3 },
+      ...resolveEditorOptions(editorOptions, fontSize, wordWrap, reducedMotion),
       overviewRulerBorder: false,
     });
     const opener = monaco.editor.registerEditorOpener({
@@ -596,33 +584,18 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, [openFiles]);
 
   useEffect(() => {
-    editor.current?.updateOptions({
-      lineNumbers: editorOptions?.lineNumbers ?? "on",
-      minimap: { enabled: editorOptions?.minimap ?? false },
-      renderWhitespace: editorOptions?.renderWhitespace ?? "selection",
-      formatOnPaste: editorOptions?.formatOnPaste ?? true,
-    });
-  }, [
-    editorOptions?.lineNumbers,
-    editorOptions?.minimap,
-    editorOptions?.renderWhitespace,
-    editorOptions?.formatOnPaste,
-  ]);
+    suggestions.current?.setAutomaticSuggestions(editorOptions?.autoSuggestions ?? true);
+    editor.current?.updateOptions(
+      resolveEditorOptions(editorOptions, fontSize, wordWrap, reducedMotion),
+    );
+  }, [editorOptions, fontSize, wordWrap, reducedMotion]);
   useEffect(() => {
     editor.current?.updateOptions({ ariaLabel, readOnly });
   }, [ariaLabel, readOnly]);
   useEffect(() => {
-    editor.current?.updateOptions({ fontSize, lineHeight: Math.round((fontSize * 25) / 16) });
-  }, [fontSize]);
-  useEffect(() => {
-    editor.current?.updateOptions({
-      wordWrap: wordWrap ? "on" : "off",
-      smoothScrolling: false,
-      cursorSmoothCaretAnimation: "off",
-    });
     for (const model of models.current.values())
       model.updateOptions({ tabSize: indentSize, indentSize, insertSpaces: true });
-  }, [wordWrap, indentSize, reducedMotion]);
+  }, [indentSize]);
   useEffect(() => {
     monaco.editor.setTheme(`kobrixa-${theme}`);
   }, [theme]);

@@ -21,6 +21,9 @@ it("keeps empty completion intent, honors dismissal and composition, and preserv
   const model = {} as editor.ITextModel;
   const position = { lineNumber: 2, column: 4 } as Position;
   const instance = {
+    trigger: vi.fn(() => {
+      visible = false;
+    }),
     getContribution: () => controller,
     getPosition: () => position,
     getModel: () => model,
@@ -63,5 +66,13 @@ it("keeps empty completion intent, honors dismissal and composition, and preserv
   callbacks.get("blur")!();
   widget.refresh(model, position);
   expect(controller.triggerSuggest).toHaveBeenCalledTimes(2);
+  callbacks.get("trigger")!({ auto: true });
+  widget.setAutomaticSuggestions(false);
+  controller.triggerSuggest.mockClear();
+  widget.refresh(model, position);
+  expect(controller.triggerSuggest).not.toHaveBeenCalled();
+  callbacks.get("trigger")!({ auto: false });
+  widget.refresh(model, position);
+  expect(controller.triggerSuggest).toHaveBeenCalledOnce();
   widget.dispose();
 });

@@ -93,11 +93,13 @@ export function UpdatesPanel({
   locale,
   busy,
   onInstall,
+  showPreferences = true,
 }: {
   state: UpdateState | undefined;
   locale: Locale;
   busy: boolean;
   onInstall(): void;
+  showPreferences?: boolean;
 }): React.JSX.Element {
   const t = (zh: string, en: string) => (locale === "zh-TW" ? zh : en);
   const [error, setError] = useState(false);
@@ -122,29 +124,31 @@ export function UpdatesPanel({
       <p>
         {t("目前版本", "Current version")}: <code>{state.currentVersion}</code>
       </p>
-      <fieldset disabled={saving || locked} className="updates-preferences">
-        <SettingToggle
-          id="updates-enabled"
-          label={t("自動檢查並下載", "Automatically check and download")}
-          checked={state.preferences.enabled}
-          onChange={(enabled) => void preferences({ enabled })}
-          onLabel={t("開啟", "On")}
-          offLabel={t("關閉", "Off")}
-        />
-        <SettingToggle
-          id="updates-preview"
-          label={t("接收預覽版更新", "Receive preview updates")}
-          hint={t(
-            "預覽版可能仍在測試中；切回正式版不會自動降版。",
-            "Preview releases may still be in testing. Switching back to stable never downgrades your app.",
-          )}
-          hintId="updates-preview-hint"
-          checked={state.preferences.channel === "preview"}
-          onChange={(preview) => void preferences({ channel: preview ? "preview" : "stable" })}
-          onLabel={t("開啟", "On")}
-          offLabel={t("關閉", "Off")}
-        />
-      </fieldset>
+      {showPreferences && (
+        <fieldset disabled={saving || locked} className="updates-preferences">
+          <SettingToggle
+            id="updates-enabled"
+            label={t("自動檢查並下載", "Automatically check and download")}
+            checked={state.preferences.enabled}
+            onChange={(enabled) => void preferences({ enabled })}
+            onLabel={t("開啟", "On")}
+            offLabel={t("關閉", "Off")}
+          />
+          <SettingToggle
+            id="updates-preview"
+            label={t("接收預覽版更新", "Receive preview updates")}
+            hint={t(
+              "預覽版可能仍在測試中；切回正式版不會自動降版。",
+              "Preview releases may still be in testing. Switching back to stable never downgrades your app.",
+            )}
+            hintId="updates-preview-hint"
+            checked={state.preferences.channel === "preview"}
+            onChange={(preview) => void preferences({ channel: preview ? "preview" : "stable" })}
+            onLabel={t("開啟", "On")}
+            offLabel={t("關閉", "Off")}
+          />
+        </fieldset>
+      )}
       <p role="status" aria-live="polite">
         {updateMessage(state, locale)}
       </p>

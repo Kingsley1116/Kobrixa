@@ -1,8 +1,9 @@
+import { checkExpandedSettings } from "./settings-smoke.mjs";
 import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -102,6 +103,13 @@ const sendUpdate = (patch) => {
   updateState = { ...updateState, ...patch, revision: updateState.revision + 1 };
   win.webContents.send("updates:state", updateState);
 };
+let devicePreferences = {
+  usbAutoReconnect: true,
+  usbRetryInterval: "backoff",
+  usbRetryLimit: "unlimited",
+  wifiConnectTimeout: 5000,
+  wifiHandshakeTimeout: 3000,
+};
 ipcMain.handle("smoke", async (_e, name, args) => {
   const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
   if (name === "restoreSession")
@@ -132,6 +140,11 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     return;
   }
 
+  if (name === "devicePreferences") return devicePreferences;
+  if (name === "setDevicePreferences") {
+    devicePreferences = { ...devicePreferences, ...args[0] };
+    return devicePreferences;
+  }
   if (name === "updateState") return updateState;
   if (name === "updatePreferences") {
     sendUpdate({ preferences: args[0] });
@@ -333,6 +346,23 @@ app
           },
         }),
     };
+    const settingsContext = {
+      js,
+      key,
+      until,
+      pause,
+      win,
+      mod,
+      temporary,
+      systemTheme: (value) => {
+        nativeTheme.themeSource = value;
+      },
+    };
+    if (process.env.KOBRIXA_SMOKE_SETTINGS_ONLY) {
+      await checkExpandedSettings(settingsContext);
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_PROJECTS_ONLY) {
       await checkProjects(projectsContext);
       app.exit(0);
@@ -393,6 +423,7 @@ app
     }
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
+    await checkExpandedSettings(settingsContext);
     console.log("catalog", await js("smoke.editorCommandCatalog(true).length"));
     await key(",", [mod]);
     await until('!document.querySelector("#settings-page").hidden');

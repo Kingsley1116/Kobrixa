@@ -68,6 +68,8 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },
   device: {
+    getPreferences: () => ipcRenderer.invoke("device:preferences"),
+    setPreferences: (patch) => ipcRenderer.invoke("device:set-preferences", patch),
     prepareFiles: (request) => ipcRenderer.invoke("device:files-prepare", request),
     executeFiles: (ref, policy) => ipcRenderer.invoke("device:files-execute", ref, policy),
     stopFiles: (ref) => ipcRenderer.invoke("device:files-stop", ref),

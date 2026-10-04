@@ -1,3 +1,4 @@
+import { loadDevicePreferences } from "./device/preferences.js";
 import { createUpdateService } from "./updates/runtime.js";
 import { UpdateOperationGate, type UpdateService } from "./updates/service.js";
 import { attachKeyboard } from "./window/keyboard.js";
@@ -117,7 +118,11 @@ void app.whenReady().then(async () => {
     language.dispose();
   });
   app.on("window-all-closed", () => language.cancel());
-  const devices = new DeviceService(builds, renderer);
+  const devices = new DeviceService(
+    builds,
+    renderer,
+    await loadDevicePreferences(app.getPath("userData")),
+  );
   app.on("will-quit", () => {
     void devices.reset();
   });

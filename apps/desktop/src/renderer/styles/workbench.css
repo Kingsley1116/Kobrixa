@@ -2761,3 +2761,100 @@ footer {
   overflow: auto;
   max-height: 100px;
 }
+
+/* Searchable preference groups share field controls with the rest of the workbench. */
+.settings-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 8px;
+}
+.settings-search > input {
+  flex: 1 1 240px;
+  min-width: 120px;
+}
+.settings-search > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-small);
+}
+.settings-search input[type="checkbox"] {
+  width: auto;
+}
+.settings-content > section + section {
+  margin-top: 32px;
+}
+.setting-entry {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+.setting-entry .setting-row {
+  border-bottom: 0;
+  padding-bottom: 8px;
+}
+.setting-entry.is-modified {
+  box-shadow: -3px 0 0 var(--accent);
+  padding-left: 12px;
+}
+.setting-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.setting-footer button {
+  padding: 4px 8px;
+  font-size: var(--font-small);
+}
+.settings-empty {
+  padding: 20px 0;
+  color: var(--muted);
+}
+
+.settings-search > input[type="search"] {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-small);
+  padding: 6px 10px;
+}
+.settings-search input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@container (max-width: 800px) {
+  .settings-heading {
+    padding: 12px 18px;
+  }
+  .settings-heading h1 {
+    font-size: calc(20px * var(--ui-scale));
+    margin-bottom: 2px;
+  }
+  .settings-search {
+    margin: 8px 0 4px;
+  }
+  .settings-categories {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 6px 12px;
+  }
+  .settings-categories button {
+    flex-shrink: 0;
+    font-size: var(--font-small);
+  }
+  .settings-content {
+    padding: 14px 18px;
+  }
+}
+@media (max-height: 740px) {
+  .settings-heading > p:not([role="status"]) {
+    display: none;
+  }
+}

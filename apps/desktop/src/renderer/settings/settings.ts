@@ -5,12 +5,48 @@ import {
   clamp,
 } from "../workbench/workbench-state.js";
 import type { Locale } from "../i18n/copy.js";
-import { THEME_KEY, type Theme } from "./theme.js";
+import { THEME_KEY, resolveTheme, type ThemePreference } from "./theme.js";
 
 export const UI_SCALES = [100, 110, 125] as const;
 export const CODE_SIZES = [14, 16, 18, 20, 24] as const;
 export const AUTO_SAVE_DELAYS = [500, 1000, 2000, 5000] as const;
-export interface Settings {
+export interface EditorPreferences {
+  lineHeight: "compact" | "standard" | "relaxed";
+  cursorStyle: "line" | "block" | "underline";
+  cursorBlinking: boolean;
+  renderLineHighlight: "none" | "line" | "all";
+  bracketPairColorization: boolean;
+  bracketGuides: boolean;
+  indentationGuides: boolean;
+  folding: boolean;
+  stickyScroll: boolean;
+  autoClosingBrackets: boolean;
+  autoClosingQuotes: boolean;
+  autoSuggestions: boolean;
+  hover: boolean;
+  parameterHints: boolean;
+  smoothScrolling: boolean;
+  scrollBeyondLastLine: boolean;
+}
+export const EDITOR_DEFAULTS: EditorPreferences = {
+  lineHeight: "standard",
+  cursorStyle: "line",
+  cursorBlinking: true,
+  renderLineHighlight: "line",
+  bracketPairColorization: true,
+  bracketGuides: true,
+  indentationGuides: true,
+  folding: true,
+  stickyScroll: true,
+  autoClosingBrackets: true,
+  autoClosingQuotes: true,
+  autoSuggestions: true,
+  hover: true,
+  parameterHints: true,
+  smoothScrolling: false,
+  scrollBeyondLastLine: false,
+};
+export interface Settings extends EditorPreferences {
   lineNumbers: "on" | "relative" | "off";
   minimap: boolean;
   renderWhitespace: "none" | "selection" | "all";
@@ -19,7 +55,11 @@ export interface Settings {
   autoSaveDelay: (typeof AUTO_SAVE_DELAYS)[number];
   formatOnSave: boolean;
   locale: Locale;
-  theme: Theme;
+  theme: ThemePreference;
+  connectionMode: "usb" | "wifi";
+  rememberWifiAddress: boolean;
+  revealDiagnostics: "never" | "errors" | "warnings";
+  revealDeviceErrors: boolean;
   uiScale: (typeof UI_SCALES)[number];
   codeSize: (typeof CODE_SIZES)[number];
   motion: "system" | "reduce";
@@ -33,12 +73,38 @@ export interface Settings {
   problemsHeight: number;
   toolTab: "connection" | "files" | "activity";
 }
+export const SETTINGS_CHOICES = {
+  lineNumbers: ["on", "relative", "off"],
+  renderWhitespace: ["none", "selection", "all"],
+  autoSave: ["off", "afterDelay", "onFocusChange"],
+  autoSaveDelay: AUTO_SAVE_DELAYS,
+  locale: ["en", "zh-TW"],
+  theme: ["dark", "light", "system"],
+  uiScale: UI_SCALES,
+  codeSize: CODE_SIZES,
+  motion: ["system", "reduce"],
+  indentSize: [2, 4],
+  toolTab: ["connection", "files", "activity"],
+  lineHeight: ["compact", "standard", "relaxed"],
+  cursorStyle: ["line", "block", "underline"],
+  renderLineHighlight: ["none", "line", "all"],
+  connectionMode: ["usb", "wifi"],
+  revealDiagnostics: ["never", "errors", "warnings"],
+} as const satisfies Partial<Record<keyof Settings, readonly (string | number)[]>>;
+export const WIFI_ADDRESS_KEY = "kobrixa.lastWifiAddress";
 export interface SettingsSnapshot {
   values: Settings;
   saveError: boolean;
 }
 type StorageAccess = () => Pick<Storage, "getItem" | "setItem">;
 export const SETTINGS_KEYS: Record<keyof Settings, string> = {
+  ...(Object.fromEntries(
+    Object.keys(EDITOR_DEFAULTS).map((key) => [key, `kobrixa.${key}`]),
+  ) as Record<keyof EditorPreferences, string>),
+  connectionMode: "kobrixa.connectionMode",
+  rememberWifiAddress: "kobrixa.rememberWifiAddress",
+  revealDiagnostics: "kobrixa.revealDiagnostics",
+  revealDeviceErrors: "kobrixa.revealDeviceErrors",
   lineNumbers: "kobrixa.lineNumbers",
   minimap: "kobrixa.minimap",
   renderWhitespace: "kobrixa.renderWhitespace",
@@ -58,6 +124,11 @@ export const SETTINGS_KEYS: Record<keyof Settings, string> = {
 };
 export function defaultSettings(language: string): Settings {
   return {
+    ...EDITOR_DEFAULTS,
+    connectionMode: "usb",
+    rememberWifiAddress: false,
+    revealDiagnostics: "errors",
+    revealDeviceErrors: true,
     lineNumbers: "on",
     minimap: false,
     renderWhitespace: "selection",
@@ -78,40 +149,15 @@ export function defaultSettings(language: string): Settings {
 }
 export function readSettings(storage: Pick<Storage, "getItem">, language: string): Settings {
   const result = defaultSettings(language);
-  const choice = <T extends string | number>(
-    key: keyof Settings,
-    options: readonly T[],
-    fallback: T,
-  ): T => {
+  for (const [key, options] of Object.entries(SETTINGS_CHOICES)) {
+    const raw = storage.getItem(SETTINGS_KEYS[key as keyof Settings]);
+    const selected = options.find((value) => String(value) === raw);
+    if (selected !== undefined) Object.assign(result, { [key]: selected });
+  }
+  for (const key of Object.keys(result) as (keyof Settings)[]) {
+    if (typeof result[key] !== "boolean") continue;
     const raw = storage.getItem(SETTINGS_KEYS[key]);
-    return options.find((option) => String(option) === raw) ?? fallback;
-  };
-  result.lineNumbers = choice("lineNumbers", ["on", "relative", "off"], result.lineNumbers);
-  result.renderWhitespace = choice(
-    "renderWhitespace",
-    ["none", "selection", "all"],
-    result.renderWhitespace,
-  );
-  result.autoSave = choice("autoSave", ["off", "afterDelay", "onFocusChange"], result.autoSave);
-  result.autoSaveDelay = choice("autoSaveDelay", AUTO_SAVE_DELAYS, result.autoSaveDelay);
-  result.locale = choice("locale", ["en", "zh-TW"], result.locale);
-  result.theme = choice("theme", ["light", "dark"], result.theme);
-  result.uiScale = choice("uiScale", UI_SCALES, result.uiScale);
-  result.codeSize = choice("codeSize", CODE_SIZES, result.codeSize);
-  result.motion = choice("motion", ["system", "reduce"], result.motion);
-  result.indentSize = choice("indentSize", [2, 4], result.indentSize);
-  result.toolTab = choice("toolTab", ["connection", "files", "activity"], result.toolTab);
-  for (const key of [
-    "minimap",
-    "formatOnPaste",
-    "formatOnSave",
-    "wordWrap",
-    "filesOpen",
-    "deviceOpen",
-    "problemsOpen",
-  ] as const) {
-    const raw = storage.getItem(SETTINGS_KEYS[key]);
-    if (raw === "true" || raw === "false") result[key] = raw === "true";
+    if (raw === "true" || raw === "false") Object.assign(result, { [key]: raw === "true" });
   }
   for (const key of ["filesWidth", "deviceWidth", "problemsHeight"] as const) {
     const raw = storage.getItem(SETTINGS_KEYS[key]);
@@ -131,16 +177,30 @@ export function readSettings(storage: Pick<Storage, "getItem">, language: string
 /** One source for both quick controls and the settings page; writes never block editing. */
 export class SettingsStore {
   private state: SettingsSnapshot;
+  private wifiAddress = "";
+  readonly defaults: Settings;
   private listeners = new Set<() => void>();
   constructor(
     private storage: StorageAccess,
     language: string,
   ) {
+    this.defaults = defaultSettings(language);
     try {
       this.state = { values: readSettings(storage(), language), saveError: false };
+      if (this.state.values.rememberWifiAddress)
+        this.wifiAddress = storage().getItem(WIFI_ADDRESS_KEY)?.trim().slice(0, 45) ?? "";
     } catch {
       this.state = { values: defaultSettings(language), saveError: true };
     }
+  }
+  getWifiAddress = (): string => this.wifiAddress;
+  rememberAddress(address: string): void {
+    if (!this.state.values.rememberWifiAddress) return;
+    this.wifiAddress = address.trim();
+    this.save();
+  }
+  reset<K extends keyof Settings>(key: K): void {
+    this.set(key, this.defaults[key]);
   }
   getSnapshot = (): SettingsSnapshot => this.state;
   subscribe = (listener: () => void): (() => void) => {
@@ -154,6 +214,7 @@ export class SettingsStore {
     const next = typeof value === "function" ? value(this.state.values[key]) : value;
     if (next === this.state.values[key]) return;
     this.state = { ...this.state, values: { ...this.state.values, [key]: next } };
+    if (key === "rememberWifiAddress" && !next) this.wifiAddress = "";
     this.save();
   }
   resetLayout = (): void => {
@@ -167,6 +228,10 @@ export class SettingsStore {
     let saveError = false;
     try {
       const storage = this.storage();
+      storage.setItem(
+        WIFI_ADDRESS_KEY,
+        this.state.values.rememberWifiAddress ? this.wifiAddress : "",
+      );
       for (const key of Object.keys(SETTINGS_KEYS) as (keyof Settings)[])
         storage.setItem(SETTINGS_KEYS[key], String(this.state.values[key]));
     } catch {
@@ -176,8 +241,12 @@ export class SettingsStore {
     this.listeners.forEach((listener) => listener());
   };
 }
-export function applyAppearance(values: Settings, root: HTMLElement): void {
-  root.dataset.theme = values.theme;
+export function applyAppearance(
+  values: Settings,
+  root: HTMLElement,
+  systemDark = globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false,
+): void {
+  root.dataset.theme = resolveTheme(values.theme, systemDark);
   root.dataset.motion = values.motion;
   root.lang = values.locale;
   root.style.setProperty("--ui-scale", String(values.uiScale / 100));

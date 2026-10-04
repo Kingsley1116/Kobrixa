@@ -384,3 +384,55 @@ describe("deployment verification after USB recovery", () => {
     expect(restored(h.events).deployment).toBe("none");
   });
 });
+
+it("counts the immediate attempt, stops at the limit and snapshots the recovery policy", async () => {
+  const h = await setup();
+  await h.service.setPreferences({ usbRetryInterval: 2000, usbRetryLimit: 3 });
+  h.discover.mockResolvedValue([]);
+  h.original.drop();
+  await settle();
+  expect(h.discover).toHaveBeenCalledTimes(1);
+  await h.service.setPreferences({ usbRetryInterval: 1000, usbRetryLimit: 10 });
+  await vi.advanceTimersByTimeAsync(1999);
+  expect(h.discover).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(h.discover).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(h.discover).toHaveBeenCalledTimes(3);
+  expect(h.events.at(-1)).toMatchObject({ type: "usb-recovery", state: "exhausted" });
+  expect(vi.getTimerCount()).toBe(0);
+  expect(h.service.busy).toBe(false);
+});
+it("disabling automatic recovery cancels a pending candidate and ignores its late result", async () => {
+  const h = await setup();
+  const open = deferred<ReturnType<typeof robot>>();
+  h.connect.mockImplementationOnce(() => open.promise as never);
+  h.original.drop();
+  await settle();
+  await h.service.setPreferences({ usbAutoReconnect: false });
+  open.resolve(h.replacement);
+  await settle();
+  expect(
+    h.events.some((event) => event.type === "usb-recovery" && event.state === "restored"),
+  ).toBe(false);
+  expect(h.replacement.connected).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("does not start recovery when disabled and uses selected Wi-Fi timeouts", async () => {
+  const h = await setup();
+  await h.service.setPreferences({
+    usbAutoReconnect: false,
+    wifiConnectTimeout: 30000,
+    wifiHandshakeTimeout: 10000,
+  });
+  h.original.drop();
+  await settle();
+  expect(h.discover).not.toHaveBeenCalled();
+  const wifi = robot({ id: "wifi:1", name: "EV3", transport: "wifi" });
+  const connect = vi.spyOn(WiFiTransport.prototype, "connect").mockResolvedValue(wifi as never);
+  await h.service.connectWifi("192.168.0.42");
+  expect(connect).toHaveBeenCalledWith(expect.anything(), expect.any(AbortSignal), {
+    connectTimeoutMs: 30000,
+    handshakeTimeoutMs: 10000,
+  });
+});

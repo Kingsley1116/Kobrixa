@@ -1,6 +1,6 @@
 # Keyboard shortcuts and settings
 
-Open Settings from the gear button or **Command+,** on macOS / **Ctrl+,** on Windows and Linux. Changes take effect immediately and are saved on this computer. A save-error message means the setting still applies for this session; use **Retry saving** to persist it.
+Open Settings from the gear button or **Command+,** on macOS / **Ctrl+,** on Windows and Linux. General preferences take effect immediately and are saved on this computer. A save-error message for general preferences means they still apply for this session; use **Retry saving** to persist them. Device parameters and update preferences apply only after saving succeeds.
 
 ## Keyboard shortcuts
 
@@ -59,3 +59,37 @@ Auto save can run after typing stops, or when leaving the editor. The delay can 
 Auto save only saves modified, open files and does not format them. When enabled, Format on save applies to manual Save, Save all and the saves before building/running. It uses the current indentation size and the existing Basic Plus or JSON formatter; unsupported file types are saved unchanged. Formatting changes in open files can be undone. A formatting or save failure stops the requested save/build and preserves unsaved work.
 
 Source writes and recovery drafts are serialized. Input typed during a write stays unsaved until that newer content reaches disk. Project switches and file moves/deletions wait for pending writes; compilation still saves recovered drafts even if their files are not open. Failed automatic saves are reported rather than retried in a loop; edit the file or save manually to try again. Existing draft recovery and the unsaved-tab confirmation remain available.
+
+## Search and reset settings
+
+All settings groups general, editor, saving, layout, EV3 and update preferences. Search combines Chinese and English names, descriptions, setting IDs and multiple keywords. Searching selects all categories; select a category to narrow the results. Modified only compares the saved preference with its default, so a system theme's current appearance does not change its modified status.
+
+Each setting shows its default; modified settings can be reset individually. If resetting removes a filtered row, focus returns to search. Dependent settings remain searchable with an explanation of their requirements, such as selecting After delay before adjusting the auto-save delay. Keyboard shortcuts keep their own search and reset interface.
+
+## Appearance and advanced editor preferences
+
+Follow system tracks system light/dark appearance immediately. The top theme button switches the effective appearance and saves an explicit light or dark choice. The initial default remains dark.
+
+Line height offers compact (1.4×), standard (the existing font size × 25/16), and relaxed (1.8×). Choose a line, block or underline cursor and independently toggle blinking. Current-line highlighting can be off, cover the code line, or include the gutter.
+
+Bracket colors, bracket/indentation guides, folding, sticky scope lines (up to three), automatic bracket/quote closing, automatic suggestions, hover information and parameter hints default to on. Smooth scrolling and scrolling beyond the last line default to off. Disabling automatic suggestions still allows manual completion.
+
+Reduced motion temporarily disables smooth scrolling and cursor blinking while retaining their preferences. Editor changes apply immediately, preserving contents, cursor and undo history.
+
+## EV3 and execution preferences
+
+Connection method initially defaults to USB and then remembers USB/Wi-Fi selection. Changing this preference does not interrupt an existing connection. Remember Wi-Fi address defaults to off; enabling it stores the last successful manually entered connection address. Disabling it clears the saved address while retaining current input.
+
+Build diagnostics can open automatically on errors (default), on errors or warnings, or never. Opening activity on device-operation failure defaults to on. Required connection prompts always remain visible.
+
+| Device parameter             | Choices                         | Default                                  |
+| ---------------------------- | ------------------------------- | ---------------------------------------- |
+| USB automatic reconnect      | On/off                          | On                                       |
+| USB retry interval           | Backoff, fixed 1/2/5/10 seconds | Backoff: 1, 2, then 5 seconds repeatedly |
+| USB attempt limit            | 3/5/10 attempts, unlimited      | Unlimited                                |
+| Wi-Fi TCP connection timeout | 3/5/10/30 seconds               | 5 seconds                                |
+| Wi-Fi handshake timeout      | 1/3/5/10 seconds                | 3 seconds                                |
+
+The first reconnect attempt is immediate and counts toward the limit. Exhaustion stops retries and prompts a manual connection. Disabling automatic reconnect immediately cancels waiting or in-progress recovery. Interval and limit changes apply to the next recovery; Wi-Fi timeouts apply to the next connection. USB continues to identify devices by serial number and verify uploaded contents. Reconnecting never automatically runs a program.
+
+General preferences take effect immediately and are stored on this computer. The main process saves device parameters before applying them; failed writes retain the previous values and can be retried. Settings are shared by all local projects.
