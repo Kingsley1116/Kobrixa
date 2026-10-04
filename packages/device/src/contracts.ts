@@ -1,3 +1,5 @@
+import type { DeviceInputModes, DeviceMonitorSnapshot } from "./monitor-types.js";
+
 export type DeviceErrorCategory =
   | "permission"
   | "not-found"
@@ -37,6 +39,23 @@ export interface DeviceSession {
   readonly connected: boolean;
   onDisconnect?(listener: (error: Error) => void): () => void;
   disconnect(): Promise<void>;
+  /** Yield only between exchanges; abort is reserved for actual session cancellation. */
+  readMonitor(
+    signal: AbortSignal,
+    shouldYield?: () => boolean,
+  ): Promise<DeviceMonitorSnapshot | undefined>;
+  readInputModes(
+    port: number,
+    expectedType: number,
+    signal: AbortSignal,
+    shouldYield?: () => boolean,
+  ): Promise<DeviceInputModes | undefined>;
+  setInputMode(
+    port: number,
+    expectedType: number,
+    mode: number,
+    signal: AbortSignal,
+  ): Promise<DeviceMonitorSnapshot>;
   upload(remotePath: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
   list(directory: string, signal: AbortSignal): Promise<RemoteEntry[]>;
   download(

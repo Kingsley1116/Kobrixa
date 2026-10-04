@@ -352,7 +352,10 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
     "deviceOpen",
     "layout",
     ["EV3 工具面板", "EV3 tools"],
-    ["顯示設備連線、檔案與活動。", "Show device connection, files and activity."],
+    [
+      "顯示設備連線、即時監測、檔案與活動。",
+      "Show device connection, live monitoring, files and activity.",
+    ],
   ),
   app(
     "problemsOpen",

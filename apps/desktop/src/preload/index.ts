@@ -68,6 +68,11 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },
   device: {
+    monitor: (sessionId) => ipcRenderer.invoke("device:monitor", sessionId),
+    inputModes: (sessionId, port, expectedType) =>
+      ipcRenderer.invoke("device:input-modes", sessionId, port, expectedType),
+    setInputMode: (sessionId, port, expectedType, mode) =>
+      ipcRenderer.invoke("device:set-input-mode", sessionId, port, expectedType, mode),
     getPreferences: () => ipcRenderer.invoke("device:preferences"),
     setPreferences: (patch) => ipcRenderer.invoke("device:set-preferences", patch),
     prepareFiles: (request) => ipcRenderer.invoke("device:files-prepare", request),

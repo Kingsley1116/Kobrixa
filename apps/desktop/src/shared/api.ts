@@ -11,7 +11,18 @@ import type {
   Diagnostic,
   ProjectManifest,
 } from "@kobrixa/compiler";
-import type { DeviceDescriptor, DeviceErrorCategory, RemoteEntry } from "@kobrixa/device";
+import type {
+  DeviceDescriptor,
+  DeviceErrorCategory,
+  RemoteEntry,
+  DeviceMonitorSnapshot,
+  DeviceInputModes,
+} from "@kobrixa/device";
+
+export type MonitorResult<T> =
+  | { status: "ok"; value: T }
+  | { status: "busy" }
+  | { status: "error"; category: DeviceErrorCategory; message: string };
 
 export interface WorkspaceSummary {
   id: string;
@@ -201,6 +212,18 @@ export interface KobrixaApi {
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {
+    monitor(sessionId: string): Promise<MonitorResult<DeviceMonitorSnapshot>>;
+    inputModes(
+      sessionId: string,
+      port: number,
+      expectedType: number,
+    ): Promise<MonitorResult<DeviceInputModes>>;
+    setInputMode(
+      sessionId: string,
+      port: number,
+      expectedType: number,
+      mode: number,
+    ): Promise<MonitorResult<DeviceMonitorSnapshot>>;
     getPreferences(): Promise<DevicePreferences>;
     setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences>;
     files(request: RemoteFileRequest): Promise<RemoteFileResult>;
@@ -221,3 +244,9 @@ export interface KobrixaApi {
 }
 
 export type { BuildArtifact, CompileResult, Diagnostic, DeviceDescriptor, RemoteEntry };
+export type {
+  DeviceMonitorSnapshot,
+  DeviceInputModes,
+  MonitorInput,
+  MonitorOutput,
+} from "@kobrixa/device";

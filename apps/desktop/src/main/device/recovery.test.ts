@@ -57,6 +57,9 @@ function robot(descriptor = target) {
     delete: vi.fn(),
     run: vi.fn(),
     stop: vi.fn(),
+    readMonitor: vi.fn(),
+    readInputModes: vi.fn(),
+    setInputMode: vi.fn(),
     drop() {
       session.connected = false;
       for (const listener of [...listeners])

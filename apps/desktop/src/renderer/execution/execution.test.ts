@@ -54,6 +54,9 @@ function setup() {
       artifacts: vi.fn(),
     },
     device: {
+      monitor: vi.fn(),
+      inputModes: vi.fn(),
+      setInputMode: vi.fn(),
       getPreferences: vi.fn(),
       setPreferences: vi.fn(),
       files: vi.fn(),
@@ -99,6 +102,28 @@ function setup() {
 }
 
 describe("execution flow", () => {
+  it("locks device actions during a mode change without logging each monitor sample", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    const before = h.controller.getSnapshot().logs.length;
+    const change = deferred<void>();
+    const pending = h.controller.withMonitor(() => change.promise);
+    expect(h.controller.locked).toBe(true);
+    expect(h.controller.editingLocked).toBe(false);
+    await h.controller.run(h.request);
+    expect(h.api.build.start).not.toHaveBeenCalled();
+    await expect(h.controller.withFiles(async () => {}, "upload")).rejects.toThrow("in progress");
+    change.resolve();
+    await pending;
+    expect(h.controller.locked).toBe(false);
+    expect(h.controller.getSnapshot().logs).toHaveLength(before);
+    await expect(
+      h.controller.withMonitor(async () => {
+        throw new Error("mode failed");
+      }),
+    ).rejects.toThrow("mode failed");
+    expect(h.controller.locked).toBe(false);
+  });
   it("saves, builds, deploys assets, then runs the actual artifact path", async () => {
     const h = setup();
     await h.controller.connect(usb);

@@ -32,6 +32,9 @@ async function setup() {
     disconnect: vi.fn(async () => {}),
     run: vi.fn(),
     stop: vi.fn(),
+    readMonitor: vi.fn(),
+    readInputModes: vi.fn(),
+    setInputMode: vi.fn(),
   } satisfies DeviceSession;
   vi.spyOn(UsbTransport.prototype, "connect").mockResolvedValueOnce(
     session as unknown as Awaited<ReturnType<UsbTransport["connect"]>>,

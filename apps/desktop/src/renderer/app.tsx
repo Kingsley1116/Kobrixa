@@ -67,6 +67,8 @@ import {
 import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
+import { MonitorController } from "./device/monitor-controller.js";
+import { MonitorPanel } from "./device/monitor-panel.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -148,6 +150,14 @@ export function App(): React.JSX.Element {
   const locked =
     controller.editingLockedFor(activeSession?.workspace.id) || updatePreparing || closingProject;
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
+  const [monitor] = useState(
+    () =>
+      new MonitorController({
+        ...window.kobrixa.device,
+        setInputMode: (...args) =>
+          controller.withMonitor(() => window.kobrixa.device.setInputMode(...args)),
+      }),
+  );
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
@@ -1459,6 +1469,7 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     setConfirmUpdate(false);
     try {
+      await monitor.drain();
       await window.kobrixa.updates.prepareInstall();
       await saveAllChanges();
       await flushDrafts();
@@ -2099,6 +2110,16 @@ export function App(): React.JSX.Element {
                   controller.cancelWaiting();
                   setDeviceOpen(false);
                 }}
+                monitor={
+                  <MonitorPanel
+                    controller={monitor}
+                    locale={locale}
+                    sessionId={execution.session?.id}
+                    active={deviceOpen && toolTab === "monitor" && !updatePreparing}
+                    locked={updatePreparing || controller.locked}
+                    onConnect={() => setToolTab("connection")}
+                  />
+                }
                 connection={
                   <DevicePanel
                     t={t}

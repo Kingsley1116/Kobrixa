@@ -9,6 +9,8 @@ import type {
 } from "./contracts.js";
 import { DeviceOperationError, normalizeDeviceError, withTimeout } from "./errors.js";
 import { normalizeRemotePath } from "./path.js";
+import { readInputModes, readMonitor, setInputMode } from "./monitor.js";
+import type { DeviceInputModes, DeviceMonitorSnapshot } from "./monitor-types.js";
 
 const SYSTEM_COMMAND_REPLY = 0x01;
 const DIRECT_COMMAND_REPLY = 0x00;
@@ -85,6 +87,33 @@ export class EV3DeviceSession implements DeviceSession {
     this.unsubscribeConnection?.();
     this.disconnectListeners.clear();
     await this.connection.close();
+  }
+
+  readMonitor(
+    signal: AbortSignal,
+    shouldYield?: () => boolean,
+  ): Promise<DeviceMonitorSnapshot | undefined> {
+    return this.exclusive(() => readMonitor(this.connection, signal, shouldYield));
+  }
+
+  readInputModes(
+    port: number,
+    expectedType: number,
+    signal: AbortSignal,
+    shouldYield?: () => boolean,
+  ): Promise<DeviceInputModes | undefined> {
+    return this.exclusive(() =>
+      readInputModes(this.connection, port, expectedType, signal, shouldYield),
+    );
+  }
+
+  setInputMode(
+    port: number,
+    expectedType: number,
+    mode: number,
+    signal: AbortSignal,
+  ): Promise<DeviceMonitorSnapshot> {
+    return this.exclusive(() => setInputMode(this.connection, port, expectedType, mode, signal));
   }
 
   upload(remotePath: string, data: Uint8Array, signal: AbortSignal): Promise<void> {

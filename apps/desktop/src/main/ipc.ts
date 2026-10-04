@@ -12,6 +12,9 @@ import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 
 const id = z.string().uuid();
+const inputPort = z.number().int().min(0).max(3);
+const inputType = z.number().int().min(1).max(127);
+const inputMode = z.number().int().min(0).max(7);
 const file = z
   .string()
   .min(1)
@@ -216,6 +219,21 @@ export function registerIpc(
     language.diagnostics(id.parse(workspaceId), z.record(file, content).parse(overlays)),
   );
   handle("language:cancel", () => language.cancel());
+
+  handle("device:monitor", (_event, sessionId: unknown) => devices.monitor(id.parse(sessionId)));
+  handle("device:input-modes", (_event, sessionId: unknown, port: unknown, type: unknown) =>
+    devices.inputModes(id.parse(sessionId), inputPort.parse(port), inputType.parse(type)),
+  );
+  handle(
+    "device:set-input-mode",
+    (_event, sessionId: unknown, port: unknown, type: unknown, mode: unknown) =>
+      devices.setInputMode(
+        id.parse(sessionId),
+        inputPort.parse(port),
+        inputType.parse(type),
+        inputMode.parse(mode),
+      ),
+  );
 
   handle("device:files", (_event, request: unknown) =>
     devices.files(

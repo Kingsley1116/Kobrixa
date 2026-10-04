@@ -1,0 +1,180 @@
+.tools-tabs button {
+  display: block;
+  min-width: 0;
+  font-size: var(--font-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tools-tabs::after {
+  width: 25%;
+}
+.tools-tabs[data-active-tab="monitor"]::after {
+  transform: translateX(100%);
+}
+.tools-tabs[data-active-tab="files"]::after {
+  transform: translateX(200%);
+}
+.tools-tabs[data-active-tab="activity"]::after {
+  transform: translateX(300%);
+}
+.monitor-panel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.monitor-panel h3 {
+  margin: 20px 0 10px;
+  font-size: var(--font-ui);
+}
+.monitor-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.monitor-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.monitor-status[data-state="live"] {
+  color: var(--success);
+}
+.monitor-status[data-state="error"] {
+  color: var(--error);
+}
+.monitor-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 10px;
+}
+.monitor-summary dt,
+.monitor-hint,
+.monitor-updated,
+.monitor-values dt {
+  color: var(--muted);
+  font-size: var(--font-small);
+  line-height: 1.5;
+}
+.monitor-summary dd {
+  margin: 3px 0 0;
+  font-size: calc(21px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+.monitor-program {
+  grid-column: 1 / -1;
+}
+.monitor-program dd {
+  font-size: var(--font-ui);
+}
+.monitor-hint,
+.monitor-updated {
+  margin: 8px 0;
+}
+.monitor-updated time {
+  font-variant-numeric: tabular-nums;
+}
+.monitor-inputs,
+.monitor-outputs {
+  display: grid;
+  gap: 10px;
+}
+.monitor-outputs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.monitor-port {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--editor);
+  padding: 11px;
+}
+.monitor-port h4 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: var(--font-small);
+  font-weight: 600;
+  margin: 0;
+}
+.monitor-port-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 25px;
+  height: 25px;
+  border-radius: 5px;
+  background: var(--raised);
+  color: var(--accent);
+}
+.monitor-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-top: 8px;
+}
+.monitor-mode-button {
+  font-size: var(--font-small);
+  padding: 5px 8px;
+}
+.tool-content .monitor-mode-select {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  margin-block: 2px 6px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.monitor-mode-select select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--font-small);
+}
+.monitor-values {
+  margin: 6px 0 0;
+}
+.monitor-values > div,
+.monitor-value {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 3px 8px;
+  margin: 4px 0;
+}
+.monitor-values dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.monitor-unit,
+.monitor-value > span {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.monitor-value strong {
+  font-size: var(--font-ui);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.monitor-panel[data-stale="true"] .monitor-values dd,
+.monitor-panel[data-stale="true"] .monitor-summary dd,
+.monitor-panel[data-stale="true"] .monitor-value strong {
+  color: var(--muted);
+}
+.monitor-error {
+  color: var(--error);
+  background: var(--error-bg);
+  padding: 9px;
+  border-radius: 6px;
+  font-size: var(--font-small);
+}
+.monitor-connect p {
+  color: var(--muted);
+  line-height: 1.5;
+}

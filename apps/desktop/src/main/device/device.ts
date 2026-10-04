@@ -15,11 +15,18 @@ import {
   type DeviceDescriptor,
   type DeviceSession,
   type RemoteEntry,
+  type DeviceMonitorSnapshot,
+  type DeviceInputModes,
 } from "@kobrixa/device";
 import { remoteFileOperation } from "./remote-files.js";
 import { FileBatchManager } from "./file-batch.js";
 import type { FileBatchRequest, FileBatchRef, FileBatchSnapshot } from "../../shared/api.js";
-import type { RemoteFileRequest, RemoteFileResult, DeviceEvent } from "../../shared/api.js";
+import type {
+  RemoteFileRequest,
+  RemoteFileResult,
+  DeviceEvent,
+  MonitorResult,
+} from "../../shared/api.js";
 import type { BuildService } from "../workspace/build.js";
 
 interface Deployment {
@@ -68,13 +75,21 @@ export function deploymentTargets(
 export class DeviceService {
   readonly #sessions = new Map<string, DeviceSession>();
   readonly #busy = new Map<string, AbortController>();
+  readonly #monitors = new Map<
+    string,
+    { controller: AbortController; pending: Promise<unknown> }
+  >();
   readonly #subscriptions = new Map<string, () => void>();
   readonly #deployments = new Map<string, Deployment>();
   readonly #recoveries = new Map<string, Recovery>();
   readonly #recovered = new Map<string, string>();
   private generation = 0;
   get busy(): boolean {
-    return this.#busy.size > 0 || [...this.#recoveries.values()].some((item) => item.working);
+    return (
+      this.#busy.size > 0 ||
+      this.#monitors.size > 0 ||
+      [...this.#recoveries.values()].some((item) => item.working)
+    );
   }
   readonly #usb = new UsbTransport();
   readonly #wifi = new WiFiTransport();
@@ -88,6 +103,79 @@ export class DeviceService {
   ) {}
 
   getPreferences = (): DevicePreferences => this.preferences.get();
+
+  monitor(id: string): Promise<MonitorResult<DeviceMonitorSnapshot>> {
+    return this.monitorRead(id, (session, signal, shouldYield) =>
+      session.readMonitor(signal, shouldYield),
+    );
+  }
+
+  inputModes(
+    id: string,
+    port: number,
+    expectedType: number,
+  ): Promise<MonitorResult<DeviceInputModes>> {
+    return this.monitorRead(id, (session, signal, shouldYield) =>
+      session.readInputModes(port, expectedType, signal, shouldYield),
+    );
+  }
+
+  async setInputMode(
+    id: string,
+    port: number,
+    expectedType: number,
+    mode: number,
+  ): Promise<MonitorResult<DeviceMonitorSnapshot>> {
+    try {
+      const value = await this.operation(id, (session, signal) =>
+        session.setInputMode(port, expectedType, mode, signal),
+      );
+      return { status: "ok", value };
+    } catch (error) {
+      const normalized = normalizeDeviceError(error);
+      return { status: "error", category: normalized.category, message: normalized.message };
+    }
+  }
+
+  /** Background reads never take the foreground busy state or queue behind it. */
+  private async monitorRead<T>(
+    id: string,
+    read: (
+      session: DeviceSession,
+      signal: AbortSignal,
+      shouldYield: () => boolean,
+    ) => Promise<T | undefined>,
+  ): Promise<MonitorResult<T>> {
+    try {
+      const session = this.require(id);
+      if (this.#busy.has(id) || this.#monitors.has(id)) return { status: "busy" };
+      const controller = new AbortController();
+      const flight = { controller, pending: Promise.resolve() as Promise<unknown> };
+      this.#monitors.set(id, flight);
+      const result = (async (): Promise<MonitorResult<T>> => {
+        try {
+          const value = await read(
+            session,
+            controller.signal,
+            () => this.#busy.has(id) || this.#sessions.get(id) !== session,
+          );
+          if (this.#sessions.get(id) !== session || value === undefined) return { status: "busy" };
+          return { status: "ok", value };
+        } catch (error) {
+          const normalized = normalizeDeviceError(error);
+          if (connectionFailure(normalized)) await this.lost(id, session, normalized);
+          return { status: "error", category: normalized.category, message: normalized.message };
+        } finally {
+          if (this.#monitors.get(id) === flight) this.#monitors.delete(id);
+        }
+      })();
+      flight.pending = result;
+      return await result;
+    } catch (error) {
+      const normalized = normalizeDeviceError(error);
+      return { status: "error", category: normalized.category, message: normalized.message };
+    }
+  }
   setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences> {
     return this.preferences.set(patch, (next) => {
       if (!next.usbAutoReconnect)
@@ -145,6 +233,7 @@ export class DeviceService {
     this.#sessions.delete(id);
     this.#deployments.delete(id);
     this.#busy.get(id)?.abort();
+    this.#monitors.get(id)?.controller.abort();
     await session?.disconnect().catch(() => {});
     this.send({ type: "state", state: "disconnected", sessionId: id });
   }
@@ -339,7 +428,17 @@ export class DeviceService {
       transport: session.descriptor.transport,
     });
     try {
-      const result = await Promise.race([work(session, controller.signal), cancelled]);
+      // Reserve foreground ownership before waiting so no new monitor exchange
+      // can jump ahead. Do not abort the in-flight USB read to make room.
+      const monitor = this.#monitors.get(id)?.pending;
+      const run = async () => {
+        if (monitor) await monitor;
+        controller.signal.throwIfAborted();
+        if (this.#sessions.get(id) !== session)
+          throw new DeviceOperationError("connection", "The EV3 session changed.");
+        return work(session, controller.signal);
+      };
+      const result = await Promise.race([run(), cancelled]);
       controller.signal.throwIfAborted();
       this.send({
         type: "state",
@@ -376,6 +475,7 @@ export class DeviceService {
     const deployment = this.#deployments.get(id);
     this.#deployments.delete(id);
     this.#busy.get(id)?.abort(error);
+    this.#monitors.get(id)?.controller.abort(error);
     let recovery: Recovery | undefined;
     if (session.descriptor.transport === "usb") {
       if (this.getPreferences().usbAutoReconnect && session.descriptor.serialNumber?.trim()) {

@@ -1,11 +1,12 @@
 import { useRef, type ReactNode } from "react";
 import type { Locale, Copy } from "../i18n/copy.js";
 import type { ExecutionState } from "../execution/execution.js";
-export type ToolTab = "connection" | "files" | "activity";
+export type ToolTab = "connection" | "monitor" | "files" | "activity";
 const labels = {
   en: {
     tools: "EV3 tools",
     connection: "Connection",
+    monitor: "Monitor",
     files: "EV3 files",
     activity: "Activity",
     close: "Close tools",
@@ -13,6 +14,7 @@ const labels = {
   "zh-TW": {
     tools: "EV3 工具",
     connection: "連線",
+    monitor: "監測",
     files: "EV3 檔案",
     activity: "操作紀錄",
     close: "關閉工具面板",
@@ -24,6 +26,7 @@ export function ToolsPanel({
   locale,
   onClose,
   connection,
+  monitor,
   files,
   activity,
 }: {
@@ -32,11 +35,12 @@ export function ToolsPanel({
   locale: Locale;
   onClose(): void;
   connection: ReactNode;
+  monitor: ReactNode;
   files: ReactNode;
   activity: ReactNode;
 }): React.JSX.Element {
   const t = labels[locale],
-    tabs: ToolTab[] = ["connection", "files", "activity"];
+    tabs: ToolTab[] = ["connection", "monitor", "files", "activity"];
   const bar = useRef<HTMLDivElement>(null);
   return (
     <>
@@ -59,8 +63,9 @@ export function ToolsPanel({
             event.key === "Home"
               ? 0
               : event.key === "End"
-                ? 2
-                : (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+                ? tabs.length - 1
+                : (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) %
+                  tabs.length;
           onTab(tabs[index]!);
           bar.current?.querySelectorAll<HTMLButtonElement>("button")[index]?.focus();
         }}
@@ -70,6 +75,7 @@ export function ToolsPanel({
             key={value}
             id={`tool-tab-${value}`}
             role="tab"
+            title={t[value]}
             aria-selected={tab === value}
             aria-controls={`tool-panel-${value}`}
             tabIndex={tab === value ? 0 : -1}
@@ -89,7 +95,13 @@ export function ToolsPanel({
           hidden={tab !== value}
           tabIndex={0}
         >
-          {value === "connection" ? connection : value === "files" ? files : activity}
+          {value === "connection"
+            ? connection
+            : value === "monitor"
+              ? monitor
+              : value === "files"
+                ? files
+                : activity}
         </div>
       ))}
     </>

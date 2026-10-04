@@ -61,15 +61,22 @@ contextBridge.exposeInMainWorld("kobrixa", {
   device: {
     getPreferences: call("devicePreferences"),
     setPreferences: call("setDevicePreferences"),
-    onEvent: () => () => {},
-    discover: async () => [],
-    files: async () => ({ ok: true, entries: [] }),
+    onEvent: (listener) => {
+      const handler = (_event, value) => listener(value);
+      ipcRenderer.on("device:event", handler);
+      return () => ipcRenderer.removeListener("device:event", handler);
+    },
+    monitor: call("deviceMonitor"),
+    inputModes: call("deviceInputModes"),
+    setInputMode: call("deviceSetInputMode"),
+    discover: call("deviceDiscover"),
+    files: call("deviceFiles"),
     prepareFiles: call("device"),
     executeFiles: call("device"),
     stopFiles: call("device"),
-    connect: call("device"),
-    connectWifi: call("device"),
-    disconnect: call("device"),
+    connect: call("deviceConnect"),
+    connectWifi: call("deviceConnectWifi"),
+    disconnect: call("deviceDisconnect"),
     upload: call("device"),
     deploy: call("device"),
     run: call("device"),

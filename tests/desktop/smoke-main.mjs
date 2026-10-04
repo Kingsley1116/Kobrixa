@@ -3,6 +3,7 @@ import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
+import { checkMonitor, createMonitorFixture } from "./monitor-smoke.mjs";
 import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -31,7 +32,7 @@ app.setPath("userData", path.join(temporary, "profile"));
 const timeout = setTimeout(() => {
   console.error("Electron smoke test timed out");
   app.exit(1);
-}, 120000);
+}, 180000);
 app.on("will-quit", () => clearTimeout(timeout));
 const files = {
   "main.bp": "If True Then\nLCD.Clear()\nEndIf\n",
@@ -76,6 +77,7 @@ function payloadBytes(value) {
 let failNextWrite = false;
 let openCount = 0;
 let win;
+const monitor = createMonitorFixture((event) => win.webContents.send("device:event", event));
 const workspace = (id = firstId) => {
   const project = fixtures.get(id);
   return {
@@ -111,6 +113,7 @@ let devicePreferences = {
   wifiHandshakeTimeout: 3000,
 };
 ipcMain.handle("smoke", async (_e, name, args) => {
+  if (monitor.handles(name)) return monitor.handle(name, args);
   const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
   if (name === "restoreSession")
     return {
@@ -358,6 +361,12 @@ app
         nativeTheme.themeSource = value;
       },
     };
+    const monitorContext = { js, key, until, pause, win, temporary, monitor };
+    if (process.env.KOBRIXA_SMOKE_MONITOR_ONLY) {
+      await checkMonitor(monitorContext);
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_SETTINGS_ONLY) {
       await checkExpandedSettings(settingsContext);
       app.exit(0);
@@ -421,6 +430,7 @@ app
       app.exit(0);
       return;
     }
+    await checkMonitor(monitorContext);
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
     await checkExpandedSettings(settingsContext);

@@ -71,7 +71,7 @@ export interface Settings extends EditorPreferences {
   filesWidth: number;
   deviceWidth: number;
   problemsHeight: number;
-  toolTab: "connection" | "files" | "activity";
+  toolTab: "connection" | "monitor" | "files" | "activity";
 }
 export const SETTINGS_CHOICES = {
   lineNumbers: ["on", "relative", "off"],
@@ -84,7 +84,7 @@ export const SETTINGS_CHOICES = {
   codeSize: CODE_SIZES,
   motion: ["system", "reduce"],
   indentSize: [2, 4],
-  toolTab: ["connection", "files", "activity"],
+  toolTab: ["connection", "monitor", "files", "activity"],
   lineHeight: ["compact", "standard", "relaxed"],
   cursorStyle: ["line", "block", "underline"],
   renderLineHighlight: ["none", "line", "all"],

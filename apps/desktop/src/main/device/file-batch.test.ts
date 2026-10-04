@@ -65,6 +65,9 @@ async function setup() {
     disconnect: vi.fn(),
     run: vi.fn(),
     stop: vi.fn(),
+    readMonitor: vi.fn(),
+    readInputModes: vi.fn(),
+    setInputMode: vi.fn(),
   } satisfies DeviceSession;
   const dialog = { showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: [dir] })) };
   const changed = vi.fn();

@@ -38,6 +38,18 @@ The remote file browser also supports directory listing, downloads, folder creat
 
 Remote paths are normalized as EV3 paths. Parent traversal, embedded nulls, invalid lengths, and unsupported names are rejected before transport I/O.
 
+## Live monitor
+
+Open **EV3 tools → Monitor** after connecting over USB or Wi-Fi. The panel shows local input ports 1–4, output ports A–D, battery percentage and voltage, and the EV3 user-program slot status. That status describes the program on the brick; it does not identify the currently edited project. Motor angles are read without resetting their counters.
+
+Sampling runs only while Monitor is selected, the tools panel is open, and the window is visible. Each completed sample is followed by a 500 ms delay. Foreground operations take priority and there is at most one outstanding sample; uploads, file batches and confirmation waits pause monitoring. Paused, busy or failed samples preserve the last values and mark them as no longer live. The timestamp is the last successful sample, not a promise of continuous updates. Empty ports, initializing devices, unknown devices and unavailable values are distinct; invalid readings are never shown as zero.
+
+Official EV3 UART sensors offer the firmware's Port View modes through **Change mode**. Touch sensors, motors and third-party/I2C devices are read-only. Internal and calibration modes are excluded. Mode changes require a confirmed stopped user-program slot; running or unknown status disables the control. The application checks the program state and sensor identity again before sending a change and verifies the resulting mode. It never stops a program automatically, saves mode preferences, or restores an earlier mode after closing Monitor or reconnecting. A program started directly on the brick can change the sensor mode again.
+
+All available channels are shown; unlabeled multi-channel data uses channel numbers. The first version does not include graphs, CSV export, motor control, calibration or daisy-chain monitoring. USB recovery uses the replacement session and discards old replies. Closing Monitor stops future samples without interrupting a pending USB exchange or disconnecting the brick.
+
+The desktop smoke uses simulated samples. Physical monitoring acceptance is **not yet tested** on Windows, macOS or Linux for either USB or Wi-Fi; see the [monitor acceptance procedure](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測) before recording a platform pass.
+
 ## Required acceptance scenarios
 
 Use the [manual hardware tools](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md) with the fixtures and restrictions in the acceptance record. These checks require a connected brick and are excluded from ordinary CI.
@@ -48,5 +60,6 @@ Use the [manual hardware tools](https://github.com/Kingsley1116/Kobrixa/blob/mai
 - User cancellation during discovery, connect, and upload.
 - Reconnect after a recoverable error without restarting the IDE.
 - Verify that failure never transitions the UI or API result to success.
+- Monitor Color mode changes, IR multi-channel readings, Gyro initialization, negative motor angles, battery values and programs started/stopped directly on the brick. Verify pause/resume and USB recovery with pending samples.
 
 Bluetooth remains out of v1 because discovery, pairing, serial profiles, permissions, and packaging differ substantially across operating systems.

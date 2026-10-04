@@ -48,6 +48,7 @@ export interface ExecutionState {
   operationWorkspaceId?: string | undefined;
   phase: Phase;
   fileBusy?: boolean;
+  monitorBusy?: boolean;
   recovery?:
     | {
         sessionId: string;
@@ -144,7 +145,7 @@ export class ExecutionController {
   }
   private connectionLost(detail: string, recovering: boolean): void {
     const localBuild = this.working && !this.deviceWork;
-    const interrupted = this.deviceWork || Boolean(this.state.fileBusy);
+    const interrupted = this.deviceWork || Boolean(this.state.fileBusy || this.state.monitorBusy);
     if (!localBuild) this.generation++;
     if (this.deviceWork && this.waitingBuild) {
       this.waitingBuild.reject(new Error(detail));
@@ -202,7 +203,7 @@ export class ExecutionController {
     }
   }
   get locked(): boolean {
-    return this.editingLocked || Boolean(this.state.fileBusy);
+    return this.editingLocked || Boolean(this.state.fileBusy || this.state.monitorBusy);
   }
   get editingLocked(): boolean {
     return this.working || Boolean(this.pendingRun);
@@ -232,6 +233,17 @@ export class ExecutionController {
       throw error;
     } finally {
       this.update({ fileBusy: false });
+    }
+  }
+  /** Mode changes reserve device actions without treating samples as activity. */
+  async withMonitor<T>(work: () => Promise<T>): Promise<T> {
+    if (this.locked || this.state.recovery)
+      throw new Error("Another EV3 operation is in progress.");
+    this.update({ monitorBusy: true });
+    try {
+      return await work();
+    } finally {
+      this.update({ monitorBusy: false });
     }
   }
   private publish(): void {
