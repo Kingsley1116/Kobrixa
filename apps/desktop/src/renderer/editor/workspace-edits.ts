@@ -1,11 +1,30 @@
 import type { editor, languages } from "monaco-editor";
 import type { EditorAnalysis } from "./editor.js";
 
-const snapshots = new WeakMap<languages.WorkspaceEdit, EditorAnalysis>();
+export interface WorkspaceEditContext {
+  snapshot: EditorAnalysis;
+  kind: "rename" | "quick-fix";
+  files?: string[];
+  summary?: string;
+}
+const snapshots = new WeakMap<languages.WorkspaceEdit, WorkspaceEditContext>();
 export function rememberRename(edit: languages.WorkspaceEdit, snapshot: EditorAnalysis): void {
-  snapshots.set(edit, snapshot);
+  snapshots.set(edit, { snapshot, kind: "rename" });
 }
 export function renameSnapshot(edit: languages.WorkspaceEdit): EditorAnalysis | undefined {
+  return snapshots.get(edit)?.snapshot;
+}
+export function rememberQuickFix(
+  edit: languages.WorkspaceEdit,
+  snapshot: EditorAnalysis,
+  file: string,
+  summary: string,
+): void {
+  snapshots.set(edit, { snapshot, kind: "quick-fix", files: [file], summary });
+}
+export function workspaceEditContext(
+  edit: languages.WorkspaceEdit,
+): WorkspaceEditContext | undefined {
   return snapshots.get(edit);
 }
 
@@ -40,7 +59,7 @@ export function validateTextEdits(
       throw new Error("Unsupported workspace edit.");
     const model = findModel(item.resource.toString());
     if (!model || model.isDisposed() || item.versionId !== model.getVersionId())
-      throw new Error("A document changed while preparing the rename. Try again.");
+      throw new Error("A document changed while preparing the edit. Try again.");
     const range = item.textEdit.range;
     const valid = model.validateRange(range);
     if (
@@ -49,7 +68,7 @@ export function validateTextEdits(
       valid.endLineNumber !== range.endLineNumber ||
       valid.endColumn !== range.endColumn
     )
-      throw new Error("The rename contains an invalid source range.");
+      throw new Error("The edit contains an invalid source range.");
     const edits = groups.get(model) ?? [];
     edits.push({ range, text: item.textEdit.text });
     groups.set(model, edits);
@@ -67,7 +86,7 @@ export function validateTextEdits(
         previous.endLineNumber > next.startLineNumber ||
         (previous.endLineNumber === next.startLineNumber && previous.endColumn > next.startColumn)
       )
-        throw new Error("The rename contains overlapping edits.");
+        throw new Error("The edit contains overlapping edits.");
     }
   }
   return groups;

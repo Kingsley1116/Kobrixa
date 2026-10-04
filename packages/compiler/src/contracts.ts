@@ -9,6 +9,8 @@ export interface SourceRange {
 
 export interface Diagnostic {
   code: string;
+  /** Optional producer-supplied reason for codes with several meanings. */
+  helpKey?: string | undefined;
   severity: "error" | "warning" | "info";
   file: string;
   range: SourceRange;

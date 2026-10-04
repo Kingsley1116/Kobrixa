@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
 
 const api: KobrixaApi = {
+  documentation: { open: (request) => ipcRenderer.invoke("documentation:open", request) },
   updates: {
     getState: () => ipcRenderer.invoke("updates:state"),
     setPreferences: (value) => ipcRenderer.invoke("updates:preferences", value),
@@ -66,6 +67,10 @@ const api: KobrixaApi = {
     },
   },
   language: {
+    cancelQuickFix: (workspaceId, requestId) =>
+      ipcRenderer.invoke("language:cancel-quick-fix", workspaceId, requestId),
+    quickFixes: (workspaceId, request) =>
+      ipcRenderer.invoke("language:quick-fixes", workspaceId, request),
     completionSync: (workspaceId, request) =>
       ipcRenderer.invoke("language:completion-sync", workspaceId, request),
     sync: (workspaceId, request) => ipcRenderer.invoke("language:sync", workspaceId, request),

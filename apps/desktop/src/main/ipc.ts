@@ -3,7 +3,9 @@ import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { documentationUrl } from "./window/documentation.js";
+import { quickFixRequestIdSchema, quickFixRequestSchema } from "./language/quick-fix-request.js";
 import { isIP } from "node:net";
 import { z } from "zod";
 import type { BuildService } from "./workspace/build.js";
@@ -87,6 +89,15 @@ export function registerIpc(
   };
 
   handle("updates:state", () => updates.getState());
+  handle("documentation:open", (_event, request: unknown) =>
+    shell.openExternal(documentationUrl(request)),
+  );
+  handle("language:quick-fixes", (_event, workspaceId: unknown, request: unknown) =>
+    language.quickFixes(id.parse(workspaceId), quickFixRequestSchema.parse(request)),
+  );
+  handle("language:cancel-quick-fix", (_event, workspaceId: unknown, requestId: unknown) =>
+    language.cancelQuickFix(id.parse(workspaceId), quickFixRequestIdSchema.parse(requestId)),
+  );
   handle("updates:preferences", (_event, value: unknown) =>
     updates.setPreferences(
       z

@@ -1,0 +1,93 @@
+.problems {
+  container-type: inline-size;
+}
+.problem-body {
+  height: calc(100% - 40px * var(--ui-scale));
+  min-height: 0;
+  overflow: hidden;
+}
+.problem-body.with-details {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+}
+.problem-body > .problem-list {
+  height: 100%;
+  min-height: 0;
+}
+.diagnostic-details {
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  font-size: var(--font-small);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.diagnostic-details h3,
+.diagnostic-details h4,
+.diagnostic-details p {
+  margin: 0 0 8px;
+}
+.diagnostic-details h3 {
+  font-size: var(--font-ui);
+}
+.diagnostic-details h3 code {
+  color: var(--accent);
+}
+.diagnostic-details ol {
+  margin: 8px 0 12px;
+  padding-left: 22px;
+}
+.diagnostic-details pre {
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--editor);
+  font-size: var(--font-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diagnostic-fixes,
+.diagnostic-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+.diagnostic-fixes button,
+.diagnostic-links button {
+  text-align: start;
+  white-space: normal;
+  padding: 5px 8px;
+}
+.diagnostic-fixes > span,
+.diagnostic-original small {
+  color: var(--muted);
+}
+.diagnostic-links button {
+  color: var(--accent);
+}
+.diagnostic-error {
+  color: var(--error);
+}
+.diagnostic-examples {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+}
+.diagnostic-original summary {
+  cursor: pointer;
+}
+@container (max-width: 560px) {
+  .problem-body.with-details {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(48px, 30%) minmax(0, 1fr);
+  }
+  .diagnostic-details {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}

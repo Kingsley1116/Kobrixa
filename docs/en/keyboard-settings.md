@@ -51,6 +51,14 @@ Press **Mod+Shift+F** to search the active project's Basic Plus (`.bp`, `.bpi`, 
 
 Enter replacement text and choose **Preview replacement** to review the affected files before applying. Replacement text is literal, including characters such as `$`. Applying a preview opens affected files as modified editor tabs and follows the normal saving preferences. With auto save off, it does not save source files until you save them. Undo is available separately in each affected file. If a file changes after the preview, refresh the search and review a new preview before replacing it. Replacement is unavailable when results are incomplete; refine the query or inspect the skipped files. Search skips generated output, hidden paths, assets, dependencies, symbolic links, and files larger than 1 MiB. Each scan is limited to 2,000 matches, 5,000 files, and 16 MiB of file and editor content.
 
+## Diagnostic explanations and Quick Fix
+
+Open diagnostics with **Mod+J** and select a problem to read its cause, suggested steps, examples and original compiler message. Explanations for all diagnostic codes are available offline in English and Traditional Chinese. Changing the interface language updates the explanations immediately. **View this diagnostic online** opens the matching entry in the [diagnostic index](https://kobrixa.com/docs/diagnostics?lang=en), where you can search by code or keyword and filter by family.
+
+When a safe correction is available, choose its button in the diagnostic details or place the cursor at the error and use the editor lightbulb / **Mod+.** Quick Fix command. The shortcut can be customized in Keyboard shortcuts. Supported corrections insert a missing array-type `]`, closing `)`, `For` `=` or `To`, or the missing block endings at the end of a file. Closing parentheses are inserted before trailing comments; nested unfinished blocks are closed together.
+
+Each correction is one undoable edit and triggers fresh analysis. It follows normal auto-save and draft preferences; with auto save off, source files remain unchanged until you save. Corrections are available only for the current analysis and are rejected if the file, project or disk contents changed. Build diagnostics remain readable after edits, but outdated locations cannot apply corrections. Ambiguous syntax, unclosed strings, missing array-index brackets and mismatched blocks provide guidance without a Quick Fix.
+
 ## Editor preferences
 
 - **Line numbers:** on (default), relative or off.

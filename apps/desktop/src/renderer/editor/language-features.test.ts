@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { CancellationToken, editor, Position } from "monaco-editor";
-import { analyzeBasicPlusProject } from "@kobrixa/basic-plus";
+import { analyzeBasicPlusProject, getBasicPlusQuickFixes } from "@kobrixa/basic-plus";
+import type { Diagnostic } from "../../shared/api.js";
 import { ModelSnapshots } from "./model-snapshots.js";
 import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
 import {
@@ -8,6 +9,7 @@ import {
   renameSnapshot,
   validateTextEdits,
   workspaceEditService,
+  workspaceEditContext,
 } from "./workspace-edits.js";
 
 vi.mock("monaco-editor", () => ({
@@ -54,6 +56,7 @@ function model(file: string, initial: string) {
   } as unknown as editor.ITextModel;
 }
 function setup(sources: Record<string, string>) {
+  let locale: "en" | "zh-TW" = "en";
   const analysis = analyzeBasicPlusProject(
     {
       root: "/project",
@@ -76,7 +79,19 @@ function setup(sources: Record<string, string>) {
   let editable = true;
   const versions = new ModelSnapshots();
   const refreshCompletions = vi.fn();
+  const quickFixes = vi.fn(
+    async (current: typeof snapshot, diagnostic: Diagnostic, _signal: AbortSignal) => ({
+      kind: "result" as const,
+      fixes: getBasicPlusQuickFixes(
+        diagnostic.file,
+        current.analysis.index.sources[diagnostic.file]!,
+        diagnostic,
+      ),
+    }),
+  );
   const features = new BasicPlusLanguageFeatures({
+    locale: () => locale,
+    quickFixes,
     fileFor: (m) => [...models].find(([, value]) => value === m)?.[0],
     ensureModel: (file, content) => {
       if (!models.has(file)) models.set(file, model(file, content));
@@ -101,6 +116,10 @@ function setup(sources: Record<string, string>) {
   features.update(snapshot);
   const position = (lineNumber: number, column: number) => ({ lineNumber, column }) as Position;
   return {
+    quickFixes,
+    setLocale: (value: "en" | "zh-TW") => {
+      locale = value;
+    },
     features,
     refreshCompletions,
     models,
@@ -310,3 +329,104 @@ it("rebinds the global Monaco workspace service across workspace remounts", asyn
   detachSecond();
   await expect(workspaceEditService.apply({ edits: [] })).rejects.toThrow("No editable workspace");
 });
+
+it("offers localized, versioned single-file fixes with BOM-correct insertion ranges", async () => {
+  const h = setup({ "main.bp": "\uFEFFLCD.Clear( ' 中文😀\r\n" });
+  const diagnostic = h.snapshot.analysis.diagnostics.find((d) => d.code === "BP1043")!;
+  const [action] = await h.features.quickFixes(h.main, diagnostic);
+  expect(action?.title).toBe("Insert closing parenthesis )");
+  expect(action?.edit?.edits).toEqual([
+    expect.objectContaining({
+      versionId: 1,
+      textEdit: {
+        range: expect.objectContaining({
+          startLineNumber: 1,
+          startColumn: 11,
+          endLineNumber: 1,
+          endColumn: 11,
+        }),
+        text: ")",
+      },
+    }),
+  ]);
+  expect(workspaceEditContext(action!.edit!)).toMatchObject({
+    kind: "quick-fix",
+    files: ["main.bp"],
+    snapshot: h.snapshot,
+  });
+  expect(validateTextEdits(action!.edit!, () => h.main).size).toBe(1);
+  expect(h.main.getValue()).toBe("LCD.Clear( ' 中文😀\n");
+  h.setLocale("zh-TW");
+  expect((await h.features.quickFixes(h.main, diagnostic))[0]?.title).toBe("補上右括號 )");
+  h.main.setValue("LCD.Clear()\n");
+  expect(() => validateTextEdits(action!.edit!, () => h.main)).toThrow("changed");
+  expect(await h.features.quickFixes(h.main, diagnostic)).toEqual([]);
+});
+
+it("discards delayed fixes after edits, cancellation or workspace replacement", async () => {
+  const h = setup({ "main.bp": "LCD.Clear(\n" });
+  const diagnostic = h.snapshot.analysis.diagnostics.find((d) => d.code === "BP1043")!;
+  let resolve!: (value: Awaited<ReturnType<typeof h.quickFixes>>) => void;
+  h.quickFixes.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  const pending = h.features.quickFixes(h.main, diagnostic);
+  h.main.setValue("LCD.Clear()\n");
+  resolve({ kind: "result", fixes: [] });
+  expect(await pending).toEqual([]);
+  const other = setup({ "main.bp": "LCD.Clear(\n" });
+  const cancelled = { ...token, isCancellationRequested: true };
+  expect(await other.features.quickFixes(other.main, diagnostic, cancelled)).toEqual([]);
+  expect(other.quickFixes).not.toHaveBeenCalled();
+  other.features.update(undefined);
+  expect(await other.features.quickFixes(other.main, diagnostic)).toEqual([]);
+  other.features.update(other.snapshot);
+  other.lock();
+  expect(await other.features.quickFixes(other.main, diagnostic)).toEqual([]);
+});
+
+it.each(["monaco", "panel", "invalidation", "dispose"] as const)(
+  "propagates %s cancellation to the quick-fix request",
+  async (reason) => {
+    const h = setup({ "main.bp": "LCD.Clear(\n" });
+    const diagnostic = h.snapshot.analysis.diagnostics.find((d) => d.code === "BP1043")!;
+    let finish!: (value: Awaited<ReturnType<typeof h.quickFixes>>) => void;
+    h.quickFixes.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let cancelToken = () => {};
+    const dispose = vi.fn();
+    const queryToken = {
+      isCancellationRequested: false,
+      onCancellationRequested: (listener: (event: unknown) => unknown) => {
+        cancelToken = () => {
+          listener(undefined);
+        };
+        return { dispose };
+      },
+    };
+    const controller = new AbortController();
+    const pending = h.features.quickFixes(h.main, diagnostic, queryToken, controller.signal);
+    const signal = h.quickFixes.mock.calls[0]![2];
+    expect(signal.aborted).toBe(false);
+    if (reason === "monaco") {
+      queryToken.isCancellationRequested = true;
+      cancelToken();
+    } else if (reason === "panel") controller.abort();
+    else if (reason === "invalidation") h.features.update(undefined);
+    else h.features.dispose();
+    expect(signal.aborted).toBe(true);
+    finish({
+      kind: "result",
+      fixes: getBasicPlusQuickFixes("main.bp", "LCD.Clear(\n", diagnostic),
+    });
+    expect(await pending).toEqual([]);
+    expect(dispose).toHaveBeenCalledOnce();
+  },
+);

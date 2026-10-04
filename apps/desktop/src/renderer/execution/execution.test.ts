@@ -83,6 +83,7 @@ function setup() {
     },
     workspace: {} as KobrixaApi["workspace"],
     language: {} as KobrixaApi["language"],
+    documentation: { open: vi.fn(async () => undefined) },
   } satisfies KobrixaApi;
   const controller = new ExecutionController(api);
   controller.attach();

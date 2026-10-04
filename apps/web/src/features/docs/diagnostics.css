@@ -1,0 +1,183 @@
+.diagnostics-reference {
+  min-width: 0;
+  color: #202b36;
+}
+.diagnostics-header h1 {
+  margin: 0.5rem 0 1rem;
+  font-size: clamp(1.7rem, 4vw, 2.6rem);
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+}
+.diagnostics-header > p:last-child,
+.diagnostics-count {
+  color: #536273;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+.diagnostics-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.6fr);
+  gap: 1rem;
+  margin: 1.75rem 0 1rem;
+}
+.diagnostics-filters label,
+.diagnostics-family {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+}
+.diagnostics-filters input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #aeb7c2;
+  border-radius: 0.25rem;
+  background: #fff;
+  color: #202b36;
+  font: inherit;
+}
+.diagnostics-filters input:focus-visible {
+  outline: 3px solid #c7d6ff;
+  border-color: #2457d6;
+}
+.diagnostics-list {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid #d7dce2;
+  list-style: none;
+}
+.diagnostics-list li > a {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) 1rem;
+  align-items: start;
+  gap: 1rem;
+  padding: 1rem 0.7rem;
+  border-bottom: 1px solid #d7dce2;
+  background: #fff;
+  color: #163d9d;
+}
+.diagnostics-list li > a:hover {
+  background: #f4f7fb;
+}
+.diagnostics-list code,
+.diagnostics-header > code {
+  font:
+    0.85rem/1.65 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.diagnostics-list strong {
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.diagnostics-list p {
+  margin: 0.3rem 0 0;
+  color: #536273;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.diagnostics-empty {
+  padding: 1.25rem;
+  border: 1px solid #aeb7c2;
+  background: #f8fafc;
+  line-height: 1.65;
+}
+.diagnostics-detail .back-link {
+  display: inline-block;
+}
+.diagnostics-variants {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid #d7dce2;
+  border-radius: 0.25rem;
+  background: #f4f7fb;
+}
+.diagnostics-variants p {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+.diagnostics-variants a,
+.diagnostics-related a {
+  color: #163d9d;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.diagnostics-explanation {
+  padding: 1.25rem 0;
+  border-bottom: 1px solid #d7dce2;
+  scroll-margin-top: 6rem;
+}
+.diagnostics-explanation:target {
+  border-left: 3px solid #2457d6;
+  padding-left: 1rem;
+}
+.diagnostics-explanation h2 {
+  margin: 0 0 1.5rem;
+  font-size: 1.4rem;
+  line-height: 1.4;
+}
+.diagnostics-explanation h3 {
+  margin: 0.5rem 0 0.6rem;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.diagnostics-explanation p,
+.diagnostics-explanation li {
+  font-size: 0.9rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.diagnostics-explanation p {
+  margin: 0 0 1.3rem;
+}
+.diagnostics-explanation ol,
+.diagnostics-explanation ul {
+  padding-left: 1.5rem;
+}
+.diagnostics-examples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.4rem 0;
+}
+.diagnostics-examples pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid #cbd3dc;
+  border-radius: 0.25rem;
+  background: #f4f7fb;
+  font:
+    0.8rem/1.65 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+@media (max-width: 980px) {
+  .diagnostics-filters,
+  .diagnostics-examples {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .diagnostics-list li > a {
+    grid-template-columns: minmax(0, 1fr) 1rem;
+    gap: 0.4rem;
+  }
+  .diagnostics-list li > a > code,
+  .diagnostics-list li > a > div {
+    grid-column: 1;
+  }
+  .diagnostics-list li > a > span {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}

@@ -7,6 +7,7 @@
     "paths": {
       "@kobrixa/ir": ["packages/ir/src/index.ts"],
       "@kobrixa/compiler": ["packages/compiler/src/index.ts"],
+      "@kobrixa/compiler/diagnostic-help": ["packages/compiler/src/diagnostic-help.ts"],
       "@kobrixa/backend-ev3": ["packages/backend-ev3/src/index.ts"],
       "@kobrixa/device": ["packages/device/src/index.ts"],
       "@kobrixa/basic-plus": ["frontends/basic-plus/src/index.ts"]

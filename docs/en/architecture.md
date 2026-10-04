@@ -129,6 +129,7 @@ interface CompileResult {
 
 interface Diagnostic {
   code: string;
+  helpKey?: string;
   severity: "error" | "warning" | "info";
   file: string;
   range: { startLine: number; startColumn: number; endLine: number; endColumn: number };
@@ -144,6 +145,10 @@ interface BuildArtifact {
 ```
 
 Line and column numbers are one-based in public results. `success` is true only when no error diagnostic exists and a valid `rbf` artifact was committed atomically. Temporary output is removed after failure or cancellation.
+
+The browser-safe `@kobrixa/compiler/diagnostic-help` subpath contains the shared English and Traditional Chinese diagnostic catalog; the original compiler entrypoint is unchanged. Producers set optional `helpKey` values when one code has distinct causes. Consumers fall back to the code's general entry for missing or unknown keys and retain the raw message for unknown codes. Tests compare production codes with the catalog and validate the examples and documentation links.
+
+Quick Fix requests carry the workspace, accepted analysis session/revision/version, file, diagnostic and a cancellation ID. The language worker derives insertion candidates from parser tokens and block metadata, reparses an in-memory copy, and caches validated candidates per analysis version. Queries are bounded to 1,000,000 UTF-16 code units and at most two parses of that file; they never run full project analysis in the renderer. Cancellation marks a shared flag without cancelling another query or invalidating accepted analysis. Edits recheck the target model version, source snapshot and disk conflicts before one undo group is applied through the normal document/draft/save path. Rename continues to validate all project source files. A dedicated documentation IPC accepts catalog selectors only; the main process constructs official URLs.
 
 `runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program. Each output file is committed through a same-filesystem rename; this is not a transaction across the complete set of output files.
 

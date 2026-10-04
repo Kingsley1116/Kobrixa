@@ -84,6 +84,7 @@ import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
 import { AnalysisTransport } from "./editor/analysis-transport.js";
+import type { WorkspaceEditContext } from "./editor/workspace-edits.js";
 import { Documents, CursorStore, type DocumentTab } from "./editor/documents.js";
 import { CursorPosition } from "./editor/cursor-position.js";
 
@@ -273,8 +274,10 @@ export function App(): React.JSX.Element {
   useEffect(() => () => completionSession.dispose(), [completionSession]);
   const [analysisTransport] = useState(
     () =>
-      new AnalysisTransport((workspaceId, request) =>
-        window.kobrixa.language.sync(workspaceId, request),
+      new AnalysisTransport(
+        (workspaceId, request) => window.kobrixa.language.sync(workspaceId, request),
+        (workspaceId, request) => window.kobrixa.language.quickFixes(workspaceId, request),
+        (workspaceId, requestId) => window.kobrixa.language.cancelQuickFix(workspaceId, requestId),
       ),
   );
   const analysisSession = useMemo(
@@ -1764,6 +1767,7 @@ export function App(): React.JSX.Element {
   async function applyWorkspaceEdit(
     snapshot: EditorAnalysis,
     apply: () => Record<string, string>,
+    context?: WorkspaceEditContext,
   ): Promise<void> {
     const current = workspaceStateRef.current;
     const initialTabs = tabsRef.current;
@@ -1778,10 +1782,17 @@ export function App(): React.JSX.Element {
       !projectBusyRef.current &&
       !managingEntriesRef.current;
     if (!editable() || analysisSession.getCurrent() !== snapshot)
-      throw new Error("The workspace changed. Try renaming again after analysis completes.");
+      throw new Error(
+        locale === "zh-TW"
+          ? "工作區已變更，請等分析完成後重試。"
+          : "The workspace changed. Try again after analysis completes.",
+      );
     const saved = Object.fromEntries(
       await Promise.all(
-        Object.keys(snapshot.analysis.index.sources).map(async (file) => {
+        (context?.kind === "quick-fix"
+          ? context.files!
+          : Object.keys(snapshot.analysis.index.sources)
+        ).map(async (file) => {
           if (!current!.files.includes(file))
             throw new Error("A source file was moved or removed.");
           const diskSnapshot = await window.kobrixa.workspace.readFile(current!.id, file);
@@ -1793,7 +1804,11 @@ export function App(): React.JSX.Element {
             normalizeSource(content) !== normalizeSource(snapshot.analysis.index.sources[file]!) ||
             (tab && normalizeSource(disk) !== normalizeSource(tab.saved))
           )
-            throw new Error(`'${file}' changed since analysis. Reopen the file before renaming.`);
+            throw new Error(
+              locale === "zh-TW"
+                ? `「${file}」已變更，請先比較外部變更再重試。`
+                : `'${file}' changed since analysis. Review external changes before editing.`,
+            );
           if (sessions.active?.files.conflicts.has(file))
             throw new Error(`'${file}' has unresolved external changes.`);
           sessions.get(current!.id)?.files.accept(file, diskSnapshot);
@@ -1801,7 +1816,12 @@ export function App(): React.JSX.Element {
         }),
       ),
     );
-    if (!editable()) throw new Error("The workspace changed while preparing the rename.");
+    if (!editable())
+      throw new Error(
+        locale === "zh-TW"
+          ? "工作區已變更，請重試。"
+          : "The workspace changed while preparing the edit.",
+      );
     // The editor rechecks every model version before making the first edit.
     const changes = apply();
     setTabs((previous) => {
@@ -2737,6 +2757,10 @@ export function App(): React.JSX.Element {
               )}
               {active ? (
                 <Editor
+                  locale={locale}
+                  onQuickFixes={(snapshot, diagnostic, signal) =>
+                    analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
+                  }
                   key={workspace.id}
                   retainedModels={activeSession!.editor}
                   focusOnMount={focusEditorOnMount.current}
@@ -2784,6 +2808,17 @@ export function App(): React.JSX.Element {
             />
             <BottomPanel
               t={t}
+              fixesDisabled={locked || projectBusy || managingEntries}
+              locale={locale}
+              analysisSession={analysisSession}
+              getQuickFixes={(diagnostic, signal) =>
+                editorRef.current?.quickFixes(diagnostic, signal) ?? Promise.resolve([])
+              }
+              applyQuickFix={(action) =>
+                editorRef.current?.applyQuickFix(action) ??
+                Promise.reject(new Error("Editor unavailable."))
+              }
+              openDocumentation={(request) => window.kobrixa.documentation.open(request)}
               open={problemsOpen}
               onToggle={() => setProblemsOpen((value) => !value)}
               diagnostics={diagnostics}

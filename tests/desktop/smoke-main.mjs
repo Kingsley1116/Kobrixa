@@ -6,6 +6,7 @@ import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkMonitor, createMonitorFixture } from "./monitor-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
+import { checkDiagnostics, createDiagnosticsFixture } from "./diagnostics-smoke.mjs";
 import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -100,6 +101,7 @@ const workspace = (id = firstId) => {
 };
 const fileHistory = createFileHistoryFixture(fixtures, workspace);
 const search = createSearchFixture(fixtures, searchHelpers);
+const diagnostics = createDiagnosticsFixture(language);
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -121,6 +123,9 @@ let devicePreferences = {
   wifiHandshakeTimeout: 3000,
 };
 ipcMain.handle("smoke", async (_e, name, args) => {
+  if (name === "diagnosticQuickFixes") return diagnostics.quickFixes(args);
+  if (name === "diagnosticCancelQuickFix") return diagnostics.cancelQuickFix(args);
+  if (name === "documentationOpen") return diagnostics.openDocumentation(args[0]);
   if (monitor.handles(name)) return monitor.handle(name, args);
   if (name === "readFile") search.beforeRead(args);
   if (fileHistory.handles(name)) return fileHistory.handle(name, args);
@@ -385,6 +390,12 @@ app
       analysisCount: () => analysisRequests,
     };
     const searchContext = { ...projectsContext, search, writes };
+    const diagnosticsContext = { ...projectsContext, diagnostics, fileHistory, search, writes };
+    if (process.env.KOBRIXA_SMOKE_DIAGNOSTICS_ONLY) {
+      await checkDiagnostics(diagnosticsContext);
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_SEARCH_ONLY) {
       await checkWorkspaceSearch(searchContext);
       app.exit(0);
@@ -897,11 +908,36 @@ app
       files,
     });
     await checkWorkspaceSearch(searchContext);
+    await checkDiagnostics(diagnosticsContext);
     await checkProjects(projectsContext);
     console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);
   })
-  .catch((error) => {
+  .catch(async (error) => {
     console.error(error);
+    if (win && !win.isDestroyed()) {
+      try {
+        const state = await win.webContents.executeJavaScript(`({
+          project: document.querySelector('.project-tab.active')?.textContent,
+          file: window.ed?.getModel()?.uri.toString(),
+          text: window.ed?.getValue().slice(0, 10000),
+          position: window.ed?.getPosition(),
+          lineCount: window.ed?.getModel()?.getLineCount(),
+          scrollTop: window.ed?.getScrollTop(),
+          layout: window.ed?.getLayoutInfo(),
+          focused: document.activeElement?.outerHTML.slice(0, 500)
+        })`);
+        fs.writeFileSync(
+          path.join(temporary, "smoke-failure-state.json"),
+          JSON.stringify(state, null, 2),
+        );
+        fs.writeFileSync(
+          path.join(temporary, "smoke-failure.png"),
+          (await win.webContents.capturePage()).toPNG(),
+        );
+      } catch (captureError) {
+        console.error("Unable to capture smoke failure state:", captureError);
+      }
+    }
     app.exit(1);
   });

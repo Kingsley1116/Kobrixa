@@ -19,21 +19,49 @@ const binaryPrecedence = new Map<string, number>([
   ["%", 5],
 ]);
 
+const forExpressionBoundary =
+  /^(?:step|to|then|else|elseif|end(?:for|function|if|module|region|sub|while))$/i;
+
 function mergeSpan(start: SourceSpan, end: SourceSpan): SourceSpan {
   return { file: start.file, start: start.start, end: end.end };
+}
+
+export type BasicPlusSyntaxFixKind =
+  | "insert-type-bracket"
+  | "insert-parenthesis"
+  | "insert-for-equals"
+  | "insert-for-to"
+  | "close-blocks";
+
+/** Parser-owned insertion points; consumers must validate an edit before offering it. */
+export interface BasicPlusSyntaxFixCandidate {
+  diagnostic: Diagnostic;
+  titleKey: BasicPlusSyntaxFixKind;
+  offset: number;
+  text: string;
+  openingSpan?: SourceSpan;
 }
 
 export function parse(
   file: string,
   source: string,
-): { parsed: ParsedFile; diagnostics: Diagnostic[] } {
+): {
+  parsed: ParsedFile;
+  diagnostics: Diagnostic[];
+  syntaxFixes: BasicPlusSyntaxFixCandidate[];
+} {
   const result = lex(file, source);
   const parser = new Parser(result.tokens, result.diagnostics);
-  return { parsed: parser.parseFile(file), diagnostics: result.diagnostics };
+  return {
+    parsed: parser.parseFile(file),
+    diagnostics: result.diagnostics,
+    syntaxFixes: parser.syntaxFixes,
+  };
 }
 
 class Parser {
   #index = 0;
+  readonly syntaxFixes: BasicPlusSyntaxFixCandidate[] = [];
 
   constructor(
     private readonly tokens: Token[],
@@ -66,8 +94,18 @@ class Parser {
       }
       if (this.keyword("folder")) {
         const start = this.take();
-        const storage = this.takeKind("string", "BP1050", 'Folder expects "prjs" or "sd".');
-        const directory = this.takeKind("string", "BP1050", "Folder expects a directory name.");
+        const storage = this.takeKind(
+          "string",
+          "BP1050",
+          'Folder expects "prjs" or "sd".',
+          "folder-storage",
+        );
+        const directory = this.takeKind(
+          "string",
+          "BP1050",
+          "Folder expects a directory name.",
+          "folder-directory",
+        );
         const area = String(storage?.value).toLocaleLowerCase("en-US");
         const name = String(directory?.value ?? "");
         if (
@@ -132,7 +170,12 @@ class Parser {
           const element = this.take().text.toLowerCase() as "number" | "string";
           type = { kind: element };
           if (this.match("[")) {
-            this.expect("]", "BP1015", "Expected ']' in array parameter type.");
+            this.expect(
+              "]",
+              "BP1015",
+              "Expected ']' in array parameter type.",
+              "insert-type-bracket",
+            );
             type = { kind: "array", element };
           }
         }
@@ -141,13 +184,19 @@ class Parser {
           parameters.push({ name: parameter.text, nameSpan: parameter.span, direction, type });
         if (!this.match(",")) break;
       }
-      this.expect(")", "BP1013", "Expected ')' after parameters.");
+      this.expect(")", "BP1013", "Expected ')' after parameters.", "insert-parenthesis");
     }
     this.skipLine();
     const endKeyword = kind === "sub" ? "endsub" : "endfunction";
     const body = this.parseBlock([endKeyword]);
     const end = this.current();
-    if (!this.keyword(endKeyword)) this.error("BP1014", `Expected ${endKeyword}.`, end.span);
+    if (!this.keyword(endKeyword))
+      this.missingBlockEnd(
+        "BP1014",
+        `Expected ${endKeyword}.`,
+        kind === "sub" ? "EndSub" : "EndFunction",
+        start.span,
+      );
     else this.skipLine();
     return {
       kind,
@@ -231,7 +280,7 @@ class Parser {
       const typeToken = this.take();
       const element = typeToken.text.toLowerCase() as "number" | "string";
       const type = this.match("[")
-        ? (this.expect("]", "BP1024", "Expected ']' in array declaration."),
+        ? (this.expect("]", "BP1024", "Expected ']' in array declaration.", "insert-type-bracket"),
           {
             kind: "array" as const,
             element,
@@ -414,7 +463,8 @@ class Parser {
       otherwise = this.parseBlock(["endif"]);
     }
     const end = this.current();
-    if (!this.keyword("endif")) this.error("BP1030", "Expected EndIf.", end.span);
+    if (!this.keyword("endif"))
+      this.missingBlockEnd("BP1030", "Expected EndIf.", "EndIf", start.span);
     else this.skipLine();
     return { kind: "if", branches, otherwise, span: mergeSpan(start.span, end.span) };
   }
@@ -425,7 +475,8 @@ class Parser {
     this.skipLine();
     const body = this.parseBlock(["endwhile"]);
     const end = this.current();
-    if (!this.keyword("endwhile")) this.error("BP1031", "Expected EndWhile.", end.span);
+    if (!this.keyword("endwhile"))
+      this.missingBlockEnd("BP1031", "Expected EndWhile.", "EndWhile", start.span);
     else this.skipLine();
     return { kind: "while", condition, body, span: mergeSpan(start.span, end.span) };
   }
@@ -433,21 +484,61 @@ class Parser {
   private parseFor(): Statement | undefined {
     const start = this.take();
     const variable = this.takeKind("identifier", "BP1032", "For expects a variable.");
-    this.expect("=", "BP1033", "Expected '=' in For statement.");
+    const equalsOffset = this.current().span.start.offset;
+    const missingEquals = this.match("=")
+      ? undefined
+      : this.error("BP1033", "Expected '=' in For statement.", this.current().span);
+    const fromTokenStart = this.#index;
     const from = this.parseExpression();
-    if (!this.keyword("to"))
-      this.error("BP1034", "Expected To in For statement.", this.current().span);
-    else this.take();
+    const fromTokenEnd = this.#index;
+    const toOffset = this.current().span.start.offset;
+    const missingTo = this.keyword("to")
+      ? (this.take(), undefined)
+      : this.error("BP1034", "Expected To in For statement.", this.current().span);
+    const toTokenStart = this.#index;
     const to = this.parseExpression();
+    const toTokenEnd = this.#index;
     let step: Expression = { kind: "literal", value: 1, span: start.span };
+    let validStep = true;
+    let stepTokenStart = this.#index;
     if (this.keyword("step")) {
       this.take();
-      step = this.parseExpression() ?? step;
+      stepTokenStart = this.#index;
+      const expression = this.parseExpression();
+      validStep = !!expression;
+      step = expression ?? step;
+    }
+    if (
+      (missingEquals || missingTo) &&
+      variable &&
+      from &&
+      to &&
+      validStep &&
+      !this.forExpressionHasBoundary(fromTokenStart, fromTokenEnd) &&
+      !this.forExpressionHasBoundary(toTokenStart, toTokenEnd) &&
+      !this.forExpressionHasBoundary(stepTokenStart, this.#index) &&
+      (this.is("newline") || this.is("eof"))
+    ) {
+      if (missingEquals)
+        this.syntaxFixes.push({
+          diagnostic: missingEquals,
+          titleKey: "insert-for-equals",
+          offset: equalsOffset,
+          text: "= ",
+        });
+      if (missingTo)
+        this.syntaxFixes.push({
+          diagnostic: missingTo,
+          titleKey: "insert-for-to",
+          offset: toOffset,
+          text: "To ",
+        });
     }
     this.skipLine();
     const body = this.parseBlock(["endfor"]);
     const end = this.current();
-    if (!this.keyword("endfor")) this.error("BP1035", "Expected EndFor.", end.span);
+    if (!this.keyword("endfor"))
+      this.missingBlockEnd("BP1035", "Expected EndFor.", "EndFor", start.span);
     else this.skipLine();
     return variable && from && to
       ? {
@@ -461,6 +552,17 @@ class Parser {
           span: mergeSpan(start.span, end.span),
         }
       : undefined;
+  }
+
+  private forExpressionHasBoundary(start: number, end: number): boolean {
+    // Recovery can parse a misplaced To/Step/ending as a variable, including
+    // inside unary or grouped expressions. Such headers are not deterministic
+    // missing-punctuation fixes, even if a second parse would accept the edit.
+    for (let index = start; index < end; index++) {
+      const token = this.tokens[index]!;
+      if (token.kind === "identifier" && forExpressionBoundary.test(token.text)) return true;
+    }
+    return false;
   }
 
   private parseExpression(minimum = 0): Expression | undefined {
@@ -523,7 +625,7 @@ class Parser {
     }
     if (this.match("(")) {
       const expression = this.parseExpression();
-      this.expect(")", "BP1040", "Expected ')' after expression.");
+      this.expect(")", "BP1040", "Expected ')' after expression.", "insert-parenthesis");
       return expression;
     }
     this.error("BP1041", "Expected an expression.", token.span);
@@ -555,7 +657,7 @@ class Parser {
       if (!this.match(",")) break;
     }
     const end = this.current();
-    this.expect(")", "BP1043", "Expected ')' after arguments.");
+    this.expect(")", "BP1043", "Expected ')' after arguments.", "insert-parenthesis");
     return {
       kind: "call",
       name: name.text,
@@ -599,15 +701,38 @@ class Parser {
     return true;
   }
 
-  private expect(text: string, code: string, message: string): Token | undefined {
+  private expect(
+    text: string,
+    code: string,
+    message: string,
+    titleKey?: "insert-type-bracket" | "insert-parenthesis",
+  ): Token | undefined {
     if (this.isText(text)) return this.take();
-    this.error(code, message, this.current().span);
+    const diagnostic = this.error(code, message, this.current().span);
+    if (
+      (titleKey === "insert-type-bracket" && this.is("identifier")) ||
+      (titleKey === "insert-parenthesis" && (this.is("newline") || this.is("eof")))
+    ) {
+      // Missing punctuation belongs after the last code token, before trailing
+      // comments, whitespace, CRLF, or the next token's spelling.
+      const previous = this.tokens[this.#index - 1];
+      // A trailing comma means the next argument/parameter is still missing.
+      // The parser tolerates trailing commas, so reparsing alone cannot prove
+      // that adding a closing parenthesis was the intended repair.
+      if (previous && previous.kind !== "newline" && previous.text !== ",")
+        this.syntaxFixes.push({ diagnostic, titleKey, offset: previous.span.end.offset, text });
+    }
     return undefined;
   }
 
-  private takeKind(kind: Token["kind"], code: string, message: string): Token | undefined {
+  private takeKind(
+    kind: Token["kind"],
+    code: string,
+    message: string,
+    helpKey?: string,
+  ): Token | undefined {
     if (this.is(kind)) return this.take();
-    this.error(code, message, this.current().span);
+    this.error(code, message, this.current().span, helpKey);
     return undefined;
   }
 
@@ -620,8 +745,25 @@ class Parser {
     this.skipNewlines();
   }
 
-  private error(code: string, message: string, span: SourceSpan): void {
-    this.diagnostics.push({
+  private missingBlockEnd(
+    code: string,
+    message: string,
+    keyword: string,
+    openingSpan: SourceSpan,
+  ): void {
+    const diagnostic = this.error(code, message, this.current().span);
+    if (this.is("eof"))
+      this.syntaxFixes.push({
+        diagnostic,
+        titleKey: "close-blocks",
+        offset: this.current().span.start.offset,
+        text: keyword,
+        openingSpan,
+      });
+  }
+
+  private error(code: string, message: string, span: SourceSpan, helpKey?: string): Diagnostic {
+    const diagnostic: Diagnostic = {
       code,
       severity: "error",
       file: span.file,
@@ -632,6 +774,9 @@ class Parser {
         endColumn: span.end.column,
       },
       message,
-    });
+      ...(helpKey ? { helpKey } : {}),
+    };
+    this.diagnostics.push(diagnostic);
+    return diagnostic;
   }
 }

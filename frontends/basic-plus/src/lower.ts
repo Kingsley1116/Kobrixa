@@ -85,7 +85,12 @@ function isNegativeConstant(expression: Expression): boolean {
   );
 }
 
-function toDiagnostic(code: string, message: string, span: SourceSpan): Diagnostic {
+function toDiagnostic(
+  code: string,
+  message: string,
+  span: SourceSpan,
+  helpKey?: string,
+): Diagnostic {
   return {
     code,
     severity: "error",
@@ -97,6 +102,7 @@ function toDiagnostic(code: string, message: string, span: SourceSpan): Diagnost
       endColumn: span.end.column,
     },
     message,
+    ...(helpKey ? { helpKey } : {}),
   };
 }
 
@@ -287,7 +293,12 @@ class FunctionBuilder {
           const loop = this.#loopTargets.at(-1);
           if (!loop) {
             this.diagnostics.push(
-              toDiagnostic("BP2006", "Break can only be used inside For or While.", statement.span),
+              toDiagnostic(
+                "BP2006",
+                "Break can only be used inside For or While.",
+                statement.span,
+                "break-outside-loop",
+              ),
             );
             break;
           }
@@ -675,6 +686,7 @@ class FunctionBuilder {
             "BP2006",
             `Output argument ${index + 1} of '${declaration.name}' must have type ${parameter.type.kind}.`,
             expression.args[index]?.span ?? expression.span,
+            "out-type",
           ),
         );
       }

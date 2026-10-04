@@ -11,7 +11,13 @@ import {
   type LanguageSyncReply,
   type LanguageSyncRequest,
 } from "../../shared/language-sync.js";
-import type { DiagnosticsReply, DiagnosticsRequest } from "./language-protocol.js";
+import type {
+  DiagnosticsReply,
+  DiagnosticsRequest,
+  QuickFixWorkerReply,
+  QuickFixWorkerRequest,
+} from "./language-protocol.js";
+import type { QuickFixReply, QuickFixRequest } from "../../shared/quick-fixes.js";
 import type { WorkspaceService } from "../workspace/workspace.js";
 
 export class LanguageService {
@@ -22,6 +28,17 @@ export class LanguageService {
     | undefined;
   private workerSession: string | undefined;
   private disposed = false;
+  private accepted:
+    { workspaceId: string; session: string; revision: number; analysisVersion: number } | undefined;
+  private readonly pendingFixes = new Map<
+    number,
+    {
+      workspaceId: string;
+      requestId: string;
+      cancellation: Int32Array;
+      resolve(result: QuickFixReply): void;
+    }
+  >();
   private pending:
     | {
         id: number;
@@ -112,10 +129,86 @@ export class LanguageService {
         this.fail(worker, error instanceof Error ? error : new Error(String(error)));
       }
     });
+    if (
+      this.documents?.workspaceId === workspaceId &&
+      this.documents.session === update.session &&
+      this.documents.revision === update.revision
+    )
+      this.accepted = {
+        workspaceId,
+        session: update.session,
+        revision: update.revision,
+        analysisVersion: patch.version,
+      };
     return { kind: "result", session: update.session, revision: update.revision, patch };
   }
 
+  async quickFixes(workspaceId: string, request: QuickFixRequest): Promise<QuickFixReply> {
+    if (this.disposed) throw new Error("Language service is disposed.");
+    this.workspaces.projectInput(workspaceId);
+    const accepted = this.accepted;
+    const worker = this.worker;
+    if (
+      !worker ||
+      !accepted ||
+      accepted.workspaceId !== workspaceId ||
+      accepted.session !== request.session ||
+      accepted.revision !== request.revision ||
+      accepted.analysisVersion !== request.analysisVersion
+    )
+      return { kind: "stale" };
+    // A query identity belongs to exactly one live request in one workspace.
+    if (
+      [...this.pendingFixes.values()].some(
+        (pending) => pending.workspaceId === workspaceId && pending.requestId === request.requestId,
+      )
+    )
+      return { kind: "stale" };
+    const cancellation = new Int32Array(new SharedArrayBuffer(4));
+    const message: QuickFixWorkerRequest = {
+      kind: "quick-fixes",
+      id: ++this.nextId,
+      workspaceId,
+      request,
+      cancellation: cancellation.buffer as SharedArrayBuffer,
+    };
+    worker.ref();
+    const result = await new Promise<QuickFixReply>((resolve) => {
+      this.pendingFixes.set(message.id, {
+        workspaceId,
+        requestId: request.requestId,
+        cancellation,
+        resolve,
+      });
+      try {
+        worker.postMessage(message);
+      } catch (error) {
+        this.fail(worker, error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    return this.accepted === accepted ? result : { kind: "stale" };
+  }
+
+  cancelQuickFix(workspaceId: string, requestId: string): void {
+    for (const [id, pending] of this.pendingFixes) {
+      if (pending.workspaceId !== workspaceId || pending.requestId !== requestId) continue;
+      Atomics.store(pending.cancellation, 0, 1);
+      pending.resolve({ kind: "stale" });
+      this.pendingFixes.delete(id);
+      // The worker sees cancellation through shared memory even during parsing.
+      // A late response is ignored, without invalidating the accepted analysis.
+      if (!this.pending && !this.pendingFixes.size) this.worker?.unref();
+      return;
+    }
+  }
+
   cancel(): void {
+    this.accepted = undefined;
+    for (const pending of this.pendingFixes.values()) {
+      Atomics.store(pending.cancellation, 0, 1);
+      pending.resolve({ kind: "stale" });
+    }
+    this.pendingFixes.clear();
     // Shared memory is visible during synchronous parsing, unlike an abort
     // message. Keep the worker and its completed caches for the next revision.
     if (!this.pending) return;
@@ -137,15 +230,22 @@ export class LanguageService {
   private startWorker(): Worker {
     const worker = this.createWorker();
     this.worker = worker;
-    worker.on("message", (reply: DiagnosticsReply) => {
+    worker.on("message", (reply: DiagnosticsReply | QuickFixWorkerReply) => {
       if (worker !== this.worker) return;
+      if ("kind" in reply) {
+        const pending = this.pendingFixes.get(reply.id);
+        this.pendingFixes.delete(reply.id);
+        pending?.resolve(reply.result);
+        if (!this.pending && !this.pendingFixes.size) worker.unref();
+        return;
+      }
       if (reply.id !== this.pending?.id) {
-        if (!this.pending) worker.unref();
+        if (!this.pending && !this.pendingFixes.size) worker.unref();
         return;
       }
       const pending = this.pending;
       this.pending = undefined;
-      worker.unref();
+      if (!this.pendingFixes.size) worker.unref();
       if (reply.ok) pending.resolve(reply.patch);
       else pending.reject(new Error(reply.error));
     });
@@ -160,6 +260,9 @@ export class LanguageService {
     if (worker !== this.worker) return;
     this.worker = undefined;
     this.workerSession = undefined;
+    this.accepted = undefined;
+    for (const pending of this.pendingFixes.values()) pending.resolve({ kind: "stale" });
+    this.pendingFixes.clear();
     const pending = this.pending;
     this.pending = undefined;
     void worker.terminate();

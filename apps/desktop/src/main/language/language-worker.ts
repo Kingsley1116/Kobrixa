@@ -1,9 +1,19 @@
 import { startCompletionWorker } from "./completion-worker.js";
 import { parentPort, workerData } from "node:worker_threads";
-import { BasicPlusProjectAnalyzer, type BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
+import {
+  BasicPlusProjectAnalyzer,
+  getBasicPlusQuickFixes,
+  type BasicPlusProjectAnalysis,
+} from "@kobrixa/basic-plus";
 import { loadProject, ProjectSourceCache } from "@kobrixa/compiler";
 import { applyRecord, diffAnalysis, emptyAnalysis } from "../../shared/language-sync.js";
-import type { DiagnosticsReply, DiagnosticsRequest } from "./language-protocol.js";
+import type {
+  DiagnosticsReply,
+  DiagnosticsRequest,
+  QuickFixWorkerRequest,
+  QuickFixWorkerReply,
+} from "./language-protocol.js";
+import { sameDiagnostic, type QuickFixReply } from "../../shared/quick-fixes.js";
 
 const port = parentPort;
 if (!port) throw new Error("Diagnostics must run in a worker.");
@@ -14,14 +24,72 @@ let documentSession = "";
 let documentRevision = 0;
 let overlays: Record<string, string> = Object.create(null);
 const history = new Map<number, BasicPlusProjectAnalysis>();
+const fixes = new Map<string, QuickFixReply>();
+let currentWorkspaceId = "";
 // Serialize async project loading as well as parsing. Superseded requests are
 // skipped before I/O; only completed, version-checked replies reach the renderer.
 let queue = Promise.resolve();
 if (workerData?.completion) startCompletionWorker(port);
 else
-  port.on("message", (request: DiagnosticsRequest) => {
+  port.on("message", (request: DiagnosticsRequest | QuickFixWorkerRequest) => {
     queue = queue.then(async () => {
+      if ("kind" in request) {
+        const query = request.request;
+        const cancelled = new Int32Array(request.cancellation);
+        const controller = new AbortController();
+        const originalCheck = controller.signal.throwIfAborted.bind(controller.signal);
+        controller.signal.throwIfAborted = () => {
+          if (Atomics.load(cancelled, 0)) controller.abort();
+          originalCheck();
+        };
+        let result: QuickFixReply = { kind: "stale" };
+        try {
+          controller.signal.throwIfAborted();
+          const analysis = history.get(query.analysisVersion);
+          const source = analysis?.index.sources[query.file];
+          if (
+            request.workspaceId === currentWorkspaceId &&
+            query.session === documentSession &&
+            query.revision === documentRevision &&
+            source !== undefined &&
+            analysis?.diagnostics.some(
+              (d) => d.file === query.file && sameDiagnostic(d, query.diagnostic),
+            )
+          ) {
+            const key = JSON.stringify([
+              query.session,
+              query.revision,
+              query.analysisVersion,
+              query.file,
+              query.diagnostic,
+            ]);
+            result = fixes.get(key) ?? {
+              kind: "result",
+              fixes: getBasicPlusQuickFixes(
+                query.file,
+                source,
+                query.diagnostic,
+                controller.signal,
+              ),
+            };
+            controller.signal.throwIfAborted();
+            fixes.set(key, result);
+            while (fixes.size > 128) fixes.delete(fixes.keys().next().value!);
+          }
+        } catch {
+          // Cancellation or an invalid candidate must never offer an unchecked edit.
+          result = { kind: "stale" };
+        }
+        port.postMessage({
+          kind: "quick-fixes",
+          id: request.id,
+          result,
+        } satisfies QuickFixWorkerReply);
+        return;
+      }
       const { id, input, sync, workspaceId } = request;
+      currentWorkspaceId = workspaceId;
+      fixes.clear();
       const cancellation = new Int32Array(request.cancellation);
       const controller = new AbortController();
       const check = () => {

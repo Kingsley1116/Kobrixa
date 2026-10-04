@@ -7,6 +7,7 @@ Run `pnpm test:bytecode` from the repository root. This builds the compiler pack
 - `array-lifetime.test.mjs`: repeated sensor polling under a 250-array budget, transfer-buffer cleanup, and preservation of arrays that escape a helper.
 - `i2c-bytecode.test.mjs`: firmware reply reversal, Pixy2 signature/largest-block/RGB layouts, unsigned byte values, and single/full-buffer reads.
 - `example-bytecode.test.mjs`: literal-byte VM checks and all scenarios in the new-example and Clev3r-parity selection files.
+- `diagnostic-examples.test.mjs`: every corrected Basic Plus example in the shared diagnostic catalog compiles through the frontend and backend to a structurally valid native RBF.
 - `robot-bytecode.test.mjs`: project initialization, buttons, scheduling, gyro, camera, steering and odometry checks.
 - `movement-bytecode.test.mjs`: 5,460 steering combinations, nine repeated calls, two turns and four timed moves.
 

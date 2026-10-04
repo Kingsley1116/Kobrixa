@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { AnalysisTransport } from "./analysis-transport.js";
+import type { QuickFixReply, QuickFixRequest } from "../../shared/quick-fixes.js";
 import {
   diffAnalysis,
   emptyAnalysis,
@@ -53,4 +54,81 @@ it("resets after unknown failure or workspace switch and retries a lost server b
     baseRevision: null,
     overlays: { set: files, removed: [] },
   });
+});
+
+it("binds quick fixes to the accepted source analysis and discards replies after another revision", async () => {
+  const { sync } = server();
+  const request = vi.fn(async () => ({ kind: "result" as const, fixes: [] }));
+  const transport = new AnalysisTransport(sync, request);
+  const analysis = await transport.analyze("one", { "main.bp": "LCD.Clear(" });
+  const diagnostic = {
+    code: "BP1043",
+    severity: "error" as const,
+    file: "main.bp",
+    range: { startLine: 1, startColumn: 11, endLine: 1, endColumn: 12 },
+    message: "original",
+  };
+  expect(await transport.quickFixes(analysis, diagnostic)).toEqual({ kind: "result", fixes: [] });
+  expect(request).toHaveBeenCalledWith(
+    "one",
+    expect.objectContaining({
+      revision: 1,
+      analysisVersion: 1,
+      file: "main.bp",
+      diagnostic: { code: "BP1043", range: diagnostic.range },
+    }),
+  );
+  let resolve!: (value: { kind: "result"; fixes: [] }) => void;
+  request.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  const pending = transport.quickFixes(analysis, diagnostic);
+  await transport.analyze("two", { "main.bp": "LCD.Clear()" });
+  resolve({ kind: "result", fixes: [] });
+  expect(await pending).toEqual({ kind: "stale" });
+  expect(await transport.quickFixes(analysis, diagnostic)).toEqual({ kind: "stale" });
+});
+
+it("cancels only the requested query, settles immediately and removes the abort listener", async () => {
+  const { sync } = server();
+  const resolvers = new Map<string, (reply: QuickFixReply) => void>();
+  const request = vi.fn(
+    (_workspaceId: string, query: QuickFixRequest) =>
+      new Promise<QuickFixReply>((resolve) => {
+        resolvers.set(query.requestId, resolve);
+      }),
+  );
+  const cancel = vi.fn(async () => {});
+  const transport = new AnalysisTransport(sync, request, cancel);
+  const analysis = await transport.analyze("one", { "main.bp": "LCD.Clear(" });
+  const diagnostic = {
+    code: "BP1043",
+    severity: "error" as const,
+    file: "main.bp",
+    range: { startLine: 1, startColumn: 11, endLine: 1, endColumn: 12 },
+    message: "original",
+  };
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const first = transport.quickFixes(analysis, diagnostic, firstController.signal);
+  const second = transport.quickFixes(analysis, diagnostic, secondController.signal);
+  const firstId = request.mock.calls[0]![1].requestId;
+  const secondId = request.mock.calls[1]![1].requestId;
+  expect(firstId).not.toBe(secondId);
+  firstController.abort();
+  expect(await first).toEqual({ kind: "stale" });
+  expect(cancel).toHaveBeenCalledExactlyOnceWith("one", firstId);
+  resolvers.get(secondId)!({ kind: "result", fixes: [] });
+  expect(await second).toEqual({ kind: "result", fixes: [] });
+  secondController.abort();
+  expect(cancel).toHaveBeenCalledTimes(1);
+  resolvers.get(firstId)!({ kind: "result", fixes: [] });
+  const before = request.mock.calls.length;
+  expect(await transport.quickFixes(analysis, diagnostic, firstController.signal)).toEqual({
+    kind: "stale",
+  });
+  expect(request).toHaveBeenCalledTimes(before);
 });

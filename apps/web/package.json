@@ -15,6 +15,7 @@
     "db:local": "wrangler d1 migrations apply DB --local"
   },
   "dependencies": {
+    "@kobrixa/compiler": "workspace:*",
     "@kobrixa/ir": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

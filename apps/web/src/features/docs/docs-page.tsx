@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
+import { DiagnosticsPage } from "./diagnostics-page.js";
 import {
   documents,
   findDocument,
@@ -65,6 +66,7 @@ const ui = {
     overview: "總覽",
     syntax: "語法",
     functions: "API 函數",
+    diagnostics: "錯誤索引",
   },
   en: {
     home: "Home",
@@ -106,6 +108,7 @@ const ui = {
     overview: "Overview",
     syntax: "Syntax",
     functions: "API functions",
+    diagnostics: "Diagnostic index",
   },
 } as const;
 
@@ -217,6 +220,13 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
         <p>{t.start}</p>
         <AppLink className={`sidebar-parent ${active("/docs")}`} href="/docs">
           {t.start}
+        </AppLink>
+        <AppLink
+          className={`sidebar-parent ${inSection("/docs/diagnostics") ? "active" : ""}`}
+          href={`/docs/diagnostics?lang=${locale}`}
+          aria-current={inSection("/docs/diagnostics") ? "page" : undefined}
+        >
+          {t.diagnostics}
         </AppLink>
       </section>
       <details open={inSection("/docs/tutorial")}>
@@ -784,6 +794,11 @@ export function DocsPage({ locale, onLocaleChange, path }: DocsPageProps) {
   const view =
     path === "/docs" || path === "/docs/" ? (
       <GettingStarted locale={locale} />
+    ) : section === "diagnostics" && segments.length <= 2 ? (
+      <main className="docs-layout unified-layout" id="content">
+        <KnowledgeSidebar locale={locale} activePath={path} />
+        <DiagnosticsPage locale={locale} code={slug} />
+      </main>
     ) : section === "tutorial" && !slug ? (
       <TutorialOverview locale={locale} />
     ) : section === "tutorial" && findTutorial(slug) ? (

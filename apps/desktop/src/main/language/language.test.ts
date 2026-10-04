@@ -232,6 +232,141 @@ describe("LanguageService background checks", () => {
     });
   });
 
+  it("resolves cached quick fixes only for the accepted workspace and analysis revision", async () => {
+    const request: LanguageSyncRequest = {
+      session: "fix-test",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "LCD.Clear( ' comment\n" }, removed: [] },
+    };
+    const reply = await service.sync("workspace", request);
+    if (reply.kind !== "result") throw new Error("resync");
+    const analysis = applyAnalysis(undefined, reply.patch).analysis;
+    const diagnostic = analysis.diagnostics.find((d) => d.code === "BP1043")!;
+    const query = {
+      requestId: "fix-query",
+      session: request.session,
+      revision: request.revision,
+      analysisVersion: reply.patch.version,
+      file: "main.bp",
+      diagnostic,
+    };
+    const first = await service.quickFixes("workspace", query);
+    expect(first).toMatchObject({
+      kind: "result",
+      fixes: [{ titleKey: "insert-parenthesis", edits: [{ newText: ")" }] }],
+    });
+    expect(await service.quickFixes("workspace", query)).toEqual(first);
+    expect(
+      await service.quickFixes("workspace", {
+        ...query,
+        analysisVersion: query.analysisVersion + 100,
+      }),
+    ).toEqual({ kind: "stale" });
+    expect(await service.quickFixes("workspace", { ...query, file: "../outside.bp" })).toEqual({
+      kind: "stale",
+    });
+    expect(
+      await service.quickFixes("workspace", {
+        ...query,
+        diagnostic: { ...diagnostic, code: "BP1030" },
+      }),
+    ).toEqual({ kind: "stale" });
+    const cancelled = service.quickFixes("workspace", query);
+    service.cancel();
+    expect(await cancelled).toEqual({ kind: "stale" });
+    expect(await service.quickFixes("workspace", query)).toEqual({ kind: "stale" });
+    const next = await service.sync("workspace", {
+      ...request,
+      revision: 2,
+      baseRevision: 1,
+      analysisBase: reply.patch.version,
+      overlays: { set: { "main.bp": "LCD.Clear()\n" }, removed: [] },
+    });
+    expect(next.kind).toBe("result");
+    expect(await service.quickFixes("workspace", query)).toEqual({ kind: "stale" });
+    expect(createWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels one quick-fix query through shared memory without invalidating other queries or analysis", async () => {
+    const reply = await service.sync("workspace", {
+      session: "isolated-fixes",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "LCD.Clear(\n" }, removed: [] },
+    });
+    if (reply.kind !== "result") throw new Error("resync");
+    const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics.find(
+      (d) => d.code === "BP1043",
+    )!;
+    const query = {
+      requestId: "first",
+      session: "isolated-fixes",
+      revision: 1,
+      analysisVersion: reply.patch.version,
+      file: "main.bp",
+      diagnostic,
+    };
+    const post = vi.spyOn(workers[0]!, "postMessage");
+    const first = service.quickFixes("workspace", query);
+    const second = service.quickFixes("workspace", { ...query, requestId: "second" });
+    const firstMessage = post.mock.calls[0]![0] as { cancellation: SharedArrayBuffer };
+    const secondMessage = post.mock.calls[1]![0] as { cancellation: SharedArrayBuffer };
+    service.cancelQuickFix("another-workspace", "first");
+    expect(Atomics.load(new Int32Array(firstMessage.cancellation), 0)).toBe(0);
+    service.cancelQuickFix("workspace", "first");
+    expect(Atomics.load(new Int32Array(firstMessage.cancellation), 0)).toBe(1);
+    expect(Atomics.load(new Int32Array(secondMessage.cancellation), 0)).toBe(0);
+    expect(await first).toEqual({ kind: "stale" });
+    expect(await second).toMatchObject({
+      kind: "result",
+      fixes: [{ titleKey: "insert-parenthesis" }],
+    });
+    // Accepted analysis remains queryable after individual cancellation.
+    expect(await service.quickFixes("workspace", { ...query, requestId: "third" })).toMatchObject({
+      kind: "result",
+      fixes: [{ titleKey: "insert-parenthesis" }],
+    });
+    service.cancelQuickFix("workspace", "first"); // Late cancellation is harmless.
+    expect(createWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards quick-fix requests on a worker exit and reanalysis creates a fresh version", async () => {
+    const update: LanguageSyncRequest = {
+      session: "fix",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "While True\n" }, removed: [] },
+    };
+    const reply = await service.sync("workspace", update);
+    if (reply.kind !== "result") throw new Error("resync");
+    const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics.find(
+      (d) => d.code === "BP1031",
+    )!;
+    const query = {
+      requestId: "fix-query",
+      session: "fix",
+      revision: 1,
+      analysisVersion: reply.patch.version,
+      file: "main.bp",
+      diagnostic,
+    };
+    await workers[0]!.terminate();
+    expect(await service.quickFixes("workspace", query)).toEqual({ kind: "stale" });
+    const fresh = await service.sync("workspace", { ...update, revision: 2, baseRevision: 1 });
+    if (fresh.kind !== "result") throw new Error("resync");
+    expect(
+      await service.quickFixes("workspace", {
+        ...query,
+        revision: 2,
+        analysisVersion: fresh.patch.version,
+      }),
+    ).toMatchObject({ kind: "result", fixes: [{ titleKey: "close-blocks" }] });
+  });
+
   it("runs completion independently, synchronizes edits and recovers from worker restarts", async () => {
     const completionWorkers: Worker[] = [];
     const completion = new CompletionService(

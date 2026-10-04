@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("kobrixa", {
     },
   },
   keyboard: { updateContext: call("keyboard") },
+  documentation: { open: call("documentationOpen") },
   workspace: {
     getPreferences: call("filePreferences"),
     setPreferences: call("setFilePreferences"),
@@ -59,6 +60,8 @@ contextBridge.exposeInMainWorld("kobrixa", {
     },
   },
   language: {
+    quickFixes: call("diagnosticQuickFixes"),
+    cancelQuickFix: call("diagnosticCancelQuickFix"),
     completionSync: call("completionSync"),
     sync: call("languageSync"),
     cancel: call("languageCancel"),

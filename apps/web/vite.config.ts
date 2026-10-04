@@ -6,8 +6,17 @@ export default defineConfig({
   plugins: [react()],
   server: { proxy: { "/api": "http://localhost:8787" } },
   resolve: {
-    alias: {
-      "@kobrixa/ir": fileURLToPath(new URL("../../packages/ir/src/index.ts", import.meta.url)),
-    },
+    alias: [
+      {
+        find: /^@kobrixa\/compiler\/diagnostic-help$/,
+        replacement: fileURLToPath(
+          new URL("../../packages/compiler/src/diagnostic-help.ts", import.meta.url),
+        ),
+      },
+      {
+        find: "@kobrixa/ir",
+        replacement: fileURLToPath(new URL("../../packages/ir/src/index.ts", import.meta.url)),
+      },
+    ],
   },
 });

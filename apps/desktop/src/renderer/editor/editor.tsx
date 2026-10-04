@@ -8,7 +8,17 @@ import type { AnalysisSession } from "./analysis-session.js";
 import { ModelSnapshots } from "./model-snapshots.js";
 import { BasicPlusSemanticTokens } from "./semantic-tokens.js";
 import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
-import { bindWorkspaceEdits, renameSnapshot, validateTextEdits } from "./workspace-edits.js";
+import {
+  bindWorkspaceEdits,
+  workspaceEditContext,
+  workspaceEditService,
+  validateTextEdits,
+  type WorkspaceEditContext,
+} from "./workspace-edits.js";
+import type { QuickFixReply } from "../../shared/quick-fixes.js";
+import { diagnosticMarkerMessage } from "./diagnostic-presentation.js";
+import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
+import { editorRange } from "./language-features.js";
 import { editorOptions as resolveEditorOptions, type EditorSettings } from "./editor-options.js";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import * as monaco from "monaco-editor";
@@ -94,6 +104,8 @@ export interface EditorFocusTarget {
 }
 
 export interface EditorHandle {
+  quickFixes(diagnostic: Diagnostic, signal?: AbortSignal): Promise<monaco.languages.CodeAction[]>;
+  applyQuickFix(action: monaco.languages.CodeAction): Promise<void>;
   captureView(): void;
   applySavedFormat(file: string, before: string, after: string): void;
   replaceMatches(files: WorkspaceSearchFile[], replacement: string): Record<string, string>;
@@ -109,6 +121,12 @@ export interface EditorAnalysis {
 }
 
 interface EditorProps {
+  locale?: DiagnosticLocale;
+  onQuickFixes?(
+    snapshot: EditorAnalysis,
+    diagnostic: Diagnostic,
+    signal: AbortSignal,
+  ): Promise<QuickFixReply>;
   retainedModels?: EditorModels;
   focusOnMount?: boolean;
   onViewChange?(): void;
@@ -119,7 +137,11 @@ interface EditorProps {
   onEditorReady?(editor: monaco.editor.IStandaloneCodeEditor): () => void;
   onBlur?(file: string): void;
   onOpenLocation?(file: string, range: Diagnostic["range"]): Promise<boolean>;
-  onWorkspaceEdit?(snapshot: EditorAnalysis, apply: () => Record<string, string>): Promise<void>;
+  onWorkspaceEdit?(
+    snapshot: EditorAnalysis,
+    apply: () => Record<string, string>,
+    context?: WorkspaceEditContext,
+  ): Promise<void>;
   theme: Theme;
   fontSize: number;
   wordWrap: boolean;
@@ -161,6 +183,8 @@ function toMonacoRange(range: Diagnostic["range"]): monaco.Range {
 export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   {
     file,
+    locale = "en",
+    onQuickFixes,
     retainedModels,
     focusOnMount = true,
     onViewChange,
@@ -212,8 +236,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const suggestions = useRef<ReturnType<typeof completionWidget> | undefined>(undefined);
   const features = useRef<BasicPlusLanguageFeatures | undefined>(undefined);
   const modelSubscriptions = useRef(new Map<monaco.editor.ITextModel, monaco.IDisposable>());
-  const currentProps = useRef({ readOnly, onOpenLocation, onWorkspaceEdit });
-  currentProps.current = { readOnly, onOpenLocation, onWorkspaceEdit };
+  const currentProps = useRef({ readOnly, onOpenLocation, onWorkspaceEdit, locale, onQuickFixes });
+  currentProps.current = { readOnly, onOpenLocation, onWorkspaceEdit, locale, onQuickFixes };
   const buffers = useRef(new Map<monaco.editor.ITextModel, DocumentBuffer>());
   const fileFor = (model: monaco.editor.ITextModel): string | undefined =>
     [...models.current].find(([, item]) => item === model)?.[0];
@@ -292,6 +316,19 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   useImperativeHandle(
     handleRef,
     () => ({
+      quickFixes: async (diagnostic, signal) => {
+        const snapshot = analysisSession.getCurrent();
+        const source = snapshot?.analysis.index.sources[diagnostic.file];
+        if (!snapshot || source === undefined) return [];
+        const model = ensureModel(diagnostic.file, source);
+        return features.current?.quickFixes(model, diagnostic, undefined, signal) ?? [];
+      },
+      applyQuickFix: async (action) => {
+        if (!action.edit || workspaceEditContext(action.edit)?.kind !== "quick-fix")
+          throw new Error("This quick fix is no longer available.");
+        await workspaceEditService.apply(action.edit);
+        editor.current?.focus();
+      },
       captureView,
       replaceMatches: (files, replacement) => {
         if (currentProps.current.readOnly) throw new Error("The editor is read-only.");
@@ -409,6 +446,10 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       semanticTokens,
     );
     const languageFeatures = new BasicPlusLanguageFeatures({
+      locale: () => currentProps.current.locale,
+      quickFixes: (snapshot, diagnostic, signal) =>
+        currentProps.current.onQuickFixes?.(snapshot, diagnostic, signal) ??
+        Promise.resolve({ kind: "stale" }),
       fileFor,
       ensureModel,
       completionSymbols: (model, position) => {
@@ -427,7 +468,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     languageFeatures.register();
     let mounted = true;
     const detachEdits = bindWorkspaceEdits(async (edit) => {
-      const snapshot = renameSnapshot(edit);
+      const context = workspaceEditContext(edit);
+      const snapshot = context?.snapshot;
       const validate = () => {
         if (
           !mounted ||
@@ -436,7 +478,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           !snapshot ||
           analysisSession.getCurrent() !== snapshot
         )
-          throw new Error("The workspace changed while preparing the rename. Try again.");
+          throw new Error(
+            currentProps.current.locale === "zh-TW"
+              ? "工作區已變更，請重新取得修正。"
+              : "The workspace changed while preparing the edit. Try again.",
+          );
         const groups = validateTextEdits(edit, (resource) =>
           [...models.current.values()].find((model) => model.uri.toString() === resource),
         );
@@ -444,34 +490,46 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           const file = fileFor(model);
           if (
             !file ||
+            (context?.kind === "quick-fix" && !context.files?.includes(file)) ||
             normalizeSource(snapshot.analysis.index.sources[file] ?? "") !==
               normalizeSource(model.getValue())
           )
-            throw new Error("A source file changed while preparing the rename.");
+            throw new Error(
+              currentProps.current.locale === "zh-TW"
+                ? "來源檔案已變更，請重新取得修正。"
+                : "A source file changed while preparing the edit.",
+            );
         }
         return groups;
       };
       validate();
       if (!currentProps.current.onWorkspaceEdit)
         throw new Error("Workspace editing is unavailable.");
-      await currentProps.current.onWorkspaceEdit(snapshot!, () => {
-        const groups = validate();
-        const changes: Record<string, string> = {};
-        applyingValue.current = true;
-        try {
-          for (const [model, edits] of groups) {
-            model.pushStackElement();
-            model.pushEditOperations(null, edits, () => null);
-            model.pushStackElement();
-            changes[fileFor(model)!] = model.getValue(undefined, true);
+      await currentProps.current.onWorkspaceEdit(
+        snapshot!,
+        () => {
+          const groups = validate();
+          const changes: Record<string, string> = {};
+          applyingValue.current = true;
+          try {
+            for (const [model, edits] of groups) {
+              model.pushStackElement();
+              model.pushEditOperations(null, edits, () => null);
+              model.pushStackElement();
+              changes[fileFor(model)!] = model.getValue(undefined, true);
+            }
+          } finally {
+            applyingValue.current = false;
           }
-        } finally {
-          applyingValue.current = false;
-        }
-        languageFeatures.update(undefined);
-        return changes;
-      });
-      return { isApplied: true, ariaSummary: `${edit.edits.length} occurrences renamed.` };
+          languageFeatures.update(undefined);
+          return changes;
+        },
+        context,
+      );
+      return {
+        isApplied: true,
+        ariaSummary: context?.summary ?? `${edit.edits.length} occurrences renamed.`,
+      };
     });
     const detachCompletion = completionSession?.subscribe(() => {
       const snapshot = analysisSession.getCurrent();
@@ -713,15 +771,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           .filter((item) => item.file === modelFile)
           .map((item) => ({
             severity: markerSeverity(item.severity),
-            message: `${item.code}: ${item.message}`,
-            startLineNumber: item.range.startLine,
-            startColumn: item.range.startColumn,
-            endLineNumber: item.range.endLine,
-            endColumn: item.range.endColumn,
+            code: item.code,
+            source: "Kobrixa",
+            message: diagnosticMarkerMessage(item, locale),
+            ...editorRange(item.range, modelSnapshots.source(model) ?? ""),
           })),
       );
     }
-  }, [diagnostics, file]);
+  }, [diagnostics, file, locale]);
 
   useEffect(() => {
     if (focusTarget?.file === file) reveal(focusTarget.range);

@@ -20,6 +20,8 @@ export type {
   WorkspaceWriteResult,
 } from "./workspace-files.js";
 import type { DevicePreferences } from "./device-preferences.js";
+import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
+import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
 import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
 import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
@@ -187,6 +189,7 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;
   keyboard: { updateContext(context: KeyboardContext): Promise<void> };
   workspace: {
@@ -241,6 +244,8 @@ export interface KobrixaApi {
     onEvent(listener: (event: BuildEvent) => void): () => void;
   };
   language: {
+    quickFixes(workspaceId: string, request: QuickFixRequest): Promise<QuickFixReply>;
+    cancelQuickFix(workspaceId: string, requestId: string): Promise<void>;
     completionSync(
       workspaceId: string,
       request: CompletionSyncRequest,

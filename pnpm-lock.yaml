@@ -107,6 +107,9 @@ importers:
 
   apps/web:
     dependencies:
+      "@kobrixa/compiler":
+        specifier: workspace:*
+        version: link:../../packages/compiler
       "@kobrixa/ir":
         specifier: workspace:*
         version: link:../../packages/ir

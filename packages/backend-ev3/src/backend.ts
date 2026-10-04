@@ -49,7 +49,12 @@ interface CallableFunction {
 /** CLEV3R's standard string value capacity, including its terminating NUL. */
 const STRING_BYTES = 252;
 
-function diagnostic(code: string, message: string, span?: SourceSpan): Diagnostic {
+function diagnostic(
+  code: string,
+  message: string,
+  span?: SourceSpan,
+  helpKey?: string,
+): Diagnostic {
   return {
     code,
     severity: "error",
@@ -63,6 +68,7 @@ function diagnostic(code: string, message: string, span?: SourceSpan): Diagnosti
         }
       : { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
     message,
+    ...(helpKey ? { helpKey } : {}),
   };
 }
 
@@ -1004,6 +1010,7 @@ class ObjectAssembler {
             "EV32003",
             `Unknown user function '${instruction.functionName}'.`,
             instruction.span,
+            "unknown-function",
           ),
         );
         return;
@@ -1019,6 +1026,7 @@ class ObjectAssembler {
               "EV32003",
               `Missing argument for user function '${instruction.functionName}'.`,
               instruction.span,
+              "missing-argument",
             ),
           );
           return;
@@ -1030,6 +1038,7 @@ class ObjectAssembler {
                 "EV32003",
                 `Output argument '${parameter.name}' must be a variable.`,
                 instruction.span,
+                "out-variable",
               ),
             );
             return;
@@ -1051,6 +1060,7 @@ class ObjectAssembler {
               "EV32003",
               `Function '${instruction.functionName}' requires a return target.`,
               instruction.span,
+              "missing-return-target",
             ),
           );
           return;
@@ -1190,6 +1200,7 @@ class ObjectAssembler {
             "EV32010",
             `Unsupported legacy motor call '${instruction.operation}'.`,
             instruction.span,
+            "legacy-motor-call",
           ),
         );
       }
@@ -3423,6 +3434,7 @@ class ObjectAssembler {
         "EV32010",
         `EV3 operation '${instruction.operation}' is catalogued but not lowered yet.`,
         instruction.span,
+        "operation-not-lowered",
       ),
     );
   }
@@ -3539,7 +3551,14 @@ export class EV3Backend implements CompilerBackend {
     const retained = this.options.retainFunctions ?? [];
     const diagnostics = retained
       .filter((name) => !functions.has(name.toLocaleLowerCase("en-US")))
-      .map((name) => diagnostic("EV32003", `Unknown retained function '${name}'.`));
+      .map((name) =>
+        diagnostic(
+          "EV32003",
+          `Unknown retained function '${name}'.`,
+          undefined,
+          "unknown-retained-function",
+        ),
+      );
     if (diagnostics.length) return { diagnostics };
     if (this.options.optimize === false) return this.emit(expandRecursiveCalls(ir), signal, false);
 
@@ -3550,7 +3569,12 @@ export class EV3Backend implements CompilerBackend {
     if (!functions.has(ir.program.entryFunction.toLocaleLowerCase("en-US")))
       return {
         diagnostics: [
-          diagnostic("EV32003", `Unknown entry function '${ir.program.entryFunction}'.`),
+          diagnostic(
+            "EV32003",
+            `Unknown entry function '${ir.program.entryFunction}'.`,
+            undefined,
+            "unknown-entry-function",
+          ),
         ],
       };
     const optimized = {

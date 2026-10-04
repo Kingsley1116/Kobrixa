@@ -14,7 +14,11 @@ import {
   symbolSignature,
   visibleSymbols,
 } from "@kobrixa/basic-plus/intelligence";
-import { rememberRename } from "./workspace-edits.js";
+import { rememberQuickFix, rememberRename } from "./workspace-edits.js";
+import { QUICK_FIX_CODES, sameDiagnostic, type QuickFixReply } from "../../shared/quick-fixes.js";
+import type { Diagnostic } from "@kobrixa/compiler";
+import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
+import { quickFixTitle } from "./diagnostic-presentation.js";
 import type { EditorAnalysis } from "./editor.js";
 import type { SourceRange } from "@kobrixa/compiler";
 
@@ -30,6 +34,12 @@ export function editorRange(range: SourceRange, source: string): monaco.Range {
   );
 }
 interface FeatureHost {
+  locale?(): DiagnosticLocale;
+  quickFixes?(
+    snapshot: EditorAnalysis,
+    diagnostic: Diagnostic,
+    signal: AbortSignal,
+  ): Promise<QuickFixReply>;
   fileFor(model: monaco.editor.ITextModel): string | undefined;
   ensureModel(file: string, content: string): monaco.editor.ITextModel;
   canEdit(): boolean;
@@ -47,10 +57,12 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
   private readonly changed = new Set<() => void>();
   private readonly registrations: monaco.IDisposable[] = [];
   private disposed = false;
+  private readonly pendingFixes = new Set<AbortController>();
   private pendingCompletion:
     { model: monaco.editor.ITextModel; version: number; position: monaco.Position } | undefined;
   constructor(private readonly host: FeatureHost) {}
   update(snapshot: EditorAnalysis | undefined): void {
+    if (this.snapshot !== snapshot) for (const controller of this.pendingFixes) controller.abort();
     this.snapshot = snapshot;
     for (const listener of this.changed) listener();
     const pending = this.pendingCompletion;
@@ -154,7 +166,107 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
         resolveRenameLocation: (m, p, t) => this.renameLocation(m, p, t),
         provideRenameEdits: (m, p, n, t) => this.rename(m, p, n, t),
       }),
+      monaco.languages.registerCodeActionProvider(
+        selector,
+        {
+          provideCodeActions: async (model, range, context, token) => {
+            if (context.only && !"quickfix".startsWith(context.only))
+              return { actions: [], dispose() {} };
+            const current = await this.ready(model, token);
+            if (!current || token.isCancellationRequested) return { actions: [], dispose() {} };
+            const actions: monaco.languages.CodeAction[] = [];
+            const seen = new Set<string>();
+            for (const diagnostic of current.snapshot.analysis.diagnostics) {
+              if (diagnostic.file !== current.file || !QUICK_FIX_CODES.has(diagnostic.code))
+                continue;
+              const source = current.snapshot.analysis.index.sources[current.file] ?? "";
+              const marker = model.validateRange(editorRange(diagnostic.range, source));
+              if (
+                marker.endLineNumber < range.startLineNumber ||
+                marker.startLineNumber > range.endLineNumber ||
+                (marker.endLineNumber === range.startLineNumber &&
+                  marker.endColumn < range.startColumn) ||
+                (marker.startLineNumber === range.endLineNumber &&
+                  marker.startColumn > range.endColumn)
+              )
+                continue;
+              for (const action of await this.quickFixes(model, diagnostic, token)) {
+                const key = JSON.stringify(action.edit?.edits);
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  actions.push(action);
+                }
+              }
+            }
+            return { actions, dispose() {} };
+          },
+        },
+        { providedCodeActionKinds: ["quickfix"] },
+      ),
     );
+  }
+  async quickFixes(
+    model: monaco.editor.ITextModel,
+    diagnostic: Diagnostic,
+    token?: monaco.CancellationToken,
+    signal?: AbortSignal,
+  ): Promise<monaco.languages.CodeAction[]> {
+    const current = this.current(model);
+    if (
+      !current ||
+      !this.host.quickFixes ||
+      !this.host.canEdit() ||
+      token?.isCancellationRequested ||
+      signal?.aborted ||
+      diagnostic.file !== current.file ||
+      !QUICK_FIX_CODES.has(diagnostic.code) ||
+      !current.snapshot.analysis.diagnostics.some(
+        (d) => d.file === diagnostic.file && sameDiagnostic(d, diagnostic),
+      )
+    )
+      return [];
+    const version = model.getVersionId();
+    const controller = new AbortController();
+    this.pendingFixes.add(controller);
+    const abort = () => controller.abort();
+    const cancellation = token?.onCancellationRequested(abort);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (token?.isCancellationRequested || signal?.aborted) abort();
+    let result: QuickFixReply;
+    try {
+      result = await this.host.quickFixes(current.snapshot, diagnostic, controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) return [];
+      throw error;
+    } finally {
+      cancellation?.dispose();
+      signal?.removeEventListener("abort", abort);
+      this.pendingFixes.delete(controller);
+    }
+    if (
+      result.kind !== "result" ||
+      controller.signal.aborted ||
+      token?.isCancellationRequested ||
+      this.disposed ||
+      model.isDisposed() ||
+      version !== model.getVersionId() ||
+      !this.host.canEdit() ||
+      this.current(model)?.snapshot !== current.snapshot
+    )
+      return [];
+    const source = current.snapshot.analysis.index.sources[current.file]!;
+    return result.fixes.map((fix) => {
+      const title = quickFixTitle(fix.titleKey, this.host.locale?.() ?? "en");
+      const edit: monaco.languages.WorkspaceEdit = {
+        edits: fix.edits.map((item) => ({
+          resource: model.uri,
+          versionId: version,
+          textEdit: { range: editorRange(item.range, source), text: item.newText },
+        })),
+      };
+      rememberQuickFix(edit, current.snapshot, current.file, title);
+      return { title, kind: "quickfix", edit };
+    });
   }
   async completions(
     model: monaco.editor.ITextModel,

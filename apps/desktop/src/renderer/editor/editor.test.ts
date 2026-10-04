@@ -37,6 +37,14 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("monaco-editor", () => ({
+  Range: class {
+    constructor(
+      public startLineNumber: number,
+      public startColumn: number,
+      public endLineNumber: number,
+      public endColumn: number,
+    ) {}
+  },
   Uri: { from: vi.fn((value) => value) },
   MarkerSeverity: { Error: 8, Warning: 4, Info: 2 },
   languages: {
@@ -50,6 +58,7 @@ vi.mock("monaco-editor", () => ({
     registerDefinitionProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerReferenceProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerRenameProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerCodeActionProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerDocumentFormattingEditProvider: vi.fn(),
     registerDocumentRangeFormattingEditProvider: vi.fn(),
   },
