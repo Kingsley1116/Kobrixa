@@ -1,6 +1,6 @@
 {
   "name": "@kobrixa/web",
-  "version": "0.1.0-v1-candidate.5",
+  "version": "0.1.0-v1-candidate.6",
   "private": true,
   "type": "module",
   "scripts": {
