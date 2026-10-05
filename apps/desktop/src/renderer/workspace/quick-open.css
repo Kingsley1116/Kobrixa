@@ -1,17 +1,31 @@
 section.modal-card.quick-open-dialog {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: min(640px, 100%);
+  max-height: calc(100dvh - 48px);
   padding: 20px;
   overflow: hidden;
 }
 .quick-open-dialog h2 {
+  flex: 0 0 auto;
   margin: 0 40px 16px 0;
-  font-size: calc(17px * var(--ui-scale));
+  font-size: calc(18px * var(--ui-scale));
+  font-weight: 700;
 }
 .quick-open-content {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+.quick-open-content > input {
+  flex: 0 0 auto;
+  font-size: var(--font-ui);
+  font-weight: 500;
+}
+.quick-open-content > input::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 .quick-open-close {
   position: absolute;
@@ -35,18 +49,20 @@ section.modal-card.quick-open-dialog {
 }
 .quick-open-summary {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 4px 12px;
   padding: 12px 0 8px;
   color: var(--muted);
   font-size: var(--font-small);
+  line-height: 1.5;
 }
 .quick-open-content > ul {
   list-style: none;
   padding: 0;
   margin: 0 -8px;
-  max-height: min(390px, calc(100dvh - 280px));
+  max-height: 390px;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -80,6 +96,11 @@ section.modal-card.quick-open-dialog {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.quick-open-name {
+  font-size: var(--font-ui);
+  font-weight: 600;
+  line-height: 1.5;
+}
 .quick-open-directory,
 .quick-open-badge {
   color: var(--muted);
@@ -98,18 +119,17 @@ section.modal-card.quick-open-dialog {
   color: var(--muted);
 }
 .quick-open-help {
+  flex: 0 0 auto;
   margin: 12px 0 0;
   padding-top: 12px;
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: var(--font-small);
+  line-height: 1.5;
 }
 @media (max-width: 480px) {
   section.modal-card.quick-open-dialog {
     padding: 16px;
-  }
-  .quick-open-dialog input {
-    font-size: var(--font-small);
   }
   .quick-open-content li {
     gap: 8px;

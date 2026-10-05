@@ -1,10 +1,11 @@
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useSyncExternalStore } from "react";
 import * as monaco from "monaco-editor";
 import type { LocalHistoryEntry } from "../../shared/workspace-files.js";
 import { DEFAULT_FILE_PREFERENCES, type FilePreferences } from "../../shared/file-preferences.js";
 import { Dialog, DialogActions } from "../components/dialog.js";
 import type { Locale } from "../i18n/copy.js";
 import { restoreEditorHoverDelegate } from "../editor/monaco-services.js";
+import { settingsStore } from "../settings/settings-state.js";
 import "./file-review-dialog.css";
 
 const copy = {
@@ -115,6 +116,7 @@ export function FileDiff({
   modifiedLabel: string;
   resolvedTheme: "dark" | "light";
 }): React.JSX.Element {
+  const { values } = useSyncExternalStore(settingsStore.subscribe, settingsStore.getSnapshot);
   const container = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneDiffEditor | undefined>(undefined);
   const models = useRef<monaco.editor.IDiffEditorModel | undefined>(undefined);
@@ -141,7 +143,6 @@ export function FileDiff({
       renderOverviewRuler: false,
       scrollBeyondLastLine: false,
       minimap: { enabled: false },
-      fontSize: 13,
       lineNumbersMinChars: 3,
       wordWrap: "on",
       contextmenu: false,
@@ -162,6 +163,12 @@ export function FileDiff({
       pair.modified.dispose();
     };
   }, [file]);
+  useEffect(() => {
+    editor.current?.updateOptions({
+      fontSize: values.codeSize,
+      lineHeight: Math.round((values.codeSize * 25) / 16),
+    });
+  }, [file, values.codeSize]);
   useEffect(() => {
     models.current?.original.setValue(original);
     models.current?.modified.setValue(modified);

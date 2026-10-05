@@ -1,15 +1,18 @@
 .files-navigation {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 3px;
   padding: 6px;
   border-bottom: 1px solid var(--border);
-  min-height: 38px;
+  min-height: calc(40px * var(--ui-scale));
 }
 .files-navigation button {
   padding: 5px 7px;
   border-radius: 4px;
-  font-size: var(--font-small);
+  font-size: var(--font-ui);
+  font-weight: 600;
+  white-space: nowrap;
   color: var(--muted);
 }
 .files-navigation button[aria-pressed="true"] {
@@ -18,19 +21,23 @@
 }
 .files-navigation .quick-open-trigger {
   margin-left: auto;
+  flex: 0 0 auto;
 }
 .files-navigation button svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: calc(18px * var(--ui-scale));
+  height: calc(18px * var(--ui-scale));
 }
 .workspace-search {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   flex: 1;
-  font-size: var(--font-small);
-  overflow: hidden;
+  font-size: var(--font-ui);
+  line-height: 1.5;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .workspace-search[hidden] {
   display: none;
@@ -38,11 +45,14 @@
 .workspace-search-fields {
   padding: 10px;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 7px;
 }
 .workspace-search-fields label {
-  color: var(--muted);
+  color: var(--text);
+  font-size: var(--font-small);
+  font-weight: 600;
 }
 .workspace-search-fields input {
   width: 100%;
@@ -54,20 +64,27 @@
   color: var(--text);
   font: inherit;
 }
+.workspace-search-fields input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
 .workspace-search-fields button {
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
   text-align: center;
   font: inherit;
+  font-weight: 600;
 }
 .workspace-search-options {
   display: flex;
   gap: 5px;
 }
 .workspace-search-options button {
-  min-width: 30px;
+  min-width: calc(32px * var(--ui-scale));
+  min-height: calc(28px * var(--ui-scale));
   padding: 3px 7px;
+  font-size: var(--font-small);
 }
 .workspace-search-options button:last-child {
   margin-left: auto;
@@ -85,20 +102,24 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
+  font-weight: 600;
 }
 .workspace-search-scope span {
   display: block;
   white-space: normal;
   color: var(--muted);
-  font-size: 0.9em;
+  font-size: var(--font-small);
+  font-weight: 500;
   margin-top: 3px;
 }
 .workspace-search-status,
 .workspace-search-notice,
 .workspace-search-error {
   margin: 0;
+  flex: 0 0 auto;
   padding: 8px 10px;
   overflow-wrap: anywhere;
+  font-size: var(--font-small);
 }
 .workspace-search-status {
   color: var(--muted);
@@ -120,9 +141,8 @@
   padding-left: 16px;
 }
 .workspace-search-results {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
+  flex: 1 0 auto;
+  min-width: 0;
   padding-bottom: 10px;
 }
 .workspace-search-results summary {
@@ -130,6 +150,7 @@
   cursor: pointer;
   color: var(--text);
   white-space: nowrap;
+  font-weight: 600;
 }
 .workspace-search-results summary > span {
   display: inline-block;
@@ -141,6 +162,8 @@
 .workspace-search-results summary small {
   color: var(--muted);
   margin-left: 8px;
+  font-size: var(--font-small);
+  font-weight: 500;
 }
 .workspace-search-results ul {
   list-style: none;
@@ -153,19 +176,24 @@
   align-items: baseline;
   gap: 8px;
   width: 100%;
+  min-height: calc(30px * var(--ui-scale));
   padding: 5px 10px;
   text-align: left;
   font: inherit;
+  border-radius: 0;
 }
 .workspace-search-line {
   flex: 0 0 5ch;
   text-align: right;
   color: var(--muted);
+  font-size: var(--font-small);
+  font-variant-numeric: tabular-nums;
 }
 .workspace-search-results mark {
   background: var(--selection);
   color: var(--accent);
   border-radius: 2px;
+  font-weight: 700;
 }
 .workspace-search-results code {
   min-width: 0;
@@ -173,27 +201,32 @@
   text-overflow: ellipsis;
   white-space: pre;
   color: var(--text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 1em;
+  font-weight: 500;
 }
 .workspace-search-results button:hover,
 .workspace-search-results summary:hover {
   background: var(--hover);
 }
-.search-replace-dialog {
-  width: min(1000px, calc(100vw - 40px));
+section.modal-card.search-replace-dialog {
+  width: min(1080px, 100%);
 }
 .search-replace-dialog > header > p {
+  margin: 0;
   color: var(--muted);
   font-size: var(--font-small);
+  line-height: 1.5;
 }
 .search-replace-content {
   display: flex;
-  min-height: 0;
-  height: min(50vh, 430px);
+  flex: 1 1 auto;
+  min-height: 180px;
+  overflow: hidden;
   border: 1px solid var(--border);
 }
 .search-replace-content > nav {
-  width: 190px;
+  flex: 0 0 clamp(150px, 22%, 220px);
   min-width: 100px;
   overflow-y: auto;
   border-right: 1px solid var(--border);
@@ -204,7 +237,8 @@
   gap: 8px;
   padding: 10px;
   text-align: left;
-  font-size: var(--font-small);
+  font-size: var(--font-ui);
+  font-weight: 600;
 }
 .search-replace-content > nav > button > span {
   overflow: hidden;
@@ -214,6 +248,7 @@
 }
 .search-replace-content > nav > button > small {
   color: var(--muted);
+  font-size: var(--font-small);
 }
 .search-replace-content > nav > button[aria-pressed="true"] {
   background: var(--selection);
@@ -223,11 +258,24 @@
   width: 0;
   min-width: 0;
 }
+@media (max-height: 740px) {
+  .workspace-search-fields {
+    gap: 5px;
+    padding-block: 8px;
+  }
+  .workspace-search-fields input {
+    padding-block: 5px;
+  }
+  .workspace-search-scope {
+    display: none;
+  }
+}
 @media (max-width: 800px) {
   .search-replace-content {
     flex-direction: column;
   }
   .search-replace-content > nav {
+    flex: 0 0 auto;
     width: 100%;
     max-height: 100px;
     flex-shrink: 0;

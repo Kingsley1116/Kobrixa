@@ -27,8 +27,9 @@
   font-synthesis: none;
   --ui-scale: 1;
   --font-ui: calc(14px * var(--ui-scale));
-  --font-small: calc(12px * var(--ui-scale));
+  --font-small: calc(13px * var(--ui-scale));
   font-size: var(--font-ui);
+  font-weight: 500;
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -353,22 +354,21 @@ button.danger:hover:not(:disabled) {
   white-space: nowrap;
 }
 .tree-toolbar {
-  position: absolute;
-  z-index: 2;
-  top: 5px;
-  right: 7px;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  height: 25px;
+  min-height: calc(32px * var(--ui-scale));
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
 }
 .tree-toolbar-actions {
   display: flex;
   gap: 1px;
 }
 .tree-toolbar-actions button {
-  min-width: 24px;
-  height: 24px;
+  min-width: calc(28px * var(--ui-scale));
+  height: calc(28px * var(--ui-scale));
   padding: 0 4px;
   border: 0;
   border-radius: 4px;
