@@ -20,6 +20,7 @@ export type {
   WorkspaceWriteResult,
 } from "./workspace-files.js";
 import type { DevicePreferences } from "./device-preferences.js";
+import type { MonitorUpdate, SensorLabApi } from "./sensor-lab.js";
 import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
 import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
@@ -189,6 +190,7 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  sensorLab: SensorLabApi;
   documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;
   keyboard: { updateContext(context: KeyboardContext): Promise<void> };
@@ -259,6 +261,8 @@ export interface KobrixaApi {
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {
+    watchMonitor(sessionId: string, enabled: boolean): Promise<MonitorUpdate>;
+    onMonitor(listener: (update: MonitorUpdate) => void): () => void;
     monitor(sessionId: string): Promise<MonitorResult<DeviceMonitorSnapshot>>;
     inputModes(
       sessionId: string,

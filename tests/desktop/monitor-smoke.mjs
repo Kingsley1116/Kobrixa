@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const descriptor = {
+export const monitorDescriptor = {
   id: "monitor-usb",
   name: "Monitor EV3",
   transport: "usb",
-  serial: "MONITOR-SMOKE",
+  serialNumber: "MONITOR-SMOKE",
 };
 const input = (port, patch) => ({
   port,
@@ -60,8 +60,9 @@ const snapshot = () => ({
 
 // All state and controls stay in the smoke main process, outside the shipped API.
 export function createMonitorFixture(send) {
+  const descriptor = monitorDescriptor;
   let current = snapshot();
-  let sessionId = "monitor-session-1";
+  let sessionId = "00000000-0000-4000-8000-000000000101";
   let nextReply;
   let calls = 0;
   let active = 0;
@@ -153,7 +154,7 @@ export function createMonitorFixture(send) {
     recover() {
       const previousSessionId = sessionId;
       send({ type: "usb-recovery", state: "waiting", previousSessionId, descriptor });
-      sessionId = "monitor-session-2";
+      sessionId = "00000000-0000-4000-8000-000000000102";
       return () =>
         send({
           type: "usb-recovery",
@@ -235,11 +236,14 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
 
   await js("document.querySelector('[data-testid=\"monitor-load-modes-0\"]').click()");
   await until('Boolean(document.querySelector("#monitor-mode-0"))');
-  await js(
-    'document.querySelector("#monitor-mode-0").value="2";document.querySelector("#monitor-mode-0").dispatchEvent(new Event("change",{bubbles:true}))',
-  );
+  await js('document.querySelector("#monitor-mode-0").focus()');
+  await key("ArrowDown");
+  await until('Boolean(document.querySelector(".picker-popup"))');
+  await key("End");
+  await key("Enter");
+  await until('!document.querySelector(".picker-popup")');
   await until(`(${text("monitor-input-0")}).includes("COL-COLOR")`);
-  assert.deepEqual(monitor.stats().changes, [["monitor-session-1", 0, 29, 2]]);
+  assert.deepEqual(monitor.stats().changes, [["00000000-0000-4000-8000-000000000101", 0, 29, 2]]);
   for (const program of ["running", "unknown"]) {
     monitor.patch((sample) => {
       sample.program.status = program;
@@ -345,7 +349,7 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
   releaseOld();
   await until(`(${text("monitor-input-0")}).includes("39")`);
   assert.doesNotMatch(await js(text("monitor-input-0")), /888/);
-  assert.equal(monitor.stats().requests.at(-1), "monitor-session-2");
+  assert.equal(monitor.stats().requests.at(-1), "00000000-0000-4000-8000-000000000102");
   assert.equal(await js('document.querySelector("#monitor-mode-0")'), null);
   assert.equal(
     await js("Boolean(document.querySelector('[data-testid=\"monitor-load-modes-0\"]'))"),

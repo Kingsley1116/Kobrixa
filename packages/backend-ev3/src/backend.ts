@@ -3136,6 +3136,169 @@ class ObjectAssembler {
         this.retainCallLocalArray(lv(handle), target);
         return;
       }
+      case "Sensor.ReadSIValue": {
+        if (!target) break;
+        const port = instruction.args[0];
+        const index = instruction.args[1];
+        if (!port || !index) break;
+        for (const [value, minimum, maximum] of [
+          [port, 1, 16],
+          [index, 0, 7],
+        ] as const) {
+          if (
+            (value.kind === "integer" || value.kind === "number") &&
+            (!Number.isInteger(value.value) || value.value < minimum || value.value > maximum)
+          ) {
+            this.diagnostics.push(
+              diagnostic(
+                "EV32031",
+                "Sensor.ReadSIValue requires a whole-number port from 1 through 16 and index from 0 through 7.",
+                instruction.span,
+              ),
+            );
+            return;
+          }
+        }
+        // Validate the original numeric values before sensorAddress narrows a port
+        // to DATA8. In particular, a fractional/large port must not alias another brick.
+        const done = this.newLabel("sensor-si-done");
+        const finished = this.newLabel("sensor-si-finished");
+        const valid = this.scratch(1);
+        for (const [value, minimum, maximum] of [
+          [port, 1, 16],
+          [index, 0, 7],
+        ] as const) {
+          const input = this.floatParameter(value);
+          const integer = this.integerParameter(value);
+          if (!input || !integer) return;
+          const roundTrip = this.scratch(4);
+          this.bytes.push(OP.MOVE_32_F, ...integer, ...lv(roundTrip));
+          this.bytes.push(OP.CP_EQ_F, ...input, ...lv(roundTrip), ...lv(valid));
+          this.bytes.push(OP.JR_FALSE, ...lv(valid));
+          this.addPatch(done);
+          this.bytes.push(OP.CP_GTEQ_F, ...input, ...lcf(minimum), ...lv(valid));
+          this.bytes.push(OP.JR_FALSE, ...lv(valid));
+          this.addPatch(done);
+          this.bytes.push(OP.CP_LTEQ_F, ...input, ...lcf(maximum), ...lv(valid));
+          this.bytes.push(OP.JR_FALSE, ...lv(valid));
+          this.addPatch(done);
+        }
+        const sensor = this.sensorAddress(port);
+        const requested = this.integerParameter(index);
+        if (!sensor || !requested) return;
+        const type = this.scratch(1),
+          mode = this.scratch(1);
+        const finalType = this.scratch(1),
+          finalMode = this.scratch(1);
+        const count = this.scratch(1),
+          format = this.scratch(1);
+        const modes = this.scratch(1),
+          views = this.scratch(1);
+        const busy = this.scratch(1),
+          countNumber = this.scratch(4);
+        const values = this.scratch(32),
+          offset = this.scratch(4),
+          result = this.scratch(4);
+        this.bytes.push(OP.INPUT_TEST, ...sensor.layer, ...sensor.port, ...lv(busy));
+        this.bytes.push(OP.JR_TRUE, ...lv(busy));
+        this.addPatch(done);
+        this.bytes.push(
+          OP.INPUT_DEVICE,
+          ...lc(INPUT_DEVICE.GET_TYPEMODE),
+          ...sensor.layer,
+          ...sensor.port,
+          ...lv(type),
+          ...lv(mode),
+        );
+        // Empty/error/unknown type sentinels are not usable SI sources.
+        const typeNumber = this.scratch(4),
+          modeNumber = this.scratch(4);
+        this.bytes.push(OP.MOVE_8_32, ...lv(type), ...lv(typeNumber));
+        this.bytes.push(OP.MOVE_8_32, ...lv(mode), ...lv(modeNumber));
+        for (const [value, minimum, maximum] of [
+          [typeNumber, 1, 124],
+          [modeNumber, 0, 7],
+        ]) {
+          this.bytes.push(OP.CP_GTEQ_32, ...lv(value!), ...lc(minimum!), ...lv(valid));
+          this.bytes.push(OP.JR_FALSE, ...lv(valid));
+          this.addPatch(done);
+          this.bytes.push(OP.CP_LTEQ_32, ...lv(value!), ...lc(maximum!), ...lv(valid));
+          this.bytes.push(OP.JR_FALSE, ...lv(valid));
+          this.addPatch(done);
+        }
+        this.bytes.push(
+          OP.INPUT_DEVICE,
+          ...lc(INPUT_DEVICE.GET_FORMAT),
+          ...sensor.layer,
+          ...sensor.port,
+          ...lv(count),
+          ...lv(format),
+          ...lv(modes),
+          ...lv(views),
+        );
+        this.bytes.push(OP.MOVE_8_32, ...lv(count), ...lv(countNumber));
+        this.bytes.push(OP.CP_LT_32, ...requested, ...lv(countNumber), ...lv(valid));
+        this.bytes.push(OP.JR_FALSE, ...lv(valid));
+        this.addPatch(done);
+        // The same non-blocking SI format as the desktop monitor: no READY opcode
+        // and mode -1, so reading never takes ownership of or reconfigures a sensor.
+        for (let channel = 0; channel < 8; channel++)
+          this.bytes.push(OP.MOVE_F_F, ...lcf(NaN), ...lv(values + channel * 4));
+        this.bytes.push(
+          OP.INPUT_READ_EXT,
+          ...sensor.layer,
+          ...sensor.port,
+          ...lc(0),
+          ...lc(-1),
+          ...lc(19),
+          ...lc(8),
+        );
+        for (let channel = 0; channel < 8; channel++) this.bytes.push(...lv(values + channel * 4));
+        this.bytes.push(
+          OP.INPUT_DEVICE,
+          ...lc(INPUT_DEVICE.GET_TYPEMODE),
+          ...sensor.layer,
+          ...sensor.port,
+          ...lv(finalType),
+          ...lv(finalMode),
+        );
+        for (const [before, after] of [
+          [type, finalType],
+          [mode, finalMode],
+        ]) {
+          this.bytes.push(OP.CP_EQ_8, ...lv(before!), ...lv(after!), ...lv(valid));
+          this.bytes.push(OP.JR_FALSE, ...lv(valid));
+          this.addPatch(done);
+        }
+        this.bytes.push(OP.INPUT_TEST, ...sensor.layer, ...sensor.port, ...lv(busy));
+        this.bytes.push(OP.JR_TRUE, ...lv(busy));
+        this.addPatch(done);
+        this.bytes.push(OP.MUL_32, ...requested, ...lc(4), ...lv(offset));
+        this.bytes.push(OP.ADD_32, ...lv(offset), ...lc(values), ...lv(offset));
+        this.bytes.push(
+          OP.MEMORY_READ,
+          ...lc(1),
+          ...lc(this.objectId),
+          ...lv(offset),
+          ...lc(4),
+          ...lv(result),
+        );
+        // NaN and infinities remain missing; a valid physical zero stays zero.
+        const maximumFloat = 3.4028234663852886e38;
+        this.bytes.push(OP.CP_GTEQ_F, ...lv(result), ...lcf(-maximumFloat), ...lv(valid));
+        this.bytes.push(OP.JR_FALSE, ...lv(valid));
+        this.addPatch(done);
+        this.bytes.push(OP.CP_LTEQ_F, ...lv(result), ...lcf(maximumFloat), ...lv(valid));
+        this.bytes.push(OP.JR_FALSE, ...lv(valid));
+        this.addPatch(done);
+        this.bytes.push(OP.MOVE_F_F, ...lv(result), ...this.location(target));
+        this.bytes.push(OP.JR);
+        this.addPatch(finished);
+        this.markLabel(done);
+        this.bytes.push(OP.MOVE_F_F, ...lcf(NaN), ...this.location(target));
+        this.markLabel(finished);
+        return;
+      }
       case "Sensor.ReadRawValue": {
         if (!target) break;
         const sensor = this.sensorAddress(instruction.args[0]!);

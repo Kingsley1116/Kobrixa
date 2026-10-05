@@ -85,6 +85,16 @@ function isNegativeConstant(expression: Expression): boolean {
   );
 }
 
+function numericLiteral(expression: Expression): number | undefined {
+  if (expression.kind === "literal" && typeof expression.value === "number")
+    return expression.value;
+  if (expression.kind === "unary" && expression.operator === "-") {
+    const value = numericLiteral(expression.value);
+    return value === undefined ? undefined : -value;
+  }
+  return undefined;
+}
+
 function toDiagnostic(
   code: string,
   message: string,
@@ -600,6 +610,25 @@ class FunctionBuilder {
       return this.lowerExpression(argument, expected);
     });
     if (operation) {
+      if (operation.name === "Sensor.ReadSIValue") {
+        expression.args.slice(0, 2).forEach((argument, index) => {
+          const value = numericLiteral(argument);
+          if (
+            value !== undefined &&
+            (!Number.isInteger(value) ||
+              value < (index === 0 ? 1 : 0) ||
+              value > (index === 0 ? 16 : 7))
+          ) {
+            this.diagnostics.push(
+              toDiagnostic(
+                "EV32031",
+                "Sensor.ReadSIValue requires a whole-number port from 1 through 16 and index from 0 through 7.",
+                argument.span,
+              ),
+            );
+          }
+        });
+      }
       if (operation.parameters.length !== args.length) {
         this.diagnostics.push(
           toDiagnostic(

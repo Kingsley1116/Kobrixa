@@ -1,4 +1,5 @@
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { TabList } from "../components/tab-list.js";
 import type { Locale, Copy } from "../i18n/copy.js";
 import type { ExecutionState } from "../execution/execution.js";
 export type ToolTab = "connection" | "monitor" | "files" | "activity";
@@ -41,7 +42,6 @@ export function ToolsPanel({
 }): React.JSX.Element {
   const t = labels[locale],
     tabs: ToolTab[] = ["connection", "monitor", "files", "activity"];
-  const bar = useRef<HTMLDivElement>(null);
   return (
     <>
       <div className="tools-heading">
@@ -50,41 +50,18 @@ export function ToolsPanel({
           ×
         </button>
       </div>
-      <div
+      <TabList
         className="tools-tabs"
-        data-active-tab={tab}
-        role="tablist"
-        aria-label={t.tools}
-        ref={bar}
-        onKeyDown={(event) => {
-          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-          event.preventDefault();
-          const index =
-            event.key === "Home"
-              ? 0
-              : event.key === "End"
-                ? tabs.length - 1
-                : (tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) %
-                  tabs.length;
-          onTab(tabs[index]!);
-          bar.current?.querySelectorAll<HTMLButtonElement>("button")[index]?.focus();
-        }}
-      >
-        {tabs.map((value) => (
-          <button
-            key={value}
-            id={`tool-tab-${value}`}
-            role="tab"
-            title={t[value]}
-            aria-selected={tab === value}
-            aria-controls={`tool-panel-${value}`}
-            tabIndex={tab === value ? 0 : -1}
-            onClick={() => onTab(value)}
-          >
-            {t[value]}
-          </button>
-        ))}
-      </div>
+        label={t.tools}
+        value={tab}
+        onChange={onTab}
+        tabs={tabs.map((value) => ({
+          value,
+          label: t[value],
+          id: `tool-tab-${value}`,
+          panelId: `tool-panel-${value}`,
+        }))}
+      />
       {tabs.map((value) => (
         <div
           className={`tool-content ${value === "files" ? "files-content" : ""}`}

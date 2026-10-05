@@ -449,6 +449,14 @@ const operationParameterDescriptions: Record<string, Localized> = {
     "要取出的原始資料通道索引，從 0 起算。",
     "Zero-based raw-data channel index to return.",
   ),
+  "Sensor.ReadSIValue.port": action(
+    "感測器埠整數 1–16；本機為 1–4，其餘依序為串接 EV3 的輸入埠。",
+    "Whole-number sensor port 1–16: 1–4 on the local brick, then the chained bricks' input ports.",
+  ),
+  "Sensor.ReadSIValue.index": action(
+    "目前模式的資料通道索引，從 0 起算，範圍 0–7；不存在的通道回傳 NaN。",
+    "Zero-based data channel in the current mode, from 0 through 7; absent channels return NaN.",
+  ),
   "Sensor.SetMode.mode": action(
     "要切換至的感測器模式代碼；切換後應等待感測器完成設定。",
     "Sensor mode code to select; wait for the sensor after changing it.",
@@ -1110,6 +1118,7 @@ function parameterInfo(
     "Sensor.IsBusy": ["port"],
     "Sensor.ReadRaw": ["port", "values"],
     "Sensor.ReadRawValue": ["port", "index"],
+    "Sensor.ReadSIValue": ["port", "index"],
     "Sensor.SetMode": ["port", "mode"],
     "Sensor.Wait": ["port"],
     "Sensor.CommunicateI2C": ["port", "address", "writebytes", "readbytes", "writedata"],
@@ -1349,6 +1358,10 @@ const undocumentedParameters = apiEntries.flatMap((operation) =>
 if (undocumentedParameters.length)
   throw new Error(`Basic Plus parameters need names: ${undocumentedParameters.join(", ")}`);
 const exactDescriptions: Record<string, Localized> = {
+  "Sensor.ReadSIValue": action(
+    "讀取目前模式的 SI 浮點值，單位與 EV3 監測面板相同（例如 cm）。不切換模式、不等待感測器。請先設定所需模式並等待就緒。未就緒、無資料、讀取途中模式／類型改變或無效的變數參數會回傳 NaN；可用 value <> value 判斷。無效常數參數會產生編譯錯誤。",
+    "Reads a floating-point SI value in the current mode, in the same units as the EV3 monitor (for example cm). Does not change modes or wait for readiness. Select the required mode and wait first. Returns NaN for unavailable data, busy sensors, type/mode changes during the read, or invalid variable arguments; test with value <> value. Invalid constant arguments produce a compile error.",
+  ),
   "LCD.Clear": action("清除 LCD 的繪圖緩衝區", "clears the LCD drawing buffer"),
   "LCD.Pixel": action(
     "在指定座標設定一個 LCD 像素",

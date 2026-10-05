@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { MonitorInput, MonitorOutput } from "@kobrixa/device";
 import type { Locale } from "../i18n/copy.js";
+import { Picker } from "../components/picker.js";
 import type { MonitorController, MonitorState } from "./monitor-controller.js";
 
 const labels = {
@@ -296,32 +297,36 @@ function InputCard({
             </span>
             {input.switchable ? (
               modes ? (
-                <label className="monitor-mode-select" htmlFor={`monitor-mode-${input.port}`}>
-                  <span>{t.change}</span>
-                  <select
+                <div className="monitor-mode-select">
+                  <label htmlFor={`monitor-mode-${input.port}`}>{t.change}</label>
+                  <Picker
                     id={`monitor-mode-${input.port}`}
-                    data-testid={`monitor-mode-${input.port}`}
-                    aria-label={title}
+                    label={title}
+                    locale={locale}
                     disabled={disabled || !modes.modes.length}
                     title={disabled ? reason : title}
                     value={input.mode}
-                    onChange={(event) => {
-                      void controller.setMode(input.port, Number(event.currentTarget.value));
+                    onChange={(mode) => {
+                      void controller.setMode(input.port, mode);
                     }}
-                  >
-                    {!modes.modes.some((value) => value.mode === input.mode) && (
-                      <option value={input.mode} disabled>
-                        {input.modeName || input.mode} ({t.current})
-                      </option>
-                    )}
-                    {modes.modes.map((value) => (
-                      <option key={value.mode} value={value.mode}>
-                        {value.name || value.mode}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      ...(!modes.modes.some((value) => value.mode === input.mode)
+                        ? [
+                            {
+                              value: input.mode,
+                              label: `${input.modeName || input.mode} (${t.current})`,
+                              disabled: true,
+                            },
+                          ]
+                        : []),
+                      ...modes.modes.map((value) => ({
+                        value: value.mode,
+                        label: value.name || String(value.mode),
+                      })),
+                    ]}
+                  />
                   {!modes.modes.length && <span>{t.noModes}</span>}
-                </label>
+                </div>
               ) : (
                 <button
                   className="monitor-mode-button"

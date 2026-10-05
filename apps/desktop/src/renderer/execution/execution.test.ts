@@ -37,6 +37,7 @@ function setup() {
   const calls: string[] = [];
   const api = {
     updates: {} as KobrixaApi["updates"],
+    sensorLab: {} as KobrixaApi["sensorLab"],
     keyboard: { updateContext: vi.fn(async () => undefined) },
     build: {
       onEvent: vi.fn((listener) => {
@@ -54,6 +55,8 @@ function setup() {
       artifacts: vi.fn(),
     },
     device: {
+      watchMonitor: vi.fn(),
+      onMonitor: () => () => {},
       monitor: vi.fn(),
       inputModes: vi.fn(),
       setInputMode: vi.fn(),

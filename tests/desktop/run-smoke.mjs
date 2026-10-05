@@ -58,6 +58,8 @@ try {
   await build({
     entryPoints: [
       path.join(root, "apps/desktop/src/main/window/keyboard.ts"),
+      path.join(root, "apps/desktop/src/main/device/monitor-service.ts"),
+      path.join(root, "apps/desktop/src/main/sensor-lab/service.ts"),
       path.join(root, "apps/desktop/src/shared/workspace-search.ts"),
       path.join(root, "apps/desktop/src/main/language/language.ts"),
       path.join(root, "apps/desktop/src/main/language/language-worker.ts"),

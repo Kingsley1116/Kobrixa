@@ -3,7 +3,8 @@ import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
-import { checkMonitor, createMonitorFixture } from "./monitor-smoke.mjs";
+import { checkSensorLab } from "./sensor-lab-smoke.mjs";
+import { checkMonitor, createMonitorFixture, monitorDescriptor } from "./monitor-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
 import { checkDiagnostics, createDiagnosticsFixture } from "./diagnostics-smoke.mjs";
@@ -21,6 +22,10 @@ const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
 );
 const { LanguageService } = await import(pathToFileURL(path.join(temporary, "language.cjs")).href);
+const { MonitorService } = await import(
+  pathToFileURL(path.join(temporary, "monitor-service.cjs")).href
+);
+const { SensorLabService } = await import(pathToFileURL(path.join(temporary, "service.cjs")).href);
 const searchHelpers = await import(
   pathToFileURL(path.join(temporary, "workspace-search.cjs")).href
 );
@@ -83,7 +88,30 @@ function payloadBytes(value) {
 let failNextWrite = false;
 let openCount = 0;
 let win;
-const monitor = createMonitorFixture((event) => win.webContents.send("device:event", event));
+const monitor = createMonitorFixture((event) => {
+  win.webContents.send("device:event", event);
+  if (event.type === "usb-recovery" && event.state === "waiting") {
+    sensorLab.onDisconnect(event.previousSessionId);
+    void sampler.disconnect(event.previousSessionId);
+  }
+});
+const sampler = new MonitorService(
+  {
+    monitor: (id) => monitor.handle("deviceMonitor", [id]),
+    inputModes: (...args) => monitor.handle("deviceInputModes", args),
+    setInputMode: (...args) => monitor.handle("deviceSetInputMode", args),
+  },
+  (update) => win?.webContents.send("device:monitor-update", update),
+);
+const sensorLab = new SensorLabService({
+  directory: path.join(temporary, "sensor-lab"),
+  device: () => monitorDescriptor,
+  acquire: (id) => sampler.acquire(id),
+  release: (id) => sampler.release(id),
+  latest: sampler.latest,
+  publish: (state) => win?.webContents.send("sensor-lab:state", state),
+});
+sampler.subscribe((update) => sensorLab.observe(update));
 const workspace = (id = firstId) => {
   const project = fixtures.get(id);
   return {
@@ -126,6 +154,36 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "diagnosticQuickFixes") return diagnostics.quickFixes(args);
   if (name === "diagnosticCancelQuickFix") return diagnostics.cancelQuickFix(args);
   if (name === "documentationOpen") return diagnostics.openDocumentation(args[0]);
+  if (name === "deviceWatchMonitor") return sampler.watch(...args);
+  if (name === "deviceInputModes") return sampler.inputModes(...args);
+  if (name === "deviceSetInputMode") return sampler.setInputMode(...args);
+  if (name === "deviceDisconnect") {
+    sensorLab.onDisconnect(args[0]);
+    await sampler.disconnect(args[0]);
+  }
+  if (name === "labStop") {
+    if (args[0] === "close" || args[0] === "update") {
+      await sensorLab.flush(args[0]);
+      return sensorLab.getState();
+    }
+    return sensorLab.stop();
+  }
+  if (name === "labExportCsv") {
+    await sensorLab.exportCSVContent(args[0]);
+    return { cancelled: true };
+  }
+  const labMethod = {
+    labGetState: "getState",
+    labStart: "start",
+    labRetrySave: "retrySave",
+    labList: "list",
+    labRead: "read",
+    labDelete: "delete",
+    labListCalibrations: "listCalibrations",
+    labSaveCalibration: "saveCalibration",
+    labDeleteCalibration: "deleteCalibration",
+  }[name];
+  if (labMethod) return sensorLab[labMethod](...args);
   if (monitor.handles(name)) return monitor.handle(name, args);
   if (name === "readFile") search.beforeRead(args);
   if (fileHistory.handles(name)) return fileHistory.handle(name, args);
@@ -384,6 +442,7 @@ app
       },
     };
     const monitorContext = { js, key, until, pause, win, temporary, monitor };
+    const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
       ...projectsContext,
       fileHistory,
@@ -403,6 +462,11 @@ app
     }
     if (process.env.KOBRIXA_SMOKE_FILES_ONLY) {
       await checkFileHistory(fileHistoryContext);
+      app.exit(0);
+      return;
+    }
+    if (process.env.KOBRIXA_SMOKE_SENSOR_LAB_ONLY) {
+      await checkSensorLab(labContext);
       app.exit(0);
       return;
     }
@@ -480,6 +544,7 @@ app
     openCount = fileCheckOpenCount;
     writes.splice(fileCheckWriteCount);
     await checkMonitor(monitorContext);
+    await checkSensorLab(labContext);
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
     await checkExpandedSettings(settingsContext);

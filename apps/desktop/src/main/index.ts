@@ -3,13 +3,24 @@ import { createUpdateService } from "./updates/runtime.js";
 import { UpdateOperationGate, type UpdateService } from "./updates/service.js";
 import { attachKeyboard } from "./window/keyboard.js";
 import path from "node:path";
-import { app, BrowserWindow, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  session,
+  shell,
+  powerMonitor,
+  dialog,
+  type MessageBoxOptions,
+} from "electron";
 import { BuildService } from "./workspace/build.js";
 import { DeviceService } from "./device/device.js";
 import { registerIpc } from "./ipc.js";
 import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
 import { CloseHandshake } from "./window/close.js";
+import { MonitorService } from "./device/monitor-service.js";
+import { SensorLabService } from "./sensor-lab/service.js";
+import { MainProcessCloseGuard } from "./window/main-close.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -26,7 +37,25 @@ let quitting = false;
 let closeHandshake: CloseHandshake | undefined;
 let rendererCanFlush = false;
 
-function createWindow(): void {
+async function retrySensorSave(error: unknown, window?: BrowserWindow): Promise<boolean> {
+  const options: MessageBoxOptions = {
+    type: "error",
+    title: "Sensor recording not saved / 感測器記錄尚未儲存",
+    message: "Save the sensor recording before closing. / 請先儲存感測器記錄，再關閉程式。",
+    detail: error instanceof Error ? error.message : String(error),
+    buttons: ["Retry / 重試", "Keep open / 保持開啟"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  };
+  const result =
+    window && !window.isDestroyed()
+      ? await dialog.showMessageBox(window, options)
+      : await dialog.showMessageBox(options);
+  return result.response === 0;
+}
+
+function createWindow(flushSensorLab: () => Promise<void>): void {
   rendererCanFlush = false;
   mainWindow = new BrowserWindow({
     width: 1420,
@@ -45,20 +74,30 @@ function createWindow(): void {
   });
 
   const window = mainWindow;
+  const finish = () => {
+    if (quitting) app.quit();
+    else window.close();
+  };
+  const mainClose = new MainProcessCloseGuard(
+    flushSensorLab,
+    finish,
+    (error) => retrySensorSave(error, window),
+    () => {
+      quitting = false;
+    },
+  );
   const handshake = new CloseHandshake(
     (id) => window.webContents.send("workspace:before-close", id),
-    () => {
-      if (quitting) app.quit();
-      else window.close();
-    },
+    finish,
   );
   closeHandshake = handshake;
   window.on("close", (event) => {
-    if (updates?.installing || handshake.ready || window.webContents.isCrashed()) return;
-    // Before the renderer subscribes it cannot have editable buffers to flush.
-    if (!rendererCanFlush && !updates?.preparing) return;
+    if (updates?.installing || handshake.ready || mainClose.ready) return;
     event.preventDefault();
-    if (!updates?.preparing) handshake.request();
+    if (updates?.preparing) return;
+    if (window.webContents.isCrashed() || !rendererCanFlush) {
+      void mainClose.request();
+    } else handshake.request();
   });
   window.webContents.on("render-process-gone", () => {
     updates?.cancelInstall();
@@ -106,13 +145,6 @@ void app.whenReady().then(async () => {
   const renderer = () => mainWindow?.webContents;
   const builds = new BuildService(workspaces, renderer);
   const language = new LanguageService(workspaces);
-  app.on("before-quit", (event) => {
-    if (updates?.preparing) {
-      event.preventDefault();
-      return;
-    }
-    quitting = true;
-  });
   app.on("will-quit", () => {
     updates?.dispose();
     language.dispose();
@@ -123,25 +155,89 @@ void app.whenReady().then(async () => {
     renderer,
     await loadDevicePreferences(app.getPath("userData")),
   );
+  const send = (channel: string, value: unknown) => {
+    const target = renderer();
+    if (target && !target.isDestroyed()) target.send(channel, value);
+  };
+  const monitor = new MonitorService(devices, (update) => send("device:monitor-update", update));
+  let labBusy = false;
+  const sensorLab = new SensorLabService({
+    directory: path.join(app.getPath("userData"), "sensor-lab"),
+    device: (id) => devices.descriptor(id),
+    acquire: (id) => monitor.acquire(id),
+    release: (id) => monitor.release(id),
+    latest: monitor.latest,
+    publish: (state) => {
+      labBusy = state.active || !state.saved;
+      send("sensor-lab:state", state);
+    },
+  });
+  // On macOS the application can outlive its last window. A quit in that state
+  // still has to finish any crash recovery / background checkpoint writes.
+  const mainQuit = new MainProcessCloseGuard(
+    () => sensorLab.flush("close"),
+    () => app.quit(),
+    (error) => retrySensorSave(error),
+    () => {
+      quitting = false;
+    },
+  );
+  app.on("before-quit", (event) => {
+    if (updates?.preparing) {
+      event.preventDefault();
+      return;
+    }
+    quitting = true;
+    if (!updates?.installing && !mainQuit.ready && BrowserWindow.getAllWindows().length === 0) {
+      event.preventDefault();
+      void mainQuit.request();
+    }
+  });
+  monitor.subscribe((update) => sensorLab.observe(update));
+  devices.subscribe((event) => {
+    const id =
+      event.type === "state" && event.state === "disconnected"
+        ? event.sessionId
+        : event.type === "usb-recovery" && ["waiting", "unavailable"].includes(event.state)
+          ? event.previousSessionId
+          : undefined;
+    if (id) {
+      sensorLab.onDisconnect(id);
+      void monitor.disconnect(id);
+    }
+  });
+  powerMonitor.on("suspend", () => {
+    void sensorLab.suspend().catch(() => {});
+  });
+  void sensorLab.getState().catch(() => {});
   app.on("will-quit", () => {
+    void monitor.dispose();
     void devices.reset();
   });
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() !== "window") return;
     contents.on("destroyed", () => {
+      void sensorLab.stop("close").catch(() => {});
+      void monitor.pause();
       void devices.reset();
     });
     contents.on("render-process-gone", () => {
+      void sensorLab.stop("interrupted").catch(() => {});
+      void monitor.pause();
       void devices.reset();
     });
     contents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
-      if (isMainFrame) void devices.reset();
+      if (isMainFrame) {
+        void sensorLab.stop("interrupted").catch(() => {});
+        void monitor.pause();
+        void devices.reset();
+      }
     });
   });
   const operationGate = new UpdateOperationGate(() => updates);
   updates = await createUpdateService(
     renderer,
-    () => operationGate.busy || builds.busy || devices.busy,
+    () => operationGate.busy || builds.busy || devices.busy || monitor.busy || labBusy,
   );
   registerIpc(
     renderer,
@@ -157,11 +253,12 @@ void app.whenReady().then(async () => {
     () => {
       rendererCanFlush = true;
     },
+    { monitor, lab: sensorLab },
   );
-  createWindow();
+  createWindow(() => sensorLab.flush("close"));
   updates.start();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(() => sensorLab.flush("close"));
   });
 });
 

@@ -29,6 +29,7 @@ type Selection<T> =
 type PickerProps<T extends string | number> = Selection<T> & {
   options: PickerOption<T>[];
   label: string;
+  title?: string;
   locale: Locale;
   id?: string;
   describedBy?: string;
@@ -116,15 +117,18 @@ export function Picker<T extends string | number>(props: PickerProps<T>): React.
     const place = () => {
       const rect = trigger.current!.getBoundingClientRect();
       const width = Math.min(Math.max(rect.width, 220), window.innerWidth - 24);
-      const below = window.innerHeight - rect.bottom - 12,
-        above = rect.top - 12;
+      // A focused trigger can be scrolled out of view before keyboard activation.
+      const top = Math.max(12, Math.min(rect.top, window.innerHeight - 12));
+      const bottom = Math.max(12, Math.min(rect.bottom, window.innerHeight - 12));
+      const below = window.innerHeight - bottom - 12,
+        above = top - 12;
       const flip = below < 260 && above > below;
       setPosition({
         position: "fixed",
         width,
         left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
-        maxHeight: Math.max(60, Math.min(360, flip ? above - 6 : below - 6)),
-        ...(flip ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }),
+        maxHeight: Math.max(0, Math.min(360, flip ? above - 6 : below - 6)),
+        ...(flip ? { bottom: window.innerHeight - top + 6 } : { top: bottom + 6 }),
       });
     };
     place();
@@ -309,7 +313,7 @@ export function Picker<T extends string | number>(props: PickerProps<T>): React.
         ref={trigger}
         disabled={disabled}
         aria-label={label}
-        title={label}
+        title={props.title ?? label}
         aria-describedby={props.describedBy}
         aria-haspopup="listbox"
         aria-expanded={open}

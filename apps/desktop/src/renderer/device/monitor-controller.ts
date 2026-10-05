@@ -1,7 +1,11 @@
 import type { DeviceInputModes, DeviceMonitorSnapshot, MonitorInput } from "@kobrixa/device";
 import type { KobrixaApi, MonitorResult } from "../../shared/api.js";
+import type { MonitorUpdate } from "../../shared/sensor-lab.js";
 
-type MonitorApi = Pick<KobrixaApi["device"], "monitor" | "inputModes" | "setInputMode">;
+type MonitorApi = Pick<
+  KobrixaApi["device"],
+  "watchMonitor" | "onMonitor" | "inputModes" | "setInputMode"
+>;
 export interface MonitorState {
   sessionId: string | undefined;
   active: boolean;
@@ -14,7 +18,7 @@ export interface MonitorState {
   modeError: string | undefined;
 }
 
-/** Owns sampling separately from the editor. Stopping never cancels an EV3 exchange. */
+/** Presentation and mode requests only; the main process owns the sampling clock. */
 export class MonitorController {
   private state: MonitorState = {
     sessionId: undefined,
@@ -29,8 +33,10 @@ export class MonitorController {
   };
   private listeners = new Set<() => void>();
   private generation = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
   private pending: Promise<void> | undefined;
+  private sequence = -1;
+  private recording = false;
+  private unsubscribe: (() => void) | undefined;
 
   constructor(private api: MonitorApi) {}
   getSnapshot = (): MonitorState => this.state;
@@ -42,16 +48,18 @@ export class MonitorController {
     this.state = { ...this.state, ...patch };
     this.listeners.forEach((listener) => listener());
   }
-  private clearTimer(): void {
-    clearTimeout(this.timer);
-    this.timer = undefined;
-  }
   configure(sessionId: string | undefined, active: boolean): void {
     active = active && !!sessionId;
+    if (active) this.unsubscribe ??= this.api.onMonitor((update) => this.onUpdate(update));
     if (sessionId === this.state.sessionId && active === this.state.active) return;
     const changedSession = sessionId !== this.state.sessionId;
+    const previousSession = this.state.sessionId;
     this.generation++;
-    this.clearTimer();
+    const generation = this.generation;
+    if (changedSession) {
+      this.sequence = -1;
+      this.recording = false;
+    }
     this.update({
       sessionId,
       active,
@@ -67,7 +75,17 @@ export class MonitorController {
           }
         : {}),
     });
-    if (active && !this.pending) this.poll();
+    void this.track(async () => {
+      try {
+        if (previousSession && (changedSession || !active))
+          await this.api.watchMonitor(previousSession, false);
+        if (!this.current(generation) || !sessionId) return;
+        const update = await this.api.watchMonitor(sessionId, true);
+        if (this.current(generation)) this.onUpdate(update);
+      } catch (error) {
+        if (this.current(generation)) this.update({ status: "error", error: errorMessage(error) });
+      }
+    });
   }
   /** Update installation waits for sampling AND mode queries/switches to finish. */
   async drain(): Promise<void> {
@@ -76,10 +94,6 @@ export class MonitorController {
   }
   private current(generation: number): boolean {
     return generation === this.generation && this.state.active && !!this.state.sessionId;
-  }
-  private schedule(): void {
-    this.clearTimer();
-    if (this.state.active && this.state.sessionId) this.timer = setTimeout(() => this.poll(), 500);
   }
   private track(work: () => Promise<void>): Promise<void> {
     const preceding = this.pending;
@@ -91,7 +105,6 @@ export class MonitorController {
       .finally(() => {
         if (this.pending === tracked) {
           this.pending = undefined;
-          this.schedule();
         }
       });
     this.pending = tracked;
@@ -105,28 +118,28 @@ export class MonitorController {
     }
     this.update({ snapshot, modes, status: "live", error: undefined });
   }
-  private poll(): void {
-    this.clearTimer();
-    const sessionId = this.state.sessionId;
-    if (!this.state.active || !sessionId || this.pending) return;
-    const generation = this.generation;
-    void this.track(async () => {
-      if (!this.current(generation)) return;
-      try {
-        const result = await this.api.monitor(sessionId);
-        if (!this.current(generation)) return;
-        if (result.status === "ok") this.accept(result.value);
-        else if (result.status === "busy") this.update({ status: "waiting" });
-        else this.update({ status: "error", error: result.message });
-      } catch (error) {
-        if (this.current(generation)) this.update({ status: "error", error: errorMessage(error) });
-      }
-    });
+  private onUpdate(update: MonitorUpdate): void {
+    if (
+      !this.state.active ||
+      update.sessionId !== this.state.sessionId ||
+      update.sequence <= this.sequence
+    )
+      return;
+    this.sequence = update.sequence;
+    this.recording = update.recording === true;
+    if (update.status === "live" && update.snapshot) this.accept(update.snapshot);
+    else this.update({ status: update.status, error: update.error });
+  }
+  async dispose(): Promise<void> {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    await this.drain();
   }
   canSwitch(port: number): boolean {
     const input = this.state.snapshot?.inputs.find((value) => value.port === port);
     return !!(
       this.state.active &&
+      !this.recording &&
       this.state.sessionId &&
       this.state.status === "live" &&
       this.state.snapshot?.program.status === "stopped" &&
@@ -156,7 +169,6 @@ export class MonitorController {
   private modeRequest(input: MonitorInput, mode: number | undefined): Promise<void> {
     const generation = this.generation;
     const sessionId = this.state.sessionId!;
-    this.clearTimer();
     this.update({
       modeError: undefined,
       loadingPort: mode === undefined ? input.port : undefined,

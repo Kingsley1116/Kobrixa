@@ -147,6 +147,9 @@ class VM {
     this.modes = {};
     this.finished = false;
     this.sensorReads = 0;
+    this.siReads = 0;
+    this.sensorMetadataReads = 0;
+    this.sensorBusyReads = 0;
     this.motorReads = 0;
     this.randomReads = 0;
     this.i2cReads = 0;
@@ -610,7 +613,7 @@ class VM {
       return;
     }
     if (n === "INPUT_TEST") {
-      w(2, 0);
+      w(2, this.s.sensorBusyValues?.[this.sensorBusyReads++] ?? this.s.sensorBusy ?? 0);
       return;
     }
     if (n === "INPUT_READ") {
@@ -627,14 +630,31 @@ class VM {
       return;
     }
     if (n === "INPUT_DEVICE.GET_TYPEMODE") {
-      w(3, 29);
-      w(4, this.modes[r(2)] ?? 0);
+      const metadata = this.s.sensorMetadata?.[this.sensorMetadataReads++];
+      w(3, metadata?.type ?? this.s.sensorType ?? 29);
+      w(4, metadata?.mode ?? this.modes[r(2)] ?? this.s.sensorMode ?? 0);
+      return;
+    }
+    if (n === "INPUT_DEVICE.GET_FORMAT") {
+      w(3, this.s.sensorDatasets ?? this.s.siValues?.length ?? this.s.siSamples?.[0]?.length ?? 8);
+      w(4, 3);
+      w(5, 8);
+      w(6, 8);
       return;
     }
     if (n === "INPUT_DEVICE.READY_RAW" || n === "INPUT_READEXT") {
       const shift = n === "INPUT_READEXT" ? 0 : 1,
         idx = n === "INPUT_READEXT" ? 6 : 6;
       if (r(shift + 3) !== -1) this.modes[r(shift + 1)] = r(shift + 3);
+      if (n === "INPUT_READEXT" && r(4) === 19) {
+        if (this.s.siSamples && this.siReads >= this.s.siSamples.length)
+          throw Error("SI sensor scenario exhausted");
+        const values = this.s.siSamples?.[this.siReads] ?? this.s.siValues ?? [42.5];
+        this.siReads++;
+        for (let j = idx; j < a.length; j++) w(j, values[j - idx] ?? NaN, "PARF");
+        this.trace.push({ op: n, layer: r(0), port: r(1), mode: r(3), format: r(4), values });
+        return;
+      }
       for (let j = idx; j < a.length; j++)
         w(j, this.s.rawValues?.[j - idx] ?? this.s.sensor ?? 42, "PAR32");
       return;

@@ -1,8 +1,27 @@
 import type { UpdateState } from "../shared/updates.js";
 import { contextBridge, ipcRenderer } from "electron";
 import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
+import type { MonitorUpdate, SensorLabState } from "../shared/sensor-lab.js";
 
 const api: KobrixaApi = {
+  sensorLab: {
+    getState: () => ipcRenderer.invoke("sensor-lab:state"),
+    start: (request) => ipcRenderer.invoke("sensor-lab:start", request),
+    stop: (reason) => ipcRenderer.invoke("sensor-lab:stop", reason),
+    retrySave: () => ipcRenderer.invoke("sensor-lab:retry-save"),
+    list: () => ipcRenderer.invoke("sensor-lab:list"),
+    read: (id) => ipcRenderer.invoke("sensor-lab:read", id),
+    delete: (id) => ipcRenderer.invoke("sensor-lab:delete", id),
+    listCalibrations: () => ipcRenderer.invoke("sensor-lab:calibrations"),
+    saveCalibration: (profile) => ipcRenderer.invoke("sensor-lab:save-calibration", profile),
+    deleteCalibration: (id) => ipcRenderer.invoke("sensor-lab:delete-calibration", id),
+    exportCsv: (id) => ipcRenderer.invoke("sensor-lab:export", id),
+    onState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: SensorLabState) => listener(state);
+      ipcRenderer.on("sensor-lab:state", handler);
+      return () => ipcRenderer.removeListener("sensor-lab:state", handler);
+    },
+  },
   documentation: { open: (request) => ipcRenderer.invoke("documentation:open", request) },
   updates: {
     getState: () => ipcRenderer.invoke("updates:state"),
@@ -81,6 +100,14 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },
   device: {
+    watchMonitor: (sessionId, enabled) =>
+      ipcRenderer.invoke("device:watch-monitor", sessionId, enabled),
+    onMonitor: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, update: MonitorUpdate) =>
+        listener(update);
+      ipcRenderer.on("device:monitor-update", handler);
+      return () => ipcRenderer.removeListener("device:monitor-update", handler);
+    },
     monitor: (sessionId) => ipcRenderer.invoke("device:monitor", sessionId),
     inputModes: (sessionId, port, expectedType) =>
       ipcRenderer.invoke("device:input-modes", sessionId, port, expectedType),

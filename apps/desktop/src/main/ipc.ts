@@ -14,6 +14,10 @@ import type { LanguageService } from "./language/language.js";
 import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 import { workspaceSearchRequestSchema } from "./workspace/search.js";
+import type { MonitorService } from "./device/monitor-service.js";
+import type { SensorLabService } from "./sensor-lab/service.js";
+import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
+import { exportSensorCsv } from "./sensor-lab-export.js";
 
 const id = z.string().uuid();
 const inputPort = z.number().int().min(0).max(3);
@@ -69,6 +73,7 @@ export function registerIpc(
   operationGate: UpdateOperationGate,
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
+  sensorTools?: { monitor: MonitorService; lab: SensorLabService },
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -82,13 +87,45 @@ export function registerIpc(
   ): void => {
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
-      if (/^(workspace|device|build):/.test(channel))
+      if (/^(workspace|device|build|sensor-lab):/.test(channel))
         return operationGate.run(channel, () => action(event, ...args));
       return action(event, ...args);
     });
   };
 
   handle("updates:state", () => updates.getState());
+  if (sensorTools) {
+    const { lab, monitor } = sensorTools;
+    handle("device:watch-monitor", (_event, sessionId: unknown, enabled: unknown) =>
+      monitor.watch(id.parse(sessionId), z.boolean().parse(enabled)),
+    );
+    handle("sensor-lab:state", () => lab.getState());
+    handle("sensor-lab:start", (_event, request: unknown) =>
+      lab.start(sensorLabStartSchema.parse(request)),
+    );
+    handle("sensor-lab:stop", async (_event, reason: unknown) => {
+      const parsed = z.enum(["manual", "close", "update"]).default("manual").parse(reason);
+      if (parsed === "manual") return lab.stop(parsed);
+      await lab.flush(parsed);
+      return lab.getState();
+    });
+    handle("sensor-lab:retry-save", () => lab.retrySave());
+    handle("sensor-lab:list", () => lab.list());
+    handle("sensor-lab:read", (_event, recordingId: unknown) => lab.read(id.parse(recordingId)));
+    handle("sensor-lab:delete", (_event, recordingId: unknown) =>
+      lab.delete(id.parse(recordingId)),
+    );
+    handle("sensor-lab:calibrations", () => lab.listCalibrations());
+    handle("sensor-lab:save-calibration", (_event, profile: unknown) =>
+      lab.saveCalibration(sensorLabCalibrationSchema.parse(profile)),
+    );
+    handle("sensor-lab:delete-calibration", (_event, profileId: unknown) =>
+      lab.deleteCalibration(id.parse(profileId)),
+    );
+    handle("sensor-lab:export", (_event, recordingId: unknown) =>
+      exportSensorCsv(lab, id.parse(recordingId)),
+    );
+  }
   handle("documentation:open", (_event, request: unknown) =>
     shell.openExternal(documentationUrl(request)),
   );
@@ -274,12 +311,16 @@ export function registerIpc(
 
   handle("device:monitor", (_event, sessionId: unknown) => devices.monitor(id.parse(sessionId)));
   handle("device:input-modes", (_event, sessionId: unknown, port: unknown, type: unknown) =>
-    devices.inputModes(id.parse(sessionId), inputPort.parse(port), inputType.parse(type)),
+    (sensorTools?.monitor ?? devices).inputModes(
+      id.parse(sessionId),
+      inputPort.parse(port),
+      inputType.parse(type),
+    ),
   );
   handle(
     "device:set-input-mode",
     (_event, sessionId: unknown, port: unknown, type: unknown, mode: unknown) =>
-      devices.setInputMode(
+      (sensorTools?.monitor ?? devices).setInputMode(
         id.parse(sessionId),
         inputPort.parse(port),
         inputType.parse(type),

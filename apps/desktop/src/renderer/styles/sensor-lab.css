@@ -1,0 +1,317 @@
+.sensor-lab {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-small);
+}
+.sensor-lab-field > input {
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--font-small);
+}
+.sensor-lab-field > input:not([type="range"]) {
+  width: 100%;
+  box-sizing: border-box;
+  color: var(--text);
+  background: var(--editor);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px;
+}
+.sensor-lab input[type="checkbox"] {
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  margin: 2px 0;
+}
+.sensor-lab input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.sensor-lab-controls {
+  position: sticky;
+  z-index: 2;
+  top: -14px;
+  padding-block: 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.sensor-lab-actions,
+.sensor-lab-recording-meta,
+.sensor-lab-save-state,
+.sensor-lab-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.sensor-lab-recording-meta {
+  justify-content: space-between;
+  margin-top: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-lab-save-state {
+  margin: 5px 0 0;
+  color: var(--muted);
+}
+.sensor-lab-save-state[data-unsaved="true"] {
+  color: var(--warning);
+}
+.sensor-lab-section {
+  margin-top: 15px;
+  border-top: 1px solid var(--border);
+  padding-top: 11px;
+}
+.sensor-lab summary {
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1.5;
+  padding-block: 3px;
+}
+.sensor-lab summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sensor-lab-hint,
+.sensor-lab-current-name,
+.sensor-lab-empty {
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 9px 0;
+}
+.sensor-lab-current-name strong {
+  color: var(--text);
+}
+.sensor-lab-error {
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: 5px;
+  padding: 9px;
+  margin-block: 9px;
+  line-height: 1.5;
+}
+.sensor-lab-error p {
+  margin: 0 0 6px;
+}
+.sensor-lab fieldset {
+  border: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+.tool-content .sensor-lab-channel-list label,
+.sensor-lab .sensor-lab-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.5;
+  margin-block: 10px;
+}
+.sensor-lab-channel-list small {
+  display: block;
+  color: var(--warning);
+}
+.tool-content .sensor-lab-field,
+.sensor-lab-expanded .sensor-lab-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin-block: 10px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.sensor-lab-view-controls {
+  align-items: flex-end;
+  margin-block: 8px;
+}
+.sensor-lab-field > label {
+  margin: 0;
+}
+.sensor-lab-view-controls .sensor-lab-field {
+  flex: 1;
+  margin: 0;
+}
+.sensor-lab-charts {
+  display: grid;
+  gap: 10px;
+  margin-block: 10px;
+}
+.sensor-lab-chart-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 5px 2px;
+  background: var(--editor);
+}
+.sensor-lab-chart-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px 8px;
+  padding-inline: 5px;
+}
+.sensor-lab-chart-card h4 {
+  min-width: 0;
+  margin: 0;
+  font-weight: 500;
+  font-size: var(--font-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.sensor-lab-chart-card strong {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-size: var(--font-small);
+}
+.sensor-lab-chart {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+}
+.sensor-lab-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.sensor-lab-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sensor-lab-line.is-comparison {
+  stroke: var(--warning);
+  stroke-dasharray: 5 4;
+}
+.sensor-lab-tick,
+.sensor-lab-empty-chart {
+  fill: var(--muted);
+  font-size: 10px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-lab-cursor {
+  stroke: var(--text);
+  stroke-dasharray: 2 3;
+  opacity: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+.sensor-lab-legend {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.sensor-lab-series-current::before,
+.sensor-lab-series-comparison::before {
+  display: inline-block;
+  vertical-align: middle;
+  width: 19px;
+  margin-right: 5px;
+  content: "";
+  border-top: 2px solid var(--accent);
+}
+.sensor-lab-series-comparison::before {
+  border-top-style: dashed;
+  border-top-color: var(--warning);
+}
+.sensor-lab-text-button {
+  margin-block: 6px;
+}
+.sensor-lab-calibration-points {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.sensor-lab-calibration details {
+  margin-top: 12px;
+}
+.sensor-lab-preview {
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-lab-code {
+  display: block;
+  overflow: auto;
+  max-height: 300px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  background: var(--editor);
+  font-size: var(--font-small);
+  line-height: 1.55;
+  white-space: pre;
+  user-select: text;
+}
+.sensor-lab-history {
+  padding: 0;
+  list-style: none;
+}
+.sensor-lab-history li {
+  display: grid;
+  gap: 6px;
+  padding-block: 12px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.sensor-lab-history time,
+.sensor-lab-history li > span {
+  color: var(--muted);
+}
+.modal-card.sensor-lab-expanded {
+  width: min(900px, calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  min-width: 0;
+}
+.sensor-lab-expanded .sensor-lab-chart {
+  max-height: 230px;
+}
+.sensor-lab-expanded .sensor-lab-field input {
+  padding-inline: 0;
+  width: 100%;
+}
+.sensor-lab-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.sensor-recording-status {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  color: var(--accent);
+}
+.sensor-recording-status[data-warning="true"] {
+  color: var(--warning);
+}
+.sensor-recording-status button {
+  color: inherit;
+  min-width: 0;
+  display: inline-flex;
+  gap: 5px;
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  font-size: var(--font-small);
+  line-height: 1.35;
+}
+.sensor-recording-status button > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sensor-recording-status time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.sensor-recording-status .sensor-recording-stop {
+  flex: 0 0 auto;
+}

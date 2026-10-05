@@ -162,6 +162,7 @@ export const ARRAY = {
 } as const;
 
 export const INPUT_DEVICE = {
+  GET_FORMAT: 0x02,
   GET_TYPEMODE: 0x05,
   SETUP: 0x09,
   GET_RAW: 0x0b,

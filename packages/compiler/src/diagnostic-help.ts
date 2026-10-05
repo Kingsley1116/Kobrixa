@@ -1282,6 +1282,21 @@ export const DIAGNOSTIC_HELP: readonly DiagnosticHelp[] = [
       "Ensure the target Sub exists, is parameterless, and is included; resolve BP2009 or name diagnostics first.",
     ],
   ),
+  entry(
+    "EV32031",
+    ["SI 讀值參數超出範圍", "SI reading argument is out of range"],
+    [
+      "Sensor.ReadSIValue 的常數埠或通道索引不是有效範圍內的整數。",
+      "A constant port or channel index passed to Sensor.ReadSIValue is not a whole number in its valid range.",
+    ],
+    [
+      [
+        "埠使用 1–16（本機 1–4），通道索引使用 0–7；不存在的通道或無效的變數參數會在執行時回傳 NaN。",
+        "Use ports 1–16 (1–4 locally) and channel indices 0–7; absent channels or invalid variable arguments return NaN at runtime.",
+      ],
+    ],
+    "sensors",
+  ),
   internal(
     "EV39000",
     ["產生的 EV3 程式未通過驗證", "Generated EV3 program failed validation"],

@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
 import type { MonitorResult } from "../../shared/api.js";
 import { MonitorController } from "./monitor-controller.js";
+import { MonitorService } from "../../main/device/monitor-service.js";
+
+const samplers: MonitorService[] = [];
 
 function snapshot(
   status: DeviceMonitorSnapshot["program"]["status"] = "stopped",
@@ -70,13 +73,22 @@ function setup() {
       },
     ),
   };
-  return { api, controller: new MonitorController(api) };
+  const sampler = new MonitorService(api, () => {});
+  samplers.push(sampler);
+  const controller = new MonitorController({
+    watchMonitor: (id, active) => sampler.watch(id, active),
+    onMonitor: (listener) => sampler.subscribe(listener),
+    inputModes: (id, port, type) => sampler.inputModes(id, port, type),
+    setInputMode: (id, port, type, mode) => sampler.setInputMode(id, port, type, mode),
+  });
+  return { api, controller, sampler };
 }
 const flush = () => vi.advanceTimersByTimeAsync(0);
 beforeEach(() => {
   vi.useFakeTimers();
 });
 afterEach(() => {
+  for (const sampler of samplers.splice(0)) void sampler.dispose();
   vi.useRealTimers();
 });
 
@@ -123,10 +135,9 @@ describe("monitor sampling lifecycle", () => {
     controller.configure("new", true);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(api.monitor).toHaveBeenCalledTimes(1);
-    pending.resolve(ok(snapshot()));
+    pending.resolve(ok({ ...snapshot(), battery: { percent: 1, voltage: 1 } }));
     await flush();
-    expect(controller.getSnapshot().snapshot).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.getSnapshot().snapshot?.battery.percent).toBe(78);
     expect(api.monitor).toHaveBeenLastCalledWith("new");
     expect(controller.getSnapshot().status).toBe("live");
     await controller.drain();

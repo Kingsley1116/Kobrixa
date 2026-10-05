@@ -77,6 +77,10 @@ sessions; they do not establish physical USB behavior on any platform.
 | Windows  | Record when tested                        | Not yet tested  |
 | Linux    | Record when tested                        | Not yet tested  |
 
+## Sensor lab / 曲線與校正
+
+See [the sensor lab physical checklist](sensor-lab.md) for USB/Wi-Fi SI fractions, calibration, background recording, persistence and interruption acceptance. All sensor lab hardware checks remain pending.
+
 ## Live monitor / 即時監測
 
 Run the desktop app with the reference EV3, one Color, Gyro and Infrared sensor, and an unloaded motor whose shaft can be turned safely by hand. Connect through USB, then repeat through Wi-Fi. Record exact port assignments, sensor types, firmware, operating system and application revision. No automated monitor smoke result establishes physical acceptance.
@@ -84,12 +88,12 @@ Run the desktop app with the reference EV3, one Color, Gyro and Infrared sensor,
 1. Open **EV3 tools → Monitor**. Check battery percentage and voltage against the brick's battery information. Confirm empty ports are not zero-valued sensors and a motor rotated backwards shows a negative angle without resetting its existing count.
 2. With the user program stopped, select each offered Color mode and confirm its name, unit and changing readings. Modes must exclude internal/calibration choices. Verify IR multi-channel readings, including unavailable channels, and Gyro initialization/readings. Touch and third-party/I2C devices must remain read-only; their readings may be unavailable when unsupported.
 3. Start a display-only program directly from the EV3. The panel must show the brick's running program status and disable mode changes. Stop it from the brick and verify controls return only after a stopped sample. The monitor must never start, stop or attribute that program to the open project.
-4. While a read is pending, switch to Connection/EV3 files/Activity, close the tools panel, or hide/minimize the window. Future samples must stop; the connection and program must remain active. Reopen Monitor to obtain fresh values. Switching back must not apply a stale reply or silently change a sensor mode.
+4. With no sensor lab recording active, while a read is pending, switch to Connection/EV3 files/Activity, close the tools panel, or hide/minimize the window. Future samples must stop; the connection and program must remain active. Reopen Monitor to obtain fresh values. Switching back must not apply a stale reply or silently change a sensor mode.
 5. During monitoring, explicitly upload/run/stop a display-only program, list files and start a batch with a conflict confirmation. Foreground work must proceed, readings must show paused/stale state, and monitoring must resume after the operation or confirmation finishes. Sampling must not add operation-log entries.
 6. Unplug USB during a read, then replug the same brick. Confirm recovery resumes sampling through the replacement session, ignores old readings and reloads available modes after sensor replacement. Repeat sensor unplug/replug while connected, and repeat Wi-Fi disconnect/manual reconnect. No mode is automatically restored and no program is automatically run.
 7. Check English and Traditional Chinese, dark/light themes, the minimum 320 px tools-panel width and 125% UI scale. Keep typing and undoing in the editor while readings change; focus, model content and cursor must remain intact.
 
-以 Color、Gyro、Infrared 感測器及可安全手動旋轉的未負載馬達，分別驗證 USB 與 Wi-Fi。記錄埠位、感測器、韌體、作業系統與應用程式版本；比對電量、馬達負角度與感測器值，從 EV3 本體啟動／停止程式以驗證模式切換限制。切換分頁、隱藏視窗或關閉工具面板後應停止後續取樣；上傳、檔案批次及確認期間讓前景操作優先。USB 恢復與感測器熱拔插後不得採用舊資料、自動還原模式或重新啟動程式。另驗證雙語、深淺主題、320 px 側欄、125% 縮放，以及取樣期間的編輯與復原操作。
+以 Color、Gyro、Infrared 感測器及可安全手動旋轉的未負載馬達，分別驗證 USB 與 Wi-Fi。記錄埠位、感測器、韌體、作業系統與應用程式版本；比對電量、馬達負角度與感測器值，從 EV3 本體啟動／停止程式以驗證模式切換限制。未記錄時，切換分頁、隱藏視窗或關閉工具面板後應停止後續取樣；上傳、檔案批次及確認期間讓前景操作優先。USB 恢復與感測器熱拔插後不得採用舊資料、自動還原模式或重新啟動程式。另驗證雙語、深淺主題、320 px 側欄、125% 縮放，以及取樣期間的編輯與復原操作。
 
 | Platform | Transport | OS / app revision / EV3 firmware / sensor setup | Monitor result |
 | -------- | --------- | ----------------------------------------------- | -------------- |

@@ -79,7 +79,9 @@ import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
 import { MonitorController } from "./device/monitor-controller.js";
-import { MonitorPanel } from "./device/monitor-panel.js";
+import { MonitorWorkspace } from "./device/monitor-workspace.js";
+import { SensorLabController } from "./device/sensor-lab-controller.js";
+import { RecordingStatus } from "./device/recording-status.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -192,6 +194,15 @@ export function App(): React.JSX.Element {
       }),
   );
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
+  const [sensorLab] = useState(() => new SensorLabController(window.kobrixa.sensorLab));
+  const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
+  useEffect(() => {
+    void sensorLab.initialize();
+    return () => {
+      sensorLab.dispose();
+      void monitor.dispose().catch(() => {});
+    };
+  }, [sensorLab, monitor]);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
@@ -345,6 +356,8 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     try {
       await restoration.current;
+      await window.kobrixa.sensorLab.stop("close");
+      await monitor.drain();
       editorRef.current?.captureView();
       await flushDrafts();
       await persistSession();
@@ -2077,6 +2090,7 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     setConfirmUpdate(false);
     try {
+      await window.kobrixa.sensorLab.stop("update");
       await monitor.drain();
       await window.kobrixa.updates.prepareInstall();
       await saveAllChanges();
@@ -2854,7 +2868,10 @@ export function App(): React.JSX.Element {
                   setDeviceOpen(false);
                 }}
                 monitor={
-                  <MonitorPanel
+                  <MonitorWorkspace
+                    lab={sensorLab}
+                    view={monitorView}
+                    onView={setMonitorView}
                     controller={monitor}
                     locale={locale}
                     sessionId={execution.session?.id}
@@ -3237,6 +3254,15 @@ export function App(): React.JSX.Element {
           {locked ? t.phases[execution.phase] : checking ? t.checking : status}
         </span>
         <div className="status-group status-details">
+          <RecordingStatus
+            controller={sensorLab}
+            locale={locale}
+            onOpen={() => {
+              setDeviceOpen(true);
+              setToolTab("monitor");
+              setMonitorView("lab");
+            }}
+          />
           {active && !settingsActive && (
             <>
               <CursorPosition store={cursorStore} lineLabel={t.line} columnLabel={t.column} />

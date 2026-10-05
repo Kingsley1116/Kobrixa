@@ -1,0 +1,45 @@
+.tab-list {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+.tab-list-primary {
+  border-top: 1px solid var(--border);
+}
+.tab-list > button {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 4px;
+  border-radius: 0;
+  font-size: var(--font-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-list > button[aria-selected="true"] {
+  color: var(--accent);
+  background: var(--editor);
+}
+.tab-list > button:focus-visible {
+  outline-offset: -2px;
+}
+.tab-list-compact > button {
+  padding-block: 7px;
+  white-space: normal;
+  line-height: 1.4;
+}
+.tab-list::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: calc(100% / var(--tab-count));
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  transform: translateX(calc(var(--tab-index) * 100%));
+  transition: transform var(--motion-normal) var(--motion-ease);
+}

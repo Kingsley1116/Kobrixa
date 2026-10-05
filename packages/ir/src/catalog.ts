@@ -134,6 +134,12 @@ const operations: EV3OperationSignature[] = [
     returns: "integer",
   },
   {
+    name: "Sensor.ReadSIValue",
+    category: "sensor",
+    parameters: ["integer", "integer"],
+    returns: "number",
+  },
+  {
     name: "Sensor.SetMode",
     category: "sensor",
     parameters: ["integer", "integer"],

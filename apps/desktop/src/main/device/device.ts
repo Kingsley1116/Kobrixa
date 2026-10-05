@@ -73,6 +73,14 @@ export function deploymentTargets(
 }
 
 export class DeviceService {
+  private listeners = new Set<(event: DeviceEvent) => void>();
+  subscribe(listener: (event: DeviceEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  descriptor(id: string): DeviceDescriptor {
+    return { ...this.require(id).descriptor };
+  }
   readonly #sessions = new Map<string, DeviceSession>();
   readonly #busy = new Map<string, AbortController>();
   readonly #monitors = new Map<
@@ -668,5 +676,6 @@ export class DeviceService {
     if (event.type === "files-changed") this.invalidateDeployment(event.sessionId, event.paths);
     const renderer = this.renderer();
     if (renderer && !renderer.isDestroyed?.()) renderer.send("device:event", event);
+    for (const listener of this.listeners) listener(event);
   }
 }
