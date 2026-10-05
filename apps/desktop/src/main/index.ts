@@ -91,6 +91,12 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     finish,
   );
   closeHandshake = handshake;
+  window.on("closed", () => {
+    if (mainWindow !== window) return;
+    mainWindow = undefined;
+    closeHandshake = undefined;
+    rendererCanFlush = false;
+  });
   window.on("close", (event) => {
     if (updates?.installing || handshake.ready || mainClose.ready) return;
     event.preventDefault();
@@ -142,7 +148,13 @@ void app.whenReady().then(async () => {
     });
   });
   const workspaces = new WorkspaceService();
-  const renderer = () => mainWindow?.webContents;
+  const renderer = () => {
+    // Reading webContents itself throws once its BrowserWindow is destroyed.
+    // Services may finish saving or disconnecting after the last window closes.
+    if (!mainWindow || mainWindow.isDestroyed()) return undefined;
+    const contents = mainWindow.webContents;
+    return contents.isDestroyed() ? undefined : contents;
+  };
   const builds = new BuildService(workspaces, renderer);
   const language = new LanguageService(workspaces);
   app.on("will-quit", () => {

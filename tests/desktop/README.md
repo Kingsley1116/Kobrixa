@@ -8,6 +8,10 @@ Coverage includes the complete Chinese command catalog, bilingual search, langua
 
 The renderer fixtures in `apps/desktop/tests` are development-only and excluded by desktop packaging. This test does not replace platform packaging or the EV3 hardware matrix.
 
+## Window close and quit acceptance
+
+Run `node tests/desktop/run-close-smoke.mjs` to exercise the production main process, preload and renderer with isolated profiles. It covers closing a loaded window, quitting directly, closing during startup, and closing/reopening a window on macOS. Unexpected native error dialogs, uncaught exceptions and unhandled rejections fail the test. This catches callbacks that access a destroyed `BrowserWindow` after renderer acknowledgement, including sensor-state publication during shutdown. Sensor save failures and retry/cancel behavior remain covered by the main-process service and close-guard tests.
+
 ## Project search and quick open acceptance
 
 `KOBRIXA_SMOKE_SEARCH_ONLY=1 node tests/desktop/run-smoke.mjs` runs the actual quick-open dialog, Search panel and replacement preview in isolated projects. These cases also run in the full smoke suite. The fixture uses the production literal matcher through the sandboxed preload and can hold specific replies to verify stale-query and project-switch handling.
