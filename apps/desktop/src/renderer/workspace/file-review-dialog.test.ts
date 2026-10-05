@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
   const modifiedEditor = { updateOptions: vi.fn() };
   const instance = {
     setModel: vi.fn(),
+    updateOptions: vi.fn(),
     getOriginalEditor: vi.fn(() => originalEditor),
     getModifiedEditor: vi.fn(() => modifiedEditor),
     dispose: vi.fn(),
