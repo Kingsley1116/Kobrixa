@@ -52,12 +52,10 @@ const copy = {
       cards: ["顯示與按鈕", "感測器", "聲音與動作"],
     },
     download: {
-      eyebrow: "桌面版正在準備",
-      title: "Kobrixa v1 candidate 即將推出。",
-      body: "Windows、macOS 與 Linux 的正式安裝檔尚在完成實機驗證。現在可以先從原始碼建置，或閱讀安裝說明。",
-      soon: "即將推出",
-      install: "閱讀安裝說明",
-      status: "候選版 · 三平台硬體驗證中",
+      eyebrow: "取得桌面版",
+      title: "從你的電腦，開始 EV3 專案。",
+      body: "Windows、macOS 與 Linux 的安裝與自動更新流程已實作。前往下載頁查看 GitHub Releases 的可用版本、安裝方式與簽署狀態。",
+      status: "v1 候選版 · 可用版本以 Releases 為準",
     },
   },
   en: {
@@ -124,12 +122,10 @@ const copy = {
       cards: ["Displays & buttons", "Sensors", "Sound & motion"],
     },
     download: {
-      eyebrow: "The desktop app is on its way",
-      title: "Kobrixa v1 candidate is coming soon.",
-      body: "Windows, macOS, and Linux installers are still completing hardware validation. You can build from source now or read the installation guide.",
-      soon: "Coming soon",
-      install: "Read installation guide",
-      status: "Candidate · hardware validation in progress",
+      eyebrow: "Get the desktop app",
+      title: "Start an EV3 project on your computer.",
+      body: "Installer and automatic update workflows are implemented for Windows, macOS and Linux. Visit the download page for available GitHub Releases, setup instructions and signing status.",
+      status: "v1 candidate · Availability follows Releases",
     },
   },
 } as const;
@@ -331,13 +327,17 @@ export function HomePage({
           <h2>{t.download.title}</h2>
           <p className="download-body">{t.download.body}</p>
           <div className="platform-grid">
-            {["Windows", "macOS", "Linux"].map((platform) => (
+            {[
+              ["Windows", "NSIS (.exe)"],
+              ["macOS", "DMG (.dmg)"],
+              ["Linux", "AppImage"],
+            ].map(([platform, format]) => (
               <article className="platform-card" key={platform}>
                 <span className="platform-icon" aria-hidden="true">
                   {platform === "Windows" ? "⊞" : platform === "macOS" ? "●" : "⌘"}
                 </span>
                 <h3>{platform}</h3>
-                <span className="soon-label">{t.download.soon}</span>
+                <span className="soon-label">{format}</span>
               </article>
             ))}
           </div>

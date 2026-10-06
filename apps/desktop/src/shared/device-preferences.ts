@@ -4,6 +4,7 @@ export const WIFI_CONNECT_TIMEOUTS = [3000, 5000, 10000, 30000] as const;
 export const WIFI_HANDSHAKE_TIMEOUTS = [1000, 3000, 5000, 10000] as const;
 
 export interface DevicePreferences {
+  skipUnchangedAssets: boolean;
   usbAutoReconnect: boolean;
   usbRetryInterval: (typeof USB_RETRY_INTERVALS)[number];
   usbRetryLimit: (typeof USB_RETRY_LIMITS)[number];
@@ -12,6 +13,7 @@ export interface DevicePreferences {
 }
 
 export const DEFAULT_DEVICE_PREFERENCES: DevicePreferences = {
+  skipUnchangedAssets: true,
   usbAutoReconnect: true,
   usbRetryInterval: "backoff",
   usbRetryLimit: "unlimited",

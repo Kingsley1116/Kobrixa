@@ -533,6 +533,14 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
     ],
   ),
   device(
+    "skipUnchangedAssets",
+    ["略過未變更的素材", "Skip unchanged assets"],
+    [
+      "上傳前比對 EV3 上的檔案大小與校驗值。關閉後完整重新上傳；程式檔每次都會上傳。",
+      "Compare asset sizes and checksums on the EV3 before uploading. Turn off to upload everything again. The program is always uploaded.",
+    ],
+  ),
+  device(
     "usbAutoReconnect",
     ["USB 自動重連", "USB automatic reconnect"],
     [

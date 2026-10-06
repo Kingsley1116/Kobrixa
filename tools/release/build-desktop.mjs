@@ -28,6 +28,7 @@ const external = [
 for (const [config, entry, name] of [
   ["vite.main.config.ts", "src/main/index.ts", "main.cjs"],
   ["vite.language.config.ts", "src/main/language/language-worker.ts", "language-worker.cjs"],
+  ["vite.build-worker.config.ts", "src/main/workspace/build-worker.ts", "build-worker.cjs"],
   ["vite.preload.config.ts", "src/preload/index.ts", "preload.cjs"],
 ]) {
   const user = await loadConfigFromFile(

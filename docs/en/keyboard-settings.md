@@ -121,6 +121,8 @@ Reduced motion temporarily disables smooth scrolling and cursor blinking while r
 
 ## EV3 and execution preferences
 
+“Skip unchanged assets” defaults to on. Before deployment, Kobrixa compares asset sizes and checksums with a fresh EV3 directory listing. Missing or unverified assets are uploaded; the executable is always uploaded last. Turn this setting off to upload all files again. A connection failure during comparison stops deployment.
+
 Connection method initially defaults to USB and then remembers USB/Wi-Fi selection. Changing this preference does not interrupt an existing connection. Remember Wi-Fi address defaults to off; enabling it stores the last successful manually entered connection address. Disabling it clears the saved address while retaining current input.
 
 Build diagnostics can open automatically on errors (default), on errors or warnings, or never. Opening activity on device-operation failure defaults to on. Required connection prompts always remain visible.

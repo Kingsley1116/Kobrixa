@@ -26,7 +26,7 @@ function fileName(name: string): string {
 
 export class BuildSession {
   readonly id = randomUUID();
-  readonly #controller = new AbortController();
+  readonly #controller: AbortController;
   readonly #onProgress: ((progress: BuildProgress) => void) | undefined;
   #started = false;
 
@@ -34,8 +34,10 @@ export class BuildSession {
     readonly frontend: LanguageFrontend,
     readonly backend: CompilerBackend,
     onProgress?: (progress: BuildProgress) => void,
+    controller = new AbortController(),
   ) {
     this.#onProgress = onProgress;
+    this.#controller = controller;
   }
 
   cancel(): void {

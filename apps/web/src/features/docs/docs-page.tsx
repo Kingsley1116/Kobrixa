@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
 import { DiagnosticsPage } from "./diagnostics-page.js";
+import { DocsSearchPage } from "./docs-search-page.js";
 import {
   documents,
   findDocument,
@@ -216,6 +217,12 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
   }, [activePath]);
   return (
     <aside className="doc-sidebar knowledge-sidebar" aria-label={t.docs} ref={sidebarRef}>
+      <AppLink
+        className={`sidebar-parent ${active("/docs/search")}`}
+        href={`/docs/search?lang=${locale}`}
+      >
+        {locale === "zh-TW" ? "搜尋所有文件" : "Search all documentation"}
+      </AppLink>
       <section>
         <p>{t.start}</p>
         <AppLink className={`sidebar-parent ${active("/docs")}`} href="/docs">
@@ -823,6 +830,11 @@ export function DocsPage({ locale, onLocaleChange, path }: DocsPageProps) {
   const view =
     path === "/docs" || path === "/docs/" ? (
       <GettingStarted locale={locale} />
+    ) : section === "search" && segments.length === 1 ? (
+      <main className="docs-layout unified-layout" id="content">
+        <KnowledgeSidebar locale={locale} activePath={path} />
+        <DocsSearchPage locale={locale} />
+      </main>
     ) : section === "diagnostics" && segments.length <= 2 ? (
       <main className="docs-layout unified-layout" id="content">
         <KnowledgeSidebar locale={locale} activePath={path} />

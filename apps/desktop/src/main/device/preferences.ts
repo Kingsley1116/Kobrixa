@@ -14,6 +14,7 @@ const choice = <T extends string | number>(choices: readonly T[]) =>
   z.custom<T>((value) => choices.includes(value as T));
 export const devicePreferencesSchema = z
   .object({
+    skipUnchangedAssets: z.boolean(),
     usbAutoReconnect: z.boolean(),
     usbRetryInterval: choice(USB_RETRY_INTERVALS),
     usbRetryLimit: choice(USB_RETRY_LIMITS),

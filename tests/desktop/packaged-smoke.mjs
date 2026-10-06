@@ -161,6 +161,20 @@ async function launch(check) {
 
 try {
   await launch(async (js, send) => {
+    const restored = await js("window.kobrixa.workspace.restoreSession()");
+    const workspaceId = restored.activeWorkspaceId;
+    assert.ok(workspaceId);
+    const compiled = await js(`new Promise((resolve, reject) => {
+      const unsubscribe = window.kobrixa.build.onEvent(event => {
+        if (event.type === "complete" && event.workspaceId === ${JSON.stringify(workspaceId)}) {
+          unsubscribe();
+          resolve(event.result);
+        }
+      });
+      window.kobrixa.build.start(${JSON.stringify(workspaceId)}, {"main.bp": "LCD.Clear()\\nLCD.Update()\\n"}).catch(error => { unsubscribe(); reject(error); });
+    })`);
+    assert.equal(compiled.success, true, JSON.stringify(compiled.diagnostics));
+    assert.ok(compiled.artifacts.some((artifact) => artifact.kind === "rbf"));
     const state = await js("window.kobrixa.updates.getState()");
     assert.equal(state.currentVersion, version);
     assert.notEqual(state.reason, "development");
@@ -229,7 +243,7 @@ try {
     channel: "preview",
   });
   console.log(
-    "Packaged application: shipped runtime, device preference validation/persistence, update IPC, three-project restore and immediate-quit draft recovery pass.",
+    "Packaged application: shipped build worker, runtime, device preference validation/persistence, update IPC, three-project restore and immediate-quit draft recovery pass.",
   );
 } finally {
   await rm(profile, { recursive: true, force: true });

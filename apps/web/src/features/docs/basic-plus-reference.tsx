@@ -1618,7 +1618,7 @@ const methodDescriptions: Record<string, Localized> = {
   ),
   near: action("驗證兩個數值足夠接近", "asserts that two numeric values are sufficiently near"),
 };
-function describe(op: EV3OperationSignature, locale: DocsLocale) {
+export function describeApi(op: EV3OperationSignature, locale: DocsLocale) {
   const timer = /^Time\.(Get|Reset)(\d)$/.exec(op.name);
   if (timer)
     return timer[1] === "Get"
@@ -1820,7 +1820,7 @@ function ApiDetail({
           {locale === "zh-TW" ? labels[operation.category][0] : labels[operation.category][1]}
         </p>
         <h1 id="api-title">{operation.name}</h1>
-        <p className="api-description">{describe(operation, locale)}</p>
+        <p className="api-description">{describeApi(operation, locale)}</p>
       </header>
       <section className="reference-detail">
         <section id="syntax">

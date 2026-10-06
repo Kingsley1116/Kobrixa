@@ -96,8 +96,8 @@ async function setup(descriptor = target) {
   await writeFile(asset, "asset");
   const builds = {
     deployableArtifacts: vi.fn(async () => [
-      { path: asset, remotePath: "assets/image.rgf" },
-      { path: program, remotePath: "main.rbf" },
+      { kind: "asset", path: asset, remotePath: "assets/image.rgf" },
+      { kind: "rbf", path: program, remotePath: "main.rbf" },
     ]),
   };
   const service = new DeviceService(
@@ -138,6 +138,73 @@ function validListings(session: ReturnType<typeof robot>) {
         : [],
   );
 }
+
+describe("incremental deployment", () => {
+  it("skips matching assets, always uploads the executable and verifies skipped assets after recovery", async () => {
+    const h = await setup();
+    validListings(h.original);
+    await h.service.deploy(h.id, "build", `${ROOT}/demo`);
+    expect(h.original.upload).toHaveBeenCalledTimes(1);
+    expect(h.original.upload).toHaveBeenCalledWith(
+      `${ROOT}/demo/main.rbf`,
+      Buffer.from("program"),
+      expect.any(AbortSignal),
+    );
+    validListings(h.replacement);
+    h.original.drop();
+    await settle();
+    expect(restored(h.events)).toMatchObject({ deployment: "verified", buildId: "build" });
+  });
+
+  it.each(["missing", "size", "checksum", "unknown-checksum", "directory"])(
+    "uploads an asset with %s metadata",
+    async (kind) => {
+      const h = await setup();
+      const entry = listing(`${ROOT}/demo/assets/image.rgf`, "asset");
+      if (kind === "size") entry.size = 99;
+      if (kind === "checksum") entry.checksum = "0".repeat(32);
+      if (kind === "unknown-checksum") delete entry.checksum;
+      if (kind === "directory") entry.kind = "directory";
+      h.original.list.mockResolvedValue(kind === "missing" ? [] : [entry]);
+      await h.service.deploy(h.id, "build", `${ROOT}/demo`);
+      expect(h.original.upload).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("refreshes remote metadata on every deployment and supports a forced full upload", async () => {
+    const h = await setup();
+    validListings(h.original);
+    await h.service.deploy(h.id, "first", `${ROOT}/demo`);
+    h.original.list.mockResolvedValue([]);
+    await h.service.deploy(h.id, "second", `${ROOT}/demo`);
+    expect(h.original.upload).toHaveBeenCalledTimes(3);
+    validListings(h.original);
+    h.original.list.mockClear();
+    await h.service.setPreferences({ skipUnchangedAssets: false });
+    await h.service.deploy(h.id, "third", `${ROOT}/demo`);
+    expect(h.original.upload).toHaveBeenCalledTimes(5);
+    expect(h.original.list).not.toHaveBeenCalled();
+  });
+
+  it("falls back to uploading when an asset directory does not exist", async () => {
+    const h = await setup();
+    h.original.list.mockRejectedValue(new DeviceOperationError("not-found", "Missing directory"));
+    await h.service.deploy(h.id, "build", `${ROOT}/demo`);
+    expect(h.original.upload).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["connection", "timeout", "protocol", "cancelled"] as const)(
+    "does not upload after a %s during comparison",
+    async (category) => {
+      const h = await setup();
+      h.original.list.mockRejectedValue(new DeviceOperationError(category, "Comparison failed"));
+      await expect(h.service.deploy(h.id, "build", `${ROOT}/demo`)).rejects.toMatchObject({
+        category,
+      });
+      expect(h.original.upload).not.toHaveBeenCalled();
+    },
+  );
+});
 
 describe("USB recovery", () => {
   it("recovers idle unplug with a fresh path and session, without robot commands or continued polling", async () => {

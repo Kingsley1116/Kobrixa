@@ -81,6 +81,31 @@ afterEach(async () => {
 });
 
 describe("diagnostic documentation", () => {
+  it("searches across documentation using a shareable query and preserves locale on navigation", async () => {
+    await render("/docs/search?lang=en&q=LCD.Text");
+    expect(query("h1").textContent).toBe("Search all documentation");
+    expect(query<HTMLInputElement>('input[type="search"]').value).toBe("LCD.Text");
+    expect(query(".docs-search-results li a").textContent).toBe("LCD.Text");
+    await search("BP1013");
+    expect(router.state.location.search).toContain("q=BP1013");
+    await click(query(".docs-search-results li a"));
+    expect(router.state.location.pathname).toBe("/docs/diagnostics/BP1013");
+    expect(router.state.location.search).toBe("?lang=en");
+    expect(query("h1").textContent).toBe(getDiagnosticHelp("BP1013")?.title.en);
+  });
+
+  it("opens the unified search from the sidebar and shows an empty result state", async () => {
+    await render("/docs?lang=zh-TW");
+    await click(query('aside a[href^="/docs/search"]'));
+    expect(query("h1").textContent).toBe("搜尋所有文件");
+    await search("nonexistent-kobrixa-term");
+    expect(query(".docs-search-page").textContent).toContain("沒有符合的文件");
+    await click(query(".docs-search-controls button"));
+    expect(document.activeElement).toBe(query('input[type="search"]'));
+    expect(new URLSearchParams(router.state.location.search).has("q")).toBe(false);
+    expect(router.state.location.search).toBe("?lang=zh-TW");
+  });
+
   it.each([
     ["en", "Keyboard shortcuts and settings", "Diagnostic index"],
     ["zh-TW", "快捷鍵與設定", "錯誤索引"],

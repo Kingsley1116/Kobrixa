@@ -2,7 +2,7 @@
 
 ## Current delivery stage
 
-The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and the three-platform archive/release workflow are implemented. Production signing credentials and the complete clean-machine/hardware acceptance matrix remain release gates.
+The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Production signing credentials and the complete clean-machine/hardware acceptance matrix remain release gates.
 
 ## Phase 0 — foundation in place
 
@@ -18,7 +18,7 @@ Continue reviewing dependency licenses, brand/asset provenance and bilingual lin
 The implemented path is `.bp` → validated `KobrixaIR` → native `.rbf`, with Monaco editing, projects, bilingual offline diagnostic explanations, user-selected Quick Fix with Undo, asset deployment and remote file operations. The online [diagnostic index](/docs/diagnostics?lang=en) shares explanations with the IDE; Quick Fix offers only unambiguous syntax corrections. The remaining rollout order is:
 
 1. Complete Apple enrollment and Developer ID credentials, then verify a signed and notarized macOS archive after extraction.
-2. Complete source/history/asset review and clean-machine checks, including the outstanding USB/Wi-Fi matrix. Review the exact Release draft and its six assets.
+2. Complete source/history/asset review and clean-machine checks, including the outstanding USB/Wi-Fi matrix. Review the exact Release draft, installers, archives, update metadata and checksums.
 3. Manually make the repository public and publish the first usable release with macOS signed/notarized and Windows explicitly unsigned.
 4. Apply to SignPath Foundation using the public source and release. Approval is an external dependency; leave Windows unsigned if it is delayed or declined.
 5. After approval, configure the approved signing scope and human-approval policy, then enable Windows signing for a new version and verify the returned executable and final download.

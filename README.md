@@ -2,7 +2,7 @@
 
 **Code motion. Build ideas.**
 
-Kobrixa IDE is a planned, open-source, cross-platform development environment for programming LEGO® MINDSTORMS® EV3 robots. It is designed for students and makers who want a focused path from source code to a program running on a physical EV3 brick.
+Kobrixa IDE is an open-source, cross-platform development environment for programming LEGO® MINDSTORMS® EV3 robots. It is designed for students and makers who want a focused path from source code to a program running on a physical EV3 brick.
 
 > [繁體中文版](README.zh-TW.md)
 
@@ -10,16 +10,17 @@ Kobrixa IDE is a planned, open-source, cross-platform development environment fo
 
 **v1 candidate implementation.** The repository contains a buildable IDE, compiler pipeline, EV3 image backend, and USB/Wi-Fi device services. Basic Plus compatibility coverage and the three-platform physical-brick matrix remain release gates.
 
-| Capability                           | Status                             |
-| ------------------------------------ | ---------------------------------- |
-| Basic Plus (`.bp`) frontend          | v1 candidate                       |
-| Native EV3 `.rbf` output             | v1 candidate                       |
-| USB HID on Windows, macOS, and Linux | Candidate; physical matrix pending |
-| Wi-Fi on Windows, macOS, and Linux   | Candidate; physical matrix pending |
-| Python frontend                      | Planned after v1                   |
-| TypeScript frontend                  | Planned after Python               |
-| C++ frontend                         | Planned after TypeScript           |
-| Bluetooth, simulator, block editor   | Long-term                          |
+| Capability                           | Status                                |
+| ------------------------------------ | ------------------------------------- |
+| Basic Plus (`.bp`) frontend          | v1 candidate                          |
+| Native EV3 `.rbf` output             | v1 candidate                          |
+| USB HID on Windows, macOS, and Linux | Candidate; physical matrix pending    |
+| Wi-Fi on Windows, macOS, and Linux   | Candidate; physical matrix pending    |
+| Installers and automatic updates     | Implemented; availability per Release |
+| Python frontend                      | Planned after v1                      |
+| TypeScript frontend                  | Planned after Python                  |
+| C++ frontend                         | Planned after TypeScript              |
+| Bluetooth, simulator, block editor   | Long-term                             |
 
 No planned capability should be interpreted as already available.
 
@@ -43,7 +44,7 @@ Kobrixa will use a clean-room implementation to provide behavioral compatibility
 
 Later language frontends will share the same typed intermediate representation and EV3 backend. Kobrixa will parse as much standard Python, TypeScript, and C++ syntax as practical, but the original EV3 runtime cannot provide their complete desktop runtimes or standard libraries. Features that cannot be represented safely must produce explicit compile-time diagnostics.
 
-## Planned technology
+## Technology
 
 - Electron desktop shell
 - React and TypeScript renderer
@@ -67,7 +68,7 @@ Node.js and TypeScript describe Kobrixa's implementation stack. C++ remains a se
 - [Examples](examples/README.md)
 - [Contributing](CONTRIBUTING.md)
 
-## Intended repository layout
+## Repository layout
 
 ```text
 apps/desktop/           Electron main/preload and React renderer
@@ -81,7 +82,7 @@ tests/hardware/         Manual EV3 hardware acceptance scripts
 docs/                   Product and engineering documentation
 ```
 
-This layout is a contract for implementation, not evidence that these components exist today.
+These components are implemented in the repository. Published packages and their signing status are listed in [GitHub Releases](https://github.com/Kingsley1116/Kobrixa/releases); physical-platform acceptance is tracked separately in the device documentation.
 
 ## Legal and naming
 

@@ -2,7 +2,7 @@
 
 **用程式驅動創意。**
 
-Kobrixa IDE 是一個規劃中的開源跨平台開發環境，用於編寫 LEGO® MINDSTORMS® EV3 機器人程式。它主要服務學生與創客，提供從原始碼到實體 EV3 主機執行程式的清楚流程。
+Kobrixa IDE 是一個開源跨平台開發環境，用於編寫 LEGO® MINDSTORMS® EV3 機器人程式。它主要服務學生與創客，提供從原始碼到實體 EV3 主機執行程式的清楚流程。
 
 > [English README](README.md)
 
@@ -10,16 +10,17 @@ Kobrixa IDE 是一個規劃中的開源跨平台開發環境，用於編寫 LEGO
 
 **v1 候選實作。** 本倉庫已包含可建置的 IDE、編譯流程、EV3 image 後端，以及 USB／Wi‑Fi 設備服務。Basic Plus 相容覆蓋與三平台 EV3 實機矩陣仍是發布門檻。
 
-| 能力                          | 狀態                   |
-| ----------------------------- | ---------------------- |
-| Basic Plus（`.bp`）前端       | v1 候選版              |
-| 原生 EV3 `.rbf` 輸出          | v1 候選版              |
-| Windows、macOS、Linux USB HID | 候選版；實機矩陣待完成 |
-| Windows、macOS、Linux Wi-Fi   | 候選版；實機矩陣待完成 |
-| Python 前端                   | v1 之後規劃            |
-| TypeScript 前端               | Python 之後規劃        |
-| C++ 前端                      | TypeScript 之後規劃    |
-| Bluetooth、模擬器、積木編輯器 | 長期規劃               |
+| 能力                          | 狀態                              |
+| ----------------------------- | --------------------------------- |
+| Basic Plus（`.bp`）前端       | v1 候選版                         |
+| 原生 EV3 `.rbf` 輸出          | v1 候選版                         |
+| Windows、macOS、Linux USB HID | 候選版；實機矩陣待完成            |
+| Windows、macOS、Linux Wi-Fi   | 候選版；實機矩陣待完成            |
+| 安裝套件與自動更新            | 已實作；可用套件以各 Release 為準 |
+| Python 前端                   | v1 之後規劃                       |
+| TypeScript 前端               | Python 之後規劃                   |
+| C++ 前端                      | TypeScript 之後規劃               |
+| Bluetooth、模擬器、積木編輯器 | 長期規劃                          |
 
 任何「規劃中」能力都不應被理解為目前已經可用。
 
@@ -43,7 +44,7 @@ Kobrixa 將以 clean-room 方式實作，對常用舊版 `.bp` 程式提供行�
 
 後續語言前端會共用同一套具型別的中間表示與 EV3 後端。Kobrixa 會盡可能解析標準 Python、TypeScript 與 C++ 語法，但原生 EV3 執行環境無法提供這些語言完整的桌面 runtime 或標準函式庫。無法安全映射的能力必須產生明確的編譯期診斷。
 
-## 規劃技術
+## 技術
 
 - Electron 桌面外殼
 - React 與 TypeScript renderer
@@ -67,7 +68,7 @@ Node.js 與 TypeScript 是 Kobrixa 的內部實作技術；C++ 則仍是 TypeScr
 - [範例](examples/README.zh-TW.md)
 - [貢獻指南](CONTRIBUTING.md)
 
-## 預定倉庫結構
+## 倉庫結構
 
 ```text
 apps/desktop/           Electron main／preload 與 React renderer
@@ -81,7 +82,7 @@ tests/hardware/         手動 EV3 實機驗收腳本
 docs/                   產品與工程文件
 ```
 
-這是實作契約，不代表上述元件目前已經存在。
+上述元件已在倉庫實作。已公開的下載套件與簽章狀態以 [GitHub Releases](https://github.com/Kingsley1116/Kobrixa/releases) 為準；實機平台驗收另見設備支援文件。
 
 ## 法律與命名
 

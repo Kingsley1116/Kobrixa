@@ -42,6 +42,8 @@ The editor and compiler must work offline. Wi-Fi is used for communication with 
 
 ### Build
 
+Desktop compilation runs in a dedicated worker, with progress and cooperative cancellation available while the main process handles device and window events.
+
 - Validate the manifest before compiling.
 - Compile supported `.bp`, include, module, and asset inputs into `KobrixaIR` and then native `.rbf`.
 - Return deterministic diagnostics with stable codes and source ranges.
@@ -52,16 +54,16 @@ The editor and compiler must work offline. Wi-Fi is used for communication with 
 
 - Discover USB EV3 devices and connect to a user-supplied Wi-Fi address.
 - Display the active transport and connection state.
-- Upload, run, stop, and delete a program.
+- Upload, run, stop, and delete a program. Deployment skips assets only when a fresh EV3 directory listing matches their size and checksum; the executable is always uploaded last. Disable “Skip unchanged assets” in Settings → EV3 & execution for a full upload.
 - Browse remote files, transfer files or folders, and preview conflicts before batch transfers.
 - Time out stalled operations and distinguish permission, discovery, connection, protocol, transfer, and device errors.
 
 ### Desktop distribution
 
-- Target Windows x64, macOS Apple Silicon and Linux x64 with extractable archives and SHA-256 files.
+- Package Windows x64 NSIS/ZIP, macOS Apple Silicon DMG and Linux x64 AppImage/tar.gz, with update metadata and SHA256SUMS.txt.
 - Use Apple Developer ID signing and notarization for enabled macOS releases. Windows remains explicitly unsigned until SignPath Foundation approval and successful signature verification.
 - Report each platform's actual signing status in its Release notes. An enabled signing failure leaves an incomplete draft for review.
-- Keep Release publication manual. Intel Mac packages, installers and automatic updates are outside the current delivery scope.
+- Keep Release publication manual. Installers and automatic updates are implemented; available downloads and signing status are determined by each published Release. Intel Mac packages remain outside the current scope.
 
 See [installation and recovery](../en/installation.md) and the [code signing policy](../en/code-signing.md) for downloads and verification.
 

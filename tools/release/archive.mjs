@@ -107,6 +107,7 @@ export async function verifyApplication(directory, platform, version) {
   for (const required of [
     ".vite/build/main.cjs",
     ".vite/build/language-worker.cjs",
+    ".vite/build/build-worker.cjs",
     ".vite/build/preload.cjs",
     ".vite/renderer/main_window/index.html",
     "node_modules/electron-updater/out/main.js",

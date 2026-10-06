@@ -55,6 +55,11 @@ const config: ForgeConfig = {
       build: [
         { entry: "src/main/index.ts", config: "vite.main.config.ts", target: "main" },
         {
+          entry: "src/main/workspace/build-worker.ts",
+          config: "vite.build-worker.config.ts",
+          target: "main",
+        },
+        {
           entry: "src/main/language/language-worker.ts",
           config: "vite.language.config.ts",
           target: "main",

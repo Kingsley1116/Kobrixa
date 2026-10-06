@@ -59,16 +59,16 @@ export function mergeDiscoveryResults(
   return [];
 }
 
-export function deploymentTargets(
-  files: Array<{ path: string; remotePath: string }>,
+export function deploymentTargets<T extends { path: string; remotePath: string }>(
+  files: T[],
   remoteDirectory: string,
-): Array<{ path: string; remotePath: string }> {
+): T[] {
   return files.map((file) => {
     const relative = file.remotePath.replaceAll("\\", "/");
     if (relative.startsWith("/") || relative.split("/").some((part) => part === "..")) {
       throw new DeviceOperationError("transfer", `Unsafe asset deployment path '${relative}'.`);
     }
-    return { path: file.path, remotePath: path.posix.join(remoteDirectory, relative) };
+    return { ...file, remotePath: path.posix.join(remoteDirectory, relative) };
   });
 }
 
@@ -266,15 +266,44 @@ export class DeviceService {
       this.#deployments.delete(id);
       const deployment: Deployment = { buildId, files: [] };
       const files = await this.builds.deployableArtifacts(buildId);
+      const skipUnchanged = this.getPreferences().skipUnchangedAssets;
+      // Re-read the device on each deployment; another program or computer may
+      // have replaced assets since the previous upload. Share one listing per directory.
+      const listings = new Map<string, RemoteEntry[]>();
       for (const file of deploymentTargets(files, remoteDirectory)) {
         try {
           const bytes = await readFile(file.path);
           signal.throwIfAborted();
-          await session.upload(file.remotePath, bytes, signal);
+          const checksum = createHash("md5").update(bytes).digest("hex");
+          let unchanged = false;
+          if (skipUnchanged && file.kind === "asset") {
+            const directory = path.posix.dirname(file.remotePath);
+            if (!listings.has(directory)) {
+              try {
+                listings.set(directory, await session.list(directory, signal));
+              } catch (error) {
+                signal.throwIfAborted();
+                if (
+                  connectionFailure(error) ||
+                  normalizeDeviceError(error).category === "cancelled"
+                )
+                  throw error;
+                // Missing directories or unavailable checksums fall back to uploading.
+                listings.set(directory, []);
+              }
+            }
+            signal.throwIfAborted();
+            const entry = listings.get(directory)!.find((item) => item.path === file.remotePath);
+            unchanged =
+              entry?.kind === "file" &&
+              entry.size === bytes.length &&
+              entry.checksum?.toLowerCase() === checksum;
+          }
+          if (!unchanged) await session.upload(file.remotePath, bytes, signal);
           deployment.files.push({
             path: file.remotePath,
             size: bytes.length,
-            checksum: createHash("md5").update(bytes).digest("hex"),
+            checksum,
           });
         } catch (error) {
           const normalized = normalizeDeviceError(error, "transfer");

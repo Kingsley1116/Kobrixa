@@ -42,6 +42,8 @@ Kobrixa IDE 為學生與創客提供可靠、容易理解的流程，將 EV3 原
 
 ### 建置
 
+桌面編譯在獨立 worker 執行，持續回報進度並支援協作式取消，主程序仍可處理設備與視窗事件。
+
 - 編譯前驗證 manifest。
 - 將支援的 `.bp`、include、module 和素材輸入編譯為 `KobrixaIR`，再產生原生 `.rbf`。
 - 回傳具有穩定代碼與來源範圍的確定性診斷。
@@ -52,16 +54,16 @@ Kobrixa IDE 為學生與創客提供可靠、容易理解的流程，將 EV3 原
 
 - 搜尋 USB EV3，並連接使用者提供的 Wi-Fi 位址。
 - 顯示目前 transport 與連線狀態。
-- 上傳、執行、停止與刪除程式。
+- 上傳、執行、停止與刪除程式。部署時重新讀取 EV3 目錄，只有大小與校驗值皆符合的素材才略過；程式檔一律最後上傳。可在「設定 → EV3 與執行」關閉「略過未變更的素材」，完整重新上傳。
 - 瀏覽遠端檔案、傳輸檔案或資料夾，並在批次傳輸前預覽衝突。
 - 對停滯操作套用逾時，並區分權限、搜尋、連線、協定、傳輸和設備錯誤。
 
 ### 桌面發布
 
-- 以可解壓的壓縮包與 SHA-256 檔交付 Windows x64、macOS Apple Silicon 及 Linux x64 版本。
+- 封裝 Windows x64 NSIS／ZIP、macOS Apple Silicon DMG 與 Linux x64 AppImage／tar.gz，並產生更新資訊及 SHA256SUMS.txt。
 - 啟用 macOS 簽章時使用 Apple Developer ID 與公證。Windows 在 SignPath Foundation 核准且簽章驗證成功前，明確標示未簽章。
 - Release 說明逐平台記錄實際簽章狀態；啟用後簽章失敗會保留未完成草稿供檢閱。
-- Release 維持人工公開。目前交付範圍不包含 Intel Mac 套件、安裝程式與自動更新。
+- Release 維持人工公開。安裝套件與自動更新已實作；可下載套件與簽章狀態以各個已發布 Release 為準。Intel Mac 套件仍不在目前範圍內。
 
 下載與驗證方式請見[安裝與復原](../zh-TW/installation.md)及[程式碼簽章政策](../zh-TW/code-signing.md)。
 

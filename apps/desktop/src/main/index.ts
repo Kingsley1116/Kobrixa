@@ -160,8 +160,12 @@ void app.whenReady().then(async () => {
   app.on("will-quit", () => {
     updates?.dispose();
     language.dispose();
+    builds.dispose();
   });
-  app.on("window-all-closed", () => language.cancel());
+  app.on("window-all-closed", () => {
+    language.cancel();
+    builds.cancelAll();
+  });
   const devices = new DeviceService(
     builds,
     renderer,

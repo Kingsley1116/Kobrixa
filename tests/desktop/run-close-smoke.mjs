@@ -27,6 +27,7 @@ try {
       main: path.join(desktop, "src/main/index.ts"),
       preload: path.join(desktop, "src/preload/index.ts"),
       "language-worker": path.join(desktop, "src/main/language/language-worker.ts"),
+      "build-worker": path.join(desktop, "src/main/workspace/build-worker.ts"),
     },
     outdir: temporary,
     outExtension: { ".js": ".cjs" },

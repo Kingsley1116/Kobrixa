@@ -220,24 +220,21 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
             <h1>{t("下一個想法，\n從這裡開始。", "Your next idea\nstarts here.")}</h1>
             <p className="product-lead">
               {t(
-                "Kobrixa 桌面版目前為 v1 候選版。正式安裝檔仍在準備中，你可以先取得原始碼，在自己的電腦上建置。",
-                "The Kobrixa desktop app is a v1 candidate. Installers are still in preparation; get the source and build it on your own computer today.",
+                "Kobrixa 桌面版目前為 v1 候選版，已實作安裝套件與自動更新。請到 GitHub Releases 選擇已發布的版本，或取得原始碼自行建置。",
+                "The Kobrixa desktop app is a v1 candidate with installer packaging and automatic updates implemented. Choose a published version on GitHub Releases, or build from source.",
               )}
             </p>
             <div className="product-actions">
-              <AppLink
-                className="product-button primary"
-                href={`${github}/archive/refs/heads/main.zip`}
-              >
-                {t("下載原始碼 ZIP", "Download source ZIP")} <span>↓</span>
+              <AppLink className="product-button primary" href={`${github}/releases`}>
+                {t("查看已發布版本", "View published releases")} <span>↗</span>
               </AppLink>
               <AppLink
                 className="product-button secondary"
-                href={`${github}/releases`}
+                href={`${github}/archive/refs/heads/main.zip`}
                 target="_blank"
                 rel="noreferrer"
               >
-                GitHub Releases ↗
+                {t("下載原始碼 ZIP", "Download source ZIP")} ↓
               </AppLink>
               <AppLink className="product-inline-link" href="/docs/reference/code-signing">
                 Code signing policy ↗
@@ -254,8 +251,8 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
             <code>{metadata.version}</code>
             <p>
               {t(
-                "三平台 USB／Wi-Fi 實機矩陣尚待完成。此處提供原始碼，不是已簽署的正式安裝程式。",
-                "The three-platform USB / Wi-Fi hardware matrix is still pending. The download here is source code, not a signed production installer.",
+                "此為網站對應的原始碼版本。可下載套件與逐平台簽章狀態以各 Release 為準；三平台 USB／Wi-Fi 實機矩陣尚待完成。",
+                "This is the website's source version. Available packages and per-platform signing status are listed in each release; the three-platform USB / Wi-Fi hardware matrix is still pending.",
               )}
             </p>
           </aside>
@@ -280,7 +277,7 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
                 </span>
                 <h3>{platform}</h3>
                 <span className="platform-state">
-                  {t("正式安裝檔準備中", "Installer in preparation")}
+                  {["x64 · NSIS", "Apple Silicon · DMG", "x64 · AppImage"][index]}
                 </span>
                 <p>
                   {platform === "Linux"
@@ -289,11 +286,13 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
                         "USB access may require an EV3-specific udev rule. See the installation guide.",
                       )
                     : t(
-                        "目前可在這個平台上從原始碼建置開發版。",
-                        "Build a development version from source on this platform.",
+                        "請依 Release 說明選擇套件，確認該版本的簽章與驗收狀態。",
+                        "Choose a package using its release notes and check that version's signing and acceptance status.",
                       )}
                 </p>
-                <AppLink href="#source-build">{t("從原始碼建置", "Build from source")} →</AppLink>
+                <AppLink href={`${github}/releases`}>
+                  {t("查看版本與下載", "View releases and downloads")} ↗
+                </AppLink>
               </article>
             ))}
           </div>

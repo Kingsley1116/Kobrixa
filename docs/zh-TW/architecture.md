@@ -59,7 +59,7 @@ src/
 
 測試與對應模組放在同一目錄；跨程序操作測試留在 `apps/desktop/tests` 與 `tests/desktop`。功能內的文案留在所屬功能，共用文案才放入 `i18n`。`components` 不依賴功能模組；需要共用元件時直接匯入其檔案，不透過大型 UI 匯出集合。`main/index.ts`、`main/ipc.ts` 與 `renderer/app.tsx` 負責組裝各功能，`shared` 不匯入程序端實作。
 
-語言 worker 原始碼位於 `main/language`，Forge 仍將它輸出為與 `main.cjs` 同層的 `language-worker.cjs`。`styles/index.css` 明確保留工作台樣式先於快捷鍵樣式的載入順序。
+語言 worker 原始碼位於 `main/language`，Forge 將它輸出為與 `main.cjs` 同層的 `language-worker.cjs`。每次桌面建置另使用 `main/workspace/build-worker.ts`，封裝為 `build-worker.cjs`，執行前端、IR 驗證、後端與成品提交。編譯器在同步工作期間也會檢查共享取消旗標。Worker 異常／退出只回報一次失敗並解除忙碌狀態；關閉最後一個視窗會要求取消。`styles/index.css` 明確保留工作台樣式先於快捷鍵樣式的載入順序。
 
 共用介面行為集中在 `renderer/components`：`Dialog` 以 `Modal` 為基礎，處理無障礙標題與表單送出，`DialogActions` 負責呼叫端提供的按鈕布局。驗證、忙碌狀態、初始焦點、關閉條件與焦點還原選項仍由各功能決定。`ClosableTab` 共用檔案／設定分頁呈現，`ResizeHandle` 管理滑鼠與鍵盤縮放及事件清理，`menu-keyboard` 提供操作選單與右鍵選單的鍵盤導覽。設定專用的 `SettingField`、`SettingSelect`、`SettingToggle` 留在 `renderer/settings`，統一關聯標籤與提示，不負責偏好保存。
 
