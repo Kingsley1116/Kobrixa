@@ -1,4 +1,5 @@
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "./monitor-types.js";
+import type { MotorHelperStatus, MotorTestReading } from "./motor-types.js";
 
 export type DeviceErrorCategory =
   | "permission"
@@ -39,6 +40,24 @@ export interface DeviceSession {
   readonly connected: boolean;
   onDisconnect?(listener: (error: Error) => void): () => void;
   disconnect(): Promise<void>;
+  readMotorTest(signal: AbortSignal): Promise<MotorTestReading>;
+  motorTimed(
+    port: number,
+    power: number,
+    durationMs: number,
+    brake: boolean,
+    signal: AbortSignal,
+  ): Promise<void>;
+  motorStop(port: number, brake: boolean, signal: AbortSignal): Promise<void>;
+  runMotorHelper(remotePath: string, signal: AbortSignal): Promise<void>;
+  readMotorHelper(token: number, signal: AbortSignal): Promise<MotorHelperStatus>;
+  armMotorHelper(token: number, signal: AbortSignal): Promise<void>;
+  stopMotorHelper(
+    token: number,
+    port: number,
+    brake: boolean,
+    signal: AbortSignal,
+  ): Promise<boolean>;
   /** Yield only between exchanges; abort is reserved for actual session cancellation. */
   readMonitor(
     signal: AbortSignal,

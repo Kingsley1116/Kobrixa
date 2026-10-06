@@ -6,6 +6,7 @@ import type {
   Diagnostic,
   KobrixaApi,
 } from "../../shared/api.js";
+import type { MotorTestState } from "../../shared/motor-test.js";
 import { deploymentPath } from "./build-path.js";
 
 export type Phase =
@@ -30,7 +31,14 @@ export type Message =
   | "connected"
   | "disconnected"
   | "cancelled"
-  | "files";
+  | "files"
+  | "motorPreparing"
+  | "motorStarted"
+  | "motorCompleted"
+  | "motorStopped"
+  | "motorTimeout"
+  | "motorFailed"
+  | "motorUnconfirmed";
 export interface OperationLog {
   id: number;
   time: number;
@@ -94,6 +102,9 @@ export class ExecutionController {
   private workspaceId: string | undefined;
   private generation = 0;
   private logId = 0;
+  private deviceLogs: OperationLog[] = [];
+  private motorActivity:
+    { testId: string; workspaceId: string | undefined; phases: Set<string> } | undefined;
   private working = false;
   private deviceWork = false;
   private pendingRun: ExecutionRequest | undefined;
@@ -253,6 +264,7 @@ export class ExecutionController {
       successfulBuild: undefined,
       error: undefined,
       ...project,
+      logs: [...project.logs, ...this.deviceLogs].sort((a, b) => a.id - b.id).slice(-100),
       deployed:
         this.state.deployed?.workspaceId === this.workspaceId ? this.state.deployed : undefined,
       phase: this.editingLocked ? this.state.phase : project.error ? "error" : "idle",
@@ -280,6 +292,44 @@ export class ExecutionController {
         { id: ++this.logId, time: Date.now(), message, detail, failed },
       ],
     });
+  }
+  /** Capture the starting project once so changing tabs cannot split a test's activity. */
+  recordMotorTest(state: MotorTestState): void {
+    const request = state.request;
+    if (!request) return;
+    if (this.motorActivity?.testId !== request.testId) {
+      this.motorActivity = {
+        testId: request.testId,
+        workspaceId: this.workspaceId,
+        phases: new Set(),
+      };
+    }
+    const messages: Partial<Record<MotorTestState["phase"], Message>> = {
+      preparing: "motorPreparing",
+      running: "motorStarted",
+      completed: "motorCompleted",
+      stopped: "motorStopped",
+      timeout: "motorTimeout",
+      failed: "motorFailed",
+      unconfirmed: "motorUnconfirmed",
+    };
+    const message = messages[state.phase];
+    if (!message || this.motorActivity.phases.has(state.phase)) return;
+    this.motorActivity.phases.add(state.phase);
+    const log: OperationLog = {
+      id: ++this.logId,
+      time: Date.now(),
+      message,
+      detail: `${String.fromCharCode(65 + request.port)} · ${request.direction * request.power}%${request.durationMs ? ` · ${request.durationMs / 1_000} s` : ""}${request.degrees ? ` · ${request.degrees}°` : ""}${state.message ? `\n${state.message}` : ""}`,
+      failed:
+        state.phase === "failed" || state.phase === "unconfirmed" || state.phase === "timeout",
+    };
+    const id = this.motorActivity.workspaceId;
+    if (id) {
+      const project = this.project(id);
+      this.projects.set(id, { ...project, logs: [...project.logs.slice(-99), log] });
+    } else this.deviceLogs = [...this.deviceLogs.slice(-99), log];
+    this.publish();
   }
   private phase(phase: Phase): void {
     this.update({ phase });

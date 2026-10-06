@@ -78,6 +78,8 @@ import {
 import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
+import { motorTestActive } from "../shared/motor-test.js";
+import { MotorTestController } from "./device/motor-test-controller.js";
 import { MonitorController } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
@@ -184,6 +186,8 @@ export function App(): React.JSX.Element {
   const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const locked =
     controller.editingLockedFor(activeSession?.workspace.id) || updatePreparing || closingProject;
+  const [motorTest] = useState(() => new MotorTestController(window.kobrixa.device));
+  const motorBusy = useSyncExternalStore(motorTest.subscribe, motorTest.getBusy);
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
   const [monitor] = useState(
     () =>
@@ -198,11 +202,17 @@ export function App(): React.JSX.Element {
   const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
   useEffect(() => {
     void sensorLab.initialize();
+    void motorTest.initialize();
+    const stopMotorActivity = motorTest.subscribe(() =>
+      controller.recordMotorTest(motorTest.getSnapshot()),
+    );
     return () => {
       sensorLab.dispose();
+      stopMotorActivity();
+      void motorTest.dispose();
       void monitor.dispose().catch(() => {});
     };
-  }, [sensorLab, monitor]);
+  }, [sensorLab, monitor, motorTest, controller]);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
@@ -357,6 +367,7 @@ export function App(): React.JSX.Element {
     try {
       await restoration.current;
       await window.kobrixa.sensorLab.stop("close");
+      await motorTest.drain();
       await monitor.drain();
       editorRef.current?.captureView();
       await flushDrafts();
@@ -2091,6 +2102,7 @@ export function App(): React.JSX.Element {
     setConfirmUpdate(false);
     try {
       await window.kobrixa.sensorLab.stop("update");
+      await motorTest.drain();
       await monitor.drain();
       await window.kobrixa.updates.prepareInstall();
       await saveAllChanges();
@@ -2118,6 +2130,13 @@ export function App(): React.JSX.Element {
   }, [updates?.phase]);
 
   function runCommand(command: AppCommand): void {
+    if (
+      command === "stop" &&
+      (motorTestActive(motorTest.getSnapshot()) || motorTest.getSnapshot().phase === "unconfirmed")
+    ) {
+      void motorTest.stop();
+      return;
+    }
     if (updatePreparingRef.current || closingProjectRef.current) return;
     if (modalOpen || isModalOpen()) return;
     if (command === "settings" || command === "shortcuts") {
@@ -2196,6 +2215,7 @@ export function App(): React.JSX.Element {
   }
 
   function requestExecution(run: boolean): void {
+    if (run && motorTestActive(motorTest.getSnapshot())) return;
     if (
       !workspace ||
       controller.locked ||
@@ -2336,7 +2356,12 @@ export function App(): React.JSX.Element {
             />
           }
           deviceLocked={
-            updatePreparing || controller.locked || managingEntries || projectBusy || modalOpen
+            updatePreparing ||
+            controller.locked ||
+            motorBusy ||
+            managingEntries ||
+            projectBusy ||
+            modalOpen
           }
           projectLocked={
             restoring || updatePreparing || managingEntries || projectBusy || modalOpen
@@ -2345,6 +2370,7 @@ export function App(): React.JSX.Element {
           locked={locked || managingEntries || projectBusy || modalOpen}
           canSave={Boolean(!settingsActive && active && active.dirty)}
           state={execution}
+          motorTesting={motorBusy}
           onNew={() => runCommand("newProject")}
           onOpen={() => runCommand("openProject")}
           onSave={() => runCommand("save")}
@@ -2870,6 +2896,7 @@ export function App(): React.JSX.Element {
                 monitor={
                   <MonitorWorkspace
                     lab={sensorLab}
+                    motor={motorTest}
                     view={monitorView}
                     onView={setMonitorView}
                     controller={monitor}
@@ -2887,7 +2914,7 @@ export function App(): React.JSX.Element {
                     state={execution}
                     devices={devices}
                     discovering={discovering}
-                    locked={updatePreparing || controller.locked}
+                    locked={updatePreparing || controller.locked || motorBusy}
                     mode={connectionMode}
                     onMode={(mode) => {
                       setConnectionMode(mode);
@@ -2912,7 +2939,7 @@ export function App(): React.JSX.Element {
                     state={remoteState}
                     active={toolTab === "files"}
                     locale={locale}
-                    locked={updatePreparing || controller.locked}
+                    locked={updatePreparing || controller.locked || motorBusy}
                     deployedPath={execution.deployed?.path}
                     onConnect={() => setToolTab("connection")}
                   />

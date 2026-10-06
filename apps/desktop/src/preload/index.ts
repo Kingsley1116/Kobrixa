@@ -1,3 +1,4 @@
+import type { MotorTestState } from "../shared/motor-test.js";
 import type { UpdateState } from "../shared/updates.js";
 import { contextBridge, ipcRenderer } from "electron";
 import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
@@ -100,6 +101,15 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },
   device: {
+    startMotorTest: (request) => ipcRenderer.invoke("device:motor-test-start", request),
+    keepMotorTestAlive: (ref) => ipcRenderer.invoke("device:motor-test-keepalive", ref),
+    stopMotorTest: (ref, brake) => ipcRenderer.invoke("device:motor-test-stop", ref, brake),
+    motorTestState: () => ipcRenderer.invoke("device:motor-test-state"),
+    onMotorTest: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: MotorTestState) => listener(state);
+      ipcRenderer.on("device:motor-test-update", handler);
+      return () => ipcRenderer.removeListener("device:motor-test-update", handler);
+    },
     watchMonitor: (sessionId, enabled) =>
       ipcRenderer.invoke("device:watch-monitor", sessionId, enabled),
     onMonitor: (listener) => {

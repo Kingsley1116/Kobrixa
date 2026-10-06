@@ -45,6 +45,13 @@ async function setup() {
     disconnect: vi.fn(async () => {}),
     run: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
+    readMotorTest: vi.fn<DeviceSession["readMotorTest"]>(),
+    motorTimed: vi.fn<DeviceSession["motorTimed"]>(),
+    motorStop: vi.fn<DeviceSession["motorStop"]>(),
+    runMotorHelper: vi.fn<DeviceSession["runMotorHelper"]>(),
+    readMotorHelper: vi.fn<DeviceSession["readMotorHelper"]>(),
+    armMotorHelper: vi.fn<DeviceSession["armMotorHelper"]>(),
+    stopMotorHelper: vi.fn<DeviceSession["stopMotorHelper"]>(),
   } satisfies DeviceSession;
   vi.spyOn(UsbTransport.prototype, "connect").mockResolvedValue(session as never);
   const files = deferred<Array<{ path: string; remotePath: string }>>();

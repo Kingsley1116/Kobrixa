@@ -11,6 +11,8 @@ import { DeviceOperationError, normalizeDeviceError, withTimeout } from "./error
 import { normalizeRemotePath } from "./path.js";
 import { readInputModes, readMonitor, setInputMode } from "./monitor.js";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "./monitor-types.js";
+import * as motor from "./motor.js";
+import type { MotorHelperStatus, MotorTestReading } from "./motor-types.js";
 
 const SYSTEM_COMMAND_REPLY = 0x01;
 const DIRECT_COMMAND_REPLY = 0x00;
@@ -94,6 +96,47 @@ export class EV3DeviceSession implements DeviceSession {
     shouldYield?: () => boolean,
   ): Promise<DeviceMonitorSnapshot | undefined> {
     return this.exclusive(() => readMonitor(this.connection, signal, shouldYield));
+  }
+
+  readMotorTest(signal: AbortSignal): Promise<MotorTestReading> {
+    return this.exclusive(() => motor.readMotorTest(this.connection, signal));
+  }
+
+  motorTimed(
+    port: number,
+    power: number,
+    durationMs: number,
+    brake: boolean,
+    signal: AbortSignal,
+  ): Promise<void> {
+    return this.exclusive(() =>
+      motor.motorTimed(this.connection, port, power, durationMs, brake, signal),
+    );
+  }
+
+  motorStop(port: number, brake: boolean, signal: AbortSignal): Promise<void> {
+    return this.exclusive(() => motor.motorStop(this.connection, port, brake, signal));
+  }
+
+  runMotorHelper(remotePath: string, signal: AbortSignal): Promise<void> {
+    return this.exclusive(() => motor.runMotorHelper(this.connection, remotePath, signal));
+  }
+
+  readMotorHelper(token: number, signal: AbortSignal): Promise<MotorHelperStatus> {
+    return this.exclusive(() => motor.readMotorHelper(this.connection, token, signal));
+  }
+
+  armMotorHelper(token: number, signal: AbortSignal): Promise<void> {
+    return this.exclusive(() => motor.armMotorHelper(this.connection, token, signal));
+  }
+
+  stopMotorHelper(
+    token: number,
+    port: number,
+    brake: boolean,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    return this.exclusive(() => motor.stopMotorHelper(this.connection, token, port, brake, signal));
   }
 
   readInputModes(

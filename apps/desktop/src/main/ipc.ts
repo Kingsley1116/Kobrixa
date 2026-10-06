@@ -15,6 +15,12 @@ import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 import { workspaceSearchRequestSchema } from "./workspace/search.js";
 import type { MonitorService } from "./device/monitor-service.js";
+import {
+  motorTestRefSchema,
+  motorTestRequestSchema,
+  type MotorTestService,
+} from "./device/motor-test-service.js";
+import type { MotorTestRequest } from "../shared/motor-test.js";
 import type { SensorLabService } from "./sensor-lab/service.js";
 import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
 import { exportSensorCsv } from "./sensor-lab-export.js";
@@ -73,7 +79,7 @@ export function registerIpc(
   operationGate: UpdateOperationGate,
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
-  sensorTools?: { monitor: MonitorService; lab: SensorLabService },
+  sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -94,6 +100,35 @@ export function registerIpc(
   };
 
   handle("updates:state", () => updates.getState());
+  if (sensorTools?.motors) {
+    const motors = sensorTools.motors;
+    handle("device:motor-test-state", () => motors.getState());
+    handle("device:motor-test-start", (event, request: unknown) => {
+      const parsed = motorTestRequestSchema.parse(request) as MotorTestRequest;
+      try {
+        return motors.start(parsed, event.sender.id);
+      } catch (error) {
+        return {
+          request: parsed,
+          phase: "failed",
+          angle: null,
+          displacement: null,
+          elapsedMs: 0,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+    handle("device:motor-test-keepalive", (event, ref: unknown) =>
+      motors.keepAlive(motorTestRefSchema.parse(ref), event.sender.id),
+    );
+    handle("device:motor-test-stop", (event, ref: unknown, brake: unknown) =>
+      motors.stop(
+        motorTestRefSchema.parse(ref),
+        event.sender.id,
+        z.boolean().default(true).parse(brake),
+      ),
+    );
+  }
   if (sensorTools) {
     const { lab, monitor } = sensorTools;
     handle("device:watch-monitor", (_event, sessionId: unknown, enabled: unknown) =>
@@ -106,6 +141,7 @@ export function registerIpc(
     handle("sensor-lab:stop", async (_event, reason: unknown) => {
       const parsed = z.enum(["manual", "close", "update"]).default("manual").parse(reason);
       if (parsed === "manual") return lab.stop(parsed);
+      await sensorTools.motors?.flush();
       await lab.flush(parsed);
       return lab.getState();
     });
@@ -144,7 +180,10 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  handle("updates:prepare", () => updates.prepareInstall());
+  handle("updates:prepare", async () => {
+    await sensorTools?.motors?.flush();
+    updates.prepareInstall();
+  });
   handle("updates:cancel", () => updates.cancelInstall());
   handle("updates:install", () => updates.install());
   handle("updates:open", () => updates.openRelease());
@@ -176,9 +215,12 @@ export function registerIpc(
   handle("workspace:close", (_event, workspaceId: unknown) =>
     workspaces.close(id.parse(workspaceId)),
   );
-  handle("workspace:finish-close", (_event, requestId: unknown, ready: unknown) =>
-    finishClose(id.parse(requestId), z.boolean().parse(ready)),
-  );
+  handle("workspace:finish-close", async (_event, requestId: unknown, ready: unknown) => {
+    const parsedId = id.parse(requestId),
+      parsedReady = z.boolean().parse(ready);
+    if (parsedReady) await sensorTools?.motors?.flush();
+    finishClose(parsedId, parsedReady);
+  });
   handle("workspace:create", (_event, name: unknown) =>
     workspaces.create(z.string().min(1).max(80).parse(name)),
   );

@@ -87,6 +87,15 @@ contextBridge.exposeInMainWorld("kobrixa", {
     },
   },
   device: {
+    startMotorTest: call("motorStart"),
+    keepMotorTestAlive: call("motorKeepAlive"),
+    stopMotorTest: call("motorStop"),
+    motorTestState: call("motorState"),
+    onMotorTest: (listener) => {
+      const handler = (_event, value) => listener(value);
+      ipcRenderer.on("device:motor-test", handler);
+      return () => ipcRenderer.removeListener("device:motor-test", handler);
+    },
     getPreferences: call("devicePreferences"),
     setPreferences: call("setDevicePreferences"),
     onEvent: (listener) => {

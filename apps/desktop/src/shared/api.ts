@@ -19,6 +19,7 @@ export type {
   WorkspaceRefreshResult,
   WorkspaceWriteResult,
 } from "./workspace-files.js";
+import type { MotorTestRef, MotorTestRequest, MotorTestState } from "./motor-test.js";
 import type { DevicePreferences } from "./device-preferences.js";
 import type { MonitorUpdate, SensorLabApi } from "./sensor-lab.js";
 import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
@@ -261,6 +262,11 @@ export interface KobrixaApi {
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {
+    startMotorTest(request: MotorTestRequest): Promise<MotorTestState>;
+    keepMotorTestAlive(ref: MotorTestRef): Promise<void>;
+    stopMotorTest(ref: MotorTestRef, brake?: boolean): Promise<MotorTestState>;
+    motorTestState(): Promise<MotorTestState>;
+    onMotorTest(listener: (state: MotorTestState) => void): () => void;
     watchMonitor(sessionId: string, enabled: boolean): Promise<MonitorUpdate>;
     onMonitor(listener: (update: MonitorUpdate) => void): () => void;
     monitor(sessionId: string): Promise<MonitorResult<DeviceMonitorSnapshot>>;

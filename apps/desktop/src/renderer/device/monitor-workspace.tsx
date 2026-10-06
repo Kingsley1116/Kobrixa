@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useSyncExternalStore, type ComponentProps } from "react";
 import { TabList } from "../components/tab-list.js";
 import { MonitorPanel } from "./monitor-panel.js";
 import { SensorLabPanel } from "./sensor-lab-panel.js";
@@ -15,6 +15,8 @@ export function MonitorWorkspace({
   onView(view: "readings" | "lab"): void;
 }): React.JSX.Element {
   const zh = props.locale === "zh-TW";
+  const labState = useSyncExternalStore(lab.subscribe, lab.getSnapshot);
+  const motorBusy = useSyncExternalStore(props.motor.subscribe, props.motor.getBusy);
   return (
     <div className="monitor-workspace">
       <TabList
@@ -43,7 +45,11 @@ export function MonitorWorkspace({
         aria-labelledby="monitor-view-readings"
         hidden={view !== "readings"}
       >
-        <MonitorPanel {...props} />
+        <MonitorPanel
+          {...props}
+          recording={labState.lab.active}
+          motorActive={props.active && view === "readings"}
+        />
       </div>
       <div
         id="monitor-page-lab"
@@ -57,7 +63,7 @@ export function MonitorWorkspace({
           locale={props.locale}
           sessionId={props.sessionId}
           onConnect={props.onConnect}
-          locked={props.locked ?? false}
+          locked={!!props.locked || motorBusy}
         />
       </div>
     </div>

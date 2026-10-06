@@ -5,6 +5,7 @@ import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkSensorLab } from "./sensor-lab-smoke.mjs";
 import { checkMonitor, createMonitorFixture, monitorDescriptor } from "./monitor-smoke.mjs";
+import { checkMotorTests, createMotorFixture } from "./motor-test-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
 import { checkDiagnostics, createDiagnosticsFixture } from "./diagnostics-smoke.mjs";
@@ -24,6 +25,9 @@ const { attachKeyboard, setKeyboardContext } = await import(
 const { LanguageService } = await import(pathToFileURL(path.join(temporary, "language.cjs")).href);
 const { MonitorService } = await import(
   pathToFileURL(path.join(temporary, "monitor-service.cjs")).href
+);
+const { MotorTestService, motorTestRefSchema } = await import(
+  pathToFileURL(path.join(temporary, "motor-test-service.cjs")).href
 );
 const { SensorLabService } = await import(pathToFileURL(path.join(temporary, "service.cjs")).href);
 const searchHelpers = await import(
@@ -88,6 +92,7 @@ function payloadBytes(value) {
 let failNextWrite = false;
 let openCount = 0;
 let win;
+let motors;
 const monitor = createMonitorFixture((event) => {
   win.webContents.send("device:event", event);
   if (event.type === "usb-recovery" && event.state === "waiting") {
@@ -97,7 +102,8 @@ const monitor = createMonitorFixture((event) => {
 });
 const sampler = new MonitorService(
   {
-    monitor: (id) => monitor.handle("deviceMonitor", [id]),
+    monitor: (id) =>
+      motors?.busy ? Promise.resolve({ status: "busy" }) : monitor.handle("deviceMonitor", [id]),
     inputModes: (...args) => monitor.handle("deviceInputModes", args),
     setInputMode: (...args) => monitor.handle("deviceSetInputMode", args),
   },
@@ -112,6 +118,13 @@ const sensorLab = new SensorLabService({
   publish: (state) => win?.webContents.send("sensor-lab:state", state),
 });
 sampler.subscribe((update) => sensorLab.observe(update));
+motors = createMotorFixture({
+  MotorTestService,
+  monitor,
+  recording: () => !!sampler.recordingSession,
+  publish: (state) => win?.webContents.send("device:motor-test", state),
+  deviceEvent: (event) => win?.webContents.send("device:event", event),
+});
 const workspace = (id = firstId) => {
   const project = fixtures.get(id);
   return {
@@ -151,6 +164,12 @@ let devicePreferences = {
   wifiHandshakeTimeout: 3000,
 };
 ipcMain.handle("smoke", async (_e, name, args) => {
+  if (name === "motorState") return motors.service.getState();
+  if (name === "motorStart") return motors.start(args[0], _e.sender.id);
+  if (name === "motorKeepAlive")
+    return motors.service.keepAlive(motorTestRefSchema.parse(args[0]), _e.sender.id);
+  if (name === "motorStop")
+    return motors.service.stop(motorTestRefSchema.parse(args[0]), _e.sender.id, args[1]);
   if (name === "diagnosticQuickFixes") return diagnostics.quickFixes(args);
   if (name === "diagnosticCancelQuickFix") return diagnostics.cancelQuickFix(args);
   if (name === "documentationOpen") return diagnostics.openDocumentation(args[0]);
@@ -158,6 +177,7 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "deviceInputModes") return sampler.inputModes(...args);
   if (name === "deviceSetInputMode") return sampler.setInputMode(...args);
   if (name === "deviceDisconnect") {
+    await motors.service.stopAll(args[0]);
     sensorLab.onDisconnect(args[0]);
     await sampler.disconnect(args[0]);
   }
@@ -442,6 +462,7 @@ app
       },
     };
     const monitorContext = { js, key, until, pause, win, temporary, monitor };
+    const motorContext = { ...monitorContext, motors };
     const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
       ...projectsContext,
@@ -472,6 +493,11 @@ app
     }
     if (process.env.KOBRIXA_SMOKE_MONITOR_ONLY) {
       await checkMonitor(monitorContext);
+      app.exit(0);
+      return;
+    }
+    if (process.env.KOBRIXA_SMOKE_MOTORS_ONLY) {
+      await checkMotorTests(motorContext);
       app.exit(0);
       return;
     }
@@ -545,6 +571,7 @@ app
     writes.splice(fileCheckWriteCount);
     await checkMonitor(monitorContext);
     await checkSensorLab(labContext);
+    await checkMotorTests(motorContext);
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
     await checkExpandedSettings(settingsContext);

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuildEvent, CompileResult, DeviceEvent, KobrixaApi } from "../../shared/api.js";
+import type { MotorTestState } from "../../shared/motor-test.js";
 import { ExecutionController, filesToSave } from "./execution.js";
 import { readTheme } from "../settings/theme.js";
 
@@ -55,6 +56,11 @@ function setup() {
       artifacts: vi.fn(),
     },
     device: {
+      startMotorTest: vi.fn(),
+      keepMotorTestAlive: vi.fn(),
+      stopMotorTest: vi.fn(),
+      motorTestState: vi.fn(),
+      onMotorTest: () => () => {},
       watchMonitor: vi.fn(),
       onMonitor: () => () => {},
       monitor: vi.fn(),
@@ -106,6 +112,65 @@ function setup() {
 }
 
 describe("execution flow", () => {
+  it("records motor transitions once and keeps their starting project association", () => {
+    const { controller } = setup();
+    const state: MotorTestState = {
+      request: {
+        sessionId: "ev3",
+        testId: "motor-1",
+        port: 2,
+        power: 20,
+        direction: -1,
+        mode: "angle",
+        degrees: 90,
+        brake: true,
+      },
+      phase: "preparing",
+      angle: null,
+      displacement: null,
+      elapsedMs: 0,
+    };
+    controller.recordMotorTest(state);
+    controller.recordMotorTest({ ...state, phase: "running" });
+    controller.recordMotorTest({ ...state, phase: "running", angle: 10 });
+    controller.setWorkspace("w2");
+    controller.recordMotorTest({ ...state, phase: "completed" });
+    expect(controller.getSnapshot().logs).toHaveLength(0);
+    controller.setWorkspace("w1");
+    expect(controller.getSnapshot().logs.map((entry) => entry.message)).toEqual([
+      "motorPreparing",
+      "motorStarted",
+      "motorCompleted",
+    ]);
+    expect(controller.getSnapshot().logs[0]?.detail).toBe("C · -20% · 90°");
+    expect(controller.editingLocked).toBe(false);
+  });
+  it("keeps a motor test without an open project in device activity", () => {
+    const { controller } = setup();
+    controller.setWorkspace(undefined);
+    controller.recordMotorTest({
+      request: {
+        sessionId: "ev3",
+        testId: "motor-global",
+        port: 0,
+        power: 20,
+        direction: 1,
+        mode: "jog",
+        brake: true,
+      },
+      phase: "unconfirmed",
+      angle: null,
+      displacement: null,
+      elapsedMs: 0,
+      message: "Disconnected",
+    });
+    expect(controller.getSnapshot().logs[0]).toMatchObject({
+      message: "motorUnconfirmed",
+      failed: true,
+    });
+    controller.setWorkspace("w2");
+    expect(controller.getSnapshot().logs).toHaveLength(1);
+  });
   it("locks device actions during a mode change without logging each monitor sample", async () => {
     const h = setup();
     await h.controller.connect(usb);

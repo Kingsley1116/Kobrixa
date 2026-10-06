@@ -19,6 +19,7 @@ import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
 import { CloseHandshake } from "./window/close.js";
 import { MonitorService } from "./device/monitor-service.js";
+import { MotorTestService } from "./device/motor-test-service.js";
 import { SensorLabService } from "./sensor-lab/service.js";
 import { MainProcessCloseGuard } from "./window/main-close.js";
 
@@ -37,11 +38,12 @@ let quitting = false;
 let closeHandshake: CloseHandshake | undefined;
 let rendererCanFlush = false;
 
-async function retrySensorSave(error: unknown, window?: BrowserWindow): Promise<boolean> {
+async function retryDeviceWork(error: unknown, window?: BrowserWindow): Promise<boolean> {
   const options: MessageBoxOptions = {
     type: "error",
-    title: "Sensor recording not saved / 感測器記錄尚未儲存",
-    message: "Save the sensor recording before closing. / 請先儲存感測器記錄，再關閉程式。",
+    title: "Device work unfinished / 設備操作尚未完成",
+    message:
+      "Finish stopping motors and saving recordings before closing. / 請先確認馬達停止並儲存記錄，再關閉程式。",
     detail: error instanceof Error ? error.message : String(error),
     buttons: ["Retry / 重試", "Keep open / 保持開啟"],
     defaultId: 0,
@@ -81,7 +83,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
   const mainClose = new MainProcessCloseGuard(
     flushSensorLab,
     finish,
-    (error) => retrySensorSave(error, window),
+    (error) => retryDeviceWork(error, window),
     () => {
       quitting = false;
     },
@@ -176,11 +178,20 @@ void app.whenReady().then(async () => {
     if (target && !target.isDestroyed()) target.send(channel, value);
   };
   const monitor = new MonitorService(devices, (update) => send("device:monitor-update", update));
+  const motors = new MotorTestService({
+    run: (id, work) => devices.withMotorTest(id, work),
+    recording: () => monitor.recordingSession !== undefined,
+    publish: (state) => send("device:motor-test-update", state),
+  });
+  devices.setBeforeDisconnect((id) => motors.stopAll(id));
   let labBusy = false;
   const sensorLab = new SensorLabService({
     directory: path.join(app.getPath("userData"), "sensor-lab"),
     device: (id) => devices.descriptor(id),
-    acquire: (id) => monitor.acquire(id),
+    acquire: (id) => {
+      if (motors.busy) throw new Error("Stop the motor test before recording.");
+      return monitor.acquire(id);
+    },
     release: (id) => monitor.release(id),
     latest: monitor.latest,
     publish: (state) => {
@@ -191,9 +202,12 @@ void app.whenReady().then(async () => {
   // On macOS the application can outlive its last window. A quit in that state
   // still has to finish any crash recovery / background checkpoint writes.
   const mainQuit = new MainProcessCloseGuard(
-    () => sensorLab.flush("close"),
+    async () => {
+      await motors.flush();
+      await sensorLab.flush("close");
+    },
     () => app.quit(),
-    (error) => retrySensorSave(error),
+    (error) => retryDeviceWork(error),
     () => {
       quitting = false;
     },
@@ -211,6 +225,13 @@ void app.whenReady().then(async () => {
   });
   monitor.subscribe((update) => sensorLab.observe(update));
   devices.subscribe((event) => {
+    const connectedId =
+      event.type === "state" && event.state === "connected"
+        ? event.sessionId
+        : event.type === "usb-recovery" && event.state === "restored"
+          ? event.sessionId
+          : undefined;
+    if (connectedId) void motors.reconnected(connectedId);
     const id =
       event.type === "state" && event.state === "disconnected"
         ? event.sessionId
@@ -218,11 +239,13 @@ void app.whenReady().then(async () => {
           ? event.previousSessionId
           : undefined;
     if (id) {
+      motors.disconnected(id);
       sensorLab.onDisconnect(id);
       void monitor.disconnect(id);
     }
   });
   powerMonitor.on("suspend", () => {
+    void motors.stopAll();
     void sensorLab.suspend().catch(() => {});
   });
   void sensorLab.getState().catch(() => {});
@@ -253,7 +276,8 @@ void app.whenReady().then(async () => {
   const operationGate = new UpdateOperationGate(() => updates);
   updates = await createUpdateService(
     renderer,
-    () => operationGate.busy || builds.busy || devices.busy || monitor.busy || labBusy,
+    () =>
+      operationGate.busy || builds.busy || devices.busy || monitor.busy || motors.busy || labBusy,
   );
   registerIpc(
     renderer,
@@ -269,12 +293,28 @@ void app.whenReady().then(async () => {
     () => {
       rendererCanFlush = true;
     },
-    { monitor, lab: sensorLab },
+    { monitor, lab: sensorLab, motors },
   );
-  createWindow(() => sensorLab.flush("close"));
+  const flushDeviceWork = async () => {
+    await motors.flush();
+    await sensorLab.flush("close");
+  };
+  const openWindow = () => {
+    createWindow(flushDeviceWork);
+    mainWindow?.on("blur", () => {
+      void motors.stopAll();
+    });
+    mainWindow?.on("hide", () => {
+      void motors.stopAll();
+    });
+    mainWindow?.on("minimize", () => {
+      void motors.stopAll();
+    });
+  };
+  openWindow();
   updates.start();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(() => sensorLab.flush("close"));
+    if (BrowserWindow.getAllWindows().length === 0) openWindow();
   });
 });
 

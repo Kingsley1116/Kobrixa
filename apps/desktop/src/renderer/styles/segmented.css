@@ -1,0 +1,32 @@
+.segmented {
+  display: flex;
+  min-width: 0;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.segmented > button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: var(--font-small);
+  line-height: 1.35;
+  white-space: normal;
+}
+.segmented > button[aria-checked="true"] {
+  color: var(--text);
+  background: var(--raised);
+  border-color: var(--border);
+  font-weight: 600;
+}
+.segmented > button:hover:not(:disabled):not([aria-checked="true"]) {
+  color: var(--text);
+  border-color: transparent;
+}
+.segmented > button:focus-visible {
+  outline-offset: -2px;
+}

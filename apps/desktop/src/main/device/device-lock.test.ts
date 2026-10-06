@@ -32,7 +32,14 @@ async function setup() {
     disconnect: vi.fn(async () => {}),
     run: vi.fn(),
     stop: vi.fn(),
-    readMonitor: vi.fn(),
+    readMotorTest: vi.fn<DeviceSession["readMotorTest"]>(),
+    motorTimed: vi.fn<DeviceSession["motorTimed"]>(),
+    motorStop: vi.fn<DeviceSession["motorStop"]>(),
+    runMotorHelper: vi.fn<DeviceSession["runMotorHelper"]>(),
+    readMotorHelper: vi.fn<DeviceSession["readMotorHelper"]>(),
+    armMotorHelper: vi.fn<DeviceSession["armMotorHelper"]>(),
+    stopMotorHelper: vi.fn<DeviceSession["stopMotorHelper"]>(),
+    readMonitor: vi.fn<DeviceSession["readMonitor"]>(),
     readInputModes: vi.fn(),
     setInputMode: vi.fn(),
   } satisfies DeviceSession;
@@ -140,5 +147,112 @@ describe("main-process device lock", () => {
       descriptor: h.session.descriptor,
     });
     await expect(h.service.stop(h.id)).rejects.toThrow("Unknown or disconnected");
+  });
+
+  it("holds the motor-test lease across delays and blocks commands, files, and monitoring", async () => {
+    const h = await setup();
+    const finish = deferred<void>();
+    const started = deferred<void>();
+    const test = h.service.withMotorTest(h.id, async (session, signal) => {
+      await session.motorTimed(0, 20, 400, true, signal);
+      started.resolve();
+      await finish.promise;
+      await session.motorStop(0, true, signal);
+    });
+    await started.promise;
+    expect(h.service.busy).toBe(true);
+    await expect(h.service.run(h.id, `${ROOT}/main.rbf`)).rejects.toThrow("in progress");
+    await expect(h.service.deploy(h.id, "build", ROOT)).rejects.toThrow("in progress");
+    await expect(h.service.stop(h.id)).rejects.toThrow("in progress");
+    await expect(h.service.withMotorTest(h.id, async () => {})).rejects.toThrow("in progress");
+    expect(await h.service.monitor(h.id)).toEqual({ status: "busy" });
+    expect(await h.service.inputModes(h.id, 0, 29)).toEqual({ status: "busy" });
+    expect(await h.service.setInputMode(h.id, 0, 29, 1)).toMatchObject({ status: "error" });
+    expect(
+      await h.service.files({
+        action: "list",
+        path: ROOT,
+        sessionId: h.id,
+        requestId: "motor-file",
+        locale: "en",
+      }),
+    ).toMatchObject({ ok: false });
+    expect(h.session.run).not.toHaveBeenCalled();
+    expect(h.session.upload).not.toHaveBeenCalled();
+    expect(h.session.list).not.toHaveBeenCalled();
+    expect(h.session.readMonitor).not.toHaveBeenCalled();
+    expect(h.session.readInputModes).not.toHaveBeenCalled();
+    expect(h.session.setInputMode).not.toHaveBeenCalled();
+    finish.resolve();
+    await test;
+    expect(h.session.motorStop).toHaveBeenCalledOnce();
+    expect(h.service.busy).toBe(false);
+    await expect(h.service.run(h.id, `${ROOT}/main.rbf`)).resolves.toBeUndefined();
+  });
+
+  it("reserves motor ownership before draining an existing monitor without aborting USB", async () => {
+    const h = await setup();
+    const reading = deferred<undefined>();
+    h.session.readMonitor.mockReturnValueOnce(reading.promise);
+    const monitor = h.service.monitor(h.id);
+    const [signal, shouldYield] = h.session.readMonitor.mock.calls[0]!;
+    const work = vi.fn(async (session: DeviceSession, motorSignal: AbortSignal) => {
+      await session.motorTimed(1, 20, 400, true, motorSignal);
+    });
+    const test = h.service.withMotorTest(h.id, work);
+    expect(signal.aborted).toBe(false);
+    expect(shouldYield?.()).toBe(true);
+    expect(work).not.toHaveBeenCalled();
+    expect(await h.service.monitor(h.id)).toEqual({ status: "busy" });
+    await expect(h.service.run(h.id, `${ROOT}/main.rbf`)).rejects.toThrow("in progress");
+    reading.resolve(undefined);
+    expect(await monitor).toEqual({ status: "busy" });
+    await test;
+    expect(work).toHaveBeenCalledOnce();
+    expect(h.session.motorTimed).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(false);
+    expect(h.service.busy).toBe(false);
+  });
+
+  it("awaits the motor stop hook and its lease before closing the connection", async () => {
+    const h = await setup();
+    const stopping = deferred<void>();
+    const stopConfirmed = deferred<void>();
+    const events: string[] = [];
+    const test = h.service.withMotorTest(h.id, async (session, signal) => {
+      await stopping.promise;
+      expect(signal.aborted).toBe(false);
+      await session.motorStop(0, true, signal);
+      await stopConfirmed.promise;
+      events.push("stopped");
+    });
+    h.service.setBeforeDisconnect(async (id) => {
+      expect(id).toBe(h.id);
+      events.push("requested");
+      stopping.resolve();
+      await test;
+    });
+    h.session.disconnect.mockImplementation(async () => {
+      events.push("closed");
+    });
+    const disconnecting = h.service.disconnect(h.id);
+    await vi.waitFor(() => expect(h.session.motorStop).toHaveBeenCalledOnce());
+    expect(h.session.disconnect).not.toHaveBeenCalled();
+    expect(h.service.busy).toBe(true);
+    stopConfirmed.resolve();
+    await disconnecting;
+    expect(events).toEqual(["requested", "stopped", "closed"]);
+    expect(h.service.busy).toBe(false);
+  });
+
+  it("releases motor ownership after a test error", async () => {
+    const h = await setup();
+    await expect(
+      h.service.withMotorTest(h.id, async () => {
+        throw new DeviceOperationError("device", "Motor no longer connected");
+      }),
+    ).rejects.toThrow("Motor no longer connected");
+    expect(h.service.busy).toBe(false);
+    await expect(h.service.run(h.id, `${ROOT}/main.rbf`)).resolves.toBeUndefined();
   });
 });

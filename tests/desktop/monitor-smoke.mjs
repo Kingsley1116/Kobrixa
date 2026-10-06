@@ -130,6 +130,8 @@ export function createMonitorFixture(send) {
     patch(update) {
       update(current);
     },
+    snapshot: () => structuredClone({ ...current, sampledAt: Date.now() }),
+    sessionId: () => sessionId,
     stats: () => ({
       calls,
       active,

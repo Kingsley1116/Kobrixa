@@ -18,6 +18,7 @@ export function Toolbar({
   projectLocked = locked,
   canSave,
   deviceLocked,
+  motorTesting = false,
   state,
   onNew,
   onOpen,
@@ -41,6 +42,7 @@ export function Toolbar({
   projectLocked?: boolean;
   canSave: boolean;
   deviceLocked: boolean;
+  motorTesting?: boolean;
   state: ExecutionState;
   onNew(): void;
   onOpen(): void;
@@ -117,7 +119,7 @@ export function Toolbar({
                 className="stop-button"
                 title={hint(t.stop, "stop")}
                 aria-label={t.stop}
-                disabled={!state.session || deviceLocked}
+                disabled={!state.session || (deviceLocked && !motorTesting)}
                 onClick={onStop}
               >
                 <Icon name="stop" />

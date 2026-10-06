@@ -103,6 +103,19 @@ export class DeviceService {
   readonly #wifi = new WiFiTransport();
   private batches: FileBatchManager | undefined;
   private batchOwners = new WeakSet<WebContents>();
+  private beforeDisconnect: ((id: string) => Promise<void>) | undefined;
+
+  setBeforeDisconnect(stop: (id: string) => Promise<void>): void {
+    this.beforeDisconnect = stop;
+  }
+
+  /** Keep foreground ownership across the complete motor test, including delays. */
+  withMotorTest<T>(
+    id: string,
+    work: (session: DeviceSession, signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    return this.operation(id, work);
+  }
 
   constructor(
     private readonly builds: BuildService,
@@ -233,6 +246,7 @@ export class DeviceService {
     // Follow completed recoveries too: cancellation IPC may arrive just after
     // the replacement session was published.
     while (this.#recovered.has(id)) id = this.#recovered.get(id)!;
+    await this.beforeDisconnect?.(id);
     const recovery = this.#recoveries.get(id);
     if (recovery) this.cancelRecovery(recovery);
     const session = this.#sessions.get(id);

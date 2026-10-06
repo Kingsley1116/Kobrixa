@@ -1,5 +1,6 @@
 export * from "./contracts.js";
 export * from "./monitor-types.js";
+export * from "./motor-types.js";
 export * from "./errors.js";
 export * from "./framing.js";
 export * from "./mock.js";

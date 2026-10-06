@@ -1,8 +1,11 @@
-import { useEffect, useSyncExternalStore } from "react";
-import type { MonitorInput, MonitorOutput } from "@kobrixa/device";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { DeviceMonitorSnapshot, MonitorInput, MonitorOutput } from "@kobrixa/device";
 import type { Locale } from "../i18n/copy.js";
 import { Picker } from "../components/picker.js";
 import type { MonitorController, MonitorState } from "./monitor-controller.js";
+import { motorTestActive } from "../../shared/motor-test.js";
+import type { MotorTestController } from "./motor-test-controller.js";
+import { MotorTestControls, motorLabels, motorStopConfirmed } from "./motor-test-controls.js";
 
 const labels = {
   en: {
@@ -120,13 +123,19 @@ function portState(state: MonitorInput["state"], t: Labels): string | undefined 
 
 export function MonitorPanel({
   controller,
+  motor,
+  recording = false,
   locale,
   active,
+  motorActive = active,
   sessionId,
   locked = false,
   onConnect,
 }: {
   controller: MonitorController;
+  motor: MotorTestController;
+  motorActive?: boolean;
+  recording?: boolean;
   locale: Locale;
   active: boolean;
   sessionId: string | undefined;
@@ -134,7 +143,27 @@ export function MonitorPanel({
   onConnect(): void;
 }): React.JSX.Element {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const test = useSyncExternalStore(motor.subscribe, motor.getSnapshot);
+  const motorBusy = motorTestActive(test);
+  const [expandedPort, setExpandedPort] = useState<number | undefined>(test.request?.port);
+  const retainedSnapshot = useRef<DeviceMonitorSnapshot | undefined>(undefined);
+  const retainedOutput = useRef<MonitorOutput | undefined>(undefined);
   const t = labels[locale];
+  const mt = motorLabels[locale];
+  useEffect(() => {
+    const configure = () => motor.configure(sessionId, motorActive && !document.hidden);
+    const stop = () => {
+      void motor.stop();
+    };
+    configure();
+    window.addEventListener("blur", stop);
+    document.addEventListener("visibilitychange", configure);
+    return () => {
+      window.removeEventListener("blur", stop);
+      document.removeEventListener("visibilitychange", configure);
+      motor.configure(sessionId, false);
+    };
+  }, [motor, sessionId, motorActive]);
   useEffect(() => {
     const configure = () => controller.configure(sessionId, active && !document.hidden);
     configure();
@@ -144,7 +173,22 @@ export function MonitorPanel({
       controller.configure(sessionId, false);
     };
   }, [controller, sessionId, active]);
-  const snapshot = state.snapshot;
+  if (state.snapshot) retainedSnapshot.current = state.snapshot;
+  const snapshot = state.snapshot ?? (test.request ? retainedSnapshot.current : undefined);
+  const selectedOutput = snapshot?.outputs.find((value) => value.port === expandedPort);
+  if (selectedOutput?.state === "ready") retainedOutput.current = selectedOutput;
+  const toggle = async (output: MonitorOutput): Promise<void> => {
+    if (expandedPort === output.port) {
+      if (test.request?.port === output.port && (motorBusy || test.phase === "unconfirmed")) {
+        const stopped = await motor.stop();
+        if (!motorStopConfirmed(stopped)) return;
+      }
+      setExpandedPort(undefined);
+    } else if (!motorBusy) {
+      retainedOutput.current = output;
+      setExpandedPort(output.port);
+    }
+  };
   return (
     <section
       className="monitor-panel"
@@ -159,7 +203,7 @@ export function MonitorPanel({
         role="status"
       >
         <span className="monitor-status-dot" aria-hidden="true" />
-        {t[state.status]}
+        {motorBusy ? mt.paused : t[state.status]}
       </div>
       {!sessionId && (
         <div className="monitor-connect">
@@ -194,7 +238,7 @@ export function MonitorPanel({
             <div className="monitor-program">
               <dt>{t.program}</dt>
               <dd data-testid="monitor-program" data-state={snapshot.program.status}>
-                {t[snapshot.program.status]}
+                {motorBusy ? mt.program : t[snapshot.program.status]}
               </dd>
             </div>
           </dl>
@@ -208,7 +252,9 @@ export function MonitorPanel({
             </time>
           </p>
           <p className="monitor-hint">{t.localHint}</p>
-          {snapshot.program.status !== "stopped" && <p className="monitor-hint">{t.stopHint}</p>}
+          {!motorBusy && snapshot.program.status !== "stopped" && (
+            <p className="monitor-hint">{t.stopHint}</p>
+          )}
           {state.modeError && (
             <p className="monitor-error" role="alert">
               {state.modeError}
@@ -223,37 +269,96 @@ export function MonitorPanel({
                 locale={locale}
                 state={state}
                 controller={controller}
-                locked={locked}
+                locked={locked || motorBusy}
               />
             ))}
           </div>
           <h3>{t.outputs}</h3>
           <div className="monitor-outputs">
-            {snapshot.outputs.map((output) => (
-              <article
-                className="monitor-port"
-                key={output.port}
-                data-testid={`monitor-output-${output.port}`}
-              >
-                <h4>
-                  <span className="monitor-port-number">
-                    {String.fromCharCode(65 + output.port)}
-                  </span>
-                  <span>{deviceName(output, locale, t)}</span>
-                </h4>
-                {portState(output.state, t) ? (
-                  <p className="monitor-hint">{portState(output.state, t)}</p>
-                ) : (
-                  <p className="monitor-value">
-                    <span>{t.angle}</span>
-                    <strong>
-                      {reading(output.angle, 0, t)}
-                      {output.angle !== null ? "°" : ""}
-                    </strong>
-                  </p>
-                )}
-              </article>
-            ))}
+            {snapshot.outputs.map((currentOutput) => {
+              const expanded = expandedPort === currentOutput.port;
+              const output =
+                expanded &&
+                currentOutput.state !== "ready" &&
+                retainedOutput.current?.port === currentOutput.port
+                  ? retainedOutput.current
+                  : currentOutput;
+              const supported =
+                currentOutput.state === "ready" &&
+                (currentOutput.type === 7 || currentOutput.type === 8);
+              const canStart =
+                !!sessionId &&
+                sessionId === state.sessionId &&
+                state.active &&
+                state.status === "live" &&
+                snapshot.program.status === "stopped" &&
+                !recording &&
+                !locked &&
+                supported;
+              const blockedReason = locked
+                ? mt.reasonLocked
+                : recording
+                  ? mt.reasonRecording
+                  : snapshot.program.status !== "stopped"
+                    ? mt.reasonProgram
+                    : !supported
+                      ? mt.reasonUnsupported
+                      : mt.reasonStale;
+              const testAngle =
+                motorBusy && test.request?.port === output.port ? test.angle : output.angle;
+              return (
+                <article
+                  className={`monitor-port ${expanded ? "motor-test-expanded" : ""}`}
+                  key={output.port}
+                  data-testid={`monitor-output-${output.port}`}
+                >
+                  <h4>
+                    <span className="monitor-port-number">
+                      {String.fromCharCode(65 + output.port)}
+                    </span>
+                    <span>{deviceName(output, locale, t)}</span>
+                  </h4>
+                  {portState(currentOutput.state, t) ? (
+                    <p className="monitor-hint">{portState(currentOutput.state, t)}</p>
+                  ) : (
+                    <p className="monitor-value">
+                      <span>{t.angle}</span>
+                      <strong>
+                        {reading(testAngle, 0, t)}
+                        {testAngle !== null ? "°" : ""}
+                      </strong>
+                    </p>
+                  )}
+                  {(supported || expanded) && (
+                    <button
+                      className="monitor-mode-button"
+                      data-testid={`motor-test-toggle-${output.port}`}
+                      aria-label={`${expanded ? mt.collapse : mt.test} · ${t.output} ${String.fromCharCode(65 + output.port)}`}
+                      aria-expanded={expanded}
+                      aria-controls={`motor-test-${output.port}`}
+                      disabled={motorBusy && !expanded}
+                      onClick={() => {
+                        void toggle(output);
+                      }}
+                    >
+                      {expanded ? mt.collapse : mt.test}
+                    </button>
+                  )}
+                  {(supported || expanded) && (
+                    <div hidden={!expanded}>
+                      <MotorTestControls
+                        controller={motor}
+                        state={test}
+                        port={output.port}
+                        locale={locale}
+                        canStart={canStart}
+                        blockedReason={blockedReason}
+                      />
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </>
       ) : (
