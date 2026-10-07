@@ -29,6 +29,8 @@ import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
 import type { Diagnostic } from "../../shared/api.js";
 import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
+import type { CollabSession } from "../collab/types.js";
+import { EditorCollab } from "../collab/editor-binding.js";
 
 // Without worker factories Monaco falls back to running worker tasks on the UI
 // thread. Vite bundles these for both the dev server and the packaged file URL.
@@ -155,6 +157,8 @@ interface EditorProps {
   ariaLabel: string;
   onChange(file: string): void;
   onCursorChange(position: CursorPosition): void;
+  /** Active collaboration session; shared files are bound to its document. */
+  collabSession?: CollabSession | null;
 }
 
 let modelSequence = 0;
@@ -208,6 +212,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     readOnly,
     onChange,
     onCursorChange,
+    collabSession,
   },
   handleRef,
 ): React.JSX.Element {
@@ -239,6 +244,9 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const currentProps = useRef({ readOnly, onOpenLocation, onWorkspaceEdit, locale, onQuickFixes });
   currentProps.current = { readOnly, onOpenLocation, onWorkspaceEdit, locale, onQuickFixes };
   const buffers = useRef(new Map<monaco.editor.ITextModel, DocumentBuffer>());
+  const collab = useRef<EditorCollab | undefined>(undefined);
+  const openFilesRef = useRef(openFiles);
+  openFilesRef.current = openFiles;
   const fileFor = (model: monaco.editor.ITextModel): string | undefined =>
     [...models.current].find(([, item]) => item === model)?.[0];
   const ensureModel = (file: string, content: string): monaco.editor.ITextModel => {
@@ -261,7 +269,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       setValue: (value) => {
         applyingValue.current = true;
         try {
-          model.setValue(value);
+          if (collab.current?.binding(model))
+            model.pushEditOperations(
+              null,
+              [{ range: model.getFullModelRange(), text: value }],
+              () => null,
+            );
+          else model.setValue(value);
         } finally {
           applyingValue.current = false;
         }
@@ -433,6 +447,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           }
         }
         if (currentFile && moved[currentFile]) activeFile.current = moved[currentFile];
+        collab.current?.refresh();
       },
     }),
     [],
@@ -676,9 +691,29 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     }
     const position = instance.getPosition();
     if (position) onCursorChangeRef.current({ line: position.lineNumber, column: position.column });
+    collab.current?.refresh();
   }, [file]);
 
   useEffect(() => {
+    const instance = editor.current;
+    if (!collabSession || !instance) return undefined;
+    const attachment = new EditorCollab(instance, collabSession, {
+      models: () => {
+        const bound = new Set([...openFilesRef.current, activeFile.current]);
+        return [...models.current].filter(([modelFile]) => bound.has(modelFile));
+      },
+      activeFile: () => activeFile.current,
+    });
+    collab.current = attachment;
+    return () => {
+      attachment.dispose();
+      if (collab.current === attachment) collab.current = undefined;
+    };
+  }, [collabSession]);
+
+  useEffect(() => {
+    // Unbind closed files first so reconciling them below cannot write to the room.
+    collab.current?.refresh();
     const open = new Set(openFiles);
     // Retain models used by Peek and workspace edits while their source exists.
     // A fresh snapshot reconciles closed files changed externally or removed.
@@ -697,6 +732,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }
       }
     }
+    collab.current?.refresh();
   }, [openFiles]);
 
   useEffect(() => {

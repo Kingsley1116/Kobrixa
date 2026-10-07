@@ -22,6 +22,7 @@ import type { AppCommand } from "./keybindings/keybindings.js";
 import { FileWriteQueue, saveSnapshot } from "./workspace/save-coordinator.js";
 import { formatSource } from "./editor/editor-format.js";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -86,6 +87,7 @@ import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
 import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
+import { canEdit } from "./collab/types.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
 import { Picker } from "./components/picker.js";
@@ -225,6 +227,16 @@ export function App(): React.JSX.Element {
   const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
   const [collab] = useState(() => new CollabStore(createCollabSession));
   useEffect(() => () => collab.stop(), [collab]);
+  const collabSession = useSyncExternalStore(collab.subscribe, collab.getSnapshot);
+  const subscribeCollabSession = useCallback(
+    (listener: () => void) => collabSession?.subscribe(listener) ?? (() => undefined),
+    [collabSession],
+  );
+  const collabRole = useSyncExternalStore(
+    subscribeCollabSession,
+    () => collabSession?.getSnapshot().role,
+  );
+  const collabReadOnly = collabRole !== undefined && !canEdit(collabRole);
   useEffect(() => {
     void sensorLab.initialize();
     void motorTest.initialize();
@@ -3033,7 +3045,8 @@ export function App(): React.JSX.Element {
                     wordWrap={settings.wordWrap}
                     indentSize={settings.indentSize}
                     reducedMotion={reducedMotion}
-                    readOnly={locked || projectBusy || managingEntries}
+                    readOnly={locked || projectBusy || managingEntries || collabReadOnly}
+                    collabSession={collabSession}
                     file={active.file}
                     documents={documents}
                     analysisSession={analysisSession}

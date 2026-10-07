@@ -1,0 +1,30 @@
+/* Remote participants in a collaboration session. Per-participant colors and
+   labels are injected by renderer/collab/remote-cursors.ts. */
+.kobrixa-remote-selection {
+  border-radius: 2px;
+}
+
+.kobrixa-remote-caret {
+  position: relative;
+  border-left: 2px solid #3e63dd;
+  margin-left: -1px;
+  margin-right: -1px;
+  box-sizing: border-box;
+}
+
+.kobrixa-remote-caret::after {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  z-index: 10;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0.9;
+}
