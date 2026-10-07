@@ -105,6 +105,20 @@ describe("room update validation", () => {
     expect(() => root.validate()).toThrow("unknown document root");
   });
 
+  test("allows 200 nested files plus their directories, but rejects a 201st tree file", () => {
+    const { client, validate } = fixture();
+    const files = client.getMap(DOC_KEYS.files);
+    const tree = client.getMap(DOC_KEYS.tree);
+    for (let i = 0; i < COLLAB_LIMITS.files; i++) {
+      tree.set(`directory-${i}`, { kind: "directory" });
+      tree.set(`directory-${i}/main.bp`, { kind: "file" });
+      files.set(`directory-${i}/main.bp`, new Y.Text("PRINT 1"));
+    }
+    expect(validate(host)).toEqual({});
+    tree.set("overflow.bp", { kind: "file" });
+    expect(() => validate(host)).toThrow("too many files");
+  });
+
   test("rejects incomplete updates instead of queuing a forged change for a later actor", () => {
     const { server, client } = fixture();
     const updates: Uint8Array[] = [];

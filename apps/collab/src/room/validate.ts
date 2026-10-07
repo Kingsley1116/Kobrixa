@@ -51,8 +51,12 @@ export function validateUpdate(
 
     const files = candidate.getMap(DOC_KEYS.files);
     const tree = candidate.getMap(DOC_KEYS.tree);
-    if (files.size > COLLAB_LIMITS.files || tree.size > COLLAB_LIMITS.files)
-      invalid("too many files");
+    if (files.size > COLLAB_LIMITS.files) invalid("too many files");
+    // The contract limits files, while the tree also carries their directories.
+    // In a 200-file project, a directory must not turn the last valid file into
+    // an unauthorized update. Bound directory expansion separately by the
+    // maximum path length (at most 512 nonempty segments per 1024-byte path).
+    if (tree.size > COLLAB_LIMITS.files * 512) invalid("too many tree entries");
     for (const [path, text] of files) {
       if (!collabPathSchema.safeParse(path).success || !(text instanceof Y.Text)) {
         invalid("invalid file");
@@ -71,10 +75,13 @@ export function validateUpdate(
         invalid("invalid file content");
       }
     }
+    let treeFiles = 0;
     for (const [path, entry] of tree) {
-      if (!collabPathSchema.safeParse(path).success || !treeEntrySchema.safeParse(entry).success) {
+      const parsed = treeEntrySchema.safeParse(entry);
+      if (!collabPathSchema.safeParse(path).success || !parsed.success)
         invalid("invalid tree entry");
-      }
+      if (parsed.data.kind === "file" && ++treeFiles > COLLAB_LIMITS.files)
+        invalid("too many files");
     }
     const meta = candidate.getMap(DOC_KEYS.meta);
     for (const [key, value] of meta) {

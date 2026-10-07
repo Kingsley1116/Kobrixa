@@ -262,11 +262,12 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   await click("simulator-expand");
   await until("getComputedStyle(document.querySelector('.editor-stage')).display==='none'");
   await pause(200);
+  const expandedFieldHeight = await js(
+    "document.querySelector('[data-testid=simulator-field]').getBoundingClientRect().height",
+  );
   assert.ok(
-    (await js(
-      "document.querySelector('[data-testid=simulator-field]').getBoundingClientRect().height",
-    )) > narrowFieldHeight,
-    "Expanding a short window must give the field more height",
+    expandedFieldHeight > narrowFieldHeight,
+    `Expanding a short window must give the field more height (${narrowFieldHeight} → ${expandedFieldHeight})`,
   );
   await checkComfortableControls();
   await fs.writeFile(
