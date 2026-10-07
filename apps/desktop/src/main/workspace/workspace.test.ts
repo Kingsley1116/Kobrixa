@@ -9,11 +9,28 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import type * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const showOpenDialog = vi.hoisted(() => vi.fn());
+const statCollision = vi.hoisted(() => ({ file: undefined as string | undefined }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>();
+  return {
+    ...actual,
+    lstat: async (file: string, options?: { bigint?: boolean }) => {
+      const stat = await actual.lstat(file, options);
+      if (file === statCollision.file && "mtimeNs" in stat) {
+        stat.mtimeNs = 1n;
+        stat.ctimeNs = 1n;
+      }
+      return stat;
+    },
+  };
+});
 
 vi.mock("electron", () => ({
   app: { getPath: () => tmpdir() },
@@ -54,6 +71,7 @@ describe.sequential("workspace file management", () => {
   });
 
   afterEach(async () => {
+    statCollision.file = undefined;
     await rm(root, { recursive: true, force: true });
     await rm(userData, { recursive: true, force: true });
   });
@@ -378,20 +396,28 @@ describe.sequential("workspace file management", () => {
     expect(deleted.files["alone.bp"]?.content).toBeNull();
   });
 
-  it("detects successive same-sized external edits and does not repeat unchanged bodies", async () => {
-    const { service, workspace } = await openService();
-    let snapshot = await service.readFile(workspace.id, "src/main.bp");
-    for (const content of ["aaa", "bbb", "ccc"]) {
-      await writeFile(path.join(root, "src/main.bp"), content);
-      const refresh = await service.refresh(workspace.id, { "src/main.bp": snapshot.revision });
-      snapshot = refresh.files["src/main.bp"]!;
-      expect(snapshot.content).toBe(content);
-      expect(
-        (await service.refresh(workspace.id, { "src/main.bp": snapshot.revision })).files,
-      ).toEqual({});
-    }
-    expect((await service.history(workspace.id, "src/main.bp")).length).toBe(4);
-  });
+  it.each(["refresh", "readFile"] as const)(
+    "detects successive same-sized external edits through %s without repeating unchanged bodies",
+    async (readMethod) => {
+      const { service, workspace } = await openService();
+      // Keep both timestamp fields identical across real writes. Detection must
+      // work even when the filesystem clock cannot distinguish successive edits.
+      statCollision.file = await realpath(path.join(root, "src/main.bp"));
+      let snapshot = await service.readFile(workspace.id, "src/main.bp");
+      for (const content of ["aaa", "bbb", "ccc"]) {
+        await writeFile(path.join(root, "src/main.bp"), content);
+        if (readMethod === "readFile")
+          expect((await service.readFile(workspace.id, "src/main.bp")).content).toBe(content);
+        const refresh = await service.refresh(workspace.id, { "src/main.bp": snapshot.revision });
+        snapshot = refresh.files["src/main.bp"]!;
+        expect(snapshot.content).toBe(content);
+        expect(
+          (await service.refresh(workspace.id, { "src/main.bp": snapshot.revision })).files,
+        ).toEqual({});
+      }
+      expect((await service.history(workspace.id, "src/main.bp")).length).toBe(4);
+    },
+  );
 
   it("persists draft base revisions and saved history across process restarts", async () => {
     const { service, workspace } = await openService();

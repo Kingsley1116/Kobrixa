@@ -269,7 +269,9 @@ export class WorkspaceService {
   }
 
   readFile(id: string, file: string): Promise<WorkspaceFileSnapshot> {
-    return this.serial(id, async (record) => this.observe(record, file));
+    // Same-sized writes can share timestamps, especially on Windows. Explicit
+    // reads must verify the contents instead of trusting the metadata cache.
+    return this.serial(id, async (record) => this.observe(record, file, true));
   }
 
   async search(id: string, request: WorkspaceSearchRequest): Promise<WorkspaceSearchResult> {
@@ -288,7 +290,8 @@ export class WorkspaceService {
     return this.serial(id, async (record) => {
       const files: Record<string, WorkspaceFileSnapshot> = {};
       for (const [file, revision] of Object.entries(known)) {
-        const snapshot = await this.observe(record, file);
+        // Known/open files need the same content check as an explicit read.
+        const snapshot = await this.observe(record, file, true);
         if (snapshot.revision !== revision) files[file] = snapshot;
       }
       const workspace = await this.summary(record);
