@@ -71,6 +71,7 @@ describe("ChatController", () => {
       { ...message(1), text: "   " },
       { ...message(2), extra: true },
       { ...message(3), text: "x".repeat(COLLAB_LIMITS.chatMessageLength + 1) },
+      { ...message(5), at: Number.MAX_SAFE_INTEGER },
       message(4),
       message(4),
       null,

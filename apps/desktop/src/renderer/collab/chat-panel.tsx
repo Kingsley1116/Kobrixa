@@ -22,6 +22,7 @@ const copy = {
     placeholder: "Message the room (Enter to send, Shift+Enter for a new line)",
     send: "Send",
     viewer: "You joined as a viewer. You can read the chat but can't send messages.",
+    closed: "You have left this room. Chat history is read-only.",
     tooLong: "Message is too long.",
     justNow: "just now",
   },
@@ -33,6 +34,7 @@ const copy = {
     placeholder: "傳送訊息給房間成員（Enter 傳送，Shift+Enter 換行）",
     send: "傳送",
     viewer: "你以檢視者身分加入，可以閱讀聊天內容，但無法傳送訊息。",
+    closed: "你已離開房間，聊天紀錄僅供閱讀。",
     tooLong: "訊息太長。",
     justNow: "剛剛",
   },
@@ -109,7 +111,14 @@ export function ChatPanel({
   session: CollabSession;
   locale: Locale;
 }): React.JSX.Element {
-  return <ChatView session={session} locale={locale} controller={chatControllerFor(session)} />;
+  return (
+    <ChatView
+      key={`${session.connection.roomId}:${session.connection.participantId}`}
+      session={session}
+      locale={locale}
+      controller={chatControllerFor(session)}
+    />
+  );
 }
 
 /**
@@ -272,7 +281,9 @@ function ChatView({
           </div>
         </form>
       ) : (
-        <p className="collab-chat-hint">{t.viewer}</p>
+        <p className="collab-chat-hint">
+          {session.getSnapshot().status === "closed" ? t.closed : t.viewer}
+        </p>
       )}
     </div>
   );

@@ -30,7 +30,10 @@ function parseItem(item: unknown): ChatMessage | null {
   const cached = parsed.get(item);
   if (cached !== undefined) return cached;
   const result = chatMessageSchema.safeParse(item);
-  const message = result.success ? Object.freeze(result.data) : null;
+  const message =
+    result.success && Number.isFinite(new Date(result.data.at).getTime())
+      ? Object.freeze(result.data)
+      : null;
   parsed.set(item, message);
   return message;
 }
