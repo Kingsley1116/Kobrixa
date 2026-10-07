@@ -8,6 +8,7 @@ import { formatInviteCode, isValidInviteCode, type LobbyError } from "./collab-l
 export function JoinDialog({
   copy,
   displayName,
+  onName,
   initialCode = "",
   pending,
   error,
@@ -17,6 +18,7 @@ export function JoinDialog({
 }: {
   copy: CollabCopy;
   displayName: string;
+  onName?(name: string): void;
   initialCode?: string;
   pending: boolean;
   error: LobbyError | null;
@@ -52,6 +54,18 @@ export function JoinDialog({
         onJoin(code, password);
       }}
     >
+      <label>
+        {copy.displayName}
+        <input
+          data-testid="collab-display-name"
+          value={displayName}
+          onChange={(event) => onName?.(event.target.value)}
+          autoComplete="nickname"
+          maxLength={COLLAB_LIMITS.displayNameLength}
+          disabled={pending}
+          required
+        />
+      </label>
       <label>
         {copy.inviteCode}
         <input
@@ -105,7 +119,11 @@ export function JoinDialog({
         <button type="button" disabled={pending} onClick={onClose}>
           {copy.cancel}
         </button>
-        <button className="primary" type="submit" disabled={pending || !code}>
+        <button
+          className="primary"
+          type="submit"
+          disabled={pending || !code || !displayName.trim()}
+        >
           {pending ? copy.joining : copy.join}
         </button>
       </DialogActions>

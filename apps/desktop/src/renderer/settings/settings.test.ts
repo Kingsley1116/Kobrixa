@@ -196,3 +196,32 @@ it("only remembers successful addresses when opted in and clears them when disab
   store.set("rememberWifiAddress", true);
   expect(new SettingsStore(() => s, "en").getWifiAddress()).toBe("");
 });
+
+it("migrates the old collaboration and activity tabs into independent workbench areas", () => {
+  expect(
+    readSettings(
+      storage({
+        [SETTINGS_KEYS.deviceOpen]: "true",
+        [SETTINGS_KEYS.toolTab]: "collab",
+        [SETTINGS_KEYS.deviceWidth]: "390",
+      }),
+      "en",
+    ),
+  ).toMatchObject({ rightPanel: "collab", deviceWidth: 390, ev3Tab: "connection" });
+  expect(
+    readSettings(
+      storage({ [SETTINGS_KEYS.deviceOpen]: "true", [SETTINGS_KEYS.toolTab]: "activity" }),
+      "en",
+    ),
+  ).toMatchObject({ rightPanel: null, bottomTab: "activity", problemsOpen: true });
+  expect(
+    readSettings(
+      storage({
+        [SETTINGS_KEYS.rightPanel]: "null",
+        [SETTINGS_KEYS.deviceOpen]: "true",
+        [SETTINGS_KEYS.toolTab]: "collab",
+      }),
+      "en",
+    ).rightPanel,
+  ).toBeNull();
+});

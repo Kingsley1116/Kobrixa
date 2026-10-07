@@ -104,7 +104,10 @@ export function registerIpc(
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
       deviceControl.assert(event.sender.id, channel, args);
-      if (/^(workspace|device|build|simulator|sensor-lab):/.test(channel))
+      if (
+        /^(workspace|device|build|simulator|sensor-lab):/.test(channel) ||
+        /^collab:(prepare-project|preview-project|save-copy)$/.test(channel)
+      )
         return operationGate.run(channel, () => action(event, ...args));
       return action(event, ...args);
     });

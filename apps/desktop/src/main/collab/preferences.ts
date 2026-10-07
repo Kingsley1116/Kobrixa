@@ -22,6 +22,7 @@ export const collabRecentRoomSchema = z
     inviteCode: inviteCodeSchema.optional(),
     role: roleSchema,
     joinedAt: z.number().int().nonnegative(),
+    canResume: z.boolean().optional(),
   })
   .strict();
 

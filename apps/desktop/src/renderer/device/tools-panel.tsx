@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { TabList } from "../components/tab-list.js";
 import type { Locale, Copy } from "../i18n/copy.js";
 import type { ExecutionState } from "../execution/execution.js";
-export type ToolTab = "connection" | "monitor" | "files" | "activity" | "collab";
+export type ToolTab = "connection" | "monitor" | "files";
 const labels = {
   en: {
     tools: "EV3 tools",
@@ -31,8 +31,6 @@ export function ToolsPanel({
   connection,
   monitor,
   files,
-  activity,
-  collab,
 }: {
   tab: ToolTab;
   onTab(tab: ToolTab): void;
@@ -41,11 +39,9 @@ export function ToolsPanel({
   connection: ReactNode;
   monitor: ReactNode;
   files: ReactNode;
-  activity: ReactNode;
-  collab: ReactNode;
 }): React.JSX.Element {
   const t = labels[locale],
-    tabs: ToolTab[] = ["connection", "monitor", "files", "activity", "collab"];
+    tabs: ToolTab[] = ["connection", "monitor", "files"];
   return (
     <>
       <div className="tools-heading">
@@ -76,15 +72,7 @@ export function ToolsPanel({
           hidden={tab !== value}
           tabIndex={0}
         >
-          {value === "connection"
-            ? connection
-            : value === "monitor"
-              ? monitor
-              : value === "files"
-                ? files
-                : value === "activity"
-                  ? activity
-                  : collab}
+          {value === "connection" ? connection : value === "monitor" ? monitor : files}
         </div>
       ))}
     </>

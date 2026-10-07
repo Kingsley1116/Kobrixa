@@ -36,12 +36,12 @@ class FakeRelay {
 
   constructor() {
     this.awareness.setLocalState(null);
-    this.doc.on("update", (update: Uint8Array, origin: unknown) => {
+    this.doc.on("update", (update: Uint8Array) => {
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, MESSAGE_TYPE.sync);
       syncProtocol.writeUpdate(encoder, update);
       const frame = encoding.toUint8Array(encoder);
-      for (const socket of this.live()) if (socket !== origin) socket.deliver(frame);
+      for (const socket of this.live()) socket.deliver(frame);
     });
   }
 
@@ -337,6 +337,7 @@ describe("createCollabSession", () => {
   it.each([
     [CLOSE_CODE.unauthorized, "unauthorized"],
     [CLOSE_CODE.roomClosed, "room-closed"],
+    [CLOSE_CODE.sessionReplaced, "session-replaced"],
     [CLOSE_CODE.roomFull, "error"],
     [CLOSE_CODE.protocolMismatch, "error"],
   ])("maps close code %i to %s", async (code, reason) => {

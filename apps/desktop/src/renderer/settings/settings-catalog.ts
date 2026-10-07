@@ -27,7 +27,7 @@ export const CATEGORY_LABELS = {
   updates: ["更新", "Updates"],
 } as const satisfies Record<string, Text>;
 export type SettingsCategory = keyof typeof CATEGORY_LABELS;
-export type SettingValue = string | number | boolean;
+export type SettingValue = string | number | boolean | null;
 export interface CatalogContext {
   settings: Settings;
   defaults: Settings;

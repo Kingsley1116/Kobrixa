@@ -78,6 +78,7 @@ export function DeviceControlBar({
   locale: Locale;
 }): React.JSX.Element {
   const zh = locale === "zh-TW";
+  const connected = control.session.getSnapshot().status === "connected";
   const holder = state.isHolder
     ? zh
       ? "你持有裝置控制權"
@@ -94,7 +95,7 @@ export function DeviceControlBar({
       </p>
       <div className="device-control-actions">
         {state.requested ? (
-          <button onClick={() => control.cancelRequest()}>
+          <button disabled={!connected} onClick={() => control.cancelRequest()}>
             {zh ? "取消請求" : "Cancel request"}
           </button>
         ) : (
@@ -105,9 +106,13 @@ export function DeviceControlBar({
               title={
                 state.canRequest
                   ? undefined
-                  : zh
-                    ? "檢視者無法請求控制權"
-                    : "Viewers cannot request control"
+                  : !connected
+                    ? zh
+                      ? "等待連線與同步完成"
+                      : "Waiting for connection and sync"
+                    : zh
+                      ? "檢視者無法請求控制權"
+                      : "Viewers cannot request control"
               }
               onClick={() => control.request()}
             >
@@ -121,7 +126,7 @@ export function DeviceControlBar({
           </button>
         )}
         {state.isHost && !state.isHolder && (
-          <button onClick={() => control.reclaim()}>
+          <button disabled={!connected} onClick={() => control.reclaim()}>
             {zh ? "收回控制權" : "Take back control"}
           </button>
         )}
@@ -131,7 +136,11 @@ export function DeviceControlBar({
           {state.requests.map((request) => (
             <li key={request.participantId}>
               <span>{zh ? `${request.name} 請求控制權` : `${request.name} requests control`}</span>
-              <button className="primary" onClick={() => control.grant(request.participantId)}>
+              <button
+                className="primary"
+                disabled={!connected}
+                onClick={() => control.grant(request.participantId)}
+              >
                 {zh ? "給予控制權" : "Give control"}
               </button>
             </li>
