@@ -98,22 +98,28 @@ function remoteDecorations(target: monaco.editor.ITextModel) {
 }
 
 describe("ModelBinding", () => {
-  it("round-trips edits between two editors", () => {
+  it.each([
+    ["LF", monaco.editor.EndOfLineSequence.LF],
+    ["CRLF", monaco.editor.EndOfLineSequence.CRLF],
+  ])("round-trips edits between two editors with %s peer lines", (_label, eol) => {
     const [host, guest] = pair(["host", "editor"]);
     share(host, "main.bp", "print 1\n");
     const a = model("print 1\n");
     const b = model("stale");
+    a.setEOL(monaco.editor.EndOfLineSequence.LF);
+    b.setEOL(eol);
+    const peerText = (text: string) => text.replace(/\n/g, b.getEOL());
     bind(host, "main.bp", a);
     bind(guest, "main.bp", b);
-    expect(b.getValue()).toBe("print 1\n");
+    expect(b.getValue()).toBe(peerText("print 1\n"));
 
     type(a, 7, "\nprint 2");
-    expect(b.getValue()).toBe("print 1\nprint 2\n");
+    expect(b.getValue()).toBe(peerText("print 1\nprint 2\n"));
     type(b, 0, "' header\n");
     expect(a.getValue()).toBe("' header\nprint 1\nprint 2\n");
     type(a, 0, "", 9);
-    expect(b.getValue()).toBe("print 1\nprint 2\n");
-    expect(sharedTypes(guest.doc).files.get("main.bp")?.toString()).toBe(b.getValue());
+    expect(b.getValue()).toBe(peerText("print 1\nprint 2\n"));
+    expect(sharedTypes(guest.doc).files.get("main.bp")?.toString()).toBe("print 1\nprint 2\n");
   });
 
   it("replaces initial content in a single undoable edit and does not bind unshared files", () => {
