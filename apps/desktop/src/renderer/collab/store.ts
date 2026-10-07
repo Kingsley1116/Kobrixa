@@ -9,6 +9,7 @@ import type { CollabSession, CollabSessionFactory } from "./types.js";
 export class CollabStore {
   #session: CollabSession | null = null;
   readonly #listeners = new Set<() => void>();
+  #unsubscribeSession: () => void = () => {};
 
   constructor(private readonly factory: CollabSessionFactory) {}
 
@@ -21,17 +22,33 @@ export class CollabStore {
 
   /** Replaces any current session with a new connected one. */
   start(connection: CollabConnection): CollabSession {
-    this.#session?.destroy();
+    // Create first so a failing factory leaves the previous session intact.
     const session = this.factory(connection);
+    const previous = this.#session;
+    const initialRole = session.getSnapshot().role;
+    this.#unsubscribeSession();
     this.#session = session;
-    session.connect();
+    this.#unsubscribeSession = session.subscribe(() => {
+      if (this.#session !== session) return;
+      const snapshot = session.getSnapshot();
+      if (snapshot.status === "closed" || snapshot.role === initialRole) return;
+      // A viewer's Y.Doc can contain dropped edits (including edits already in
+      // flight when downgraded). Yjs cannot undo those by applying a snapshot.
+      // Replace the session so every binding uses fresh authoritative history;
+      // promotion must never resend changes made while the client was a viewer.
+      this.start({ ...connection, role: snapshot.role });
+    });
+    previous?.destroy();
     this.#emit();
+    session.connect();
     return session;
   }
 
   /** Leaves and destroys the current session, if any. */
   stop(): void {
     if (!this.#session) return;
+    this.#unsubscribeSession();
+    this.#unsubscribeSession = () => {};
     this.#session.destroy();
     this.#session = null;
     this.#emit();

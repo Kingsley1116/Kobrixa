@@ -547,7 +547,18 @@ describe("CollabRoom authorization and lifecycle", () => {
       () => reconnect.doc.getMap(DOC_KEYS.control).get("holder") === GUEST,
       "second grant accepted",
     );
+    let roleBeforeRevocation = false;
+    reconnect.doc.getMap(DOC_KEYS.control).observe(() => {
+      if (reconnect.doc.getMap(DOC_KEYS.control).get("holder") === HOST) {
+        roleBeforeRevocation = reconnect.lastNotice("role")?.role === "viewer";
+      }
+    });
     await post("control", "/role", { participantId: GUEST, role: "viewer" });
+    await waitFor(
+      () => reconnect.doc.getMap(DOC_KEYS.control).get("holder") === HOST,
+      "guest receives revocation",
+    );
+    expect(roleBeforeRevocation).toBe(true);
     await waitFor(
       () => host.doc.getMap(DOC_KEYS.control).get("holder") === HOST,
       "downgrade returns control to host",
