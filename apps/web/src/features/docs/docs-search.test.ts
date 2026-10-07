@@ -26,8 +26,8 @@ describe("documentation search", () => {
   it("routes and indexes the bilingual collaboration guide", () => {
     const guide = findDocument("collaboration");
     expect(guide?.category).toBe("product");
-    expect(guide?.content.en).toContain("**In development.**");
-    expect(guide?.content["zh-TW"]).toContain("**開發中。**");
+    expect(guide?.content.en).toContain("**Release candidate.**");
+    expect(guide?.content["zh-TW"]).toContain("**候選版本。**");
     for (const locale of ["en", "zh-TW"] as const) {
       expect(
         searchDocumentation("KOBRIXA_COLLAB_URL", locale).some(

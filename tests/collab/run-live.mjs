@@ -121,6 +121,17 @@ try {
     if (message !== "restart-worker") return;
     try {
       await stopServer();
+      let stillListening = true;
+      const deadline = Date.now() + 5000;
+      while (stillListening && Date.now() < deadline) {
+        try {
+          await fetch(`${serverUrl}/health`);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        } catch {
+          stillListening = false;
+        }
+      }
+      assert.equal(stillListening, false, "Old Worker must stop listening before restart");
       server = startServer();
       await waitForServer();
       child.send("worker-restarted");
