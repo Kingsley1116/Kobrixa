@@ -13,10 +13,13 @@ export function CollabWorkspace({
   store,
   api,
   locale,
+  projectName,
 }: {
   store: CollabStore;
   api: CollabApi;
   locale: Locale;
+  /** Active project, used as the room name when starting a room. */
+  projectName?: string | undefined;
 }): React.JSX.Element {
   const zh = locale === "zh-TW";
   const session = useSyncExternalStore(store.subscribe, store.getSnapshot);
@@ -45,7 +48,7 @@ export function CollabWorkspace({
         aria-labelledby="collab-view-people"
         hidden={current !== "people"}
       >
-        <CollabPanel store={store} api={api} locale={locale} />
+        <CollabPanel store={store} api={api} locale={locale} projectName={projectName} />
       </div>
       {session && (
         <div

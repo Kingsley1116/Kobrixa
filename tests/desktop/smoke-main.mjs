@@ -7,6 +7,7 @@ import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkSensorLab } from "./sensor-lab-smoke.mjs";
 import { checkMonitor, createMonitorFixture, monitorDescriptor } from "./monitor-smoke.mjs";
+import { checkCollab } from "./collab-smoke.mjs";
 import { checkMotorTests, createMotorFixture } from "./motor-test-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
@@ -498,6 +499,14 @@ app
     };
     const monitorContext = { js, key, until, pause, win, temporary, monitor };
     const motorContext = { ...monitorContext, motors };
+    const collabContext = {
+      js,
+      until,
+      pause,
+      win,
+      temporary,
+      collabPreferences: () => collabPreferences,
+    };
     const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
       ...projectsContext,
@@ -529,6 +538,11 @@ app
     }
     if (process.env.KOBRIXA_SMOKE_SENSOR_LAB_ONLY) {
       await checkSensorLab(labContext);
+      app.exit(0);
+      return;
+    }
+    if (process.env.KOBRIXA_SMOKE_COLLAB_ONLY) {
+      await checkCollab(collabContext);
       app.exit(0);
       return;
     }
@@ -611,6 +625,7 @@ app
     openCount = fileCheckOpenCount;
     writes.splice(fileCheckWriteCount);
     await checkMonitor(monitorContext);
+    await checkCollab(collabContext);
     await checkSensorLab(labContext);
     await checkMotorTests(motorContext);
     await checkHighlighting({ js, until, files, win, temporary });

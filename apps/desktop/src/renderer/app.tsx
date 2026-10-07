@@ -88,6 +88,7 @@ import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
+import { CollabStatusChip } from "./collab/status-chip.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -2600,6 +2601,16 @@ export function App(): React.JSX.Element {
             setToolTab("connection");
             setDeviceOpen(true);
           }}
+          collab={
+            <CollabStatusChip
+              store={collab}
+              locale={locale}
+              onOpen={() => {
+                setToolTab("collab");
+                setDeviceOpen(true);
+              }}
+            />
+          }
         />
         <ProjectTabs
           projects={projects.map((project) => ({
@@ -3202,7 +3213,12 @@ export function App(): React.JSX.Element {
                 }
                 activity={<ActivityPanel t={t} locale={locale} state={execution} />}
                 collab={
-                  <CollabWorkspace store={collab} api={window.kobrixa.collab} locale={locale} />
+                  <CollabWorkspace
+                    store={collab}
+                    api={window.kobrixa.collab}
+                    locale={locale}
+                    projectName={workspace?.name}
+                  />
                 }
               />
             )}
