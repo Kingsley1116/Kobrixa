@@ -18,6 +18,25 @@ const server = await createServer({
       name: "smoke-app-render-counter",
       enforce: "pre",
       transform(code, id) {
+        if (
+          process.env.KOBRIXA_SMOKE_COLLAB_LINKED &&
+          id === path.join(root, "apps/desktop/src/renderer/collab/collab-session.ts")
+        ) {
+          // Exercise the real App and room controls with deterministic linked peers.
+          // This replacement exists only in this smoke Vite server, never in a build.
+          return `import { createLinkedSessions } from "./testing.js";
+            import { DeviceControl } from "./device-control.js";
+            import { ChatController } from "./chat.js";
+            export function createCollabSession(connection) {
+              const room = createLinkedSessions([connection.role, "editor", "viewer"], connection.roomId);
+              const session = room.sessions[0];
+              Object.assign(session.connection, connection);
+              session.awareness.setLocalState({ ...session.awareness.getLocalState(), name: connection.name });
+              window.__collabSmoke = { room, session, peerControl: new DeviceControl(room.sessions[1]), peerChat: new ChatController(room.sessions[1]) };
+              return session;
+            }`;
+        }
+
         // Exercise the internal simulator covered by this suite even while its
         // release feature flag keeps the production toolbar entry hidden.
         if (id === path.join(root, "apps/desktop/src/shared/features.ts")) {

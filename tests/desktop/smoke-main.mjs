@@ -149,6 +149,7 @@ const fileHistory = createFileHistoryFixture(fixtures, workspace);
 const search = createSearchFixture(fixtures, searchHelpers);
 const diagnostics = createDiagnosticsFixture(language);
 let collabPreferences = { displayName: "", recentRooms: [] };
+let collabDeviceControl = null;
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -381,13 +382,46 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     }
     return;
   }
+  if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
+    if (name === "collabCreateRoom" || name === "collabJoinRoom")
+      return {
+        ok: true,
+        value: {
+          serverUrl: "http://collab.test",
+          roomId: "smoke-room-00000000",
+          participantId: "participant-0",
+          token: "smoke-token",
+          role: "host",
+          name: args[0].name,
+          projectName: args[0].projectName ?? "Keyboard test",
+          inviteCode: "ABCD-EFGH-JK23",
+          expiresAt: Date.now() + 60_000,
+        },
+      };
+    if (name === "collabSetRole") {
+      await win.webContents.executeJavaScript(
+        `window.__collabSmoke.room.sessions.find(session => session.connection.participantId === ${JSON.stringify(args[1].participantId)}).setRole(${JSON.stringify(args[1].role)})`,
+      );
+      return { ok: true, value: null };
+    }
+    if (name === "collabKick") {
+      await win.webContents.executeJavaScript(
+        `window.__collabSmoke.room.sessions.find(session => session.connection.participantId === ${JSON.stringify(args[1])}).close("kicked")`,
+      );
+      return { ok: true, value: null };
+    }
+  }
   if (name === "collabServerUrl") return "http://collab.test";
   if (name === "collabPreferences") return collabPreferences;
   if (name === "collabSetPreferences") {
     collabPreferences = { ...collabPreferences, ...args[0] };
     return collabPreferences;
   }
-  if (["collabLeave", "collabSetDeviceControl", "collabRemoveMirror"].includes(name)) return;
+  if (name === "collabSetDeviceControl") {
+    collabDeviceControl = args[0];
+    return;
+  }
+  if (["collabLeave", "collabRemoveMirror"].includes(name)) return;
   if (name.startsWith("collab")) return { ok: false, error: "unavailable" };
   throw new Error("Unexpected smoke API: " + name);
 });
@@ -500,12 +534,14 @@ app
     const monitorContext = { js, key, until, pause, win, temporary, monitor };
     const motorContext = { ...monitorContext, motors };
     const collabContext = {
+      ...projectsContext,
       js,
       until,
       pause,
       win,
       temporary,
       collabPreferences: () => collabPreferences,
+      collabDeviceControl: () => collabDeviceControl,
     };
     const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
