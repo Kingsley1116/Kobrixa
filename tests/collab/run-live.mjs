@@ -10,28 +10,52 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(new URL("../../apps/collab/package.json", import.meta.url));
 const { build } = require("esbuild");
 
-// Real Wrangler HTTP/WebSocket transport, real desktop service/session/file sync,
-// and independent host/guest project directories. No production account is used.
+// Real HTTP/WebSocket transport, desktop service/session/file sync, and independent
+// host/guest project directories. Remote checks require an explicit service origin.
+const args = process.argv.slice(2);
+const remote = args[0] === "--remote";
+assert.ok(
+  args.length === 0 || (remote && args.length === 2),
+  "Usage: node tests/collab/run-live.mjs [--remote <service-origin>]",
+);
+let serverUrl;
+if (remote) {
+  const url = new URL(args[1]);
+  assert.ok(
+    (url.protocol === "https:" ||
+      (url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === "/",
+    "Expected an HTTPS service origin or an HTTP loopback origin",
+  );
+  serverUrl = url.origin;
+}
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const temporary = await mkdtemp(path.join(tmpdir(), "kobrixa-collab-live-"));
-const reservation = createServer();
-reservation.listen(0, "127.0.0.1");
-await once(reservation, "listening");
-const port = reservation.address().port;
-await new Promise((resolve) => reservation.close(resolve));
-const serverUrl = `http://127.0.0.1:${port}`;
+let port;
 const config = path.join(temporary, "wrangler.json");
-await writeFile(
-  config,
-  JSON.stringify({
-    name: "kobrixa-collab-live-test",
-    main: path.join(root, "apps/collab/src/index.ts"),
-    compatibility_date: "2026-09-06",
-    vars: { COLLAB_SECRET: "local-integration-test-secret-only", ALLOWED_ORIGINS: "" },
-    durable_objects: { bindings: [{ name: "ROOMS", class_name: "CollabRoom" }] },
-    migrations: [{ tag: "v1", new_sqlite_classes: ["CollabRoom"] }],
-  }),
-);
+if (!remote) {
+  const reservation = createServer();
+  reservation.listen(0, "127.0.0.1");
+  await once(reservation, "listening");
+  port = reservation.address().port;
+  await new Promise((resolve) => reservation.close(resolve));
+  serverUrl = `http://127.0.0.1:${port}`;
+  await writeFile(
+    config,
+    JSON.stringify({
+      name: "kobrixa-collab-live-test",
+      main: path.join(root, "apps/collab/src/index.ts"),
+      compatibility_date: "2026-09-06",
+      vars: { COLLAB_SECRET: "local-integration-test-secret-only", ALLOWED_ORIGINS: "" },
+      durable_objects: { bindings: [{ name: "ROOMS", class_name: "CollabRoom" }] },
+      migrations: [{ tag: "v1", new_sqlite_classes: ["CollabRoom"] }],
+    }),
+  );
+}
 let logs = "";
 function startServer() {
   const worker = spawn(
@@ -66,20 +90,28 @@ function startServer() {
   });
   return worker;
 }
-let server = startServer();
+let server = remote ? undefined : startServer();
 async function stopServer() {
-  if (server.exitCode !== null) return;
+  if (!server || server.exitCode !== null) return;
   const stopped = once(server, "exit");
   server.kill("SIGTERM");
   await stopped;
 }
 async function waitForServer() {
+  if (remote) {
+    const response = await fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(15000) });
+    await response.arrayBuffer();
+    assert.ok(response.ok, `Service health check failed: HTTP ${response.status}`);
+    return;
+  }
   const deadline = Date.now() + 30000;
   let ready = false;
   while (Date.now() < deadline) {
     if (server.exitCode !== null) throw new Error(`Wrangler exited: ${logs}`);
     try {
-      ready = (await fetch(`${serverUrl}/health`)).ok;
+      const response = await fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(2000) });
+      await response.arrayBuffer();
+      ready = response.ok;
     } catch {
       /* starting */
     }
@@ -114,18 +146,21 @@ try {
       },
     ],
   });
-  child = spawn(process.execPath, [bundle, serverUrl, temporary], {
+  child = spawn(process.execPath, [bundle, serverUrl, temporary, remote ? "remote" : "local"], {
     stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
   child.on("message", async (message) => {
-    if (message !== "restart-worker") return;
+    if (message !== "restart-worker" || remote) return;
     try {
       await stopServer();
       let stillListening = true;
       const deadline = Date.now() + 5000;
       while (stillListening && Date.now() < deadline) {
         try {
-          await fetch(`${serverUrl}/health`);
+          const response = await fetch(`${serverUrl}/health`, {
+            signal: AbortSignal.timeout(1000),
+          });
+          await response.arrayBuffer();
           await new Promise((resolve) => setTimeout(resolve, 25));
         } catch {
           stillListening = false;

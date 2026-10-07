@@ -19,6 +19,7 @@
     "check": "pnpm -r check && eslint .",
     "test": "pnpm -r test && pnpm test:bytecode",
     "test:collab:live": "node tests/collab/run-live.mjs",
+    "test:collab:remote": "node tests/collab/run-live.mjs --remote",
     "test:desktop:smoke": "node tests/desktop/run-smoke.mjs",
     "test:hardware": "node tests/hardware/run.mjs",
     "assets:build": "node tools/build-assets.mjs",

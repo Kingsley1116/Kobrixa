@@ -1,6 +1,6 @@
 # Cloud collaboration
 
-> **Release candidate.** Cloud collaboration is implemented on the candidate branch and is not part of a published release yet. Running it requires a configured collaboration service; deployment of the default public endpoint is separate from this implementation.
+> **Release candidate.** Cloud collaboration is implemented on the candidate branch and is not part of a published desktop release yet. The default service at `https://collab.kobrixa.com` is deployed and available for this candidate.
 
 Several people can edit one Kobrixa project at the same time through a Kobrixa-operated collaboration service. No account is needed: the host starts a room and shares an invite code, and guests join with that code. Everyone sees the same files, cursors and chat; only one person at a time controls the EV3.
 
@@ -74,6 +74,8 @@ Encoded Yjs documents and individual WebSocket messages are limited to 16 MiB to
 
 Run `pnpm build:core && pnpm test:collab:live` to exercise the real local Worker with two clients, including file mirrors, edits, chat, control permissions, role changes, removal and persistence across a Worker restart. Run `KOBRIXA_SMOKE_COLLAB_LINKED=1 pnpm test:desktop:smoke` for the integrated desktop workflow. Both use local test data.
 
+After deploying a service, run `pnpm test:collab:remote https://collab.kobrixa.com` to verify the same two-client workflow against that origin. This creates one room containing synthetic test files and chat, then closes all clients; the room expires under the normal seven-day idle policy. It verifies server state and revoked access across fresh client connections without restarting the deployed Worker. The origin must be provided explicitly; HTTP is accepted only for loopback addresses.
+
 ## Acceptance status
 
-The candidate has automated unit, local Worker and Electron integration coverage. Public-service deployment and release acceptance remain separate steps before this feature ships.
+The candidate has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow on 2026-10-07. Desktop release acceptance remains a separate step before this feature ships in a published app.

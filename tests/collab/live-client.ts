@@ -15,8 +15,9 @@ import { sharedTypes, type CollabSession } from "../../apps/desktop/src/renderer
 
 const serverUrl = process.argv[2]!;
 const temporary = process.argv[3]!;
+const remote = process.argv[4] === "remote";
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + (remote ? 30000 : 10000);
   while (Date.now() < deadline) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -195,26 +196,28 @@ async function main(): Promise<void> {
     assert.ok((await hostApi.kick(host.connection.roomId, guest.connection.participantId)).ok);
     await until(() => guest.getSnapshot().closeReason === "kicked", "kick reaches guest");
     assert.equal(syncs.map((sync) => sync.getSnapshot().error).filter(Boolean).length, 0);
-    // Close every client before restarting the actual Worker process, then use a
-    // fresh empty document so the persisted state cannot be supplied by a peer.
+    // Close every client and reconnect with an empty document so the server state
+    // cannot be supplied by a peer. Only the local harness restarts its Worker.
     for (const control of controls.splice(0)) control.dispose();
     for (const chat of chats.splice(0)) chat.dispose();
     for (const sync of syncs.splice(0)) await sync.stop();
     guestStore.stop();
     for (const session of sessions.splice(0)) session.destroy();
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Worker restart timed out")), 40000);
-      process.once("message", (message) => {
-        clearTimeout(timer);
-        if (message === "worker-restarted") resolve();
-        else reject(new Error("Unexpected Worker restart response"));
+    if (!remote) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Worker restart timed out")), 40000);
+        process.once("message", (message) => {
+          clearTimeout(timer);
+          if (message === "worker-restarted") resolve();
+          else reject(new Error("Unexpected Worker restart response"));
+        });
+        process.send!("restart-worker");
       });
-      process.send!("restart-worker");
-    });
+    }
     const restored = createCollabSession(hostResult.value, { network: null });
     sessions.push(restored);
     restored.connect();
-    await until(() => restored.getSnapshot().status === "connected", "restarted room connects");
+    await until(() => restored.getSnapshot().status === "connected", "fresh room client connects");
     const restoredTypes = sharedTypes(restored.doc);
     assert.equal(restoredTypes.files.get("main.bp")?.toString(), before);
     assert.equal(restoredTypes.tree.has("renamed.bpi"), false);
@@ -223,9 +226,10 @@ async function main(): Promise<void> {
     const rejected = createCollabSession(guestResult.value, { network: null });
     sessions.push(rejected);
     rejected.connect();
-    await until(() => rejected.getSnapshot().status === "closed", "kick survives restart");
+    await until(() => rejected.getSnapshot().status === "closed", "kicked client stays revoked");
     console.log(
-      "Live collaboration passes: desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and persisted state/revocation across a Worker restart.",
+      "Live collaboration passes: desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
+        (remote ? "fresh client connections." : "a Worker restart."),
     );
   } finally {
     for (const control of controls) control.dispose();
