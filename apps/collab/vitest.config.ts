@@ -9,5 +9,10 @@ export default defineConfig({
       ),
     },
   },
-  test: { name: "collab", environment: "node", include: ["src/**/*.test.ts"] },
+  test: {
+    name: "collab",
+    environment: "node",
+    include: ["src/**/*.test.ts"],
+    env: { MINIFLARE_ASSERT_BODIES_CONSUMED: "true" },
+  },
 });

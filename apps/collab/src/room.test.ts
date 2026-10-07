@@ -112,13 +112,27 @@ afterAll(async () => {
 const HOST = "host-0001";
 const GUEST = "guest-0001";
 
+async function inPhase<T>(phase: string, action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch (cause) {
+    throw new Error(`${phase}: ${cause instanceof Error ? cause.message : String(cause)}`, {
+      cause,
+    });
+  }
+}
+
 async function post(room: string, path: string, body: unknown, actor = HOST) {
-  const response = await mf.dispatchFetch(`https://test${path}?room=${room}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Collab-Participant": actor },
-    body: JSON.stringify(body),
-  });
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  const url = `https://test${path}?room=${room}`;
+  const response = await inPhase(`POST ${url} response headers`, () =>
+    mf.dispatchFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Collab-Participant": actor },
+      body: JSON.stringify(body),
+    }),
+  );
+  const result = await inPhase(`POST ${url} JSON response body`, () => response.json());
+  return { status: response.status, body: result as Record<string, unknown> };
 }
 
 async function initRoom(room: string) {
@@ -204,16 +218,21 @@ class Client {
     role: Role = "editor",
     offlineEdits?: (client: Client) => void,
   ) {
-    const response = await mf.dispatchFetch(`https://test/ws?room=${room}`, {
-      headers: {
-        Upgrade: "websocket",
-        "X-Collab-Participant": participantId,
-        "X-Collab-Role": role,
-        "X-Collab-Name": participantId,
-      },
-    });
+    const url = `https://test/ws?room=${room}`;
+    const phase = `WebSocket ${url} as ${participantId}`;
+    const response = await inPhase(`${phase} upgrade`, () =>
+      mf.dispatchFetch(url, {
+        headers: {
+          Upgrade: "websocket",
+          "X-Collab-Participant": participantId,
+          "X-Collab-Role": role,
+          "X-Collab-Name": participantId,
+        },
+      }),
+    );
     if (response.status !== 101 || !response.webSocket) {
-      throw new Error(`upgrade failed: ${response.status}`);
+      await inPhase(`${phase} failed upgrade response body`, () => response.text());
+      throw new Error(`${phase} upgrade failed: ${response.status}`);
     }
     response.webSocket.accept();
     const client = new Client(response.webSocket, offlineEdits);
@@ -221,7 +240,9 @@ class Client {
     encoding.writeVarUint(encoder, MESSAGE_TYPE.sync);
     syncProtocol.writeSyncStep1(encoder, client.doc);
     client.send(encoding.toUint8Array(encoder));
-    await waitFor(() => client.synced, `${participantId} synced`);
+    await inPhase(`${phase} initial sync`, () =>
+      waitFor(() => client.synced, `${participantId} synced`),
+    );
     return client;
   }
 
@@ -324,6 +345,7 @@ describe("CollabRoom HTTP routes", () => {
     await initRoom("unknown");
     expect(await rejectedCloseCode("unknown", "nobody-0001")).toBe(CLOSE_CODE.unauthorized);
     const plain = await mf.dispatchFetch("https://test/ws?room=unknown");
+    await plain.text();
     expect(plain.status).toBe(426);
   });
 });
@@ -431,10 +453,14 @@ describe("CollabRoom realtime", () => {
     synced.close();
     host.close();
     guest.close();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await waitFor(
+      () => [synced, host, guest, late].every((client) => client.closeCode !== null),
+      "all live room sockets acknowledge closure before restart",
+    );
 
-    await mf.dispose();
+    await inPhase("Stop Miniflare before persistence restart", () => mf.dispose());
     mf = createMiniflare();
+    await inPhase("Start Miniflare after persistence restart", () => mf.ready);
     const again = await Client.connect("live", HOST, "host");
     expect(again.content).toBe(expected);
     expect(again.doc.getMap(DOC_KEYS.meta).get("projectName")).toBe("Line follower");
@@ -442,6 +468,7 @@ describe("CollabRoom realtime", () => {
       { participantId: HOST, name: "Host", role: "host", online: true },
     ]);
     again.close();
+    await waitFor(() => again.closeCode !== null, "restored room socket closed");
   }, 30_000);
 
   test("offline edits reach the server through its sync step 1", async () => {
