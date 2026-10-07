@@ -21,10 +21,12 @@ The React renderer owns presentation state only and has no direct access to Node
 ## Repository boundaries
 
 - `apps/desktop`: Electron main and preload processes, React renderer, Monaco integration, localization, and user workflows.
+- `apps/collab` (in development): the cloud collaboration service, a Cloudflare Worker with one Durable Object per room. Desktop editing, compilation and device use do not depend on it.
 - `apps/web`: product pages, bilingual documentation, Gallery UI and its Cloudflare Worker. Desktop editing and compilation do not depend on this service.
 - `packages/compiler`: build-session orchestration and diagnostic aggregation.
 - `packages/ir`: versioned IR types, validation, and serialization used by language frontends and backends.
 - `packages/backend-ev3`: deterministic EV3 VM lowering and `.rbf` packaging.
+- `packages/collab-protocol` (in development): the collaboration wire contract shared by the desktop app and `apps/collab` — Y.Doc layout, message and close codes, limits, and zod schemas for rooms, invites, tokens, presence, chat and device control.
 - `packages/device`: transport-neutral device operations with USB and Wi-Fi implementations.
 - `frontends/basic-plus`: clean-room lexer, parser, semantic analysis, and IR lowering.
 - `tools/release`: archive validation, signing verification and GitHub Release draft management. `.github/workflows/release.yml` coordinates native platform builds.
@@ -68,6 +70,38 @@ Shared UI behavior lives in `renderer/components`: `Dialog` builds on `Modal` fo
 `ProjectSessions` owns documents and view state by workspace ID; `EditorModels` retains Monaco models and undo history across visible editor remounts, disposing them when a project closes. Background projects retain automatic saving and recovery draft queues, while language analysis and completion serve only the active project. `ExecutionController` separates the selected project from the operation owner, preserving per-project diagnostics and build versions alongside one shared EV3 connection and deployed version.
 
 The main process deduplicates real project roots and exposes `workspace.restoreSession`, `workspace.saveSession` and `workspace.close`. A validated, versioned `workspace-session.json` in user data is written atomically and stores input paths, entry selection, project/file order and editor positions; renderers submit only registered workspace IDs. Recovery drafts keep their existing format. The quit handshake waits for all drafts and session state to be written and keeps the window open on failure. Restart restores neither undo history nor device connections or execution commands.
+
+## Cloud collaboration
+
+> **In development.** This section describes the designed boundaries of [cloud collaboration](../en/collaboration.md); it is not part of a release yet.
+
+```text
+Host renderer (Collaborate tab)          Guest renderer
+  │ Monaco ⇄ Y.Doc binding                  │ Monaco ⇄ Y.Doc binding
+  │ CollabApi via preload/IPC               │ CollabApi via preload/IPC
+  ▼                                         ▼
+Host main process                        Guest main process
+  │ create room · role · kick              │ join with invite code
+  │ real project folder                    │ mirror in <userData>/collab/<room>/
+  ▼                                         ▼
+        HTTPS (room/join) + WebSocket (Yjs sync, awareness, notices)
+                              │
+                              ▼
+          apps/collab — Cloudflare Worker (routing, HMAC tokens)
+                              │
+                              ▼
+          CollabRoom Durable Object — one per room
+          Y.Doc: files · tree · chat · control · meta
+          persisted in Durable Object SQLite storage
+```
+
+- The main process creates and joins rooms over HTTPS, stores room tokens, and resolves the service origin from `KOBRIXA_COLLAB_URL` or the default `https://collab.kobrixa.com`. The Content-Security-Policy allows only that origin for collaboration traffic.
+- The renderer opens the room WebSocket with the token and binds Monaco models to the room's Y.Doc. Remote cursors and presence use Yjs awareness.
+- `packages/collab-protocol` is the only contract between the desktop app and the service; both sides validate requests and messages with its schemas. Incompatible changes bump `COLLAB_PROTOCOL_VERSION`.
+- Tokens are HMAC-SHA256-signed by the Worker with `COLLAB_SECRET`, are valid for seven days, and carry the participant's role. The Durable Object enforces roles: viewers' document updates and chat posts are rejected.
+- The Durable Object enforces room limits (16 participants, 200 files, 1 MiB per file, 500 chat messages) and deletes a room's storage after seven days without connections.
+- Device operations stay local to each participant's main process. While a room is active, device writes are rejected unless that window holds device control; stopping a program is always allowed.
+- Room state crosses the Cloudflare network. Logs must not contain source contents, chat text or tokens.
 
 ## Project manifest
 

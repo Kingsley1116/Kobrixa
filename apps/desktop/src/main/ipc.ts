@@ -69,6 +69,12 @@ function parseDescriptor(value: unknown) {
   };
 }
 
+/** The trusted-sender `ipcMain.handle` wrapper, for feature modules that register their own channels. */
+export type IpcHandle = <T extends unknown[], R>(
+  channel: string,
+  action: (event: IpcMainInvokeEvent, ...args: T) => R,
+) => void;
+
 export function registerIpc(
   trustedRenderer: () => WebContents | undefined,
   workspaces: WorkspaceService,
@@ -80,6 +86,7 @@ export function registerIpc(
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
   sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
+  modules: readonly ((handle: IpcHandle) => void)[] = [],
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -87,7 +94,7 @@ export function registerIpc(
       throw new Error("Rejected IPC from an untrusted sender.");
     }
   };
-  const handle = <T extends unknown[], R>(
+  const handle: IpcHandle = <T extends unknown[], R>(
     channel: string,
     action: (event: IpcMainInvokeEvent, ...args: T) => R,
   ): void => {
@@ -99,6 +106,7 @@ export function registerIpc(
     });
   };
 
+  for (const register of modules) register(handle);
   handle("updates:state", () => updates.getState());
   handle("simulator:cancel", (_event, workspaceId: unknown) =>
     builds.cancelSimulation(id.parse(workspaceId)),
