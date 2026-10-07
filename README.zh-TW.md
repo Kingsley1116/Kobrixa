@@ -17,7 +17,7 @@ Kobrixa IDE 是一個開源跨平台開發環境，用於編寫 LEGO® MINDSTORM
 | Windows、macOS、Linux USB HID | 候選版；實機矩陣待完成            |
 | Windows、macOS、Linux Wi-Fi   | 候選版；實機矩陣待完成            |
 | 安裝套件與自動更新            | 已實作；可用套件以各 Release 為準 |
-| 雲端協作                      | 開發中；尚未納入任何版本          |
+| 雲端協作                      | candidate.12 已納入               |
 | Python 前端                   | v1 之後規劃                       |
 | TypeScript 前端               | Python 之後規劃                   |
 | C++ 前端                      | TypeScript 之後規劃               |
@@ -66,7 +66,7 @@ Node.js 與 TypeScript 是 Kobrixa 的內部實作技術；C++ 則仍是 TypeScr
 - [設備與平台支援](docs/zh-TW/device-support.md)
 - [路線圖](docs/zh-TW/roadmap.md)
 - [安裝與復原](docs/zh-TW/installation.md)
-- [雲端協作（開發中）](docs/zh-TW/collaboration.md)
+- [雲端協作](docs/zh-TW/collaboration.md)
 - [範例](examples/README.zh-TW.md)
 - [貢獻指南](CONTRIBUTING.md)
 
@@ -74,12 +74,12 @@ Node.js 與 TypeScript 是 Kobrixa 的內部實作技術；C++ 則仍是 TypeScr
 
 ```text
 apps/desktop/           Electron main／preload 與 React renderer
-apps/collab/            雲端協作 Worker（開發中）
+apps/collab/            雲端協作 Worker
 packages/compiler/      編譯協調與診斷
 packages/ir/            KobrixaIR 定義與驗證
 packages/backend-ev3/   EV3 bytecode 與 .rbf 產生器
 packages/device/        USB 與 Wi-Fi transport
-packages/collab-protocol/ 協作通訊契約（開發中）
+packages/collab-protocol/ 協作通訊契約
 frontends/basic-plus/   v1 Basic Plus 前端
 tests/bytecode/         離線 bytecode 與行為回歸測試
 tests/hardware/         手動 EV3 實機驗收腳本

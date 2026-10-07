@@ -21,12 +21,12 @@ The React renderer owns presentation state only and has no direct access to Node
 ## Repository boundaries
 
 - `apps/desktop`: Electron main and preload processes, React renderer, Monaco integration, localization, and user workflows.
-- `apps/collab` (in development): the cloud collaboration service, a Cloudflare Worker with one Durable Object per room. Desktop editing, compilation and device use do not depend on it.
+- `apps/collab`: the cloud collaboration service, a Cloudflare Worker with one Durable Object per room. Desktop editing, compilation and device use do not depend on it.
 - `apps/web`: product pages, bilingual documentation, Gallery UI and its Cloudflare Worker. Desktop editing and compilation do not depend on this service.
 - `packages/compiler`: build-session orchestration and diagnostic aggregation.
 - `packages/ir`: versioned IR types, validation, and serialization used by language frontends and backends.
 - `packages/backend-ev3`: deterministic EV3 VM lowering and `.rbf` packaging.
-- `packages/collab-protocol` (in development): the collaboration wire contract shared by the desktop app and `apps/collab` — Y.Doc layout, message and close codes, limits, and zod schemas for rooms, invites, tokens, presence, chat and device control.
+- `packages/collab-protocol`: the collaboration wire contract shared by the desktop app and `apps/collab` — Y.Doc layout, message and close codes, limits, and zod schemas for rooms, invites, tokens, presence, chat and device control.
 - `packages/device`: transport-neutral device operations with USB and Wi-Fi implementations.
 - `frontends/basic-plus`: clean-room lexer, parser, semantic analysis, and IR lowering.
 - `tools/release`: archive validation, signing verification and GitHub Release draft management. `.github/workflows/release.yml` coordinates native platform builds.
@@ -73,7 +73,7 @@ The main process deduplicates real project roots and exposes `workspace.restoreS
 
 ## Cloud collaboration
 
-> **In development.** This section describes the designed boundaries of [cloud collaboration](../en/collaboration.md); it is not part of a release yet.
+> **Release candidate.** [Cloud collaboration](../en/collaboration.md) is included starting with `v0.1.0-v1-candidate.12`.
 
 ```text
 Host renderer (Collaborate tab)          Guest renderer

@@ -1,6 +1,6 @@
 {
   "name": "@kobrixa/device",
-  "version": "0.1.0-v1-candidate.11",
+  "version": "0.1.0-v1-candidate.12",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

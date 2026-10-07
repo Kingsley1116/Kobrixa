@@ -8,7 +8,7 @@ Windows 的 SignPath Foundation 免費開源方案仍須申請核准，目前不
 
 - 作者、審查者與發布／簽章核准者：[Kingsley1116](https://github.com/Kingsley1116)。其他貢獻者的變更須經維護者審查；用於簽章的 GitHub 與 SignPath 帳號必須啟用多因素驗證。
 - 核准者須檢視確切來源 commit、檢查結果與簽章請求，再逐次核准 Windows 發布。SignPath 核准與 GitHub Release 公開是兩個獨立人工步驟。
-- 桌面編輯器／編譯器在本機運作；EV3 搜尋、連線與傳輸由使用者操作觸發，明確開啟的 LEGO 連結交由系統瀏覽器處理。桌面程式不實作廣告或分析追蹤。啟用自動更新時向 GitHub 取得公開 Release 資訊及下載檔，傳送一般 HTTP 連線資訊（IP 位址、User-Agent），不會上傳原始碼或專案。可在「設定 → 更新」關閉背景檢查。網站與素材庫另有[隱私政策](https://kobrixa.com/privacy)。
+- 桌面編輯器／編譯器在本機運作；EV3 搜尋、連線與傳輸由使用者操作觸發，明確開啟的 LEGO 連結交由系統瀏覽器處理。桌面程式不實作廣告或分析追蹤。啟用自動更新時向 GitHub 取得公開 Release 資訊及下載檔，傳送一般 HTTP 連線資訊（IP 位址、User-Agent），不會上傳原始碼或專案。可在「設定 → 更新」關閉背景檢查。使用者建立或加入協作房間時，共享專案檔案、顯示名稱與聊天會傳送至 Kobrixa 營運的 Cloudflare 服務，詳見[雲端協作](collaboration.md#隱私與資料)。網站與素材庫另有[隱私政策](https://kobrixa.com/privacy)。
 - 簽章服務在發布時取得版本二進位檔及建置資訊；此流程不會傳送使用者電腦中的專案。
 
 ## 發布行為

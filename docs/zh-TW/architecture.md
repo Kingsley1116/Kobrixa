@@ -21,12 +21,12 @@ React renderer 只管理呈現狀態，不能直接存取 Node.js 或 Electron A
 ## 倉庫邊界
 
 - `apps/desktop`：Electron main 與 preload process、React renderer、Monaco 整合、本地化與使用流程。
-- `apps/collab`（開發中）：雲端協作服務，由 Cloudflare Worker 與每個房間一個 Durable Object 組成。桌面編輯、編譯與設備操作不依賴此服務。
+- `apps/collab`：雲端協作服務，由 Cloudflare Worker 與每個房間一個 Durable Object 組成。桌面編輯、編譯與設備操作不依賴此服務。
 - `apps/web`：產品頁、雙語文件、素材庫介面及其 Cloudflare Worker。桌面編輯與編譯不依賴此服務。
 - `packages/compiler`：建置 session 協調與診斷彙整。
 - `packages/ir`：由語言前端和後端共用的版本化 IR 型別、驗證與序列化。
 - `packages/backend-ev3`：確定性的 EV3 VM lowering 與 `.rbf` 封裝。
-- `packages/collab-protocol`（開發中）：桌面應用程式與 `apps/collab` 共用的協作通訊契約，包含 Y.Doc 結構、訊息與關閉代碼、各項上限，以及房間、邀請、權杖、在線狀態、聊天與設備控制權的 zod schema。
+- `packages/collab-protocol`：桌面應用程式與 `apps/collab` 共用的協作通訊契約，包含 Y.Doc 結構、訊息與關閉代碼、各項上限，以及房間、邀請、權杖、在線狀態、聊天與設備控制權的 zod schema。
 - `packages/device`：transport 中立的設備操作，以及 USB、Wi-Fi 實作。
 - `frontends/basic-plus`：clean-room lexer、parser、語意分析與 IR lowering。
 - `tools/release`：壓縮包檢查、簽章驗證與 GitHub Release 草稿管理。`.github/workflows/release.yml` 協調各平台原生建置。
@@ -73,7 +73,7 @@ src/
 
 ## 雲端協作
 
-> **開發中。** 本節說明[雲端協作](../zh-TW/collaboration.md)的設計邊界，尚未納入正式版本。
+> **候選版本。** [雲端協作](../zh-TW/collaboration.md)自 `v0.1.0-v1-candidate.12` 起納入桌面版本。
 
 ```text
 主持人 renderer（協作分頁）               來賓 renderer

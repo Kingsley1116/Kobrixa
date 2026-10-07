@@ -30,7 +30,7 @@ Exit: every criterion in the [product specification](../en/product.md) and [devi
 - Expand `.bp` compatibility cases and EV3 API coverage.
 - Improve completion, formatting, performance, accessibility, localization, and recovery UX.
 - Add a headless Node.js `kobrixa` CLI over the same compiler and device packages.
-- Cloud collaboration (in development): invite-code rooms for real-time co-editing, shared file trees, chat and single-holder EV3 control through the Kobrixa-operated service. See [cloud collaboration](../en/collaboration.md).
+- Cloud collaboration (included in candidate.12): invite-code rooms for real-time co-editing, shared file trees, chat and single-holder EV3 control through the Kobrixa-operated service. See [cloud collaboration](../en/collaboration.md).
 
 Exit: compiler and device APIs are stable enough for independent CLI and desktop release cycles.
 
