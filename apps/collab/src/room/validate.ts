@@ -123,8 +123,10 @@ function validateControl(
   );
   if (after.holder !== null && !eligible.has(after.holder)) invalid("invalid controller");
   if (new Set(after.requests).size !== after.requests.length) invalid("duplicate requests");
-  if (after.requests.some((id) => !eligible.has(id))) invalid("invalid request");
-  if (actor.role === "host") return;
+  if (actor.role === "host") {
+    if (after.requests.some((id) => !eligible.has(id))) invalid("invalid request");
+    return;
+  }
   const hostId = participants.find((p) => p.role === "host")?.participantId;
   const holderAllowed = (holder: unknown) =>
     holder === before.holder || (before.holder === actor.participantId && holder === hostId);
@@ -147,9 +149,9 @@ function validateControl(
       if (!holderAllowed(value)) invalid("host-only grant");
     } else if (integrated.parentSub === "requests") {
       const requests = controlStateSchema.shape.requests.parse(value);
-      if (requests.some((id) => id !== actor.participantId && !before.requests.includes(id))) {
-        invalid("cannot request for another participant");
-      }
+      // Foreign entries are only a stale local view, never an instruction.
+      // The host may have removed or demoted them since this editor last synced;
+      // ignore them and preserve the server's current requests below.
       if (requestClient !== undefined && requestClient !== struct.id.client)
         invalid("ambiguous control requests");
       requestClient = struct.id.client;

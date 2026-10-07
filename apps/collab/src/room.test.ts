@@ -592,6 +592,37 @@ describe("CollabRoom authorization and lifecycle", () => {
     }
   });
 
+  test("keeps legitimate own requests when a stale array contains a demoted requester", async () => {
+    await initRoom("stale-request");
+    const otherId = "other-0001";
+    await post("stale-request", "/join", { participantId: GUEST, name: "Guest" });
+    await post("stale-request", "/join", { participantId: otherId, name: "Other" });
+    const host = await Client.connect("stale-request", HOST, "host");
+    const guest = await Client.connect("stale-request", GUEST);
+    host.doc.getMap(DOC_KEYS.control).set("requests", [otherId]);
+    await waitFor(
+      () => (guest.doc.getMap(DOC_KEYS.control).get("requests") as string[]).includes(otherId),
+      "earlier request synchronized",
+    );
+    await post("stale-request", "/role", { participantId: otherId, role: "viewer" });
+    // This is the array an editor with an in-flight request can still send.
+    guest.doc.getMap(DOC_KEYS.control).set("requests", [otherId, GUEST]);
+    await waitFor(
+      () => (host.doc.getMap(DOC_KEYS.control).get("requests") as string[]).includes(GUEST),
+      "own request survives stale peer entry",
+    );
+    expect(host.doc.getMap(DOC_KEYS.control).get("requests")).toEqual([GUEST]);
+    await waitFor(
+      () =>
+        JSON.stringify(guest.doc.getMap(DOC_KEYS.control).get("requests")) ===
+        JSON.stringify([GUEST]),
+      "correction returns to sender",
+    );
+    expect(guest.closeCode).toBeNull();
+    host.close();
+    guest.close();
+  });
+
   test("enforces chat identity and trims history while accepting the next message", async () => {
     await initRoom("chat");
     await post("chat", "/join", { participantId: GUEST, name: "Guest" });
