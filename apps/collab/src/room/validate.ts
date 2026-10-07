@@ -38,9 +38,12 @@ export function validateUpdate(
   actor: ParticipantRow,
   participants: readonly ParticipantRow[],
 ): { requests?: string[] } {
+  if (update.byteLength > COLLAB_LIMITS.documentBytes) invalid("document update too large");
+  const snapshot = Y.encodeStateAsUpdate(doc);
+  if (snapshot.byteLength > COLLAB_LIMITS.documentBytes) invalid("document too large");
   const candidate = roomDoc();
   try {
-    Y.applyUpdate(candidate, Y.encodeStateAsUpdate(doc));
+    Y.applyUpdate(candidate, snapshot);
     Y.applyUpdate(candidate, update);
     if (candidate.store.pendingStructs || candidate.store.pendingDs) invalid("incomplete update");
     for (const key of candidate.share.keys()) {
@@ -55,14 +58,17 @@ export function validateUpdate(
     // The contract limits files, while the tree also carries their directories.
     // In a 200-file project, a directory must not turn the last valid file into
     // an unauthorized update. Bound directory expansion separately by the
-    // maximum path length (at most 512 nonempty segments per 1024-byte path).
+    // maximum path length (at most 512 nonempty segments per 1024-character path).
     if (tree.size > COLLAB_LIMITS.files * 512) invalid("too many tree entries");
+    let sourceBytes = 0;
     for (const [path, text] of files) {
       if (!collabPathSchema.safeParse(path).success || !(text instanceof Y.Text)) {
         invalid("invalid file");
       }
-      if (utf8.encode(text.toString()).byteLength > COLLAB_LIMITS.fileBytes)
-        invalid("file too large");
+      const bytes = utf8.encode(text.toString()).byteLength;
+      if (bytes > COLLAB_LIMITS.fileBytes) invalid("file too large");
+      sourceBytes += bytes;
+      if (sourceBytes > COLLAB_LIMITS.roomFileBytes) invalid("room source budget exceeded");
       // Shared files contain plain source text, never embeds or formatting.
       if (
         text
@@ -95,6 +101,8 @@ export function validateUpdate(
     if (!meta.has("projectName")) invalid("missing project name");
     const requests = validateControl(doc, candidate, update, actor, participants);
     validateChat(doc, candidate, actor);
+    if (Y.encodeStateAsUpdate(candidate).byteLength > COLLAB_LIMITS.documentBytes)
+      invalid("document too large");
     return requests ? { requests } : {};
   } finally {
     candidate.destroy();
