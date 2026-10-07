@@ -33,6 +33,7 @@ export function Toolbar({
   onDelete,
   onCancel,
   onDevice,
+  collab,
 }: {
   t: Copy;
   locale: Locale;
@@ -58,6 +59,8 @@ export function Toolbar({
   onDelete(): void;
   onCancel(): void;
   onDevice(): void;
+  /** Collaboration status chip; renders nothing outside a room. */
+  collab?: ReactNode;
 }): React.JSX.Element {
   const hint = (label: string, command: AppCommand) =>
     [label, shortcutHint(command)].filter(Boolean).join(" · ");
@@ -85,6 +88,7 @@ export function Toolbar({
         )}
       </nav>
       <div className="run-actions">
+        {collab}
         {name && (
           <>
             <button
