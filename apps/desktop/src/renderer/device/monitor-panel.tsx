@@ -130,6 +130,7 @@ export function MonitorPanel({
   motorActive = active,
   sessionId,
   locked = false,
+  controlNotice,
   onConnect,
 }: {
   controller: MonitorController;
@@ -140,6 +141,8 @@ export function MonitorPanel({
   active: boolean;
   sessionId: string | undefined;
   locked?: boolean;
+  /** Set while another collaborator holds EV3 control: readings only. */
+  controlNotice?: string | undefined;
   onConnect(): void;
 }): React.JSX.Element {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
@@ -269,7 +272,7 @@ export function MonitorPanel({
                 locale={locale}
                 state={state}
                 controller={controller}
-                locked={locked || motorBusy}
+                locked={locked || motorBusy || Boolean(controlNotice)}
               />
             ))}
           </div>
@@ -294,16 +297,19 @@ export function MonitorPanel({
                 snapshot.program.status === "stopped" &&
                 !recording &&
                 !locked &&
+                !controlNotice &&
                 supported;
-              const blockedReason = locked
-                ? mt.reasonLocked
-                : recording
-                  ? mt.reasonRecording
-                  : snapshot.program.status !== "stopped"
-                    ? mt.reasonProgram
-                    : !supported
-                      ? mt.reasonUnsupported
-                      : mt.reasonStale;
+              const blockedReason = controlNotice
+                ? controlNotice
+                : locked
+                  ? mt.reasonLocked
+                  : recording
+                    ? mt.reasonRecording
+                    : snapshot.program.status !== "stopped"
+                      ? mt.reasonProgram
+                      : !supported
+                        ? mt.reasonUnsupported
+                        : mt.reasonStale;
               const testAngle =
                 motorBusy && test.request?.port === output.port ? test.angle : output.angle;
               return (

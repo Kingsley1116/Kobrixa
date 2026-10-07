@@ -1,0 +1,296 @@
+.collab-panel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-small);
+  line-height: 1.5;
+}
+.collab-panel h3 {
+  margin: 0;
+  font-size: var(--font-ui);
+  font-weight: 650;
+}
+.collab-panel p {
+  margin: 0;
+}
+.collab-muted {
+  color: var(--muted);
+}
+.collab-error {
+  color: var(--error);
+}
+.collab-error:empty {
+  display: none;
+}
+.collab-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.collab-intro p {
+  color: var(--muted);
+}
+.tool-content .collab-field {
+  margin-block: 12px;
+}
+.collab-field input[aria-invalid="true"],
+.collab-join-dialog input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.collab-field small {
+  color: var(--muted);
+}
+.collab-field small.collab-error {
+  color: var(--error);
+}
+.collab-actions-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--raised);
+}
+.collab-action {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.collab-action > button {
+  width: 100%;
+}
+.collab-action > button:not(.primary),
+.collab-recent button,
+.collab-participant-actions button,
+.collab-invite-row button,
+.collab-room-footer button:not(.primary) {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.collab-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.collab-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-bottom: 8px;
+}
+.collab-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.collab-recent,
+.collab-participants {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.collab-recent li,
+.collab-participant {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  min-width: 0;
+}
+.collab-recent li + li,
+.collab-participant + .collab-participant {
+  border-top: 1px solid var(--border);
+}
+.collab-recent-main,
+.collab-participant-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.collab-recent-name,
+.collab-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.collab-participant-name {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  font-weight: 600;
+}
+.collab-you {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-weight: 400;
+}
+.collab-participant-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: var(--muted);
+}
+.collab-role {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+  color: var(--text);
+}
+.collab-role-host {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.collab-role-viewer {
+  color: var(--muted);
+}
+.collab-color {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.collab-participant.is-offline .collab-color {
+  opacity: 0.35;
+}
+.collab-participant.is-offline .collab-name-text {
+  color: var(--muted);
+}
+.collab-participant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 1 auto;
+}
+.collab-participant-actions button,
+.collab-recent button {
+  padding: 4px 7px;
+}
+.collab-room-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.collab-room-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.collab-room-title h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collab-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.collab-status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+[data-status="connected"] > .collab-status-dot {
+  background: var(--success);
+}
+[data-status="closed"] > .collab-status-dot {
+  background: var(--error);
+}
+.collab-status[data-status="closed"] {
+  color: var(--error);
+}
+.collab-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--raised);
+}
+.collab-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.collab-invite-code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: calc(16px * var(--ui-scale));
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.collab-room-footer {
+  margin-top: 18px;
+}
+.collab-room-footer button {
+  width: 100%;
+}
+.collab-join-dialog .collab-invite-input {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.collab-join-dialog .collab-join-as {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.collab-join-dialog .collab-error {
+  margin: 8px 0 0;
+}
+.collab-chip {
+  gap: 5px;
+  padding: 6px 8px;
+  border-color: var(--border);
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-variant-numeric: tabular-nums;
+}
+.collab-chip[data-status="connected"] {
+  color: var(--success);
+}
+.collab-chip[data-status="closed"] {
+  color: var(--error);
+}
+.collab-chip-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-status="connecting"] > .collab-status-dot,
+  [data-status="syncing"] > .collab-status-dot,
+  [data-status="reconnecting"] > .collab-status-dot {
+    animation: collab-pulse 1.2s ease-in-out infinite;
+  }
+}
+@keyframes collab-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}

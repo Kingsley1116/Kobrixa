@@ -1,0 +1,7 @@
+# Collaboration Worker local development settings
+# Copy to apps/collab/.dev.vars (ignored by Git). Never commit real secrets.
+# For production run from apps/collab:  pnpm exec wrangler secret put COLLAB_SECRET
+
+# HMAC-SHA256 key used to sign room tokens. Any long random string works locally,
+# e.g. the output of: node -e "console.log(crypto.randomBytes(32).toString('hex'))"
+COLLAB_SECRET=

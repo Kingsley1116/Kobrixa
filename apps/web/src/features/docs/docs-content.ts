@@ -3,6 +3,7 @@ import deviceSupportEn from "../../../../../docs/en/device-support.md?raw";
 import installationEn from "../../../../../docs/en/installation.md?raw";
 import keyboardSettingsEn from "../../../../../docs/en/keyboard-settings.md?raw";
 import codeSigningEn from "../../../../../docs/en/code-signing.md?raw";
+import collaborationEn from "../../../../../docs/en/collaboration.md?raw";
 import languageSupportEn from "../../../../../docs/en/language-support.md?raw";
 import productEn from "../../../../../docs/en/product.md?raw";
 import roadmapEn from "../../../../../docs/en/roadmap.md?raw";
@@ -11,6 +12,7 @@ import deviceSupportZh from "../../../../../docs/zh-TW/device-support.md?raw";
 import installationZh from "../../../../../docs/zh-TW/installation.md?raw";
 import keyboardSettingsZh from "../../../../../docs/zh-TW/keyboard-settings.md?raw";
 import codeSigningZh from "../../../../../docs/zh-TW/code-signing.md?raw";
+import collaborationZh from "../../../../../docs/zh-TW/collaboration.md?raw";
 import languageSupportZh from "../../../../../docs/zh-TW/language-support.md?raw";
 import productZh from "../../../../../docs/zh-TW/product.md?raw";
 import roadmapZh from "../../../../../docs/zh-TW/roadmap.md?raw";
@@ -44,6 +46,7 @@ export type DocumentSlug =
   | "product"
   | "installation"
   | "keyboard-settings"
+  | "collaboration"
   | "code-signing"
   | "language-support"
   | "device-support"
@@ -226,6 +229,16 @@ export const documents: readonly DocumentEntry[] = [
       en: "Editor controls, diagnostic explanations, Quick Fix, saving and recovery preferences.",
     },
     content: { "zh-TW": keyboardSettingsZh, en: keyboardSettingsEn },
+  },
+  {
+    slug: "collaboration",
+    category: "product",
+    title: { "zh-TW": "雲端協作（開發中）", en: "Cloud collaboration (in development)" },
+    summary: {
+      "zh-TW": "以邀請碼多人即時共同編輯、角色、設備控制權、聊天與資料保存；功能仍在開發中。",
+      en: "Real-time co-editing by invite code, roles, device control, chat and data retention; still in development.",
+    },
+    content: { "zh-TW": collaborationZh, en: collaborationEn },
   },
   {
     slug: "language-support",

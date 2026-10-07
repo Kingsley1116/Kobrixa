@@ -29,6 +29,8 @@ import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
 import type { Diagnostic } from "../../shared/api.js";
 import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
+import type { CollabSession } from "../collab/types.js";
+import { EditorCollab } from "../collab/editor-binding.js";
 
 // Without worker factories Monaco falls back to running worker tasks on the UI
 // thread. Vite bundles these for both the dev server and the packaged file URL.
@@ -155,6 +157,10 @@ interface EditorProps {
   ariaLabel: string;
   onChange(file: string): void;
   onCursorChange(position: CursorPosition): void;
+  /** Active collaboration session; shared files are bound to its document. */
+  collabSession?: CollabSession | null;
+  /** A shared edit exceeded the room's file capacity. */
+  onCollabLimit?(file: string): void;
 }
 
 let modelSequence = 0;
@@ -208,6 +214,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     readOnly,
     onChange,
     onCursorChange,
+    collabSession,
+    onCollabLimit,
   },
   handleRef,
 ): React.JSX.Element {
@@ -239,12 +247,14 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const currentProps = useRef({ readOnly, onOpenLocation, onWorkspaceEdit, locale, onQuickFixes });
   currentProps.current = { readOnly, onOpenLocation, onWorkspaceEdit, locale, onQuickFixes };
   const buffers = useRef(new Map<monaco.editor.ITextModel, DocumentBuffer>());
+  const collab = useRef<EditorCollab | undefined>(undefined);
   const fileFor = (model: monaco.editor.ITextModel): string | undefined =>
     [...models.current].find(([, item]) => item === model)?.[0];
   const ensureModel = (file: string, content: string): monaco.editor.ITextModel => {
     const existing = models.current.get(file);
     if (existing && buffers.current.has(existing)) {
       documents.bind(file, buffers.current.get(existing)!);
+      collab.current?.refresh();
       return existing;
     }
     const model = existing ?? monaco.editor.createModel(content, languageFor(file), modelUri(file));
@@ -261,7 +271,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       setValue: (value) => {
         applyingValue.current = true;
         try {
-          model.setValue(value);
+          if (collab.current?.binding(model))
+            model.pushEditOperations(
+              null,
+              [{ range: model.getFullModelRange(), text: value }],
+              () => null,
+            );
+          else model.setValue(value);
         } finally {
           applyingValue.current = false;
         }
@@ -275,13 +291,16 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         if (applyingValue.current) return;
         features.current?.update(undefined);
         const currentFile = fileFor(model);
-        if (currentFile) {
+        if (currentFile && documents.getOpenFiles().includes(currentFile)) {
           documents.changed(currentFile);
           onChangeRef.current(currentFile);
         }
       }),
     );
     completionSession?.bind(file, model);
+    // Workspace edits also create models for closed files. Bind before the caller
+    // edits them, so opening the resulting tab cannot overwrite the edit with Y.Text.
+    collab.current?.refresh();
     return model;
   };
   const disposeModel = (file: string, model: monaco.editor.ITextModel) => {
@@ -299,6 +318,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const onBlurRef = useRef(onBlur);
   onBlurRef.current = onBlur;
   const onChangeRef = useRef(onChange);
+  const onCollabLimitRef = useRef(onCollabLimit);
+  onCollabLimitRef.current = onCollabLimit;
   const onCursorChangeRef = useRef(onCursorChange);
   onChangeRef.current = onChange;
   onCursorChangeRef.current = onCursorChange;
@@ -335,7 +356,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         const prepared = files.map((file) => {
           // A closed model may have been created by Peek before the file changed on disk.
           const existing = models.current.get(file.path);
-          if (existing && !documents.getOpenFiles().includes(file.path)) {
+          if (
+            existing &&
+            !documents.getOpenFiles().includes(file.path) &&
+            !collab.current?.binding(existing)
+          ) {
             applyingValue.current = true;
             try {
               if (existing.getValue(undefined, true) !== file.content)
@@ -433,6 +458,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           }
         }
         if (currentFile && moved[currentFile]) activeFile.current = moved[currentFile];
+        collab.current?.refresh();
       },
     }),
     [],
@@ -676,14 +702,34 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     }
     const position = instance.getPosition();
     if (position) onCursorChangeRef.current({ line: position.lineNumber, column: position.column });
+    collab.current?.refresh();
   }, [file]);
 
   useEffect(() => {
+    const instance = editor.current;
+    if (!collabSession || !instance) return undefined;
+    const attachment = new EditorCollab(instance, collabSession, {
+      // Retained models for Peek, search replacement and workspace edits must
+      // participate even before they become document tabs.
+      models: () => models.current,
+      activeFile: () => activeFile.current,
+      onLimit: (file) => onCollabLimitRef.current?.(file),
+    });
+    collab.current = attachment;
+    return () => {
+      attachment.dispose();
+      if (collab.current === attachment) collab.current = undefined;
+    };
+  }, [collabSession]);
+
+  useEffect(() => {
+    // Reconcile only unshared models from disk/analysis; shared models follow Y.Text.
+    collab.current?.refresh();
     const open = new Set(openFiles);
     // Retain models used by Peek and workspace edits while their source exists.
     // A fresh snapshot reconciles closed files changed externally or removed.
     for (const [modelFile, model] of models.current) {
-      if (open.has(modelFile)) continue;
+      if (open.has(modelFile) || collab.current?.binding(model)) continue;
       const source = analysisSession.getCurrent()?.analysis.index.sources[modelFile];
       if (source === undefined) {
         disposeModel(modelFile, model);
@@ -697,6 +743,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         }
       }
     }
+    collab.current?.refresh();
   }, [openFiles]);
 
   useEffect(() => {
@@ -730,6 +777,16 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             continue;
           }
           const source = snapshot.analysis.index.sources[modelFile];
+          if (collab.current?.binding(model)) {
+            // A delayed disk analysis may predate the latest shared edit. Never
+            // publish that snapshot back into the room or trust its model version.
+            if (
+              source !== undefined &&
+              normalizeSource(source) === normalizeSource(model.getValue())
+            )
+              modelSnapshots.accept(model, snapshot);
+            continue;
+          }
           if (source === undefined) disposeModel(modelFile, model);
           else {
             if (modelSnapshots.source(model) !== source)

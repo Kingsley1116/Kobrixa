@@ -5,6 +5,8 @@ interface TabOption<T extends string> {
   label: string;
   id: string;
   panelId: string;
+  /** Small count shown after the label (e.g. unread messages); hidden when 0. */
+  badge?: number;
 }
 
 /** Automatically activated tabs with one keyboard stop and focus scoped to this list. */
@@ -66,6 +68,9 @@ export function TabList<T extends string>({
           }}
         >
           {tab.label}
+          {tab.badge ? (
+            <span className="tab-list-badge">{tab.badge > 99 ? "99+" : tab.badge}</span>
+          ) : null}
         </button>
       ))}
     </div>

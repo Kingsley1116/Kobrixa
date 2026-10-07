@@ -22,6 +22,7 @@ test("website sources, Worker and website-imported docs do not trigger desktop b
 test("desktop code, fixtures, release tools and release workflow do not trigger website checks", () => {
   for (const path of [
     "apps/desktop/src/main.ts",
+    "apps/collab/src/room.ts",
     "examples/test/main.bp",
     "tests/bytecode/test.mjs",
     "tools/release/archive.mjs",

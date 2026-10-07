@@ -17,6 +17,7 @@ Kobrixa IDE is an open-source, cross-platform development environment for progra
 | USB HID on Windows, macOS, and Linux | Candidate; physical matrix pending    |
 | Wi-Fi on Windows, macOS, and Linux   | Candidate; physical matrix pending    |
 | Installers and automatic updates     | Implemented; availability per Release |
+| Cloud collaboration                  | In development; not in any release    |
 | Python frontend                      | Planned after v1                      |
 | TypeScript frontend                  | Planned after Python                  |
 | C++ frontend                         | Planned after TypeScript              |
@@ -65,6 +66,7 @@ Node.js and TypeScript describe Kobrixa's implementation stack. C++ remains a se
 - [Device and platform support](docs/en/device-support.md)
 - [Roadmap](docs/en/roadmap.md)
 - [Installation and recovery](docs/en/installation.md)
+- [Cloud collaboration (in development)](docs/en/collaboration.md)
 - [Examples](examples/README.md)
 - [Contributing](CONTRIBUTING.md)
 
@@ -72,10 +74,12 @@ Node.js and TypeScript describe Kobrixa's implementation stack. C++ remains a se
 
 ```text
 apps/desktop/           Electron main/preload and React renderer
+apps/collab/            Cloud collaboration Worker (in development)
 packages/compiler/      Compiler orchestration and diagnostics
 packages/ir/            KobrixaIR definitions and validation
 packages/backend-ev3/   EV3 bytecode and .rbf generation
 packages/device/        USB and Wi-Fi transports
+packages/collab-protocol/ Collaboration wire contract (in development)
 frontends/basic-plus/   v1 Basic Plus frontend
 tests/bytecode/         Offline bytecode and behavioral regression tests
 tests/hardware/         Manual EV3 hardware acceptance scripts

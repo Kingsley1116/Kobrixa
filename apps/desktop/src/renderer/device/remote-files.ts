@@ -124,6 +124,9 @@ export class RemoteFilesController {
   ): Promise<boolean> {
     const sessionId = this.state.sessionId;
     if (!sessionId || this.state.busy || this.execution.locked) return false;
+    // Without collaboration device control only browsing and downloads are allowed.
+    if (this.execution.deviceControlBlocked && action !== "list" && action !== "download")
+      return false;
     const generation = ++this.generation;
     const initial = !this.state.loaded;
     this.update({
@@ -200,6 +203,7 @@ export class RemoteFilesController {
   ): Promise<void> {
     const sessionId = this.state.sessionId;
     if (!sessionId || this.state.busy || this.execution.locked) return;
+    if (this.execution.deviceControlBlocked && action !== "download") return;
     const generation = ++this.generation,
       requestId = crypto.randomUUID(),
       path = this.state.path;

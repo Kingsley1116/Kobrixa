@@ -1,0 +1,73 @@
+import { useState, useSyncExternalStore } from "react";
+import { TabList } from "../components/tab-list.js";
+import type { Locale } from "../i18n/copy.js";
+import type { CollabApi } from "../../shared/collab.js";
+import type { CollabStore } from "./store.js";
+import { CollabPanel } from "./collab-panel.js";
+import { ChatPanel, useChatController } from "./chat-panel.js";
+
+type CollabView = "people" | "chat";
+
+/** Content of the "Collaborate" tool tab. Chat is available only inside a room. */
+export function CollabWorkspace({
+  store,
+  api,
+  locale,
+  projectName,
+}: {
+  store: CollabStore;
+  api: CollabApi;
+  locale: Locale;
+  /** Active project, used as the room name when starting a room. */
+  projectName?: string | undefined;
+}): React.JSX.Element {
+  const zh = locale === "zh-TW";
+  const session = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [view, setView] = useState<CollabView>("people");
+  const current: CollabView = session ? view : "people";
+  const chat = useChatController(session);
+  const unread = useSyncExternalStore(
+    chat?.subscribe ?? noSubscribe,
+    () => chat?.getSnapshot().unread ?? 0,
+  );
+  return (
+    <div className="collab-workspace">
+      {session && (
+        <TabList<CollabView>
+          className="collab-subtabs"
+          variant="compact"
+          label={zh ? "協作工具" : "Collaboration tools"}
+          value={current}
+          onChange={setView}
+          tabs={(["people", "chat"] as const).map((value) => ({
+            value,
+            id: `collab-view-${value}`,
+            panelId: `collab-page-${value}`,
+            label: value === "people" ? (zh ? "成員" : "People") : zh ? "聊天" : "Chat",
+            ...(value === "chat" && current !== "chat" && unread > 0 ? { badge: unread } : {}),
+          }))}
+        />
+      )}
+      <div
+        id="collab-page-people"
+        role="tabpanel"
+        aria-labelledby="collab-view-people"
+        hidden={current !== "people"}
+      >
+        <CollabPanel store={store} api={api} locale={locale} projectName={projectName} />
+      </div>
+      {session && (
+        <div
+          id="collab-page-chat"
+          role="tabpanel"
+          aria-labelledby="collab-view-chat"
+          hidden={current !== "chat"}
+        >
+          <ChatPanel session={session} locale={locale} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const noSubscribe = (): (() => void) => () => {};
