@@ -5,6 +5,20 @@ import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
 import type { MonitorUpdate, SensorLabState } from "../shared/sensor-lab.js";
 
 const api: KobrixaApi = {
+  collab: {
+    serverUrl: () => ipcRenderer.invoke("collab:server-url"),
+    getPreferences: () => ipcRenderer.invoke("collab:preferences"),
+    setPreferences: (patch) => ipcRenderer.invoke("collab:set-preferences", patch),
+    createRoom: (request) => ipcRenderer.invoke("collab:create-room", request),
+    joinRoom: (request) => ipcRenderer.invoke("collab:join-room", request),
+    kick: (roomId, participantId) => ipcRenderer.invoke("collab:kick", roomId, participantId),
+    setRole: (roomId, request) => ipcRenderer.invoke("collab:set-role", roomId, request),
+    leave: (roomId) => ipcRenderer.invoke("collab:leave", roomId),
+    setDeviceControl: (holder) => ipcRenderer.invoke("collab:set-device-control", holder),
+    openMirror: (roomId, projectName) =>
+      ipcRenderer.invoke("collab:open-mirror", roomId, projectName),
+    removeMirror: (roomId) => ipcRenderer.invoke("collab:remove-mirror", roomId),
+  },
   simulator: {
     cancel: (workspaceId) => ipcRenderer.invoke("simulator:cancel", workspaceId),
     prepare: (workspaceId, overlays, entries) =>

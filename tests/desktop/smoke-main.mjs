@@ -147,6 +147,7 @@ const workspace = (id = firstId) => {
 const fileHistory = createFileHistoryFixture(fixtures, workspace);
 const search = createSearchFixture(fixtures, searchHelpers);
 const diagnostics = createDiagnosticsFixture(language);
+let collabPreferences = { displayName: "", recentRooms: [] };
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -379,6 +380,14 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     }
     return;
   }
+  if (name === "collabServerUrl") return "http://collab.test";
+  if (name === "collabPreferences") return collabPreferences;
+  if (name === "collabSetPreferences") {
+    collabPreferences = { ...collabPreferences, ...args[0] };
+    return collabPreferences;
+  }
+  if (["collabLeave", "collabSetDeviceControl", "collabRemoveMirror"].includes(name)) return;
+  if (name.startsWith("collab")) return { ok: false, error: "unavailable" };
   throw new Error("Unexpected smoke API: " + name);
 });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));

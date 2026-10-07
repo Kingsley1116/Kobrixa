@@ -200,7 +200,13 @@ export async function checkMotorTests({ js, until, pause, win, temporary, monito
     await until(`Boolean(document.querySelector(${JSON.stringify(toggle(1))}))`);
     assert.deepEqual(
       await js('Array.from(document.querySelectorAll(".tools-tabs [role=tab]")).map(tab=>tab.id)'),
-      ["tool-tab-connection", "tool-tab-monitor", "tool-tab-files", "tool-tab-activity"],
+      [
+        "tool-tab-connection",
+        "tool-tab-monitor",
+        "tool-tab-files",
+        "tool-tab-activity",
+        "tool-tab-collab",
+      ],
     );
     assert.deepEqual(
       await js(

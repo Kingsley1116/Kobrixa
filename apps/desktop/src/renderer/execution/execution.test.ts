@@ -100,6 +100,7 @@ function setup() {
       delete: vi.fn(async () => {}),
     },
     workspace: {} as KobrixaApi["workspace"],
+    collab: {} as KobrixaApi["collab"],
     language: {} as KobrixaApi["language"],
     documentation: { open: vi.fn(async () => undefined) },
   } satisfies KobrixaApi;

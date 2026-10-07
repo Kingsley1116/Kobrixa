@@ -85,6 +85,9 @@ import { MonitorController } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
 import { RecordingStatus } from "./device/recording-status.js";
+import { CollabStore } from "./collab/store.js";
+import { createCollabSession } from "./collab/collab-session.js";
+import { CollabWorkspace } from "./collab/collab-workspace.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -220,6 +223,8 @@ export function App(): React.JSX.Element {
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
   const [sensorLab] = useState(() => new SensorLabController(window.kobrixa.sensorLab));
   const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
+  const [collab] = useState(() => new CollabStore(createCollabSession));
+  useEffect(() => () => collab.stop(), [collab]);
   useEffect(() => {
     void sensorLab.initialize();
     void motorTest.initialize();
@@ -3196,6 +3201,9 @@ export function App(): React.JSX.Element {
                   />
                 }
                 activity={<ActivityPanel t={t} locale={locale} state={execution} />}
+                collab={
+                  <CollabWorkspace store={collab} api={window.kobrixa.collab} locale={locale} />
+                }
               />
             )}
           </aside>

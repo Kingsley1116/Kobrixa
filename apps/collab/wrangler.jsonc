@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kobrixa-collab",
+  "compatibility_date": "2026-09-06",
+  "workers_dev": true,
+  "main": "src/index.ts",
+  "observability": { "enabled": true },
+  "vars": {
+    // Comma-separated Origin values allowed for browser requests. The desktop
+    // renderer runs from a file:// or app origin and sends no Origin for
+    // main-process `net.fetch` calls.
+    "ALLOWED_ORIGINS": "",
+  },
+  // COLLAB_SECRET (HMAC key for room tokens) is a secret:
+  //   pnpm exec wrangler secret put COLLAB_SECRET
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "CollabRoom" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CollabRoom"] }],
+  "routes": [{ "pattern": "collab.kobrixa.com", "custom_domain": true }],
+}

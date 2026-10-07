@@ -31,6 +31,7 @@ import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sy
 import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
 import type { LanguageSyncRequest, LanguageSyncReply } from "./language-sync.js";
 import type { KeyboardContext } from "./keyboard.js";
+import type { CollabApi } from "./collab.js";
 import type {
   BuildArtifact,
   BuildProgress,
@@ -193,6 +194,7 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  collab: CollabApi;
   simulator: {
     cancel(workspaceId: string): Promise<void>;
     prepare(

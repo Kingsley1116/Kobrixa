@@ -185,15 +185,21 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
   await until('Boolean(document.querySelector("#tool-tab-monitor"))');
   assert.deepEqual(
     await js('Array.from(document.querySelectorAll(".tools-tabs [role=tab]")).map(tab=>tab.id)'),
-    ["tool-tab-connection", "tool-tab-monitor", "tool-tab-files", "tool-tab-activity"],
+    [
+      "tool-tab-connection",
+      "tool-tab-monitor",
+      "tool-tab-files",
+      "tool-tab-activity",
+      "tool-tab-collab",
+    ],
   );
   await js('document.querySelector("#tool-tab-connection").focus()');
   for (const [pressed, expected] of [
     ["ArrowRight", "monitor"],
     ["ArrowRight", "files"],
-    ["End", "activity"],
+    ["End", "collab"],
     ["ArrowRight", "connection"],
-    ["ArrowLeft", "activity"],
+    ["ArrowLeft", "collab"],
     ["Home", "connection"],
   ]) {
     await key(pressed);
@@ -427,9 +433,9 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
       })()`);
       const expectedTabs =
         locale === "en"
-          ? ["Connection", "Monitor", "EV3 files", "Activity"]
-          : ["連線", "監測", "EV3 檔案", "操作紀錄"];
-      assert.equal(tabLayout.tabs.length, 4);
+          ? ["Connection", "Monitor", "EV3 files", "Activity", "Collaborate"]
+          : ["連線", "監測", "EV3 檔案", "操作紀錄", "協作"];
+      assert.equal(tabLayout.tabs.length, 5);
       assert.ok(tabLayout.scrollWidth <= tabLayout.clientWidth, `${locale}/${theme} tab bar fits`);
       tabLayout.tabs.forEach((tab, index) => {
         const context = `${locale}/${theme} ${expectedTabs[index]} tab`;
@@ -437,7 +443,10 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
         assert.equal(tab.name, expectedTabs[index], `${context} retains its accessible name`);
         assert.equal(tab.title, expectedTabs[index], `${context} exposes its full tooltip`);
         assert.ok(tab.left >= -1 && tab.right <= tabLayout.width + 1, `${context} stays in bounds`);
-        assert.ok(Math.abs(tab.width - tabLayout.width / 4) <= 1, `${context} retains equal width`);
+        assert.ok(
+          Math.abs(tab.width - tabLayout.width / expectedTabs.length) <= 1,
+          `${context} retains equal width`,
+        );
         assert.equal(tab.display, "block", `${context} uses a text box where ellipsis can render`);
         assert.equal(tab.whiteSpace, "nowrap", `${context} stays on one line`);
         assert.ok(tab.scrollHeight <= tab.clientHeight, `${context} is not vertically clipped`);

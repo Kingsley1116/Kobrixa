@@ -1,0 +1,26 @@
+{
+  "name": "@kobrixa/collab",
+  "version": "0.1.0-v1-candidate.11",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "check": "pnpm types:worker && tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "types:worker": "wrangler types --strict-vars=false",
+    "deploy": "pnpm check && wrangler deploy"
+  },
+  "dependencies": {
+    "@kobrixa/collab-protocol": "workspace:*",
+    "lib0": "^0.2.119",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260903.0-alpha",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.129.0"
+  }
+}
