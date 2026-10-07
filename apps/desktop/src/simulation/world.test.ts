@@ -733,6 +733,8 @@ describe("builtin opponent", () => {
         ).toBeGreaterThan(3);
       }
     },
+    // Two full four-robot matches need more than the default 5 s on CI runners.
+    60_000,
   );
 
   it("keeps advanced levels ahead of easy, allowing hard/standard draws with the same hardware", () => {
