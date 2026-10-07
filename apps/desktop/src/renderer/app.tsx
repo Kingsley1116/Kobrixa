@@ -87,7 +87,7 @@ import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
 import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
-import { CollabFileSyncManager } from "./collab/file-sync.js";
+import { applyMinimalDiff, CollabFileSyncManager } from "./collab/file-sync.js";
 import { sharedTypes } from "./collab/types.js";
 import { CollabSyncStatus } from "./collab/sync-status.js";
 import { canEdit } from "./collab/types.js";
@@ -1073,7 +1073,12 @@ export function App(): React.JSX.Element {
     if (!fileReview || fileReviewBusy) return;
     const review = fileReview;
     const project = sessions.get(review.workspaceId);
-    if (!project || controller.editingLockedFor(review.workspaceId)) return;
+    if (
+      !project ||
+      !canMutateWorkspace(review.workspaceId) ||
+      controller.editingLockedFor(review.workspaceId)
+    )
+      return;
     setFileReviewBusy(true);
     try {
       if (action === "save") {
@@ -1193,8 +1198,14 @@ export function App(): React.JSX.Element {
     if (!historyReview || historyReview.loading || historyReview.selectedContent === undefined)
       return;
     const project = sessions.get(historyReview.workspaceId);
-    if (!project || controller.editingLockedFor(project.workspace.id)) return;
+    if (
+      !project ||
+      !canMutateWorkspace(project.workspace.id) ||
+      controller.editingLockedFor(project.workspace.id)
+    )
+      return;
     const { file, selectedContent } = historyReview;
+    publishSharedText(project.workspace.id, file, selectedContent);
     replaceFileText(project, file, selectedContent);
     queueDraft(project.workspace.id, file, selectedContent);
     controller.clearDiagnostics(project.workspace.id);
@@ -1221,7 +1232,7 @@ export function App(): React.JSX.Element {
   }
 
   function requestCloseTab(file: string): void {
-    if (collabReadOnly || controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
     const tab = tabs.find((item) => item.file === file);
     if (!tab) return;
     const disposition = tabCloseDisposition(
@@ -1292,6 +1303,18 @@ export function App(): React.JSX.Element {
     if (next < 0) return;
     setDiagnosticIndex(next);
     await jumpTo(diagnostics[next]!, next);
+  }
+
+  function canMutateWorkspace(id: string | undefined): boolean {
+    const sync = collabFiles.for(id);
+    return !sync || (sync.canMutate && sync.getSnapshot().phase === "syncing");
+  }
+
+  function publishSharedText(id: string, file: string, content: string): void {
+    const sync = collabFiles.for(id);
+    if (!sync || !canMutateWorkspace(id)) return;
+    const text = sharedTypes(sync.session.doc).files.get(file);
+    if (text) sync.session.doc.transact(() => applyMinimalDiff(text, content));
   }
 
   collabCallbacks.current = {
@@ -1676,7 +1699,7 @@ export function App(): React.JSX.Element {
     reviewed?: WorkspaceFileSnapshot,
   ): Promise<boolean> {
     const project = sessions.get(workspaceId);
-    if (!project || !workspaceId) return false;
+    if (!project || !workspaceId || !canMutateWorkspace(workspaceId)) return false;
     const projectTabs = () => project.documents.getSnapshot();
     const replaceTabs = (change: (tabs: Tab[]) => Tab[]) =>
       project.documents.replace(change(projectTabs()));
@@ -1718,6 +1741,9 @@ export function App(): React.JSX.Element {
                   formatSource(file, content, settingsStore.getSnapshot().values.indentSize)
               : undefined,
           apply: (before, after) => {
+            if (!canMutateWorkspace(workspaceId))
+              throw new Error("This shared project is read-only.");
+            publishSharedText(workspaceId, file, after);
             if (sessions.activeId === workspaceId)
               editorRef.current?.applySavedFormat(file, before, after);
             else project.editor.format(file, before, after);
@@ -1733,6 +1759,8 @@ export function App(): React.JSX.Element {
             queueDraft(workspaceId, file, after);
           },
           write: async (content) => {
+            if (!canMutateWorkspace(workspaceId))
+              throw new Error("This shared project is read-only.");
             if (project.files.conflicts.has(file) && !reviewed) {
               if (!automatic) beginFileReview(project, file);
               throw new Error("Review external changes before saving.");
@@ -1930,6 +1958,7 @@ export function App(): React.JSX.Element {
       );
     const editable = () =>
       sessions.active === project &&
+      canMutateWorkspace(current.id) &&
       !controller.editingLockedFor(current.id) &&
       !updatePreparingRef.current &&
       !closingProjectRef.current &&
@@ -1986,7 +2015,10 @@ export function App(): React.JSX.Element {
     });
     setBuildDiagnostics([]);
     controller.clearDiagnostics(current.id);
-    for (const [file, content] of Object.entries(changes)) queueDraft(current.id, file, content);
+    for (const [file, content] of Object.entries(changes)) {
+      publishSharedText(current.id, file, content);
+      queueDraft(current.id, file, content);
+    }
   }
 
   async function applyWorkspaceEdit(
@@ -2002,6 +2034,7 @@ export function App(): React.JSX.Element {
       workspaceStateRef.current?.id === current.id &&
       workspaceStateRef.current.files === current.files &&
       documents.revision === revision &&
+      canMutateWorkspace(current.id) &&
       !controller.editingLockedFor(workspaceStateRef.current?.id) &&
       !updatePreparingRef.current &&
       !projectBusyRef.current &&
@@ -2060,7 +2093,10 @@ export function App(): React.JSX.Element {
     });
     setBuildDiagnostics([]);
     controller.clearDiagnostics(current!.id);
-    for (const [file, content] of Object.entries(changes)) queueDraft(current!.id, file, content);
+    for (const [file, content] of Object.entries(changes)) {
+      publishSharedText(current!.id, file, content);
+      queueDraft(current!.id, file, content);
+    }
   }
 
   const buildDiagnosticsRef = useRef(buildDiagnostics);
@@ -2267,6 +2303,8 @@ export function App(): React.JSX.Element {
   }
 
   async function saveProjectChanges(id: string, automatic = false): Promise<void> {
+    await collabFiles.for(id)?.flush();
+    if (!canMutateWorkspace(id)) return;
     const project = sessions.get(id);
     if (!project) return;
     for (const file of new Set([
@@ -2399,7 +2437,9 @@ export function App(): React.JSX.Element {
       void openProject();
       return;
     }
-    if (collabReadOnly || controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    if (!canMutateWorkspace(workspaceStateRef.current?.id) && ["save", "format"].includes(command))
+      return;
     switch (command) {
       case "save":
         void saveActive();
@@ -2506,8 +2546,9 @@ export function App(): React.JSX.Element {
   function changeSimulatorScene(scene: SimulationScene): void {
     if (!simulator) return;
     const project = sessions.get(simulator.workspaceId);
-    if (!project) return;
+    if (!project || !canMutateWorkspace(simulator.workspaceId)) return;
     const content = JSON.stringify(scene, null, 2) + "\n";
+    publishSharedText(simulator.workspaceId, SIMULATOR_SCENE_FILE, content);
     simulationFormDraft.current = { workspaceId: simulator.workspaceId, content };
     const existing = project.documents
       .getSnapshot()
@@ -2723,7 +2764,7 @@ export function App(): React.JSX.Element {
             restoring || updatePreparing || managingEntries || projectBusy || modalOpen
           }
           name={workspace?.name}
-          locked={locked || managingEntries || projectBusy || modalOpen}
+          locked={executionLocked || managingEntries || projectBusy || modalOpen}
           canSave={Boolean(!settingsActive && active && active.dirty)}
           state={execution}
           motorTesting={motorBusy}
