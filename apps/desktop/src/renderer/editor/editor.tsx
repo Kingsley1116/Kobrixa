@@ -159,6 +159,8 @@ interface EditorProps {
   onCursorChange(position: CursorPosition): void;
   /** Active collaboration session; shared files are bound to its document. */
   collabSession?: CollabSession | null;
+  /** A shared edit exceeded the room's file capacity. */
+  onCollabLimit?(file: string): void;
 }
 
 let modelSequence = 0;
@@ -213,6 +215,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     onChange,
     onCursorChange,
     collabSession,
+    onCollabLimit,
   },
   handleRef,
 ): React.JSX.Element {
@@ -315,6 +318,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const onBlurRef = useRef(onBlur);
   onBlurRef.current = onBlur;
   const onChangeRef = useRef(onChange);
+  const onCollabLimitRef = useRef(onCollabLimit);
+  onCollabLimitRef.current = onCollabLimit;
   const onCursorChangeRef = useRef(onCursorChange);
   onChangeRef.current = onChange;
   onCursorChangeRef.current = onCursorChange;
@@ -708,6 +713,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       // participate even before they become document tabs.
       models: () => models.current,
       activeFile: () => activeFile.current,
+      onLimit: (file) => onCollabLimitRef.current?.(file),
     });
     collab.current = attachment;
     return () => {

@@ -3,6 +3,7 @@ import * as monaco from "monaco-editor";
 import { canEdit, localPresence, sharedTypes, type CollabSession } from "./types.js";
 import { RemoteCursors } from "./remote-cursors.js";
 import { textOffsetAt, textPositionAt } from "./text-positions.js";
+import { canShareFile } from "./file-sync.js";
 
 // Monaco 0.52 routes both menu and keyboard undo through the model. These
 // runtime methods are not included in ITextModel's declaration.
@@ -49,6 +50,7 @@ export class ModelBinding {
     readonly file: string,
     readonly text: Y.Text,
     readonly model: monaco.editor.ITextModel,
+    private readonly onLimit?: (file: string) => void,
   ) {
     this.#content = text.toString();
     this.#undo = new Y.UndoManager(text, { trackedOrigins: new Set([this]) });
@@ -58,10 +60,10 @@ export class ModelBinding {
     // Monaco keyboard, menu and command actions all call these model methods.
     // Track only this binding's local transactions so undo preserves peer edits.
     undoable.undo = () => {
-      if (canEdit(session.getSnapshot().role)) this.#undo.undo();
+      this.#applyHistory("undo");
     };
     undoable.redo = () => {
-      if (canEdit(session.getSnapshot().role)) this.#undo.redo();
+      this.#applyHistory("redo");
     };
     this.#syncFromText();
     text.observe(this.#onText);
@@ -158,15 +160,15 @@ export class ModelBinding {
   }
 
   #applyLocal(event: monaco.editor.IModelContentChangedEvent): void {
-    if (this.#applyingRemote || this.#disposed) return;
+    if (this.#applyingRemote || this.#disposed || this.#resyncQueued) return;
     if (!canEdit(this.session.getSnapshot().role)) {
       // The server drops viewer updates; restore the shared content instead.
       this.#queueResync();
       return;
     }
-    const changes = [...event.changes].sort((a, b) => b.rangeOffset - a.rangeOffset);
-    this.text.doc?.transact(() => {
-      for (const change of changes) {
+    const changes = [...event.changes]
+      .sort((a, b) => b.rangeOffset - a.rangeOffset)
+      .map((change) => {
         const start = textOffsetAt(this.#content, {
           lineNumber: change.range.startLineNumber,
           column: change.range.startColumn,
@@ -175,8 +177,22 @@ export class ModelBinding {
           lineNumber: change.range.endLineNumber,
           column: change.range.endColumn,
         });
-        if (end > start) this.text.delete(start, end - start);
-        if (change.text) this.text.insert(start, change.text);
+        return { start, end, text: change.text };
+      });
+    // Count the proposed shared content, retaining its BOM and mixed line endings.
+    // Monaco normalizes those, so getValue() alone can undercount the wire bytes.
+    let content = this.#content;
+    for (const change of changes)
+      content = content.slice(0, change.start) + change.text + content.slice(change.end);
+    if (!canShareFile(sharedTypes(this.session.doc).files, this.file, content)) {
+      this.#queueResync();
+      this.onLimit?.(this.file);
+      return;
+    }
+    this.text.doc?.transact(() => {
+      for (const change of changes) {
+        if (change.end > change.start) this.text.delete(change.start, change.end - change.start);
+        if (change.text) this.text.insert(change.start, change.text);
       }
     }, this);
     if (
@@ -184,6 +200,43 @@ export class ModelBinding {
       this.#content.replace(/^\uFEFF/, "").replace(/\r\n|\r|\n/g, this.model.getEOL())
     )
       this.#queueResync();
+  }
+
+  #applyHistory(kind: "undo" | "redo"): void {
+    if (this.#disposed || this.#resyncQueued || !canEdit(this.session.getSnapshot().role)) return;
+    if (!(kind === "undo" ? this.#undo.canUndo() : this.#undo.canRedo())) return;
+    // Peer edits may consume the room budget after a local deletion. Preview the
+    // same CRDT history operation before it can emit an oversized live update.
+    const preview = new Y.Doc({ gc: false });
+    try {
+      Y.applyUpdate(preview, Y.encodeStateAsUpdate(this.session.doc));
+      // Redo links are local history metadata and are not encoded in updates.
+      // Restore them, including item boundaries, for repeated undo/redo previews.
+      preview.transact((transaction) => {
+        for (const structs of this.session.doc.store.clients.values())
+          for (const item of structs) {
+            if (!(item instanceof Y.Item) || !item.redone) continue;
+            Y.getItemCleanEnd(
+              transaction,
+              preview.store,
+              Y.createID(item.id.client, item.id.clock + item.length - 1),
+            );
+            Y.getItemCleanStart(transaction, item.id).redone = item.redone;
+          }
+      });
+      const text = sharedTypes(preview).files.get(this.file)!;
+      const history = new Y.UndoManager(text);
+      history.undoStack = [...this.#undo.undoStack];
+      history.redoStack = [...this.#undo.redoStack];
+      history[kind]();
+      if (!canShareFile(sharedTypes(this.session.doc).files, this.file, text.toString())) {
+        this.onLimit?.(this.file);
+        return;
+      }
+    } finally {
+      preview.destroy();
+    }
+    this.#undo[kind]();
   }
 
   #queueResync(): void {
@@ -201,9 +254,10 @@ export function bindModel(
   session: CollabSession,
   file: string,
   model: monaco.editor.ITextModel,
+  onLimit?: (file: string) => void,
 ): ModelBinding | undefined {
   const text = sharedTypes(session.doc).files.get(file);
-  return text instanceof Y.Text ? new ModelBinding(session, file, text, model) : undefined;
+  return text instanceof Y.Text ? new ModelBinding(session, file, text, model, onLimit) : undefined;
 }
 
 export interface EditorCollabSource {
@@ -211,6 +265,8 @@ export interface EditorCollabSource {
   models(): Iterable<readonly [string, monaco.editor.ITextModel]>;
   /** Workspace-relative path of the active file. */
   activeFile(): string | undefined;
+  /** An edit or history operation exceeded the shared file or room capacity. */
+  onLimit?(file: string): void;
 }
 
 const PRESENCE_THROTTLE_MS = 50;
@@ -264,7 +320,7 @@ export class EditorCollab {
     }
     for (const [model, file] of wanted) {
       if (this.#bindings.has(model)) continue;
-      const binding = bindModel(this.session, file, model);
+      const binding = bindModel(this.session, file, model, this.source.onLimit);
       if (binding) this.#bindings.set(model, binding);
     }
     this.#publishPresence();

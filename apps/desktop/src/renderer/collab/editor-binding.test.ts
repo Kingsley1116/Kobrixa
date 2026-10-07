@@ -36,7 +36,7 @@ vi.mock("monaco-editor", () => import("monaco-editor/esm/vs/editor/editor.api.js
 
 import * as monaco from "monaco-editor";
 import * as Y from "yjs";
-import type { Role } from "@kobrixa/collab-protocol";
+import { COLLAB_LIMITS, type Role } from "@kobrixa/collab-protocol";
 import { createLinkedSessions } from "./testing.js";
 import { sharedTypes, localPresence, type CollabSession } from "./types.js";
 import { bindModel, EditorCollab, type ModelBinding } from "./editor-binding.js";
@@ -65,8 +65,9 @@ function bind(
   session: CollabSession,
   file: string,
   target: monaco.editor.ITextModel,
+  onLimit?: (file: string) => void,
 ): ModelBinding {
-  const binding = bindModel(session, file, target);
+  const binding = bindModel(session, file, target, onLimit);
   if (!binding) throw new Error("not shared");
   disposables.push(binding);
   return binding;
@@ -223,6 +224,104 @@ describe("ModelBinding", () => {
     expect(documents.getSnapshot()[0]?.dirty).toBe(true);
     shared.delete(5, 1);
     expect(documents.getSnapshot()[0]?.dirty).toBe(false);
+  });
+
+  it("rejects oversized UTF-8 edits before sharing and restores a clean document", async () => {
+    const [host, guest] = pair(["host", "editor"]);
+    const content = "🙂".repeat(COLLAB_LIMITS.fileBytes / 4);
+    share(host, "main.bp", content);
+    const target = model(content);
+    const documents = new Documents();
+    documents.replace([{ file: "main.bp", content, saved: content }]);
+    documents.bind("main.bp", target);
+    disposables.push(target.onDidChangeContent(() => documents.changed("main.bp")));
+    const onLimit = vi.fn();
+    bind(host, "main.bp", target, onLimit);
+    const updates = vi.fn();
+    host.doc.on("update", updates);
+
+    type(target, 0, "a");
+    // A second programmatic edit in the same task must not publish an edit
+    // mapped against a model whose rejected paste has not been restored yet.
+    type(target, 1, "b");
+    expect(updates).not.toHaveBeenCalled();
+    expect(sharedTypes(guest.doc).files.get("main.bp")!.toString()).toBe(content);
+    await Promise.resolve();
+    expect(target.getValue()).toBe(content);
+    expect(documents.reader("main.bp")()).toBe(content);
+    expect(documents.getSnapshot()[0]?.dirty).toBe(false);
+    expect(onLimit).toHaveBeenCalledExactlyOnceWith("main.bp");
+
+    type(target, 0, "ok", 2);
+    expect(sharedTypes(guest.doc).files.get("main.bp")!.toString()).toBe("ok" + content.slice(2));
+    expect(documents.getSnapshot()[0]?.dirty).toBe(true);
+  });
+
+  it("counts preserved BOM and line endings in the per-file budget", async () => {
+    const [host] = pair(["host", "editor"]);
+    const content = "\uFEFF\r\n" + "a".repeat(COLLAB_LIMITS.fileBytes - 5);
+    share(host, "main.bp", content);
+    const target = model("\n" + content.slice(3));
+    bind(host, "main.bp", target);
+    type(target, 0, "x");
+    await Promise.resolve();
+    expect(sharedTypes(host.doc).files.get("main.bp")!.toString()).toBe(content);
+    expect(target.getValue()).toBe("\n" + content.slice(3));
+  });
+
+  it("checks aggregate capacity for edits and undo after a peer consumes free space", async () => {
+    const [host, guest] = pair(["host", "editor"]);
+    share(host, "main.bp", "abcd");
+    for (let index = 0; index < COLLAB_LIMITS.roomFileBytes / COLLAB_LIMITS.fileBytes; index++)
+      share(host, `other${index}.bp`, "x".repeat(COLLAB_LIMITS.fileBytes - (index === 0 ? 4 : 0)));
+    const target = model("abcd");
+    const onLimit = vi.fn();
+    bind(host, "main.bp", target, onLimit);
+    type(target, 0, "🙂");
+    await Promise.resolve();
+    expect(target.getValue()).toBe("abcd");
+    expect(onLimit).toHaveBeenCalledTimes(1);
+
+    type(target, 0, "", 4);
+    const peerText = sharedTypes(guest.doc).files.get("other0.bp")!;
+    peerText.insert(0, "🙂");
+    const updates = vi.fn();
+    host.doc.on("update", updates);
+    const history = target as monaco.editor.ITextModel & { undo(): void; redo(): void };
+    history.undo();
+    expect(target.getValue()).toBe("");
+    expect(sharedTypes(guest.doc).files.get("main.bp")!.toString()).toBe("");
+    expect(updates).not.toHaveBeenCalled();
+    expect(onLimit).toHaveBeenCalledTimes(2);
+
+    // Rejecting history keeps its stack intact, so it can be retried after space
+    // is freed. Repeated cycles exercise Yjs's local-only redo links.
+    peerText.delete(0, 2);
+    for (let index = 0; index < 3; index++) {
+      history.undo();
+      expect(target.getValue()).toBe("abcd");
+      history.redo();
+      expect(target.getValue()).toBe("");
+    }
+    history.undo();
+    expect(sharedTypes(guest.doc).files.get("main.bp")!.toString()).toBe("abcd");
+  });
+
+  it("rejects redo when a peer has filled the room since undo", () => {
+    const [host, guest] = pair(["host", "editor"]);
+    const content = "x".repeat(COLLAB_LIMITS.fileBytes - 4);
+    share(host, "main.bp", content);
+    const target = model(content);
+    const onLimit = vi.fn();
+    bind(host, "main.bp", target, onLimit);
+    type(target, 0, "🙂");
+    const history = target as monaco.editor.ITextModel & { undo(): void; redo(): void };
+    history.undo();
+    sharedTypes(guest.doc).files.get("main.bp")!.insert(0, "peer");
+    history.redo();
+    expect(onLimit).toHaveBeenCalledExactlyOnceWith("main.bp");
+    expect(target.getValue()).toBe("peer" + content);
+    expect(sharedTypes(guest.doc).files.get("main.bp")!.toString()).toBe("peer" + content);
   });
 
   it("keeps a viewer's model in sync without pushing its edits", async () => {
