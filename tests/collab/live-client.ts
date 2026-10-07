@@ -1,0 +1,193 @@
+import assert from "node:assert/strict";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { CollabService } from "../../apps/desktop/src/main/collab/service.js";
+import { CollabPreferencesStore } from "../../apps/desktop/src/main/collab/preferences.js";
+import { CollabTokenStore } from "../../apps/desktop/src/main/collab/tokens.js";
+import { CollabMirrors } from "../../apps/desktop/src/main/collab/mirror.js";
+import { WorkspaceService } from "../../apps/desktop/src/main/workspace/workspace.js";
+import { createCollabSession } from "../../apps/desktop/src/renderer/collab/collab-session.js";
+import { CollabFileSync } from "../../apps/desktop/src/renderer/collab/file-sync.js";
+import { ChatController } from "../../apps/desktop/src/renderer/collab/chat.js";
+import { DeviceControl } from "../../apps/desktop/src/renderer/collab/device-control.js";
+import { sharedTypes, type CollabSession } from "../../apps/desktop/src/renderer/collab/types.js";
+
+const serverUrl = process.argv[2]!;
+const temporary = process.argv[3]!;
+async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out: ${label}`);
+}
+const service = () =>
+  new CollabService({
+    serverUrl,
+    fetch,
+    preferences: new CollabPreferencesStore(),
+    tokens: new CollabTokenStore(undefined, undefined),
+  });
+async function main(): Promise<void> {
+  const hostApi = service();
+  const guestApi = service();
+  const hostResult = await hostApi.createRoom({ name: "Host", projectName: "Live robot" });
+  assert.ok(hostResult.ok);
+  const guestResult = await guestApi.joinRoom({
+    name: "Guest",
+    inviteCode: hostResult.value.inviteCode!,
+  });
+  assert.ok(guestResult.ok);
+  const host = createCollabSession(hostResult.value, { network: null });
+  const guest = createCollabSession(guestResult.value, { network: null });
+  const sessions: CollabSession[] = [host, guest];
+  const syncs: CollabFileSync[] = [];
+  const chats: ChatController[] = [];
+  const controls: DeviceControl[] = [];
+  try {
+    host.connect();
+    guest.connect();
+    await until(
+      () => sessions.every((session) => session.getSnapshot().status === "connected"),
+      "both sessions connected",
+    );
+    const hostDirectory = path.join(temporary, "host-project");
+    await mkdir(hostDirectory);
+    await writeFile(path.join(hostDirectory, "main.bp"), "value = 1\n");
+    const workspaces = new WorkspaceService({
+      userDataPath: () => path.join(temporary, "user-data"),
+    });
+    const hostWorkspace = await workspaces.openDirectory(hostDirectory);
+    const mirror = new CollabMirrors(workspaces, () => path.join(temporary, "guest-data"));
+    const guestWorkspace = await mirror.open(hostResult.value.roomId, "Live robot");
+    const workspaceApi = {
+      readFile: workspaces.readFile.bind(workspaces),
+      write: workspaces.write.bind(workspaces),
+      refresh: workspaces.refresh.bind(workspaces),
+      createEntry: workspaces.createEntry.bind(workspaces),
+      moveEntry: workspaces.moveEntry.bind(workspaces),
+      trashEntry: workspaces.trashEntry.bind(workspaces),
+    };
+    const hostSync = new CollabFileSync(host, hostWorkspace.id, workspaceApi, { debounceMs: 5 });
+    const guestSync = new CollabFileSync(guest, guestWorkspace.id, workspaceApi, { debounceMs: 5 });
+    syncs.push(hostSync, guestSync);
+    hostSync.start();
+    guestSync.start();
+    const hostTypes = sharedTypes(host.doc);
+    const guestTypes = sharedTypes(guest.doc);
+    await until(
+      () => guestTypes.files.get("main.bp")?.toString() === "value = 1\n",
+      "host seed reaches guest",
+    );
+    await guestSync.flush();
+    assert.equal((await workspaces.readFile(guestWorkspace.id, "main.bp")).content, "value = 1\n");
+    guestTypes.files.get("main.bp")!.insert(0, "// guest edit\n");
+    await until(
+      () => hostTypes.files.get("main.bp")?.toString().startsWith("// guest edit") === true,
+      "guest edit reaches host",
+    );
+    await hostSync.flush();
+    assert.equal(
+      await readFile(path.join(hostDirectory, "main.bp"), "utf8"),
+      "// guest edit\nvalue = 1\n",
+    );
+    host.awareness.setLocalStateField("file", "main.bp");
+    await until(
+      () =>
+        [...guest.awareness.getStates().values()].some(
+          (state) => state.name === "Host" && state.file === "main.bp",
+        ),
+      "awareness reaches guest",
+    );
+    await workspaces.createEntry(hostWorkspace.id, "", "file", "shared.bpi");
+    assert.ok(hostSync.recordCreate("shared.bpi", "file", ""));
+    await until(() => guestTypes.tree.has("shared.bpi"), "created file reaches guest");
+    await guestSync.flush();
+    const moved = await workspaces.moveEntry(guestWorkspace.id, "shared.bpi", "renamed.bpi");
+    assert.ok(guestSync.recordMove(moved));
+    await until(() => hostTypes.tree.has("renamed.bpi"), "rename reaches host");
+    await hostSync.flush();
+    assert.equal((await workspaces.readFile(hostWorkspace.id, "renamed.bpi")).content, "");
+    const removed = await workspaces.trashEntry(hostWorkspace.id, "renamed.bpi");
+    assert.ok(hostSync.recordTrash(removed.removed));
+    await until(() => !guestTypes.tree.has("renamed.bpi"), "deletion reaches guest");
+    await guestSync.flush();
+    const hostChat = new ChatController(host),
+      guestChat = new ChatController(guest);
+    chats.push(hostChat, guestChat);
+    assert.ok(guestChat.send("hello over a real socket").ok);
+    await until(() => hostChat.getSnapshot().unread === 1, "chat reaches host unread badge");
+    const hostControl = new DeviceControl(host),
+      guestControl = new DeviceControl(guest);
+    controls.push(hostControl, guestControl);
+    await until(() => hostControl.getSnapshot().isHolder, "host starts with control");
+    guestControl.request();
+    await until(() => hostControl.getSnapshot().requests.length === 1, "request reaches host");
+    hostControl.grant(guest.connection.participantId);
+    await until(
+      () => guestControl.getSnapshot().isHolder && !hostControl.getSnapshot().isHolder,
+      "guest receives control",
+    );
+    assert.ok(
+      (
+        await hostApi.setRole(host.connection.roomId, {
+          participantId: guest.connection.participantId,
+          role: "viewer",
+        })
+      ).ok,
+    );
+    await until(
+      () => guest.getSnapshot().role === "viewer" && !guestControl.getSnapshot().isHolder,
+      "viewer downgrade revokes control",
+    );
+    assert.equal(guestChat.send("forbidden").ok, false);
+    const before = hostTypes.files.get("main.bp")!.toString();
+    guestTypes.files.get("main.bp")!.insert(0, "forbidden");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(hostTypes.files.get("main.bp")!.toString(), before);
+    assert.ok((await hostApi.kick(host.connection.roomId, guest.connection.participantId)).ok);
+    await until(() => guest.getSnapshot().closeReason === "kicked", "kick reaches guest");
+    assert.equal(syncs.map((sync) => sync.getSnapshot().error).filter(Boolean).length, 0);
+    // Close every client before restarting the actual Worker process, then use a
+    // fresh empty document so the persisted state cannot be supplied by a peer.
+    for (const control of controls.splice(0)) control.dispose();
+    for (const chat of chats.splice(0)) chat.dispose();
+    for (const sync of syncs.splice(0)) await sync.stop();
+    for (const session of sessions.splice(0)) session.destroy();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Worker restart timed out")), 40000);
+      process.once("message", (message) => {
+        clearTimeout(timer);
+        if (message === "worker-restarted") resolve();
+        else reject(new Error("Unexpected Worker restart response"));
+      });
+      process.send!("restart-worker");
+    });
+    const restored = createCollabSession(hostResult.value, { network: null });
+    sessions.push(restored);
+    restored.connect();
+    await until(() => restored.getSnapshot().status === "connected", "restarted room connects");
+    const restoredTypes = sharedTypes(restored.doc);
+    assert.equal(restoredTypes.files.get("main.bp")?.toString(), before);
+    assert.equal(restoredTypes.tree.has("renamed.bpi"), false);
+    assert.equal(restoredTypes.chat.length, 1);
+    assert.equal(restoredTypes.chat.get(0).text, "hello over a real socket");
+    const rejected = createCollabSession(guestResult.value, { network: null });
+    sessions.push(rejected);
+    rejected.connect();
+    await until(() => rejected.getSnapshot().status === "closed", "kick survives restart");
+    console.log(
+      "Live collaboration passes: desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, kick, and persisted state/revocation across a Worker restart.",
+    );
+  } finally {
+    for (const control of controls) control.dispose();
+    for (const chat of chats) chat.dispose();
+    for (const sync of syncs) await sync.stop();
+    for (const session of sessions) session.destroy();
+  }
+}
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

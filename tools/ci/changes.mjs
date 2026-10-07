@@ -8,6 +8,7 @@ export function classifyPaths(paths) {
     if (path.startsWith("apps/web/") || path.startsWith("docs/")) result.web = true;
     else if (
       path.startsWith("apps/desktop/") ||
+      path.startsWith("apps/collab/") ||
       path.startsWith("examples/") ||
       path.startsWith("tests/") ||
       (path.startsWith("tools/") && !path.startsWith("tools/ci/")) ||
