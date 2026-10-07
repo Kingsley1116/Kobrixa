@@ -278,7 +278,7 @@ export function SettingsPanel({
     (entry) => category === "all" || entry.category === category,
   );
   const searching = Boolean(query.trim() || modified);
-  const labelValue = (entry: SettingDefinition, value: string | number | boolean) =>
+  const labelValue = (entry: SettingDefinition, value: string | number | boolean | null) =>
     typeof value === "boolean"
       ? value
         ? t.on

@@ -88,11 +88,13 @@ import { SensorLabController } from "./device/sensor-lab-controller.js";
 import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
 import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/file-sync.js";
+import { preserveRoom } from "./collab/preserve-room.js";
 import { sharedTypes } from "./collab/types.js";
 import { CollabSyncStatus } from "./collab/sync-status.js";
 import { canEdit } from "./collab/types.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
+import { chatDrafts } from "./collab/chat-drafts.js";
 import { CollabStatusChip } from "./collab/status-chip.js";
 import { DeviceControlBar, blockedNotice, useDeviceControl } from "./collab/device-control-bar.js";
 import { Picker } from "./components/picker.js";
@@ -157,14 +159,17 @@ export function App(): React.JSX.Element {
     connectionMode,
     uiScale,
     codeSize,
-    toolTab,
+    ev3Tab: toolTab,
+    rightPanel,
+    bottomTab,
     filesOpen,
-    deviceOpen,
+
     problemsOpen,
     filesWidth,
     deviceWidth,
     problemsHeight,
   } = settings;
+  const deviceOpen = rightPanel !== null;
   const t = copy[locale];
   const st = settingsCopy[locale];
   const [settingsCategory, setSettingsCategory] = useState<{
@@ -176,15 +181,18 @@ export function App(): React.JSX.Element {
   const [sidebarMode, setSidebarMode] = useState<"files" | "search">("files");
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [quickOpenWorkspace, setQuickOpenWorkspace] = useState<string>();
-  const setToolTab = (
-    value: Settings["toolTab"] | ((previous: Settings["toolTab"]) => Settings["toolTab"]),
-  ): void => settingsStore.set("toolTab", value);
+  const setToolTab = (value: Settings["ev3Tab"]): void => settingsStore.set("ev3Tab", value);
+  const toggleRightPanel = (panel: "ev3" | "collab"): void =>
+    settingsStore.set("rightPanel", (previous) => (previous === panel ? null : panel));
   const setFilesOpen = (
     value: Settings["filesOpen"] | ((previous: Settings["filesOpen"]) => Settings["filesOpen"]),
   ): void => settingsStore.set("filesOpen", value);
   const setDeviceOpen = (
     value: Settings["deviceOpen"] | ((previous: Settings["deviceOpen"]) => Settings["deviceOpen"]),
-  ): void => settingsStore.set("deviceOpen", value);
+  ): void =>
+    settingsStore.set("rightPanel", (previous) =>
+      (typeof value === "function" ? value(previous === "ev3") : value) ? "ev3" : null,
+    );
   const setProblemsOpen = (
     value:
       Settings["problemsOpen"] | ((previous: Settings["problemsOpen"]) => Settings["problemsOpen"]),
@@ -230,17 +238,24 @@ export function App(): React.JSX.Element {
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
   const [sensorLab] = useState(() => new SensorLabController(window.kobrixa.sensorLab));
   const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
-  const [collab] = useState(() => new CollabStore(createCollabSession));
+  const [collab] = useState(
+    () =>
+      new CollabStore((connection) =>
+        createCollabSession(connection, {
+          refreshConnection: (roomId) => window.kobrixa.collab.resumeRoom(roomId),
+        }),
+      ),
+  );
   useEffect(() => () => collab.stop(), [collab]);
   const collabSession = useSyncExternalStore(collab.subscribe, collab.getSnapshot);
   const subscribeCollabSession = useCallback(
     (listener: () => void) => collabSession?.subscribe(listener) ?? (() => undefined),
     [collabSession],
   );
-  const collabRole = useSyncExternalStore(
-    subscribeCollabSession,
-    () => collabSession?.getSnapshot().role,
+  const collabSnapshot = useSyncExternalStore(subscribeCollabSession, () =>
+    collabSession?.getSnapshot(),
   );
+  const collabRole = collabSnapshot?.role;
   const collabCallbacks = useRef({
     adopt: async (_summary: WorkspaceSummary) => {},
     diskWrite: (_id: string, _file: string, _snapshot: WorkspaceFileSnapshot) => {},
@@ -271,6 +286,8 @@ export function App(): React.JSX.Element {
       }),
   );
   useEffect(() => collabFiles.attach(), [collabFiles]);
+  const [collabLeaving, setCollabLeaving] = useState(false);
+  const collabLeavingRef = useRef(false);
   const collabBinding = useSyncExternalStore(collabFiles.subscribe, collabFiles.getSnapshot);
   const subscribeFileSync = useCallback(
     (listener: () => void) => collabBinding?.sync.subscribe(listener) ?? (() => {}),
@@ -284,7 +301,8 @@ export function App(): React.JSX.Element {
     collabBinding?.workspaceId === activeSession?.workspace.id && !!collabBinding;
   const collabReadOnly =
     sharedProject &&
-    (collabBinding.readOnly ||
+    (collabLeaving ||
+      collabBinding.readOnly ||
       fileSyncPhase !== "syncing" ||
       (collabRole !== undefined && !canEdit(collabRole)));
   const locked = executionLocked || collabReadOnly;
@@ -509,6 +527,7 @@ export function App(): React.JSX.Element {
       await monitor.drain();
       editorRef.current?.captureView();
       await flushDrafts();
+      await flushSharedRoom();
       await persistSession();
       await window.kobrixa.workspace.finishClose(requestId, true);
     } catch (error) {
@@ -595,8 +614,8 @@ export function App(): React.JSX.Element {
     [pendingMove, workspace?.entries],
   );
   const workspaceStyle = {
-    "--files-width": filesOpen ? `${filesWidth}px` : "0px",
-    "--files-divider": filesOpen ? "5px" : "0px",
+    "--files-width": workspace && filesOpen ? `${filesWidth}px` : "0px",
+    "--files-divider": workspace && filesOpen ? "5px" : "0px",
     "--device-width": deviceOpen ? `${deviceWidth}px` : "0px",
     "--device-panel-width": `${deviceWidth}px`,
     "--device-divider": deviceOpen ? "5px" : "0px",
@@ -606,11 +625,12 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const workspaceElement = workspaceRef.current;
-    const centerElement = centerRef.current;
+    const centerElement = centerRef.current ?? workspaceElement;
     if (!workspaceElement || !centerElement) return undefined;
     const fitLayout = (): void => {
       setDeviceOverlay(
-        workspaceElement.clientWidth < (filesOpen ? filesWidth + 5 : 0) + 420 + deviceWidth + 5,
+        workspaceElement.clientWidth <
+          (workspace && filesOpen ? filesWidth + 5 : 0) + 420 + deviceWidth + 5,
       );
       const problemsMaximum = Math.max(
         LAYOUT_LIMITS.problemsHeight.min,
@@ -672,8 +692,8 @@ export function App(): React.JSX.Element {
       if (execution.error.phase === "building" && execution.diagnostics.length) {
         if (settingsStore.getSnapshot().values.revealDiagnostics !== "never") setProblemsOpen(true);
       } else if (settingsStore.getSnapshot().values.revealDeviceErrors) {
-        setDeviceOpen(true);
-        setToolTab("activity");
+        setProblemsOpen(true);
+        settingsStore.set("bottomTab", "activity");
       }
     }
   }, [execution.phase, execution.error]);
@@ -1007,6 +1027,7 @@ export function App(): React.JSX.Element {
   }
 
   async function flushDrafts(workspaceId?: string): Promise<void> {
+    chatDrafts.flush();
     const pending = [...pendingDrafts.current.values()].filter(
       (item) => !workspaceId || item.workspaceId === workspaceId,
     );
@@ -1036,6 +1057,18 @@ export function App(): React.JSX.Element {
         .map(([, write]) => write),
     ]);
     await writeQueue.idle();
+  }
+
+  async function flushSharedRoom(): Promise<void> {
+    const binding = collabFiles.getSnapshot();
+    if (!binding) return;
+    const copy = await preserveRoom(binding, flushDrafts, window.kobrixa.collab);
+    if (copy)
+      setStatus(
+        locale === "zh-TW"
+          ? `未確認同步的內容已另存副本：${copy}`
+          : `Unconfirmed changes were saved separately: ${copy}`,
+      );
   }
 
   function removeWorkspaceDraft(file: string, workspaceId = workspaceStateRef.current?.id): void {
@@ -1319,7 +1352,10 @@ export function App(): React.JSX.Element {
 
   function canMutateWorkspace(id: string | undefined): boolean {
     const sync = collabFiles.for(id);
-    return !sync || (sync.canMutate && sync.getSnapshot().phase === "syncing");
+    return (
+      !sync ||
+      (!collabLeavingRef.current && sync.canMutate && sync.getSnapshot().phase === "syncing")
+    );
   }
 
   function managedEntryContext(id: string) {
@@ -1603,6 +1639,7 @@ export function App(): React.JSX.Element {
       await writeQueue.idle();
       editorRef.current?.captureView();
       captureCurrentView();
+      if (collabFiles.for(id)) await flushSharedRoom();
       const state = sessions.snapshot();
       const next = sessions.nextAfterClose(id);
       state.projects = state.projects.filter((item) => item.workspaceId !== id);
@@ -2451,6 +2488,7 @@ export function App(): React.JSX.Element {
       await window.kobrixa.sensorLab.stop("update");
       await motorTest.drain();
       await monitor.drain();
+      await flushSharedRoom();
       await window.kobrixa.updates.prepareInstall();
       await saveAllChanges();
       await flushDrafts();
@@ -2502,6 +2540,10 @@ export function App(): React.JSX.Element {
     }
     if (command === "stop" && execution.phase === "building") {
       void controller.cancelBuild();
+      return;
+    }
+    if (command === "collab") {
+      toggleRightPanel("collab");
       return;
     }
     if (command === "files" || command === "problems" || command === "device") {
@@ -2846,6 +2888,15 @@ export function App(): React.JSX.Element {
           locale={locale}
           shortcutHint={keyboard.hint}
           onSaveAll={() => runCommand("saveAll")}
+          onSaveCopy={
+            workspace?.sharedRoomId
+              ? () => {
+                  void flushDrafts(workspace.id)
+                    .then(() => window.kobrixa.collab.saveCopy(workspace.sharedRoomId!))
+                    .catch(report);
+                }
+              : undefined
+          }
           appearance={
             <SettingsQuickControls
               resolvedTheme={resolvedTheme}
@@ -2883,25 +2934,24 @@ export function App(): React.JSX.Element {
           onRunUploaded={() => void controller.runDeployed()}
           onDelete={() => void controller.deleteDeployed()}
           onCancel={() => runCommand("stop")}
-          onDevice={() => {
-            setToolTab("connection");
-            setDeviceOpen(true);
-          }}
+          devicePanelOpen={rightPanel === "ev3"}
+          onDevice={() => toggleRightPanel("ev3")}
           collab={
             <CollabStatusChip
               store={collab}
               locale={locale}
-              onOpen={() => {
-                setToolTab("collab");
-                setDeviceOpen(true);
-              }}
+              active={rightPanel === "collab"}
+              pending={deviceControl?.state.requests.length ?? 0}
+              onOpen={() => toggleRightPanel("collab")}
             />
           }
         />
         <ProjectTabs
           projects={projects.map((project) => ({
             id: project.workspace.id,
-            name: project.workspace.name,
+            name: project.workspace.sharedRoomId
+              ? `${project.workspace.name} · ${collabSession?.connection.roomId === project.workspace.sharedRoomId && collabSnapshot?.status === "connected" ? (locale === "zh-TW" ? "共享" : "Shared") : locale === "zh-TW" ? "已離線" : "Offline"}`
+              : project.workspace.name,
             location: project.workspace.locationLabel ?? project.workspace.rootLabel,
             dirty: project.dirty,
             phase: controller.editingLockedFor(project.workspace.id)
@@ -3027,506 +3077,556 @@ export function App(): React.JSX.Element {
           <SettingsError locale={locale} onRetry={settingsStore.save} />
         )}
       </div>
-      {restoring ? (
-        <div className="empty" role="status">
-          {locale === "zh-TW" ? "正在恢復專案…" : "Restoring projects…"}
-        </div>
-      ) : !workspace ? (
-        settingsActive ? (
-          <section className="standalone-settings">
-            <div className="tabs" role="tablist" aria-label={st.title}>
-              {settingsTab}
-            </div>
-            {settingsPage}
-          </section>
-        ) : (
-          <Welcome
-            t={t}
-            onNew={() => {
-              if (!projectBusy) {
-                setProjectName("my-robot");
-                setNewProjectOpen(true);
-              }
-            }}
-            onOpen={() => void openProject()}
-          />
-        )
-      ) : (
-        <section
-          id="project-workbench"
-          className={`workspace ${deviceOverlay ? "device-overlay" : ""}`}
-          ref={workspaceRef}
-          style={workspaceStyle}
-        >
-          <aside
-            className={`sidebar files-panel ${filesOpen ? "" : "collapsed"}`}
-            aria-hidden={!filesOpen}
-          >
-            {filesOpen && (
-              <>
-                <div
-                  className="files-navigation"
-                  role="group"
-                  aria-label={locale === "zh-TW" ? "專案導覽" : "Project navigation"}
-                >
-                  <button
-                    aria-pressed={sidebarMode === "files"}
-                    onClick={() => setSidebarMode("files")}
-                  >
-                    {t.files}
-                  </button>
-                  <button
-                    aria-pressed={sidebarMode === "search"}
-                    title={titleWithShortcut(
-                      locale === "zh-TW" ? "跨檔案搜尋" : "Search in project",
-                      "search",
-                    )}
-                    onClick={() => runCommand("search")}
-                  >
-                    {locale === "zh-TW" ? "搜尋" : "Search"}
-                  </button>
-                  <button
-                    className="quick-open-trigger"
-                    title={titleWithShortcut(
-                      locale === "zh-TW" ? "快速開啟檔案" : "Quick open",
-                      "quickOpen",
-                    )}
-                    aria-label={locale === "zh-TW" ? "快速開啟檔案" : "Quick open"}
-                    onClick={() => runCommand("quickOpen")}
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      aria-hidden="true"
-                    >
-                      <circle cx="10" cy="10" r="6" />
-                      <path d="m15 15 6 6" />
-                    </svg>
-                  </button>
-                </div>
-                {sidebarMode === "files" && (
-                  <ProjectTree
-                    ref={treeRef}
-                    activeFile={activeFile}
-                    buildEntry={workspace.manifest?.entry}
-                    busy={managingEntries || locked || projectBusy}
-                    copy={{
-                      treeLabel: t.fileTree,
-                      newFile: t.newFile,
-                      newFolder: t.newFolder,
-                      moreActions: t.moreActions,
-                      rename: t.rename,
-                      move: t.move,
-                      trash: t.trash,
-                      expand: t.expand,
-                      collapse: t.collapse,
-                    }}
-                    entries={workspace.entries}
-                    expandedPaths={expandedTreePaths}
-                    rootLabel={workspace.rootLabel}
-                    selectedPath={selectedTreePath}
-                    onCreate={beginCreateEntry}
-                    onExpandedPaths={setExpandedTreePaths}
-                    onMove={async (source, target) => {
-                      await moveManagedEntry(source, target);
-                    }}
-                    onMoveRequest={requestMoveEntry}
-                    onOpenFile={(file) => void openFile(workspace, file)}
-                    onRename={renameManagedEntry}
-                    onSelectedPath={setSelectedTreePath}
-                    onTrash={setPendingTrash}
-                  />
-                )}
-              </>
-            )}
-            <SearchPanel
-              key={workspace.id}
-              workspace={workspace}
-              documents={documents}
-              active={filesOpen && sidebarMode === "search"}
-              focusRequest={searchFocusRequest}
-              locale={locale}
-              resolvedTheme={resolvedTheme}
-              readOnly={locked || projectBusy || managingEntries}
-              onOpen={openSearchResult}
-              onReplace={replaceSearchResults}
-              onClose={() => {
-                setSidebarMode("files");
-                window.requestAnimationFrame(() => editorRef.current?.focus());
+      <section
+        id="project-workbench"
+        className={`workspace ${!workspace ? "welcome-workbench" : ""} ${deviceOverlay ? "device-overlay" : ""}`}
+        ref={workspaceRef}
+        style={workspaceStyle}
+      >
+        {restoring ? (
+          <div className="empty" role="status">
+            {locale === "zh-TW" ? "正在恢復專案…" : "Restoring projects…"}
+          </div>
+        ) : !workspace ? (
+          settingsActive ? (
+            <section className="standalone-settings">
+              <div className="tabs" role="tablist" aria-label={st.title}>
+                {settingsTab}
+              </div>
+              {settingsPage}
+            </section>
+          ) : (
+            <Welcome
+              t={t}
+              onNew={() => {
+                if (!projectBusy) {
+                  setProjectName("my-robot");
+                  setNewProjectOpen(true);
+                }
               }}
+              onOpen={() => void openProject()}
             />
-          </aside>
-          <ResizeHandle
-            className="resize-files"
-            axis="x"
-            direction={1}
-            label={t.resizeFiles}
-            min={LAYOUT_LIMITS.filesWidth.min}
-            max={sidebarMaximum("files")}
-            value={filesWidth}
-            visible={filesOpen}
-            defaultValue={LAYOUT_DEFAULTS.filesWidth}
-            onChange={setFilesWidth}
-          />
-
-          <section className={`center ${settingsActive ? "settings-active" : ""}`} ref={centerRef}>
-            <div className="editor-toolbar">
-              <button
-                aria-pressed={filesOpen}
-                title={titleWithShortcut(filesOpen ? t.hideFiles : t.showFiles, "files")}
-                onClick={() => runCommand("files")}
-              >
-                <span aria-hidden="true">☰</span>
-                {t.files}
-              </button>
-              <div className="breadcrumb" title={active?.file}>
-                {active?.file ?? workspace.name}
-              </div>
-              <div className="editor-tools">
-                <button
-                  className="local-history-trigger"
-                  disabled={settingsActive || !active || locked}
-                  onClick={() => void openHistory()}
-                >
-                  {locale === "zh-TW" ? "本機歷史" : "Local history"}
-                </button>
-                <button
-                  disabled={settingsActive || !active || locked}
-                  title={titleWithShortcut(t.format, "format")}
-                  onClick={() => runCommand("format")}
-                >
-                  {t.format}
-                </button>
-                <button
-                  className="icon-button"
-                  disabled={settingsActive || !diagnostics.length}
-                  aria-label={t.previousProblem}
-                  title={titleWithShortcut(t.previousProblem, "previousProblem")}
-                  onClick={() => runCommand("previousProblem")}
-                >
-                  ↑
-                </button>
-                <button
-                  className="icon-button"
-                  disabled={settingsActive || !diagnostics.length}
-                  aria-label={t.nextProblem}
-                  title={titleWithShortcut(t.nextProblem, "nextProblem")}
-                  onClick={() => runCommand("nextProblem")}
-                >
-                  ↓
-                </button>
-                <button
-                  aria-pressed={problemsOpen}
-                  title={titleWithShortcut(
-                    problemsOpen ? t.hideProblems : t.showProblems,
-                    "problems",
-                  )}
-                  onClick={() => runCommand("problems")}
-                >
-                  {t.diagnostics}
-                  {diagnostics.length > 0 && <strong>{diagnostics.length}</strong>}
-                </button>
-                <button
-                  aria-pressed={deviceOpen}
-                  title={titleWithShortcut(deviceOpen ? t.hideDevice : t.showDevice, "device")}
-                  onClick={() => runCommand("device")}
-                >
-                  EV3
-                </button>
-              </div>
-            </div>
-
-            <div className="tabs" role="tablist" aria-label={t.files}>
-              {tabs.map((tab) => {
-                const selected = !settingsActive && tab.file === activeFile;
-                const tabDirty = tab.dirty;
-                return (
-                  <ClosableTab
-                    active={selected}
-                    key={tab.file}
-                    ref={selected ? activeTabRef : undefined}
-                    title={tab.file}
-                    onSelect={() => {
-                      setSettingsActive(false);
-                      setActiveFile(tab.file);
-                      window.requestAnimationFrame(() => editorRef.current?.focus());
-                    }}
-                    closeDisabled={locked}
-                    closeLabel={`${t.closeTab}: ${tab.file}`}
-                    closeTitle={titleWithShortcut(t.closeTab, "closeTab")}
-                    onClose={() => requestCloseTab(tab.file)}
-                  >
-                    <span className="tab-kind">
-                      {tab.file.split(".").pop()?.toLocaleUpperCase("en-US")}
-                    </span>
-                    <span className="tab-name">{tab.file}</span>
-                    {tabDirty && <i aria-label={t.unsaved}>●</i>}
-                    {activeSession?.files.conflicts.has(tab.file) && (
-                      <span
-                        className="file-conflict-mark"
-                        aria-label={
-                          locale === "zh-TW" ? "外部變更待處理" : "External changes need review"
-                        }
-                      >
-                        !
-                      </span>
-                    )}
-                  </ClosableTab>
-                );
-              })}
-              {settingsTab}
-            </div>
-
-            <div
-              className={`editor-simulation-layout ${simulator?.workspaceId === workspace.id ? "with-simulator" : ""}`}
-              hidden={settingsActive}
+          )
+        ) : (
+          <>
+            <aside
+              className={`sidebar files-panel ${filesOpen ? "" : "collapsed"}`}
+              aria-hidden={!filesOpen}
             >
-              <div
-                className={`editor-stage ${activeConflict ? "file-change-stage" : ""}`}
-                hidden={settingsActive}
-              >
-                {activeConflict && active && (
-                  <div className="file-change-banner" role="status">
-                    <span>
-                      {activeConflict.content === null
-                        ? locale === "zh-TW"
-                          ? "檔案已在外部刪除，編輯器內容已保留。"
-                          : "File deleted outside Kobrixa. Editor contents are preserved."
-                        : locale === "zh-TW"
-                          ? "檔案已在外部變更，此檔案的自動儲存已暫停。"
-                          : "File changed outside Kobrixa. Automatic saving is paused for this file."}
-                    </span>
+              {filesOpen && (
+                <>
+                  <div
+                    className="files-navigation"
+                    role="group"
+                    aria-label={locale === "zh-TW" ? "專案導覽" : "Project navigation"}
+                  >
                     <button
-                      disabled={locked}
-                      onClick={() => beginFileReview(activeSession!, active.file)}
+                      aria-pressed={sidebarMode === "files"}
+                      onClick={() => setSidebarMode("files")}
                     >
-                      {locale === "zh-TW" ? "比較變更" : "Compare changes"}
+                      {t.files}
+                    </button>
+                    <button
+                      aria-pressed={sidebarMode === "search"}
+                      title={titleWithShortcut(
+                        locale === "zh-TW" ? "跨檔案搜尋" : "Search in project",
+                        "search",
+                      )}
+                      onClick={() => runCommand("search")}
+                    >
+                      {locale === "zh-TW" ? "搜尋" : "Search"}
+                    </button>
+                    <button
+                      className="quick-open-trigger"
+                      title={titleWithShortcut(
+                        locale === "zh-TW" ? "快速開啟檔案" : "Quick open",
+                        "quickOpen",
+                      )}
+                      aria-label={locale === "zh-TW" ? "快速開啟檔案" : "Quick open"}
+                      onClick={() => runCommand("quickOpen")}
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        aria-hidden="true"
+                      >
+                        <circle cx="10" cy="10" r="6" />
+                        <path d="m15 15 6 6" />
+                      </svg>
                     </button>
                   </div>
-                )}
-                {locked && (
-                  <div className="editor-lock" role="status">
-                    {t.phases[execution.phase]} <span>{t.locked}</span>
+                  {sidebarMode === "files" && (
+                    <ProjectTree
+                      ref={treeRef}
+                      activeFile={activeFile}
+                      buildEntry={workspace.manifest?.entry}
+                      busy={managingEntries || locked || projectBusy}
+                      copy={{
+                        treeLabel: t.fileTree,
+                        newFile: t.newFile,
+                        newFolder: t.newFolder,
+                        moreActions: t.moreActions,
+                        rename: t.rename,
+                        move: t.move,
+                        trash: t.trash,
+                        expand: t.expand,
+                        collapse: t.collapse,
+                      }}
+                      entries={workspace.entries}
+                      expandedPaths={expandedTreePaths}
+                      rootLabel={workspace.rootLabel}
+                      selectedPath={selectedTreePath}
+                      onCreate={beginCreateEntry}
+                      onExpandedPaths={setExpandedTreePaths}
+                      onMove={async (source, target) => {
+                        await moveManagedEntry(source, target);
+                      }}
+                      onMoveRequest={requestMoveEntry}
+                      onOpenFile={(file) => void openFile(workspace, file)}
+                      onRename={renameManagedEntry}
+                      onSelectedPath={setSelectedTreePath}
+                      onTrash={setPendingTrash}
+                    />
+                  )}
+                </>
+              )}
+              <SearchPanel
+                key={workspace.id}
+                workspace={workspace}
+                documents={documents}
+                active={filesOpen && sidebarMode === "search"}
+                focusRequest={searchFocusRequest}
+                locale={locale}
+                resolvedTheme={resolvedTheme}
+                readOnly={locked || projectBusy || managingEntries}
+                onOpen={openSearchResult}
+                onReplace={replaceSearchResults}
+                onClose={() => {
+                  setSidebarMode("files");
+                  window.requestAnimationFrame(() => editorRef.current?.focus());
+                }}
+              />
+            </aside>
+            <ResizeHandle
+              className="resize-files"
+              axis="x"
+              direction={1}
+              label={t.resizeFiles}
+              min={LAYOUT_LIMITS.filesWidth.min}
+              max={sidebarMaximum("files")}
+              value={filesWidth}
+              visible={filesOpen}
+              defaultValue={LAYOUT_DEFAULTS.filesWidth}
+              onChange={setFilesWidth}
+            />
+
+            <section
+              className={`center ${settingsActive ? "settings-active" : ""}`}
+              ref={centerRef}
+            >
+              <div className="editor-toolbar">
+                <button
+                  aria-pressed={filesOpen}
+                  title={titleWithShortcut(filesOpen ? t.hideFiles : t.showFiles, "files")}
+                  onClick={() => runCommand("files")}
+                >
+                  <span aria-hidden="true">☰</span>
+                  {t.files}
+                </button>
+                <div className="breadcrumb" title={active?.file}>
+                  {active?.file ?? workspace.name}
+                </div>
+                <div className="editor-tools">
+                  <button
+                    className="local-history-trigger"
+                    disabled={settingsActive || !active || locked}
+                    onClick={() => void openHistory()}
+                  >
+                    {locale === "zh-TW" ? "本機歷史" : "Local history"}
+                  </button>
+                  <button
+                    disabled={settingsActive || !active || locked}
+                    title={titleWithShortcut(t.format, "format")}
+                    onClick={() => runCommand("format")}
+                  >
+                    {t.format}
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={settingsActive || !diagnostics.length}
+                    aria-label={t.previousProblem}
+                    title={titleWithShortcut(t.previousProblem, "previousProblem")}
+                    onClick={() => runCommand("previousProblem")}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    className="icon-button"
+                    disabled={settingsActive || !diagnostics.length}
+                    aria-label={t.nextProblem}
+                    title={titleWithShortcut(t.nextProblem, "nextProblem")}
+                    onClick={() => runCommand("nextProblem")}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    aria-pressed={problemsOpen}
+                    title={titleWithShortcut(
+                      problemsOpen ? t.hideProblems : t.showProblems,
+                      "problems",
+                    )}
+                    onClick={() => runCommand("problems")}
+                  >
+                    {t.diagnostics}
+                    {diagnostics.length > 0 && <strong>{diagnostics.length}</strong>}
+                  </button>
+                  <button
+                    aria-pressed={deviceOpen}
+                    title={titleWithShortcut(deviceOpen ? t.hideDevice : t.showDevice, "device")}
+                    onClick={() => runCommand("device")}
+                  >
+                    EV3
+                  </button>
+                </div>
+              </div>
+
+              <div className="tabs" role="tablist" aria-label={t.files}>
+                {tabs.map((tab) => {
+                  const selected = !settingsActive && tab.file === activeFile;
+                  const tabDirty = tab.dirty;
+                  return (
+                    <ClosableTab
+                      active={selected}
+                      key={tab.file}
+                      ref={selected ? activeTabRef : undefined}
+                      title={tab.file}
+                      onSelect={() => {
+                        setSettingsActive(false);
+                        setActiveFile(tab.file);
+                        window.requestAnimationFrame(() => editorRef.current?.focus());
+                      }}
+                      closeDisabled={locked}
+                      closeLabel={`${t.closeTab}: ${tab.file}`}
+                      closeTitle={titleWithShortcut(t.closeTab, "closeTab")}
+                      onClose={() => requestCloseTab(tab.file)}
+                    >
+                      <span className="tab-kind">
+                        {tab.file.split(".").pop()?.toLocaleUpperCase("en-US")}
+                      </span>
+                      <span className="tab-name">{tab.file}</span>
+                      {tabDirty && <i aria-label={t.unsaved}>●</i>}
+                      {activeSession?.files.conflicts.has(tab.file) && (
+                        <span
+                          className="file-conflict-mark"
+                          aria-label={
+                            locale === "zh-TW" ? "外部變更待處理" : "External changes need review"
+                          }
+                        >
+                          !
+                        </span>
+                      )}
+                    </ClosableTab>
+                  );
+                })}
+                {settingsTab}
+              </div>
+
+              <div
+                className={`editor-simulation-layout ${simulator?.workspaceId === workspace.id ? "with-simulator" : ""}`}
+                hidden={settingsActive}
+              >
+                <div
+                  className={`editor-stage ${activeConflict ? "file-change-stage" : ""}`}
+                  hidden={settingsActive}
+                >
+                  {activeConflict && active && (
+                    <div className="file-change-banner" role="status">
+                      <span>
+                        {activeConflict.content === null
+                          ? locale === "zh-TW"
+                            ? "檔案已在外部刪除，編輯器內容已保留。"
+                            : "File deleted outside Kobrixa. Editor contents are preserved."
+                          : locale === "zh-TW"
+                            ? "檔案已在外部變更，此檔案的自動儲存已暫停。"
+                            : "File changed outside Kobrixa. Automatic saving is paused for this file."}
+                      </span>
+                      <button
+                        disabled={locked}
+                        onClick={() => beginFileReview(activeSession!, active.file)}
+                      >
+                        {locale === "zh-TW" ? "比較變更" : "Compare changes"}
+                      </button>
+                    </div>
+                  )}
+                  {locked && (
+                    <div className="editor-lock" role="status">
+                      {t.phases[execution.phase]} <span>{t.locked}</span>
+                    </div>
+                  )}
+                  {active ? (
+                    <Editor
+                      locale={locale}
+                      onQuickFixes={(snapshot, diagnostic, signal) =>
+                        analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
+                      }
+                      key={workspace.id}
+                      retainedModels={activeSession!.editor}
+                      focusOnMount={focusEditorOnMount.current}
+                      onViewChange={scheduleSessionSave}
+                      ref={editorRef}
+                      theme={resolvedTheme}
+                      editorOptions={settings}
+                      onEditorReady={keyboard.bindEditor}
+                      onBlur={(file) => requestFocusSave(file, workspace.id)}
+                      fontSize={codeSize}
+                      wordWrap={settings.wordWrap}
+                      indentSize={settings.indentSize}
+                      reducedMotion={reducedMotion}
+                      readOnly={locked || projectBusy || managingEntries || collabReadOnly}
+                      collabSession={sharedProject ? collabSession : null}
+                      onCollabLimit={(file) => report(sharedFileLimitError(file))}
+                      file={active.file}
+                      documents={documents}
+                      analysisSession={analysisSession}
+                      completionSession={completionSession}
+                      openFiles={openFiles}
+                      diagnostics={diagnostics}
+                      focusTarget={focusTarget}
+                      ariaLabel={t.editorLabel}
+                      onChange={(file) => updateActive(file, workspace.id)}
+                      onOpenLocation={openLocation}
+                      onWorkspaceEdit={applyWorkspaceEdit}
+                      onCursorChange={cursorStore.update}
+                    />
+                  ) : (
+                    <div className="empty">{t.chooseFile}</div>
+                  )}
+                </div>
+
+                {simulator && (
+                  <div className="simulator-host" hidden={simulator.workspaceId !== workspace.id}>
+                    {simulatorSceneError && (
+                      <div className="simulation-scene-error" role="alert">
+                        {simulatorSceneError}
+                      </div>
+                    )}
+                    <SimulatorWorkspace
+                      key={simulator.workspaceId}
+                      scene={simulator.scene}
+                      entries={
+                        sessions
+                          .get(simulator.workspaceId)
+                          ?.workspace.files.filter((file) => /\.bp$/i.test(file)) ?? []
+                      }
+                      locale={locale}
+                      projectName={simulator.projectName}
+                      active={
+                        simulator.workspaceId === workspace.id &&
+                        !settingsActive &&
+                        !updatePreparing
+                      }
+                      blocked={!!simulatorSceneError}
+                      onSceneChange={changeSimulatorScene}
+                      onSave={saveSimulatorScene}
+                      onPrepare={prepareSimulator}
+                      onCancelPrepare={cancelSimulationPreparation}
+                      onClose={() => setSimulator(undefined)}
+                      onSource={(span) => {
+                        void openQuickFile(span.file, {
+                          line: span.start.line,
+                          column: span.start.column,
+                        }).catch(report);
+                      }}
+                    />
                   </div>
-                )}
-                {active ? (
-                  <Editor
-                    locale={locale}
-                    onQuickFixes={(snapshot, diagnostic, signal) =>
-                      analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
-                    }
-                    key={workspace.id}
-                    retainedModels={activeSession!.editor}
-                    focusOnMount={focusEditorOnMount.current}
-                    onViewChange={scheduleSessionSave}
-                    ref={editorRef}
-                    theme={resolvedTheme}
-                    editorOptions={settings}
-                    onEditorReady={keyboard.bindEditor}
-                    onBlur={(file) => requestFocusSave(file, workspace.id)}
-                    fontSize={codeSize}
-                    wordWrap={settings.wordWrap}
-                    indentSize={settings.indentSize}
-                    reducedMotion={reducedMotion}
-                    readOnly={locked || projectBusy || managingEntries || collabReadOnly}
-                    collabSession={sharedProject ? collabSession : null}
-                    onCollabLimit={(file) => report(sharedFileLimitError(file))}
-                    file={active.file}
-                    documents={documents}
-                    analysisSession={analysisSession}
-                    completionSession={completionSession}
-                    openFiles={openFiles}
-                    diagnostics={diagnostics}
-                    focusTarget={focusTarget}
-                    ariaLabel={t.editorLabel}
-                    onChange={(file) => updateActive(file, workspace.id)}
-                    onOpenLocation={openLocation}
-                    onWorkspaceEdit={applyWorkspaceEdit}
-                    onCursorChange={cursorStore.update}
-                  />
-                ) : (
-                  <div className="empty">{t.chooseFile}</div>
                 )}
               </div>
 
-              {simulator && (
-                <div className="simulator-host" hidden={simulator.workspaceId !== workspace.id}>
-                  {simulatorSceneError && (
-                    <div className="simulation-scene-error" role="alert">
-                      {simulatorSceneError}
-                    </div>
-                  )}
-                  <SimulatorWorkspace
-                    key={simulator.workspaceId}
-                    scene={simulator.scene}
-                    entries={
-                      sessions
-                        .get(simulator.workspaceId)
-                        ?.workspace.files.filter((file) => /\.bp$/i.test(file)) ?? []
-                    }
-                    locale={locale}
-                    projectName={simulator.projectName}
-                    active={
-                      simulator.workspaceId === workspace.id && !settingsActive && !updatePreparing
-                    }
-                    blocked={!!simulatorSceneError}
-                    onSceneChange={changeSimulatorScene}
-                    onSave={saveSimulatorScene}
-                    onPrepare={prepareSimulator}
-                    onCancelPrepare={cancelSimulationPreparation}
-                    onClose={() => setSimulator(undefined)}
-                    onSource={(span) => {
-                      void openQuickFile(span.file, {
-                        line: span.start.line,
-                        column: span.start.column,
-                      }).catch(report);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {settingsPage}
-            <ResizeHandle
-              className="resize-problems"
-              axis="y"
-              direction={-1}
-              label={t.resizeProblems}
-              min={LAYOUT_LIMITS.problemsHeight.min}
-              max={problemsMaximum()}
-              value={problemsHeight}
-              visible={problemsOpen}
-              defaultValue={LAYOUT_DEFAULTS.problemsHeight}
-              onChange={setProblemsHeight}
-            />
-            <BottomPanel
-              t={t}
-              fixesDisabled={locked || projectBusy || managingEntries}
-              locale={locale}
-              analysisSession={analysisSession}
-              getQuickFixes={(diagnostic, signal) =>
-                editorRef.current?.quickFixes(diagnostic, signal) ?? Promise.resolve([])
-              }
-              applyQuickFix={(action) =>
-                editorRef.current?.applyQuickFix(action) ??
-                Promise.reject(new Error("Editor unavailable."))
-              }
-              openDocumentation={(request) => window.kobrixa.documentation.open(request)}
-              open={problemsOpen}
-              onToggle={() => setProblemsOpen((value) => !value)}
-              diagnostics={diagnostics}
-              selected={diagnosticIndex}
-              checking={checking}
-              onJump={(item, index) => void jumpTo(item, index)}
-            />
-          </section>
-
-          <ResizeHandle
-            className="resize-device"
-            axis="x"
-            direction={-1}
-            label={t.resizeDevice}
-            min={LAYOUT_LIMITS.deviceWidth.min}
-            max={sidebarMaximum("device")}
-            value={deviceWidth}
-            visible={deviceOpen}
-            defaultValue={LAYOUT_DEFAULTS.deviceWidth}
-            onChange={setDeviceWidth}
-          />
-          <aside
-            className={`sidebar device-panel ${deviceOpen ? "" : "collapsed"}`}
-            aria-hidden={!deviceOpen}
-          >
-            {deviceOpen && (
-              <ToolsPanel
-                tab={toolTab}
-                onTab={setToolTab}
-                locale={locale}
-                onClose={() => {
-                  controller.cancelWaiting();
-                  setDeviceOpen(false);
-                }}
-                monitor={
-                  <MonitorWorkspace
-                    lab={sensorLab}
-                    motor={motorTest}
-                    view={monitorView}
-                    onView={setMonitorView}
-                    controller={monitor}
-                    locale={locale}
-                    sessionId={execution.session?.id}
-                    active={deviceOpen && toolTab === "monitor" && !updatePreparing}
-                    locked={updatePreparing || controller.locked}
-                    controlNotice={controlNotice}
-                    onConnect={() => setToolTab("connection")}
-                  />
-                }
-                connection={
-                  <>
-                    {deviceControl && (
-                      <DeviceControlBar
-                        control={deviceControl.control}
-                        state={deviceControl.state}
-                        locale={locale}
-                      />
-                    )}
-                    <DevicePanel
-                      t={t}
-                      locale={locale}
-                      state={execution}
-                      devices={devices}
-                      discovering={discovering}
-                      locked={updatePreparing || controller.locked || motorBusy}
-                      mode={connectionMode}
-                      onMode={(mode) => {
-                        setConnectionMode(mode);
-                        setSelectedDevice(undefined);
-                      }}
-                      selected={selectedDevice}
-                      onSelect={setSelectedDevice}
-                      address={wifiAddress}
-                      onAddress={(address) => {
-                        setWifiAddress(address);
-                        setSelectedDevice(undefined);
-                      }}
-                      onDiscover={() => void discover()}
-                      onConnect={connect}
-                      onDisconnect={() => void controller.disconnect()}
-                      onCancel={() => controller.cancelWaiting()}
-                    />
-                  </>
-                }
-                files={
-                  <RemoteFilesPanel
-                    controller={remoteFiles}
-                    state={remoteState}
-                    active={toolTab === "files"}
-                    locale={locale}
-                    locked={updatePreparing || controller.locked || motorBusy}
-                    controlNotice={controlNotice}
-                    deployedPath={execution.deployed?.path}
-                    onConnect={() => setToolTab("connection")}
-                  />
-                }
-                activity={<ActivityPanel t={t} locale={locale} state={execution} />}
-                collab={
-                  <>
-                    <CollabSyncStatus sync={collabBinding?.sync} locale={locale} />
-                    <CollabWorkspace
-                      store={collab}
-                      api={window.kobrixa.collab}
-                      locale={locale}
-                      projectName={workspace?.name}
-                    />
-                  </>
-                }
+              {settingsPage}
+              <ResizeHandle
+                className="resize-problems"
+                axis="y"
+                direction={-1}
+                label={t.resizeProblems}
+                min={LAYOUT_LIMITS.problemsHeight.min}
+                max={problemsMaximum()}
+                value={problemsHeight}
+                visible={problemsOpen}
+                defaultValue={LAYOUT_DEFAULTS.problemsHeight}
+                onChange={setProblemsHeight}
               />
-            )}
-          </aside>
-        </section>
-      )}
+              <BottomPanel
+                t={t}
+                tab={bottomTab}
+                onTab={(tab) => {
+                  settingsStore.set("bottomTab", tab);
+                  setProblemsOpen(true);
+                }}
+                activity={<ActivityPanel t={t} locale={locale} state={execution} />}
+                fixesDisabled={locked || projectBusy || managingEntries}
+                locale={locale}
+                analysisSession={analysisSession}
+                getQuickFixes={(diagnostic, signal) =>
+                  editorRef.current?.quickFixes(diagnostic, signal) ?? Promise.resolve([])
+                }
+                applyQuickFix={(action) =>
+                  editorRef.current?.applyQuickFix(action) ??
+                  Promise.reject(new Error("Editor unavailable."))
+                }
+                openDocumentation={(request) => window.kobrixa.documentation.open(request)}
+                open={problemsOpen}
+                onToggle={() => setProblemsOpen((value) => !value)}
+                diagnostics={diagnostics}
+                selected={diagnosticIndex}
+                checking={checking}
+                onJump={(item, index) => void jumpTo(item, index)}
+              />
+            </section>
+          </>
+        )}
+        <ResizeHandle
+          className="resize-device"
+          axis="x"
+          direction={-1}
+          label={locale === "zh-TW" ? "調整右側面板寬度" : "Resize right panel"}
+          min={LAYOUT_LIMITS.deviceWidth.min}
+          max={sidebarMaximum("device")}
+          value={deviceWidth}
+          visible={deviceOpen}
+          defaultValue={LAYOUT_DEFAULTS.deviceWidth}
+          onChange={setDeviceWidth}
+        />
+        <aside
+          className={`sidebar device-panel ${deviceOpen ? "" : "collapsed"}`}
+          aria-hidden={!deviceOpen}
+        >
+          <div className="right-pane-content" hidden={rightPanel !== "ev3"}>
+            <ToolsPanel
+              tab={toolTab}
+              onTab={setToolTab}
+              locale={locale}
+              onClose={() => {
+                settingsStore.set("rightPanel", null);
+              }}
+              monitor={
+                <MonitorWorkspace
+                  lab={sensorLab}
+                  motor={motorTest}
+                  view={monitorView}
+                  onView={setMonitorView}
+                  controller={monitor}
+                  locale={locale}
+                  sessionId={execution.session?.id}
+                  active={toolTab === "monitor" && !updatePreparing}
+                  locked={updatePreparing || controller.locked}
+                  controlNotice={controlNotice}
+                  onConnect={() => setToolTab("connection")}
+                />
+              }
+              connection={
+                <>
+                  {deviceControl && (
+                    <p className="collab-muted">
+                      {controlNotice ??
+                        (locale === "zh-TW" ? "你持有 EV3 控制權" : "You have EV3 control")}{" "}
+                      <button onClick={() => settingsStore.set("rightPanel", "collab")}>
+                        {locale === "zh-TW" ? "協作控制權" : "Room controls"}
+                      </button>
+                    </p>
+                  )}
+                  <DevicePanel
+                    t={t}
+                    locale={locale}
+                    state={execution}
+                    devices={devices}
+                    discovering={discovering}
+                    locked={updatePreparing || controller.locked || motorBusy}
+                    mode={connectionMode}
+                    onMode={(mode) => {
+                      setConnectionMode(mode);
+                      setSelectedDevice(undefined);
+                    }}
+                    selected={selectedDevice}
+                    onSelect={setSelectedDevice}
+                    address={wifiAddress}
+                    onAddress={(address) => {
+                      setWifiAddress(address);
+                      setSelectedDevice(undefined);
+                    }}
+                    onDiscover={() => void discover()}
+                    onConnect={connect}
+                    onDisconnect={() => void controller.disconnect()}
+                    onCancel={() => controller.cancelWaiting()}
+                  />
+                </>
+              }
+              files={
+                <RemoteFilesPanel
+                  controller={remoteFiles}
+                  state={remoteState}
+                  active={toolTab === "files"}
+                  locale={locale}
+                  locked={updatePreparing || controller.locked || motorBusy}
+                  controlNotice={controlNotice}
+                  deployedPath={execution.deployed?.path}
+                  onConnect={() => setToolTab("connection")}
+                />
+              }
+            />
+          </div>
+          <div className="right-pane-content collaboration-pane" hidden={rightPanel !== "collab"}>
+            <div className="tools-heading">
+              <h2>{locale === "zh-TW" ? "協作" : "Collaborate"}</h2>
+              <button
+                aria-label={locale === "zh-TW" ? "收合協作面板" : "Collapse collaboration"}
+                onClick={() => settingsStore.set("rightPanel", null)}
+              >
+                ×
+              </button>
+            </div>
+            <CollabSyncStatus sync={collabBinding?.sync} locale={locale} />
+            <CollabWorkspace
+              store={collab}
+              api={window.kobrixa.collab}
+              locale={locale}
+              projectName={workspace?.name}
+              projectId={workspace?.id}
+              onOpenProject={() => void openProject()}
+              onStart={async (connection) => {
+                const selected = sessions.activeId;
+                await flushDrafts();
+                const summary = await window.kobrixa.collab.prepareProject(
+                  connection.roomId,
+                  selected,
+                );
+                if (!summary) return false;
+                await collabCallbacks.current.adopt(summary);
+                collab.start({ ...connection, workspaceId: summary.id });
+                return true;
+              }}
+              onLeavingChange={(leaving) => {
+                collabLeavingRef.current = leaving;
+                setCollabLeaving(leaving);
+              }}
+              onLeave={async () => {
+                await flushDrafts();
+                await flushSharedRoom();
+              }}
+              control={
+                deviceControl ? (
+                  <DeviceControlBar
+                    control={deviceControl.control}
+                    state={deviceControl.state}
+                    locale={locale}
+                  />
+                ) : null
+              }
+            />
+          </div>
+        </aside>
+      </section>
       {newProjectOpen && (
         <Dialog
           onClose={() => {

@@ -63,6 +63,7 @@ const en = {
     left: "You left the room.",
     kicked: "You were removed by the host.",
     "room-closed": "The host closed this room.",
+    "session-replaced": "This room was opened in another window. This window will stay offline.",
     unauthorized: "Your invite is no longer valid. Ask the host for a new code.",
     error: "The connection failed. Try joining again.",
   } satisfies Record<CollabCloseReason, string>,
@@ -83,6 +84,10 @@ const en = {
     `Collaboration: ${status}, ${online} ${online === 1 ? "person" : "people"} online. Open collaboration panel`,
 
   errors: {
+    "room-closed": "This room has been ended. Create a new room from your retained project.",
+    removed: "Your room access was revoked. Ask the host for a new invitation.",
+    "identity-missing":
+      "This room has no saved recovery credential. Open your retained project to create a new room.",
     network: "Can't reach the collaboration service. Check your internet connection.",
     unavailable: "Collaboration isn't available right now. Try again later.",
     "not-found": "No room matches that invite code. Check the code and try again.",
@@ -158,6 +163,7 @@ const zhTW: CollabCopy = {
     left: "你已離開房間。",
     kicked: "你已被主持人移出房間。",
     "room-closed": "主持人已關閉此房間。",
+    "session-replaced": "此身分已在另一個視窗連線，本視窗已停止重連。",
     unauthorized: "你的邀請已失效，請向主持人索取新的邀請碼。",
     error: "連線失敗，請重新加入。",
   },
@@ -177,6 +183,9 @@ const zhTW: CollabCopy = {
   chipLabel: (status, online) => `協作：${status}，${online} 人在線。開啟協作面板`,
 
   errors: {
+    "room-closed": "房間已結束。可以保留的專案建立新房間。",
+    removed: "你的房間存取權已撤銷，請向主持人取得新的邀請。",
+    "identity-missing": "此房間沒有保存恢復憑證。請開啟保留的專案並建立新房間。",
     network: "無法連線到協作服務，請檢查網路連線。",
     unavailable: "協作功能目前無法使用，請稍後再試。",
     "not-found": "找不到符合此邀請碼的房間，請確認後再試一次。",

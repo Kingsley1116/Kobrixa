@@ -180,26 +180,20 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
     assert.ok(monitor.stats().calls >= count, `Expected at least ${count} monitor calls`);
   };
   await js(
-    'smoke.settingsStore.set("deviceOpen",true);smoke.settingsStore.set("toolTab","connection");smoke.settingsStore.set("locale","en");smoke.settingsStore.set("autoSave","off")',
+    'smoke.settingsStore.set("rightPanel","ev3");smoke.settingsStore.set("ev3Tab","connection");smoke.settingsStore.set("locale","en");smoke.settingsStore.set("autoSave","off")',
   );
   await until('Boolean(document.querySelector("#tool-tab-monitor"))');
   assert.deepEqual(
     await js('Array.from(document.querySelectorAll(".tools-tabs [role=tab]")).map(tab=>tab.id)'),
-    [
-      "tool-tab-connection",
-      "tool-tab-monitor",
-      "tool-tab-files",
-      "tool-tab-activity",
-      "tool-tab-collab",
-    ],
+    ["tool-tab-connection", "tool-tab-monitor", "tool-tab-files"],
   );
   await js('document.querySelector("#tool-tab-connection").focus()');
   for (const [pressed, expected] of [
     ["ArrowRight", "monitor"],
     ["ArrowRight", "files"],
-    ["End", "collab"],
+    ["End", "files"],
     ["ArrowRight", "connection"],
-    ["ArrowLeft", "collab"],
+    ["ArrowLeft", "files"],
     ["Home", "connection"],
   ]) {
     await key(pressed);
@@ -318,7 +312,7 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
   const releaseClosed = monitor.holdNext();
   await waitCalls(monitor.stats().calls + 1);
   assert.equal(monitor.stats().active, 1);
-  await js('document.querySelector("#tool-tab-activity").click()');
+  await js('document.querySelector("#tool-tab-files").click()');
   const closedCount = monitor.stats().calls;
   await pause(700);
   assert.equal(monitor.stats().active, 1);
@@ -432,10 +426,8 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
         };
       })()`);
       const expectedTabs =
-        locale === "en"
-          ? ["Connection", "Monitor", "EV3 files", "Activity", "Collaborate"]
-          : ["連線", "監測", "EV3 檔案", "操作紀錄", "協作"];
-      assert.equal(tabLayout.tabs.length, 5);
+        locale === "en" ? ["Connection", "Monitor", "EV3 files"] : ["連線", "監測", "EV3 檔案"];
+      assert.equal(tabLayout.tabs.length, 3);
       assert.ok(tabLayout.scrollWidth <= tabLayout.clientWidth, `${locale}/${theme} tab bar fits`);
       tabLayout.tabs.forEach((tab, index) => {
         const context = `${locale}/${theme} ${expectedTabs[index]} tab`;
@@ -478,13 +470,17 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
       }
       await js('document.querySelector("#tool-panel-monitor").scrollTop=0');
     }
-  await js('smoke.settingsStore.set("deviceOpen",false)');
+  await js('smoke.settingsStore.set("rightPanel",null)');
   await pause(150);
   const panelClosed = monitor.stats().calls;
   await pause(700);
-  assert.equal(monitor.stats().calls, panelClosed, "Closing the tools panel stops polling");
+  assert.ok(monitor.stats().calls > panelClosed, "Collapsing the tools panel retains monitoring");
+  await js('smoke.settingsStore.set("rightPanel","collab")');
+  const inCollab = monitor.stats().calls;
+  await pause(700);
+  assert.ok(monitor.stats().calls > inCollab, "Opening collaboration retains monitoring");
   await js(
-    'smoke.settingsStore.set("deviceOpen",true);smoke.settingsStore.set("toolTab","connection")',
+    'smoke.settingsStore.set("rightPanel","ev3");smoke.settingsStore.set("ev3Tab","connection")',
   );
   await until('Boolean(document.querySelector(".connection-banner.is-connected"))');
   await js('document.querySelector("#tool-panel-connection button.wide").click()');
@@ -495,6 +491,6 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
   win.setSize(1420, 900);
   await js("ed.focus()");
   console.log(
-    "EV3 monitor: four-tab keyboard navigation, values/modes, polling lifecycle, stale session replies, editor isolation and bilingual 320px/125% themes pass",
+    "EV3 monitor: three-tab keyboard navigation, values/modes, polling lifecycle, stale session replies, editor isolation and bilingual 320px/125% themes pass",
   );
 }

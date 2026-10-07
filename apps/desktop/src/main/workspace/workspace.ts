@@ -1,3 +1,4 @@
+import { roomIdSchema } from "@kobrixa/collab-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import {
   link,
@@ -266,6 +267,11 @@ export class WorkspaceService {
     const snapshot = await this.readFile(id, file);
     if (snapshot.content === null) throw new Error("The project file no longer exists.");
     return snapshot.content;
+  }
+
+  /** Main-process project binding; never expose filesystem roots through IPC. */
+  async projectRoot(id: string): Promise<string> {
+    return realpath(this.require(id).root);
   }
 
   readFile(id: string, file: string): Promise<WorkspaceFileSnapshot> {
@@ -809,7 +815,11 @@ export class WorkspaceService {
         };
     }
     const { drafts, revisions } = await this.loadDraftData(record.root);
+    const mirrorRoom = roomIdSchema.safeParse(
+      path.relative(path.join(this.#userDataPath(), "collab"), record.root),
+    );
     return {
+      ...(mirrorRoom.success ? { sharedRoomId: mirrorRoom.data } : {}),
       id: record.id,
       name: manifest?.name ?? path.basename(record.root),
       rootLabel: path.basename(record.root),

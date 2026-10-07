@@ -70,7 +70,8 @@ export interface LobbySnapshot {
   joinError: LobbyError | null;
 }
 
-type LobbyApi = Pick<CollabApi, "getPreferences" | "setPreferences" | "createRoom" | "joinRoom">;
+type LobbyApi = Pick<CollabApi, "getPreferences" | "setPreferences" | "createRoom" | "joinRoom"> &
+  Partial<Pick<CollabApi, "resumeRoom">>;
 
 export interface LobbyOptions {
   saveDelayMs?: number;
@@ -116,6 +117,7 @@ export class CollabLobby {
   getSnapshot = (): LobbySnapshot => this.#snapshot;
 
   async load(): Promise<void> {
+    this.#disposed = false;
     try {
       const preferences = await this.api.getPreferences();
       if (this.#disposed) return;
@@ -183,6 +185,12 @@ export class CollabLobby {
     );
   }
 
+  async resumeRoom(roomId: string): Promise<boolean> {
+    if (this.#snapshot.pending || !this.api.resumeRoom) return false;
+    this.#update({ pending: "join", startError: null });
+    return this.#connect("start", () => this.api.resumeRoom!(roomId));
+  }
+
   clearJoinError(): void {
     if (this.#snapshot.joinError) this.#update({ joinError: null });
   }
@@ -214,13 +222,17 @@ export class CollabLobby {
     const connection =
       inviteCode && !result.value.inviteCode ? { ...result.value, inviteCode } : result.value;
     const recentRooms = rememberRoom(this.#snapshot.recentRooms, connection, this.#now());
-    this.#update({ pending: null, recentRooms });
+    this.#update({ recentRooms });
     try {
-      this.start(connection);
+      if ((await this.start(connection)) === false) {
+        this.#update({ pending: null });
+        return false;
+      }
     } catch {
-      this.#update({ [errorKey]: "unknown" });
+      this.#update({ pending: null, [errorKey]: "unknown" });
       return false;
     }
+    this.#update({ pending: null });
     void this.api.setPreferences({ recentRooms }).catch(() => undefined);
     return true;
   }

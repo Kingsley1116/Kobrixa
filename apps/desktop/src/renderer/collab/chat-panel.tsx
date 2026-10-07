@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   type CSSProperties,
 } from "react";
+import { chatDrafts } from "./chat-drafts.js";
 import { COLLAB_LIMITS, type PresenceState } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
 import { chatControllerFor, chatTextLength, type ChatController } from "./chat.js";
@@ -21,7 +22,7 @@ const copy = {
     input: "Message",
     placeholder: "Message the room (Enter to send, Shift+Enter for a new line)",
     send: "Send",
-    viewer: "You joined as a viewer. You can read the chat but can't send messages.",
+    viewer: "Waiting for connection and sync. Your draft is kept.",
     closed: "You have left this room. Chat history is read-only.",
     tooLong: "Message is too long.",
     justNow: "just now",
@@ -33,7 +34,7 @@ const copy = {
     input: "訊息",
     placeholder: "傳送訊息給房間成員（Enter 傳送，Shift+Enter 換行）",
     send: "傳送",
-    viewer: "你以檢視者身分加入，可以閱讀聊天內容，但無法傳送訊息。",
+    viewer: "等待連線與同步完成，你的草稿會保留。",
     closed: "你已離開房間，聊天紀錄僅供閱讀。",
     tooLong: "訊息太長。",
     justNow: "剛剛",
@@ -162,7 +163,29 @@ function ChatView({
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const colors = usePresenceColors(session);
   const now = useNow(30_000);
-  const [draft, setDraft] = useState("");
+  const draftKey = `kobrixa.chatDraft.${session.connection.serverUrl}.${session.connection.roomId}.${session.connection.participantId}`;
+  const [draft, setDraft] = useState(() => {
+    try {
+      return chatDrafts.get(draftKey).text;
+    } catch {
+      return "";
+    }
+  });
+  const [pending, setPending] = useState(false);
+  const [sendError, setSendError] = useState("");
+  const changeDraft = (text: string): void => {
+    setDraft(text);
+    try {
+      chatDrafts.set(draftKey, text);
+      setSendError("");
+    } catch {
+      setSendError(
+        locale === "zh-TW"
+          ? "無法保存聊天草稿，請重試；內容會保留在此視窗。"
+          : "Could not save this draft. Retry; the text is kept in this window.",
+      );
+    }
+  };
   const log = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const counterId = useId();
@@ -194,11 +217,43 @@ function ChatView({
   const tooLong = length > COLLAB_LIMITS.chatMessageLength;
   const showCounter = length > COLLAB_LIMITS.chatMessageLength - COUNTER_THRESHOLD;
 
-  const submit = (): void => {
-    const result = controller.send(draft);
-    if (!result.ok) return;
-    setDraft("");
+  const submit = async (): Promise<void> => {
+    if (pending || !snapshot.canSend) return;
+    const sending = draft;
+    let messageId: string;
+    try {
+      messageId = chatDrafts.prepare(draftKey, sending);
+    } catch {
+      setSendError(
+        locale === "zh-TW" ? "無法保存草稿，請重試。" : "Could not save the draft. Please retry.",
+      );
+      return;
+    }
+    setPending(true);
+    setSendError("");
+    const result = await controller.send(sending, messageId);
+    setPending(false);
+    if (!result.ok) {
+      setSendError(
+        locale === "zh-TW"
+          ? "傳送失敗，草稿已保留。請重試。"
+          : "Could not send. Your draft is kept; try again.",
+      );
+      return;
+    }
+    try {
+      if (chatDrafts.sent(draftKey, sending, messageId))
+        setDraft((current) => (current === sending ? "" : current));
+    } catch {
+      setSendError(
+        locale === "zh-TW"
+          ? "訊息已傳送，但無法更新本機草稿。退出前請重試保存。"
+          : "Message sent, but the local draft could not be updated. Retry saving before quitting.",
+      );
+    }
     pinned.current = true;
+    controller.setAtBottom(true);
+    scrollToBottom();
   };
 
   return (
@@ -213,6 +268,7 @@ function ChatView({
           const element = event.currentTarget;
           if (element.clientHeight === 0) return;
           pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+          controller.setAtBottom(pinned.current);
         }}
       >
         {snapshot.messages.length === 0 ? (
@@ -242,12 +298,28 @@ function ChatView({
           })
         )}
       </div>
-      {snapshot.canSend ? (
+      {snapshot.unread > 0 && (
+        <button
+          onClick={() => {
+            pinned.current = true;
+            scrollToBottom();
+            controller.setAtBottom(true);
+          }}
+        >
+          {locale === "zh-TW" ? "查看新訊息" : "View new messages"} ({snapshot.unread})
+        </button>
+      )}
+      {sendError && (
+        <p className="collab-error" role="alert">
+          {sendError}
+        </p>
+      )}
+      {
         <form
           className="collab-chat-compose"
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
+            void submit();
           }}
         >
           <textarea
@@ -257,11 +329,11 @@ function ChatView({
             placeholder={t.placeholder}
             rows={2}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => changeDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
               event.preventDefault();
-              submit();
+              void submit();
             }}
           />
           <div className="collab-chat-actions">
@@ -275,12 +347,17 @@ function ChatView({
                 {length}/{COLLAB_LIMITS.chatMessageLength}
               </span>
             )}
-            <button type="submit" className="primary" disabled={length === 0 || tooLong}>
+            <button
+              type="submit"
+              className="primary"
+              disabled={pending || !snapshot.canSend || length === 0 || tooLong}
+            >
               {t.send}
             </button>
           </div>
         </form>
-      ) : (
+      }
+      {!snapshot.canSend && (
         <p className="collab-chat-hint">
           {session.getSnapshot().status === "closed" ? t.closed : t.viewer}
         </p>

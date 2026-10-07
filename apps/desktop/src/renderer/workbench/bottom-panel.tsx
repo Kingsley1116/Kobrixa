@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Diagnostic } from "../../shared/api.js";
 import type { Copy } from "../i18n/copy.js";
 import { DiagnosticDetails, type DiagnosticDetailsHost } from "./diagnostic-details.js";
@@ -6,6 +7,9 @@ import "./diagnostics.css";
 
 export function BottomPanel({
   t,
+  tab = "problems",
+  onTab,
+  activity,
   open,
   onToggle,
   diagnostics,
@@ -15,6 +19,9 @@ export function BottomPanel({
   ...detailsHost
 }: {
   t: Copy;
+  tab?: "problems" | "activity";
+  onTab?(tab: "problems" | "activity"): void;
+  activity?: ReactNode;
   open: boolean;
   onToggle(): void;
   diagnostics: Diagnostic[];
@@ -26,8 +33,18 @@ export function BottomPanel({
     <section className={`problems ${open ? "" : "collapsed"}`}>
       <div className="problems-header">
         <div className="bottom-tabs">
-          <button aria-expanded={open} onClick={onToggle}>
-            {open ? "⌄" : "›"} {t.diagnostics} <strong>{diagnostics.length}</strong>
+          <button
+            aria-expanded={open && tab === "problems"}
+            onClick={() => (tab === "problems" ? onToggle() : onTab?.("problems"))}
+          >
+            {open ? "⌄" : "›"} {detailsHost.locale === "zh-TW" ? "問題" : "Problems"}{" "}
+            <strong>{diagnostics.length}</strong>
+          </button>
+          <button
+            aria-expanded={open && tab === "activity"}
+            onClick={() => (tab === "activity" ? onToggle() : onTab?.("activity"))}
+          >
+            {t.activity}
           </button>
         </div>
         <div className="diagnostic-summary">
@@ -40,7 +57,7 @@ export function BottomPanel({
           </span>
         </div>
       </div>
-      {open && (
+      {open && tab === "problems" && (
         <div className={`problem-body ${diagnostics[selected] ? "with-details" : ""}`}>
           <div className="problem-list">
             {diagnostics.length ? (
@@ -66,6 +83,9 @@ export function BottomPanel({
           )}
         </div>
       )}
+      <div className="bottom-activity" hidden={!open || tab !== "activity"}>
+        {activity}
+      </div>
     </section>
   );
 }

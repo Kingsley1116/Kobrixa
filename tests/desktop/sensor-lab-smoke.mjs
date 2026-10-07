@@ -18,7 +18,7 @@ export async function checkSensorLab({
       `Array.from(document.querySelectorAll(${JSON.stringify(`${root} button`)})).find(button => button.textContent.trim() === ${JSON.stringify(text)} && !button.disabled).click()`,
     );
   await js(
-    'smoke.settingsStore.set("deviceOpen",true);smoke.settingsStore.set("toolTab","connection");smoke.settingsStore.set("locale","en")',
+    'smoke.settingsStore.set("rightPanel","ev3");smoke.settingsStore.set("ev3Tab","connection");smoke.settingsStore.set("locale","en")',
   );
   if (!(await js('Boolean(document.querySelector(".connection-banner.is-connected"))'))) {
     await click("Find EV3", "#tool-panel-connection");
@@ -121,7 +121,7 @@ export async function checkSensorLab({
   );
   assert.equal(await js("ed.hasTextFocus()"), true, "Recording samples preserve editor focus");
 
-  await js('smoke.settingsStore.set("deviceOpen",false)');
+  await js('smoke.settingsStore.set("rightPanel",null)');
   const hiddenFrames = (await sensorLab.getState()).recording.frameCount;
   win.hide();
   await until('document.visibilityState === "hidden"');
@@ -149,7 +149,7 @@ export async function checkSensorLab({
   );
   assert.equal((await sensorLab.getState()).saved, true);
 
-  await js('smoke.settingsStore.set("deviceOpen",true)');
+  await js('smoke.settingsStore.set("rightPanel","ev3")');
   await until('Boolean(document.querySelector("#monitor-view-lab"))');
   await js('document.querySelector("#monitor-view-lab").click()');
   await until('!document.querySelector("[data-testid=sensor-lab-start]").disabled');
@@ -287,7 +287,7 @@ export async function checkSensorLab({
   await until('!document.querySelector("[role=alertdialog]")');
   assert.equal((await sensorLab.list()).length, 1);
   assert.equal(monitor.stats().maxActive, 1, "UI and recording share one device exchange");
-  await js('smoke.settingsStore.set("toolTab","connection")');
+  await js('smoke.settingsStore.set("ev3Tab","connection")');
   await js('document.querySelector("#tool-panel-connection button.wide").click()');
   await until('!document.querySelector(".connection-banner.is-connected")');
   await js(

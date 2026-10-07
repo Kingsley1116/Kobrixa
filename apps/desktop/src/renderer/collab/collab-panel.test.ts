@@ -161,24 +161,26 @@ describe("collaboration panel", () => {
       expect(document.querySelector("[data-testid=collab-status]")?.textContent).toBe(
         collabCopy[locale].status.connected,
       );
-      expect(document.querySelector(".collab-chip-count")?.textContent).toBe("2");
+      expect(document.querySelector(".collab-chip-count")?.textContent).toContain("2");
       expect(document.querySelectorAll(".collab-participant")).toHaveLength(2);
       await click("[data-testid=collab-copy-invite]");
       expect(writeText).toHaveBeenCalledWith("ABCD-EFGH-JK23");
-      await click(".collab-participant-actions button:not(.danger)");
+      await click(".collab-participant .more-button");
+      await click(".collab-participant [role=menuitem]:not(.danger)");
       expect(requests.setRole).toHaveBeenCalledWith(room.sessions[0]!.connection.roomId, {
         participantId: room.sessions[1]!.connection.participantId,
         role: "viewer",
       });
       expect(document.querySelectorAll(".collab-role-viewer")).toHaveLength(1);
-      await click(".collab-participant-actions .danger");
+      await click(".collab-participant .more-button");
+      await click(".collab-participant [role=menuitem].danger");
       expect(requests.kick).not.toHaveBeenCalled();
       await click(".collab-kick-confirm .danger");
       expect(requests.kick).toHaveBeenCalledWith(
         room.sessions[0]!.connection.roomId,
         room.sessions[1]!.connection.participantId,
       );
-      expect(document.querySelector(".collab-chip-count")?.textContent).toBe("1");
+      expect(document.querySelector(".collab-chip-count")?.textContent).toContain("1");
       await click("[data-testid=collab-leave]");
       expect(document.querySelector("[data-testid=collab-room]")).toBeNull();
       expect(document.querySelector("[data-testid=collab-lobby]")).not.toBeNull();

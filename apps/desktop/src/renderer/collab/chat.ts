@@ -1,3 +1,4 @@
+import type { CollabApi } from "../../shared/collab.js";
 import type * as Y from "yjs";
 import { COLLAB_LIMITS, chatMessageSchema, type ChatMessage } from "@kobrixa/collab-protocol";
 import { canEdit, sharedTypes, type CollabSession } from "./types.js";
@@ -13,11 +14,12 @@ export interface ChatSnapshot {
 
 export type ChatSendResult =
   | { ok: true; message: ChatMessage }
-  | { ok: false; reason: "empty" | "too-long" | "read-only" | "invalid" };
+  | { ok: false; reason: "empty" | "too-long" | "read-only" | "invalid" | "network" };
 
 export interface ChatControllerOptions {
   now?: () => number;
   randomId?: () => string;
+  sendChat?: CollabApi["sendChat"];
 }
 
 /** Extra messages tolerated before the host trims, so trims are rare and batched. */
@@ -48,7 +50,9 @@ const controllers = new WeakMap<CollabSession, ChatController>();
 export function chatControllerFor(session: CollabSession): ChatController {
   let controller = controllers.get(session);
   if (!controller) {
-    controller = new ChatController(session);
+    controller = new ChatController(session, {
+      sendChat: (roomId, message) => window.kobrixa.collab.sendChat(roomId, message),
+    });
     controllers.set(session, controller);
   }
   return controller;
@@ -69,6 +73,8 @@ export class ChatController {
   readonly #listeners = new Set<() => void>();
   readonly #now: () => number;
   readonly #randomId: () => string;
+  readonly #sendChat: CollabApi["sendChat"] | undefined;
+  #atBottom = true;
   /** Ids of messages the local user has had a chance to see. */
   #seen = new Set<string>();
   #visible = false;
@@ -78,6 +84,7 @@ export class ChatController {
 
   constructor(session: CollabSession, options: ChatControllerOptions = {}) {
     this.#session = session;
+    this.#sendChat = options.sendChat;
     this.#chat = sharedTypes(session.doc).chat;
     this.#now = options.now ?? Date.now;
     this.#randomId = options.randomId ?? (() => crypto.randomUUID());
@@ -106,19 +113,25 @@ export class ChatController {
     if (visible) this.markRead();
   }
 
+  setAtBottom(atBottom: boolean): void {
+    this.#atBottom = atBottom;
+    if (atBottom && this.#visible) this.markRead();
+  }
+
   markRead(): void {
+    if (!this.#atBottom || !this.#visible) return;
     for (const message of this.#snapshot.messages) this.#seen.add(message.id);
     this.#refresh(true);
   }
 
-  send(text: string): ChatSendResult {
+  async send(text: string, id = this.#randomId()): Promise<ChatSendResult> {
     if (this.#disposed || !this.#snapshot.canSend) return { ok: false, reason: "read-only" };
     const trimmed = text.trim();
     if (!trimmed) return { ok: false, reason: "empty" };
     if (trimmed.length > COLLAB_LIMITS.chatMessageLength) return { ok: false, reason: "too-long" };
     const { participantId, name } = this.#session.connection;
     const result = chatMessageSchema.safeParse({
-      id: this.#randomId(),
+      id,
       participantId,
       name,
       text: trimmed,
@@ -126,6 +139,20 @@ export class ChatController {
     });
     if (!result.success) return { ok: false, reason: "invalid" };
     const message = result.data;
+    if (this.#sendChat) {
+      try {
+        const response = await this.#sendChat(this.#session.connection.roomId, {
+          id,
+          text: trimmed,
+        });
+        if (!response.ok) return { ok: false, reason: "network" };
+        this.#seen.add(response.value.id);
+        return { ok: true, message: response.value };
+      } catch {
+        return { ok: false, reason: "network" };
+      }
+    }
+    // Explicit in-memory transport used by linked-session tests and old peers.
     this.#seen.add(message.id);
     this.#chat.push([message]);
     return { ok: true, message };
@@ -152,7 +179,7 @@ export class ChatController {
    */
   #trim(): void {
     const session = this.#session.getSnapshot();
-    if (session.role !== "host" || session.status === "closed") return;
+    if (this.#sendChat || session.role !== "host" || session.status !== "connected") return;
     const excess = this.#chat.length - COLLAB_LIMITS.chatMessages;
     if (this.#chat.length <= COLLAB_LIMITS.chatMessages + CHAT_TRIM_SLACK) return;
     this.#chat.delete(0, excess);
@@ -173,11 +200,15 @@ export class ChatController {
     const seen = new Set<string>();
     let unread = 0;
     for (const message of messages) {
-      if (this.#seen.has(message.id) || this.#visible || !session.synced) seen.add(message.id);
+      if (this.#seen.has(message.id) || (this.#visible && this.#atBottom) || !session.synced)
+        seen.add(message.id);
       else if (message.participantId !== this.#session.connection.participantId) unread++;
     }
     this.#seen = seen;
-    const canSend = canEdit(session.role) && session.status !== "closed";
+    const canSend =
+      (!!this.#sendChat || canEdit(session.role)) &&
+      session.status === "connected" &&
+      session.synced;
     const previous = this.#snapshot;
     const sameMessages =
       previous.messages.length === messages.length &&

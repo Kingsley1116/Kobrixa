@@ -82,7 +82,7 @@ export async function checkSharedComponents({ js, key, until, pause, mod, mutati
 
   // All three separators share keyboard, pointer, bounds and interruption handling.
   await js(
-    'smoke.settingsStore.set("deviceOpen",true);smoke.settingsStore.set("problemsOpen",true)',
+    'smoke.settingsStore.set("rightPanel","ev3");smoke.settingsStore.set("problemsOpen",true)',
   );
   await pause(100);
   for (const [name, increase, axis, sign, defaultValue] of [
@@ -132,7 +132,7 @@ export async function checkSharedComponents({ js, key, until, pause, mod, mutati
     await pause(80);
   }
   await js(
-    'smoke.settingsStore.set("deviceOpen",false);smoke.settingsStore.set("problemsOpen",false);ed.focus()',
+    'smoke.settingsStore.set("rightPanel",null);smoke.settingsStore.set("problemsOpen",false);ed.focus()',
   );
 
   // Labels and hints remain connected, and the extracted controls work by keyboard.

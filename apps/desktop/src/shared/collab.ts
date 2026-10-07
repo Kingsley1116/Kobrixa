@@ -4,6 +4,8 @@ import type {
   JoinRequest,
   Role,
   SetRoleRequest,
+  ChatMessage,
+  SendChatRequest,
 } from "@kobrixa/collab-protocol";
 import type { WorkspaceSummary } from "./api.js";
 
@@ -20,6 +22,7 @@ export interface CollabConnection {
   /** Only known to the host (and to guests who joined with it). */
   inviteCode?: string;
   expiresAt: number;
+  workspaceId?: string;
 }
 
 export interface CollabRecentRoom {
@@ -28,6 +31,7 @@ export interface CollabRecentRoom {
   inviteCode?: string;
   role: Role;
   joinedAt: number;
+  canResume?: boolean;
 }
 
 export interface CollabPreferences {
@@ -35,20 +39,36 @@ export interface CollabPreferences {
   recentRooms: CollabRecentRoom[];
 }
 
-export type CollabErrorCode = ErrorResponse["error"] | "network" | "unavailable";
+export type CollabErrorCode =
+  ErrorResponse["error"] | "network" | "unavailable" | "identity-missing";
 
 export type CollabResult<T> =
   { ok: true; value: T } | { ok: false; error: CollabErrorCode; message?: string };
 
+export interface CollabSharePreview {
+  shared: string[];
+  skipped: { path: string; reason: "format" | "size" | "total" | "count" }[];
+}
+
 export interface CollabApi {
+  previewProject(workspaceId: string): Promise<CollabSharePreview>;
   /** Resolved service origin (`KOBRIXA_COLLAB_URL` or the default). */
   serverUrl(): Promise<string>;
   getPreferences(): Promise<CollabPreferences>;
   setPreferences(patch: Partial<CollabPreferences>): Promise<CollabPreferences>;
   /** Host flow: creates a room on the service. */
-  createRoom(request: CreateRoomRequest): Promise<CollabResult<CollabConnection>>;
+  createRoom(
+    request: CreateRoomRequest,
+    workspaceId?: string,
+  ): Promise<CollabResult<CollabConnection>>;
   /** Guest flow: exchanges an invite code for a room token. */
   joinRoom(request: JoinRequest): Promise<CollabResult<CollabConnection>>;
+  resumeRoom(roomId: string): Promise<CollabResult<CollabConnection>>;
+  closeRoom(roomId: string): Promise<CollabResult<null>>;
+  sendChat(roomId: string, message: SendChatRequest): Promise<CollabResult<ChatMessage>>;
+  prepareProject(roomId: string, workspaceId?: string): Promise<WorkspaceSummary | null>;
+  checkpoint(roomId: string): Promise<void>;
+  saveCopy(roomId: string, reveal?: boolean): Promise<string>;
   /** Host-only room administration. */
   kick(roomId: string, participantId: string): Promise<CollabResult<null>>;
   setRole(roomId: string, request: SetRoleRequest): Promise<CollabResult<null>>;

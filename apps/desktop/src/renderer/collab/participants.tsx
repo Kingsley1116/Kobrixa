@@ -1,3 +1,4 @@
+import { ActionMenu } from "../components/action-menu.js";
 import { useState } from "react";
 import { Dialog, DialogActions } from "../components/dialog.js";
 import type { CollabApi, CollabErrorCode, CollabResult } from "../../shared/collab.js";
@@ -41,6 +42,9 @@ export function Participants({
     }
   };
 
+  const [showOffline, setShowOffline] = useState(false);
+  const offline = entries.filter((entry) => !entry.online);
+  const visible = [...entries.filter((entry) => entry.online), ...(showOffline ? offline : [])];
   const others = entries.filter((entry) => !entry.self);
   return (
     <section className="collab-section" aria-labelledby="collab-people-title">
@@ -51,7 +55,7 @@ export function Participants({
         </span>
       </div>
       <ul className="collab-participants" data-testid="collab-participants">
-        {entries.map((entry) => {
+        {visible.map((entry) => {
           const manageable = isHost && !entry.self && entry.role !== "host";
           const nextRole = entry.role === "viewer" ? "editor" : "viewer";
           const pending = busy?.participantId === entry.participantId;
@@ -83,8 +87,9 @@ export function Participants({
                 </span>
               </span>
               {manageable && (
-                <span className="collab-participant-actions">
+                <ActionMenu label={`${copy.people}: ${entry.name}`}>
                   <button
+                    role="menuitem"
                     type="button"
                     disabled={Boolean(busy)}
                     aria-busy={pending && busy?.action === "role"}
@@ -99,6 +104,7 @@ export function Participants({
                     {nextRole === "viewer" ? copy.makeViewer : copy.makeEditor}
                   </button>
                   <button
+                    role="menuitem"
                     type="button"
                     className="danger"
                     disabled={Boolean(busy)}
@@ -109,12 +115,17 @@ export function Participants({
                   >
                     {copy.remove}
                   </button>
-                </span>
+                </ActionMenu>
               )}
             </li>
           );
         })}
       </ul>
+      {offline.length > 0 && (
+        <button aria-expanded={showOffline} onClick={() => setShowOffline((value) => !value)}>
+          {showOffline ? "▾" : "▸"} {copy.offline} ({offline.length})
+        </button>
+      )}
       {others.length === 0 && <p className="collab-muted">{copy.noParticipants}</p>}
       {error && (
         <p className="collab-error" role="alert">

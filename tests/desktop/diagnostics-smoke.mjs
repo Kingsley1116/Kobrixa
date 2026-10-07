@@ -267,7 +267,7 @@ export async function checkDiagnostics({
 
   win.setSize(980, 650);
   await js(
-    "smoke.settingsStore.set('uiScale',125);smoke.settingsStore.set('problemsHeight',320);smoke.settingsStore.set('deviceOpen',false)",
+    "smoke.settingsStore.set('uiScale',125);smoke.settingsStore.set('problemsHeight',320);smoke.settingsStore.set('rightPanel',null)",
   );
   await until("window.outerWidth===980 && window.outerHeight===650");
   for (const locale of ["en", "zh-TW"])

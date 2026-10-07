@@ -22,7 +22,8 @@ export type CollabStatus =
   /** Terminal state; see `closeReason`. */
   | "closed";
 
-export type CollabCloseReason = "left" | "kicked" | "room-closed" | "unauthorized" | "error";
+export type CollabCloseReason =
+  "left" | "kicked" | "session-replaced" | "room-closed" | "unauthorized" | "error";
 
 export type CollabParticipant = Extract<Notice, { type: "participants" }>["participants"][number];
 
@@ -52,6 +53,9 @@ export interface CollabSession {
   subscribe(listener: () => void): () => void;
   getSnapshot(): CollabSessionSnapshot;
   connect(): void;
+  /** Waits for local document updates to be accepted by the server. */
+  flush?(): Promise<void>;
+  hasPendingUpdates?(): boolean;
   /** Leaves the room; status becomes `closed` with reason `left`. */
   disconnect(): void;
   /** Disconnects and releases the doc and awareness. */
