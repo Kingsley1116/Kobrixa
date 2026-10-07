@@ -291,6 +291,10 @@ export class CollabRoom extends DurableObject<CollabEnv> {
       this.closeSocket(ws, 1003, "binary frames only");
       return;
     }
+    if (message.byteLength > COLLAB_LIMITS.documentBytes) {
+      this.closeSocket(ws, CLOSE_CODE.protocolMismatch, "frame too large");
+      return;
+    }
     const attachment = this.attachment(ws);
     const participant = attachment ? this.store.participant(attachment.participantId) : null;
     if (!attachment || !participant || participant.revoked) {

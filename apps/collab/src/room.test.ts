@@ -660,6 +660,43 @@ describe("CollabRoom authorization and lifecycle", () => {
     restored.close();
   });
 
+  test("syncs the 8 MiB room budget and rejects a ninth 1 MiB file", async () => {
+    await initRoom("budget");
+    const host = await Client.connect("budget", HOST, "host");
+    const verifier = await Client.connect("budget", HOST, "host");
+    const source = "x".repeat(COLLAB_LIMITS.fileBytes);
+    host.doc.transact(() => {
+      for (let i = 0; i < 8; i++)
+        host.doc.getMap(DOC_KEYS.files).set(`file-${i}.bp`, new Y.Text(source));
+    });
+    await waitFor(
+      () => verifier.doc.getMap(DOC_KEYS.files).size === 8,
+      "eight MiB synchronized",
+      10_000,
+    );
+    expect(verifier.closeCode).toBeNull();
+    const restored = await Client.connect("budget", HOST, "host");
+    expect(restored.doc.getMap<Y.Text>(DOC_KEYS.files).get("file-7.bp")?.length).toBe(
+      COLLAB_LIMITS.fileBytes,
+    );
+    host.doc.getMap(DOC_KEYS.files).set("ninth.bp", new Y.Text(source));
+    await waitFor(() => host.closeCode !== null, "over-budget document rejected");
+    expect(host.closeCode).toBe(CLOSE_CODE.unauthorized);
+    expect(verifier.doc.getMap(DOC_KEYS.files).has("ninth.bp")).toBe(false);
+    host.close();
+    verifier.close();
+    restored.close();
+  }, 20_000);
+
+  test("rejects oversized frames before decoding and without an endless reconnect code", async () => {
+    await initRoom("large-frame");
+    const host = await Client.connect("large-frame", HOST, "host");
+    host.send(new Uint8Array(COLLAB_LIMITS.documentBytes + 1));
+    await waitFor(() => host.closeCode !== null, "over-sized frame rejected");
+    expect(host.closeCode).toBe(CLOSE_CODE.protocolMismatch);
+    host.close();
+  });
+
   test("deletes an idle room and cancels cleanup when a socket connects", async () => {
     const before = Date.now();
     await initRoom("idle");

@@ -119,6 +119,27 @@ describe("room update validation", () => {
     expect(() => validate(host)).toThrow("too many files");
   });
 
+  test("accepts eight 1 MiB files and rejects a ninth by UTF-8 aggregate budget", () => {
+    const { client, validate } = fixture();
+    const files = client.getMap(DOC_KEYS.files);
+    for (let i = 0; i < 8; i++)
+      files.set(`file-${i}.bp`, new Y.Text("x".repeat(COLLAB_LIMITS.fileBytes)));
+    expect(validate(host)).toEqual({});
+    files.set("overflow.bp", new Y.Text("x".repeat(COLLAB_LIMITS.fileBytes)));
+    expect(() => validate(host)).toThrow("room source budget exceeded");
+    files.delete("overflow.bp");
+    files.get("file-0.bp").delete(0, 1);
+    files.set("overflow.bp", new Y.Text("漢"));
+    expect(() => validate(host)).toThrow("room source budget exceeded");
+  });
+
+  test("rejects oversized encoded updates before decoding malformed input", () => {
+    const { server } = fixture();
+    expect(() =>
+      validateUpdate(server, new Uint8Array(COLLAB_LIMITS.documentBytes + 1), guest, participants),
+    ).toThrow("document update too large");
+  });
+
   test("rejects incomplete updates instead of queuing a forged change for a later actor", () => {
     const { server, client } = fixture();
     const updates: Uint8Array[] = [];

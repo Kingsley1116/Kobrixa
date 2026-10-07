@@ -41,6 +41,10 @@ export const COLLAB_LIMITS = {
   participants: 16,
   files: 200,
   fileBytes: 1024 * 1024,
+  /** Combined UTF-8 text size; stays below the room runtime's memory budget. */
+  roomFileBytes: 8 * 1024 * 1024,
+  /** Encoded document and individual WebSocket frame resource guard. */
+  documentBytes: 16 * 1024 * 1024,
   chatMessages: 500,
   chatMessageLength: 2000,
   displayNameLength: 40,
