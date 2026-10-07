@@ -159,13 +159,13 @@ describe("room update validation", () => {
     expect(validate()).toEqual({});
   });
 
-  test("rejects guest grants, forged requests, and even host grants to viewers", () => {
+  test("rejects guest grants and viewer holders, and ignores forged requests", () => {
     const grant = fixture();
     grant.client.getMap(DOC_KEYS.control).set("holder", guest.participantId);
     expect(() => grant.validate()).toThrow("host-only grant");
     const request = fixture();
     request.client.getMap(DOC_KEYS.control).set("requests", [host.participantId]);
-    expect(() => request.validate()).toThrow("cannot request for another participant");
+    expect(request.validate()).toEqual({ requests: [] });
     const invalid = fixture();
     invalid.client.getMap(DOC_KEYS.control).set("holder", viewer.participantId);
     expect(() => invalid.validate(host)).toThrow("invalid controller");
