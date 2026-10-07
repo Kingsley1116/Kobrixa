@@ -18,6 +18,11 @@ const server = await createServer({
       name: "smoke-app-render-counter",
       enforce: "pre",
       transform(code, id) {
+        // Exercise the internal simulator covered by this suite even while its
+        // release feature flag keeps the production toolbar entry hidden.
+        if (id === path.join(root, "apps/desktop/src/shared/features.ts")) {
+          return code.replace("SIMULATOR_ENABLED = false", "SIMULATOR_ENABLED = true");
+        }
         if (id === path.join(root, "apps/desktop/src/renderer/editor/completion-session.ts")) {
           return code.replace(
             "for (const listener of this.listeners) listener();",

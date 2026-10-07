@@ -19,6 +19,7 @@ export function Toolbar({
   projectLocked = locked,
   canSave,
   deviceLocked,
+  deviceControlNotice,
   motorTesting = false,
   state,
   onNew,
@@ -44,6 +45,8 @@ export function Toolbar({
   projectLocked?: boolean;
   canSave: boolean;
   deviceLocked: boolean;
+  /** Set while another collaborator holds EV3 control; disables writes but not Stop. */
+  deviceControlNotice?: string | undefined;
   motorTesting?: boolean;
   state: ExecutionState;
   onNew(): void;
@@ -61,6 +64,7 @@ export function Toolbar({
 }): React.JSX.Element {
   const hint = (label: string, command: AppCommand) =>
     [label, shortcutHint(command)].filter(Boolean).join(" · ");
+  const controlBlocked = Boolean(deviceControlNotice);
   return (
     <header className="topbar">
       <div className="brand">
@@ -118,8 +122,8 @@ export function Toolbar({
             )}
             <button
               className="primary run-button"
-              disabled={deviceLocked || Boolean(state.recovery)}
-              title={hint(t.runOnDevice, "run")}
+              disabled={deviceLocked || controlBlocked || Boolean(state.recovery)}
+              title={deviceControlNotice ?? hint(t.runOnDevice, "run")}
               onClick={onRun}
             >
               <Icon name="play" />
@@ -159,14 +163,18 @@ export function Toolbar({
               </button>
               <button
                 role="menuitem"
-                disabled={deviceLocked || !state.session || !state.successfulBuild}
+                disabled={
+                  deviceLocked || controlBlocked || !state.session || !state.successfulBuild
+                }
+                title={deviceControlNotice}
                 onClick={onUpload}
               >
                 {t.uploadLatest}
               </button>
               <button
                 role="menuitem"
-                disabled={deviceLocked || !state.deployed}
+                disabled={deviceLocked || controlBlocked || !state.deployed}
+                title={deviceControlNotice}
                 onClick={onRunUploaded}
               >
                 {t.runUploaded}
@@ -174,7 +182,8 @@ export function Toolbar({
               <button
                 role="menuitem"
                 className="danger"
-                disabled={deviceLocked || !state.deployed}
+                disabled={deviceLocked || controlBlocked || !state.deployed}
+                title={deviceControlNotice}
                 onClick={onDelete}
               >
                 {t.deleteUploaded}

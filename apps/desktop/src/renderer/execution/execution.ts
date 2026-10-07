@@ -10,6 +10,9 @@ import type { MotorTestState } from "../../shared/motor-test.js";
 import { deploymentPath } from "./build-path.js";
 import type { OfflinePreviewProgram } from "../../shared/offline-preview.js";
 
+/** Matches the main process rejection for collaborators without device control. */
+export const DEVICE_CONTROL_DENIED = "Device control is held by another collaborator.";
+
 export type Phase =
   | "idle"
   | "awaitingDevice"
@@ -110,6 +113,7 @@ export class ExecutionController {
   private deviceWork = false;
   private pendingRun: ExecutionRequest | undefined;
   private waitingBuild: WaitingBuild | undefined;
+  private controlBlocked = false;
 
   constructor(private api: KobrixaApi) {}
   getSnapshot = (): ExecutionState => this.snapshot;
@@ -214,6 +218,19 @@ export class ExecutionController {
       });
     }
   }
+  /**
+   * True while in a collaboration room where another participant holds EV3
+   * control. Uploads, runs, deletes and mode changes are refused; stop is not.
+   */
+  get deviceControlBlocked(): boolean {
+    return this.controlBlocked;
+  }
+  setDeviceControlBlocked(blocked: boolean): void {
+    if (this.controlBlocked === blocked) return;
+    this.controlBlocked = blocked;
+    if (blocked && this.pendingRun) this.cancelWaiting();
+    else this.publish();
+  }
   get locked(): boolean {
     return this.editingLocked || Boolean(this.state.fileBusy || this.state.monitorBusy);
   }
@@ -249,6 +266,7 @@ export class ExecutionController {
   }
   /** Mode changes reserve device actions without treating samples as activity. */
   async withMonitor<T>(work: () => Promise<T>): Promise<T> {
+    if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
     if (this.locked || this.state.recovery)
       throw new Error("Another EV3 operation is in progress.");
     this.update({ monitorBusy: true });
@@ -492,6 +510,7 @@ export class ExecutionController {
   }
   async run(request: ExecutionRequest): Promise<void> {
     if (this.locked || this.state.recovery || request.workspaceId !== this.workspaceId) return;
+    if (this.controlBlocked) return;
     if (!this.state.session) {
       this.pendingRun = request;
       this.operationWorkspaceId = request.workspaceId;
@@ -591,6 +610,7 @@ export class ExecutionController {
   private async deploy(version: BuildVersion, generation: number): Promise<void> {
     const session = this.state.session;
     if (!session) throw new Error("EV3 disconnected.");
+    if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
     this.phase("uploading");
     this.update({ deployed: undefined, connectionNotice: undefined });
     await this.api.device.deploy(
@@ -611,6 +631,7 @@ export class ExecutionController {
       deployed.workspaceId !== this.operationWorkspaceId
     )
       throw new Error("Upload a program to this EV3 first.");
+    if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
     this.phase("running");
     await this.api.device.run(session.id, deployed.path);
     this.assertCurrent(generation);
@@ -618,12 +639,23 @@ export class ExecutionController {
   }
   async upload(): Promise<void> {
     const version = this.snapshot.successfulBuild;
-    if (this.locked || !version || version.workspaceId !== this.workspaceId || !this.state.session)
+    if (
+      this.locked ||
+      this.controlBlocked ||
+      !version ||
+      version.workspaceId !== this.workspaceId ||
+      !this.state.session
+    )
       return;
     await this.perform((generation) => this.deploy(version, generation), this.workspaceId, true);
   }
   async runDeployed(): Promise<void> {
-    if (this.locked || !this.state.deployed || this.state.deployed.workspaceId !== this.workspaceId)
+    if (
+      this.locked ||
+      this.controlBlocked ||
+      !this.state.deployed ||
+      this.state.deployed.workspaceId !== this.workspaceId
+    )
       return;
     await this.perform((generation) => this.runVersion(generation), this.workspaceId, true);
   }
@@ -643,7 +675,14 @@ export class ExecutionController {
   }
   async deleteDeployed(): Promise<void> {
     const { session, deployed } = this.state;
-    if (this.locked || !session || !deployed || deployed.workspaceId !== this.workspaceId) return;
+    if (
+      this.locked ||
+      this.controlBlocked ||
+      !session ||
+      !deployed ||
+      deployed.workspaceId !== this.workspaceId
+    )
+      return;
     await this.perform(
       async (generation) => {
         this.phase("deleting");
