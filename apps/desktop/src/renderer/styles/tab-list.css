@@ -43,3 +43,16 @@
   transform: translateX(calc(var(--tab-index) * 100%));
   transition: transform var(--motion-normal) var(--motion-ease);
 }
+.tab-list-badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-inline-start: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  color: var(--on-accent);
+  background: var(--primary);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

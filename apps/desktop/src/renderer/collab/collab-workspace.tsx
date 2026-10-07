@@ -4,7 +4,7 @@ import type { Locale } from "../i18n/copy.js";
 import type { CollabApi } from "../../shared/collab.js";
 import type { CollabStore } from "./store.js";
 import { CollabPanel } from "./collab-panel.js";
-import { ChatPanel } from "./chat-panel.js";
+import { ChatPanel, useChatController } from "./chat-panel.js";
 
 type CollabView = "people" | "chat";
 
@@ -22,6 +22,11 @@ export function CollabWorkspace({
   const session = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const [view, setView] = useState<CollabView>("people");
   const current: CollabView = session ? view : "people";
+  const chat = useChatController(session);
+  const unread = useSyncExternalStore(
+    chat?.subscribe ?? noSubscribe,
+    () => chat?.getSnapshot().unread ?? 0,
+  );
   return (
     <div className="collab-workspace">
       {session && (
@@ -36,6 +41,7 @@ export function CollabWorkspace({
             id: `collab-view-${value}`,
             panelId: `collab-page-${value}`,
             label: value === "people" ? (zh ? "成員" : "People") : zh ? "聊天" : "Chat",
+            ...(value === "chat" && current !== "chat" && unread > 0 ? { badge: unread } : {}),
           }))}
         />
       )}
@@ -60,3 +66,5 @@ export function CollabWorkspace({
     </div>
   );
 }
+
+const noSubscribe = (): (() => void) => () => {};
