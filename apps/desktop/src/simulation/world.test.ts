@@ -1,4 +1,5 @@
 import { BasicPlusFrontend } from "@kobrixa/basic-plus";
+import { setImmediate as yieldToRunner } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type {
   OpponentLevel,
@@ -723,8 +724,11 @@ describe("builtin opponent", () => {
 
   it.each(["easy", "standard", "hard"] as const)(
     "keeps four %s robots out of the opponent half and red ramp bands for a whole match",
-    (level) => {
+    async (level) => {
       for (const seed of [2026, 7919]) {
+        // Full matches are CPU-bound. Let pending test-runner RPC replies arrive
+        // between seeds instead of starving them across consecutive CI matches.
+        await yieldToRunner();
         const simulation = new SimulationWorld(opponents(seed, { A: level, B: level }));
         expect(play(simulation)).toEqual([]);
         expect(simulation.status).toBe("completed");
@@ -737,7 +741,7 @@ describe("builtin opponent", () => {
     60_000,
   );
 
-  it("keeps advanced levels ahead of easy, allowing hard/standard draws with the same hardware", () => {
+  it("keeps advanced levels ahead of easy, allowing hard/standard draws with the same hardware", async () => {
     for (const [strong, weak] of [
       ["hard", "easy"],
       ["standard", "easy"],
@@ -745,6 +749,7 @@ describe("builtin opponent", () => {
     ] as const) {
       let margin = 0;
       for (const seed of [11, 2026, 7919, 31337]) {
+        await yieldToRunner();
         const simulation = new SimulationWorld(opponents(seed, { A: strong, B: weak }));
         play(simulation);
         margin += simulation.snapshot().score.B - simulation.snapshot().score.A;
