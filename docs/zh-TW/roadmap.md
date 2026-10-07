@@ -30,7 +30,7 @@
 - 擴充 `.bp` 相容案例與 EV3 API 覆蓋。
 - 改進補全、格式化、效能、無障礙、本地化與復原體驗。
 - 在相同 compiler 與 device package 上加入 headless Node.js `kobrixa` CLI。
-- 雲端協作（開發中）：透過 Kobrixa 營運的服務，以邀請碼開啟房間，即時共同編輯、共享檔案樹、聊天，並由單一持有者控制 EV3。詳見[雲端協作](../zh-TW/collaboration.md)。
+- 雲端協作（candidate.12 已納入）：透過 Kobrixa 營運的服務，以邀請碼開啟房間，即時共同編輯、共享檔案樹、聊天，並由單一持有者控制 EV3。詳見[雲端協作](../zh-TW/collaboration.md)。
 
 退出條件：編譯器和設備 API 足夠穩定，可讓 CLI 與桌面程式獨立發布。
 

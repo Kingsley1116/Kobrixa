@@ -1,6 +1,6 @@
 # Cloud collaboration
 
-> **Release candidate.** Cloud collaboration is implemented on the candidate branch and is not part of a published desktop release yet. The default service at `https://collab.kobrixa.com` is deployed and available for this candidate.
+> **Release candidate.** Cloud collaboration is included starting with `v0.1.0-v1-candidate.12`. The default service at `https://collab.kobrixa.com` is deployed and available for this candidate.
 
 Several people can edit one Kobrixa project at the same time through a Kobrixa-operated collaboration service. No account is needed: the host starts a room and shares an invite code, and guests join with that code and the optional room password. Everyone sees the same files, cursors and chat; only one person at a time controls the EV3.
 
@@ -80,4 +80,4 @@ After deploying a service, run `pnpm test:collab:remote https://collab.kobrixa.c
 
 ## Acceptance status
 
-The candidate has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow, including optional room passwords, on 2026-10-08. Desktop release acceptance remains a separate step before this feature ships in a published app.
+The candidate has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow, including optional room passwords, on 2026-10-08. Windows x64, Linux x64 and macOS Apple Silicon builds pass automated packaged-application checks. Physical EV3 acceptance remains separate; it is not completed by these collaboration tests.
