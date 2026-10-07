@@ -12,6 +12,9 @@ const require = createRequire(import.meta.url);
 const server = await createServer({
   root: path.join(root, "apps/desktop"),
   configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+  // The worker discovers physics lazily; optimize it before opening the UI so
+  // Vite cannot reload the workbench halfway through the simulator assertions.
+  optimizeDeps: { include: ["planck"] },
   // Count real App renders without adding instrumentation to the shipped renderer.
   plugins: [
     {
