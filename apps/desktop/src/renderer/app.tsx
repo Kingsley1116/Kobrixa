@@ -94,6 +94,7 @@ import { canEdit } from "./collab/types.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
 import { CollabStatusChip } from "./collab/status-chip.js";
+import { DeviceControlBar, blockedNotice, useDeviceControl } from "./collab/device-control-bar.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -287,6 +288,12 @@ export function App(): React.JSX.Element {
       fileSyncPhase !== "syncing" ||
       (collabRole !== undefined && !canEdit(collabRole)));
   const locked = executionLocked || collabReadOnly;
+  const deviceControl = useDeviceControl(collab, window.kobrixa.collab);
+  const controlNotice = blockedNotice(locale, deviceControl);
+  useEffect(
+    () => controller.setDeviceControlBlocked(Boolean(controlNotice)),
+    [controller, controlNotice],
+  );
   useEffect(() => {
     void sensorLab.initialize();
     void motorTest.initialize();
@@ -2460,7 +2467,7 @@ export function App(): React.JSX.Element {
         if (SIMULATOR_ENABLED) void requestPreview();
         break;
       case "run":
-        requestExecution(true);
+        if (!controller.deviceControlBlocked) requestExecution(true);
         break;
       case "stop":
         if (execution.session && !controller.locked) void controller.stop();
@@ -2752,6 +2759,7 @@ export function App(): React.JSX.Element {
               shortcut={keyboard.hint("settings")}
             />
           }
+          deviceControlNotice={controlNotice}
           deviceLocked={
             updatePreparing ||
             controller.locked ||
@@ -3354,34 +3362,44 @@ export function App(): React.JSX.Element {
                     sessionId={execution.session?.id}
                     active={deviceOpen && toolTab === "monitor" && !updatePreparing}
                     locked={updatePreparing || controller.locked}
+                    controlNotice={controlNotice}
                     onConnect={() => setToolTab("connection")}
                   />
                 }
                 connection={
-                  <DevicePanel
-                    t={t}
-                    locale={locale}
-                    state={execution}
-                    devices={devices}
-                    discovering={discovering}
-                    locked={updatePreparing || controller.locked || motorBusy}
-                    mode={connectionMode}
-                    onMode={(mode) => {
-                      setConnectionMode(mode);
-                      setSelectedDevice(undefined);
-                    }}
-                    selected={selectedDevice}
-                    onSelect={setSelectedDevice}
-                    address={wifiAddress}
-                    onAddress={(address) => {
-                      setWifiAddress(address);
-                      setSelectedDevice(undefined);
-                    }}
-                    onDiscover={() => void discover()}
-                    onConnect={connect}
-                    onDisconnect={() => void controller.disconnect()}
-                    onCancel={() => controller.cancelWaiting()}
-                  />
+                  <>
+                    {deviceControl && (
+                      <DeviceControlBar
+                        control={deviceControl.control}
+                        state={deviceControl.state}
+                        locale={locale}
+                      />
+                    )}
+                    <DevicePanel
+                      t={t}
+                      locale={locale}
+                      state={execution}
+                      devices={devices}
+                      discovering={discovering}
+                      locked={updatePreparing || controller.locked || motorBusy}
+                      mode={connectionMode}
+                      onMode={(mode) => {
+                        setConnectionMode(mode);
+                        setSelectedDevice(undefined);
+                      }}
+                      selected={selectedDevice}
+                      onSelect={setSelectedDevice}
+                      address={wifiAddress}
+                      onAddress={(address) => {
+                        setWifiAddress(address);
+                        setSelectedDevice(undefined);
+                      }}
+                      onDiscover={() => void discover()}
+                      onConnect={connect}
+                      onDisconnect={() => void controller.disconnect()}
+                      onCancel={() => controller.cancelWaiting()}
+                    />
+                  </>
                 }
                 files={
                   <RemoteFilesPanel
@@ -3390,6 +3408,7 @@ export function App(): React.JSX.Element {
                     active={toolTab === "files"}
                     locale={locale}
                     locked={updatePreparing || controller.locked || motorBusy}
+                    controlNotice={controlNotice}
                     deployedPath={execution.deployed?.path}
                     onConnect={() => setToolTab("connection")}
                   />

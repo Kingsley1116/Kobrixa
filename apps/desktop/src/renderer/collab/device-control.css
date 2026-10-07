@@ -1,0 +1,48 @@
+.device-control-bar {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.device-control-holder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.device-control-holder .status-dot.is-holder {
+  background: var(--accent);
+}
+
+.device-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.device-control-actions:empty {
+  display: none;
+}
+
+.device-control-requests {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-control-requests li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

@@ -25,6 +25,7 @@ import type { SensorLabService } from "./sensor-lab/service.js";
 import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
 import { exportSensorCsv } from "./sensor-lab-export.js";
 import { registerCollabMirrorIpc } from "./collab/mirror.js";
+import { DeviceControlGate, registerDeviceControlIpc } from "./collab/device-control.js";
 
 const id = z.string().uuid();
 const inputPort = z.number().int().min(0).max(3);
@@ -95,12 +96,14 @@ export function registerIpc(
       throw new Error("Rejected IPC from an untrusted sender.");
     }
   };
+  const deviceControl = new DeviceControlGate();
   const handle: IpcHandle = <T extends unknown[], R>(
     channel: string,
     action: (event: IpcMainInvokeEvent, ...args: T) => R,
   ): void => {
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
+      deviceControl.assert(event.sender.id, channel, args);
       if (/^(workspace|device|build|simulator|sensor-lab):/.test(channel))
         return operationGate.run(channel, () => action(event, ...args));
       return action(event, ...args);
@@ -108,6 +111,11 @@ export function registerIpc(
   };
 
   for (const register of modules) register(handle);
+  registerDeviceControlIpc(
+    handle,
+    deviceControl,
+    () => sensorTools?.motors?.flush() ?? Promise.resolve(),
+  );
   handle("updates:state", () => updates.getState());
   handle("simulator:cancel", (_event, workspaceId: unknown) =>
     builds.cancelSimulation(id.parse(workspaceId)),
@@ -410,7 +418,7 @@ export function registerIpc(
     ),
   );
   const batchRef = z.object({ sessionId: id, requestId: id, planId: id });
-  handle("device:files-prepare", (event, request: unknown) => {
+  handle("device:files-prepare", async (event, request: unknown) => {
     const parsed = z
       .object({
         sessionId: id,
@@ -422,7 +430,9 @@ export function registerIpc(
         locale: z.enum(["en", "zh-TW"]),
       })
       .parse(request);
-    return devices.prepareFiles(parsed, event.sender);
+    const snapshot = await devices.prepareFiles(parsed, event.sender);
+    deviceControl.rememberBatch(event.sender, snapshot);
+    return snapshot;
   });
   handle("device:files-execute", (event, ref: unknown, policy: unknown) =>
     devices.executeFiles(

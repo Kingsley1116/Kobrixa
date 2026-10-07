@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuildEvent, CompileResult, DeviceEvent, KobrixaApi } from "../../shared/api.js";
 import type { MotorTestState } from "../../shared/motor-test.js";
-import { ExecutionController, filesToSave } from "./execution.js";
+import { DEVICE_CONTROL_DENIED, ExecutionController, filesToSave } from "./execution.js";
 import { readTheme } from "../settings/theme.js";
 
 const success: CompileResult = {
@@ -233,6 +233,37 @@ describe("execution flow", () => {
       }),
     ).rejects.toThrow("mode failed");
     expect(h.controller.locked).toBe(false);
+  });
+  it("refuses device writes without collaboration device control but still stops", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    await h.controller.build(h.request);
+    await h.controller.upload();
+    h.controller.setDeviceControlBlocked(true);
+    expect(h.controller.deviceControlBlocked).toBe(true);
+    h.api.device.deploy.mockClear();
+    h.api.device.run.mockClear();
+    await h.controller.run(h.request);
+    await h.controller.upload();
+    await h.controller.runDeployed();
+    await h.controller.deleteDeployed();
+    await expect(h.controller.withMonitor(async () => {})).rejects.toThrow(DEVICE_CONTROL_DENIED);
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.api.device.delete).not.toHaveBeenCalled();
+    await h.controller.stop();
+    expect(h.api.device.stop).toHaveBeenCalledWith("s1");
+    h.controller.setDeviceControlBlocked(false);
+    await h.controller.runDeployed();
+    expect(h.api.device.run).toHaveBeenCalled();
+  });
+  it("drops a waiting run when device control is lost", async () => {
+    const h = setup();
+    await h.controller.run(h.request);
+    expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
+    h.controller.setDeviceControlBlocked(true);
+    await h.controller.connect(usb);
+    expect(h.calls).toEqual([]);
   });
   it("saves, builds, deploys assets, then runs the actual artifact path", async () => {
     const h = setup();

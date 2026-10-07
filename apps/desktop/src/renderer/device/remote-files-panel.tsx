@@ -19,6 +19,7 @@ import { selectVisible } from "../components/selection.js";
 function RemoteNavigation({
   path,
   busy,
+  writeBlocked,
   t,
   navigate,
   upload,
@@ -26,6 +27,8 @@ function RemoteNavigation({
 }: {
   path: string;
   busy: boolean;
+  /** Reason write actions are unavailable (collaboration device control). */
+  writeBlocked: string | undefined;
   t: RemoteCopy;
   navigate(path: string): void;
   upload(source: "files" | "folders"): void;
@@ -100,18 +103,28 @@ function RemoteNavigation({
             </>
           }
         >
-          <button role="menuitem" disabled={busy} onClick={() => upload("files")}>
+          <button
+            role="menuitem"
+            disabled={busy || Boolean(writeBlocked)}
+            title={writeBlocked}
+            onClick={() => upload("files")}
+          >
             {t.uploadFiles}
           </button>
-          <button role="menuitem" disabled={busy} onClick={() => upload("folders")}>
+          <button
+            role="menuitem"
+            disabled={busy || Boolean(writeBlocked)}
+            title={writeBlocked}
+            onClick={() => upload("folders")}
+          >
             {t.uploadFolders}
           </button>
         </ActionMenu>
         <button
           className="remote-icon-button"
-          title={t.mkdir}
+          title={writeBlocked ?? t.mkdir}
           aria-label={t.mkdir}
-          disabled={busy}
+          disabled={busy || Boolean(writeBlocked)}
           onClick={create}
         >
           <Icon name="plus" />
@@ -435,6 +448,7 @@ export function RemoteFilesPanel({
   active,
   locale,
   locked,
+  controlNotice,
   deployedPath,
   onConnect,
 }: {
@@ -443,6 +457,8 @@ export function RemoteFilesPanel({
   active: boolean;
   locale: Locale;
   locked: boolean;
+  /** Set while another collaborator holds EV3 control: browsing only. */
+  controlNotice?: string | undefined;
   deployedPath: string | undefined;
   onConnect(): void;
 }): React.JSX.Element {
@@ -460,6 +476,7 @@ export function RemoteFilesPanel({
   const panel = useRef<HTMLDivElement>(null);
   const selectAll = useRef<HTMLInputElement>(null);
   const busy = state.busy || locked;
+  const writeBusy = busy || Boolean(controlNotice);
   const entries = visibleRemoteEntries(state.entries, query);
   const selectable = entries.filter((entry) => !protectedRemotePath(entry.path));
   const checkedCount = selectable.filter((entry) => selected.includes(entry.path)).length;
@@ -579,7 +596,7 @@ export function RemoteFilesPanel({
       className="remote-files"
       ref={panel}
       onKeyDown={(event) => {
-        if (!busy && !form && !confirm && event.key === "F2" && item) {
+        if (!writeBusy && !form && !confirm && event.key === "F2" && item) {
           event.preventDefault();
           openForm("rename", item);
         }
@@ -598,6 +615,7 @@ export function RemoteFilesPanel({
           <RemoteNavigation
             path={state.path}
             busy={busy}
+            writeBlocked={controlNotice}
             t={t}
             navigate={navigate}
             upload={(source) => start("upload", source)}
@@ -691,12 +709,17 @@ export function RemoteFilesPanel({
               <button disabled={busy || !selected.length} onClick={() => start("download")}>
                 {t.download}
               </button>
-              <button disabled={busy || !item} onClick={() => openForm("rename", item)}>
+              <button
+                disabled={writeBusy || !item}
+                title={controlNotice}
+                onClick={() => openForm("rename", item)}
+              >
                 {t.rename}
               </button>
               <button
                 className="danger"
-                disabled={busy || !selected.length}
+                title={controlNotice}
+                disabled={writeBusy || !selected.length}
                 onClick={() => start("delete")}
               >
                 {t.remove}
@@ -706,6 +729,7 @@ export function RemoteFilesPanel({
         </>
       )}
       <div className="remote-feedback">
+        {controlNotice && state.sessionId && <p className="monitor-hint">{controlNotice}</p>}
         {error && !form && (
           <RemoteError
             error={error}
