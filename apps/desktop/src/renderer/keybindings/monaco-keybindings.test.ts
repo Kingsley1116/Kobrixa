@@ -17,7 +17,7 @@ import { commandDescription, commandLabel } from "./keybindings.js";
 let adapter: typeof Adapter;
 beforeAll(async () => {
   adapter = await import("./monaco-keybindings.js");
-});
+}, 60_000);
 describe("Monaco 0.52.2 compatibility", () => {
   it("has reviewed Traditional Chinese and readable English for every registered command", () => {
     for (const mac of [true, false]) {

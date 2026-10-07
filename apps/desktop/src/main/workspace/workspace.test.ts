@@ -6,6 +6,7 @@ import {
   realpath,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -355,6 +356,9 @@ describe.sequential("workspace file management", () => {
     expect(first.changed).toBe(true);
     expect((await service.refresh(workspace.id, {})).changed).toBe(false);
     await writeFile(path.join(root, "src/lib/helper.bp"), "one");
+    // Model separate external edits without relying on sub-millisecond Windows timestamps.
+    const earlier = new Date("2020-01-01T00:00:00Z");
+    await utimes(path.join(root, "src/lib/helper.bp"), earlier, earlier);
     const added = await service.refresh(workspace.id, {});
     expect(added.changed).toBe(true);
     expect(added.workspace.files).toContain("src/lib/helper.bp");

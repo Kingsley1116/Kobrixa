@@ -1,6 +1,6 @@
 {
   "name": "@kobrixa/backend-ev3",
-  "version": "0.1.0-v1-candidate.10",
+  "version": "0.1.0-v1-candidate.11",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
