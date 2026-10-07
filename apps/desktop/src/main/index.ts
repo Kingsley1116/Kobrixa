@@ -22,6 +22,10 @@ import { MonitorService } from "./device/monitor-service.js";
 import { MotorTestService } from "./device/motor-test-service.js";
 import { SensorLabService } from "./sensor-lab/service.js";
 import { MainProcessCloseGuard } from "./window/main-close.js";
+import { rendererContentSecurityPolicy } from "./window/csp.js";
+import { resolveCollabServerUrl } from "./collab/server-url.js";
+import { createCollabService } from "./collab/runtime.js";
+import { registerCollabIpc } from "./collab/ipc.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -137,15 +141,16 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
 }
 
 void app.whenReady().then(async () => {
+  const collabServerUrl = resolveCollabServerUrl();
+  const contentSecurityPolicy = rendererContentSecurityPolicy(
+    collabServerUrl,
+    Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL),
+  );
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [
-          MAIN_WINDOW_VITE_DEV_SERVER_URL
-            ? "default-src 'self' 'unsafe-inline' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; worker-src 'self' blob:"
-            : "default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; connect-src 'none'",
-        ],
+        "Content-Security-Policy": [contentSecurityPolicy],
       },
     });
   });
@@ -273,6 +278,7 @@ void app.whenReady().then(async () => {
       }
     });
   });
+  const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
   const operationGate = new UpdateOperationGate(() => updates);
   updates = await createUpdateService(
     renderer,
@@ -294,6 +300,7 @@ void app.whenReady().then(async () => {
       rendererCanFlush = true;
     },
     { monitor, lab: sensorLab, motors },
+    [(handle) => registerCollabIpc(handle, collab)],
   );
   const flushDeviceWork = async () => {
     await motors.flush();

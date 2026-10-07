@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { findDocument } from "./docs-content.js";
 import { documentationIndex, searchDocumentation, searchExcerpt } from "./docs-search.js";
 
 describe("documentation search", () => {
@@ -21,6 +22,19 @@ describe("documentation search", () => {
     ).toBe(true);
     expect(searchDocumentation("SHA256SUMS nonexistent-kobrixa-term", "en")).toEqual([]);
     expect(searchDocumentation("   ", "en")).toEqual([]);
+  });
+  it("routes and indexes the bilingual collaboration guide", () => {
+    const guide = findDocument("collaboration");
+    expect(guide?.category).toBe("product");
+    expect(guide?.content.en).toContain("**Release candidate.**");
+    expect(guide?.content["zh-TW"]).toContain("**候選版本。**");
+    for (const locale of ["en", "zh-TW"] as const) {
+      expect(
+        searchDocumentation("KOBRIXA_COLLAB_URL", locale).some(
+          (entry) => entry.path === "/docs/reference/collaboration",
+        ),
+      ).toBe(true);
+    }
   });
   it("covers each documentation family with unique local links and short readable excerpts", () => {
     for (const locale of ["en", "zh-TW"] as const) {

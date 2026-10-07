@@ -196,6 +196,31 @@ export class WorkspaceService {
     return inputPath ? this.register(inputPath) : undefined;
   }
 
+  /** Opens an app-managed folder (e.g. a collaboration mirror) without a dialog. */
+  openDirectory(directory: string): Promise<WorkspaceSummary> {
+    return this.register(directory);
+  }
+
+  /** Forgets every open workspace whose root is `directory` or inside it. */
+  async closeWithin(directory: string): Promise<string[]> {
+    let parent: string;
+    try {
+      parent = projectPath(await realpath(directory));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const closed: string[] = [];
+    for (const record of [...this.#records.values()]) {
+      if (!containsPath(parent, projectPath(record.root))) continue;
+      // Wait for queued file operations before the folder disappears.
+      await this.#operations.get(record.root)?.catch(() => undefined);
+      this.#records.delete(record.id);
+      closed.push(record.id);
+    }
+    return closed;
+  }
+
   async create(name: string): Promise<WorkspaceSummary | undefined> {
     const safe = name
       .trim()
@@ -244,7 +269,9 @@ export class WorkspaceService {
   }
 
   readFile(id: string, file: string): Promise<WorkspaceFileSnapshot> {
-    return this.serial(id, async (record) => this.observe(record, file));
+    // Same-sized writes can share timestamps, especially on Windows. Explicit
+    // reads must verify the contents instead of trusting the metadata cache.
+    return this.serial(id, async (record) => this.observe(record, file, true));
   }
 
   async search(id: string, request: WorkspaceSearchRequest): Promise<WorkspaceSearchResult> {
@@ -263,7 +290,8 @@ export class WorkspaceService {
     return this.serial(id, async (record) => {
       const files: Record<string, WorkspaceFileSnapshot> = {};
       for (const [file, revision] of Object.entries(known)) {
-        const snapshot = await this.observe(record, file);
+        // Known/open files need the same content check as an explicit read.
+        const snapshot = await this.observe(record, file, true);
         if (snapshot.revision !== revision) files[file] = snapshot;
       }
       const workspace = await this.summary(record);

@@ -90,6 +90,9 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm check:desktop
       - run: pnpm build:core
+      - name: Check collaboration service and real two-client sync
+        if: runner.os == 'Linux'
+        run: pnpm check:collab && pnpm test:collab:live
       - run: pnpm test:desktop
       - run: pnpm build:desktop
       - name: Smoke test the packaged application

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { TabList } from "../components/tab-list.js";
 import type { Locale, Copy } from "../i18n/copy.js";
 import type { ExecutionState } from "../execution/execution.js";
-export type ToolTab = "connection" | "monitor" | "files" | "activity";
+export type ToolTab = "connection" | "monitor" | "files" | "activity" | "collab";
 const labels = {
   en: {
     tools: "EV3 tools",
@@ -10,6 +10,7 @@ const labels = {
     monitor: "Monitor",
     files: "EV3 files",
     activity: "Activity",
+    collab: "Collaborate",
     close: "Close tools",
   },
   "zh-TW": {
@@ -18,6 +19,7 @@ const labels = {
     monitor: "監測",
     files: "EV3 檔案",
     activity: "操作紀錄",
+    collab: "協作",
     close: "關閉工具面板",
   },
 };
@@ -30,6 +32,7 @@ export function ToolsPanel({
   monitor,
   files,
   activity,
+  collab,
 }: {
   tab: ToolTab;
   onTab(tab: ToolTab): void;
@@ -39,9 +42,10 @@ export function ToolsPanel({
   monitor: ReactNode;
   files: ReactNode;
   activity: ReactNode;
+  collab: ReactNode;
 }): React.JSX.Element {
   const t = labels[locale],
-    tabs: ToolTab[] = ["connection", "monitor", "files", "activity"];
+    tabs: ToolTab[] = ["connection", "monitor", "files", "activity", "collab"];
   return (
     <>
       <div className="tools-heading">
@@ -78,7 +82,9 @@ export function ToolsPanel({
               ? monitor
               : value === "files"
                 ? files
-                : activity}
+                : value === "activity"
+                  ? activity
+                  : collab}
         </div>
       ))}
     </>

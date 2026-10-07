@@ -3,7 +3,7 @@ import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
-import { ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { documentationUrl } from "./window/documentation.js";
 import { quickFixRequestIdSchema, quickFixRequestSchema } from "./language/quick-fix-request.js";
 import { isIP } from "node:net";
@@ -24,6 +24,8 @@ import type { MotorTestRequest } from "../shared/motor-test.js";
 import type { SensorLabService } from "./sensor-lab/service.js";
 import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
 import { exportSensorCsv } from "./sensor-lab-export.js";
+import { registerCollabMirrorIpc } from "./collab/mirror.js";
+import { DeviceControlGate, registerDeviceControlIpc } from "./collab/device-control.js";
 
 const id = z.string().uuid();
 const inputPort = z.number().int().min(0).max(3);
@@ -69,6 +71,12 @@ function parseDescriptor(value: unknown) {
   };
 }
 
+/** The trusted-sender `ipcMain.handle` wrapper, for feature modules that register their own channels. */
+export type IpcHandle = <T extends unknown[], R>(
+  channel: string,
+  action: (event: IpcMainInvokeEvent, ...args: T) => R,
+) => void;
+
 export function registerIpc(
   trustedRenderer: () => WebContents | undefined,
   workspaces: WorkspaceService,
@@ -80,6 +88,7 @@ export function registerIpc(
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
   sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
+  modules: readonly ((handle: IpcHandle) => void)[] = [],
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -87,18 +96,26 @@ export function registerIpc(
       throw new Error("Rejected IPC from an untrusted sender.");
     }
   };
-  const handle = <T extends unknown[], R>(
+  const deviceControl = new DeviceControlGate();
+  const handle: IpcHandle = <T extends unknown[], R>(
     channel: string,
     action: (event: IpcMainInvokeEvent, ...args: T) => R,
   ): void => {
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
+      deviceControl.assert(event.sender.id, channel, args);
       if (/^(workspace|device|build|simulator|sensor-lab):/.test(channel))
         return operationGate.run(channel, () => action(event, ...args));
       return action(event, ...args);
     });
   };
 
+  for (const register of modules) register(handle);
+  registerDeviceControlIpc(
+    handle,
+    deviceControl,
+    () => sensorTools?.motors?.flush() ?? Promise.resolve(),
+  );
   handle("updates:state", () => updates.getState());
   handle("simulator:cancel", (_event, workspaceId: unknown) =>
     builds.cancelSimulation(id.parse(workspaceId)),
@@ -214,6 +231,7 @@ export function registerIpc(
     workspaces.setPreferences(filePreferencesPatchSchema.parse(patch)),
   );
   handle("workspace:open", () => workspaces.open());
+  registerCollabMirrorIpc(handle, workspaces, () => app.getPath("userData"));
   handle("workspace:search", (_event, workspaceId: unknown, request: unknown) =>
     workspaces.search(id.parse(workspaceId), workspaceSearchRequestSchema.parse(request)),
   );
@@ -400,7 +418,7 @@ export function registerIpc(
     ),
   );
   const batchRef = z.object({ sessionId: id, requestId: id, planId: id });
-  handle("device:files-prepare", (event, request: unknown) => {
+  handle("device:files-prepare", async (event, request: unknown) => {
     const parsed = z
       .object({
         sessionId: id,
@@ -412,7 +430,9 @@ export function registerIpc(
         locale: z.enum(["en", "zh-TW"]),
       })
       .parse(request);
-    return devices.prepareFiles(parsed, event.sender);
+    const snapshot = await devices.prepareFiles(parsed, event.sender);
+    deviceControl.rememberBatch(event.sender, snapshot);
+    return snapshot;
   });
   handle("device:files-execute", (event, ref: unknown, policy: unknown) =>
     devices.executeFiles(

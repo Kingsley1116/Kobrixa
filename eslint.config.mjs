@@ -10,6 +10,7 @@ export default tseslint.config(
       "**/out/**",
       "**/coverage/**",
       ".corepack/**",
+      ".claude/**",
       "node_modules/**",
       "**/worker-configuration.d.ts",
       "**/.wrangler/**",

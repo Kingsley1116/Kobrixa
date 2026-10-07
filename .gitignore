@@ -12,6 +12,7 @@
 *.log
 *.tsbuildinfo
 .DS_Store
+/.claude/
 
 **/.wrangler
 **/.dev.vars
@@ -31,3 +32,4 @@ apps/web/worker-configuration.d.ts
 *.p8
 *.keychain
 *.keychain-db
+apps/collab/worker-configuration.d.ts

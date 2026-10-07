@@ -12,12 +12,47 @@ const require = createRequire(import.meta.url);
 const server = await createServer({
   root: path.join(root, "apps/desktop"),
   configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+  // The worker discovers physics lazily; optimize it before opening the UI so
+  // Vite cannot reload the workbench halfway through the simulator assertions.
+  optimizeDeps: { include: ["planck"] },
   // Count real App renders without adding instrumentation to the shipped renderer.
   plugins: [
     {
       name: "smoke-app-render-counter",
       enforce: "pre",
       transform(code, id) {
+        if (
+          process.env.KOBRIXA_SMOKE_COLLAB_LINKED &&
+          id === path.join(root, "apps/desktop/src/renderer/collab/collab-session.ts")
+        ) {
+          // Exercise the real App and room controls with deterministic linked peers.
+          // This replacement exists only in this smoke Vite server, never in a build.
+          return `import { createLinkedSessions } from "./testing.js";
+            import * as Y from "yjs";
+            import { DeviceControl } from "./device-control.js";
+            import { ChatController } from "./chat.js";
+            export function createCollabSession(connection) {
+              const previous = window.__collabSmoke;
+              const state = previous?.session.connection.roomId === connection.roomId
+                ? Y.encodeStateAsUpdate(previous.room.sessions[2].doc) : null;
+              const room = createLinkedSessions([connection.role, "editor", "viewer"], connection.roomId);
+              if (state) Y.applyUpdate(room.sessions[1].doc, state);
+              const session = room.sessions[0];
+              Object.assign(session.connection, connection);
+              session.setRole(connection.role);
+              session.awareness.setLocalState({ ...session.awareness.getLocalState(), name: connection.name });
+              window.__collabSmoke = { room, session, peerControl: new DeviceControl(room.sessions[1]), peerChat: new ChatController(room.sessions[1]) };
+              previous?.peerControl.dispose();
+              previous?.peerChat.dispose();
+              return session;
+            }`;
+        }
+
+        // Exercise the internal simulator covered by this suite even while its
+        // release feature flag keeps the production toolbar entry hidden.
+        if (id === path.join(root, "apps/desktop/src/shared/features.ts")) {
+          return code.replace("SIMULATOR_ENABLED = false", "SIMULATOR_ENABLED = true");
+        }
         if (id === path.join(root, "apps/desktop/src/renderer/editor/completion-session.ts")) {
           return code.replace(
             "for (const listener of this.listeners) listener();",

@@ -7,6 +7,7 @@ import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkSensorLab } from "./sensor-lab-smoke.mjs";
 import { checkMonitor, createMonitorFixture, monitorDescriptor } from "./monitor-smoke.mjs";
+import { checkCollab } from "./collab-smoke.mjs";
 import { checkMotorTests, createMotorFixture } from "./motor-test-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
@@ -147,6 +148,8 @@ const workspace = (id = firstId) => {
 const fileHistory = createFileHistoryFixture(fixtures, workspace);
 const search = createSearchFixture(fixtures, searchHelpers);
 const diagnostics = createDiagnosticsFixture(language);
+let collabPreferences = { displayName: "", recentRooms: [] };
+let collabDeviceControl = null;
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -379,6 +382,47 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     }
     return;
   }
+  if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
+    if (name === "collabCreateRoom" || name === "collabJoinRoom")
+      return {
+        ok: true,
+        value: {
+          serverUrl: "http://collab.test",
+          roomId: "smoke-room-00000000",
+          participantId: "participant-0",
+          token: "smoke-token",
+          role: "host",
+          name: args[0].name,
+          projectName: args[0].projectName ?? "Keyboard test",
+          inviteCode: "ABCD-EFGH-JK23",
+          expiresAt: Date.now() + 60_000,
+        },
+      };
+    if (name === "collabSetRole") {
+      await win.webContents.executeJavaScript(
+        `window.__collabSmoke.room.sessions.find(session => session.connection.participantId === ${JSON.stringify(args[1].participantId)}).setRole(${JSON.stringify(args[1].role)})`,
+      );
+      return { ok: true, value: null };
+    }
+    if (name === "collabKick") {
+      await win.webContents.executeJavaScript(
+        `window.__collabSmoke.room.sessions.find(session => session.connection.participantId === ${JSON.stringify(args[1])}).close("kicked")`,
+      );
+      return { ok: true, value: null };
+    }
+  }
+  if (name === "collabServerUrl") return "http://collab.test";
+  if (name === "collabPreferences") return collabPreferences;
+  if (name === "collabSetPreferences") {
+    collabPreferences = { ...collabPreferences, ...args[0] };
+    return collabPreferences;
+  }
+  if (name === "collabSetDeviceControl") {
+    collabDeviceControl = args[0];
+    return;
+  }
+  if (["collabLeave", "collabRemoveMirror"].includes(name)) return;
+  if (name.startsWith("collab")) return { ok: false, error: "unavailable" };
   throw new Error("Unexpected smoke API: " + name);
 });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -489,6 +533,16 @@ app
     };
     const monitorContext = { js, key, until, pause, win, temporary, monitor };
     const motorContext = { ...monitorContext, motors };
+    const collabContext = {
+      ...projectsContext,
+      js,
+      until,
+      pause,
+      win,
+      temporary,
+      collabPreferences: () => collabPreferences,
+      collabDeviceControl: () => collabDeviceControl,
+    };
     const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
       ...projectsContext,
@@ -520,6 +574,11 @@ app
     }
     if (process.env.KOBRIXA_SMOKE_SENSOR_LAB_ONLY) {
       await checkSensorLab(labContext);
+      app.exit(0);
+      return;
+    }
+    if (process.env.KOBRIXA_SMOKE_COLLAB_ONLY) {
+      await checkCollab(collabContext);
       app.exit(0);
       return;
     }
@@ -602,6 +661,11 @@ app
     openCount = fileCheckOpenCount;
     writes.splice(fileCheckWriteCount);
     await checkMonitor(monitorContext);
+    const collabOpenCount = openCount;
+    const collabWriteCount = writes.length;
+    await checkCollab(collabContext);
+    openCount = collabOpenCount;
+    writes.splice(collabWriteCount);
     await checkSensorLab(labContext);
     await checkMotorTests(motorContext);
     await checkHighlighting({ js, until, files, win, temporary });

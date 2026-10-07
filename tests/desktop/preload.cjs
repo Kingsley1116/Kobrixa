@@ -6,6 +6,19 @@ const call =
   (...args) =>
     ipcRenderer.invoke("smoke", name, args);
 contextBridge.exposeInMainWorld("kobrixa", {
+  collab: {
+    serverUrl: call("collabServerUrl"),
+    getPreferences: call("collabPreferences"),
+    setPreferences: call("collabSetPreferences"),
+    createRoom: call("collabCreateRoom"),
+    joinRoom: call("collabJoinRoom"),
+    kick: call("collabKick"),
+    setRole: call("collabSetRole"),
+    leave: call("collabLeave"),
+    setDeviceControl: call("collabSetDeviceControl"),
+    openMirror: call("collabOpenMirror"),
+    removeMirror: call("collabRemoveMirror"),
+  },
   simulator: { prepare: call("simulatorPrepare"), cancel: call("simulatorCancel") },
   updates: {
     getState: call("updateState"),
