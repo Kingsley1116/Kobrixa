@@ -38,6 +38,11 @@ describe("linked test sessions", () => {
     expect(first.getSnapshot().status).toBe("closed");
     store.stop();
     expect(store.getSnapshot()).toBeNull();
+    const failing = new CollabStore(() => {
+      throw new Error("offline");
+    });
+    expect(() => failing.start(first.connection)).toThrow("offline");
+    expect(failing.getSnapshot()).toBeNull();
     expect(changes).toBe(3);
   });
 });

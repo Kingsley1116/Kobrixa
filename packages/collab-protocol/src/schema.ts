@@ -16,7 +16,8 @@ export const displayNameSchema = z
   .min(1)
   .max(COLLAB_LIMITS.displayNameLength)
   .refine(
-    (name) => [...name].every((char) => char.charCodeAt(0) >= 0x20 && char !== "\u007f"),
+    // Rejects C0/C1 controls and bidi/format characters that could spoof other names.
+    (name) => !/[\p{Cc}\p{Cf}]/u.test(name),
     "control characters",
   );
 /** Workspace-relative POSIX path, as used by the desktop workspace service. */

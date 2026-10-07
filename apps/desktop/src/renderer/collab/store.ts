@@ -21,11 +21,13 @@ export class CollabStore {
 
   /** Replaces any current session with a new connected one. */
   start(connection: CollabConnection): CollabSession {
-    this.#session?.destroy();
+    // Create the replacement first so a failing factory leaves the current session intact.
     const session = this.factory(connection);
+    const previous = this.#session;
     this.#session = session;
-    session.connect();
+    previous?.destroy();
     this.#emit();
+    session.connect();
     return session;
   }
 

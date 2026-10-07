@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collabPathSchema,
+  displayNameSchema,
   COLLAB_ROUTES,
   inviteCodeSchema,
   noticeSchema,
@@ -19,6 +20,12 @@ describe("collab protocol", () => {
     expect(inviteCodeSchema.safeParse("ABCD-EFGH-JK23").success).toBe(true);
     expect(inviteCodeSchema.safeParse("ABCD-EFGH-JKL0").success).toBe(false);
     expect(inviteCodeSchema.safeParse("abcd-efgh-jkmn").success).toBe(false);
+  });
+
+  it("rejects control and bidi characters in display names", () => {
+    expect(displayNameSchema.safeParse("小明 Ada").success).toBe(true);
+    for (const bad of ["a\u0007b", "a\u0085b", "evil\u202Etxt", "x\u200By"])
+      expect(displayNameSchema.safeParse(bad).success).toBe(false);
   });
 
   it("parses notices and presence", () => {
