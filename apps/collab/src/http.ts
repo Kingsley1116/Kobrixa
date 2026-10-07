@@ -88,7 +88,10 @@ export function preflightResponse(origin: string | null): Response {
   const headers = new Headers();
   if (origin) {
     headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    headers.set(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type, X-Collab-Capabilities",
+    );
     headers.set("Access-Control-Max-Age", "600");
   }
   return new Response(null, { status: 204, headers });

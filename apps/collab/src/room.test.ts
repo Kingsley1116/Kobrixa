@@ -336,15 +336,14 @@ describe("CollabRoom HTTP routes", () => {
       (await post("routes", "/role", { participantId: GUEST, role: "viewer" }, GUEST)).status,
     ).toBe(403);
 
-    // 2 registered; fill up to the limit.
+    // Offline identities do not occupy online seats.
     for (let i = 2; i < COLLAB_LIMITS.participants; i++) {
       const res = await post("routes", "/join", { participantId: `extra-${i}-0000`, name: "X" });
       expect(res.status).toBe(200);
     }
-    expect(await post("routes", "/join", { participantId: "late-00000", name: "Late" })).toEqual({
-      status: 409,
-      body: { error: "room-full" },
-    });
+    expect(
+      (await post("routes", "/join", { participantId: "late-00000", name: "Late" })).status,
+    ).toBe(200);
   });
 
   test("websocket upgrade is rejected for unknown participants and rooms", async () => {
@@ -428,13 +427,13 @@ describe("CollabRoom realtime", () => {
     const late = await Client.connect("live", GUEST, "editor");
     expect(late.lastNotice("role")).toEqual({ type: "role", role: "viewer" });
     expect(late.content).toBe("PRINT 3");
-    late.close();
+    await waitFor(() => guest.closeCode === CLOSE_CODE.sessionReplaced, "old identity replaced");
 
     // Kick closes with 4001 and revokes the participant.
     expect((await post("live", "/kick", { participantId: GUEST })).status).toBe(200);
-    await waitFor(() => guest.closeCode !== null, "guest closed");
-    expect(guest.closeCode).toBe(CLOSE_CODE.kicked);
-    expect(guest.lastNotice("kicked")).toEqual({ type: "kicked" });
+    await waitFor(() => late.closeCode !== null, "guest closed");
+    expect(late.closeCode).toBe(CLOSE_CODE.kicked);
+    expect(late.lastNotice("kicked")).toEqual({ type: "kicked" });
     await waitFor(
       () => !host.awareness.getStates().has(guest.doc.clientID),
       "kicked awareness removed",
@@ -453,7 +452,8 @@ describe("CollabRoom realtime", () => {
     // Many updates trigger compaction; content must survive it and a restart.
     for (let i = 0; i < 250; i++) host.text.insert(host.text.length, ".");
     const expected = host.content;
-    const synced = await Client.connect("live", HOST, "host");
+    await post("live", "/join", { participantId: "observer-0001", name: "Observer" });
+    const synced = await Client.connect("live", "observer-0001");
     await waitFor(() => synced.content === expected, "all edits persisted before restart");
     const stats = await post("live", "/inspect", {});
     expect(stats.body.updates).toBeLessThan(200);
@@ -471,7 +471,7 @@ describe("CollabRoom realtime", () => {
     const again = await Client.connect("live", HOST, "host");
     expect(again.content).toBe(expected);
     expect(again.doc.getMap(DOC_KEYS.meta).get("projectName")).toBe("Line follower");
-    expect(again.lastNotice("participants")?.participants).toEqual([
+    expect(again.lastNotice("participants")?.participants.filter((p) => p.online)).toEqual([
       { participantId: HOST, name: "Host", role: "host", online: true },
     ]);
     again.close();
@@ -489,14 +489,27 @@ describe("CollabRoom realtime", () => {
     other.close();
   });
 
-  test("concurrent sockets beyond the limit are closed with roomFull", async () => {
+  test("limits online identities to 16 and allows replacing an existing connection", async () => {
     await initRoom("full");
+    for (let i = 0; i <= COLLAB_LIMITS.participants; i++)
+      await post("full", "/join", { participantId: `online-${i}-0000`, name: "Guest" });
     const clients: Client[] = [];
-    for (let i = 0; i < COLLAB_LIMITS.participants; i++) {
-      clients.push(await Client.connect("full", HOST, "host"));
-    }
+    for (let i = 0; i < COLLAB_LIMITS.participants; i++)
+      clients.push(await Client.connect("full", `online-${i}-0000`));
     expect(await rejectedCloseCode("full", HOST)).toBe(CLOSE_CODE.roomFull);
-    for (const client of clients) client.close();
+    const replacement = await Client.connect("full", "online-0-0000");
+    await waitFor(
+      () => clients[0]!.closeCode === CLOSE_CODE.sessionReplaced,
+      "old window replaced",
+    );
+    clients[1]!.close();
+    await waitFor(
+      () =>
+        replacement.lastNotice("participants")?.participants.filter((p) => p.online).length === 15,
+      "seat released",
+    );
+    const host = await Client.connect("full", HOST, "host");
+    for (const client of [...clients, replacement, host]) client.close();
   }, 30_000);
 });
 
@@ -518,7 +531,8 @@ describe("CollabRoom authorization and lifecycle", () => {
       "host presence before sleep",
     );
     expect((await post("sleeping", "/reconstruct", {})).status).toBe(200);
-    const late = await Client.connect("sleeping", HOST, "host");
+    await post("sleeping", "/join", { participantId: "observer-0001", name: "Observer" });
+    const late = await Client.connect("sleeping", "observer-0001");
     expect(late.content).toBe("PRINT awake");
     await waitFor(
       () => late.awareness.getStates().has(host.doc.clientID),
@@ -709,7 +723,8 @@ describe("CollabRoom authorization and lifecycle", () => {
       for (const path of ["main.bas", "second.bas", "third.bas"])
         files.set(path, new Y.Text(expected));
     });
-    const verifier = await Client.connect("chunks", HOST, "host");
+    await post("chunks", "/join", { participantId: GUEST, name: "Guest" });
+    const verifier = await Client.connect("chunks", GUEST);
     await waitFor(() => verifier.content === expected, "large update reaches another client");
     host.close();
     verifier.close();
@@ -728,7 +743,8 @@ describe("CollabRoom authorization and lifecycle", () => {
   test("syncs the 8 MiB room budget and rejects a ninth 1 MiB file", async () => {
     await initRoom("budget");
     const host = await Client.connect("budget", HOST, "host");
-    const verifier = await Client.connect("budget", HOST, "host");
+    await post("budget", "/join", { participantId: GUEST, name: "Guest" });
+    const verifier = await Client.connect("budget", GUEST);
     const source = "x".repeat(COLLAB_LIMITS.fileBytes);
     host.doc.transact(() => {
       for (let i = 0; i < 8; i++)
@@ -740,7 +756,8 @@ describe("CollabRoom authorization and lifecycle", () => {
       10_000,
     );
     expect(verifier.closeCode).toBeNull();
-    const restored = await Client.connect("budget", HOST, "host");
+    await post("budget", "/join", { participantId: "observer-0001", name: "Observer" });
+    const restored = await Client.connect("budget", "observer-0001");
     expect(restored.doc.getMap<Y.Text>(DOC_KEYS.files).get("file-7.bp")?.length).toBe(
       COLLAB_LIMITS.fileBytes,
     );
@@ -856,5 +873,90 @@ describe("optional room passwords", () => {
     const loser = winner === "first" ? "second" : "first";
     expect((await joinRoom("password-race", loser)).status).toBe(401);
     expect((await joinRoom("password-race", winner)).status).toBe(200);
+  });
+});
+
+describe("saved room identities and server chat", () => {
+  test("restores authoritative roles, rejects revoked credentials and ends rooms persistently", async () => {
+    const credentialHash = "h".repeat(43);
+    expect(
+      (
+        await post("recovery", "/init", {
+          roomId: "recovery-room-id-0000",
+          projectName: "Original project",
+          inviteCode: "ABCD-EFGH-JKLM",
+          host: { participantId: HOST, name: "Original host" },
+          credentialHash,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await post("recovery", "/resume", { participantId: HOST, credentialHash })).body,
+    ).toMatchObject({ role: "host", name: "Original host", projectName: "Original project" });
+    expect(
+      (await post("recovery", "/resume", { participantId: HOST, credentialHash: "x".repeat(43) }))
+        .status,
+    ).toBe(401);
+    await post("recovery", "/join", {
+      participantId: GUEST,
+      name: "Original host",
+      credentialHash: "g".repeat(43),
+    });
+    await post("recovery", "/role", { participantId: GUEST, role: "viewer" });
+    await post("recovery", "/reconstruct", {});
+    expect(
+      (await post("recovery", "/resume", { participantId: GUEST, credentialHash: "g".repeat(43) }))
+        .body.role,
+    ).toBe("viewer");
+    const host = await Client.connect("recovery", HOST, "host");
+    const guest = await Client.connect("recovery", GUEST, "viewer");
+    const sent = await post(
+      "recovery",
+      "/chat",
+      { id: "viewer-chat-001", text: "Hello from viewer" },
+      GUEST,
+    );
+    expect(sent.status).toBe(200);
+    expect(sent.body).toMatchObject({
+      participantId: GUEST,
+      name: "Original host",
+      text: "Hello from viewer",
+    });
+    expect(sent.body.at).toBeGreaterThan(0);
+    expect(
+      await post("recovery", "/chat", { id: "viewer-chat-001", text: "Hello from viewer" }, GUEST),
+    ).toEqual(sent);
+    await waitFor(
+      () => host.doc.getArray(DOC_KEYS.chat).length === 1,
+      "viewer chat broadcast once",
+    );
+    expect(
+      (
+        await post(
+          "recovery",
+          "/chat",
+          { id: "forged-chat-001", text: "Fake", name: "Other" },
+          GUEST,
+        )
+      ).status,
+    ).toBe(400);
+    await post("recovery", "/kick", { participantId: GUEST });
+    expect(
+      (await post("recovery", "/resume", { participantId: GUEST, credentialHash: "g".repeat(43) }))
+        .body.error,
+    ).toBe("removed");
+    expect((await post("recovery", "/close", {}, GUEST)).status).toBe(403);
+    expect((await post("recovery", "/close", {})).status).toBe(200);
+    await waitFor(() => host.closeCode === CLOSE_CODE.roomClosed, "host notified room ended");
+    await post("recovery", "/reconstruct", {});
+    expect(
+      (await post("recovery", "/resume", { participantId: HOST, credentialHash })).body.error,
+    ).toBe("room-closed");
+    expect(
+      (await post("recovery", "/join", { participantId: "new-member-001", name: "New" })).status,
+    ).toBe(410);
+    expect(await rejectedCloseCode("recovery", HOST)).toBe(CLOSE_CODE.roomClosed);
+    host.close();
+    guest.close();
   });
 });

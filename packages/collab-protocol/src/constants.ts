@@ -35,6 +35,7 @@ export const CLOSE_CODE = {
   roomClosed: 4004,
   roomFull: 4009,
   protocolMismatch: 4010,
+  sessionReplaced: 4011,
 } as const;
 
 export const COLLAB_LIMITS = {
@@ -58,11 +59,17 @@ export const COLLAB_ROUTES = {
   createRoom: "/rooms",
   /** Join by invite code; the invite code identifies the room. */
   join: "/rooms/join",
+  resume: (roomId = ":roomId") => `/rooms/${roomId}/resume`,
+  close: (roomId = ":roomId") => `/rooms/${roomId}/close`,
+  chat: (roomId = ":roomId") => `/rooms/${roomId}/chat`,
   kick: (roomId = ":roomId") => `/rooms/${roomId}/kick`,
   setRole: (roomId = ":roomId") => `/rooms/${roomId}/role`,
   /** WebSocket upgrade; the token is passed as `?token=` (browsers cannot set headers). */
   socket: (roomId = ":roomId") => `/rooms/${roomId}/ws`,
 } as const;
+
+export const COLLAB_CAPABILITY_HEADER = "X-Collab-Capabilities";
+export const COLLAB_RESUME_CAPABILITY = "resume-v1";
 
 /** Participant colors assigned round-robin by join order. */
 export const PARTICIPANT_COLORS = [
