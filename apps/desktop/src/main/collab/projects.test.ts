@@ -48,9 +48,11 @@ async function setup() {
 describe("room project protection", () => {
   it("persists restricted recovery credentials and restores the original project instead of the selected project", async () => {
     const env = await setup();
-    expect((await stat(path.join(env.directory, "collab-identities.json"))).mode & 0o777).toBe(
-      0o600,
-    );
+    // Windows uses the per-user profile ACL; POSIX exposes the owner-only mode bits.
+    if (process.platform !== "win32")
+      expect((await stat(path.join(env.directory, "collab-identities.json"))).mode & 0o777).toBe(
+        0o600,
+      );
     const restored = await loadCollabIdentities(env.directory);
     expect(restored.get("https://collab.test", "saved-room-0000001")?.credential).toBe(
       "x".repeat(43),
