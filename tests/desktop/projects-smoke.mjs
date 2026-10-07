@@ -201,7 +201,9 @@ export async function checkProjects({
   await js("document.querySelector('[aria-label=\"Close project: Keyboard test\"]').click()");
   await until("Boolean(document.querySelector('#close-project-title'))");
   await js("document.querySelector('.modal-card .danger').click()");
-  await until("!document.querySelector('.project-tab') && !document.querySelector('.workspace')");
+  await until(
+    "!document.querySelector('.project-tab') && Boolean(document.querySelector('.welcome-workbench .welcome'))",
+  );
   assert.equal(session().projects.length, 0);
   console.log(
     "PASS multi-project switching, undo, save ownership, background build, close and restore",

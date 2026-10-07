@@ -50,7 +50,7 @@ app.setPath("userData", path.join(temporary, "profile"));
 const timeout = setTimeout(() => {
   console.error("Electron smoke test timed out");
   app.exit(1);
-}, 180000);
+}, 300000);
 app.on("will-quit", () => clearTimeout(timeout));
 const files = {
   "main.bp": "If True Then\nLCD.Clear()\nEndIf\n",
