@@ -87,6 +87,9 @@ import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
 import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
+import { CollabFileSyncManager } from "./collab/file-sync.js";
+import { sharedTypes } from "./collab/types.js";
+import { CollabSyncStatus } from "./collab/sync-status.js";
 import { canEdit } from "./collab/types.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
@@ -209,7 +212,7 @@ export function App(): React.JSX.Element {
   const closingProjectRef = useRef(false);
   const [controller] = useState(() => new ExecutionController(window.kobrixa));
   const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
-  const locked =
+  const executionLocked =
     controller.editingLockedFor(activeSession?.workspace.id) || updatePreparing || closingProject;
   const [motorTest] = useState(() => new MotorTestController(window.kobrixa.device));
   const motorBusy = useSyncExternalStore(motorTest.subscribe, motorTest.getBusy);
@@ -236,7 +239,53 @@ export function App(): React.JSX.Element {
     subscribeCollabSession,
     () => collabSession?.getSnapshot().role,
   );
-  const collabReadOnly = collabRole !== undefined && !canEdit(collabRole);
+  const collabCallbacks = useRef({
+    adopt: async (_summary: WorkspaceSummary) => {},
+    diskWrite: (_id: string, _file: string, _snapshot: WorkspaceFileSnapshot) => {},
+    treeChange: (_result: WorkspaceMutationResult) => {},
+    report: (_error: unknown) => {},
+  });
+  const [collabFiles] = useState(
+    () =>
+      new CollabFileSyncManager(collab, {
+        workspace: {
+          ...window.kobrixa.workspace,
+          write: (...args) =>
+            writeQueue.enqueue(args[0], args[1], () => window.kobrixa.workspace.write(...args)),
+        },
+        collab: window.kobrixa.collab,
+        activeWorkspaceId: () => sessions.activeId,
+        summary: (id) => sessions.get(id)?.workspace,
+        seedContent: (id, file) => {
+          const project = sessions.get(id);
+          return project?.documents.getOpenFiles().includes(file)
+            ? project.documents.reader(file)()
+            : project?.workspace.drafts[file];
+        },
+        adopt: (summary) => collabCallbacks.current.adopt(summary),
+        onDiskWrite: (...args) => collabCallbacks.current.diskWrite(...args),
+        onTreeChange: (result) => collabCallbacks.current.treeChange(result),
+        report: (error) => collabCallbacks.current.report(error),
+      }),
+  );
+  useEffect(() => collabFiles.attach(), [collabFiles]);
+  const collabBinding = useSyncExternalStore(collabFiles.subscribe, collabFiles.getSnapshot);
+  const subscribeFileSync = useCallback(
+    (listener: () => void) => collabBinding?.sync.subscribe(listener) ?? (() => {}),
+    [collabBinding],
+  );
+  const fileSyncPhase = useSyncExternalStore(
+    subscribeFileSync,
+    () => collabBinding?.sync.getSnapshot().phase,
+  );
+  const sharedProject =
+    collabBinding?.workspaceId === activeSession?.workspace.id && !!collabBinding;
+  const collabReadOnly =
+    sharedProject &&
+    (collabBinding.readOnly ||
+      fileSyncPhase !== "syncing" ||
+      (collabRole !== undefined && !canEdit(collabRole)));
+  const locked = executionLocked || collabReadOnly;
   useEffect(() => {
     void sensorLab.initialize();
     void motorTest.initialize();
@@ -644,6 +693,11 @@ export function App(): React.JSX.Element {
         if (controller.editingLockedFor(id)) continue;
         const generation = project.files.generation;
         try {
+          const sync = collabFiles.for(id);
+          if (sync) {
+            await sync.checkDisk((file) => project.documents.getOpenFiles().includes(file));
+            await sync.flush();
+          }
           const result = await window.kobrixa.workspace.refresh(id, project.files.known());
           if (
             preferences !== filePreferencesRef.current ||
@@ -1166,7 +1220,7 @@ export function App(): React.JSX.Element {
   }
 
   function requestCloseTab(file: string): void {
-    if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    if (collabReadOnly || controller.editingLockedFor(workspaceStateRef.current?.id)) return;
     const tab = tabs.find((item) => item.file === file);
     if (!tab) return;
     const disposition = tabCloseDisposition(
@@ -1238,6 +1292,64 @@ export function App(): React.JSX.Element {
     setDiagnosticIndex(next);
     await jumpTo(diagnostics[next]!, next);
   }
+
+  collabCallbacks.current = {
+    adopt: async (summary) => {
+      await flushDrafts();
+      await loadWorkspace(summary);
+    },
+    diskWrite: (id, file, snapshot) => {
+      const project = sessions.get(id);
+      if (!project || snapshot.content === null) return;
+      project.files.accept(file, snapshot);
+      const sync = collabFiles.for(id);
+      const text = sync ? sharedTypes(sync.session.doc).files.get(file)?.toString() : undefined;
+      if (text !== undefined) replaceFileText(project, file, text, snapshot.content);
+      const tab = project.documents.getSnapshot().find((tab) => tab.file === file);
+      if (tab) {
+        if (tab.content === tab.saved) removeWorkspaceDraft(file, id);
+        void settleDraft(id, file)
+          .then(() => enqueueDraftWrite(id, file, tab.content))
+          .catch(report);
+      }
+      controller.clearDiagnostics(id);
+      sessions.changed();
+    },
+    treeChange: (result) => {
+      const project = sessions.get(result.workspace.id);
+      if (!project) return;
+      const { moved, removed } = result;
+      const deleted = new Set(removed);
+      if (sessions.active === project) editorRef.current?.remapFiles(moved);
+      else project.editor.remap(moved);
+      project.files.remap(moved);
+      for (const file of removed) project.files.forget(file);
+      project.documents.replace(
+        project.documents
+          .getSnapshot()
+          .filter((tab) => !deleted.has(tab.file))
+          .map((tab) => ({ ...tab, file: moved[tab.file] ?? tab.file })),
+      );
+      project.workspace = result.workspace;
+      const currentFile = project.view.activeFile;
+      if (currentFile)
+        project.view.activeFile = deleted.has(currentFile)
+          ? project.documents.getOpenFiles()[0]
+          : (moved[currentFile] ?? currentFile);
+      if (sessions.active === project) {
+        setActiveFile((file) =>
+          file && !deleted.has(file) ? (moved[file] ?? file) : project.documents.getOpenFiles()[0],
+        );
+        setSelectedTreePath((file) => (deleted.has(file) ? "" : (moved[file] ?? file)));
+        setExpandedTreePaths((paths) =>
+          remapTreePaths(new Set([...paths].filter((file) => !deleted.has(file))), moved),
+        );
+      }
+      controller.clearDiagnostics(result.workspace.id);
+      sessions.changed();
+    },
+    report,
+  };
 
   async function adoptWorkspace(next: WorkspaceSummary | undefined): Promise<void> {
     if (!next) return;
@@ -1426,6 +1538,12 @@ export function App(): React.JSX.Element {
       sessionSaveTimer.current = undefined;
       await sessionWrites.current.catch(() => undefined);
       await window.kobrixa.workspace.saveSession(state);
+      const sync = collabFiles.for(id);
+      if (sync) {
+        await sync.stop();
+        await window.kobrixa.collab.leave(sync.session.connection.roomId);
+        collab.stop();
+      }
       await window.kobrixa.workspace.close(id);
       if (sessions.activeId === id) activateProject(next);
       sessions.remove(id);
@@ -1575,6 +1693,7 @@ export function App(): React.JSX.Element {
     }
     let warning: string | undefined;
     try {
+      await collabFiles.for(workspaceId)?.flush();
       await settleDraft(workspaceId, file);
       if (!project.files.baseline(file)) {
         const snapshot = await window.kobrixa.workspace.readFile(workspaceId, file);
@@ -1957,7 +2076,7 @@ export function App(): React.JSX.Element {
   }
 
   function beginCreateEntry(kind: WorkspaceEntry["kind"], parent: string): void {
-    if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    if (collabReadOnly || controller.editingLockedFor(workspaceStateRef.current?.id)) return;
     setPendingCreate({ kind, parent });
     setEntryName(kind === "file" ? "untitled.bp" : "new-folder");
   }
@@ -2013,7 +2132,8 @@ export function App(): React.JSX.Element {
   }
 
   async function moveManagedEntry(source: string, target: string): Promise<boolean> {
-    if (!workspace || controller.editingLockedFor(workspaceStateRef.current?.id)) return false;
+    if (!workspace || collabReadOnly || controller.editingLockedFor(workspaceStateRef.current?.id))
+      return false;
     if (buildEntryMovesWith(source) && manifestHasUnsavedChanges()) {
       setStatus(t.manifestDirty);
       return false;
@@ -2031,6 +2151,7 @@ export function App(): React.JSX.Element {
           : undefined;
       if (manifestSnapshot)
         sessions.get(workspace.id)?.files.accept("kobrixa.json", manifestSnapshot);
+      collabFiles.for(workspace.id)?.recordMove(result);
       applyMoveMutation(result, manifestSnapshot?.content ?? undefined);
       setStatus(t.ready);
       return true;
@@ -2049,7 +2170,7 @@ export function App(): React.JSX.Element {
   }
 
   async function confirmCreateEntry(): Promise<void> {
-    if (!workspace || !pendingCreate) return;
+    if (!workspace || !pendingCreate || collabReadOnly) return;
     const name = entryName.trim();
     if (!name) return;
     setManagingEntries(true);
@@ -2063,6 +2184,13 @@ export function App(): React.JSX.Element {
         name,
       );
       const createdPath = pendingCreate.parent ? `${pendingCreate.parent}/${name}` : name;
+      const created =
+        pendingCreate.kind === "file"
+          ? await window.kobrixa.workspace.readFile(workspace.id, createdPath)
+          : undefined;
+      collabFiles
+        .for(workspace.id)
+        ?.recordCreate(createdPath, pendingCreate.kind, created?.content ?? "");
       setWorkspace(result.workspace);
       setSelectedTreePath(createdPath);
       setExpandedTreePaths((current) => {
@@ -2096,12 +2224,13 @@ export function App(): React.JSX.Element {
   }
 
   async function confirmTrashEntry(): Promise<void> {
-    if (!workspace || !pendingTrash) return;
+    if (!workspace || !pendingTrash || collabReadOnly) return;
     setManagingEntries(true);
     setStatus(t.managingFiles);
     try {
       await flushDrafts();
       const result = await window.kobrixa.workspace.trashEntry(workspace.id, pendingTrash);
+      collabFiles.for(workspace.id)?.recordTrash(result.removed);
       const removed = new Set(result.removed);
       for (const file of removed) sessions.get(workspace.id)?.files.forget(file);
       const remainingTabs = tabs.filter((tab) => !removed.has(tab.file));
@@ -2269,7 +2398,7 @@ export function App(): React.JSX.Element {
       void openProject();
       return;
     }
-    if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    if (collabReadOnly || controller.editingLockedFor(workspaceStateRef.current?.id)) return;
     switch (command) {
       case "save":
         void saveActive();
@@ -3046,7 +3175,7 @@ export function App(): React.JSX.Element {
                     indentSize={settings.indentSize}
                     reducedMotion={reducedMotion}
                     readOnly={locked || projectBusy || managingEntries || collabReadOnly}
-                    collabSession={collabSession}
+                    collabSession={sharedProject ? collabSession : null}
                     file={active.file}
                     documents={documents}
                     analysisSession={analysisSession}
@@ -3215,7 +3344,10 @@ export function App(): React.JSX.Element {
                 }
                 activity={<ActivityPanel t={t} locale={locale} state={execution} />}
                 collab={
-                  <CollabWorkspace store={collab} api={window.kobrixa.collab} locale={locale} />
+                  <>
+                    <CollabSyncStatus sync={collabBinding?.sync} locale={locale} />
+                    <CollabWorkspace store={collab} api={window.kobrixa.collab} locale={locale} />
+                  </>
                 }
               />
             )}
