@@ -21,10 +21,12 @@ React renderer 只管理呈現狀態，不能直接存取 Node.js 或 Electron A
 ## 倉庫邊界
 
 - `apps/desktop`：Electron main 與 preload process、React renderer、Monaco 整合、本地化與使用流程。
+- `apps/collab`（開發中）：雲端協作服務，由 Cloudflare Worker 與每個房間一個 Durable Object 組成。桌面編輯、編譯與設備操作不依賴此服務。
 - `apps/web`：產品頁、雙語文件、素材庫介面及其 Cloudflare Worker。桌面編輯與編譯不依賴此服務。
 - `packages/compiler`：建置 session 協調與診斷彙整。
 - `packages/ir`：由語言前端和後端共用的版本化 IR 型別、驗證與序列化。
 - `packages/backend-ev3`：確定性的 EV3 VM lowering 與 `.rbf` 封裝。
+- `packages/collab-protocol`（開發中）：桌面應用程式與 `apps/collab` 共用的協作通訊契約，包含 Y.Doc 結構、訊息與關閉代碼、各項上限，以及房間、邀請、權杖、在線狀態、聊天與設備控制權的 zod schema。
 - `packages/device`：transport 中立的設備操作，以及 USB、Wi-Fi 實作。
 - `frontends/basic-plus`：clean-room lexer、parser、語意分析與 IR lowering。
 - `tools/release`：壓縮包檢查、簽章驗證與 GitHub Release 草稿管理。`.github/workflows/release.yml` 協調各平台原生建置。
@@ -68,6 +70,38 @@ src/
 `ProjectSessions` 依專案 ID 管理文件與編輯位置，`EditorModels` 保留 Monaco model 與復原歷史；可見編輯器卸載時解除綁定，關閉專案才釋放 model。背景專案沿用自動儲存與草稿佇列，語言分析與補全僅服務目前專案。`ExecutionController` 分開目前編輯專案與作業所屬專案，將診斷及最新編譯版本歸屬原專案，並保留全域 EV3 連線與單一部署版本。
 
 主程序以實體根目錄去重，並透過 `workspace.restoreSession`、`workspace.saveSession`、`workspace.close` 管理註冊與工作階段。`workspace-session.json` 位於使用者資料目錄，使用版本化驗證與原子寫入，保存來源路徑、入口選擇、專案／檔案順序及編輯位置；renderer 僅用已註冊 ID 提交狀態。草稿沿用原有格式。退出握手等待所有草稿與狀態寫入，失敗則保持視窗開啟；重新啟動不恢復復原歷史、設備連線或執行指令。
+
+## 雲端協作
+
+> **開發中。** 本節說明[雲端協作](../zh-TW/collaboration.md)的設計邊界，尚未納入正式版本。
+
+```text
+主持人 renderer（協作分頁）               來賓 renderer
+  │ Monaco ⇄ Y.Doc 綁定                     │ Monaco ⇄ Y.Doc 綁定
+  │ 經 preload／IPC 呼叫 CollabApi          │ 經 preload／IPC 呼叫 CollabApi
+  ▼                                         ▼
+主持人 main process                       來賓 main process
+  │ 建立房間・變更角色・移除參與者         │ 以邀請碼加入
+  │ 真實專案資料夾                         │ 鏡像於 <userData>/collab/<room>/
+  ▼                                         ▼
+        HTTPS（房間／加入）+ WebSocket（Yjs 同步、awareness、通知）
+                              │
+                              ▼
+          apps/collab — Cloudflare Worker（路由、HMAC 權杖）
+                              │
+                              ▼
+          CollabRoom Durable Object — 每個房間一個
+          Y.Doc：files・tree・chat・control・meta
+          儲存在 Durable Object SQLite storage
+```
+
+- main process 透過 HTTPS 建立與加入房間、保存房間權杖，並從 `KOBRIXA_COLLAB_URL` 或預設的 `https://collab.kobrixa.com` 決定服務來源。Content-Security-Policy 只允許該來源的協作連線。
+- renderer 以權杖開啟房間 WebSocket，並把 Monaco model 綁定到房間的 Y.Doc；遠端游標與在線狀態使用 Yjs awareness。
+- `packages/collab-protocol` 是桌面應用程式與服務之間唯一的契約，雙方都以其 schema 驗證請求與訊息。不相容的變更必須遞增 `COLLAB_PROTOCOL_VERSION`。
+- 權杖由 Worker 以 `COLLAB_SECRET` 進行 HMAC-SHA256 簽署，有效期限 7 天，並帶有參與者角色。Durable Object 負責執行角色限制：拒絕檢視者的文件更新與聊天訊息。
+- Durable Object 執行房間上限（16 人、200 個檔案、每檔 1 MiB、500 則聊天訊息），並在連續 7 天沒有連線後刪除房間儲存資料。
+- 設備操作維持在各參與者本機的 main process。房間啟用期間，未持有設備控制權的視窗所發出的設備寫入操作會被拒絕；停止程式則一律允許。
+- 房間狀態會經過 Cloudflare 網路。記錄檔不得包含原始碼內容、聊天文字或權杖。
 
 ## 專案 manifest
 
