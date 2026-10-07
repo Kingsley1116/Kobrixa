@@ -235,9 +235,12 @@ export class CollabRoom extends DurableObject<CollabEnv> {
     if (participant.role === "host") return error(400, "bad-request");
     if (participant.role !== role) {
       this.store.setRole(participantId, role);
-      if (role === "viewer") this.removeControl(participantId);
       const notice = encodeNotice({ type: "role", role });
+      // Notify the changed participant before revoking its request/holder. A
+      // still-editor DeviceControl would otherwise reassert a removed request
+      // in response to the update, creating a viewer update that must be dropped.
       for (const ws of this.ctx.getWebSockets(participantId)) this.send(ws, notice);
+      if (role === "viewer") this.removeControl(participantId);
       this.broadcastParticipants();
     }
     return Response.json({});
