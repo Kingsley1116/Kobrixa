@@ -18,6 +18,7 @@ import {
   CollabFileSync,
   CollabFileSyncManager,
   applyMinimalDiff,
+  canShareFile,
   openGuestWorkspace,
   type FileSyncWorkspaceApi,
 } from "./file-sync.js";
@@ -283,6 +284,40 @@ describe.sequential("collaborative file sync", () => {
     expect(host.canMutate).toBe(false);
   });
 
+  it("discards pending document writes during a role reset", async () => {
+    const { host, guest, guestSession } = await shared();
+    sharedTypes(guestSession.doc).files.get("src/main.bp")!.insert(0, "not authoritative ");
+    await host.stop(true);
+    await settle(host, guest);
+    expect(await read(project, "src/main.bp")).toBe("LCD.Clear()\n");
+  });
+
+  it("waits for a write already inside IPC before finishing a role reset", async () => {
+    const { host, guestSession } = await shared();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realWrite = hostService.write.bind(hostService);
+    const write = vi.spyOn(hostService, "write").mockImplementation(async (...args) => {
+      await pending;
+      return realWrite(...args);
+    });
+    sharedTypes(guestSession.doc).files.get("src/main.bp")!.insert(0, "in flight ");
+    const flushing = host.flush();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    let stopped = false;
+    const stopping = host.stop(true).then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    release();
+    await Promise.all([flushing, stopping]);
+    expect(await read(project, "src/main.bp")).toBe("in flight LCD.Clear()\n");
+    expect(stopped).toBe(true);
+  });
+
   it("does not let viewers mutate the tree", async () => {
     const room = createLinkedSessions(["host", "viewer"], roomId);
     const host = start(room.sessions[0] as LinkedSession, hostService, hostSummary.id);
@@ -336,6 +371,84 @@ describe("applyMinimalDiff", () => {
   });
 });
 
+describe("shared file byte budget", () => {
+  it("seeds eight one-MiB files and reports the ninth as skipped", async () => {
+    const room = createLinkedSessions(["host"]);
+    const files = Array.from({ length: 9 }, (_, index) => `file${index}.bp`);
+    const content = "a".repeat(COLLAB_LIMITS.fileBytes);
+    const summary = {
+      id: "budget",
+      entries: files.map((path) => ({ path, kind: "file" })),
+      files,
+    } as WorkspaceSummary;
+    const sync = new CollabFileSync(room.sessions[0]!, "budget", {
+      refresh: async () => ({ workspace: summary }),
+      readFile: async () => ({ content, revision: "revision" }),
+    } as unknown as FileSyncWorkspaceApi);
+    sync.start();
+    await sync.flush();
+    expect(sharedTypes(room.sessions[0]!.doc).files.size).toBe(8);
+    expect(sync.getSnapshot().skipped).toEqual(["file8.bp"]);
+    expect(sync.recordCreate("extra.bp", "file", "a")).toBe(false);
+    sync.dispose();
+    room.sessions[0]!.destroy();
+  });
+
+  it("counts UTF-8 bytes and subtracts the replaced file", () => {
+    const doc = new Y.Doc();
+    const files = sharedTypes(doc).files;
+    for (let index = 0; index < 8; index++)
+      files.set(`file${index}.bp`, new Y.Text("a".repeat(COLLAB_LIMITS.fileBytes)));
+    expect(canShareFile(files, "file0.bp", "b".repeat(COLLAB_LIMITS.fileBytes))).toBe(true);
+    expect(canShareFile(files, "file0.bp", "😀".repeat(COLLAB_LIMITS.fileBytes / 4))).toBe(true);
+    expect(canShareFile(files, "file0.bp", "😀".repeat(COLLAB_LIMITS.fileBytes / 4 + 1))).toBe(
+      false,
+    );
+    files.get("file0.bp")!.delete(0, 3);
+    expect(canShareFile(files, "extra.bp", "界")).toBe(true);
+    expect(canShareFile(files, "extra.bp", "😀")).toBe(false);
+    doc.destroy();
+  });
+
+  it("rejects external growth beyond the room budget while accepting an exact-fit replacement", async () => {
+    const room = createLinkedSessions(["host"]);
+    const paths = Array.from({ length: 9 }, (_, index) => `file${index}.bp`);
+    const disk = new Map(
+      paths.map((file, index) => [
+        file,
+        {
+          content:
+            index < 7
+              ? "a".repeat(COLLAB_LIMITS.fileBytes)
+              : "b".repeat(COLLAB_LIMITS.fileBytes / 2),
+          revision: "initial",
+        },
+      ]),
+    );
+    const summary = {
+      id: "budget",
+      entries: paths.map((path) => ({ path, kind: "file" })),
+      files: paths,
+    } as WorkspaceSummary;
+    const sync = new CollabFileSync(room.sessions[0]!, "budget", {
+      refresh: async () => ({ workspace: summary }),
+      readFile: async (_id: string, file: string) => disk.get(file),
+    } as unknown as FileSyncWorkspaceApi);
+    sync.start();
+    await sync.flush();
+    const shared = sharedTypes(room.sessions[0]!.doc).files;
+    disk.set("file8.bp", { content: "界" + disk.get("file8.bp")!.content, revision: "growth" });
+    await sync.checkDisk();
+    expect(shared.get("file8.bp")!.toString()).toBe("b".repeat(COLLAB_LIMITS.fileBytes / 2));
+    expect(sync.getSnapshot().skipped).toEqual(["file8.bp"]);
+    disk.set("file8.bp", { content: "c".repeat(COLLAB_LIMITS.fileBytes / 2), revision: "replace" });
+    await sync.checkDisk();
+    expect(shared.get("file8.bp")!.toString()).toBe("c".repeat(COLLAB_LIMITS.fileBytes / 2));
+    sync.dispose();
+    room.sessions[0]!.destroy();
+  });
+});
+
 describe("guest workspace flow", () => {
   it("opens the mirror and adopts it", async () => {
     const summary = { id: "w" } as WorkspaceSummary;
@@ -372,6 +485,65 @@ describe("guest workspace flow", () => {
     expect(adopt).not.toHaveBeenCalled();
     expect(manager.getSnapshot()).toBeNull();
     detach();
+  });
+
+  it("retains the room workspace and read-only gate while a role reset drains", async () => {
+    const previousRoom = createLinkedSessions(["host", "editor"], roomId);
+    const nextRoom = createLinkedSessions(["host", "viewer"], roomId);
+    let current = previousRoom.sessions[1]!;
+    const listeners = new Set<() => void>();
+    const store = {
+      getSnapshot: () => current,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const summary = {
+      id: "mirror",
+      entries: [],
+      files: [],
+      drafts: {},
+    } as unknown as WorkspaceSummary;
+    const openMirror = vi.fn(async () => summary);
+    const adopt = vi.fn(async () => {});
+    const manager = new CollabFileSyncManager(store, {
+      workspace: {
+        refresh: async () => ({ workspace: summary }),
+      } as unknown as FileSyncWorkspaceApi,
+      collab: { openMirror },
+      activeWorkspaceId: () => "unrelated-active-project",
+      adopt,
+    });
+    const detach = manager.attach();
+    await vi.waitFor(() => expect(manager.getSnapshot()?.workspaceId).toBe("mirror"));
+    const previous = manager.getSnapshot()!;
+    await previous.sync.flush();
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const realStop = previous.sync.stop.bind(previous.sync);
+    const stop = vi.spyOn(previous.sync, "stop").mockImplementation(async (discard) => {
+      await realStop(discard);
+      await pending;
+    });
+    current = nextRoom.sessions[1]!;
+    for (const listener of listeners) listener();
+    expect(stop).toHaveBeenCalledWith(true);
+    expect(manager.getSnapshot()).toMatchObject({
+      workspaceId: "mirror",
+      readOnly: true,
+      sync: previous.sync,
+    });
+    expect(previous.sync.canMutate).toBe(false);
+    finish();
+    await vi.waitFor(() => expect(manager.getSnapshot()?.session).toBe(current));
+    expect(manager.getSnapshot()).toMatchObject({ workspaceId: "mirror", readOnly: true });
+    expect(openMirror).toHaveBeenCalledTimes(1);
+    expect(adopt).toHaveBeenCalledTimes(1);
+    detach();
+    for (const session of [...previousRoom.sessions, ...nextRoom.sessions]) session.destroy();
   });
 
   it("starts a sync for each store session and tracks read-only role", async () => {

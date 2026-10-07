@@ -87,7 +87,7 @@ import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
 import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
-import { applyMinimalDiff, CollabFileSyncManager } from "./collab/file-sync.js";
+import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/file-sync.js";
 import { sharedTypes } from "./collab/types.js";
 import { CollabSyncStatus } from "./collab/sync-status.js";
 import { canEdit } from "./collab/types.js";
@@ -1212,7 +1212,12 @@ export function App(): React.JSX.Element {
     )
       return;
     const { file, selectedContent } = historyReview;
-    publishSharedText(project.workspace.id, file, selectedContent);
+    try {
+      publishSharedText(project.workspace.id, file, selectedContent);
+    } catch (error) {
+      report(error);
+      return;
+    }
     replaceFileText(project, file, selectedContent);
     queueDraft(project.workspace.id, file, selectedContent);
     controller.clearDiagnostics(project.workspace.id);
@@ -1317,9 +1322,47 @@ export function App(): React.JSX.Element {
     return !sync || (sync.canMutate && sync.getSnapshot().phase === "syncing");
   }
 
+  function managedEntryContext(id: string) {
+    const project = sessions.get(id);
+    const sync = collabFiles.for(id);
+    const assertCurrent = () => {
+      if (
+        !project ||
+        sessions.get(id) !== project ||
+        sessions.activeId !== id ||
+        collabFiles.for(id) !== sync ||
+        !canMutateWorkspace(id) ||
+        controller.editingLockedFor(id)
+      )
+        throw new Error(
+          locale === "zh-TW"
+            ? "專案或協作權限已變更，請重試。"
+            : "The project or collaboration permissions changed. Try again.",
+        );
+    };
+    assertCurrent();
+    return { project: project!, sync, assertCurrent };
+  }
+
+  function sharedFileLimitError(file: string): Error {
+    return new Error(
+      locale === "zh-TW"
+        ? `「${file}」超出協作限制：僅支援文字原始碼，每個檔案 1 MiB、共 8 MiB、最多 200 個檔案。`
+        : `'${file}' exceeds collaboration limits: supported source text only, 1 MiB per file, 8 MiB total, and 200 files.`,
+    );
+  }
+
+  function assertSharedFileFits(id: string, file: string, content: string): void {
+    const sync = collabFiles.for(id);
+    if (!sync) return;
+    const files = sharedTypes(sync.session.doc).files;
+    if (!canShareFile(files, file, content)) throw sharedFileLimitError(file);
+  }
+
   function publishSharedText(id: string, file: string, content: string): void {
     const sync = collabFiles.for(id);
     if (!sync || !canMutateWorkspace(id)) return;
+    assertSharedFileFits(id, file, content);
     const text = sharedTypes(sync.session.doc).files.get(file);
     if (text) sync.session.doc.transact(() => applyMinimalDiff(text, content));
   }
@@ -1707,6 +1750,11 @@ export function App(): React.JSX.Element {
   ): Promise<boolean> {
     const project = sessions.get(workspaceId);
     if (!project || !workspaceId || !canMutateWorkspace(workspaceId)) return false;
+    const sharedSync = collabFiles.for(workspaceId);
+    const canWrite = () =>
+      sessions.get(workspaceId) === project &&
+      collabFiles.for(workspaceId) === sharedSync &&
+      canMutateWorkspace(workspaceId);
     const projectTabs = () => project.documents.getSnapshot();
     const replaceTabs = (change: (tabs: Tab[]) => Tab[]) =>
       project.documents.replace(change(projectTabs()));
@@ -1748,8 +1796,7 @@ export function App(): React.JSX.Element {
                   formatSource(file, content, settingsStore.getSnapshot().values.indentSize)
               : undefined,
           apply: (before, after) => {
-            if (!canMutateWorkspace(workspaceId))
-              throw new Error("This shared project is read-only.");
+            if (!canWrite()) throw new Error("This shared project is read-only.");
             publishSharedText(workspaceId, file, after);
             if (sessions.activeId === workspaceId)
               editorRef.current?.applySavedFormat(file, before, after);
@@ -1766,8 +1813,7 @@ export function App(): React.JSX.Element {
             queueDraft(workspaceId, file, after);
           },
           write: async (content) => {
-            if (!canMutateWorkspace(workspaceId))
-              throw new Error("This shared project is read-only.");
+            if (!canWrite()) throw new Error("This shared project is read-only.");
             if (project.files.conflicts.has(file) && !reviewed) {
               if (!automatic) beginFileReview(project, file);
               throw new Error("Review external changes before saving.");
@@ -1775,6 +1821,7 @@ export function App(): React.JSX.Element {
             // The exact version shown in the comparison is the only version approved.
             const baseline = reviewed ?? project.files.baseline(file);
             if (!baseline) throw new Error("Missing file baseline.");
+            assertSharedFileFits(workspaceId, file, content);
             const result = await window.kobrixa.workspace.write(
               workspaceId,
               file,
@@ -1803,6 +1850,16 @@ export function App(): React.JSX.Element {
                   ? "檔案在外部已變更，本機修改已保留。"
                   : "The file changed externally. Your edits have been kept.",
               );
+            }
+            if (sharedSync && !sharedTypes(sharedSync.session.doc).files.has(file)) {
+              // The first binding must include typing that arrived while the save
+              // was in flight; only `content` below is marked as saved on disk.
+              const sharedContent = read()?.content ?? content;
+              assertSharedFileFits(workspaceId, file, sharedContent);
+              if (!canWrite() || !sharedSync.recordCreate(file, "file", sharedContent))
+                throw new Error(
+                  "The file was saved locally, but collaboration permissions or limits changed.",
+                );
             }
             warning = result.warning;
             project.files.accept(file, result.snapshot);
@@ -2185,7 +2242,9 @@ export function App(): React.JSX.Element {
     setManagingEntries(true);
     setStatus(t.managingFiles);
     try {
-      await flushDrafts();
+      const context = managedEntryContext(workspace.id);
+      await flushDrafts(workspace.id);
+      context.assertCurrent();
       const result = await window.kobrixa.workspace.moveEntry(workspace.id, source, target);
       const manifestSnapshot =
         buildEntryMovesWith(source) && !workspace.implicit
@@ -2195,7 +2254,19 @@ export function App(): React.JSX.Element {
           : undefined;
       if (manifestSnapshot)
         sessions.get(workspace.id)?.files.accept("kobrixa.json", manifestSnapshot);
-      collabFiles.for(workspace.id)?.recordMove(result);
+      if (collabFiles.for(workspace.id) === context.sync) context.sync?.recordMove(result);
+      if (sessions.get(workspace.id) !== context.project) return false;
+      if (sessions.activeId !== workspace.id) {
+        collabCallbacks.current.treeChange(result);
+        if (manifestSnapshot?.content !== null && manifestSnapshot)
+          replaceFileText(
+            context.project,
+            "kobrixa.json",
+            manifestSnapshot.content,
+            manifestSnapshot.content,
+          );
+        return false;
+      }
       applyMoveMutation(result, manifestSnapshot?.content ?? undefined);
       setStatus(t.ready);
       return true;
@@ -2220,22 +2291,27 @@ export function App(): React.JSX.Element {
     setManagingEntries(true);
     setStatus(t.managingFiles);
     try {
-      await flushDrafts();
+      const context = managedEntryContext(workspace.id);
+      const createdPath = pendingCreate.parent ? `${pendingCreate.parent}/${name}` : name;
+      await flushDrafts(workspace.id);
+      context.assertCurrent();
+      if (pendingCreate.kind === "file") assertSharedFileFits(workspace.id, createdPath, "");
       const result = await window.kobrixa.workspace.createEntry(
         workspace.id,
         pendingCreate.parent,
         pendingCreate.kind,
         name,
       );
-      const createdPath = pendingCreate.parent ? `${pendingCreate.parent}/${name}` : name;
       const created =
         pendingCreate.kind === "file"
           ? await window.kobrixa.workspace.readFile(workspace.id, createdPath)
           : undefined;
-      collabFiles
-        .for(workspace.id)
-        ?.recordCreate(createdPath, pendingCreate.kind, created?.content ?? "");
-      setWorkspace(result.workspace);
+      if (collabFiles.for(workspace.id) === context.sync)
+        context.sync?.recordCreate(createdPath, pendingCreate.kind, created?.content ?? "");
+      if (sessions.get(workspace.id) !== context.project) return;
+      context.project.workspace = result.workspace;
+      sessions.changed();
+      if (sessions.activeId !== workspace.id) return;
       setSelectedTreePath(createdPath);
       setExpandedTreePaths((current) => {
         const next = expandAncestors(current, createdPath);
@@ -2243,9 +2319,12 @@ export function App(): React.JSX.Element {
         return next;
       });
       if (pendingCreate.kind === "file") await openFile(result.workspace, createdPath);
+      if (sessions.activeId !== workspace.id || sessions.get(workspace.id) !== context.project)
+        return;
       setPendingCreate(undefined);
       setStatus(t.ready);
       window.requestAnimationFrame(() => {
+        if (sessions.activeId !== workspace.id) return;
         if (pendingCreate.kind === "file") editorRef.current?.focus();
         else treeRef.current?.focus(createdPath);
       });
@@ -2258,12 +2337,15 @@ export function App(): React.JSX.Element {
 
   async function confirmMoveEntry(): Promise<void> {
     if (!pendingMove) return;
+    const id = workspace?.id;
     const target = moveDestination
       ? `${moveDestination}/${pathName(pendingMove)}`
       : pathName(pendingMove);
-    if (await moveManagedEntry(pendingMove, target)) {
+    if ((await moveManagedEntry(pendingMove, target)) && sessions.activeId === id) {
       setPendingMove(undefined);
-      window.requestAnimationFrame(() => treeRef.current?.focus(target));
+      window.requestAnimationFrame(() => {
+        if (sessions.activeId === id) treeRef.current?.focus(target);
+      });
     }
   }
 
@@ -2272,9 +2354,16 @@ export function App(): React.JSX.Element {
     setManagingEntries(true);
     setStatus(t.managingFiles);
     try {
-      await flushDrafts();
+      const context = managedEntryContext(workspace.id);
+      await flushDrafts(workspace.id);
+      context.assertCurrent();
       const result = await window.kobrixa.workspace.trashEntry(workspace.id, pendingTrash);
-      collabFiles.for(workspace.id)?.recordTrash(result.removed);
+      if (collabFiles.for(workspace.id) === context.sync) context.sync?.recordTrash(result.removed);
+      if (sessions.get(workspace.id) !== context.project) return;
+      if (sessions.activeId !== workspace.id) {
+        collabCallbacks.current.treeChange(result);
+        return;
+      }
       const removed = new Set(result.removed);
       for (const file of removed) sessions.get(workspace.id)?.files.forget(file);
       const remainingTabs = tabs.filter((tab) => !removed.has(tab.file));
@@ -2301,7 +2390,9 @@ export function App(): React.JSX.Element {
       controller.invalidateBuild();
       setPendingTrash(undefined);
       setStatus(t.ready);
-      window.requestAnimationFrame(() => treeRef.current?.focus(focusPath));
+      window.requestAnimationFrame(() => {
+        if (sessions.activeId === workspace.id) treeRef.current?.focus(focusPath);
+      });
     } catch (error) {
       report(error);
     } finally {
@@ -2555,7 +2646,12 @@ export function App(): React.JSX.Element {
     const project = sessions.get(simulator.workspaceId);
     if (!project || !canMutateWorkspace(simulator.workspaceId)) return;
     const content = JSON.stringify(scene, null, 2) + "\n";
-    publishSharedText(simulator.workspaceId, SIMULATOR_SCENE_FILE, content);
+    try {
+      publishSharedText(simulator.workspaceId, SIMULATOR_SCENE_FILE, content);
+    } catch (error) {
+      report(error);
+      return;
+    }
     simulationFormDraft.current = { workspaceId: simulator.workspaceId, content };
     const existing = project.documents
       .getSnapshot()
@@ -3236,6 +3332,7 @@ export function App(): React.JSX.Element {
                     reducedMotion={reducedMotion}
                     readOnly={locked || projectBusy || managingEntries || collabReadOnly}
                     collabSession={sharedProject ? collabSession : null}
+                    onCollabLimit={(file) => report(sharedFileLimitError(file))}
                     file={active.file}
                     documents={documents}
                     analysisSession={analysisSession}

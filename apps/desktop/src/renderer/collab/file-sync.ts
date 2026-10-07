@@ -83,6 +83,23 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+/** Checks the UTF-8 room budget with replacement bytes subtracted. */
+export function canShareFile(files: Y.Map<Y.Text>, file: string, content: string): boolean {
+  const bytes = byteLength(content);
+  if (
+    !validPath(file, "file") ||
+    bytes > COLLAB_LIMITS.fileBytes ||
+    (!files.has(file) && files.size >= COLLAB_LIMITS.files)
+  )
+    return false;
+  let total = bytes;
+  for (const [path, text] of files) {
+    if (path !== file) total += byteLength(text.toString());
+    if (total > COLLAB_LIMITS.roomFileBytes) return false;
+  }
+  return total <= COLLAB_LIMITS.roomFileBytes;
+}
+
 function validPath(entryPath: string, kind: TreeEntry["kind"]): boolean {
   return (
     collabPathSchema.safeParse(entryPath).success &&
@@ -206,9 +223,12 @@ export class CollabFileSync {
   }
 
   /** Detaches observers immediately, then drains the changes already received. */
-  async stop(): Promise<void> {
+  async stop(discardPending = false): Promise<void> {
     this.#stopping = true;
     for (const cleanup of this.#cleanup.splice(0)) cleanup();
+    // Role resets replace a potentially divergent document. Cancel debounced and
+    // queued writes, but wait for already-started IPC before the new sync writes.
+    if (discardPending) this.dispose();
     await this.flush();
     this.dispose();
   }
@@ -333,6 +353,7 @@ export class CollabFileSync {
       const summary = await this.#summary();
       const skipped: string[] = [];
       const files: [string, string, string | null, string][] = [];
+      let roomBytes = 0;
       const directories = summary.entries
         .filter((entry) => entry.kind === "directory" && validPath(entry.path, "directory"))
         .map((entry) => entry.path);
@@ -345,11 +366,13 @@ export class CollabFileSync {
         const snapshot = await this.api.readFile(this.workspaceId, entry.path);
         if (snapshot.content === null) continue;
         const content = this.options.seedContent?.(entry.path) ?? snapshot.content;
-        if (byteLength(content) > COLLAB_LIMITS.fileBytes) {
+        const bytes = byteLength(content);
+        if (bytes > COLLAB_LIMITS.fileBytes || roomBytes + bytes > COLLAB_LIMITS.roomFileBytes) {
           skipped.push(entry.path);
           continue;
         }
         files.push([entry.path, content, snapshot.revision, snapshot.content]);
+        roomBytes += bytes;
       }
       if (this.#disposed) return;
       this.session.doc.transact(() => {
@@ -681,6 +704,7 @@ export class CollabFileSync {
         }
         if (this.#disk.get(file) === content) return;
         const result = await this.api.write(this.workspaceId, file, content, expected);
+        if (this.#disposed) return;
         if (result.status === "saved" || result.snapshot.content === content) {
           this.#remember(file, result.snapshot);
           this.options.onDiskWrite?.(file, result.snapshot);
@@ -705,10 +729,7 @@ export class CollabFileSync {
       const snapshot = await this.api.readFile(this.workspaceId, file);
       if (snapshot.content === null || this.#disposed) return;
       if (snapshot.revision === this.#revisions.get(file)) return;
-      if (byteLength(snapshot.content) > COLLAB_LIMITS.fileBytes) {
-        this.#skip(file);
-        return;
-      }
+      if (!this.#fits(file, snapshot.content)) return;
       this.#remember(file, snapshot);
       if (this.#timers.has(file) || !this.canMutate) return;
       this.session.doc.transact(() => applyMinimalDiff(text, snapshot.content!), this);
@@ -746,6 +767,7 @@ export class CollabFileSync {
   }
 
   #adopt(result: WorkspaceMutationResult, entries: Map<string, WorkspaceEntry["kind"]>): void {
+    if (this.#disposed) return;
     entries.clear();
     for (const [entryPath, kind] of entryKinds(result.workspace)) entries.set(entryPath, kind);
     this.options.onTreeChange?.(result);
@@ -757,14 +779,9 @@ export class CollabFileSync {
   }
 
   #fits(file: string, content: string): boolean {
-    if (
-      byteLength(content) > COLLAB_LIMITS.fileBytes ||
-      (!this.#types.files.has(file) && this.#types.files.size >= COLLAB_LIMITS.files)
-    ) {
-      this.#skip(file);
-      return false;
-    }
-    return true;
+    if (canShareFile(this.#types.files, file, content)) return true;
+    this.#skip(file);
+    return false;
   }
 
   #remember(file: string, snapshot: WorkspaceFileSnapshot): void {
@@ -856,6 +873,7 @@ export class CollabFileSyncManager {
   #binding: CollabFileSyncBinding | null = null;
   #session: CollabSession | null = null;
   #unsubscribeSession: () => void = () => {};
+  #draining: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly store: Pick<CollabStore, "subscribe" | "getSnapshot">,
@@ -881,21 +899,31 @@ export class CollabFileSyncManager {
     void this.#sessionChanged();
     return () => {
       unsubscribe();
-      this.#stop();
       this.#session = null;
+      void this.#stop();
     };
   }
 
   async #sessionChanged(): Promise<void> {
     const session = this.store.getSnapshot();
     if (session === this.#session) return;
-    this.#stop();
+    const previous = this.#binding;
+    const replaced =
+      !!session &&
+      !!previous &&
+      session.connection.roomId === previous.session.connection.roomId &&
+      session.connection.participantId === previous.session.connection.participantId;
+    const retainedWorkspaceId = replaced ? previous.workspaceId : undefined;
     this.#session = session;
+    const draining = this.#stop(replaced);
     if (!session) return;
     try {
-      let workspaceId: string | undefined;
-      if (session.connection.role === "host") workspaceId = this.dependencies.activeWorkspaceId();
-      else {
+      await draining;
+      if (this.#session !== session) return;
+      let workspaceId: string | undefined = retainedWorkspaceId;
+      if (!workspaceId && session.connection.role === "host")
+        workspaceId = this.dependencies.activeWorkspaceId();
+      else if (!workspaceId) {
         const summary = await this.dependencies.collab.openMirror(
           session.connection.roomId,
           session.connection.projectName,
@@ -935,15 +963,17 @@ export class CollabFileSyncManager {
     this.#emit();
   }
 
-  #stop(): void {
+  #stop(replacing = false): Promise<void> {
     this.#unsubscribeSession();
     this.#unsubscribeSession = () => {};
     const binding = this.#binding;
-    if (!binding) return;
-    this.#binding = null;
-    // Finish writes already received from the room before letting go.
-    void binding.sync.stop();
+    if (!binding) return this.#draining;
+    // Keep the project read-only through a role-reset drain; an absent binding
+    // would temporarily make the renderer treat it as an ordinary local project.
+    this.#binding = replacing ? { ...binding, readOnly: true } : null;
+    this.#draining = Promise.all([this.#draining, binding.sync.stop(replacing)]).then(() => {});
     this.#emit();
+    return this.#draining;
   }
 
   #emit(): void {
