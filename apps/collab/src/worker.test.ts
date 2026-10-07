@@ -45,6 +45,9 @@ export class CollabRoom extends DurableObject {
     }
     if (!this.room) return Response.json({ error: "not-found" }, { status: 404 });
     if (path === "/join") {
+      if (this.room.password && !body.password) return Response.json({ error: "password-required" }, { status: 401 });
+      if (this.room.password && body.password !== this.room.password) return Response.json({ error: "invalid-password" }, { status: 401 });
+      if (body.name === "PasswordLimited") return Response.json({ error: "rate-limited" }, { status: 429, headers: { "Retry-After": "60" } });
       if (body.name === "Full") return Response.json({ error: "room-full" }, { status: 409 });
       const role = body.name === "Viewer" ? "viewer" : "editor";
       this.room.participants.set(body.participantId, role);
@@ -455,4 +458,31 @@ describe("collab worker", () => {
     expect(health.status).toBe(200);
     await health.arrayBuffer();
   });
+});
+
+it("forwards optional passwords and reports required, invalid and throttled joins", async () => {
+  const password = " Password 密碼 ";
+  const created = await call("/rooms", {
+    body: { name: "Host", projectName: "Protected", password },
+  });
+  expect(created.res.status).toBe(201);
+  const room = createRoomResponseSchema.parse(created.json);
+  expect(JSON.stringify(created.json)).not.toContain(password);
+  const join = (value?: string, name = "Guest") =>
+    call("/rooms/join", {
+      body: {
+        name,
+        inviteCode: room.inviteCode,
+        ...(value === undefined ? {} : { password: value }),
+      },
+    });
+  expect((await join()).json).toEqual({ error: "password-required" });
+  expect((await join("wrong")).json).toEqual({ error: "invalid-password" });
+  const accepted = await join(password);
+  expect(accepted.res.status).toBe(200);
+  expect(joinResponseSchema.parse(accepted.json).role).toBe("editor");
+  expect(JSON.stringify(accepted.json)).not.toContain(password);
+  const limited = await join(password, "PasswordLimited");
+  expect(limited.res.status).toBe(429);
+  expect(limited.res.headers.get("Retry-After")).toBe("60");
 });

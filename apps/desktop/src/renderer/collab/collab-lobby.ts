@@ -153,17 +153,21 @@ export class CollabLobby {
   }
 
   /** Host flow. Returns true when a session was started. */
-  async startRoom(projectName: string): Promise<boolean> {
+  async startRoom(projectName: string, password = ""): Promise<boolean> {
     const name = this.#snapshot.displayName.trim();
     if (this.#snapshot.pending || displayNameProblem(name) || !projectName.trim()) return false;
     this.#update({ pending: "start", startError: null });
     return this.#connect("start", () =>
-      this.api.createRoom({ name, projectName: projectName.trim() }),
+      this.api.createRoom({
+        name,
+        projectName: projectName.trim(),
+        ...(password ? { password } : {}),
+      }),
     );
   }
 
   /** Guest flow. Returns true when a session was started. */
-  async joinRoom(inviteCode: string): Promise<boolean> {
+  async joinRoom(inviteCode: string, password = ""): Promise<boolean> {
     const name = this.#snapshot.displayName.trim();
     const code = formatInviteCode(inviteCode);
     if (this.#snapshot.pending || displayNameProblem(name)) return false;
@@ -172,7 +176,11 @@ export class CollabLobby {
       return false;
     }
     this.#update({ pending: "join", joinError: null });
-    return this.#connect("join", () => this.api.joinRoom({ inviteCode: code, name }), code);
+    return this.#connect(
+      "join",
+      () => this.api.joinRoom({ inviteCode: code, name, ...(password ? { password } : {}) }),
+      code,
+    );
   }
 
   clearJoinError(): void {

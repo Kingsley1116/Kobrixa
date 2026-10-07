@@ -95,14 +95,15 @@ Host main process                        Guest main process
           persisted in Durable Object SQLite storage
 ```
 
-- The main process creates and joins rooms over HTTPS, stores room tokens, and resolves the service origin from `KOBRIXA_COLLAB_URL` or the default `https://collab.kobrixa.com`. The Content-Security-Policy allows only that origin for collaboration traffic.
+- The main process creates and joins rooms over HTTPS, keeps room tokens only in process memory (no keychain access), and resolves the service origin from `KOBRIXA_COLLAB_URL` or the default `https://collab.kobrixa.com`. The Content-Security-Policy allows only that origin for collaboration traffic.
+- Hosts may set an optional room password. The Durable Object checks a server-keyed, salted PBKDF2-SHA256 verifier before admitting guests and durably limits password attempts per client. Passwords are never included in shared documents, tokens or local preferences. Existing rooms remain passwordless.
 - The renderer opens the room WebSocket with the token and binds Monaco models to the room's Y.Doc. Remote cursors and presence use Yjs awareness.
 - `packages/collab-protocol` is the only contract between the desktop app and the service; both sides validate requests and messages with its schemas. Incompatible changes bump `COLLAB_PROTOCOL_VERSION`.
 - Tokens are HMAC-SHA256-signed by the Worker with `COLLAB_SECRET`, are valid for seven days, and carry the participant's role. The Durable Object enforces roles: viewers' document updates and chat posts are rejected.
 - The Durable Object enforces room limits (16 participants, 200 files, 1 MiB per file, 8 MiB total UTF-8 file content, 500 chat messages). Encoded document snapshots and individual WebSocket messages are bounded at 16 MiB. Directories do not count as files. The room's storage is deleted after seven days without connections.
 - A role change replaces the renderer session with a fresh document from the server while preserving its workspace binding. This prevents dropped viewer edits or stale Yjs clock dependencies from being resent after promotion.
 - Device operations stay local to each participant's main process. While a room is active, device writes are rejected unless that window holds device control; stopping a program is always allowed.
-- Room state crosses the Cloudflare network. Logs must not contain source contents, chat text or tokens.
+- Room state crosses the Cloudflare network. Logs must not contain source contents, chat text, passwords or tokens.
 
 ## Project manifest
 

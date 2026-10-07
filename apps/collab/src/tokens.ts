@@ -51,7 +51,7 @@ function hmacKey(secret: string): Promise<CryptoKey> {
   return key;
 }
 
-async function hmac(secret: string, message: string): Promise<Uint8Array> {
+export async function hmac(secret: string, message: string): Promise<Uint8Array> {
   return new Uint8Array(
     await crypto.subtle.sign("HMAC", await hmacKey(secret), encoder.encode(message)),
   );

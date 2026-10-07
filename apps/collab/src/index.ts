@@ -27,7 +27,7 @@ import {
   readJson,
 } from "./http.js";
 import { generateInviteCode } from "./invite.js";
-import { deriveRoomId, randomId, signToken, verifyToken } from "./tokens.js";
+import { base64urlEncode, deriveRoomId, hmac, randomId, signToken, verifyToken } from "./tokens.js";
 
 export { CollabRoom } from "./room.js";
 
@@ -116,7 +116,7 @@ async function createRoom(
   secret: string,
   now: number,
 ): Promise<Response> {
-  const { name, projectName } = await readJson(request, createRoomRequestSchema);
+  const { name, projectName, password } = await readJson(request, createRoomRequestSchema);
   const participantId = randomId(16);
   // A 409 means the derived room already exists (an invite-code collision); retry.
   for (let attempt = 0; attempt < INIT_ATTEMPTS; attempt++) {
@@ -127,6 +127,7 @@ async function createRoom(
       projectName,
       inviteCode,
       host: { participantId, name },
+      password,
     });
     if (response.status === 409) {
       await response.body?.cancel();
@@ -157,10 +158,28 @@ async function joinRoom(
   secret: string,
   now: number,
 ): Promise<Response> {
-  const { inviteCode, name } = await readJson(request, joinRequestSchema);
+  const { inviteCode, name, password } = await readJson(request, joinRequestSchema);
   const roomId = await deriveRoomId(secret, inviteCode);
   const participantId = randomId(16);
-  const response = await callRoom(roomStub(env, roomId), "/join", { participantId, name });
+  const clientKey = base64urlEncode(
+    await hmac(secret, `join-client:${request.headers.get("CF-Connecting-IP") ?? "unknown"}`),
+  );
+  const response = await callRoom(roomStub(env, roomId), "/join", {
+    participantId,
+    name,
+    password,
+    clientKey,
+  });
+  if (response.status === 401) {
+    const body = (await response.json()) as { error?: string };
+    if (body.error === "password-required" || body.error === "invalid-password")
+      throw new HttpError(401, body.error);
+    throw new HttpError(401, "unauthorized");
+  }
+  if (response.status === 429) {
+    await response.body?.cancel();
+    throw new HttpError(429, "rate-limited", "Too many attempts", { "Retry-After": "60" });
+  }
   if (response.status === 404) {
     await response.body?.cancel();
     throw new HttpError(404, "not-found", "Room not found");

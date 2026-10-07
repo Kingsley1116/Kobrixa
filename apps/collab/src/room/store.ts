@@ -1,4 +1,7 @@
 import type { Role } from "@kobrixa/collab-protocol";
+import type { PasswordVerifier } from "../password.js";
+
+export const PASSWORD_ATTEMPTS_PER_MINUTE = 20;
 
 /** SQLite rows are limited to 2 MB; Y.Doc updates are split into parts below that. */
 const CHUNK_BYTES = 512 * 1024;
@@ -48,6 +51,13 @@ export class RoomStore {
   constructor(private readonly sql: SqlStorage) {}
 
   migrate(): void {
+    // Separate tables keep existing rooms passwordless without rewriting room metadata.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS room_password (
+      id INTEGER PRIMARY KEY CHECK (id = 1), verifier TEXT NOT NULL
+    )`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS join_attempts (
+      client TEXT PRIMARY KEY, started_at INTEGER NOT NULL, attempts INTEGER NOT NULL
+    )`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS room_meta (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       room_id TEXT NOT NULL,
@@ -97,6 +107,48 @@ export class RoomStore {
       hostId: row.host_id,
       createdAt: row.created_at,
     };
+  }
+
+  password(): PasswordVerifier | null {
+    const row = this.sql
+      .exec<{ verifier: string }>("SELECT verifier FROM room_password WHERE id = 1")
+      .toArray()[0];
+    return row ? (JSON.parse(row.verifier) as PasswordVerifier) : null;
+  }
+
+  setPassword(verifier: PasswordVerifier): void {
+    this.sql.exec(
+      "INSERT INTO room_password (id, verifier) VALUES (1, ?)",
+      JSON.stringify(verifier),
+    );
+  }
+
+  /** Durable per-room/client limit, charged before password work, including concurrent attempts. */
+  takePasswordAttempt(client: string, now: number): boolean {
+    this.sql.exec("DELETE FROM join_attempts WHERE started_at <= ?", now - 60_000);
+    const entry = this.sql
+      .exec<{ attempts: number }>("SELECT attempts FROM join_attempts WHERE client = ?", client)
+      .toArray()[0];
+    if (entry) {
+      if (entry.attempts >= PASSWORD_ATTEMPTS_PER_MINUTE) return false;
+      this.sql.exec("UPDATE join_attempts SET attempts = attempts + 1 WHERE client = ?", client);
+    } else {
+      if (
+        this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM join_attempts").one()
+          .count >= 256
+      )
+        return false;
+      this.sql.exec(
+        "INSERT INTO join_attempts (client, started_at, attempts) VALUES (?, ?, 1)",
+        client,
+        now,
+      );
+    }
+    return true;
+  }
+
+  clearPasswordAttempts(client: string): void {
+    this.sql.exec("DELETE FROM join_attempts WHERE client = ?", client);
   }
 
   setMeta(meta: RoomMeta): void {

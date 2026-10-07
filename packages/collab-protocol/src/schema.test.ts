@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   collabPathSchema,
+  createRoomRequestSchema,
+  joinRequestSchema,
+  COLLAB_LIMITS,
   displayNameSchema,
   COLLAB_ROUTES,
   inviteCodeSchema,
@@ -10,6 +13,23 @@ import {
 } from "./index.js";
 
 describe("collab protocol", () => {
+  it("accepts optional passwords without trimming and rejects oversized passwords", () => {
+    const create = { name: "Host", projectName: "Robot" };
+    const join = { name: "Guest", inviteCode: "ABCD-EFGH-JK23" };
+    for (const [schema, body] of [
+      [createRoomRequestSchema, create],
+      [joinRequestSchema, join],
+    ] as const) {
+      expect(schema.safeParse(body).success).toBe(true);
+      expect(schema.parse({ ...body, password: " A 密碼 " }).password).toBe(" A 密碼 ");
+      expect(schema.parse({ ...body, password: "" }).password).toBe("");
+      expect(
+        schema.safeParse({ ...body, password: "x".repeat(COLLAB_LIMITS.roomPasswordLength + 1) })
+          .success,
+      ).toBe(false);
+      expect(schema.safeParse({ ...body, password: 1234 }).success).toBe(false);
+    }
+  });
   it("accepts only workspace-relative paths", () => {
     expect(collabPathSchema.safeParse("src/main.bp").success).toBe(true);
     for (const bad of ["/abs.bp", "../up.bp", "a//b.bp", "a\\b.bp", "./a.bp"])

@@ -9,6 +9,7 @@ import {
   participantIdSchema,
   presenceStateSchema,
   roomIdSchema,
+  roomPasswordSchema,
   setRoleRequestSchema,
   type ErrorResponse,
   type Notice,
@@ -29,6 +30,7 @@ import {
 } from "./room/frames.js";
 import { RoomStore, type ParticipantRow } from "./room/store.js";
 import { roomDoc, validateUpdate } from "./room/validate.js";
+import { createPasswordVerifier, verifyPassword } from "./password.js";
 
 /** Stored updates after which the document is compacted into one snapshot. */
 export const COMPACT_AFTER_UPDATES = 200;
@@ -41,11 +43,17 @@ const initRequestSchema = z
     projectName: z.string().trim().min(1).max(120),
     inviteCode: inviteCodeSchema,
     host: z.object({ participantId: participantIdSchema, name: displayNameSchema }).strict(),
+    password: roomPasswordSchema.optional(),
   })
   .strict();
 
 const joinRequestSchema = z
-  .object({ participantId: participantIdSchema, name: displayNameSchema })
+  .object({
+    participantId: participantIdSchema,
+    name: displayNameSchema,
+    password: roomPasswordSchema.optional(),
+    clientKey: z.string().min(1).max(64).default("internal"),
+  })
   .strict();
 
 /** Survives hibernation via `serializeAttachment`. */
@@ -81,8 +89,8 @@ function rejectSocket(code: number, reason: string): Response {
  * a token that may be days old; the percent-encoded header name is never decoded).
  *
  * Internal routes (called by the Worker only):
- * - `POST /init`  `{roomId, projectName, inviteCode, host: {participantId, name}}`
- * - `POST /join`  `{participantId, name}` → `{role, projectName}`
+ * - `POST /init`  `{roomId, projectName, inviteCode, host: {participantId, name}, password?}`
+ * - `POST /join`  `{participantId, name, password?, clientKey}` → `{role, projectName}`
  * - `POST /kick`  `{participantId}`
  * - `POST /role`  `{participantId, role}`
  * - `GET  /ws`    WebSocket upgrade; rejections are accepted then closed with
@@ -149,7 +157,12 @@ export class CollabRoom extends DurableObject<CollabEnv> {
     const parsed = initRequestSchema.safeParse(body);
     if (!parsed.success) return error(400, "bad-request");
     if (this.store.meta()) return error(409, "bad-request");
-    const { roomId, projectName, inviteCode, host } = parsed.data;
+    const { roomId, projectName, inviteCode, host, password } = parsed.data;
+    const secret = this.env.COLLAB_SECRET;
+    if (password && !secret) return error(503, "internal");
+    const verifier = password ? await createPasswordVerifier(secret!, roomId, password) : null;
+    // Another /init can arrive while Web Crypto is pending.
+    if (this.store.meta()) return error(409, "bad-request");
     const now = Date.now();
     const initial = roomDoc();
     initial.transact(() => {
@@ -173,6 +186,7 @@ export class CollabRoom extends DurableObject<CollabEnv> {
         role: "host",
         joinedAt: now,
       });
+      if (verifier) this.store.setPassword(verifier);
       this.store.appendUpdate(snapshot);
     });
     await this.scheduleIdleCleanup();
@@ -184,7 +198,26 @@ export class CollabRoom extends DurableObject<CollabEnv> {
     if (!parsed.success) return error(400, "bad-request");
     const meta = this.store.meta();
     if (!meta) return error(404, "not-found");
-    const { participantId, name } = parsed.data;
+    const { participantId, name, password, clientKey } = parsed.data;
+    const verifier = this.store.password();
+    if (verifier) {
+      const secret = this.env.COLLAB_SECRET;
+      if (!secret) return error(503, "internal");
+      if (!password) return error(401, "password-required");
+      if (!this.store.takePasswordAttempt(clientKey, Date.now())) {
+        return Response.json(
+          { error: "rate-limited" },
+          { status: 429, headers: { "Retry-After": "60" } },
+        );
+      }
+      if (!(await verifyPassword(secret, meta.roomId, password, verifier)))
+        return error(401, "invalid-password");
+      // An idle-room alarm may run while the password is being derived.
+      const current = this.store.meta();
+      if (!current || current.createdAt !== meta.createdAt || current.roomId !== meta.roomId)
+        return error(404, "not-found");
+      this.store.clearPasswordAttempts(clientKey);
+    }
     const existing = this.store.participant(participantId);
     if (existing) {
       if (existing.revoked) return error(403, "forbidden");

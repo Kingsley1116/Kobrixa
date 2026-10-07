@@ -29,16 +29,43 @@ const service = () =>
     serverUrl,
     fetch,
     preferences: new CollabPreferencesStore(),
-    tokens: new CollabTokenStore(undefined, undefined),
+    tokens: new CollabTokenStore(),
   });
 async function main(): Promise<void> {
   const hostApi = service();
   const guestApi = service();
-  const hostResult = await hostApi.createRoom({ name: "Host", projectName: "Live robot" });
+  const openRoom = await hostApi.createRoom({ name: "Host", projectName: "Passwordless robot" });
+  assert.ok(openRoom.ok);
+  const openGuest = await guestApi.joinRoom({
+    name: "Guest",
+    inviteCode: openRoom.value.inviteCode!,
+  });
+  assert.ok(openGuest.ok);
+  await hostApi.leave(openRoom.value.roomId);
+  await guestApi.leave(openRoom.value.roomId);
+  const password = " Local-or-remote smoke 密碼 ";
+  const hostResult = await hostApi.createRoom({
+    name: "Host",
+    projectName: "Live robot",
+    password,
+  });
   assert.ok(hostResult.ok);
+  const inviteCode = hostResult.value.inviteCode!;
+  assert.partialDeepStrictEqual(await guestApi.joinRoom({ name: "Guest", inviteCode }), {
+    ok: false,
+    error: "password-required",
+  });
+  assert.partialDeepStrictEqual(
+    await guestApi.joinRoom({ name: "Guest", inviteCode, password: "wrong" }),
+    {
+      ok: false,
+      error: "invalid-password",
+    },
+  );
   const guestResult = await guestApi.joinRoom({
     name: "Guest",
-    inviteCode: hostResult.value.inviteCode!,
+    inviteCode,
+    password,
   });
   assert.ok(guestResult.ok);
   const host = createCollabSession(hostResult.value, { network: null });
@@ -214,6 +241,22 @@ async function main(): Promise<void> {
         process.send!("restart-worker");
       });
     }
+    const freshApi = service();
+    assert.partialDeepStrictEqual(await freshApi.joinRoom({ name: "Fresh", inviteCode }), {
+      ok: false,
+      error: "password-required",
+    });
+    assert.partialDeepStrictEqual(
+      await freshApi.setRole(hostResult.value.roomId, {
+        participantId: guestResult.value.participantId,
+        role: "editor",
+      }),
+      { ok: false, error: "forbidden" },
+    );
+    const freshGuest = await freshApi.joinRoom({ name: "Fresh", inviteCode, password });
+    assert.ok(freshGuest.ok);
+    assert.ok((await hostApi.kick(hostResult.value.roomId, freshGuest.value.participantId)).ok);
+    await freshApi.leave(hostResult.value.roomId);
     const restored = createCollabSession(hostResult.value, { network: null });
     sessions.push(restored);
     restored.connect();
@@ -228,7 +271,7 @@ async function main(): Promise<void> {
     rejected.connect();
     await until(() => rejected.getSnapshot().status === "closed", "kicked client stays revoked");
     console.log(
-      "Live collaboration passes: desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
+      "Live collaboration passes: optional room passwords, memory-only credentials, desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
         (remote ? "fresh client connections." : "a Worker restart."),
     );
   } finally {

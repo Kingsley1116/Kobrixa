@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { CollabTokenStore, type SecretCodec } from "./tokens.js";
+import { describe, expect, it } from "vitest";
+import { CollabTokenStore, removeLegacyTokenFiles } from "./tokens.js";
 
 const roomId = "room-000000000001";
 const entry = {
@@ -12,50 +12,39 @@ const entry = {
   expiresAt: 10_000,
 };
 
-/** Reversible stand-in for the OS keychain. */
-const codec = (available = true): SecretCodec => ({
-  isEncryptionAvailable: () => available,
-  encryptString: (text) => Buffer.from(`enc:${[...text].reverse().join("")}`),
-  decryptString: (buffer) => {
-    const text = buffer.toString();
-    if (!text.startsWith("enc:")) throw new Error("bad ciphertext");
-    return [...text.slice(4)].reverse().join("");
-  },
-});
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory) await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
-
 describe("collab token store", () => {
-  it("persists tokens only in encrypted form and reloads them", async () => {
-    directory = await mkdtemp(path.join(tmpdir(), "kobrixa-collab-tokens-"));
-    const store = new CollabTokenStore(directory, codec(), () => 1);
-    await store.set(roomId, entry);
-    const raw = await readFile(path.join(directory, "collab-tokens.json"), "utf8");
-    expect(raw).not.toContain("secret-token");
-    expect(await new CollabTokenStore(directory, codec(), () => 1).get(roomId)).toEqual(entry);
-
-    await store.delete(roomId);
-    expect(await new CollabTokenStore(directory, codec(), () => 1).get(roomId)).toBeUndefined();
-  });
-
-  it("keeps tokens in memory only without OS encryption", async () => {
-    directory = await mkdtemp(path.join(tmpdir(), "kobrixa-collab-tokens-"));
-    const store = new CollabTokenStore(directory, codec(false), () => 1);
+  it("keeps credentials for this process only and forgets them on leave", async () => {
+    const store = new CollabTokenStore(() => 1);
     await store.set(roomId, entry);
     expect(await store.get(roomId)).toEqual(entry);
-    await expect(readFile(path.join(directory, "collab-tokens.json"))).rejects.toThrow();
-    expect(await new CollabTokenStore(directory, codec(false), () => 1).get(roomId)).toBe(
-      undefined,
-    );
+    expect(await new CollabTokenStore(() => 1).get(roomId)).toBeUndefined();
+    const copy = (await store.get(roomId))!;
+    copy.role = "editor";
+    expect((await store.get(roomId))?.role).toBe("host");
+    await store.delete(roomId);
+    expect(await store.get(roomId)).toBeUndefined();
+  });
+
+  it("removes old encrypted cache files without loading them or touching preferences", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-collab-tokens-"));
+    try {
+      await writeFile(path.join(directory, "collab-tokens.json"), "old encrypted content");
+      await writeFile(path.join(directory, "collab-tokens.json.tmp"), "interrupted old write");
+      await writeFile(path.join(directory, "collab-preferences.json"), "preferences");
+      await removeLegacyTokenFiles(directory);
+      await removeLegacyTokenFiles(directory);
+      expect(await readdir(directory)).toEqual(["collab-preferences.json"]);
+      expect(await readFile(path.join(directory, "collab-preferences.json"), "utf8")).toBe(
+        "preferences",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("drops expired tokens", async () => {
     let now = 1;
-    const store = new CollabTokenStore(undefined, undefined, () => now);
+    const store = new CollabTokenStore(() => now);
     await store.set(roomId, entry);
     expect(await store.get(roomId)).toBeDefined();
     now = entry.expiresAt;

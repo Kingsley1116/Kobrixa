@@ -34,8 +34,15 @@ export const collabPathSchema = z
     "relative path",
   );
 
+/** Passwords are case-sensitive; preserve whitespace exactly. Empty means no password. */
+export const roomPasswordSchema = z.string().max(COLLAB_LIMITS.roomPasswordLength);
+
 export const createRoomRequestSchema = z
-  .object({ name: displayNameSchema, projectName: z.string().trim().min(1).max(120) })
+  .object({
+    name: displayNameSchema,
+    projectName: z.string().trim().min(1).max(120),
+    password: roomPasswordSchema.optional(),
+  })
   .strict();
 export type CreateRoomRequest = z.infer<typeof createRoomRequestSchema>;
 
@@ -51,7 +58,11 @@ export const createRoomResponseSchema = z
 export type CreateRoomResponse = z.infer<typeof createRoomResponseSchema>;
 
 export const joinRequestSchema = z
-  .object({ inviteCode: inviteCodeSchema, name: displayNameSchema })
+  .object({
+    inviteCode: inviteCodeSchema,
+    name: displayNameSchema,
+    password: roomPasswordSchema.optional(),
+  })
   .strict();
 export type JoinRequest = z.infer<typeof joinRequestSchema>;
 
@@ -95,6 +106,8 @@ export const errorResponseSchema = z
     error: z.enum([
       "bad-request",
       "unauthorized",
+      "password-required",
+      "invalid-password",
       "forbidden",
       "not-found",
       "room-full",

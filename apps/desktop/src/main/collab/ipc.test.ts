@@ -13,7 +13,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>());
-const keychain = vi.hoisted(() => ({ available: true }));
 vi.mock("electron", () => ({
   ipcMain: {
     handle: (name: string, fn: (...args: unknown[]) => unknown) => handlers.set(name, fn),
@@ -21,11 +20,8 @@ vi.mock("electron", () => ({
   shell: {},
   app: { getPath: () => tmpdir() },
   net: { fetch: (url: string, init: RequestInit) => globalThis.fetch(url, init) },
-  safeStorage: {
-    isEncryptionAvailable: () => keychain.available,
-    encryptString: (text: string) => Buffer.from(`enc:${Buffer.from(text).toString("hex")}`),
-    decryptString: (buffer: Buffer) =>
-      Buffer.from(buffer.toString().slice(4), "hex").toString("utf8"),
+  get safeStorage() {
+    throw new Error("Collaboration must not access the OS keychain");
   },
 }));
 
@@ -141,7 +137,6 @@ let server: FakeCollabServer;
 let userData: string;
 beforeEach(async () => {
   handlers.clear();
-  keychain.available = true;
   server = new FakeCollabServer();
   await server.start();
   userData = await mkdtemp(path.join(tmpdir(), "kobrixa-collab-ipc-"));
@@ -227,8 +222,7 @@ describe("collab IPC against a fake collaboration service", () => {
     ]);
     const persisted = await readFile(path.join(userData, "collab-preferences.json"), "utf8");
     expect(persisted).not.toContain("token");
-    const tokens = await readFile(path.join(userData, "collab-tokens.json"), "utf8");
-    expect(tokens).not.toContain("host-token");
+    await expect(readFile(path.join(userData, "collab-tokens.json"))).rejects.toThrow();
 
     await call("collab:leave", ROOM);
     expect(await call("collab:kick", ROOM, GUEST)).toMatchObject({ ok: false, error: "forbidden" });
@@ -251,12 +245,13 @@ describe("collab IPC against a fake collaboration service", () => {
     expect(server.seen).toHaveLength(1);
   });
 
-  it("keeps tokens in memory only when the keychain is unavailable", async () => {
-    keychain.available = false;
+  it("forgets host credentials on a new app process without touching the keychain", async () => {
     register(await createCollabService(userData, server.origin));
     await call("collab:create-room", { name: "Host", projectName: "Robot" });
     expect(await call("collab:kick", ROOM, GUEST)).toEqual({ ok: true, value: null });
     await expect(readFile(path.join(userData, "collab-tokens.json"))).rejects.toThrow();
+    register(await createCollabService(userData, server.origin));
+    expect(await call("collab:kick", ROOM, GUEST)).toMatchObject({ ok: false, error: "forbidden" });
   });
 
   it("rejects invalid arguments before any request", async () => {
@@ -299,7 +294,7 @@ describe("collab IPC against a fake collaboration service", () => {
 
   it("reports network failures and timeouts", async () => {
     const preferences = await loadCollabPreferences(userData, () => "me");
-    const tokens = new CollabTokenStore(undefined, undefined);
+    const tokens = new CollabTokenStore();
     server.mode = "hang";
     const slow = new CollabService({
       serverUrl: server.origin,
@@ -327,4 +322,19 @@ describe("collab IPC against a fake collaboration service", () => {
       error: "network",
     });
   });
+});
+
+it("passes passwords over IPC/HTTP without persisting them in recent rooms", async () => {
+  register(await createCollabService(userData, server.origin));
+  const password = " Private room password ";
+  await call("collab:create-room", { name: "Host", projectName: "Robot", password });
+  await call("collab:join-room", { name: "Guest", inviteCode: INVITE, password });
+  expect(server.seen.map((request) => request.body)).toEqual([
+    { name: "Host", projectName: "Robot", password },
+    { name: "Guest", inviteCode: INVITE, password },
+  ]);
+  const persisted = await readFile(path.join(userData, "collab-preferences.json"), "utf8");
+  expect(persisted).not.toContain(password);
+  expect(persisted).not.toContain("password");
+  await expect(readFile(path.join(userData, "collab-tokens.json"))).rejects.toThrow();
 });

@@ -48,6 +48,7 @@ export const COLLAB_LIMITS = {
   chatMessages: 500,
   chatMessageLength: 2000,
   displayNameLength: 40,
+  roomPasswordLength: 128,
   /** Rooms without connections are deleted after this many milliseconds. */
   idleRoomMs: 7 * 24 * 60 * 60 * 1000,
   tokenTtlMs: 7 * 24 * 60 * 60 * 1000,

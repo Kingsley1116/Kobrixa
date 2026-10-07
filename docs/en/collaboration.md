@@ -2,17 +2,19 @@
 
 > **Release candidate.** Cloud collaboration is implemented on the candidate branch and is not part of a published desktop release yet. The default service at `https://collab.kobrixa.com` is deployed and available for this candidate.
 
-Several people can edit one Kobrixa project at the same time through a Kobrixa-operated collaboration service. No account is needed: the host starts a room and shares an invite code, and guests join with that code. Everyone sees the same files, cursors and chat; only one person at a time controls the EV3.
+Several people can edit one Kobrixa project at the same time through a Kobrixa-operated collaboration service. No account is needed: the host starts a room and shares an invite code, and guests join with that code and the optional room password. Everyone sees the same files, cursors and chat; only one person at a time controls the EV3.
 
 ## Starting and joining a room
 
-**Host:** open a project, then open the tools panel's **Collaborate** tab. Enter a display name and select **Start a room**. The tab shows an invite code such as `ABCD-EFGH-JK23`; share it with the people you want to invite.
+**Host:** open a project, then open the tools panel's **Collaborate** tab. Enter a display name and select **Start a room**. You can set a room password in the dialog or leave it blank. The tab shows an invite code such as `ABCD-EFGH-JK23`; share it with the people you want to invite.
 
-**Guest:** open the **Collaborate** tab, enter the invite code and a display name, and join. Guests do not need a copy of the project; it arrives from the room.
+**Guest:** open the **Collaborate** tab, enter the invite code, a display name and the room password if the host set one, and join. Guests do not need a copy of the project; it arrives from the room.
 
 - Display names are up to 40 characters. A room holds up to 16 participants.
-- Anyone who has the invite code can join. Treat it like a password and share it only with the intended people.
-- Room access tokens are signed by the service and are valid for seven days.
+- Without a room password, anyone with the invite code can join. With a password, both are required. Share them only with the intended people.
+- Room passwords are case-sensitive, preserve spaces and allow up to 128 characters. The service stores a salted password verifier, not the password.
+- The app keeps room access tokens only in memory and does not use the system keychain for collaboration. Passwords are not saved. Quitting the app or leaving the room forgets access; rejoin with the invite code and password if required. A returning host joins as a guest; start a new room to host again.
+- Room access tokens are signed by the service and are valid for seven days within that session.
 
 ## Roles
 
@@ -53,7 +55,7 @@ The **Collaborate** tab includes a plain-text chat. Messages are limited to 2,00
 
 - Room content, including project files, chat messages and display names, is stored on the collaboration service while the room is in use. It is deleted automatically after seven days without any connection.
 - The service runs on Cloudflare, so source code passes through Cloudflare's network.
-- Do not post invite codes publicly; anyone with the code can read and, as an editor, change the project.
+- Do not post invite codes or room passwords publicly; people who can join can read and, as editors, change the project.
 - The app connects only to the configured collaboration origin. Its Content-Security-Policy allows that origin and no other collaboration endpoint.
 
 Do not use collaboration for content you are not allowed to share with a third-party service.
@@ -72,10 +74,10 @@ KOBRIXA_COLLAB_URL=http://localhost:8787 pnpm dev
 
 Encoded Yjs documents and individual WebSocket messages are limited to 16 MiB to bound synchronization and history overhead. Oversized updates are rejected before acceptance. These service limits keep room snapshots below the platform's message and memory constraints.
 
-Run `pnpm build:core && pnpm test:collab:live` to exercise the real local Worker with two clients, including file mirrors, edits, chat, control permissions, role changes, removal and persistence across a Worker restart. Run `KOBRIXA_SMOKE_COLLAB_LINKED=1 pnpm test:desktop:smoke` for the integrated desktop workflow. Both use local test data.
+Run `pnpm build:core && pnpm test:collab:live` to exercise the real local Worker with two clients, including passwordless and protected rooms, rejected passwords, memory-only credentials, file mirrors, edits, chat, control permissions, role changes, removal and persistence across a Worker restart. Run `KOBRIXA_SMOKE_COLLAB_LINKED=1 pnpm test:desktop:smoke` for the integrated desktop workflow. Both use local test data.
 
-After deploying a service, run `pnpm test:collab:remote https://collab.kobrixa.com` to verify the same two-client workflow against that origin. This creates one room containing synthetic test files and chat, then closes all clients; the room expires under the normal seven-day idle policy. It verifies server state and revoked access across fresh client connections without restarting the deployed Worker. The origin must be provided explicitly; HTTP is accepted only for loopback addresses.
+After deploying a service, run `pnpm test:collab:remote https://collab.kobrixa.com` to verify the same two-client workflow against that origin. This creates two rooms containing only synthetic test data, then closes all clients; the rooms expire under the normal seven-day idle policy. It verifies server state and revoked access across fresh client connections without restarting the deployed Worker. The origin must be provided explicitly; HTTP is accepted only for loopback addresses.
 
 ## Acceptance status
 
-The candidate has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow on 2026-10-07. Desktop release acceptance remains a separate step before this feature ships in a published app.
+The candidate has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow, including optional room passwords, on 2026-10-08. Desktop release acceptance remains a separate step before this feature ships in a published app.

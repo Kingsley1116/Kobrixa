@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { COLLAB_LIMITS } from "@kobrixa/collab-protocol";
 import { Dialog, DialogActions } from "../components/dialog.js";
 import { collabErrorMessage, type CollabCopy } from "./collab-copy.js";
 import { formatInviteCode, isValidInviteCode, type LobbyError } from "./collab-lobby.js";
@@ -19,12 +20,13 @@ export function JoinDialog({
   initialCode?: string;
   pending: boolean;
   error: LobbyError | null;
-  onJoin(code: string): void;
+  onJoin(code: string, password: string): void;
   /** Called when the code changes, so a stale server error can be cleared. */
   onEdit(): void;
   onClose(): void;
 }): React.JSX.Element {
   const [code, setCode] = useState(() => formatInviteCode(initialCode));
+  const [password, setPassword] = useState("");
   const [showInvalid, setShowInvalid] = useState(false);
   const id = useId();
   const hintId = `${id}-hint`;
@@ -47,7 +49,7 @@ export function JoinDialog({
           setShowInvalid(true);
           return;
         }
-        onJoin(code);
+        onJoin(code, password);
       }}
     >
       <label>
@@ -63,7 +65,10 @@ export function JoinDialog({
           inputMode="text"
           placeholder="ABCD-EFGH-JK23"
           readOnly={pending}
-          aria-invalid={invalid || Boolean(error)}
+          aria-invalid={
+            invalid ||
+            (Boolean(error) && error !== "password-required" && error !== "invalid-password")
+          }
           aria-describedby={message ? `${hintId} ${errorId}` : hintId}
           onChange={(event) => {
             const next = formatInviteCode(event.target.value);
@@ -73,6 +78,24 @@ export function JoinDialog({
           }}
         />
         <small id={hintId}>{copy.inviteCodeHint}</small>
+      </label>
+      <label>
+        {copy.roomPassword}
+        <input
+          type="password"
+          data-testid="collab-join-password"
+          value={password}
+          maxLength={COLLAB_LIMITS.roomPasswordLength}
+          autoComplete="off"
+          readOnly={pending}
+          aria-invalid={error === "password-required" || error === "invalid-password"}
+          aria-describedby={`${id}-password-hint ${errorId}`}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            onEdit();
+          }}
+        />
+        <small id={`${id}-password-hint`}>{copy.joinPasswordHint}</small>
       </label>
       <p className="collab-join-as">{copy.joiningAs(displayName.trim())}</p>
       <p id={errorId} className="collab-error" role="alert" data-testid="collab-join-error">

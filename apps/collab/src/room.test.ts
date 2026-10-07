@@ -39,7 +39,13 @@ export class CollabRoom extends Room {
       return Response.json({
         alarm: await this.ctx.storage.getAlarm(),
         updates: this.ctx.storage.sql.exec("SELECT COUNT(DISTINCT seq) AS count FROM doc_updates").one().count,
+        password: this.ctx.storage.sql.exec("SELECT verifier FROM room_password").toArray(),
+        participants: this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM participants").one().count,
       });
+    }
+    if (path === "/expire-password-attempts") {
+      this.ctx.storage.sql.exec("UPDATE join_attempts SET started_at = ?", Date.now() - 60_001);
+      return Response.json({});
     }
     if (path === "/expire") {
       await (this.restored ?? this).alarm();
@@ -79,6 +85,7 @@ function createMiniflare(): Miniflare {
       compatibilityDate: "2026-09-06",
       durableObjects: { ROOMS: { className: "CollabRoom", useSQLite: true } },
       resourcePersistencePath: persistDir,
+      bindings: { COLLAB_SECRET: "room-test-signing-secret" },
     }),
   );
 }
@@ -776,5 +783,78 @@ describe("CollabRoom authorization and lifecycle", () => {
     await post("idle", "/expire", {});
     expect(await rejectedCloseCode("idle", HOST)).toBe(CLOSE_CODE.roomClosed);
     expect((await post("idle", "/join", { participantId: GUEST, name: "Guest" })).status).toBe(404);
+  });
+});
+
+describe("optional room passwords", () => {
+  const password = " Room 密碼 ";
+  const init = (room: string, value = password) =>
+    post(room, "/init", {
+      roomId: `${room}-room-id-0000`,
+      projectName: "Robot",
+      inviteCode: "ABCD-EFGH-JKLM",
+      host: { participantId: HOST, name: "Host" },
+      password: value,
+    });
+  const joinRoom = (room: string, value?: string, participantId = GUEST) =>
+    post(room, "/join", {
+      participantId,
+      name: "Guest",
+      ...(value === undefined ? {} : { password: value }),
+      clientKey: "client-one",
+    });
+
+  test("requires the exact password without exposing it or creating rejected participants", async () => {
+    expect((await init("password-exact")).status).toBe(200);
+    expect(await joinRoom("password-exact")).toMatchObject({
+      status: 401,
+      body: { error: "password-required" },
+    });
+    expect(await joinRoom("password-exact", password.trim())).toMatchObject({
+      status: 401,
+      body: { error: "invalid-password" },
+    });
+    expect(await joinRoom("password-exact", "wrong")).toMatchObject({
+      status: 401,
+      body: { error: "invalid-password" },
+    });
+    const inspected = await post("password-exact", "/inspect", {});
+    expect(inspected.body.participants).toBe(1);
+    expect(JSON.stringify(inspected.body.password)).not.toContain(password);
+    expect(inspected.body.password).toHaveLength(1);
+    const joined = await joinRoom("password-exact", password);
+    expect(joined).toMatchObject({ status: 200, body: { role: "editor" } });
+    expect(JSON.stringify(joined.body)).not.toContain(password);
+    await post("password-exact", "/reconstruct", {});
+    expect((await joinRoom("password-exact", "wrong", "guest-0002")).status).toBe(401);
+    expect((await joinRoom("password-exact", password, "guest-0002")).status).toBe(200);
+  });
+
+  test("limits password guessing across room reconstruction and admits again after expiry", async () => {
+    await init("password-throttle");
+    for (let i = 0; i < 20; i++)
+      expect((await joinRoom("password-throttle", "wrong")).status).toBe(401);
+    expect(await joinRoom("password-throttle", password)).toMatchObject({
+      status: 429,
+      body: { error: "rate-limited" },
+    });
+    await post("password-throttle", "/reconstruct", {});
+    expect((await joinRoom("password-throttle", password)).status).toBe(429);
+    await post("password-throttle", "/expire-password-attempts", {});
+    expect((await joinRoom("password-throttle", password)).status).toBe(200);
+  });
+
+  test("keeps passwordless rooms working and serializes concurrent protected room creation", async () => {
+    await init("password-empty", "");
+    expect((await joinRoom("password-empty")).status).toBe(200);
+    const results = await Promise.all([
+      init("password-race", "first"),
+      init("password-race", "second"),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
+    const winner = results[0]!.status === 200 ? "first" : "second";
+    const loser = winner === "first" ? "second" : "first";
+    expect((await joinRoom("password-race", loser)).status).toBe(401);
+    expect((await joinRoom("password-race", winner)).status).toBe(200);
   });
 });

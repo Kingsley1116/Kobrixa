@@ -34,6 +34,13 @@ const button = (selector: string): HTMLButtonElement => document.querySelector(s
 async function click(selector: string): Promise<void> {
   await act(async () => button(selector).click());
 }
+async function input(selector: string, value: string): Promise<void> {
+  await act(async () => {
+    const element = document.querySelector<HTMLInputElement>(selector)!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
 function api(): CollabApi {
   return {
     getPreferences: vi.fn(async () => ({ displayName: "Ada", recentRooms: [] })),
@@ -53,6 +60,81 @@ function api(): CollabApi {
 }
 
 describe("collaboration panel", () => {
+  it.each(["en", "zh-TW"] as const)("creates a password-protected room in %s", async (locale) => {
+    const requests = api();
+    await act(async () =>
+      root.render(
+        createElement(CollabPanel, {
+          store,
+          api: requests,
+          locale,
+          projectName: "Robot",
+        }),
+      ),
+    );
+    await click("[data-testid=collab-start]");
+    await input("[data-testid=collab-create-password]", " Room 密碼 ");
+    await click(".collab-create-dialog button[type=submit]");
+    expect(requests.createRoom).toHaveBeenCalledWith({
+      name: "Ada",
+      projectName: "Robot",
+      password: " Room 密碼 ",
+    });
+    expect(document.querySelector("[data-testid=collab-create-password]")).toBeNull();
+    expect(JSON.stringify(vi.mocked(requests.setPreferences).mock.calls)).not.toContain(
+      "Room 密碼",
+    );
+  });
+
+  it.each(["en", "zh-TW"] as const)(
+    "corrects missing and wrong room passwords in %s",
+    async (locale) => {
+      const requests = api();
+      vi.mocked(requests.joinRoom)
+        .mockResolvedValueOnce({ ok: false, error: "password-required" })
+        .mockResolvedValueOnce({ ok: false, error: "invalid-password" });
+      await act(async () =>
+        root.render(
+          createElement(CollabPanel, {
+            store,
+            api: requests,
+            locale,
+            projectName: "Robot",
+          }),
+        ),
+      );
+      await click("[data-testid=collab-join]");
+      await input("[data-testid=collab-invite-code]", "ABCD-EFGH-JK23");
+      await click(".collab-join-dialog button[type=submit]");
+      expect(document.querySelector("[data-testid=collab-join-error]")?.textContent).toBe(
+        collabCopy[locale].errors["password-required"],
+      );
+      expect(
+        document.querySelector("[data-testid=collab-invite-code]")?.getAttribute("aria-invalid"),
+      ).toBe("false");
+      expect(
+        document.querySelector("[data-testid=collab-join-password]")?.getAttribute("aria-invalid"),
+      ).toBe("true");
+      await input("[data-testid=collab-join-password]", "wrong");
+      expect(document.querySelector("[data-testid=collab-join-error]")?.textContent).toBe("");
+      await click(".collab-join-dialog button[type=submit]");
+      expect(document.querySelector("[data-testid=collab-join-error]")?.textContent).toBe(
+        collabCopy[locale].errors["invalid-password"],
+      );
+      await input("[data-testid=collab-join-password]", " Correct 密碼 ");
+      await click(".collab-join-dialog button[type=submit]");
+      expect(requests.joinRoom).toHaveBeenLastCalledWith({
+        name: "Ada",
+        inviteCode: "ABCD-EFGH-JK23",
+        password: " Correct 密碼 ",
+      });
+      expect(document.querySelector("[data-testid=collab-join-password]")).toBeNull();
+      expect(JSON.stringify(vi.mocked(requests.setPreferences).mock.calls)).not.toContain(
+        "Correct 密碼",
+      );
+    },
+  );
+
   it.each(["en", "zh-TW"] as const)(
     "creates a room and manages participants in %s",
     async (locale) => {

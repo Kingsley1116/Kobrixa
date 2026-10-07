@@ -193,7 +193,7 @@ function Lobby({
           displayName={state.displayName}
           pending={state.pending === "start"}
           error={state.startError}
-          onCreate={() => void lobby.startRoom(project)}
+          onCreate={(password) => void lobby.startRoom(project, password)}
           onClose={() => setCreating(false)}
         />
       )}
@@ -206,7 +206,7 @@ function Lobby({
           pending={state.pending === "join"}
           error={state.joinError}
           onEdit={() => lobby.clearJoinError()}
-          onJoin={(code) => void lobby.joinRoom(code)}
+          onJoin={(code, password) => void lobby.joinRoom(code, password)}
           onClose={() => setJoinCode(null)}
         />
       )}

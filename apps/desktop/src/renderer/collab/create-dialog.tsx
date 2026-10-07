@@ -1,4 +1,5 @@
-import { useId } from "react";
+import { useId, useState } from "react";
+import { COLLAB_LIMITS } from "@kobrixa/collab-protocol";
 import { Dialog, DialogActions } from "../components/dialog.js";
 import { collabErrorMessage, type CollabCopy } from "./collab-copy.js";
 import type { LobbyError } from "./collab-lobby.js";
@@ -17,10 +18,11 @@ export function CreateDialog({
   displayName: string;
   pending: boolean;
   error: LobbyError | null;
-  onCreate(): void;
+  onCreate(password: string): void;
   onClose(): void;
 }): React.JSX.Element {
   const id = useId();
+  const [password, setPassword] = useState("");
   return (
     <Dialog
       className="collab-create-dialog"
@@ -32,11 +34,25 @@ export function CreateDialog({
         if (!pending) onClose();
       }}
       onSubmit={() => {
-        if (!pending) onCreate();
+        if (!pending) onCreate(password);
       }}
     >
       <p>{copy.createIntro}</p>
       <p>{copy.hostingAs(displayName.trim())}</p>
+      <label>
+        {copy.roomPassword}
+        <input
+          type="password"
+          data-testid="collab-create-password"
+          value={password}
+          maxLength={COLLAB_LIMITS.roomPasswordLength}
+          autoComplete="new-password"
+          readOnly={pending}
+          aria-describedby={`${id}-password-hint`}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <small id={`${id}-password-hint`}>{copy.createPasswordHint}</small>
+      </label>
       <p className="collab-error" role="alert" data-testid="collab-create-error">
         {error ? collabErrorMessage(copy, error) : ""}
       </p>
