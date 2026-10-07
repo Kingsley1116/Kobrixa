@@ -196,6 +196,31 @@ export class WorkspaceService {
     return inputPath ? this.register(inputPath) : undefined;
   }
 
+  /** Opens an app-managed folder (e.g. a collaboration mirror) without a dialog. */
+  openDirectory(directory: string): Promise<WorkspaceSummary> {
+    return this.register(directory);
+  }
+
+  /** Forgets every open workspace whose root is `directory` or inside it. */
+  async closeWithin(directory: string): Promise<string[]> {
+    let parent: string;
+    try {
+      parent = projectPath(await realpath(directory));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const closed: string[] = [];
+    for (const record of [...this.#records.values()]) {
+      if (!containsPath(parent, projectPath(record.root))) continue;
+      // Wait for queued file operations before the folder disappears.
+      await this.#operations.get(record.root)?.catch(() => undefined);
+      this.#records.delete(record.id);
+      closed.push(record.id);
+    }
+    return closed;
+  }
+
   async create(name: string): Promise<WorkspaceSummary | undefined> {
     const safe = name
       .trim()
