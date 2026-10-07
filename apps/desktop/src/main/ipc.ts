@@ -3,7 +3,7 @@ import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
-import { ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { documentationUrl } from "./window/documentation.js";
 import { quickFixRequestIdSchema, quickFixRequestSchema } from "./language/quick-fix-request.js";
 import { isIP } from "node:net";
@@ -24,6 +24,7 @@ import type { MotorTestRequest } from "../shared/motor-test.js";
 import type { SensorLabService } from "./sensor-lab/service.js";
 import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
 import { exportSensorCsv } from "./sensor-lab-export.js";
+import { registerCollabMirrorIpc } from "./collab/mirror.js";
 
 const id = z.string().uuid();
 const inputPort = z.number().int().min(0).max(3);
@@ -214,6 +215,7 @@ export function registerIpc(
     workspaces.setPreferences(filePreferencesPatchSchema.parse(patch)),
   );
   handle("workspace:open", () => workspaces.open());
+  registerCollabMirrorIpc(handle, workspaces, () => app.getPath("userData"));
   handle("workspace:search", (_event, workspaceId: unknown, request: unknown) =>
     workspaces.search(id.parse(workspaceId), workspaceSearchRequestSchema.parse(request)),
   );
