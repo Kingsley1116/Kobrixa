@@ -661,7 +661,11 @@ app
     openCount = fileCheckOpenCount;
     writes.splice(fileCheckWriteCount);
     await checkMonitor(monitorContext);
+    const collabOpenCount = openCount;
+    const collabWriteCount = writes.length;
     await checkCollab(collabContext);
+    openCount = collabOpenCount;
+    writes.splice(collabWriteCount);
     await checkSensorLab(labContext);
     await checkMotorTests(motorContext);
     await checkHighlighting({ js, until, files, win, temporary });

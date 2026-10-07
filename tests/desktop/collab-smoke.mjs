@@ -144,7 +144,11 @@ async function checkCollabSuccess({
   collabDeviceControl,
 }) {
   const originalSettings = await js("smoke.settingsStore.getSnapshot().values");
+  const originalContent = await js("ed.getValue()");
   win.setSize(980, 650);
+  await js(
+    'smoke.settingsStore.set("autoSave","off");smoke.settingsStore.set("formatOnSave",false)',
+  );
   await js(
     'smoke.settingsStore.set("deviceWidth",320);smoke.settingsStore.set("deviceOpen",true);smoke.settingsStore.set("toolTab","collab");smoke.settingsStore.set("locale","en")',
   );
@@ -295,6 +299,25 @@ async function checkCollabSuccess({
   await js(click('[data-testid="collab-leave"]'));
   await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
   assert.equal(await js('Boolean(document.querySelector("[data-testid=collab-chip]"))'), false);
+  // Restore the editor and fixture ownership for the remaining full smoke suite.
+  await js('smoke.settingsStore.set("locale","en")');
+  await until(
+    'document.documentElement.lang === "en" && !ed.getOption(smoke.monaco.editor.EditorOption.readOnly)',
+  );
+  await js(
+    `ed.executeEdits("collab-restore", [{ range: ed.getModel().getFullModelRange(), text: ${JSON.stringify(originalContent)} }]);ed.focus()`,
+  );
+  await key("s", [mod]);
+  await until('!document.querySelector(".project-tab.active .dirty")');
+  assert.equal(
+    fixtures.get("00000000-0000-4000-8000-000000000001").files["main.bp"],
+    originalContent,
+  );
+  await js(click('[aria-label="Close project: Project 2"]'));
+  await until('Boolean(document.querySelector("#close-project-title"))');
+  await js(click(".modal-card .danger"));
+  await until('document.querySelectorAll(".project-tab").length === 1');
+  choose("00000000-0000-4000-8000-000000000001");
   await js(
     `for (const [key,value] of Object.entries(${JSON.stringify(originalSettings)})) smoke.settingsStore.set(key,value)`,
   );

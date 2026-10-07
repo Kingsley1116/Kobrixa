@@ -28,14 +28,22 @@ const server = await createServer({
           // Exercise the real App and room controls with deterministic linked peers.
           // This replacement exists only in this smoke Vite server, never in a build.
           return `import { createLinkedSessions } from "./testing.js";
+            import * as Y from "yjs";
             import { DeviceControl } from "./device-control.js";
             import { ChatController } from "./chat.js";
             export function createCollabSession(connection) {
+              const previous = window.__collabSmoke;
+              const state = previous?.session.connection.roomId === connection.roomId
+                ? Y.encodeStateAsUpdate(previous.room.sessions[2].doc) : null;
               const room = createLinkedSessions([connection.role, "editor", "viewer"], connection.roomId);
+              if (state) Y.applyUpdate(room.sessions[1].doc, state);
               const session = room.sessions[0];
               Object.assign(session.connection, connection);
+              session.setRole(connection.role);
               session.awareness.setLocalState({ ...session.awareness.getLocalState(), name: connection.name });
               window.__collabSmoke = { room, session, peerControl: new DeviceControl(room.sessions[1]), peerChat: new ChatController(room.sessions[1]) };
+              previous?.peerControl.dispose();
+              previous?.peerChat.dispose();
               return session;
             }`;
         }
