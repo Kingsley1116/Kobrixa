@@ -1,4 +1,6 @@
 import { checkExpandedSettings } from "./settings-smoke.mjs";
+import { compilePreview } from "./preview-smoke.mjs";
+import { checkSimulator, compileSimulationFixture } from "./simulator-smoke.mjs";
 import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
@@ -57,6 +59,8 @@ const files = {
 const drafts = {};
 const firstId = "00000000-0000-4000-8000-000000000001";
 let nextOpenId = firstId;
+let offlinePreviewSnapshot;
+let offlinePreviewSequence = 0;
 const fixtures = new Map([[firstId, { name: "Keyboard test", files, drafts, root: languageRoot }]]);
 for (const number of [2, 3]) {
   const id = `00000000-0000-4000-8000-00000000000${number}`;
@@ -209,6 +213,8 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (fileHistory.handles(name)) return fileHistory.handle(name, args);
   if (name === "search") return search.handle(args);
   const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
+  if (name === "simulatorCancel") return;
+  if (name === "simulatorPrepare") return compileSimulationFixture(fixture.files, args[1], args[2]);
   if (name === "restoreSession")
     return {
       ...savedSession,
@@ -225,8 +231,28 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     return;
   }
   if (name === "build") {
+    if (args[2]) {
+      const buildId = `preview-${++offlinePreviewSequence}`;
+      const { ir, diagnostics } = await compilePreview(fixtures.get(args[0]).files["main.bp"]);
+      offlinePreviewSnapshot = ir ? { ir, files: {} } : undefined;
+      win.webContents.send("build:event", {
+        type: "complete",
+        workspaceId: args[0],
+        buildId,
+        result: {
+          success: Boolean(ir),
+          diagnostics,
+          artifacts: ir ? [{ kind: "rbf", path: "/tmp/preview.rbf", sha256: "smoke" }] : [],
+        },
+      });
+      return buildId;
+    }
     backgroundBuild = { workspaceId: args[0], buildId: "background" };
     return "background";
+  }
+  if (name === "previewIR") {
+    if (!offlinePreviewSnapshot) throw new Error("No preview snapshot");
+    return offlinePreviewSnapshot;
   }
   if (name === "cancel") {
     win.webContents.send("build:event", {
@@ -471,6 +497,12 @@ app
     };
     const searchContext = { ...projectsContext, search, writes };
     const diagnosticsContext = { ...projectsContext, diagnostics, fileHistory, search, writes };
+    if (process.env.KOBRIXA_SMOKE_SIMULATOR_ONLY || process.env.KOBRIXA_SMOKE_PREVIEW_ONLY) {
+      await checkSimulator(projectsContext);
+      console.log("PASS local simulator");
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_DIAGNOSTICS_ONLY) {
       await checkDiagnostics(diagnosticsContext);
       app.exit(0);
@@ -1001,6 +1033,7 @@ app
     });
     await checkWorkspaceSearch(searchContext);
     await checkDiagnostics(diagnosticsContext);
+    await checkSimulator(projectsContext);
     await checkProjects(projectsContext);
     console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);

@@ -8,6 +8,7 @@ import type {
 } from "../../shared/api.js";
 import type { MotorTestState } from "../../shared/motor-test.js";
 import { deploymentPath } from "./build-path.js";
+import type { OfflinePreviewProgram } from "../../shared/offline-preview.js";
 
 export type Phase =
   | "idle"
@@ -399,7 +400,7 @@ export class ExecutionController {
       else waiting.resolve(event.result);
     }
   }
-  private async compile(request: ExecutionRequest): Promise<BuildVersion> {
+  private async compile(request: ExecutionRequest, preview = false): Promise<BuildVersion> {
     const generation = this.generation;
     this.phase("building");
     this.update({ diagnostics: [] });
@@ -420,7 +421,9 @@ export class ExecutionController {
     };
     this.waitingBuild = waiting;
     try {
-      waiting.id = await this.api.build.start(request.workspaceId, {});
+      waiting.id = preview
+        ? await this.api.build.start(request.workspaceId, {}, true)
+        : await this.api.build.start(request.workspaceId, {});
       if (generation !== this.generation) {
         void this.api.build.cancel(waiting.id).catch(() => {});
         throw new Cancelled();
@@ -501,6 +504,21 @@ export class ExecutionController {
   async build(request: ExecutionRequest): Promise<void> {
     if (this.locked || request.workspaceId !== this.workspaceId) return;
     await this.buildAndMaybeRun(request, false);
+  }
+  async preview(request: ExecutionRequest): Promise<OfflinePreviewProgram | undefined> {
+    if (this.locked || request.workspaceId !== this.workspaceId) return;
+    let ir: OfflinePreviewProgram | undefined;
+    await this.perform(async (generation) => {
+      this.phase("saving");
+      await request.saveAll();
+      this.assertCurrent(generation);
+      const version = await this.compile(request, true);
+      this.assertCurrent(generation);
+      const snapshot = await this.api.build.preview(version.buildId);
+      this.assertCurrent(generation);
+      ir = snapshot;
+    }, request.workspaceId);
+    return ir;
   }
   private async buildAndMaybeRun(request: ExecutionRequest, run: boolean): Promise<void> {
     await this.perform(

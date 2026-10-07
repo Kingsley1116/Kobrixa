@@ -1,6 +1,6 @@
 {
   "name": "@kobrixa/desktop",
-  "version": "0.1.0-v1-candidate.8",
+  "version": "0.1.0-v1-candidate.9",
   "private": true,
   "type": "module",
   "main": ".vite/build/main.cjs",
@@ -21,6 +21,7 @@
     "electron-updater": "6.8.9",
     "monaco-editor": "0.52.2",
     "node-hid": "^3.2.0",
+    "planck": "1.5.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "semver": "7.7.2",

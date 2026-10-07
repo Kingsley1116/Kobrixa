@@ -1,0 +1,38 @@
+' Synthetic vision is a simulator extension, not a stock EV3 camera.
+' 合成視覺是模擬器擴充，不是 EV3 原生相機；實機上辨識不到時直接結束。
+If Sensor.GetName(4) <> "KOBRIXA-VISION" Then
+  LCD.Text(1, 0, 0, 0, "Use 2D simulator")
+  Program.End()
+EndIf
+Sensor.SetMode(4, 1)
+' Mode 1 selects orange balls; 0 all, 2 purple. / 模式 1 只看橘球；0 全部，2 紫球。
+' SI channels: detected, bearing degrees, distance mm, class(1 orange / 2 purple).
+' SI 通道：偵測旗標、相對角度、距離 mm、類別（1 橘 / 2 紫）。
+Time.Reset1()
+found = False
+While Time.Get1() < 8000
+  detected = Sensor.ReadSIValue(4, 0)
+  If detected = 0 Then
+    Motor.Start("B", 20)
+    Motor.Start("C", -20)
+  Else
+    bearing = Sensor.ReadSIValue(4, 1)
+    distance = Sensor.ReadSIValue(4, 2)
+    If distance < 140 Then
+      found = True
+      Break
+    EndIf
+    correction = bearing * 0.7
+    Motor.Start("B", 24 - correction)
+    Motor.Start("C", 24 + correction)
+  EndIf
+  Program.Delay(20)
+EndWhile
+Motor.Stop("BC", True)
+LCD.Clear()
+If found Then
+  LCD.Text(1, 0, 0, 0, "Orange ball found")
+Else
+  LCD.Text(1, 0, 0, 0, "Search timed out")
+EndIf
+Program.Delay(500)

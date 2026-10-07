@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "vision-search",
+  "language": "bp",
+  "entry": "src/main.bp",
+  "target": "ev3-native",
+  "assets": [],
+  "outputDir": "build"
+}

@@ -68,6 +68,7 @@ describe("USB recovery controls", () => {
                   onRun: noop,
                   onStop: noop,
                   onBuild: build,
+                  onPreview: noop,
                   onUpload: noop,
                   onRunUploaded: noop,
                   onDelete: noop,

@@ -1,0 +1,26 @@
+' Four tangential omni wheels / 四顆切向全向輪：A front 前、B left 左、C rear 後、D right 右。
+' All four ports are drive wheels: this scene has no shooter. / 四埠皆為驅動輪，不配置發射器。
+LCD.Clear()
+LCD.Text(1, 0, 0, 0, "1. Slide left")
+
+' Equal/opposite A/C rolls sideways without turning. / A、C 等速反向，橫移且保持朝向。
+Motor.Start("A", 40)
+Motor.Start("C", -40)
+Program.Delay(1000)
+Motor.Stop("ABCD", True)
+Program.Delay(200)
+
+LCD.Text(1, 0, 20, 0, "2. Move forward")
+Motor.Start("B", -40)
+Motor.Start("D", 40)
+Program.Delay(1000)
+Motor.Stop("ABCD", True)
+Program.Delay(200)
+
+' All tangential wheels forward spin the chassis. / 所有切向輪同向運轉，使車身原地旋轉。
+LCD.Text(1, 0, 40, 0, "3. Rotate")
+Motor.Start("ABCD", 25)
+Program.Delay(800)
+Motor.Stop("ABCD", True)
+LCD.Text(1, 0, 60, 0, "Omni complete")
+Program.Delay(500)

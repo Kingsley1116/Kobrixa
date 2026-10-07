@@ -61,6 +61,9 @@ importers:
       node-hid:
         specifier: ^3.2.0
         version: 3.4.0
+      planck:
+        specifier: 1.5.0
+        version: 1.5.0(stage-js@1.0.2)
       react:
         specifier: ^19.1.1
         version: 19.2.8
@@ -5631,6 +5634,15 @@ packages:
       }
     engines: { node: ">=16.0.0" }
 
+  planck@1.5.0:
+    resolution:
+      {
+        integrity: sha512-dlvqJE+FscZgrGUXJ5ybd0o5bvZ5XXyZNbm08xGsXp9WjXeAyWSFT6n9s/1PQcUBo4546fDXA5RMA4wbDyZw6g==,
+      }
+    engines: { node: ">=24.0" }
+    peerDependencies:
+      stage-js: ^1.0.0-alpha.12
+
   plist@3.1.0:
     resolution:
       {
@@ -6271,6 +6283,13 @@ packages:
       {
         integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==,
       }
+
+  stage-js@1.0.2:
+    resolution:
+      {
+        integrity: sha512-EWTRBYlg7Qv9wGUao99/PfRe3KaiQqWmgSvTOXvaWnu1Jk/q/vV8yJVu6bi/3EqDZeMVnCPAjheba6OFc5k1GQ==,
+      }
+    engines: { node: ">=24.0" }
 
   stat-mode@1.0.0:
     resolution:
@@ -10853,6 +10872,10 @@ snapshots:
       pvutils: 1.2.0
       tslib: 2.8.1
 
+  planck@1.5.0(stage-js@1.0.2):
+    dependencies:
+      stage-js: 1.0.2
+
   plist@3.1.0:
     dependencies:
       "@xmldom/xmldom": 0.8.15
@@ -11274,6 +11297,8 @@ snapshots:
       minipass: 3.3.6
 
   stackback@0.0.2: {}
+
+  stage-js@1.0.2: {}
 
   stat-mode@1.0.0: {}
 

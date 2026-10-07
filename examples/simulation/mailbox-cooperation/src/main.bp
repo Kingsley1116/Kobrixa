@@ -1,0 +1,24 @@
+' A1 Scout and A2 Runner compile from two entries in this one project.
+' 同一專案的兩個入口分別控制 A1 偵察車與 A2 移動車。
+If Sensor.GetName(4) <> "KOBRIXA-VISION" Then
+  LCD.Text(1, 0, 0, 0, "Use 2D simulator")
+  Program.End()
+EndIf
+Sensor.SetMode(4, 1)
+readyBox = Mailbox.Create("ready")
+doneBox = Mailbox.Create("done")
+Mailbox.Connect("Runner")
+
+' Wait until Runner has opened its receiving mailbox. / 等移動車先建立收件匣。
+ready = Mailbox.Receive(readyBox)
+distance = Sensor.ReadSIValue(4, 2)
+If Sensor.ReadSIValue(4, 0) = 0 Then
+  distance = 0.0
+EndIf
+Mailbox.SendNumber("Runner", "distance", distance)
+LCD.Text(1, 0, 0, 0, "Sent mm: " + distance)
+
+' Delivery becomes visible on the next 10 ms world tick. / 訊息在下一個 10 ms 世界步進才可見。
+done = Mailbox.Receive(doneBox)
+LCD.Text(1, 0, 20, 0, done)
+Program.Delay(500)

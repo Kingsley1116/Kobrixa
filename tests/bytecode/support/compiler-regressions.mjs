@@ -13,6 +13,37 @@ EndFunction
 `;
 export const compilerFixtures = [
   {
+    name: "textual flags compare with Boolean literals and variables without numeric coercion",
+    source: `is_stuck = "False"
+falsePositive = 0
+If is_stuck = True Then
+  falsePositive = 1
+EndIf
+moving = is_stuck <> True
+is_stuck = "True"
+stopped = 0
+If is_stuck = True Then
+  stopped = 1
+EndIf
+reverse = True = is_stuck
+flag = False
+falseText = "False"
+falseMatches = flag = falseText
+falseDiffers = is_stuck <> flag
+flag = True
+lowerCase = "true"
+caseSensitive = lowerCase = flag
+ordinaryText = "pending"
+ordinaryDiffers = flag <> ordinaryText
+textSame = "True" = "True"
+textCaseDiffers = "True" <> "true"
+LCD.Text(1, 0, 0, 1, falsePositive + "," + moving + "," + stopped + "," + reverse)
+LCD.Text(1, 0, 20, 1, falseMatches + "," + falseDiffers + "," + caseSensitive)
+LCD.Text(1, 0, 40, 1, ordinaryDiffers + "," + textSame + "," + textCaseDiffers)
+`,
+    texts: ["0,True,1,True", "True,True,False", "True,True,True"],
+  },
+  {
     name: "computed delays keep their duration separate from the timer deadline",
     source: `Time.Reset1()
 Wait(25)

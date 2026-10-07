@@ -1,0 +1,66 @@
+.center {
+  container-type: inline-size;
+  container-name: simulation-editor;
+}
+.editor-simulation-layout {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.editor-simulation-layout.with-simulator {
+  grid-template-columns: minmax(260px, 0.55fr) minmax(0, 1.45fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.editor-simulation-layout[hidden],
+.simulator-host[hidden] {
+  display: none;
+}
+.simulator-host {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+.simulator-host > section {
+  flex: 1;
+  min-height: 0;
+}
+.simulation-scene-error {
+  padding: 8px;
+  color: var(--danger, #b91c1c);
+  max-height: 100px;
+  overflow: auto;
+}
+@container simulation-editor (max-width: 1000px) {
+  .editor-simulation-layout.with-simulator {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(70px, 0.17fr) minmax(0, 0.83fr);
+  }
+  .with-simulator > .simulator-host {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+}
+
+/* Expanding keeps the mounted editor and live world intact. */
+.editor-simulation-layout.with-simulator:has(
+    .simulator-workspace[data-expanded="true"]:not([hidden])
+  ) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.editor-simulation-layout.with-simulator:has(
+    .simulator-workspace[data-expanded="true"]:not([hidden])
+  )
+  > .editor-stage {
+  display: none;
+}
+.editor-simulation-layout.with-simulator:has(
+    .simulator-workspace[data-expanded="true"]:not([hidden])
+  )
+  > .simulator-host {
+  border: 0;
+}

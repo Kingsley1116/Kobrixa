@@ -6,6 +6,7 @@ const call =
   (...args) =>
     ipcRenderer.invoke("smoke", name, args);
 contextBridge.exposeInMainWorld("kobrixa", {
+  simulator: { prepare: call("simulatorPrepare"), cancel: call("simulatorCancel") },
   updates: {
     getState: call("updateState"),
     setPreferences: call("updatePreferences"),
@@ -53,6 +54,7 @@ contextBridge.exposeInMainWorld("kobrixa", {
     start: call("build"),
     cancel: call("cancel"),
     artifacts: async () => [],
+    preview: call("previewIR"),
     onEvent: (listener) => {
       const handler = (_event, event) => listener(event);
       ipcRenderer.on("build:event", handler);

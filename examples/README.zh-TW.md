@@ -1,6 +1,6 @@
 # Kobrixa 範例
 
-這 114 個程式均為 Kobrixa 原創範例，從只使用顯示器的安全入門程式，逐步進展到需要連接 EV3 硬體的程式。
+這 119 個專案均為 Kobrixa 原創範例，從只使用顯示器的入門程式，逐步進展到本機機器人模擬及需要連接 EV3 硬體的程式。
 
 <a href="./algorithms/">演算法</a> · <a href="./getting-started/">入門</a> · <a href="./capstones/">整合專題</a> · <a href="./display/">顯示</a> · <a href="./sound/">聲音</a> · <a href="./media/">媒體</a> · <a href="./time/">時間</a> · <a href="./buttons/">按鍵</a> · <a href="./control-flow/">控制流程</a> · <a href="./language/">語言</a> · <a href="./collections/">集合</a> · <a href="./concurrency/">並行</a> · <a href="./files/">檔案</a> · <a href="./mailboxes/">信箱</a> · <a href="./program/">程式</a> · <a href="./projects/">專案</a> · <a href="./motors/">馬達</a> · <a href="./sensors/">感測器</a>
 
@@ -49,6 +49,19 @@
 每個分類現在都是 `examples/` 下的實體資料夾；上表每個連結都會開啟對應的專案資料夾。可在 Kobrixa 開啟專案目錄、`kobrixa.json` 或 `src/main.bp`。連接 EV3 前請先建置；第一次執行馬達範例時，請先架高機器人，確保輪子可安全轉動。
 
 ## 延伸課程
+
+### 本機 2D 模擬
+
+<a href="./simulation/">模擬課程</a>附有儲存好的練習場景，不需要 EV3：
+
+- [differential-route](simulation/differential-route/) — 編碼器控制直行與 90° 轉彎。
+- [omni-lateral](simulation/omni-lateral/) — 四輪全向底盤的橫移與直行。
+- [vision-search](simulation/vision-search/) — 合成視覺搜尋，使用前明確檢查感測器身分。
+- [pixy2-search](simulation/pixy2-search/) — Pixy2 LEGO I2C 色碼數量和影像色塊，含相機設定場景。
+- [motor-shooter](simulation/motor-shooter/) — 用馬達行程發射附近的球。
+- [mailbox-cooperation](simulation/mailbox-cooperation/) — 同專案兩個入口交換目標與完成回覆。
+
+### 其他課程
 
 - [button-car](capstones/button-car/)、[sensor-dashboard](capstones/sensor-dashboard/)、[obstacle-rover](capstones/obstacle-rover/)
 - [drawing-primitives](display/drawing-primitives/)、[double-buffer-animation](display/double-buffer-animation/)、[timer-slots](time/timer-slots/)、[original-media](media/original-media/)

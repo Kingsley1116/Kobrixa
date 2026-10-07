@@ -1,3 +1,4 @@
+import { SIMULATOR_ENABLED } from "../../shared/features.js";
 import { COMMAND_LABELS } from "./command-labels.js";
 import { COMMAND_DESCRIPTIONS } from "./command-descriptions.js";
 import type { Locale } from "../i18n/copy.js";
@@ -43,6 +44,7 @@ export const appCommandInfo = {
   nextProblem: "F8",
   previousProblem: "Shift+F8",
   build: "Mod+Shift+KeyB",
+  preview: "Alt+F5",
   run: "F5",
   stop: "Shift+F5",
 } as const;
@@ -51,13 +53,15 @@ export const appCommandId = (id: AppCommand): string => `kobrixa.${id}`;
 export const commandAvailableInInput = (id: string): boolean =>
   ["kobrixa.settings", "kobrixa.shortcuts", "kobrixa.quickOpen", "kobrixa.search"].includes(id);
 export function appCommands(mac: boolean): KeyboardCommand[] {
-  return Object.entries(appCommandInfo).map(([id, binding]) => ({
-    id: `kobrixa.${id}`,
-    label: COMMAND_LABELS[`kobrixa.${id}`]![0],
-    source: "workbench",
-    contexts: [{ when: "editorFocus" }],
-    defaults: [{ keys: binding.replaceAll("Mod", mac ? "Meta" : "Ctrl").split(" ") }],
-  }));
+  return Object.entries(appCommandInfo)
+    .filter(([id]) => id !== "preview" || SIMULATOR_ENABLED)
+    .map(([id, binding]) => ({
+      id: `kobrixa.${id}`,
+      label: COMMAND_LABELS[`kobrixa.${id}`]![0],
+      source: "workbench",
+      contexts: [{ when: "editorFocus" }],
+      defaults: [{ keys: binding.replaceAll("Mod", mac ? "Meta" : "Ctrl").split(" ") }],
+    }));
 }
 export const commandLabel = (command: KeyboardCommand, locale: Locale): string =>
   COMMAND_LABELS[command.id]?.[locale === "zh-TW" ? 1 : 0] ?? command.label;

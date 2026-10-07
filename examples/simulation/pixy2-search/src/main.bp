@@ -1,0 +1,25 @@
+' Pixy2 for LEGO: I2C address 1, signature 1 at register 81.
+' Pixy2 LEGO：I2C 位址 1，色碼 1 使用暫存器 81。
+' This probe never starts motors. / 此探測範例不會啟動馬達。
+If Sensor.GetName(4) <> "Pixy2" Then
+  LCD.Text(1, 0, 0, 0, "Configure Pixy2 port 4")
+  Program.End()
+EndIf
+signature = 1
+Time.Reset1()
+While Time.Get1() < 2000
+  block = Sensor.ReadI2CRegisters(4, 1, 80 + signature, 5)
+  count = block[0]
+  x = block[1]
+  y = block[2]
+  width = block[3]
+  height = block[4]
+  ' X right, Y down; bytes 0..255, not millimetres.
+  ' X 向右、Y 向下；數值 0..255，不是毫米。
+  LCD.Clear()
+  LCD.Text(1, 0, 0, 0, "Pixy2 signature " + signature)
+  LCD.Text(1, 0, 20, 0, "Count: " + count)
+  LCD.Text(1, 0, 40, 0, "X/Y: " + x + "/" + y)
+  LCD.Text(1, 0, 60, 0, "W/H: " + width + "/" + height)
+  Program.Delay(50)
+EndWhile

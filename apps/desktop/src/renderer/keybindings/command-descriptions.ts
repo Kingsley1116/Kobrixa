@@ -1156,6 +1156,10 @@ export const COMMAND_DESCRIPTIONS: Record<string, readonly [en: string, zh: stri
     "Save pending project changes, then compile the project and show diagnostics.",
     "先保存專案中尚未儲存的修改，再編譯專案並顯示診斷結果。",
   ],
+  "kobrixa.preview": [
+    "Open the local WRO robot simulator beside your code.",
+    "在程式碼旁開啟本地 WRO 機器人模擬器。",
+  ],
   "kobrixa.closeTab": [
     "Close the active file or settings tab; ask how to handle unsaved file changes.",
     "關閉目前的檔案或設定分頁；檔案有未儲存修改時會詢問處理方式。",

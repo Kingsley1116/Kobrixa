@@ -922,14 +922,25 @@ class ObjectAssembler {
         );
         return;
       }
-      if (leftType === "string" && rightType === "string" && instruction.operator === "=") {
+      if (
+        (instruction.operator === "=" || instruction.operator === "<>") &&
+        ((leftType === "string" && (rightType === "string" || rightType === "boolean")) ||
+          (rightType === "string" && leftType === "boolean"))
+      ) {
+        // Legacy programs compare textual flags with Boolean literals/variables.
+        // Use their canonical text form; passing string storage to CP_EQ_F reads raw bytes.
+        const leftText = this.textParameter(instruction.left);
+        const rightText = this.textParameter(instruction.right);
+        if (!leftText || !rightText) return;
         this.bytes.push(
           OP.STRING,
           ...lc(STRING.COMPARE),
-          ...left,
-          ...right,
+          ...leftText,
+          ...rightText,
           ...this.location(target),
         );
+        if (instruction.operator === "<>")
+          this.bytes.push(OP.CP_EQ_8, ...this.location(target), ...lc(0), ...this.location(target));
         return;
       }
       const integerOperands =

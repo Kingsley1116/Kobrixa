@@ -1,4 +1,6 @@
 import type { FilePreferences } from "./file-preferences.js";
+import type { OfflinePreviewProgram } from "./offline-preview.js";
+import type { SimulationPrepareResult } from "./simulator.js";
 import type { WorkspaceSearchRequest, WorkspaceSearchResult } from "./workspace-search.js";
 export type {
   WorkspaceSearchFile,
@@ -191,6 +193,14 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  simulator: {
+    cancel(workspaceId: string): Promise<void>;
+    prepare(
+      workspaceId: string,
+      overlays: Record<string, string>,
+      entries: string[],
+    ): Promise<SimulationPrepareResult>;
+  };
   sensorLab: SensorLabApi;
   documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;
@@ -241,7 +251,12 @@ export interface KobrixaApi {
     trashEntry(workspaceId: string, entry: string): Promise<WorkspaceMutationResult>;
   };
   build: {
-    start(workspaceId: string, overlays: Record<string, string>): Promise<string>;
+    start(
+      workspaceId: string,
+      overlays: Record<string, string>,
+      preview?: boolean,
+    ): Promise<string>;
+    preview(buildId: string): Promise<OfflinePreviewProgram>;
     cancel(buildId: string): Promise<void>;
     artifacts(buildId: string): Promise<BuildArtifact[]>;
     onEvent(listener: (event: BuildEvent) => void): () => void;

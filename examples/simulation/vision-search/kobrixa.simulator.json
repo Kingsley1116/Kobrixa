@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "ruleset": "wro-double-tennis-2026",
+  "mode": "practice",
+  "seed": 2026,
+  "durationMs": 12000,
+  "balls": [
+    {
+      "id": "target-orange",
+      "kind": "orange",
+      "x": 700,
+      "y": 350,
+      "z": 20
+    },
+    {
+      "id": "ignored-purple",
+      "kind": "purple",
+      "x": 450,
+      "y": 430,
+      "z": 20
+    }
+  ],
+  "robots": [
+    {
+      "id": "A1",
+      "name": "A1",
+      "team": "A",
+      "controller": {
+        "kind": "program",
+        "entry": "src/main.bp"
+      },
+      "pose": {
+        "x": 350,
+        "y": 300,
+        "heading": 90
+      },
+      "drive": "differential",
+      "width": 150,
+      "length": 160,
+      "mass": 1,
+      "wheels": [
+        {
+          "port": "B",
+          "x": 0,
+          "y": 60,
+          "angle": 0,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        },
+        {
+          "port": "C",
+          "x": 0,
+          "y": -60,
+          "angle": 0,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        }
+      ],
+      "sensors": [
+        {
+          "port": 1,
+          "kind": "color",
+          "x": 65,
+          "y": 0,
+          "angle": 0,
+          "range": 5,
+          "fov": 0
+        },
+        {
+          "port": 2,
+          "kind": "ultrasonic",
+          "x": 75,
+          "y": 0,
+          "angle": 0,
+          "range": 2550,
+          "fov": 30
+        },
+        {
+          "port": 3,
+          "kind": "gyro",
+          "x": 0,
+          "y": 0,
+          "angle": 0,
+          "range": 0,
+          "fov": 0
+        },
+        {
+          "port": 4,
+          "kind": "vision",
+          "x": 75,
+          "y": 0,
+          "angle": 0,
+          "range": 2500,
+          "fov": 60
+        }
+      ],
+      "pusher": {
+        "width": 120,
+        "depth": 15
+      },
+      "shooter": null
+    }
+  ]
+}

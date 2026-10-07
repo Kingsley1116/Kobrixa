@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "ruleset": "wro-double-tennis-2026",
+  "mode": "practice",
+  "seed": 2026,
+  "durationMs": 12000,
+  "balls": [],
+  "robots": [
+    {
+      "id": "A1",
+      "name": "A1",
+      "team": "A",
+      "controller": {
+        "kind": "program",
+        "entry": "src/main.bp"
+      },
+      "pose": {
+        "x": 300,
+        "y": 750,
+        "heading": 0
+      },
+      "drive": "omni4",
+      "width": 150,
+      "length": 160,
+      "mass": 1,
+      "wheels": [
+        {
+          "port": "A",
+          "x": 65,
+          "y": 0,
+          "angle": 90,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        },
+        {
+          "port": "B",
+          "x": 3.980102097228898e-15,
+          "y": 65,
+          "angle": 180,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        },
+        {
+          "port": "C",
+          "x": -65,
+          "y": 7.960204194457796e-15,
+          "angle": 270,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        },
+        {
+          "port": "D",
+          "x": -1.1940306291686693e-14,
+          "y": -65,
+          "angle": 360,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        }
+      ],
+      "sensors": [
+        {
+          "port": 1,
+          "kind": "color",
+          "x": 65,
+          "y": 0,
+          "angle": 0,
+          "range": 5,
+          "fov": 0
+        },
+        {
+          "port": 2,
+          "kind": "ultrasonic",
+          "x": 75,
+          "y": 0,
+          "angle": 0,
+          "range": 2550,
+          "fov": 30
+        },
+        {
+          "port": 3,
+          "kind": "gyro",
+          "x": 0,
+          "y": 0,
+          "angle": 0,
+          "range": 0,
+          "fov": 0
+        },
+        {
+          "port": 4,
+          "kind": "vision",
+          "x": 75,
+          "y": 0,
+          "angle": 0,
+          "range": 2500,
+          "fov": 120
+        }
+      ],
+      "pusher": null,
+      "shooter": null
+    }
+  ]
+}

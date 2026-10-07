@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "pixy2-search",
+  "language": "bp",
+  "entry": "src/main.bp",
+  "target": "ev3-native",
+  "assets": [],
+  "outputDir": "build"
+}

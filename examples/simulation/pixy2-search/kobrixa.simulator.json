@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "ruleset": "wro-double-tennis-2026",
+  "mode": "practice",
+  "seed": 2026,
+  "durationMs": 12000,
+  "balls": [
+    {
+      "id": "target-orange",
+      "kind": "orange",
+      "x": 700,
+      "y": 330,
+      "z": 20
+    },
+    {
+      "id": "ignored-purple",
+      "kind": "purple",
+      "x": 640,
+      "y": 230,
+      "z": 20
+    }
+  ],
+  "robots": [
+    {
+      "id": "A1",
+      "name": "A1",
+      "team": "A",
+      "controller": {
+        "kind": "program",
+        "entry": "src/main.bp"
+      },
+      "pose": {
+        "x": 350,
+        "y": 300,
+        "heading": 0
+      },
+      "drive": "differential",
+      "width": 150,
+      "length": 160,
+      "mass": 1,
+      "wheels": [
+        {
+          "port": "B",
+          "x": 0,
+          "y": 60,
+          "angle": 0,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        },
+        {
+          "port": "C",
+          "x": 0,
+          "y": -60,
+          "angle": 0,
+          "diameter": 56,
+          "gearRatio": 1,
+          "inverted": false
+        }
+      ],
+      "sensors": [
+        {
+          "port": 4,
+          "kind": "pixy2",
+          "x": 75,
+          "y": 0,
+          "angle": 0,
+          "range": 2500,
+          "fov": 60,
+          "pixy2": {
+            "height": 100,
+            "pitch": -10,
+            "verticalFov": 40,
+            "orangeSignature": 1,
+            "purpleSignature": 2
+          }
+        }
+      ],
+      "pusher": {
+        "width": 120,
+        "depth": 15
+      },
+      "shooter": null
+    }
+  ]
+}

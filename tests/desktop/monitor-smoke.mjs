@@ -267,10 +267,13 @@ export async function checkMonitor({ js, key, until, pause, win, temporary, moni
   assert.equal(await js('document.querySelector("#monitor-mode-0").disabled'), false);
 
   // Independent monitor updates must not replace the editor or rerender the workbench.
+  // Establish actual window focus after preceding settings/history smoke dialogs.
+  win.focus();
   await js(
     "window.monitorEditor=ed;window.monitorModel=ed.getModel();ed.focus();ed.setPosition({lineNumber:1,column:1})",
   );
   await pause(700);
+  await until("document.hasFocus() && ed.hasTextFocus()");
   const renders = await js("smoke.metrics.appRenders");
   const activity = await js('document.querySelector(".activity-list").textContent');
   const pollingStart = monitor.stats().calls;

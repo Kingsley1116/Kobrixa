@@ -1,0 +1,15 @@
+' A nearby ball is loaded in the scene; D drives the launcher.
+' 場景已在發射口附近放球，D 埠負責發射機構。
+' The configured positive 180-degree shaft stroke triggers one shot.
+' 正向累積 180 度馬達行程會觸發一次發射，反轉回位不會觸發。
+LCD.Clear()
+LCD.Text(1, 0, 0, 0, "Ready to shoot")
+Program.Delay(500)
+Motor.Move("D", 70, 180, True)
+LCD.Text(1, 0, 20, 0, "Shot released")
+
+' Retract after the first stroke. / 第一行程完成後反轉回位。
+Motor.Move("D", -35, 180, True)
+Motor.Stop("D", True)
+Program.Delay(2000)
+LCD.Text(1, 0, 40, 0, "Shooter complete")

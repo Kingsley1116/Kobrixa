@@ -5,6 +5,11 @@ import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
 import type { MonitorUpdate, SensorLabState } from "../shared/sensor-lab.js";
 
 const api: KobrixaApi = {
+  simulator: {
+    cancel: (workspaceId) => ipcRenderer.invoke("simulator:cancel", workspaceId),
+    prepare: (workspaceId, overlays, entries) =>
+      ipcRenderer.invoke("simulator:prepare", workspaceId, overlays, entries),
+  },
   sensorLab: {
     getState: () => ipcRenderer.invoke("sensor-lab:state"),
     start: (request) => ipcRenderer.invoke("sensor-lab:start", request),
@@ -76,7 +81,9 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("workspace:trash-entry", workspaceId, entry),
   },
   build: {
-    start: (workspaceId, overlays) => ipcRenderer.invoke("build:start", workspaceId, overlays),
+    start: (workspaceId, overlays, preview) =>
+      ipcRenderer.invoke("build:start", workspaceId, overlays, preview),
+    preview: (buildId) => ipcRenderer.invoke("build:preview", buildId),
     cancel: (buildId) => ipcRenderer.invoke("build:cancel", buildId),
     artifacts: (buildId) => ipcRenderer.invoke("build:artifacts", buildId),
     onEvent: (listener) => {

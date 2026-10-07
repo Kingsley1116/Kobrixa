@@ -1,6 +1,6 @@
 # Kobrixa examples
 
-These 114 examples are independently authored for Kobrixa and progress from display-only first builds to programs that need connected EV3 hardware.
+These 119 examples are independently authored for Kobrixa and progress from display-only first builds to local robot simulation and programs that need connected EV3 hardware.
 
 <a href="./algorithms/">Algorithms</a> · <a href="./getting-started/">Getting started</a> · <a href="./capstones/">Capstones</a> · <a href="./display/">Display</a> · <a href="./sound/">Sound</a> · <a href="./media/">Media</a> · <a href="./time/">Time</a> · <a href="./buttons/">Buttons</a> · <a href="./control-flow/">Control flow</a> · <a href="./language/">Language</a> · <a href="./collections/">Collections</a> · <a href="./concurrency/">Concurrency</a> · <a href="./files/">Files</a> · <a href="./mailboxes/">Mailboxes</a> · <a href="./program/">Program</a> · <a href="./projects/">Projects</a> · <a href="./motors/">Motors</a> · <a href="./sensors/">Sensors</a>
 
@@ -49,6 +49,19 @@ These 114 examples are independently authored for Kobrixa and progress from disp
 Each category is a physical folder under `examples/`; every link above opens the corresponding project folder. Open a project directory, its `kobrixa.json`, or its `src/main.bp` in Kobrixa. Build before connecting to an EV3. For motor examples, lift the robot so its wheels can turn safely during the first run.
 
 ## Extended curriculum
+
+### Local 2D simulation
+
+<a href="./simulation/">Simulation lessons</a> include saved practice scenes and run without an EV3:
+
+- [differential-route](simulation/differential-route/) — Encoder travel and a 90° turn.
+- [omni-lateral](simulation/omni-lateral/) — Lateral and forward motion with four omni wheels.
+- [vision-search](simulation/vision-search/) — Synthetic vision with an explicit sensor identity guard.
+- [pixy2-search](simulation/pixy2-search/) — Pixy2 LEGO I2C signature counts and image blocks, with a saved camera scene.
+- [motor-shooter](simulation/motor-shooter/) — A motor stroke launches a nearby ball.
+- [mailbox-cooperation](simulation/mailbox-cooperation/) — Two entries in one project exchange a target and acknowledgement.
+
+### Further lessons
 
 - [button-car](capstones/button-car/), [sensor-dashboard](capstones/sensor-dashboard/), [obstacle-rover](capstones/obstacle-rover/)
 - [drawing-primitives](display/drawing-primitives/), [double-buffer-animation](display/double-buffer-animation/), [timer-slots](time/timer-slots/), [original-media](media/original-media/)

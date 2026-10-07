@@ -93,13 +93,23 @@ export function registerIpc(
   ): void => {
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
-      if (/^(workspace|device|build|sensor-lab):/.test(channel))
+      if (/^(workspace|device|build|simulator|sensor-lab):/.test(channel))
         return operationGate.run(channel, () => action(event, ...args));
       return action(event, ...args);
     });
   };
 
   handle("updates:state", () => updates.getState());
+  handle("simulator:cancel", (_event, workspaceId: unknown) =>
+    builds.cancelSimulation(id.parse(workspaceId)),
+  );
+  handle("simulator:prepare", (_event, workspaceId: unknown, overlays: unknown, entries: unknown) =>
+    builds.prepareSimulation(
+      id.parse(workspaceId),
+      z.record(file, content).parse(overlays),
+      z.array(file).max(4).parse(entries),
+    ),
+  );
   if (sensorTools?.motors) {
     const motors = sensorTools.motors;
     handle("device:motor-test-state", () => motors.getState());
@@ -287,9 +297,14 @@ export function registerIpc(
     workspaces.trashEntry(id.parse(workspaceId), file.parse(entry)),
   );
 
-  handle("build:start", (_event, workspaceId: unknown, overlays: unknown) =>
-    builds.start(id.parse(workspaceId), z.record(file, content).parse(overlays)),
+  handle("build:start", (_event, workspaceId: unknown, overlays: unknown, preview: unknown) =>
+    builds.start(
+      id.parse(workspaceId),
+      z.record(file, content).parse(overlays),
+      z.boolean().optional().parse(preview),
+    ),
   );
+  handle("build:preview", (_event, buildId: unknown) => builds.preview(id.parse(buildId)));
   handle("build:cancel", (_event, buildId: unknown) => builds.cancel(id.parse(buildId)));
   handle("build:artifacts", (_event, buildId: unknown) => builds.artifacts(id.parse(buildId)));
 

@@ -37,6 +37,14 @@ function setup() {
   let sequence = 0;
   const calls: string[] = [];
   const api = {
+    simulator: {
+      cancel: vi.fn(async () => undefined),
+      prepare: vi.fn(async () => ({
+        success: true as const,
+        diagnostics: [],
+        prepared: { programs: {} },
+      })),
+    },
     updates: {} as KobrixaApi["updates"],
     sensorLab: {} as KobrixaApi["sensorLab"],
     keyboard: { updateContext: vi.fn(async () => undefined) },
@@ -54,6 +62,7 @@ function setup() {
       }),
       cancel: vi.fn(async () => {}),
       artifacts: vi.fn(),
+      preview: vi.fn(),
     },
     device: {
       startMotorTest: vi.fn(),
@@ -112,6 +121,37 @@ function setup() {
 }
 
 describe("execution flow", () => {
+  it("saves and compiles an offline preview without discovering or touching a device", async () => {
+    const h = setup();
+    const ir = { version: 1, program: { name: "preview" } };
+    h.api.build.preview.mockResolvedValue(ir);
+    expect(await h.controller.preview(h.request)).toEqual(ir);
+    expect(h.calls).toEqual(["save", "build"]);
+    expect(h.api.build.start).toHaveBeenCalledWith("w1", {}, true);
+    expect(h.api.build.preview).toHaveBeenCalledWith("b1");
+    expect(h.api.device.discover).not.toHaveBeenCalled();
+    expect(h.api.device.connect).not.toHaveBeenCalled();
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+  });
+  it("never substitutes a previous preview after a compile failure", async () => {
+    const h = setup();
+    await h.controller.build(h.request);
+    h.api.build.start.mockImplementationOnce(async (workspaceId) => {
+      h.emitBuild({ type: "complete", workspaceId, buildId: "bad", result: failure });
+      return "bad";
+    });
+    expect(await h.controller.preview(h.request)).toBeUndefined();
+    expect(h.api.build.preview).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().diagnostics).toEqual(failure.diagnostics);
+  });
+  it("reports a missing preview snapshot and releases the operation lock", async () => {
+    const h = setup();
+    h.api.build.preview.mockRejectedValueOnce(new Error("Preview snapshot missing"));
+    expect(await h.controller.preview(h.request)).toBeUndefined();
+    expect(h.controller.getSnapshot().error?.detail).toBe("Preview snapshot missing");
+    expect(h.controller.locked).toBe(false);
+  });
   it("records motor transitions once and keeps their starting project association", () => {
     const { controller } = setup();
     const state: MotorTestState = {

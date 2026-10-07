@@ -1,0 +1,18 @@
+' Runner receives a distance and moves along its own parallel lane.
+' 移動車接收距離，沿自己的平行車道前進。
+distanceBox = Mailbox.CreateForNumber("distance")
+Mailbox.Connect("Scout")
+Mailbox.Send("Scout", "ready", "Receiver ready")
+distance = Mailbox.ReceiveNumber(distanceBox)
+
+' Keep this lesson's motion between 0 and 400 mm. / 此範例將位移限制在 0–400 mm。
+distance = Math.Max(0.0, Math.Min(400.0, distance))
+degrees = Math.Floor(distance * 360.0 / (56.0 * Math.Pi))
+LCD.Text(1, 0, 0, 0, "Moving mm: " + distance)
+If degrees > 0 Then
+  Motor.Move("BC", 40, degrees, True)
+EndIf
+Motor.Stop("BC", True)
+Mailbox.Send("Scout", "done", "Runner arrived")
+LCD.Text(1, 0, 20, 0, "Runner arrived")
+Program.Delay(500)

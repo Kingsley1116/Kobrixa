@@ -397,6 +397,7 @@ export const COMMAND_LABELS: Record<string, readonly [en: string, zh: string]> =
   jumpToNextSnippetPlaceholder: ["Go to next snippet placeholder", "前往下一個程式碼片段欄位"],
   jumpToPrevSnippetPlaceholder: ["Go to previous snippet placeholder", "前往上一個程式碼片段欄位"],
   "kobrixa.build": ["Build", "編譯"],
+  "kobrixa.preview": ["Local simulator", "本地模擬器"],
   "kobrixa.closeTab": ["Close tab", "關閉分頁"],
   "kobrixa.device": ["Toggle EV3 tools", "切換 EV3 面板"],
   "kobrixa.files": ["Toggle file tree", "切換檔案樹"],

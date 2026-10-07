@@ -1,0 +1,21 @@
+' Differential route / 差速底盤路線：B = left 左輪，C = right 右輪。
+' Scene wheels: 56 mm diameter, 120 mm track, 1:1 gearing.
+' 場景：輪徑 56 mm、輪距 120 mm、齒比 1:1。
+LCD.Clear()
+Sensor.SetMode(3, 0)
+startHeading = Sensor.ReadSIValue(3, 0)
+LCD.Text(1, 0, 0, 0, "Differential route")
+
+' Two wheel revolutions move about 352 mm forward. / 兩圈約前進 352 mm。
+Motor.Move("BC", 50, 720, True)
+
+' Opposite wheel directions turn left about 90 degrees. / 反向轉輪，左轉約 90 度。
+' Wheel angle = track / wheel diameter * chassis angle.
+Motor.MoveSync("BC", -40, 40, 193, True)
+Motor.Move("BC", 40, 360, True)
+Motor.Stop("BC", True)
+
+turn = Sensor.ReadSIValue(3, 0) - startHeading
+LCD.Text(1, 0, 20, 0, "Turn: " + turn)
+LCD.Text(1, 0, 40, 0, "Route complete")
+Program.Delay(500)

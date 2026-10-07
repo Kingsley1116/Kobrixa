@@ -71,6 +71,12 @@ const documentedExamples = [
   "sound/speaker-scale",
   "concurrency/thread-mutex",
   "time/timer-slots",
+  "simulation/differential-route",
+  "simulation/omni-lateral",
+  "simulation/vision-search",
+  "simulation/pixy2-search",
+  "simulation/motor-shooter",
+  "simulation/mailbox-cooperation",
 ].sort();
 const documentedCategories = [
   "benchmarks",
@@ -94,6 +100,7 @@ const documentedCategories = [
   "motors",
   "sensors",
   "time",
+  "simulation",
 ];
 
 async function findExampleProjects(root: string, relative = ""): Promise<string[]> {

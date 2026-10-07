@@ -1,3 +1,4 @@
+import { SIMULATOR_ENABLED } from "../../shared/features.js";
 import type { ReactNode } from "react";
 import kobrixaMark from "../../../../../assets/brand/kobrixa-mark.svg";
 import type { AppCommand } from "../keybindings/keybindings.js";
@@ -26,6 +27,7 @@ export function Toolbar({
   onRun,
   onStop,
   onBuild,
+  onPreview,
   onUpload,
   onRunUploaded,
   onDelete,
@@ -50,6 +52,7 @@ export function Toolbar({
   onRun(): void;
   onStop(): void;
   onBuild(): void;
+  onPreview(): void;
   onUpload(): void;
   onRunUploaded(): void;
   onDelete(): void;
@@ -101,6 +104,18 @@ export function Toolbar({
                     : t.connectionStates.disconnected}
               </span>
             </button>
+            {SIMULATOR_ENABLED && (
+              <button
+                disabled={deviceLocked}
+                title={hint(
+                  locale === "zh-TW" ? "開啟本地機器人模擬器" : "Open the local robot simulator",
+                  "preview",
+                )}
+                onClick={onPreview}
+              >
+                {locale === "zh-TW" ? "本地模擬器" : "Local simulator"}
+              </button>
+            )}
             <button
               className="primary run-button"
               disabled={deviceLocked || Boolean(state.recovery)}

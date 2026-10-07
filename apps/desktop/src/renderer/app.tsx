@@ -1,3 +1,4 @@
+import { SIMULATOR_ENABLED } from "../shared/features.js";
 import { ProjectSessions, type ProjectSession } from "./workspace/project-sessions.js";
 import { ProjectTabs } from "./workspace/project-tabs.js";
 import { QuickOpen } from "./workspace/quick-open.js";
@@ -91,6 +92,14 @@ import { AnalysisTransport } from "./editor/analysis-transport.js";
 import type { WorkspaceEditContext } from "./editor/workspace-edits.js";
 import { Documents, CursorStore, type DocumentTab } from "./editor/documents.js";
 import { CursorPosition } from "./editor/cursor-position.js";
+import {
+  SIMULATOR_SCENE_FILE,
+  type SimulationScene,
+  type PreparedSimulation,
+} from "../shared/simulator.js";
+import { createDefaultScene, validateScene } from "../simulation/scene.js";
+import { SimulatorWorkspace } from "./simulator/simulator-workspace.js";
+import "./simulator-integration.css";
 
 import { copy } from "./i18n/copy.js";
 type Tab = DocumentTab;
@@ -113,6 +122,17 @@ type HistoryReview = {
 };
 
 export function App(): React.JSX.Element {
+  const [simulator, setSimulator] = useState<{
+    workspaceId: string;
+    projectName: string;
+    scene: SimulationScene;
+  }>();
+  const [simulatorSceneError, setSimulatorSceneError] = useState<string>();
+  const simulationPreparation = useRef(0);
+  // Form edits may temporarily be incomplete; only editor/disk JSON blocks the form.
+  const simulationFormDraft = useRef<{ workspaceId: string; content: string } | undefined>(
+    undefined,
+  );
   const updates = useUpdates();
   const filePreferences = useFilePreferences();
   const filePreferencesRef = useRef(filePreferences.value);
@@ -258,6 +278,50 @@ export function App(): React.JSX.Element {
     documents.replace(typeof value === "function" ? value(documents.getSnapshot()) : value);
   };
   const [writeQueue] = useState(() => new FileWriteQueue());
+  useEffect(() => {
+    if (!simulator) return;
+    const project = sessions.get(simulator.workspaceId);
+    if (!project) {
+      setSimulator(undefined);
+      return;
+    }
+    const synchronize = () => {
+      try {
+        const source = project.documents
+          .getSnapshot()
+          .find((tab) => tab.file === SIMULATOR_SCENE_FILE)?.content;
+        if (source === undefined) {
+          // Closing/discarding the scene document also closes its live view. Reopening
+          // reads the accepted disk/draft version, never a discarded scene object.
+          setSimulator((current) =>
+            current?.workspaceId === project.workspace.id ? undefined : current,
+          );
+          setSimulatorSceneError(undefined);
+          return;
+        }
+        if (
+          simulationFormDraft.current?.workspaceId === project.workspace.id &&
+          simulationFormDraft.current.content === source
+        ) {
+          setSimulatorSceneError(undefined);
+          return;
+        }
+        const scene = validateScene(JSON.parse(source));
+        setSimulatorSceneError(undefined);
+        setSimulator((current) =>
+          current?.workspaceId === project.workspace.id &&
+          JSON.stringify(current.scene) !== JSON.stringify(scene)
+            ? { ...current, scene }
+            : current,
+        );
+      } catch (error) {
+        setSimulatorSceneError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    synchronize();
+    return project.documents.onChange(synchronize);
+  }, [sessions, simulator?.workspaceId, projects]);
+
   const [fileReview, setFileReview] = useState<FileReview>();
   const [fileReviewBusy, setFileReviewBusy] = useState(false);
   const [historyReview, setHistoryReview] = useState<HistoryReview>();
@@ -2205,6 +2269,9 @@ export function App(): React.JSX.Element {
       case "build":
         requestExecution(false);
         break;
+      case "preview":
+        if (SIMULATOR_ENABLED) void requestPreview();
+        break;
       case "run":
         requestExecution(true);
         break;
@@ -2229,6 +2296,148 @@ export function App(): React.JSX.Element {
     const request = { workspaceId: id, saveAll: () => saveProjectChanges(id) };
     if (run) void controller.run(request);
     else void controller.build(request);
+  }
+
+  async function requestPreview(): Promise<void> {
+    if (
+      !workspace ||
+      controller.locked ||
+      projectBusyRef.current ||
+      managingEntries ||
+      updatePreparing ||
+      modalOpen ||
+      isModalOpen()
+    )
+      return;
+    const { id, name } = workspace;
+    if (simulator?.workspaceId === id) {
+      setSettingsActive(false);
+      return;
+    }
+    try {
+      const project = sessions.get(id)!;
+      const snapshot = await window.kobrixa.workspace.readFile(id, SIMULATOR_SCENE_FILE);
+      if (sessions.activeId !== id || sessions.get(id) !== project) return;
+      const existing = project.documents
+        .getSnapshot()
+        .find((tab) => tab.file === SIMULATOR_SCENE_FILE);
+      const draft = project.workspace.drafts[SIMULATOR_SCENE_FILE];
+      const entry =
+        (activeFile && /\.bp$/i.test(activeFile) ? activeFile : undefined) ??
+        project.workspace.manifest?.entry ??
+        project.workspace.entryCandidates[0] ??
+        "src/main.bp";
+      const content =
+        existing?.content ??
+        draft ??
+        snapshot.content ??
+        JSON.stringify(createDefaultScene(entry), null, 2) + "\n";
+      const scene = validateScene(JSON.parse(content));
+      if (!existing) {
+        project.files.recover(
+          SIMULATOR_SCENE_FILE,
+          snapshot,
+          draft,
+          project.workspace.draftRevisions?.[SIMULATOR_SCENE_FILE],
+        );
+        project.documents.replace([
+          ...project.documents.getSnapshot(),
+          { file: SIMULATOR_SCENE_FILE, content, saved: snapshot.content ?? "" },
+        ]);
+        if (content !== snapshot.content) queueDraft(id, SIMULATOR_SCENE_FILE, content);
+      }
+      simulationFormDraft.current = undefined;
+      setSimulatorSceneError(undefined);
+      setSimulator({ workspaceId: id, projectName: name, scene });
+      setSettingsActive(false);
+      setProblemsOpen(false);
+    } catch (error) {
+      report(error);
+    }
+  }
+
+  function changeSimulatorScene(scene: SimulationScene): void {
+    if (!simulator) return;
+    const project = sessions.get(simulator.workspaceId);
+    if (!project) return;
+    const content = JSON.stringify(scene, null, 2) + "\n";
+    simulationFormDraft.current = { workspaceId: simulator.workspaceId, content };
+    const existing = project.documents
+      .getSnapshot()
+      .find((tab) => tab.file === SIMULATOR_SCENE_FILE);
+    if (existing) replaceFileText(project, SIMULATOR_SCENE_FILE, content);
+    else
+      project.documents.replace([
+        ...project.documents.getSnapshot(),
+        {
+          file: SIMULATOR_SCENE_FILE,
+          content,
+          saved: project.files.baseline(SIMULATOR_SCENE_FILE)?.content ?? "",
+        },
+      ]);
+    queueDraft(project.workspace.id, SIMULATOR_SCENE_FILE, content);
+    setSimulator((current) =>
+      current?.workspaceId === project.workspace.id ? { ...current, scene } : current,
+    );
+    setSimulatorSceneError(undefined);
+  }
+
+  async function saveSimulatorScene(scene: SimulationScene): Promise<void> {
+    changeSimulatorScene(scene);
+    if (!simulator || !(await saveTab(SIMULATOR_SCENE_FILE, false, simulator.workspaceId)))
+      throw new Error(
+        locale === "zh-TW"
+          ? "場景儲存失敗；請檢查檔案衝突。"
+          : "Scene was not saved. Check file conflicts.",
+      );
+  }
+
+  function cancelSimulationPreparation(): void {
+    simulationPreparation.current += 1;
+    if (simulator) void window.kobrixa.simulator.cancel(simulator.workspaceId).catch(report);
+  }
+
+  async function prepareSimulator(scene: SimulationScene): Promise<PreparedSimulation> {
+    if (!simulator) throw new Error("Simulator is closed.");
+    const id = simulator.workspaceId;
+    const generation = ++simulationPreparation.current;
+    const project = sessions.get(id);
+    if (!project || sessions.activeId !== id) throw new Error("Simulation project is not active.");
+    const sceneSource = project.documents
+      .getSnapshot()
+      .find((tab) => tab.file === SIMULATOR_SCENE_FILE)?.content;
+    if (sceneSource !== undefined) validateScene(JSON.parse(sceneSource));
+    validateScene(scene);
+    await saveProjectChanges(id);
+    if (
+      generation !== simulationPreparation.current ||
+      sessions.get(id) !== project ||
+      sessions.activeId !== id
+    )
+      throw new Error("Simulation preparation was cancelled.");
+    const entries = scene.robots.flatMap((robot) =>
+      robot.controller.kind === "program" ? [robot.controller.entry] : [],
+    );
+    const overlays = Object.fromEntries(
+      project.documents.getSnapshot().map((tab) => [tab.file, tab.content]),
+    );
+    const result = await window.kobrixa.simulator.prepare(id, overlays, entries);
+    if (
+      generation !== simulationPreparation.current ||
+      sessions.get(id) !== project ||
+      sessions.activeId !== id
+    )
+      throw new Error("Simulation preparation was cancelled.");
+    setBuildDiagnostics(result.diagnostics);
+    if (!result.success) {
+      setProblemsOpen(true);
+      throw new Error(
+        result.diagnostics.map((item) => `${item.file}: ${item.message}`).join("\n") ||
+          "Simulation compilation failed.",
+      );
+    }
+    setProblemsOpen(false);
+    return result.prepared;
   }
 
   async function discover(): Promise<void> {
@@ -2376,6 +2585,7 @@ export function App(): React.JSX.Element {
           onSave={() => runCommand("save")}
           onRun={() => runCommand("run")}
           onBuild={() => runCommand("build")}
+          onPreview={() => runCommand("preview")}
           onStop={() => runCommand("stop")}
           onUpload={() => void controller.upload()}
           onRunUploaded={() => void controller.runDeployed()}
@@ -2768,68 +2978,109 @@ export function App(): React.JSX.Element {
             </div>
 
             <div
-              className={`editor-stage ${activeConflict ? "file-change-stage" : ""}`}
+              className={`editor-simulation-layout ${simulator?.workspaceId === workspace.id ? "with-simulator" : ""}`}
               hidden={settingsActive}
             >
-              {activeConflict && active && (
-                <div className="file-change-banner" role="status">
-                  <span>
-                    {activeConflict.content === null
-                      ? locale === "zh-TW"
-                        ? "檔案已在外部刪除，編輯器內容已保留。"
-                        : "File deleted outside Kobrixa. Editor contents are preserved."
-                      : locale === "zh-TW"
-                        ? "檔案已在外部變更，此檔案的自動儲存已暫停。"
-                        : "File changed outside Kobrixa. Automatic saving is paused for this file."}
-                  </span>
-                  <button
-                    disabled={locked}
-                    onClick={() => beginFileReview(activeSession!, active.file)}
-                  >
-                    {locale === "zh-TW" ? "比較變更" : "Compare changes"}
-                  </button>
+              <div
+                className={`editor-stage ${activeConflict ? "file-change-stage" : ""}`}
+                hidden={settingsActive}
+              >
+                {activeConflict && active && (
+                  <div className="file-change-banner" role="status">
+                    <span>
+                      {activeConflict.content === null
+                        ? locale === "zh-TW"
+                          ? "檔案已在外部刪除，編輯器內容已保留。"
+                          : "File deleted outside Kobrixa. Editor contents are preserved."
+                        : locale === "zh-TW"
+                          ? "檔案已在外部變更，此檔案的自動儲存已暫停。"
+                          : "File changed outside Kobrixa. Automatic saving is paused for this file."}
+                    </span>
+                    <button
+                      disabled={locked}
+                      onClick={() => beginFileReview(activeSession!, active.file)}
+                    >
+                      {locale === "zh-TW" ? "比較變更" : "Compare changes"}
+                    </button>
+                  </div>
+                )}
+                {locked && (
+                  <div className="editor-lock" role="status">
+                    {t.phases[execution.phase]} <span>{t.locked}</span>
+                  </div>
+                )}
+                {active ? (
+                  <Editor
+                    locale={locale}
+                    onQuickFixes={(snapshot, diagnostic, signal) =>
+                      analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
+                    }
+                    key={workspace.id}
+                    retainedModels={activeSession!.editor}
+                    focusOnMount={focusEditorOnMount.current}
+                    onViewChange={scheduleSessionSave}
+                    ref={editorRef}
+                    theme={resolvedTheme}
+                    editorOptions={settings}
+                    onEditorReady={keyboard.bindEditor}
+                    onBlur={(file) => requestFocusSave(file, workspace.id)}
+                    fontSize={codeSize}
+                    wordWrap={settings.wordWrap}
+                    indentSize={settings.indentSize}
+                    reducedMotion={reducedMotion}
+                    readOnly={locked || projectBusy || managingEntries}
+                    file={active.file}
+                    documents={documents}
+                    analysisSession={analysisSession}
+                    completionSession={completionSession}
+                    openFiles={openFiles}
+                    diagnostics={diagnostics}
+                    focusTarget={focusTarget}
+                    ariaLabel={t.editorLabel}
+                    onChange={(file) => updateActive(file, workspace.id)}
+                    onOpenLocation={openLocation}
+                    onWorkspaceEdit={applyWorkspaceEdit}
+                    onCursorChange={cursorStore.update}
+                  />
+                ) : (
+                  <div className="empty">{t.chooseFile}</div>
+                )}
+              </div>
+
+              {simulator && (
+                <div className="simulator-host" hidden={simulator.workspaceId !== workspace.id}>
+                  {simulatorSceneError && (
+                    <div className="simulation-scene-error" role="alert">
+                      {simulatorSceneError}
+                    </div>
+                  )}
+                  <SimulatorWorkspace
+                    key={simulator.workspaceId}
+                    scene={simulator.scene}
+                    entries={
+                      sessions
+                        .get(simulator.workspaceId)
+                        ?.workspace.files.filter((file) => /\.bp$/i.test(file)) ?? []
+                    }
+                    locale={locale}
+                    projectName={simulator.projectName}
+                    active={
+                      simulator.workspaceId === workspace.id && !settingsActive && !updatePreparing
+                    }
+                    blocked={!!simulatorSceneError}
+                    onSceneChange={changeSimulatorScene}
+                    onSave={saveSimulatorScene}
+                    onPrepare={prepareSimulator}
+                    onCancelPrepare={cancelSimulationPreparation}
+                    onClose={() => setSimulator(undefined)}
+                    onSource={(span) => {
+                      void openQuickFile(span.file, {
+                        line: span.start.line,
+                        column: span.start.column,
+                      }).catch(report);
+                    }}
+                  />
                 </div>
-              )}
-              {locked && (
-                <div className="editor-lock" role="status">
-                  {t.phases[execution.phase]} <span>{t.locked}</span>
-                </div>
-              )}
-              {active ? (
-                <Editor
-                  locale={locale}
-                  onQuickFixes={(snapshot, diagnostic, signal) =>
-                    analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
-                  }
-                  key={workspace.id}
-                  retainedModels={activeSession!.editor}
-                  focusOnMount={focusEditorOnMount.current}
-                  onViewChange={scheduleSessionSave}
-                  ref={editorRef}
-                  theme={resolvedTheme}
-                  editorOptions={settings}
-                  onEditorReady={keyboard.bindEditor}
-                  onBlur={(file) => requestFocusSave(file, workspace.id)}
-                  fontSize={codeSize}
-                  wordWrap={settings.wordWrap}
-                  indentSize={settings.indentSize}
-                  reducedMotion={reducedMotion}
-                  readOnly={locked || projectBusy || managingEntries}
-                  file={active.file}
-                  documents={documents}
-                  analysisSession={analysisSession}
-                  completionSession={completionSession}
-                  openFiles={openFiles}
-                  diagnostics={diagnostics}
-                  focusTarget={focusTarget}
-                  ariaLabel={t.editorLabel}
-                  onChange={(file) => updateActive(file, workspace.id)}
-                  onOpenLocation={openLocation}
-                  onWorkspaceEdit={applyWorkspaceEdit}
-                  onCursorChange={cursorStore.update}
-                />
-              ) : (
-                <div className="empty">{t.chooseFile}</div>
               )}
             </div>
 

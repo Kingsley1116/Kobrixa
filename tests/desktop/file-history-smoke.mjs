@@ -450,8 +450,12 @@ export async function checkFileHistory({
     "!document.querySelector('.local-history-dialog') && ed.getValue() === 'value = 10\\n'",
   );
   assert.equal(first.files["main.bp"], "value = 33\n");
+  // Dialog teardown restores focus on the next frame; undo routes through the focused editor.
+  win.focus();
+  await js("ed.focus()");
+  await until("ed.hasTextFocus()");
   await js("ed.trigger('test','undo',null)");
-  assert.equal(await js("ed.getValue()"), "value = 33\n");
+  await until("ed.getValue() === 'value = 33\\n'");
 
   // Two pending opens must not accept a later baseline beneath the first buffer.
   calls = fileHistory.stats().refreshCalls;
@@ -576,7 +580,9 @@ export async function checkFileHistory({
   await until(
     "document.querySelector('.local-history-dialog').textContent.includes('還原到編輯器')",
   );
-  await until("window.outerWidth === 980 && window.outerHeight === 650");
+  assert.deepEqual(win.getSize(), [980, 650]);
+  const [contentWidth, contentHeight] = win.getContentSize();
+  await until(`innerWidth === ${contentWidth} && innerHeight === ${contentHeight}`);
   await pause(250);
   assert.equal(
     await js(`(() => {
@@ -640,6 +646,7 @@ async function checkFileHistoryPreferences({
 }) {
   const originalContent = await js("ed.getValue()");
   const originalSettings = await js("smoke.settingsStore.getSnapshot().values");
+  const originalFilePreferences = fileHistory.preferences();
   const originalSize = win.getSize();
   const waitMain = async (check, message) => {
     for (let n = 0; n < 100; n++) {
@@ -833,7 +840,9 @@ async function checkFileHistoryPreferences({
     "smoke.settingsStore.set('locale','zh-TW');smoke.settingsStore.set('theme','light');smoke.settingsStore.set('uiScale',125)",
   );
   await until("document.querySelector('#settings-page').textContent.includes('檔案與歷史')");
-  await until("window.outerWidth === 980 && window.outerHeight === 650");
+  assert.deepEqual(win.getSize(), [980, 650]);
+  const [contentWidth, contentHeight] = win.getContentSize();
+  await until(`innerWidth === ${contentWidth} && innerHeight === ${contentHeight}`);
   assert.equal(
     await js(
       "document.querySelector('.settings-content').scrollWidth <= document.querySelector('.settings-content').clientWidth",
@@ -868,6 +877,24 @@ async function checkFileHistoryPreferences({
   await js(
     `ed.getContribution('editor.contrib.findController').closeFindWidget();smoke.keybindingsStore.set('actions.find',${JSON.stringify(findOverride) ?? "undefined"});ed.focus()`,
   );
+  // File preferences have their own persisted store; restoring settingsStore alone
+  // leaves review-only external changes and the short polling interval active in
+  // later suites. Restore through the real controls so the renderer and host agree.
+  await settings();
+  for (const [field, value] of Object.entries(originalFilePreferences)) {
+    if (fileHistory.preferences()[field] === value) continue;
+    if (typeof value === "boolean") await toggle(field, value);
+    else {
+      await search(field);
+      await js(`document.querySelector('#setting-${field}').click()`);
+      await until(`Boolean(document.querySelector('[data-picker-value="${value}"]'))`);
+      await js(`document.querySelector('[data-picker-value="${value}"]').click()`);
+      await waitMain(() => fileHistory.preferences()[field] === value, `${field} was not restored`);
+      await until(`!document.querySelector('#setting-${field}').disabled`);
+    }
+  }
+  await closeSettings();
+  assert.deepEqual(fileHistory.preferences(), originalFilePreferences);
   console.log(
     "PASS file/history preference search, reset, restart persistence, polling controls, save conflict protection, paused history and dynamic retention",
   );
