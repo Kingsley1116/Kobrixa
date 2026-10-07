@@ -53,10 +53,18 @@ function roomStub(env: CollabEnv, roomId: string): Room {
   return env.ROOMS.get(env.ROOMS.idFromName(roomId)) as unknown as Room;
 }
 
-function callRoom(room: Room, path: string, body: unknown): Promise<Response> {
+function callRoom(
+  room: Room,
+  path: string,
+  body: unknown,
+  participantId?: string,
+): Promise<Response> {
   return room.fetch(`https://room${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(participantId ? { "X-Collab-Participant": participantId } : {}),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -193,7 +201,11 @@ async function hostAction(
       : await readJson(request, setRoleRequestSchema);
   if (body.participantId === auth.participantId)
     throw new HttpError(400, "bad-request", "The host cannot target itself");
-  const response = await callRoom(roomStub(env, roomId), `/${action}`, body);
+  const response = await callRoom(roomStub(env, roomId), `/${action}`, body, auth.participantId);
+  if (response.status === 403) {
+    await response.body?.cancel();
+    throw new HttpError(403, "forbidden", "Host only");
+  }
   if (response.status === 404) {
     await response.body?.cancel();
     throw new HttpError(404, "not-found", "Participant not found");

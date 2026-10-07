@@ -12,6 +12,7 @@
 *.log
 *.tsbuildinfo
 .DS_Store
+/.claude/
 
 **/.wrangler
 **/.dev.vars

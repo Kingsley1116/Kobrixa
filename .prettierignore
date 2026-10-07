@@ -1,3 +1,4 @@
 
 **/worker-configuration.d.ts
 **/.wrangler/**
+.claude/

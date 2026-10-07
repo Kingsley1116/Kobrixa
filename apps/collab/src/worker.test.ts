@@ -50,6 +50,8 @@ export class CollabRoom extends DurableObject {
       this.room.participants.set(body.participantId, role);
       return Response.json({ role, projectName: this.room.projectName });
     }
+    if (this.room.participants.get(request.headers.get("X-Collab-Participant")) !== "host")
+      return Response.json({ error: "forbidden" }, { status: 403 });
     if (!this.room.participants.has(body.participantId))
       return Response.json({ error: "not-found" }, { status: 404 });
     if (path === "/kick") this.room.participants.delete(body.participantId);
