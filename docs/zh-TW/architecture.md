@@ -99,7 +99,8 @@ src/
 - renderer 以權杖開啟房間 WebSocket，並把 Monaco model 綁定到房間的 Y.Doc；遠端游標與在線狀態使用 Yjs awareness。
 - `packages/collab-protocol` 是桌面應用程式與服務之間唯一的契約，雙方都以其 schema 驗證請求與訊息。不相容的變更必須遞增 `COLLAB_PROTOCOL_VERSION`。
 - 權杖由 Worker 以 `COLLAB_SECRET` 進行 HMAC-SHA256 簽署，有效期限 7 天，並帶有參與者角色。Durable Object 負責執行角色限制：拒絕檢視者的文件更新與聊天訊息。
-- Durable Object 執行房間上限（16 人、200 個檔案、每檔 1 MiB、500 則聊天訊息），並在連續 7 天沒有連線後刪除房間儲存資料。
+- Durable Object 執行房間上限（16 人、200 個檔案、每檔 1 MiB、檔案 UTF-8 內容合計 8 MiB、500 則聊天訊息）。編碼後的文件快照及單一 WebSocket 訊息上限為 16 MiB；資料夾不計入檔案數量。連續 7 天沒有連線後會刪除房間儲存資料。
+- 角色變更時，renderer 會建立新的 session，從伺服器載入文件並保留原工作區綁定，避免升為編輯者後重送已被拒絕的檢視者編輯或殘留的 Yjs 時序依賴。
 - 設備操作維持在各參與者本機的 main process。房間啟用期間，未持有設備控制權的視窗所發出的設備寫入操作會被拒絕；停止程式則一律允許。
 - 房間狀態會經過 Cloudflare 網路。記錄檔不得包含原始碼內容、聊天文字或權杖。
 

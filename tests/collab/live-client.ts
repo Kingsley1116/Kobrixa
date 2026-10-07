@@ -10,6 +10,7 @@ import { createCollabSession } from "../../apps/desktop/src/renderer/collab/coll
 import { CollabFileSync } from "../../apps/desktop/src/renderer/collab/file-sync.js";
 import { ChatController } from "../../apps/desktop/src/renderer/collab/chat.js";
 import { DeviceControl } from "../../apps/desktop/src/renderer/collab/device-control.js";
+import { CollabStore } from "../../apps/desktop/src/renderer/collab/store.js";
 import { sharedTypes, type CollabSession } from "../../apps/desktop/src/renderer/collab/types.js";
 
 const serverUrl = process.argv[2]!;
@@ -40,7 +41,10 @@ async function main(): Promise<void> {
   });
   assert.ok(guestResult.ok);
   const host = createCollabSession(hostResult.value, { network: null });
-  const guest = createCollabSession(guestResult.value, { network: null });
+  const guestStore = new CollabStore((connection) =>
+    createCollabSession(connection, { network: null }),
+  );
+  let guest = guestStore.start(guestResult.value);
   const sessions: CollabSession[] = [host, guest];
   const syncs: CollabFileSync[] = [];
   const chats: ChatController[] = [];
@@ -70,12 +74,12 @@ async function main(): Promise<void> {
       trashEntry: workspaces.trashEntry.bind(workspaces),
     };
     const hostSync = new CollabFileSync(host, hostWorkspace.id, workspaceApi, { debounceMs: 5 });
-    const guestSync = new CollabFileSync(guest, guestWorkspace.id, workspaceApi, { debounceMs: 5 });
+    let guestSync = new CollabFileSync(guest, guestWorkspace.id, workspaceApi, { debounceMs: 5 });
     syncs.push(hostSync, guestSync);
     hostSync.start();
     guestSync.start();
     const hostTypes = sharedTypes(host.doc);
-    const guestTypes = sharedTypes(guest.doc);
+    let guestTypes = sharedTypes(guest.doc);
     await until(
       () => guestTypes.files.get("main.bp")?.toString() === "value = 1\n",
       "host seed reaches guest",
@@ -113,13 +117,13 @@ async function main(): Promise<void> {
     assert.ok(hostSync.recordTrash(removed.removed));
     await until(() => !guestTypes.tree.has("renamed.bpi"), "deletion reaches guest");
     await guestSync.flush();
-    const hostChat = new ChatController(host),
-      guestChat = new ChatController(guest);
+    const hostChat = new ChatController(host);
+    let guestChat = new ChatController(guest);
     chats.push(hostChat, guestChat);
     assert.ok(guestChat.send("hello over a real socket").ok);
     await until(() => hostChat.getSnapshot().unread === 1, "chat reaches host unread badge");
-    const hostControl = new DeviceControl(host),
-      guestControl = new DeviceControl(guest);
+    const hostControl = new DeviceControl(host);
+    let guestControl = new DeviceControl(guest);
     controls.push(hostControl, guestControl);
     await until(() => hostControl.getSnapshot().isHolder, "host starts with control");
     guestControl.request();
@@ -129,6 +133,29 @@ async function main(): Promise<void> {
       () => guestControl.getSnapshot().isHolder && !hostControl.getSnapshot().isHolder,
       "guest receives control",
     );
+    async function acceptGuestRole(role: "editor" | "viewer"): Promise<void> {
+      await until(() => {
+        const next = guestStore.getSnapshot();
+        return (
+          next !== guest &&
+          next?.getSnapshot().role === role &&
+          next.getSnapshot().status === "connected"
+        );
+      }, `fresh ${role} session connects`);
+      await guestSync.stop();
+      guestChat.dispose();
+      guestControl.dispose();
+      guest = guestStore.getSnapshot()!;
+      sessions.push(guest);
+      guestTypes = sharedTypes(guest.doc);
+      guestSync = new CollabFileSync(guest, guestWorkspace.id, workspaceApi, { debounceMs: 5 });
+      syncs.push(guestSync);
+      guestSync.start();
+      guestChat = new ChatController(guest);
+      guestControl = new DeviceControl(guest);
+      chats.push(guestChat);
+      controls.push(guestControl);
+    }
     assert.ok(
       (
         await hostApi.setRole(host.connection.roomId, {
@@ -137,15 +164,34 @@ async function main(): Promise<void> {
         })
       ).ok,
     );
-    await until(
-      () => guest.getSnapshot().role === "viewer" && !guestControl.getSnapshot().isHolder,
-      "viewer downgrade revokes control",
-    );
+    await acceptGuestRole("viewer");
+    assert.equal(guestControl.getSnapshot().isHolder, false);
     assert.equal(guestChat.send("forbidden").ok, false);
-    const before = hostTypes.files.get("main.bp")!.toString();
+    let before = hostTypes.files.get("main.bp")!.toString();
     guestTypes.files.get("main.bp")!.insert(0, "forbidden");
     await new Promise((resolve) => setTimeout(resolve, 150));
     assert.equal(hostTypes.files.get("main.bp")!.toString(), before);
+    assert.ok(
+      (
+        await hostApi.setRole(host.connection.roomId, {
+          participantId: guest.connection.participantId,
+          role: "editor",
+        })
+      ).ok,
+    );
+    await acceptGuestRole("editor");
+    assert.equal(guestTypes.files.get("main.bp")!.toString(), before);
+    guestTypes.files.get("main.bp")!.insert(0, "// promoted edit\n");
+    await until(
+      () => hostTypes.files.get("main.bp")!.toString() === "// promoted edit\n" + before,
+      "promoted editor writes without clock gaps or resurrecting viewer changes",
+    );
+    before = hostTypes.files.get("main.bp")!.toString();
+    guestControl.request();
+    await until(
+      () => hostControl.getSnapshot().requests.length === 1,
+      "promoted editor requests control",
+    );
     assert.ok((await hostApi.kick(host.connection.roomId, guest.connection.participantId)).ok);
     await until(() => guest.getSnapshot().closeReason === "kicked", "kick reaches guest");
     assert.equal(syncs.map((sync) => sync.getSnapshot().error).filter(Boolean).length, 0);
@@ -154,6 +200,7 @@ async function main(): Promise<void> {
     for (const control of controls.splice(0)) control.dispose();
     for (const chat of chats.splice(0)) chat.dispose();
     for (const sync of syncs.splice(0)) await sync.stop();
+    guestStore.stop();
     for (const session of sessions.splice(0)) session.destroy();
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Worker restart timed out")), 40000);
@@ -178,12 +225,13 @@ async function main(): Promise<void> {
     rejected.connect();
     await until(() => rejected.getSnapshot().status === "closed", "kick survives restart");
     console.log(
-      "Live collaboration passes: desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, kick, and persisted state/revocation across a Worker restart.",
+      "Live collaboration passes: desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and persisted state/revocation across a Worker restart.",
     );
   } finally {
     for (const control of controls) control.dispose();
     for (const chat of chats) chat.dispose();
     for (const sync of syncs) await sync.stop();
+    guestStore.stop();
     for (const session of sessions) session.destroy();
   }
 }
