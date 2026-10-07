@@ -337,6 +337,38 @@ class FakeEditor {
 }
 
 describe("EditorCollab", () => {
+  it("keeps retained closed models shared before and after workspace edits", () => {
+    const [host, guest] = pair(["host", "editor"]);
+    share(host, "main.bp", "main");
+    share(host, "closed.bp", "old");
+    const main = model("main");
+    const models = new Map([["main.bp", main]]);
+    let active = "main.bp";
+    const editor = new FakeEditor();
+    editor.setModel(main);
+    const collab = new EditorCollab(editor as never, host, {
+      models: () => models,
+      activeFile: () => active,
+    });
+    disposables.push(collab);
+    const closed = model("old");
+    models.set("closed.bp", closed);
+    // ensureModel refreshes immediately, before a rename/refactor edits this file.
+    collab.refresh();
+    type(closed, 0, "renamed", 3);
+    expect(sharedTypes(guest.doc).files.get("closed.bp")!.toString()).toBe("renamed");
+    active = "closed.bp";
+    editor.setModel(closed);
+    collab.refresh();
+    expect(closed.getValue()).toBe("renamed");
+    active = "main.bp";
+    editor.setModel(main);
+    collab.refresh();
+    sharedTypes(guest.doc).files.get("closed.bp")!.insert(7, " remotely");
+    expect(closed.getValue()).toBe("renamed remotely");
+    expect(collab.binding(closed)).toBeDefined();
+  });
+
   it("binds shared open files, publishes throttled presence and clears it on dispose", () => {
     vi.useFakeTimers();
     const [host, guest] = pair(["host", "editor"]);
