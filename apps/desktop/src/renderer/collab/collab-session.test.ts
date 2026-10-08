@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
@@ -21,7 +21,7 @@ import {
   type CollabSocket,
   type CollabSocketConstructor,
 } from "./collab-session.js";
-import { sharedTypes, type CollabSession } from "./types.js";
+import { CollabPendingUpdatesError, sharedTypes, type CollabSession } from "./types.js";
 
 const RELAY = Symbol("relay");
 
@@ -338,8 +338,8 @@ describe("createCollabSession", () => {
     [CLOSE_CODE.unauthorized, "unauthorized"],
     [CLOSE_CODE.roomClosed, "room-closed"],
     [CLOSE_CODE.sessionReplaced, "session-replaced"],
-    [CLOSE_CODE.roomFull, "error"],
-    [CLOSE_CODE.protocolMismatch, "error"],
+    [CLOSE_CODE.roomFull, "room-full"],
+    [CLOSE_CODE.protocolMismatch, "protocol-mismatch"],
   ])("maps close code %i to %s", async (code, reason) => {
     const { relay, timers, open } = setup();
     const a = open(1);
@@ -408,6 +408,44 @@ describe("createCollabSession", () => {
     await flush();
     expect(relay.sockets).toHaveLength(2);
     expect(a.getSnapshot().status).toBe("connected");
+  });
+
+  it("reconnects now without waiting for the backoff delay", async () => {
+    const { relay, timers, open } = setup();
+    const a = open(1);
+    await flush();
+    a.reconnectNow?.(); // connected: nothing to do
+    expect(relay.sockets).toHaveLength(1);
+    relay.sockets[0]!.serverClose(1006);
+    await flush();
+    expect(a.getSnapshot().status).toBe("reconnecting");
+    expect(timers.pending.size).toBe(1);
+    a.reconnectNow?.();
+    expect(timers.pending.size).toBe(0);
+    a.reconnectNow?.(); // attempt already in flight
+    await flush();
+    expect(relay.sockets).toHaveLength(2);
+    expect(a.getSnapshot().status).toBe("connected");
+  });
+
+  it("rejects flush with a typed error when edits stay unacknowledged", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { relay, open } = setup();
+      const a = open(1);
+      await vi.advanceTimersByTimeAsync(0);
+      for (let index = 0; index < 20; index++) await Promise.resolve();
+      relay.accepting = false;
+      relay.receive = () => {}; // the server stops acknowledging
+      text(a).insert(0, "unsent");
+      expect(a.hasPendingUpdates?.()).toBe(true);
+      const flushing = a.flush!();
+      const result = expect(flushing).rejects.toBeInstanceOf(CollabPendingUpdatesError);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops retrying once the token has expired", async () => {
