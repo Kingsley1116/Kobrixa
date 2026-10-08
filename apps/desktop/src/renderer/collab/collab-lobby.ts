@@ -1,10 +1,12 @@
 import { COLLAB_LIMITS, displayNameSchema, inviteCodeSchema } from "@kobrixa/collab-protocol";
-import type {
-  CollabApi,
-  CollabConnection,
-  CollabErrorCode,
-  CollabRecentRoom,
-  CollabResult,
+import {
+  COLLAB_LOCAL_ERRORS,
+  type CollabApi,
+  type CollabConnection,
+  type CollabErrorCode,
+  type CollabLocalErrorCode,
+  type CollabRecentRoom,
+  type CollabResult,
 } from "../../shared/collab.js";
 import type { DisplayNameProblem } from "./collab-copy.js";
 
@@ -60,6 +62,27 @@ export function rememberRoom(
 }
 
 export type LobbyError = CollabErrorCode | "unknown";
+
+/**
+ * Thrown by the lobby's `start` callback when the room's project can't be
+ * prepared; the lobby shows `code`. Returning `false` instead means the user
+ * cancelled and the lobby just returns to idle.
+ */
+export class CollabStartError extends Error {
+  constructor(readonly code: LobbyError) {
+    super(code);
+    this.name = "CollabStartError";
+  }
+}
+
+/**
+ * Recovers a local error code thrown in the main process. Electron rewrites
+ * IPC rejections as "Error invoking remote method '…': Name: message".
+ */
+export function localCollabError(error: unknown): CollabLocalErrorCode | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  return COLLAB_LOCAL_ERRORS.find((code) => message === code || message.endsWith(`: ${code}`));
+}
 
 export interface LobbySnapshot {
   loaded: boolean;
@@ -211,8 +234,11 @@ export class CollabLobby {
     let result: CollabResult<CollabConnection>;
     try {
       result = await request();
-    } catch {
-      result = { ok: false, error: "network" };
+    } catch (error) {
+      // Service and network failures arrive as results; a rejection is local (IPC, validation).
+      if (!this.#disposed)
+        this.#update({ pending: null, [errorKey]: localCollabError(error) ?? "unknown" });
+      return false;
     }
     if (this.#disposed) return false;
     if (!result.ok) {
@@ -228,8 +254,14 @@ export class CollabLobby {
         this.#update({ pending: null });
         return false;
       }
-    } catch {
-      this.#update({ pending: null, [errorKey]: "unknown" });
+    } catch (error) {
+      this.#update({
+        pending: null,
+        [errorKey]:
+          error instanceof CollabStartError
+            ? error.code
+            : (localCollabError(error) ?? "prepare-failed"),
+      });
       return false;
     }
     this.#update({ pending: null });
