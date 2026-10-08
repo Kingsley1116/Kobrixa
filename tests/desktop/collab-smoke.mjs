@@ -24,6 +24,36 @@ export async function checkCollabWelcome({ js, until, win, temporary }) {
   await js('smoke.settingsStore.set("rightPanel", null)');
 }
 
+/** A peer deletes the file open in the host's editor while it has unsaved typing. */
+async function checkRemoteDeleteOfUnsavedTab({ js, until, win, temporary }) {
+  const editor =
+    "smoke.monaco.editor.getEditors().find(editor=>editor.getModel()?.uri.scheme!=='kobrixa-review')";
+  await until(`Boolean(${editor}?.getModel())`);
+  const file = await js(
+    `(() => { const files = window.__collabSmoke.session.doc.getMap("files"); const text = ${editor}.getModel().getValue(); return [...files.keys()].find(file => files.get(file).toString() === text); })()`,
+  );
+  assert.ok(file, "the active editor shows a shared file");
+  await js(
+    `${editor}.executeEdits('collab-smoke',[{range:new smoke.monaco.Range(1,1,1,1),text:"' unsaved\\n"}]); void 0`,
+  );
+  await js(
+    `(() => { const peer = window.__collabSmoke.room.sessions[1]; peer.doc.transact(() => { peer.doc.getMap("tree").delete(${JSON.stringify(file)}); peer.doc.getMap("files").delete(${JSON.stringify(file)}); }); })()`,
+  );
+  await until(
+    `document.querySelector("[data-testid=collab-removed-files]")?.textContent.includes(${JSON.stringify(file)})`,
+  );
+  assert.equal(
+    await js('document.activeElement?.getAttribute("data-testid")'),
+    "collab-removed-keep",
+  );
+  await fs.writeFile(
+    path.join(temporary, "collab-removed-file.png"),
+    (await win.webContents.capturePage()).toPNG(),
+  );
+  await js(click("[data-testid=collab-removed-keep]"));
+  await until('!document.querySelector("[data-testid=collab-removed-files]")');
+}
+
 export async function checkCollab(context) {
   const { js, until, pause, win, temporary } = context;
   const original = await js("smoke.settingsStore.getSnapshot().values");
@@ -44,6 +74,7 @@ export async function checkCollab(context) {
   } else {
     await until('Boolean(document.querySelector("[data-testid=collab-room]"))');
     await until('window.__collabSmoke.session.doc.getMap("files").size > 0');
+    await checkRemoteDeleteOfUnsavedTab({ js, until, win, temporary });
     await js(click("#collab-view-chat"));
     await until('Boolean(document.querySelector(".collab-chat-compose textarea"))');
     await js(
