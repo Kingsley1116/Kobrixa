@@ -214,7 +214,7 @@ describe("collaboration panel", () => {
       expect(dialog.textContent).toContain(collabCopy[locale].previewFailed);
       expect(dialog.textContent).not.toContain("Error invoking");
       expect(button(".collab-create-dialog button[type=submit]").disabled).toBe(false);
-      await click("[data-testid=collab-preview-retry]");
+      await click("[data-testid=collab-share-preview-retry]");
       expect(previewProject).toHaveBeenCalledTimes(2);
       expect(dialog.textContent).not.toContain(collabCopy[locale].previewFailed);
       expect(dialog.textContent).toContain("main.bp");

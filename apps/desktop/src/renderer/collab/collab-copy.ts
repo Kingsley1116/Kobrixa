@@ -1,10 +1,11 @@
 import type { Role } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
-import type { CollabErrorCode, CollabJoinChange } from "../../shared/collab.js";
+import type { CollabErrorCode, CollabJoinChange, CollabSharePreview } from "../../shared/collab.js";
 import type { CollabFileSyncErrorCode, CollabSkipReason } from "./file-sync.js";
 import type { CollabCloseReason, CollabStatus } from "./types.js";
 
 export type DisplayNameProblem = "empty" | "too-long" | "invalid";
+export type ShareSkipReason = CollabSharePreview["skipped"][number]["reason"];
 
 const en = {
   lobbyTitle: "Work together",
@@ -23,8 +24,30 @@ const en = {
   starting: "Starting room…",
   createIntro: "Project files will be shared with everyone who joins using your invite code.",
   previewFailed: "Couldn't check which files will be shared. You can still start the room.",
+  shareLimits: (files: number, fileMiB: number, totalMiB: number) =>
+    `Supports .bp, .bpi, .bpm and .json; up to ${files} files, ${fileMiB} MiB each and ${totalMiB} MiB total.`,
+  sharePreviewChecking: "Checking files to share…",
+  sharePreviewRetry: "Try again",
+  sharePreviewSummary: (shared: number, excluded: number) =>
+    excluded
+      ? `${shared} ${shared === 1 ? "file" : "files"} will be shared; ${excluded} won't sync.`
+      : `${shared} ${shared === 1 ? "file" : "files"} will be shared.`,
+  sharePreviewExcluded: (count: number) => `Not shared (${count})`,
+  sharePreviewShared: (count: number) => `Shared files (${count})`,
+  shareSkipReasons: {
+    format: "Unsupported format or path",
+    size: "Larger than the per-file limit",
+    total: "Over the room's total size limit",
+    count: "Over the room's file limit",
+  } satisfies Record<ShareSkipReason, string>,
   roomPassword: "Room password (optional)",
   createPasswordHint: "Leave blank to allow joining with just the invite code.",
+  createPasswordShare:
+    "The password isn't part of the invite code. Send it to guests separately, for example in a different message.",
+  showPassword: "Show",
+  hidePassword: "Hide",
+  showPasswordLabel: "Show password",
+  hidePasswordLabel: "Hide password",
   joinPasswordHint: "If the host set a password, enter it here. It won't be remembered.",
   hostingAs: (name: string) => `You will host as ${name}.`,
   joinRoom: "Join a room",
@@ -49,6 +72,7 @@ const en = {
 
   joinTitle: "Join a room",
   joinIntro: "Enter the invite code you received from the host.",
+  joinRoomContext: (project: string) => `Rejoining “${project}”.`,
   inviteCode: "Invite code",
   inviteCodeHint: "12 letters and digits, for example ABCD-EFGH-JK23.",
   inviteCodeInvalid:
@@ -217,8 +241,27 @@ const zhTW: CollabCopy = {
   starting: "正在建立房間…",
   createIntro: "透過邀請碼加入的人將能存取此專案的檔案。",
   previewFailed: "無法檢查將分享哪些檔案，但仍可建立房間。",
+  shareLimits: (files, fileMiB, totalMiB) =>
+    `支援 .bp、.bpi、.bpm、.json；最多 ${files} 個檔案，每個 ${fileMiB} MiB，合計 ${totalMiB} MiB。`,
+  sharePreviewChecking: "正在檢查要分享的檔案…",
+  sharePreviewRetry: "重試",
+  sharePreviewSummary: (shared, excluded) =>
+    excluded ? `將分享 ${shared} 個檔案；${excluded} 個不會同步。` : `將分享 ${shared} 個檔案。`,
+  sharePreviewExcluded: (count) => `不會分享（${count}）`,
+  sharePreviewShared: (count) => `分享的檔案（${count}）`,
+  shareSkipReasons: {
+    format: "不支援的格式或路徑",
+    size: "超過單一檔案大小上限",
+    total: "超過房間的總容量上限",
+    count: "超過房間的檔案數量上限",
+  },
   roomPassword: "房間密碼（選填）",
   createPasswordHint: "留空時，其他人只需邀請碼即可加入。",
+  createPasswordShare: "密碼不包含在邀請碼中，請另外告知來賓，例如用另一則訊息傳送。",
+  showPassword: "顯示",
+  hidePassword: "隱藏",
+  showPasswordLabel: "顯示密碼",
+  hidePasswordLabel: "隱藏密碼",
   joinPasswordHint: "若主持人有設定密碼，請在此輸入。應用程式不會記住密碼。",
   hostingAs: (name) => `你將以「${name}」的身分主持房間。`,
   joinRoom: "加入房間",
@@ -242,6 +285,7 @@ const zhTW: CollabCopy = {
 
   joinTitle: "加入房間",
   joinIntro: "輸入主持人提供的邀請碼。",
+  joinRoomContext: (project) => `重新加入「${project}」。`,
   inviteCode: "邀請碼",
   inviteCodeHint: "12 個英文字母與數字，例如 ABCD-EFGH-JK23。",
   inviteCodeInvalid: "邀請碼格式不正確。請確認共有 12 個英文字母與數字（不含 I、O、0、1）。",

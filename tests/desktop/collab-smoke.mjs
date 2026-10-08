@@ -15,12 +15,33 @@ export async function checkCollabWelcome({ js, until, win, temporary }) {
   assert.equal(await js('Boolean(document.querySelector(".connection-chip"))'), true);
   await js(click("[data-testid=collab-join]"));
   await until('Boolean(document.querySelector(".collab-join-dialog"))');
+  // An empty name is explained and focused instead of silently disabling Join.
+  await js(input("[data-testid=collab-display-name]", ""));
+  assert.equal(await js('document.querySelector(".collab-join-as") === null'), true);
+  await js(click(".collab-join-dialog button[type=submit]"));
+  await until('Boolean(document.querySelector("[data-testid=collab-display-name-error]"))');
+  assert.equal(
+    await js('document.activeElement?.getAttribute("data-testid")'),
+    "collab-display-name",
+  );
+  assert.equal(
+    await js(
+      'document.querySelector("[data-testid=collab-display-name]").getAttribute("aria-invalid")',
+    ),
+    "true",
+  );
   await js(input("[data-testid=collab-display-name]", "Ada Lovelace"));
+  await until('!document.querySelector("[data-testid=collab-display-name-error]")');
+  await js(click("[data-testid=collab-join-password-toggle]"));
+  assert.equal(
+    await js('document.querySelector("[data-testid=collab-join-password]").type'),
+    "text",
+  );
   await fs.writeFile(
     path.join(temporary, "collab-welcome-join.png"),
     (await win.webContents.capturePage()).toPNG(),
   );
-  await js(click(".collab-join-dialog button[type=button]"));
+  await js(click(".collab-join-dialog .modal-actions button[type=button]"));
   await js('smoke.settingsStore.set("rightPanel", null)');
 }
 
@@ -65,7 +86,7 @@ export async function checkCollab(context) {
   await js(click("[data-testid=collab-start]"));
   await until('Boolean(document.querySelector(".collab-create-dialog"))');
   // A failed share preview is explained in plain language and can be retried.
-  await until('Boolean(document.querySelector("[data-testid=collab-preview-retry]"))');
+  await until('Boolean(document.querySelector("[data-testid=collab-share-preview-retry]"))');
   assert.doesNotMatch(
     await js('document.querySelector(".collab-create-dialog").textContent'),
     /smoke: preview unavailable|Error invoking/,
@@ -74,18 +95,33 @@ export async function checkCollab(context) {
     await js('document.querySelector(".collab-create-dialog button[type=submit]").disabled'),
     false,
   );
-  await js(click("[data-testid=collab-preview-retry]"));
+  await js(click("[data-testid=collab-share-preview-retry]"));
   await until(
-    '!document.querySelector("[data-testid=collab-preview-retry]") && Boolean(document.querySelector(".collab-create-dialog details summary"))',
+    '!document.querySelector("[data-testid=collab-share-preview-retry]") && Boolean(document.querySelector(".collab-create-dialog details summary"))',
   );
+  assert.equal(
+    await js('Boolean(document.querySelector("[data-testid=collab-create-privacy]"))'),
+    true,
+  );
+  // Control characters are reported instead of the room silently failing to start.
+  await js(input("[data-testid=collab-display-name]", "Ada\u0007"));
+  await until('Boolean(document.querySelector("[data-testid=collab-display-name-error]"))');
+  await until('!document.querySelector(".collab-create-dialog button[type=submit]").disabled');
+  await js(click(".collab-create-dialog button[type=submit]"));
+  assert.equal(
+    await js('document.activeElement?.getAttribute("data-testid")'),
+    "collab-display-name",
+  );
+  assert.equal(await js('Boolean(document.querySelector("[data-testid=collab-room]"))'), false);
   await js(input("[data-testid=collab-display-name]", "Ada Lovelace"));
+  await until('!document.querySelector("[data-testid=collab-display-name-error]")');
   await until('!document.querySelector(".collab-create-dialog button[type=submit]").disabled');
   await js(click(".collab-create-dialog button[type=submit]"));
   if (!process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
     await until(
       'document.querySelector("[data-testid=collab-create-error]")?.textContent.includes("available")',
     );
-    await js(click(".collab-create-dialog button[type=button]"));
+    await js(click(".collab-create-dialog .modal-actions button[type=button]"));
   } else {
     await until('Boolean(document.querySelector("[data-testid=collab-room]"))');
     await until('window.__collabSmoke.session.doc.getMap("files").size > 0');
