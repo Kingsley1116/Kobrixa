@@ -72,6 +72,8 @@ export function CollabPanel(props: PanelProps): React.JSX.Element {
   }, [session, lobby]);
   const state = useSyncExternalStore(lobby.subscribe, lobby.getSnapshot);
   const [joinCode, setJoinCode] = useState<string | null>(null);
+  // Names the recent room being rejoined so the password prompt has context.
+  const [joinRoomName, setJoinRoomName] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [preview, setPreview] = useState<CollabSharePreview>();
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -122,6 +124,7 @@ export function CollabPanel(props: PanelProps): React.JSX.Element {
           disabled={!state.loaded || busy}
           onClick={() => {
             lobby.clearJoinError();
+            setJoinRoomName(undefined);
             setJoinCode("");
           }}
         >
@@ -201,6 +204,7 @@ export function CollabPanel(props: PanelProps): React.JSX.Element {
                       if (room.canResume) void lobby.resumeRoom(room.roomId);
                       else if (room.inviteCode) {
                         lobby.clearJoinError();
+                        setJoinRoomName(room.projectName);
                         setJoinCode(room.inviteCode);
                       }
                     }}
@@ -250,6 +254,7 @@ export function CollabPanel(props: PanelProps): React.JSX.Element {
           displayName={state.displayName}
           onName={(name) => lobby.setDisplayName(name)}
           initialCode={joinCode}
+          roomName={joinRoomName}
           pending={state.pending === "join"}
           error={state.joinError}
           onEdit={() => lobby.clearJoinError()}
