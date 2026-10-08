@@ -294,3 +294,200 @@
     opacity: 0.35;
   }
 }
+
+/* Shared tool space: the panes remain mounted when hidden. */
+.right-pane-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+.right-pane-content[hidden],
+.collab-room [hidden] {
+  display: none !important;
+}
+.welcome-workbench > .welcome,
+.welcome-workbench > .empty,
+.welcome-workbench > .standalone-settings {
+  grid-column: 1 / 4;
+  min-width: 0;
+}
+.collaboration-pane {
+  overflow: hidden;
+}
+.collaboration-pane > .collab-lobby {
+  overflow-y: auto;
+}
+.collab-panel,
+.collab-room {
+  padding: 12px;
+  min-width: 0;
+  font-size: var(--font-small);
+  line-height: 1.4;
+}
+.collab-room {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  overflow: hidden;
+}
+.collab-room-header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.collab-room-title {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.collab-room-title h3 {
+  margin: 0;
+  font-size: var(--font-ui);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collab-room-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--font-small);
+}
+.collab-room-meta p {
+  margin: 0;
+}
+.collab-invite-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.collab-invite-code {
+  font-size: var(--font-small);
+  letter-spacing: 0.04em;
+}
+.collab-invite-row [role="status"] {
+  font-size: var(--font-small);
+  overflow-wrap: anywhere;
+}
+.collab-people-page {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+#collab-page-chat {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.collab-room-footer button {
+  width: auto;
+}
+.collab-room-footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+.collab-lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.collab-recent > li {
+  flex-wrap: wrap;
+}
+.collab-chip {
+  max-width: 280px;
+}
+.collab-chip-count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottom-activity {
+  overflow-y: auto;
+  min-height: 0;
+}
+.bottom-activity[hidden] {
+  display: none;
+}
+.collab-participant .action-menu {
+  flex: 0 0 auto;
+}
+.collab-room button:focus-visible,
+.collab-panel button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.collab-share-preview {
+  max-height: 150px;
+  overflow: auto;
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+
+.collab-room .collab-section {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.collab-chip .collab-count {
+  display: inline-flex;
+  min-width: 18px;
+  min-height: 18px;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 0 4px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: var(--font-small);
+}
+
+.collab-sync-notice {
+  flex: 0 0 auto;
+  max-height: 128px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 8px 12px;
+}
+.collab-sync-notice summary {
+  cursor: pointer;
+}
+
+@media (max-height: 700px) {
+  .collaboration-pane > .tools-heading {
+    padding-block: 4px;
+  }
+  .collab-room {
+    gap: 6px;
+    padding-block: 8px;
+  }
+  .collab-room-header {
+    gap: 4px;
+  }
+  .collab-room-footer {
+    padding: 4px 0 0;
+  }
+  .collab-room-footer button,
+  .collab-invite-row button {
+    padding-block: 4px;
+  }
+  .collab-room .tab-list > button {
+    padding-block: 5px;
+  }
+}

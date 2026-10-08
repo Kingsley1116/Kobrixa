@@ -25,11 +25,11 @@ function message(index: number, participantId = "participant-1"): ChatMessage {
   return { id: `m-${index}`, participantId, name: "User 2", text: `message ${index}`, at: index };
 }
 
-describe("ChatController", () => {
-  it("relays editor messages to the host and viewer", () => {
+describe("ChatController", async () => {
+  it("relays editor messages to the host and viewer", async () => {
     const { chats, editor } = room();
     const [hostChat, editorChat, viewerChat] = chats;
-    const result = editorChat.send("  hello\nworld  ");
+    const result = await editorChat.send("  hello\nworld  ");
     expect(result.ok).toBe(true);
     for (const chat of chats) {
       expect(chat.getSnapshot().messages).toEqual([
@@ -44,26 +44,26 @@ describe("ChatController", () => {
     expect(viewerChat.getSnapshot().canSend).toBe(false);
   });
 
-  it("does not let viewers send, and drops their raw pushes", () => {
+  it("does not let viewers send, and drops their raw pushes", async () => {
     const { chats, viewer } = room();
     const [hostChat, editorChat, viewerChat] = chats;
-    expect(viewerChat.send("hi")).toEqual({ ok: false, reason: "read-only" });
+    expect(await viewerChat.send("hi")).toEqual({ ok: false, reason: "read-only" });
     sharedTypes(viewer.doc).chat.push([message(1, viewer.connection.participantId)]);
     expect(hostChat.getSnapshot().messages).toHaveLength(0);
     expect(editorChat.getSnapshot().messages).toHaveLength(0);
   });
 
-  it("enables sending when a viewer is promoted", () => {
+  it("enables sending when a viewer is promoted", async () => {
     const { chats, viewer } = room();
     const [, editorChat, viewerChat] = chats;
     viewer.setRole("editor");
     expect(viewerChat.getSnapshot().canSend).toBe(true);
     editorChat.setVisible(true);
-    expect(viewerChat.send("now I can talk").ok).toBe(true);
+    expect((await viewerChat.send("now I can talk")).ok).toBe(true);
     expect(editorChat.getSnapshot().messages.at(-1)?.text).toBe("now I can talk");
   });
 
-  it("ignores invalid and duplicate items", () => {
+  it("ignores invalid and duplicate items", async () => {
     const { chats, editor } = room();
     const chat = sharedTypes(editor.doc).chat as Y.Array<unknown>;
     chat.push([
@@ -81,7 +81,7 @@ describe("ChatController", () => {
     }
   });
 
-  it("counts unread messages from others while hidden", () => {
+  it("counts unread messages from others while hidden", async () => {
     const { chats } = room();
     const [hostChat, editorChat] = chats;
     const notified: number[] = [];
@@ -94,6 +94,7 @@ describe("ChatController", () => {
     expect(editorChat.getSnapshot().unread).toBe(1);
     expect(notified.at(-1)).toBe(2);
 
+    hostChat.setVisible(true);
     hostChat.markRead();
     expect(hostChat.getSnapshot().unread).toBe(0);
 
@@ -107,7 +108,7 @@ describe("ChatController", () => {
     expect(hostChat.getSnapshot().unread).toBe(0);
   });
 
-  it("treats history present when joining as read", () => {
+  it("treats history present when joining as read", async () => {
     const linked = createLinkedSessions(["host", "editor"]);
     const editorChat = new ChatController(linked.sessions[1]!);
     editorChat.send("before you came");
@@ -119,7 +120,7 @@ describe("ChatController", () => {
     });
   });
 
-  it("keeps snapshots immutable and stable", () => {
+  it("keeps snapshots immutable and stable", async () => {
     const { chats } = room();
     const [hostChat, editorChat] = chats;
     const before = hostChat.getSnapshot();
@@ -132,20 +133,20 @@ describe("ChatController", () => {
     expect(Object.isFrozen(after.messages)).toBe(true);
   });
 
-  it("validates text length and emptiness", () => {
+  it("validates text length and emptiness", async () => {
     const { chats } = room();
     const editorChat = chats[1];
-    expect(editorChat.send("   \n ")).toEqual({ ok: false, reason: "empty" });
-    expect(editorChat.send("x".repeat(COLLAB_LIMITS.chatMessageLength + 1))).toEqual({
+    expect(await editorChat.send("   \n ")).toEqual({ ok: false, reason: "empty" });
+    expect(await editorChat.send("x".repeat(COLLAB_LIMITS.chatMessageLength + 1))).toEqual({
       ok: false,
       reason: "too-long",
     });
     const padded = ` ${"x".repeat(COLLAB_LIMITS.chatMessageLength)} `;
-    expect(editorChat.send(padded).ok).toBe(true);
+    expect((await editorChat.send(padded)).ok).toBe(true);
     expect(editorChat.getSnapshot().messages).toHaveLength(1);
   });
 
-  it("lets only the host trim, down to exactly the limit", () => {
+  it("lets only the host trim, down to exactly the limit", async () => {
     const { chats, host, editor, viewer } = room();
     const [hostChat, editorChat] = chats;
     hostChat.dispose();
@@ -165,7 +166,7 @@ describe("ChatController", () => {
     expect(hostAgain.getSnapshot().messages[0]?.id).toBe(`m-${CHAT_TRIM_SLACK + 1}`);
   });
 
-  it("trims idempotently when sends race with the trim", () => {
+  it("trims idempotently when sends race with the trim", async () => {
     const { chats, host, editor } = room();
     const [, editorChat] = chats;
     const limit = COLLAB_LIMITS.chatMessages;
@@ -189,7 +190,7 @@ describe("ChatController", () => {
     expect(offlineChat.toJSON()).toEqual(sharedTypes(host.doc).chat.toJSON());
   });
 
-  it("stops observing after dispose", () => {
+  it("stops observing after dispose", async () => {
     const { chats } = room();
     const [hostChat, editorChat] = chats;
     let calls = 0;
@@ -198,24 +199,67 @@ describe("ChatController", () => {
     editorChat.send("hello");
     expect(calls).toBe(0);
     expect(hostChat.getSnapshot().messages).toHaveLength(0);
-    expect(hostChat.send("x")).toEqual({ ok: false, reason: "read-only" });
+    expect(await hostChat.send("x")).toEqual({ ok: false, reason: "read-only" });
   });
 
-  it("disables sending once the session closes", () => {
+  it("disables sending once the session closes", async () => {
     const { chats, editor } = room();
     const editorChat = chats[1];
     editor.close("kicked");
     expect(editorChat.getSnapshot().canSend).toBe(false);
-    expect(editorChat.send("anyone?")).toEqual({ ok: false, reason: "read-only" });
+    expect(await editorChat.send("anyone?")).toEqual({ ok: false, reason: "read-only" });
   });
 
-  it("keeps one controller per session so unread state survives remounts", () => {
+  it("keeps one controller per session so unread state survives remounts", async () => {
     const { sessions } = createLinkedSessions(["host", "editor"]);
     const [host, editor] = sessions as [LinkedSession, LinkedSession];
     const hostChat = chatControllerFor(host);
     expect(chatControllerFor(host)).toBe(hostChat);
     expect(chatControllerFor(editor)).not.toBe(hostChat);
-    chatControllerFor(editor).send("ping");
+    sharedTypes(editor.doc).chat.push([message(1, editor.connection.participantId)]);
     expect(chatControllerFor(host).getSnapshot().unread).toBe(1);
   });
+});
+
+it("lets viewers send through the server without trusting local author or time", async () => {
+  const { viewer } = room();
+  const calls: unknown[] = [];
+  const controller = new ChatController(viewer, {
+    sendChat: async (roomId, message) => {
+      calls.push({ roomId, message });
+      return {
+        ok: true,
+        value: {
+          ...message,
+          participantId: viewer.connection.participantId,
+          name: "Server name",
+          at: 1234,
+        },
+      };
+    },
+  });
+  expect(controller.getSnapshot().canSend).toBe(true);
+  expect(await controller.send("hello", "stable-message-id")).toMatchObject({
+    ok: true,
+    message: { name: "Server name", at: 1234 },
+  });
+  expect(calls).toEqual([
+    { roomId: viewer.connection.roomId, message: { id: "stable-message-id", text: "hello" } },
+  ]);
+  expect(sharedTypes(viewer.doc).chat.length).toBe(0);
+});
+it("keeps incoming messages unread while scrolled up or while the window is hidden", () => {
+  const { chats } = room();
+  const [host, editor] = chats;
+  host.setVisible(true);
+  host.setAtBottom(false);
+  void editor.send("unread above bottom");
+  expect(host.getSnapshot().unread).toBe(1);
+  host.markRead();
+  expect(host.getSnapshot().unread).toBe(1);
+  host.setVisible(false);
+  host.setAtBottom(true);
+  expect(host.getSnapshot().unread).toBe(1);
+  host.setVisible(true);
+  expect(host.getSnapshot().unread).toBe(0);
 });

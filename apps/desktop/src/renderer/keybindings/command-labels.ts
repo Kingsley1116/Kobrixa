@@ -399,6 +399,7 @@ export const COMMAND_LABELS: Record<string, readonly [en: string, zh: string]> =
   "kobrixa.build": ["Build", "編譯"],
   "kobrixa.preview": ["Local simulator", "本地模擬器"],
   "kobrixa.closeTab": ["Close tab", "關閉分頁"],
+  "kobrixa.collab": ["Toggle collaboration", "切換協作面板"],
   "kobrixa.device": ["Toggle EV3 tools", "切換 EV3 面板"],
   "kobrixa.files": ["Toggle file tree", "切換檔案樹"],
   "kobrixa.format": ["Format document", "格式化文件"],

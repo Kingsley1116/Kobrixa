@@ -1164,6 +1164,10 @@ export const COMMAND_DESCRIPTIONS: Record<string, readonly [en: string, zh: stri
     "Close the active file or settings tab; ask how to handle unsaved file changes.",
     "關閉目前的檔案或設定分頁；檔案有未儲存修改時會詢問處理方式。",
   ],
+  "kobrixa.collab": [
+    "Show or collapse the collaboration panel without leaving the room.",
+    "顯示或收合協作面板，不會離開房間。",
+  ],
   "kobrixa.device": [
     "Show or hide the EV3 tools panel for connections, remote files and activity.",
     "顯示或隱藏 EV3 工具面板，查看連線、遠端檔案與活動紀錄。",

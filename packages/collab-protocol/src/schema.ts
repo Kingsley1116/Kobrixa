@@ -78,6 +78,24 @@ export const joinResponseSchema = z
   .strict();
 export type JoinResponse = z.infer<typeof joinResponseSchema>;
 
+export const resumeCredentialSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const resumableCreateResponseSchema = createRoomResponseSchema.extend({
+  resumeCredential: resumeCredentialSchema.optional(),
+});
+export const resumableJoinResponseSchema = joinResponseSchema.extend({
+  resumeCredential: resumeCredentialSchema.optional(),
+});
+export const resumeRequestSchema = z
+  .object({
+    participantId: participantIdSchema,
+    credential: resumeCredentialSchema,
+  })
+  .strict();
+export const resumeResponseSchema = joinResponseSchema.extend({
+  name: displayNameSchema,
+  inviteCode: inviteCodeSchema,
+});
+
 /** Host-only. Disconnects a participant and revokes its token. */
 export const kickRequestSchema = z.object({ participantId: participantIdSchema }).strict();
 export type KickRequest = z.infer<typeof kickRequestSchema>;
@@ -114,6 +132,8 @@ export const errorResponseSchema = z
       "rate-limited",
       "expired",
       "internal",
+      "room-closed",
+      "removed",
     ]),
     message: z.string().optional(),
   })
@@ -155,6 +175,9 @@ export const chatMessageSchema = z
   })
   .strict();
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
+
+export const sendChatRequestSchema = chatMessageSchema.pick({ id: true, text: true });
+export type SendChatRequest = z.infer<typeof sendChatRequestSchema>;
 
 export const treeEntrySchema = z.object({ kind: z.enum(["file", "directory"]) }).strict();
 export type TreeEntry = z.infer<typeof treeEntrySchema>;

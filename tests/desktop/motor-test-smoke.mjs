@@ -184,7 +184,7 @@ export async function checkMotorTests({ js, until, pause, win, temporary, monito
     );
   try {
     await js(
-      'smoke.settingsStore.set("locale","en");smoke.settingsStore.set("deviceOpen",true);smoke.settingsStore.set("toolTab","connection");smoke.settingsStore.set("autoSave","off")',
+      'smoke.settingsStore.set("locale","en");smoke.settingsStore.set("rightPanel","ev3");smoke.settingsStore.set("ev3Tab","connection");smoke.settingsStore.set("autoSave","off")',
     );
     await until('Boolean(document.querySelector("#tool-panel-connection"))');
     if (!(await js('Boolean(document.querySelector(".connection-banner.is-connected"))'))) {
@@ -200,13 +200,7 @@ export async function checkMotorTests({ js, until, pause, win, temporary, monito
     await until(`Boolean(document.querySelector(${JSON.stringify(toggle(1))}))`);
     assert.deepEqual(
       await js('Array.from(document.querySelectorAll(".tools-tabs [role=tab]")).map(tab=>tab.id)'),
-      [
-        "tool-tab-connection",
-        "tool-tab-monitor",
-        "tool-tab-files",
-        "tool-tab-activity",
-        "tool-tab-collab",
-      ],
+      ["tool-tab-connection", "tool-tab-monitor", "tool-tab-files"],
     );
     assert.deepEqual(
       await js(
@@ -248,6 +242,15 @@ export async function checkMotorTests({ js, until, pause, win, temporary, monito
       await js('document.querySelector("[data-testid=motor-test-0] fieldset").disabled'),
       true,
     );
+    for (const panel of ["collab", null, "ev3"]) {
+      await js(`smoke.settingsStore.set("rightPanel",${JSON.stringify(panel)})`);
+      await pause(60);
+      assert.equal(
+        await js(state),
+        "running",
+        "Panel visibility must not cancel the timed motor test",
+      );
+    }
     await until(`${state} === 'completed'`);
     const timed = motors.actions().slice(beforeTimed);
     assert.equal(timed.filter((action) => action.type === "timed").length, 1);
@@ -371,7 +374,7 @@ export async function checkMotorTests({ js, until, pause, win, temporary, monito
     throw error;
   } finally {
     await motors.service.stopAll();
-    await js('smoke.settingsStore.set("toolTab","connection")');
+    await js('smoke.settingsStore.set("ev3Tab","connection")');
     if (await js('Boolean(document.querySelector(".connection-banner.is-connected"))')) {
       await click("#tool-panel-connection button.wide");
       await until('!document.querySelector(".connection-banner.is-connected")');

@@ -71,6 +71,9 @@ export interface Settings extends EditorPreferences {
   filesWidth: number;
   deviceWidth: number;
   problemsHeight: number;
+  rightPanel: "ev3" | "collab" | null;
+  ev3Tab: "connection" | "monitor" | "files";
+  bottomTab: "problems" | "activity";
   toolTab: "connection" | "monitor" | "files" | "activity" | "collab";
 }
 export const SETTINGS_CHOICES = {
@@ -84,13 +87,16 @@ export const SETTINGS_CHOICES = {
   codeSize: CODE_SIZES,
   motion: ["system", "reduce"],
   indentSize: [2, 4],
+  rightPanel: ["ev3", "collab", null],
+  ev3Tab: ["connection", "monitor", "files"],
+  bottomTab: ["problems", "activity"],
   toolTab: ["connection", "monitor", "files", "activity", "collab"],
   lineHeight: ["compact", "standard", "relaxed"],
   cursorStyle: ["line", "block", "underline"],
   renderLineHighlight: ["none", "line", "all"],
   connectionMode: ["usb", "wifi"],
   revealDiagnostics: ["never", "errors", "warnings"],
-} as const satisfies Partial<Record<keyof Settings, readonly (string | number)[]>>;
+} as const satisfies Partial<Record<keyof Settings, readonly (string | number | null)[]>>;
 export const WIFI_ADDRESS_KEY = "kobrixa.lastWifiAddress";
 export interface SettingsSnapshot {
   values: Settings;
@@ -121,6 +127,9 @@ export const SETTINGS_KEYS: Record<keyof Settings, string> = {
   indentSize: "kobrixa.indentSize",
   ...LAYOUT_STORAGE_KEYS,
   toolTab: "kobrixa.tools.tab",
+  rightPanel: "kobrixa.layout.rightPanel",
+  ev3Tab: "kobrixa.layout.ev3Tab",
+  bottomTab: "kobrixa.layout.bottomTab",
 };
 export function defaultSettings(language: string): Settings {
   return {
@@ -145,6 +154,9 @@ export function defaultSettings(language: string): Settings {
     indentSize: 2,
     ...LAYOUT_DEFAULTS,
     toolTab: "connection",
+    rightPanel: null,
+    ev3Tab: "connection",
+    bottomTab: "problems",
   };
 }
 export function readSettings(storage: Pick<Storage, "getItem">, language: string): Settings {
@@ -170,6 +182,21 @@ export function readSettings(storage: Pick<Storage, "getItem">, language: string
       // Keep legacy EV3 pane widths, clamped to the expanded range.
       if (key === "deviceWidth") result[key] = clamp(value, min, max);
       else if (value >= min && value <= max) result[key] = value;
+    }
+  }
+  if (storage.getItem(SETTINGS_KEYS.rightPanel) === null) {
+    result.rightPanel = result.deviceOpen
+      ? result.toolTab === "collab"
+        ? "collab"
+        : result.toolTab === "activity"
+          ? null
+          : "ev3"
+      : null;
+    if (["connection", "monitor", "files"].includes(result.toolTab))
+      result.ev3Tab = result.toolTab as Settings["ev3Tab"];
+    if (result.deviceOpen && result.toolTab === "activity") {
+      result.bottomTab = "activity";
+      result.problemsOpen = true;
     }
   }
   return result;
@@ -220,7 +247,14 @@ export class SettingsStore {
   resetLayout = (): void => {
     this.state = {
       ...this.state,
-      values: { ...this.state.values, ...LAYOUT_DEFAULTS, toolTab: "connection" },
+      values: {
+        ...this.state.values,
+        ...LAYOUT_DEFAULTS,
+        toolTab: "connection",
+        rightPanel: null,
+        ev3Tab: "connection",
+        bottomTab: "problems",
+      },
     };
     this.save();
   };

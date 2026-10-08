@@ -47,7 +47,7 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   const state = (value) =>
     `document.querySelector('[data-testid="simulator-status"]')?.dataset.state===${JSON.stringify(value)}`;
   await js(
-    'smoke.settingsStore.set("locale","en");smoke.settingsStore.set("filesOpen",false);smoke.settingsStore.set("deviceOpen",false);smoke.settingsStore.set("problemsOpen",false)',
+    'smoke.settingsStore.set("locale","en");smoke.settingsStore.set("filesOpen",false);smoke.settingsStore.set("rightPanel",null);smoke.settingsStore.set("problemsOpen",false)',
   );
   await js(`window.ed.setValue(${JSON.stringify(source)});window.ed.focus()`);
   await key("F5", ["alt"]);
@@ -318,6 +318,6 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   await until("!document.querySelector('.simulator-workspace')");
   win.setSize(...oldSize);
   await js(
-    `window.ed.setValue(${JSON.stringify(old)});smoke.settingsStore.set("locale",${JSON.stringify(settings.locale)});smoke.settingsStore.set("filesOpen",${settings.filesOpen});smoke.settingsStore.set("deviceOpen",${settings.deviceOpen});smoke.settingsStore.set("problemsOpen",${settings.problemsOpen})`,
+    `window.ed.setValue(${JSON.stringify(old)});smoke.settingsStore.set("locale",${JSON.stringify(settings.locale)});smoke.settingsStore.set("filesOpen",${settings.filesOpen});smoke.settingsStore.set("rightPanel",${JSON.stringify(settings.rightPanel)});smoke.settingsStore.set("problemsOpen",${settings.problemsOpen})`,
   );
 }

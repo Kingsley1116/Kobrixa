@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { loadCollabIdentities } from "../../apps/desktop/src/main/collab/identities.js";
 import { CollabService } from "../../apps/desktop/src/main/collab/service.js";
 import { CollabPreferencesStore } from "../../apps/desktop/src/main/collab/preferences.js";
 import { CollabTokenStore } from "../../apps/desktop/src/main/collab/tokens.js";
@@ -24,16 +25,17 @@ async function until(check: () => boolean | Promise<boolean>, label: string): Pr
   }
   throw new Error(`Timed out: ${label}`);
 }
-const service = () =>
+const service = async (identity = crypto.randomUUID()) =>
   new CollabService({
     serverUrl,
     fetch,
     preferences: new CollabPreferencesStore(),
     tokens: new CollabTokenStore(),
+    identities: await loadCollabIdentities(path.join(temporary, identity)),
   });
 async function main(): Promise<void> {
-  const hostApi = service();
-  const guestApi = service();
+  const hostApi = await service("host");
+  const guestApi = await service("guest");
   const openRoom = await hostApi.createRoom({ name: "Host", projectName: "Passwordless robot" });
   assert.ok(openRoom.ok);
   const openGuest = await guestApi.joinRoom({
@@ -145,10 +147,14 @@ async function main(): Promise<void> {
     assert.ok(hostSync.recordTrash(removed.removed));
     await until(() => !guestTypes.tree.has("renamed.bpi"), "deletion reaches guest");
     await guestSync.flush();
-    const hostChat = new ChatController(host);
-    let guestChat = new ChatController(guest);
+    const hostChat = new ChatController(host, {
+      sendChat: (roomId, message) => hostApi.sendChat(roomId, message),
+    });
+    let guestChat = new ChatController(guest, {
+      sendChat: (roomId, message) => guestApi.sendChat(roomId, message),
+    });
     chats.push(hostChat, guestChat);
-    assert.ok(guestChat.send("hello over a real socket").ok);
+    assert.ok((await guestChat.send("hello over a real socket")).ok);
     await until(() => hostChat.getSnapshot().unread === 1, "chat reaches host unread badge");
     const hostControl = new DeviceControl(host);
     let guestControl = new DeviceControl(guest);
@@ -179,7 +185,9 @@ async function main(): Promise<void> {
       guestSync = new CollabFileSync(guest, guestWorkspace.id, workspaceApi, { debounceMs: 5 });
       syncs.push(guestSync);
       guestSync.start();
-      guestChat = new ChatController(guest);
+      guestChat = new ChatController(guest, {
+        sendChat: (roomId, message) => guestApi.sendChat(roomId, message),
+      });
       guestControl = new DeviceControl(guest);
       chats.push(guestChat);
       controls.push(guestControl);
@@ -194,7 +202,12 @@ async function main(): Promise<void> {
     );
     await acceptGuestRole("viewer");
     assert.equal(guestControl.getSnapshot().isHolder, false);
-    assert.equal(guestChat.send("forbidden").ok, false);
+    assert.equal((await guestChat.send("viewer can chat")).ok, true);
+    const restartedGuest = await service("guest");
+    const resumedViewer = await restartedGuest.resumeRoom(guest.connection.roomId);
+    assert.ok(resumedViewer.ok);
+    assert.equal(resumedViewer.value.role, "viewer");
+    assert.equal(resumedViewer.value.participantId, guest.connection.participantId);
     let before = hostTypes.files.get("main.bp")!.toString();
     guestTypes.files.get("main.bp")!.insert(0, "forbidden");
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -241,7 +254,7 @@ async function main(): Promise<void> {
         process.send!("restart-worker");
       });
     }
-    const freshApi = service();
+    const freshApi = await service();
     assert.partialDeepStrictEqual(await freshApi.joinRoom({ name: "Fresh", inviteCode }), {
       ok: false,
       error: "password-required",
@@ -251,27 +264,47 @@ async function main(): Promise<void> {
         participantId: guestResult.value.participantId,
         role: "editor",
       }),
-      { ok: false, error: "forbidden" },
+      { ok: false, error: "identity-missing" },
     );
     const freshGuest = await freshApi.joinRoom({ name: "Fresh", inviteCode, password });
     assert.ok(freshGuest.ok);
     assert.ok((await hostApi.kick(hostResult.value.roomId, freshGuest.value.participantId)).ok);
     await freshApi.leave(hostResult.value.roomId);
-    const restored = createCollabSession(hostResult.value, { network: null });
+    await hostApi.leave(hostResult.value.roomId);
+    const restartedHost = await service("host");
+    const resumedHost = await restartedHost.resumeRoom(hostResult.value.roomId);
+    assert.ok(resumedHost.ok);
+    assert.equal(resumedHost.value.role, "host");
+    assert.equal(resumedHost.value.participantId, hostResult.value.participantId);
+    const restored = createCollabSession(resumedHost.value, { network: null });
     sessions.push(restored);
     restored.connect();
     await until(() => restored.getSnapshot().status === "connected", "fresh room client connects");
     const restoredTypes = sharedTypes(restored.doc);
     assert.equal(restoredTypes.files.get("main.bp")?.toString(), before);
     assert.equal(restoredTypes.tree.has("renamed.bpi"), false);
-    assert.equal(restoredTypes.chat.length, 1);
+    assert.equal(restoredTypes.chat.length, 2);
     assert.equal(restoredTypes.chat.get(0).text, "hello over a real socket");
     const rejected = createCollabSession(guestResult.value, { network: null });
     sessions.push(rejected);
     rejected.connect();
     await until(() => rejected.getSnapshot().status === "closed", "kicked client stays revoked");
+    assert.partialDeepStrictEqual(await guestApi.resumeRoom(guestResult.value.roomId), {
+      ok: false,
+      error: "removed",
+    });
+    await restored.flush?.();
+    assert.ok((await restartedHost.closeRoom(restored.connection.roomId)).ok);
+    await until(
+      () => restored.getSnapshot().closeReason === "room-closed",
+      "end room disconnects host",
+    );
+    assert.partialDeepStrictEqual(await restartedHost.resumeRoom(restored.connection.roomId), {
+      ok: false,
+      error: "room-closed",
+    });
     console.log(
-      "Live collaboration passes: optional room passwords, memory-only credentials, desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
+      "Live collaboration passes: optional room passwords, persistent private recovery credentials, same host/viewer identity after desktop restart, end-room invalidation, desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
         (remote ? "fresh client connections." : "a Worker restart."),
     );
   } finally {
