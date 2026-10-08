@@ -1,6 +1,6 @@
 # Cloud collaboration
 
-> **Release candidate.** Cloud collaboration is included starting with `v0.1.0-v1-candidate.12`. The default service is `https://collab.kobrixa.com`. Room recovery and the independent collaboration pane are included starting with `v0.1.0-v1-candidate.13`; the original `.12` desktop does not retain room recovery credentials.
+> **Release candidate.** Cloud collaboration is included starting with `v0.1.0-v1-candidate.12`. The default service is `https://collab.kobrixa.com`. Room recovery and the independent collaboration pane are included starting with `v0.1.0-v1-candidate.13`. Local-change conflict choices, a host decline for device-control requests and the redesigned room panel are included starting with `v0.1.0-v1-candidate.14`; the original `.12` desktop does not retain room recovery credentials.
 
 Several people can edit one Kobrixa project at the same time through a Kobrixa-operated collaboration service. No account is needed: the host starts a room and shares an invite code, and guests join with that code and the optional room password. Everyone sees the same files, cursors and chat; only one person at a time controls the EV3.
 
