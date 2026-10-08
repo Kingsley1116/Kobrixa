@@ -78,6 +78,24 @@ export async function checkCollab({ js, until, pause, win, temporary }) {
     await until('Boolean(document.querySelector(".collab-participant [role=menu]"))');
     assert.match(await js('document.activeElement?.getAttribute("role") ?? ""'), /menuitem/);
     await js(click(".collab-participant .more-button"));
+    // The host can decline; the requester stops waiting and learns why.
+    assert.equal(await js("window.__collabSmoke.peerControl.getSnapshot().requested"), true);
+    assert.equal(
+      await js('document.querySelector("[data-testid=device-control-decline]").textContent'),
+      "Decline",
+    );
+    await js(click("[data-testid=device-control-decline]"));
+    await until('!document.querySelector(".device-control-requests")');
+    assert.deepEqual(
+      await js(
+        "(() => { const s = window.__collabSmoke.peerControl.getSnapshot(); return { requested: s.requested, declined: s.declined }; })()",
+      ),
+      { requested: false, declined: true },
+    );
+    // Request again so the layout checks below include a pending request.
+    await js("window.__collabSmoke.peerControl.request()");
+    await until('Boolean(document.querySelector(".device-control-requests"))');
+    assert.equal(await js("window.__collabSmoke.peerControl.getSnapshot().declined"), false);
   }
   // Exercise every requested size, width, language, theme and scale combination.
   for (const [width, height] of [
