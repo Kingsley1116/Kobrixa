@@ -8,9 +8,12 @@ import {
 } from "@kobrixa/collab-protocol";
 import { shell } from "electron";
 import { z } from "zod";
-import type { CollabProjects } from "./projects.js";
+import type { CollabConnection, CollabJoinResolution, CollabResult } from "../../shared/collab.js";
+import { CollabLocalError, type CollabProjects } from "./projects.js";
 import type { IpcHandle } from "../ipc.js";
 import type { CollabService } from "./service.js";
+
+const joinResolutionSchema: z.ZodType<CollabJoinResolution> = z.enum(["keep-copy", "replace"]);
 
 /**
  * Registers the collaboration HTTP/preferences channels. Other collaboration
@@ -30,8 +33,14 @@ export function registerCollabIpc(
     handle("collab:preview-project", (_event, workspaceId: unknown) =>
       projects.preview(z.string().parse(workspaceId)),
     );
-    handle("collab:prepare-project", (_event, roomId: unknown, workspaceId: unknown) =>
-      projects.prepare(roomIdSchema.parse(roomId), z.string().optional().parse(workspaceId)),
+    handle(
+      "collab:prepare-project",
+      (_event, roomId: unknown, workspaceId: unknown, resolution: unknown) =>
+        projects.prepare(
+          roomIdSchema.parse(roomId),
+          z.string().optional().parse(workspaceId),
+          joinResolutionSchema.optional().parse(resolution),
+        ),
     );
     handle("collab:checkpoint", (_event, roomId: unknown) =>
       projects.checkpoint(roomIdSchema.parse(roomId)),
@@ -46,21 +55,32 @@ export function registerCollabIpc(
   handle("collab:server-url", () => collab.serverUrl());
   handle("collab:preferences", () => collab.getPreferences());
   handle("collab:set-preferences", (_event, patch: unknown) => collab.setPreferences(patch));
-  handle("collab:create-room", async (_event, request: unknown, workspaceId: unknown) => {
-    const id = z.string().optional().parse(workspaceId);
-    if (projects && !id) throw new Error("Choose a project before sharing.");
-    const result = await collab.createRoom(createRoomRequestSchema.parse(request));
-    if (result.ok && projects && id) {
-      try {
-        await projects.bindCreated(result.value.roomId, id);
-      } catch (error) {
-        await collab.closeRoom(result.value.roomId);
-        await collab.leave(result.value.roomId);
-        throw error;
+  handle(
+    "collab:create-room",
+    async (
+      _event,
+      request: unknown,
+      workspaceId: unknown,
+    ): Promise<CollabResult<CollabConnection>> => {
+      const id = z.string().optional().parse(workspaceId);
+      const parsed = createRoomRequestSchema.parse(request);
+      if (projects && !id) return { ok: false, error: "project-required" };
+      const result = await collab.createRoom(parsed);
+      if (result.ok && projects && id) {
+        try {
+          await projects.bindCreated(result.value.roomId, id);
+        } catch (error) {
+          await collab.closeRoom(result.value.roomId);
+          await collab.leave(result.value.roomId);
+          return {
+            ok: false,
+            error: error instanceof CollabLocalError ? error.code : "prepare-failed",
+          };
+        }
       }
-    }
-    return result;
-  });
+      return result;
+    },
+  );
   handle("collab:join-room", (_event, request: unknown) =>
     collab.joinRoom(joinRequestSchema.parse(request)),
   );

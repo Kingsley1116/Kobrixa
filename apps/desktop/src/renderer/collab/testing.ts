@@ -10,7 +10,12 @@ import {
   encodeAwarenessUpdate,
   removeAwarenessStates,
 } from "y-protocols/awareness";
-import { participantColor, type Role } from "@kobrixa/collab-protocol";
+import {
+  DOC_KEYS,
+  controlStateSchema,
+  participantColor,
+  type Role,
+} from "@kobrixa/collab-protocol";
 import type { CollabConnection } from "../../shared/collab.js";
 import type {
   CollabCloseReason,
@@ -26,6 +31,10 @@ export interface LinkedSession extends CollabSession {
   setRole(role: Role): void;
   /** Simulates the server closing this session. */
   close(reason: CollabCloseReason): void;
+  /** Simulates a lost connection; the session waits in `reconnecting`. */
+  drop(): void;
+  /** Restores a dropped session and exchanges the state missed meanwhile. */
+  reconnectNow(): void;
 }
 
 export interface LinkedRoom {
@@ -93,6 +102,7 @@ class FakeSession implements LinkedSession {
   readonly doc = new Y.Doc();
   readonly awareness = new Awareness(this.doc);
   readonly #listeners = new Set<() => void>();
+  readonly #declinedListeners = new Set<() => void>();
   #snapshot: CollabSessionSnapshot;
 
   constructor(
@@ -137,6 +147,27 @@ class FakeSession implements LinkedSession {
     this.doc.destroy();
   }
 
+  /** Mirrors the room: notify the requester, then remove its request. */
+  declineControlRequest(participantId: string): boolean {
+    if (!this.#live() || this.#snapshot.role !== "host") return false;
+    const control = this.doc.getMap<unknown>(DOC_KEYS.control);
+    const requests = controlStateSchema.shape.requests.safeParse(control.get("requests"));
+    if (!requests.success || !requests.data.includes(participantId)) return true;
+    for (const peer of this.#peers())
+      if (peer.connection.participantId === participantId)
+        for (const listener of [...peer.#declinedListeners]) listener();
+    control.set(
+      "requests",
+      requests.data.filter((id) => id !== participantId),
+    );
+    return true;
+  }
+
+  onControlDeclined = (listener: () => void): (() => void) => {
+    this.#declinedListeners.add(listener);
+    return () => this.#declinedListeners.delete(listener);
+  };
+
   setRole(role: Role): void {
     this.update({ role });
     const state = this.awareness.getLocalState();
@@ -145,10 +176,31 @@ class FakeSession implements LinkedSession {
   }
 
   close(reason: CollabCloseReason): void {
-    if (!this.#live()) return;
+    if (this.#snapshot.status === "closed") return;
     for (const peer of this.#peers())
       removeAwarenessStates(peer.awareness, [this.doc.clientID], RELAY);
     this.update({ status: "closed", closeReason: reason });
+    this.onRoster();
+  }
+
+  drop(): void {
+    if (!this.#live()) return;
+    for (const peer of this.#peers())
+      removeAwarenessStates(peer.awareness, [this.doc.clientID], RELAY);
+    this.update({ status: "reconnecting" });
+    this.onRoster();
+  }
+
+  reconnectNow(): void {
+    if (this.#snapshot.status !== "reconnecting") return;
+    this.update({ status: "connected" });
+    for (const peer of this.#peers()) {
+      if (this.#snapshot.role !== "viewer")
+        Y.applyUpdate(peer.doc, Y.encodeStateAsUpdate(this.doc), RELAY);
+      Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(peer.doc), RELAY);
+    }
+    const state = this.awareness.getLocalState();
+    if (state) this.awareness.setLocalState({ ...state });
     this.onRoster();
   }
 

@@ -70,6 +70,71 @@ describe("DeviceControl", () => {
     expect(editorControl.getSnapshot().isHolder).toBe(false);
   });
 
+  it("lets the host decline a request and tells the requester", () => {
+    const { editor, hostControl, editorControl } = room();
+    editorControl.request();
+    expect(editorControl.getSnapshot()).toMatchObject({ requested: true, declined: false });
+    // Editors cannot decline.
+    editorControl.decline(editor.connection.participantId);
+    expect(hostControl.getSnapshot().requests).toHaveLength(1);
+
+    hostControl.decline(editor.connection.participantId);
+    expect(hostControl.getSnapshot()).toMatchObject({ isHolder: true, requests: [] });
+    // The declined request is not reasserted.
+    expect(sharedTypes(editor.doc).control.get("requests")).toEqual([]);
+    expect(editorControl.getSnapshot()).toMatchObject({
+      requested: false,
+      declined: true,
+      canRequest: true,
+    });
+    editorControl.dismissDeclined();
+    expect(editorControl.getSnapshot().declined).toBe(false);
+
+    // A new request after a decline is shown to the host again.
+    hostControl.decline(editor.connection.participantId);
+    editorControl.request();
+    hostControl.decline(editor.connection.participantId);
+    editorControl.request();
+    expect(editorControl.getSnapshot()).toMatchObject({ requested: true, declined: false });
+    expect(hostControl.getSnapshot().requests).toEqual([
+      { participantId: editor.connection.participantId, name: "User 2" },
+    ]);
+  });
+
+  it("hides a declined request locally when the server cannot decline", () => {
+    const { host, editor, hostControl, editorControl } = room();
+    const spy = vi
+      .spyOn(host as Required<LinkedSession>, "declineControlRequest")
+      .mockReturnValue(true);
+    editorControl.request();
+    hostControl.decline(editor.connection.participantId);
+    expect(spy).toHaveBeenCalledWith(editor.connection.participantId);
+    expect(hostControl.getSnapshot().requests).toEqual([]);
+    expect(editorControl.getSnapshot()).toMatchObject({ requested: true, declined: false });
+    // Once the requester cancels and asks again, the host sees the new request.
+    editorControl.cancelRequest();
+    editorControl.request();
+    expect(hostControl.getSnapshot().requests).toHaveLength(1);
+
+    // A locally hidden request reappears after the host reconnects.
+    hostControl.decline(editor.connection.participantId);
+    expect(hostControl.getSnapshot().requests).toEqual([]);
+    // The fake session's internal snapshot update simulates a resync.
+    const resync = host as LinkedSession & { update(patch: { synced: boolean }): void };
+    resync.update({ synced: false });
+    resync.update({ synced: true });
+    expect(hostControl.getSnapshot().requests).toHaveLength(1);
+  });
+
+  it("keeps showing a request when the decline could not be sent", () => {
+    const { host, editor, hostControl, editorControl } = room();
+    vi.spyOn(host as Required<LinkedSession>, "declineControlRequest").mockReturnValue(false);
+    editorControl.request();
+    hostControl.decline(editor.connection.participantId);
+    expect(hostControl.getSnapshot().requests).toHaveLength(1);
+    expect(editorControl.getSnapshot()).toMatchObject({ requested: true, declined: false });
+  });
+
   it("ignores grant and reclaim from non-hosts", () => {
     const { editor, hostControl, editorControl } = room();
     editorControl.grant(editor.connection.participantId);
@@ -157,6 +222,7 @@ describe("DeviceControl", () => {
 
   it("formats the holder notice", () => {
     expect(deviceControlNotice("en", "Ada")).toBe("Device control is held by Ada");
-    expect(deviceControlNotice("zh-TW", "Ada")).toContain("Ada");
+    expect(deviceControlNotice("zh-TW", "Ada")).toBe("裝置控制權目前由 Ada 持有");
+    expect(deviceControlNotice("en", null)).toBe("Device control is held by another collaborator");
   });
 });

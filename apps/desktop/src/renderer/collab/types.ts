@@ -23,7 +23,26 @@ export type CollabStatus =
   | "closed";
 
 export type CollabCloseReason =
-  "left" | "kicked" | "session-replaced" | "room-closed" | "unauthorized" | "error";
+  | "left"
+  | "kicked"
+  | "session-replaced"
+  | "room-closed"
+  | "unauthorized"
+  | "room-full"
+  | "protocol-mismatch"
+  | "error";
+
+/**
+ * Thrown by `CollabSession.flush()` when the server has not acknowledged local
+ * edits in time. The UI shows a localized message for `code`.
+ */
+export class CollabPendingUpdatesError extends Error {
+  readonly code = "pending-updates" as const;
+  constructor() {
+    super("Some shared changes are still waiting for the server.");
+    this.name = "CollabPendingUpdatesError";
+  }
+}
 
 export type CollabParticipant = Extract<Notice, { type: "participants" }>["participants"][number];
 
@@ -56,6 +75,15 @@ export interface CollabSession {
   /** Waits for local document updates to be accepted by the server. */
   flush?(): Promise<void>;
   hasPendingUpdates?(): boolean;
+  /** While `reconnecting`, skips the backoff delay and retries right away. */
+  reconnectNow?(): void;
+  /**
+   * Host only: asks the server to decline `participantId`'s device-control
+   * request. Returns false when the command could not be sent (not connected).
+   */
+  declineControlRequest?(participantId: string): boolean;
+  /** Notified when the host declines this participant's device-control request. */
+  onControlDeclined?(listener: () => void): () => void;
   /** Leaves the room; status becomes `closed` with reason `left`. */
   disconnect(): void;
   /** Disconnects and releases the doc and awareness. */

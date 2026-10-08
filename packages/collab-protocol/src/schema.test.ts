@@ -6,7 +6,9 @@ import {
   COLLAB_LIMITS,
   displayNameSchema,
   COLLAB_ROUTES,
+  controlCommandSchema,
   inviteCodeSchema,
+  MESSAGE_TYPE,
   noticeSchema,
   participantColor,
   presenceStateSchema,
@@ -62,6 +64,22 @@ describe("collab protocol", () => {
         file: "main.bp",
       }).success,
     ).toBe(true);
+  });
+
+  it("parses device-control commands and the decline notice", () => {
+    expect(controlCommandSchema.parse({ type: "decline", participantId: "abcdefgh" })).toEqual({
+      type: "decline",
+      participantId: "abcdefgh",
+    });
+    for (const bad of [
+      { type: "decline" },
+      { type: "decline", participantId: "../x" },
+      { type: "decline", participantId: "abcdefgh", extra: true },
+      { type: "grant", participantId: "abcdefgh" },
+    ])
+      expect(controlCommandSchema.safeParse(bad).success).toBe(false);
+    expect(noticeSchema.parse({ type: "control-declined" })).toEqual({ type: "control-declined" });
+    expect(MESSAGE_TYPE.control).toBe(3);
   });
 
   it("builds routes and cycles colors", () => {

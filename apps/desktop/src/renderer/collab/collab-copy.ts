@@ -1,9 +1,12 @@
 import type { Role } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
-import type { CollabErrorCode } from "../../shared/collab.js";
+import type { CollabErrorCode, CollabJoinChange, CollabSharePreview } from "../../shared/collab.js";
+import type { CollabFileSyncErrorCode, CollabSkipReason } from "./file-sync.js";
 import type { CollabCloseReason, CollabStatus } from "./types.js";
+import type { ChatSendBlock } from "./chat.js";
 
 export type DisplayNameProblem = "empty" | "too-long" | "invalid";
+export type ShareSkipReason = CollabSharePreview["skipped"][number]["reason"];
 
 const en = {
   lobbyTitle: "Work together",
@@ -18,22 +21,59 @@ const en = {
   startRoom: "Start a room",
   startHint: (project: string) => `Invite others to edit “${project}”.`,
   startNeedsProject: "Open a project to start a room.",
+  openProject: "Open project",
   starting: "Starting room…",
   createIntro: "Project files will be shared with everyone who joins using your invite code.",
+  previewFailed: "Couldn't check which files will be shared. You can still start the room.",
+  shareLimits: (files: number, fileMiB: number, totalMiB: number) =>
+    `Supports .bp, .bpi, .bpm and .json; up to ${files} files, ${fileMiB} MiB each and ${totalMiB} MiB total.`,
+  sharePreviewChecking: "Checking files to share…",
+  sharePreviewRetry: "Try again",
+  sharePreviewSummary: (shared: number, excluded: number) =>
+    excluded
+      ? `${shared} ${shared === 1 ? "file" : "files"} will be shared; ${excluded} won't sync.`
+      : `${shared} ${shared === 1 ? "file" : "files"} will be shared.`,
+  sharePreviewExcluded: (count: number) => `Not shared (${count})`,
+  sharePreviewShared: (count: number) => `Shared files (${count})`,
+  shareSkipReasons: {
+    format: "Unsupported format or path",
+    size: "Larger than the per-file limit",
+    total: "Over the room's total size limit",
+    count: "Over the room's file limit",
+  } satisfies Record<ShareSkipReason, string>,
   roomPassword: "Room password (optional)",
   createPasswordHint: "Leave blank to allow joining with just the invite code.",
+  createPasswordShare:
+    "The password isn't part of the invite code. Send it to guests separately, for example in a different message.",
+  showPassword: "Show",
+  hidePassword: "Hide",
+  showPasswordLabel: "Show password",
+  hidePasswordLabel: "Hide password",
   joinPasswordHint: "If the host set a password, enter it here. It won't be remembered.",
   hostingAs: (name: string) => `You will host as ${name}.`,
   joinRoom: "Join a room",
   joinHint: "Have an invite code? Join someone else's project.",
   recentRooms: "Recent rooms",
   noRecentRooms: "Rooms you start or join appear here.",
+  loadingRecentRooms: "Loading recent rooms…",
+  recentRoomsLoadFailed: "Couldn't load recent rooms.",
+  forgetRoomFailed: "Couldn't remove the room from recent rooms. Try again.",
+  retry: "Try again",
   rejoin: "Rejoin",
+  rejoining: "Rejoining…",
+  forgetRoom: "Forget",
+  forgetRoomLabel: (project: string) => `Remove “${project}” from recent rooms`,
+  legacyHostRoom:
+    "This older room has no saved host credential. A name or password cannot restore ownership. Open your retained project to create a new room.",
+  guestRejoinWithCode:
+    "Your saved access has expired. Rejoin with the saved invite code, and enter the password if the host set one.",
+  guestNoInviteCode: "No invite code was saved for this room. Ask the host for a new invite.",
   roles: { host: "Host", editor: "Editor", viewer: "Viewer" } satisfies Record<Role, string>,
   joinedAt: (date: string) => `Joined ${date}`,
 
   joinTitle: "Join a room",
   joinIntro: "Enter the invite code you received from the host.",
+  joinRoomContext: (project: string) => `Rejoining “${project}”.`,
   inviteCode: "Invite code",
   inviteCodeHint: "12 letters and digits, for example ABCD-EFGH-JK23.",
   inviteCodeInvalid:
@@ -43,6 +83,24 @@ const en = {
   joining: "Joining…",
   cancel: "Cancel",
 
+  joinConflictTitle: "Local changes found",
+  joinConflictIntro: (project: string) =>
+    `Files in “${project}” changed on this computer since the last room sync. Joining syncs the room's version over them.`,
+  joinConflictFiles: (count: number) =>
+    `${count} ${count === 1 ? "file differs" : "files differ"} from the last sync`,
+  joinConflictChanges: {
+    added: "Added",
+    changed: "Changed",
+    removed: "Removed",
+  } satisfies Record<CollabJoinChange["change"], string>,
+  joinKeepCopy: "Keep a local copy, then join",
+  joinKeepCopyHint:
+    "Saves the current files and unsaved drafts to a separate folder first. If saving fails, nothing is changed.",
+  joinReplace: "Replace with room version",
+  joinReplaceHint:
+    "Overwrites the local changes without a separate copy. Earlier versions of overwritten files can still be restored from local history while it is turned on.",
+  joinBackupSaved: (path: string) => `Local copy saved to ${path}`,
+
   room: "Room",
   inviteCodeLabel: "Invite code",
   inviteShare: "Share this code and, if you set one, the room password.",
@@ -50,8 +108,38 @@ const en = {
   copied: "Copied",
   copyFailed: "Couldn't copy. Select the code and copy it manually.",
   noInviteCode: "Only the host can see the invite code.",
+  onlineCount: (online: number, limit: number) => `${online}/${limit} online`,
+  hostOffline:
+    "The host is offline. You can keep working and chatting. Changing roles, removing people and ending the room wait until the host returns.",
+  roomTools: "Collaboration",
+  chatTab: "Chat",
+  roomActions: "Room actions",
   leave: "Leave room",
+  leaving: "Leaving…",
+  leaveTitle: "Leave this room?",
+  leaveHostHint:
+    "The room stays open, so others can keep editing. To close it for everyone, end the room instead.",
+  endForEveryone: "End for everyone",
+  leavePendingTitle: "Leave with unsent changes?",
+  leavePendingIntro:
+    "Some of your recent edits haven't reached the room yet. If you leave now, they'll be saved as a separate project copy.",
+  stay: "Stay",
+  leaveAnyway: "Leave anyway",
+  leaveFailed: "Couldn't leave the room cleanly. Your files are still here. Try again.",
+  pendingUpdates:
+    "Some shared changes are still waiting for the server. Reconnect, then try again.",
   backToLobby: "Back to lobby",
+  reconnectNow: "Reconnect now",
+  reconnectingHint: "Editing is paused until you're reconnected. Your changes are kept.",
+  reconnectHere: "Reconnect here",
+  saveCopy: "Save project copy",
+  copySaved: (file: string) => `Copy saved: ${file}`,
+  saveCopyFailed:
+    "Couldn't save a project copy. Check that there's enough disk space and try again.",
+  endRoom: "End room",
+  endRoomTitle: "End this room?",
+  endRoomIntro: "Everyone will be disconnected and this room will expire. Local files are kept.",
+  ending: "Ending…",
   status: {
     connecting: "Connecting…",
     syncing: "Syncing project…",
@@ -65,29 +153,175 @@ const en = {
     "room-closed": "The host closed this room.",
     "session-replaced": "This room was opened in another window. This window will stay offline.",
     unauthorized: "Your invite is no longer valid. Ask the host for a new code.",
+    "room-full": "This room is full. Try rejoining after someone leaves.",
+    "protocol-mismatch":
+      "This version of Kobrixa can't connect to the room. Update Kobrixa, then rejoin.",
     error: "The connection failed. Try joining again.",
   } satisfies Record<CollabCloseReason, string>,
   people: "People",
   peopleCount: (online: number, total: number) => `${online} online · ${total} total`,
+  peopleLoading: "Loading people…",
   you: "(you)",
   online: "Online",
   offline: "Offline",
+  editingFile: (file: string) => `Editing ${file}`,
+  controlBadge: "Device control",
+  controlBadgeTitle: (name: string) => `${name} holds EV3 device control`,
+  participantActions: (name: string) => `Actions for ${name}`,
   makeViewer: "Make viewer",
   makeEditor: "Make editor",
   changeRoleLabel: (name: string, role: string) => `Change ${name} to ${role}`,
+  changingRole: (name: string) => `Changing ${name}'s role…`,
+  roleChanged: (name: string, role: "editor" | "viewer") =>
+    `${name} is now ${role === "viewer" ? "a viewer" : "an editor"}.`,
+  demoteTitle: (name: string) => `Make ${name} a viewer?`,
+  demoteIntro: (name: string) =>
+    `${name} will reconnect as a viewer. Edits ${name} hasn't synced yet will be discarded.`,
   remove: "Remove",
   removeLabel: (name: string) => `Remove ${name} from the room`,
   removeTitle: (name: string) => `Remove ${name}?`,
   removeIntro: "They will be disconnected from this room.",
+  removing: (name: string) => `Removing ${name}…`,
+  removed: (name: string) => `${name} was removed from the room.`,
+  participantErrors: {
+    notFound: (name: string) => `${name} is no longer in this room.`,
+    forbidden: "Only the host can manage participants.",
+    roleRejected: (name: string) => `${name}'s role can't be changed.`,
+    removeRejected: (name: string) => `${name} can't be removed.`,
+  },
   noParticipants: "Waiting for others to join…",
   chipLabel: (status: string, online: number) =>
     `Collaboration: ${status}, ${online} ${online === 1 ? "person" : "people"} online. Open collaboration panel`,
+  chipIdleLabel: "Collaboration. Open collaboration panel",
+  chipName: "Collaborate",
+  /** Short toolbar labels; the full status is in the chip's accessible name and tooltip. */
+  chipStatus: {
+    connecting: "Connecting",
+    syncing: "Syncing",
+    connected: "Collaborate",
+    reconnecting: "Reconnecting",
+    closed: "Offline",
+  } satisfies Record<CollabStatus, string>,
+  chipUnread: (count: number) => `${count} unread ${count === 1 ? "message" : "messages"}`,
+  chipRequests: (count: number) => `${count} control ${count === 1 ? "request" : "requests"}`,
+  chipJoin: (parts: readonly string[]) => parts.join(", "),
+
+  chat: {
+    log: "Chat messages",
+    empty: "No messages yet. Say hello to your team.",
+    you: "You",
+    input: "Message",
+    placeholder: "Message the room (Enter to send, Shift+Enter for a new line)",
+    send: "Send",
+    sending: "Sending…",
+    justNow: "just now",
+    today: "Today",
+    yesterday: "Yesterday",
+    newMessages: "View new messages",
+    newMessagesLabel: (count: number) =>
+      `View ${count} new ${count === 1 ? "message" : "messages"}`,
+    tooLong: "Message is too long.",
+    blocked: {
+      closed: "You have left this room. Chat history is read-only.",
+      offline: "Not connected. Your draft is kept and can be sent once the connection is back.",
+      syncing: "Syncing the room. You can send once it finishes; your draft is kept.",
+      viewer: "Viewers can read the chat but can't send messages in this room.",
+    } satisfies Record<ChatSendBlock, string>,
+    sendNetwork: "Could not send. Check your connection; your draft is kept.",
+    sendFailed: "Could not send this message. Your draft is kept.",
+    sendRateLimited: "You're sending messages too quickly. Wait a moment and try again.",
+    sendRejected: (reason: string) => `Could not send. ${reason} Your draft is kept.`,
+    draftSaveFailed: "Could not save this draft. Retry; the text is kept in this window.",
+    draftPrepareFailed: "Could not save the draft. Please retry.",
+    draftUpdateFailed:
+      "Message sent, but the local draft could not be updated. Retry saving before quitting.",
+  },
+
+  sync: {
+    label: "Shared file sync",
+    syncing: "Syncing project files…",
+    errors: {
+      seed: () =>
+        "Couldn't share the project files. Check that the project folder is still available.",
+      read: (file?: string) =>
+        file ? `Couldn't read “${file}” from disk.` : "Couldn't read the project folder.",
+      write: (file?: string) => `Couldn't save the room's version of “${file ?? ""}” to disk.`,
+      busy: (file?: string) =>
+        `“${file ?? ""}” keeps changing on disk, so the room's version couldn't be saved. Close other programs that edit it, then retry.`,
+      tree: (file?: string) => `Couldn't create, move or delete “${file ?? ""}” on disk.`,
+      sync: () => "Shared files couldn't be synced to this computer.",
+    } satisfies Record<CollabFileSyncErrorCode, (file?: string) => string>,
+    details: "Details",
+    retry: "Retry sync",
+    retryOffline: "Reconnect to the room to retry.",
+    skipped: (count: number) => `${count} ${count === 1 ? "file" : "files"} not shared`,
+    skippedHint: "These files stay on this computer. Others in the room can't see them.",
+    skipReasons: {
+      format: "only .bp, .bpi, .bpm and .json files with simple names can be shared",
+      size: "larger than the 1 MiB file limit",
+      count: "over the 200-file room limit",
+      total: "over the 8 MiB room limit",
+    } satisfies Record<CollabSkipReason, string>,
+    replacedTitle: (count: number) =>
+      `The room's version replaced ${count} local ${count === 1 ? "file" : "files"}`,
+    replacedBody:
+      "These files had changes that weren't in the room. To get them back, open the file and choose Local history.",
+    trashedTitle: (count: number) =>
+      `${count} local ${count === 1 ? "item was" : "items were"} moved to the trash`,
+    trashedBody:
+      "They aren't part of the room. Restore them from the system Trash if you still need them.",
+    dismiss: "Dismiss",
+  },
+  removedFiles: {
+    title: (count: number) =>
+      count === 1
+        ? "A file with unsaved changes was deleted"
+        : `${count} files with unsaved changes were deleted`,
+    intro:
+      "Someone in the room deleted these files while you had unsaved changes. Keep your changes as a local copy or discard them.",
+    keep: "Keep as local copy",
+    keepHint:
+      "Saves a copy of the project, including your changes, outside the room and shows it in your file manager. It isn't shared.",
+    keeping: "Saving copy…",
+    discard: "Discard changes",
+    failed: "Couldn't save the copy. Try again, or discard the changes.",
+    saved: (target: string) => `Saved a local copy to ${target}`,
+  },
+
+  deviceControl: "Device control",
+  deviceControlYours: "You have device control",
+  deviceControlHeldBy: (name: string | null) =>
+    name ? `Device control is held by ${name}` : "Device control is held by another collaborator",
+  deviceControlOffline: (holder: string) => `${holder} (offline)`,
+  requestControl: "Request control",
+  requestControlViewer: "Viewers can't request control. Ask the host to make you an editor.",
+  deviceControlNotConnected: "Device control can change once the room is connected and synced.",
+  controlRequestPending: "Waiting for the host to respond…",
+  cancelControlRequest: "Cancel request",
+  controlRequestDeclined: "The host declined your request.",
+  dismiss: "Dismiss",
+  giveBackControl: "Give back control",
+  takeBackControl: "Take back control",
+  controlRequests: "Control requests",
+  controlRequestFrom: (name: string) => `${name} requests control`,
+  giveControl: "Give control",
+  declineControl: "Decline",
 
   errors: {
     "room-closed": "This room has been ended. Create a new room from your retained project.",
     removed: "Your room access was revoked. Ask the host for a new invitation.",
     "identity-missing":
       "This room has no saved recovery credential. Open your retained project to create a new room.",
+    "identity-unsupported":
+      "The collaboration service didn't provide a recovery credential, so the room was closed. Try again later.",
+    "project-required": "Open a project before starting a room.",
+    "project-location-missing":
+      "The original project location wasn't saved. Open your retained project and create a new room.",
+    "project-unavailable": "Open the shared project before saving a copy.",
+    "backup-failed":
+      "Couldn't save a local copy, so nothing was changed. Check free disk space and folder permissions, then try again.",
+    "prepare-failed":
+      "Couldn't open the room's project on this computer. Check that the folder is available, then try again.",
     network: "Can't reach the collaboration service. Check your internet connection.",
     unavailable: "Collaboration isn't available right now. Try again later.",
     "not-found": "No room matches that invite code. Check the code and try again.",
@@ -119,22 +353,55 @@ const zhTW: CollabCopy = {
   startRoom: "建立房間",
   startHint: (project) => `邀請其他人編輯「${project}」。`,
   startNeedsProject: "請先開啟專案，才能建立房間。",
+  openProject: "開啟專案",
   starting: "正在建立房間…",
   createIntro: "透過邀請碼加入的人將能存取此專案的檔案。",
+  previewFailed: "無法檢查將分享哪些檔案，但仍可建立房間。",
+  shareLimits: (files, fileMiB, totalMiB) =>
+    `支援 .bp、.bpi、.bpm、.json；最多 ${files} 個檔案，每個 ${fileMiB} MiB，合計 ${totalMiB} MiB。`,
+  sharePreviewChecking: "正在檢查要分享的檔案…",
+  sharePreviewRetry: "重試",
+  sharePreviewSummary: (shared, excluded) =>
+    excluded ? `將分享 ${shared} 個檔案；${excluded} 個不會同步。` : `將分享 ${shared} 個檔案。`,
+  sharePreviewExcluded: (count) => `不會分享（${count}）`,
+  sharePreviewShared: (count) => `分享的檔案（${count}）`,
+  shareSkipReasons: {
+    format: "不支援的格式或路徑",
+    size: "超過單一檔案大小上限",
+    total: "超過房間的總容量上限",
+    count: "超過房間的檔案數量上限",
+  },
   roomPassword: "房間密碼（選填）",
   createPasswordHint: "留空時，其他人只需邀請碼即可加入。",
+  createPasswordShare: "密碼不包含在邀請碼中，請另外告知來賓，例如用另一則訊息傳送。",
+  showPassword: "顯示",
+  hidePassword: "隱藏",
+  showPasswordLabel: "顯示密碼",
+  hidePasswordLabel: "隱藏密碼",
   joinPasswordHint: "若主持人有設定密碼，請在此輸入。應用程式不會記住密碼。",
   hostingAs: (name) => `你將以「${name}」的身分主持房間。`,
   joinRoom: "加入房間",
   joinHint: "有邀請碼嗎？加入別人的專案。",
   recentRooms: "最近的房間",
   noRecentRooms: "你建立或加入的房間會顯示在這裡。",
+  loadingRecentRooms: "正在載入最近的房間…",
+  recentRoomsLoadFailed: "無法載入最近的房間。",
+  forgetRoomFailed: "無法從最近的房間中移除，請再試一次。",
+  retry: "重試",
   rejoin: "重新加入",
+  rejoining: "正在重新加入…",
+  forgetRoom: "移除",
+  forgetRoomLabel: (project) => `從最近的房間中移除「${project}」`,
+  legacyHostRoom: "舊版主持憑證未保存，無法以名稱或密碼恢復主持權。請開啟保留的專案並建立新房間。",
+  guestRejoinWithCode:
+    "你保存的存取權已失效。請使用保存的邀請碼重新加入；若主持人有設定密碼，請一併輸入。",
+  guestNoInviteCode: "此房間沒有保存邀請碼，請向主持人索取新的邀請。",
   roles: { host: "主持人", editor: "編輯者", viewer: "檢視者" },
   joinedAt: (date) => `加入於 ${date}`,
 
   joinTitle: "加入房間",
   joinIntro: "輸入主持人提供的邀請碼。",
+  joinRoomContext: (project) => `重新加入「${project}」。`,
   inviteCode: "邀請碼",
   inviteCodeHint: "12 個英文字母與數字，例如 ABCD-EFGH-JK23。",
   inviteCodeInvalid: "邀請碼格式不正確。請確認共有 12 個英文字母與數字（不含 I、O、0、1）。",
@@ -143,6 +410,22 @@ const zhTW: CollabCopy = {
   joining: "正在加入…",
   cancel: "取消",
 
+  joinConflictTitle: "發現本機修改",
+  joinConflictIntro: (project) =>
+    `自上次同步房間後，「${project}」在這台電腦上有檔案變更。加入後，房間版本會同步覆蓋這些檔案。`,
+  joinConflictFiles: (count) => `有 ${count} 個檔案與上次同步不同`,
+  joinConflictChanges: {
+    added: "新增",
+    changed: "修改",
+    removed: "刪除",
+  },
+  joinKeepCopy: "保留本機副本後加入",
+  joinKeepCopyHint: "先將目前的檔案與未儲存草稿另存到獨立資料夾；保存失敗時不會變更任何內容。",
+  joinReplace: "以房間版本取代",
+  joinReplaceHint:
+    "直接覆蓋本機修改，不另存副本。啟用本機歷史時，仍可從本機歷史還原被覆蓋檔案的先前版本。",
+  joinBackupSaved: (path) => `本機副本已保存至 ${path}`,
+
   room: "房間",
   inviteCodeLabel: "邀請碼",
   inviteShare: "分享此邀請碼；若有設定房間密碼，請一併告知對方。",
@@ -150,8 +433,33 @@ const zhTW: CollabCopy = {
   copied: "已複製",
   copyFailed: "無法複製，請手動選取並複製邀請碼。",
   noInviteCode: "只有主持人可以看到邀請碼。",
+  onlineCount: (online, limit) => `${online}/${limit} 在線`,
+  hostOffline: "主持人已離線。你仍可繼續協作與聊天；變更角色、移除成員與結束房間須待主持人回來。",
+  roomTools: "協作工具",
+  chatTab: "聊天",
+  roomActions: "房間操作",
   leave: "離開房間",
+  leaving: "正在離開…",
+  leaveTitle: "要離開房間嗎？",
+  leaveHostHint: "房間會保持開啟，其他人可以繼續編輯。若要為所有人關閉房間，請改為結束房間。",
+  endForEveryone: "為所有人結束",
+  leavePendingTitle: "要在變更尚未送出時離開嗎？",
+  leavePendingIntro: "你最近的部分編輯尚未送達房間。若現在離開，這些內容會另存為專案副本。",
+  stay: "留下",
+  leaveAnyway: "仍要離開",
+  leaveFailed: "無法順利離開房間。你的檔案仍保留在本機，請再試一次。",
+  pendingUpdates: "部分共享變更仍在等待伺服器確認。請重新連線後再試一次。",
   backToLobby: "返回大廳",
+  reconnectNow: "立即重新連線",
+  reconnectingHint: "重新連線前會暫停編輯，你的變更都會保留。",
+  reconnectHere: "在此視窗重新連線",
+  saveCopy: "另存專案副本",
+  copySaved: (file) => `副本已保存：${file}`,
+  saveCopyFailed: "無法另存專案副本，請確認磁碟空間足夠後再試一次。",
+  endRoom: "結束房間",
+  endRoomTitle: "要結束房間嗎？",
+  endRoomIntro: "所有成員都會斷線，此房間將失效。本機檔案會保留。",
+  ending: "正在結束…",
   status: {
     connecting: "正在連線…",
     syncing: "正在同步專案…",
@@ -165,27 +473,153 @@ const zhTW: CollabCopy = {
     "room-closed": "主持人已關閉此房間。",
     "session-replaced": "此身分已在另一個視窗連線，本視窗已停止重連。",
     unauthorized: "你的邀請已失效，請向主持人索取新的邀請碼。",
+    "room-full": "房間人數已滿，請待有人離開後再重新加入。",
+    "protocol-mismatch": "此版本的 Kobrixa 無法連線到房間。請更新 Kobrixa 後再重新加入。",
     error: "連線失敗，請重新加入。",
   },
   people: "成員",
   peopleCount: (online, total) => `${online} 人在線 · 共 ${total} 人`,
+  peopleLoading: "正在載入成員…",
   you: "（你）",
   online: "在線",
   offline: "離線",
+  editingFile: (file) => `正在編輯 ${file}`,
+  controlBadge: "裝置控制權",
+  controlBadgeTitle: (name) => `${name} 目前持有 EV3 裝置控制權`,
+  participantActions: (name) => `${name} 的操作`,
   makeViewer: "設為檢視者",
   makeEditor: "設為編輯者",
   changeRoleLabel: (name, role) => `將 ${name} 改為${role}`,
+  changingRole: (name) => `正在變更 ${name} 的角色…`,
+  roleChanged: (name, role) => `${name} 現在是${role === "viewer" ? "檢視者" : "編輯者"}。`,
+  demoteTitle: (name) => `要將 ${name} 設為檢視者嗎？`,
+  demoteIntro: (name) => `${name} 將以檢視者身分重新連線，尚未同步的編輯內容會被捨棄。`,
   remove: "移除",
   removeLabel: (name) => `將 ${name} 移出房間`,
   removeTitle: (name) => `要移除 ${name} 嗎？`,
   removeIntro: "對方將被中斷與此房間的連線。",
+  removing: (name) => `正在移除 ${name}…`,
+  removed: (name) => `已將 ${name} 移出房間。`,
+  participantErrors: {
+    notFound: (name) => `${name} 已不在此房間中。`,
+    forbidden: "只有主持人可以管理成員。",
+    roleRejected: (name) => `無法變更 ${name} 的角色。`,
+    removeRejected: (name) => `無法移除 ${name}。`,
+  },
   noParticipants: "正在等待其他人加入…",
   chipLabel: (status, online) => `協作：${status}，${online} 人在線。開啟協作面板`,
+  chipIdleLabel: "協作。開啟協作面板",
+  chipName: "協作",
+  chipStatus: {
+    connecting: "連線中",
+    syncing: "同步中",
+    connected: "協作",
+    reconnecting: "重新連線中",
+    closed: "離線",
+  },
+  chipUnread: (count) => `${count} 則未讀訊息`,
+  chipRequests: (count) => `${count} 個控制權請求`,
+  chipJoin: (parts) => parts.join("，"),
+
+  chat: {
+    log: "聊天訊息",
+    empty: "還沒有訊息，向大家打個招呼吧。",
+    you: "你",
+    input: "訊息",
+    placeholder: "傳送訊息給房間成員（Enter 傳送，Shift+Enter 換行）",
+    send: "傳送",
+    sending: "傳送中…",
+    justNow: "剛剛",
+    today: "今天",
+    yesterday: "昨天",
+    newMessages: "查看新訊息",
+    newMessagesLabel: (count) => `查看 ${count} 則新訊息`,
+    tooLong: "訊息太長。",
+    blocked: {
+      closed: "你已離開房間，聊天紀錄僅供閱讀。",
+      offline: "目前未連線。草稿會保留，恢復連線後即可傳送。",
+      syncing: "正在同步房間，完成後即可傳送；草稿會保留。",
+      viewer: "檢視者可以閱讀聊天，但無法在此房間傳送訊息。",
+    },
+    sendNetwork: "傳送失敗，請檢查網路連線；草稿已保留。",
+    sendFailed: "無法傳送這則訊息，草稿已保留。",
+    sendRateLimited: "傳送太頻繁，請稍候再試。",
+    sendRejected: (reason) => `傳送失敗。${reason}草稿已保留。`,
+    draftSaveFailed: "無法保存聊天草稿，請重試；內容會保留在此視窗。",
+    draftPrepareFailed: "無法保存草稿，請重試。",
+    draftUpdateFailed: "訊息已傳送，但無法更新本機草稿。退出前請重試保存。",
+  },
+
+  sync: {
+    label: "共享檔案同步",
+    syncing: "正在同步專案檔案…",
+    errors: {
+      seed: () => "無法分享專案檔案。請確認專案資料夾仍然存在。",
+      read: (file) => (file ? `無法從磁碟讀取「${file}」。` : "無法讀取專案資料夾。"),
+      write: (file) => `無法將房間版本的「${file ?? ""}」儲存到磁碟。`,
+      busy: (file) =>
+        `「${file ?? ""}」在磁碟上不斷變更，無法儲存房間版本。請關閉其他正在編輯此檔案的程式後重試。`,
+      tree: (file) => `無法在磁碟上建立、移動或刪除「${file ?? ""}」。`,
+      sync: () => "無法將共享檔案同步到這台電腦。",
+    },
+    details: "詳細資訊",
+    retry: "重試同步",
+    retryOffline: "請先重新連線到房間，才能重試。",
+    skipped: (count) => `${count} 個檔案未分享`,
+    skippedHint: "這些檔案只保留在這台電腦上，房間內的其他人看不到。",
+    skipReasons: {
+      format: "只能分享名稱簡單的 .bp、.bpi、.bpm 與 .json 檔案",
+      size: "超過單一檔案 1 MiB 的限制",
+      count: "超過房間 200 個檔案的上限",
+      total: "超過房間 8 MiB 的總容量上限",
+    },
+    replacedTitle: (count) => `房間版本已取代 ${count} 個本機檔案`,
+    replacedBody: "這些檔案有房間中沒有的修改。如需找回，請開啟檔案並選擇「本機歷史」。",
+    trashedTitle: (count) => `已將 ${count} 個本機項目移至垃圾桶`,
+    trashedBody: "這些項目不屬於此房間。如仍需要，可從系統垃圾桶還原。",
+    dismiss: "關閉",
+  },
+  removedFiles: {
+    title: (count) =>
+      count === 1 ? "有未儲存修改的檔案已被刪除" : `${count} 個有未儲存修改的檔案已被刪除`,
+    intro: "房間內有人刪除了這些檔案，而你仍有未儲存的修改。你可以將修改保留為本機副本，或捨棄。",
+    keep: "保留為本機副本",
+    keepHint: "會在房間以外儲存一份包含你修改的專案副本，並在檔案管理員中顯示。此副本不會分享。",
+    keeping: "正在儲存副本…",
+    discard: "捨棄修改",
+    failed: "無法儲存副本。請再試一次，或捨棄修改。",
+    saved: (target) => `已將本機副本儲存到 ${target}`,
+  },
+
+  deviceControl: "裝置控制權",
+  deviceControlYours: "你持有裝置控制權",
+  deviceControlHeldBy: (name) =>
+    name ? `裝置控制權目前由 ${name} 持有` : "裝置控制權目前由其他協作者持有",
+  deviceControlOffline: (holder) => `${holder}（離線）`,
+  requestControl: "請求控制權",
+  requestControlViewer: "檢視者無法請求控制權，請主持人將你設為編輯者。",
+  deviceControlNotConnected: "房間連線並同步完成後，才能變更裝置控制權。",
+  controlRequestPending: "正在等待主持人回應…",
+  cancelControlRequest: "取消請求",
+  controlRequestDeclined: "主持人拒絕了你的請求。",
+  dismiss: "關閉",
+  giveBackControl: "交還控制權",
+  takeBackControl: "收回控制權",
+  controlRequests: "控制權請求",
+  controlRequestFrom: (name) => `${name} 請求控制權`,
+  giveControl: "給予控制權",
+  declineControl: "拒絕",
 
   errors: {
-    "room-closed": "房間已結束。可以保留的專案建立新房間。",
+    "room-closed": "房間已結束。請以保留的專案建立新房間。",
     removed: "你的房間存取權已撤銷，請向主持人取得新的邀請。",
     "identity-missing": "此房間沒有保存恢復憑證。請開啟保留的專案並建立新房間。",
+    "identity-unsupported": "協作服務未提供恢復憑證，房間已關閉。請稍後再試。",
+    "project-required": "請先開啟專案，才能建立房間。",
+    "project-location-missing": "未保存原專案位置。請開啟保留的專案並建立新房間。",
+    "project-unavailable": "請先開啟共享專案，再另存副本。",
+    "backup-failed": "無法保存本機副本，因此未做任何變更。請確認磁碟空間與資料夾權限後再試一次。",
+    "prepare-failed": "無法在這台電腦上開啟房間的專案。請確認資料夾可以存取後再試一次。",
     network: "無法連線到協作服務，請檢查網路連線。",
     unavailable: "協作功能目前無法使用，請稍後再試。",
     "not-found": "找不到符合此邀請碼的房間，請確認後再試一次。",
@@ -203,6 +637,21 @@ const zhTW: CollabCopy = {
 };
 
 export const collabCopy: Record<Locale, CollabCopy> = { en, "zh-TW": zhTW };
+
+/** Error for a host action on one participant; codes the action gives specific meaning to are mapped here. */
+export function participantErrorMessage(
+  copy: CollabCopy,
+  action: "role" | "kick",
+  name: string,
+  error: CollabErrorCode | "unknown" | undefined,
+): string {
+  const errors = copy.participantErrors;
+  if (error === "not-found") return errors.notFound(name);
+  if (error === "forbidden") return errors.forbidden;
+  if (error === "bad-request")
+    return action === "role" ? errors.roleRejected(name) : errors.removeRejected(name);
+  return collabErrorMessage(copy, error);
+}
 
 export function collabErrorMessage(
   copy: CollabCopy,
