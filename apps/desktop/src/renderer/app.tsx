@@ -101,7 +101,6 @@ import { CollabStatusChip } from "./collab/status-chip.js";
 import { DeviceControlBar, blockedNotice, useDeviceControl } from "./collab/device-control-bar.js";
 import { JoinConflictDialog } from "./collab/join-conflict-dialog.js";
 import { CollabStartError } from "./collab/collab-lobby.js";
-import { collabCopy } from "./collab/collab-copy.js";
 import type { CollabJoinChange, CollabJoinResolution } from "../shared/collab.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
