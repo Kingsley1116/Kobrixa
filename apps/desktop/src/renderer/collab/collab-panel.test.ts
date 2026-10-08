@@ -189,6 +189,8 @@ describe("collaboration panel", () => {
       expect(writeText).toHaveBeenCalledWith("ABCD-EFGH-JK23");
       await click(".collab-participant .more-button");
       await click(".collab-participant [role=menuitem]:not(.danger)");
+      expect(requests.setRole).not.toHaveBeenCalled();
+      await click(".collab-demote-confirm .danger");
       expect(requests.setRole).toHaveBeenCalledWith(room.sessions[0]!.connection.roomId, {
         participantId: room.sessions[1]!.connection.participantId,
         role: "viewer",

@@ -7,6 +7,12 @@ import { textPositionAt } from "./text-positions.js";
 /** Class names used by remote selection and caret decorations (see `styles/collab.css`). */
 export const REMOTE_SELECTION_CLASS = "kobrixa-remote-selection";
 export const REMOTE_CARET_CLASS = "kobrixa-remote-caret";
+/** Caret modifier that shows the name label (after the participant moved). */
+export const REMOTE_CARET_ACTIVE_CLASS = "kobrixa-remote-caret-active";
+/** Caret modifier that places the label below the caret on the first line. */
+export const REMOTE_CARET_BELOW_CLASS = "kobrixa-remote-caret-below";
+/** How long a caret's name label stays visible after the participant moves. */
+export const REMOTE_LABEL_MS = 2500;
 
 const COLOR = /^#[0-9a-f]{6}$/i;
 
@@ -20,6 +26,22 @@ export function resolveRelativeIndex(doc: Y.Doc, text: Y.Text, json: unknown): n
   } catch {
     return undefined;
   }
+}
+
+function channel(value: number): number {
+  const srgb = value / 255;
+  return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+}
+
+/** Black or white, whichever contrasts more with the `#rrggbb` background. */
+export function labelTextColor(background: string): "#000" | "#fff" {
+  const hex = Number.parseInt(background.slice(1), 16);
+  const luminance =
+    0.2126 * channel((hex >> 16) & 255) +
+    0.7152 * channel((hex >> 8) & 255) +
+    0.0722 * channel(hex & 255);
+  // Contrast with black is (L + 0.05) / 0.05; with white 1.05 / (L + 0.05).
+  return (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05) ? "#000" : "#fff";
 }
 
 function cssString(value: string): string {
@@ -52,7 +74,7 @@ class ParticipantStyles {
     const rule =
       `.${REMOTE_SELECTION_CLASS}-${clientId}{background-color:${color}33;}` +
       `.${REMOTE_CARET_CLASS}-${clientId}{border-left-color:${color};}` +
-      `.${REMOTE_CARET_CLASS}-${clientId}::after{content:${cssString(name)};background-color:${color};}`;
+      `.${REMOTE_CARET_CLASS}-${clientId}::after{content:${cssString(name)};background-color:${color};color:${labelTextColor(color)};}`;
     if (this.#rules.get(clientId) === rule) return;
     this.#rules.set(clientId, rule);
     this.#write();
@@ -79,6 +101,9 @@ const styles = new ParticipantStyles();
 export class RemoteCursors {
   #decorations: string[] = [];
   #disposed = false;
+  /** Last seen selection per client, to notice when a participant moves. */
+  readonly #moves = new Map<number, { selection: string; until: number }>();
+  #timer: ReturnType<typeof setTimeout> | undefined;
   readonly #onAwareness = () => this.render();
 
   constructor(
@@ -96,6 +121,9 @@ export class RemoteCursors {
     if (this.#disposed || this.model.isDisposed()) return;
     const { awareness, doc } = this.session;
     const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+    const now = Date.now();
+    const seen = new Set<number>();
+    let nextExpiry = Infinity;
     for (const [clientId, raw] of awareness.getStates()) {
       if (clientId === awareness.clientID || !Number.isInteger(clientId)) continue;
       const parsed = presenceStateSchema.safeParse(raw);
@@ -106,6 +134,15 @@ export class RemoteCursors {
       const head = resolveRelativeIndex(doc, this.text, state.selection.head);
       if (anchor === undefined || head === undefined) continue;
       styles.ensure(clientId, state.color, state.name);
+      seen.add(clientId);
+      const selection = JSON.stringify(state.selection);
+      let move = this.#moves.get(clientId);
+      if (move?.selection !== selection) {
+        move = { selection, until: now + REMOTE_LABEL_MS };
+        this.#moves.set(clientId, move);
+      }
+      const active = move.until > now;
+      if (active) nextExpiry = Math.min(nextExpiry, move.until);
       const start = textPositionAt(this.text.toString(), Math.min(anchor, head));
       const end = textPositionAt(this.text.toString(), Math.max(anchor, head));
       const caret = textPositionAt(this.text.toString(), head);
@@ -122,18 +159,34 @@ export class RemoteCursors {
       decorations.push({
         range: monaco.Range.fromPositions(caret, caret),
         options: {
-          beforeContentClassName: `${REMOTE_CARET_CLASS} ${REMOTE_CARET_CLASS}-${clientId}`,
+          beforeContentClassName: [
+            REMOTE_CARET_CLASS,
+            `${REMOTE_CARET_CLASS}-${clientId}`,
+            ...(active ? [REMOTE_CARET_ACTIVE_CLASS] : []),
+            ...(caret.lineNumber === 1 ? [REMOTE_CARET_BELOW_CLASS] : []),
+          ].join(" "),
           hoverMessage,
           stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
         },
       });
     }
+    for (const clientId of this.#moves.keys())
+      if (!seen.has(clientId)) this.#moves.delete(clientId);
     this.#decorations = this.model.deltaDecorations(this.#decorations, decorations);
+    this.#schedule(nextExpiry === Infinity ? undefined : nextExpiry - now);
+  }
+
+  /** Re-renders once the earliest visible label should hide. */
+  #schedule(delay: number | undefined): void {
+    if (this.#timer !== undefined) clearTimeout(this.#timer);
+    this.#timer = delay === undefined ? undefined : setTimeout(() => this.render(), delay + 1);
   }
 
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#schedule(undefined);
+    this.#moves.clear();
     this.session.awareness.off("change", this.#onAwareness);
     if (!this.model.isDisposed()) this.model.deltaDecorations(this.#decorations, []);
     this.#decorations = [];

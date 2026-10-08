@@ -161,16 +161,35 @@ const en = {
   } satisfies Record<CollabCloseReason, string>,
   people: "People",
   peopleCount: (online: number, total: number) => `${online} online · ${total} total`,
+  peopleLoading: "Loading people…",
   you: "(you)",
   online: "Online",
   offline: "Offline",
+  editingFile: (file: string) => `Editing ${file}`,
+  controlBadge: "Device control",
+  controlBadgeTitle: (name: string) => `${name} holds EV3 device control`,
+  participantActions: (name: string) => `Actions for ${name}`,
   makeViewer: "Make viewer",
   makeEditor: "Make editor",
   changeRoleLabel: (name: string, role: string) => `Change ${name} to ${role}`,
+  changingRole: (name: string) => `Changing ${name}'s role…`,
+  roleChanged: (name: string, role: "editor" | "viewer") =>
+    `${name} is now ${role === "viewer" ? "a viewer" : "an editor"}.`,
+  demoteTitle: (name: string) => `Make ${name} a viewer?`,
+  demoteIntro: (name: string) =>
+    `${name} will reconnect as a viewer. Edits ${name} hasn't synced yet will be discarded.`,
   remove: "Remove",
   removeLabel: (name: string) => `Remove ${name} from the room`,
   removeTitle: (name: string) => `Remove ${name}?`,
   removeIntro: "They will be disconnected from this room.",
+  removing: (name: string) => `Removing ${name}…`,
+  removed: (name: string) => `${name} was removed from the room.`,
+  participantErrors: {
+    notFound: (name: string) => `${name} is no longer in this room.`,
+    forbidden: "Only the host can manage participants.",
+    roleRejected: (name: string) => `${name}'s role can't be changed.`,
+    removeRejected: (name: string) => `${name} can't be removed.`,
+  },
   noParticipants: "Waiting for others to join…",
   chipLabel: (status: string, online: number) =>
     `Collaboration: ${status}, ${online} ${online === 1 ? "person" : "people"} online. Open collaboration panel`,
@@ -400,16 +419,33 @@ const zhTW: CollabCopy = {
   },
   people: "成員",
   peopleCount: (online, total) => `${online} 人在線 · 共 ${total} 人`,
+  peopleLoading: "正在載入成員…",
   you: "（你）",
   online: "在線",
   offline: "離線",
+  editingFile: (file) => `正在編輯 ${file}`,
+  controlBadge: "裝置控制權",
+  controlBadgeTitle: (name) => `${name} 目前持有 EV3 裝置控制權`,
+  participantActions: (name) => `${name} 的操作`,
   makeViewer: "設為檢視者",
   makeEditor: "設為編輯者",
   changeRoleLabel: (name, role) => `將 ${name} 改為${role}`,
+  changingRole: (name) => `正在變更 ${name} 的角色…`,
+  roleChanged: (name, role) => `${name} 現在是${role === "viewer" ? "檢視者" : "編輯者"}。`,
+  demoteTitle: (name) => `要將 ${name} 設為檢視者嗎？`,
+  demoteIntro: (name) => `${name} 將以檢視者身分重新連線，尚未同步的編輯內容會被捨棄。`,
   remove: "移除",
   removeLabel: (name) => `將 ${name} 移出房間`,
   removeTitle: (name) => `要移除 ${name} 嗎？`,
   removeIntro: "對方將被中斷與此房間的連線。",
+  removing: (name) => `正在移除 ${name}…`,
+  removed: (name) => `已將 ${name} 移出房間。`,
+  participantErrors: {
+    notFound: (name) => `${name} 已不在此房間中。`,
+    forbidden: "只有主持人可以管理成員。",
+    roleRejected: (name) => `無法變更 ${name} 的角色。`,
+    removeRejected: (name) => `無法移除 ${name}。`,
+  },
   noParticipants: "正在等待其他人加入…",
   chipLabel: (status, online) => `協作：${status}，${online} 人在線。開啟協作面板`,
 
@@ -481,6 +517,21 @@ const zhTW: CollabCopy = {
 };
 
 export const collabCopy: Record<Locale, CollabCopy> = { en, "zh-TW": zhTW };
+
+/** Error for a host action on one participant; codes the action gives specific meaning to are mapped here. */
+export function participantErrorMessage(
+  copy: CollabCopy,
+  action: "role" | "kick",
+  name: string,
+  error: CollabErrorCode | "unknown" | undefined,
+): string {
+  const errors = copy.participantErrors;
+  if (error === "not-found") return errors.notFound(name);
+  if (error === "forbidden") return errors.forbidden;
+  if (error === "bad-request")
+    return action === "role" ? errors.roleRejected(name) : errors.removeRejected(name);
+  return collabErrorMessage(copy, error);
+}
 
 export function collabErrorMessage(
   copy: CollabCopy,
