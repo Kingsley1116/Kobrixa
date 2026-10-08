@@ -39,8 +39,23 @@ export interface CollabPreferences {
   recentRooms: CollabRecentRoom[];
 }
 
+/**
+ * Failures that happen on this computer rather than at the collaboration
+ * service. Main-process code reports these codes (as results, or as the message
+ * of a thrown error) so the renderer can show localized copy.
+ */
+export const COLLAB_LOCAL_ERRORS = [
+  "project-required",
+  "identity-unsupported",
+  "project-location-missing",
+  "project-unavailable",
+  "backup-failed",
+  "prepare-failed",
+] as const;
+export type CollabLocalErrorCode = (typeof COLLAB_LOCAL_ERRORS)[number];
+
 export type CollabErrorCode =
-  ErrorResponse["error"] | "network" | "unavailable" | "identity-missing";
+  ErrorResponse["error"] | "network" | "unavailable" | "identity-missing" | CollabLocalErrorCode;
 
 export type CollabResult<T> =
   { ok: true; value: T } | { ok: false; error: CollabErrorCode; message?: string };
@@ -49,6 +64,24 @@ export interface CollabSharePreview {
   shared: string[];
   skipped: { path: string; reason: "format" | "size" | "total" | "count" }[];
 }
+
+/** How to handle local changes made since the last room sync when (re)joining. */
+export type CollabJoinResolution = "keep-copy" | "replace";
+
+export interface CollabJoinChange {
+  /** Project-relative path. */
+  path: string;
+  change: "added" | "changed" | "removed";
+}
+
+export type CollabPrepareResult =
+  /** The project is open and the room may overwrite it. `backupPath` is set after "keep-copy". */
+  | { status: "ready"; workspace: WorkspaceSummary; backupPath?: string }
+  /** Local files differ from the last sync; nothing was changed. Ask, then call again. */
+  | { status: "conflict"; changes: CollabJoinChange[] }
+  /** The user dismissed a native prompt (for example the folder picker). */
+  | { status: "cancelled" }
+  | { status: "error"; error: CollabErrorCode };
 
 export interface CollabApi {
   previewProject(workspaceId: string): Promise<CollabSharePreview>;
@@ -66,7 +99,15 @@ export interface CollabApi {
   resumeRoom(roomId: string): Promise<CollabResult<CollabConnection>>;
   closeRoom(roomId: string): Promise<CollabResult<null>>;
   sendChat(roomId: string, message: SendChatRequest): Promise<CollabResult<ChatMessage>>;
-  prepareProject(roomId: string, workspaceId?: string): Promise<WorkspaceSummary | null>;
+  /**
+   * Opens the room's local project. Without `resolution`, reports a conflict
+   * instead of touching files that changed since the last sync.
+   */
+  prepareProject(
+    roomId: string,
+    workspaceId?: string,
+    resolution?: CollabJoinResolution,
+  ): Promise<CollabPrepareResult>;
   checkpoint(roomId: string): Promise<void>;
   saveCopy(roomId: string, reveal?: boolean): Promise<string>;
   /** Host-only room administration. */

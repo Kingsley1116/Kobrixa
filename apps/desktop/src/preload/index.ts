@@ -13,8 +13,8 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("collab:create-room", request, workspaceId),
     joinRoom: (request) => ipcRenderer.invoke("collab:join-room", request),
     previewProject: (workspaceId) => ipcRenderer.invoke("collab:preview-project", workspaceId),
-    prepareProject: (roomId, workspaceId) =>
-      ipcRenderer.invoke("collab:prepare-project", roomId, workspaceId),
+    prepareProject: (roomId, workspaceId, resolution) =>
+      ipcRenderer.invoke("collab:prepare-project", roomId, workspaceId, resolution),
     checkpoint: (roomId) => ipcRenderer.invoke("collab:checkpoint", roomId),
     saveCopy: (roomId, reveal) => ipcRenderer.invoke("collab:save-copy", roomId, reveal),
     resumeRoom: (roomId) => ipcRenderer.invoke("collab:resume-room", roomId),

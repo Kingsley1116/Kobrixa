@@ -41,7 +41,15 @@ Editing, file operations and chat sending pause during disconnection and initial
 - **Host:** edits are written to the host's own project folder, as in a normal session.
 - **Guests:** the project is mirrored into a folder inside the app's user data directory, `<userData>/collab/<room>/`. Guests can build and use the simulator from this mirror, and upload to their EV3 while holding device control.
 
-Returning hosts reopen the original project rather than the currently selected project. If its path is missing, choose its location. Before rejoining, changes relative to the saved sync baseline require **Keep a copy and join** or **Cancel**. The copy includes drafts, and synchronization cannot overwrite local files until the copy succeeds. Guest mirrors show **Shared** or **Offline**, with a **Save shared project copy** action.
+Returning hosts reopen the original project rather than the currently selected project. If its path is missing, choose its location.
+
+Before rejoining, Kobrixa compares the local project with the last room sync. If files were added, changed or removed since then, a dialog lists them and offers three choices:
+
+- **Keep a local copy, then join** (default): saves the current files, including unsaved drafts, to a separate folder under `<userData>/collab-backups/`, then joins. Synchronization cannot overwrite local files until the copy succeeds; if it fails, nothing changes and an error is shown. The status bar shows where the copy was saved.
+- **Replace with room version**: joins without a separate copy, so the room's version overwrites the local changes. Earlier versions of overwritten files can still be restored from local history while **Record local history** is turned on.
+- **Cancel**: returns to the lobby without changing anything.
+
+Guest mirrors show **Shared** or **Offline**, with a **Save shared project copy** action.
 
 Closing or switching the right pane only changes visibility. **Leave room** saves drafts and finishes local writes before disconnecting only you. Shared edits that have not been acknowledged are saved as a separate copy before exit; failed writes keep the room open for retry. The host can choose **End room** from the room menu and confirm to disconnect everyone and invalidate the room. Local projects remain. Host ownership never transfers automatically when the host goes offline.
 
