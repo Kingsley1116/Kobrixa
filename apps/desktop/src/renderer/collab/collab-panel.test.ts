@@ -188,6 +188,165 @@ describe("collaboration panel", () => {
     },
   );
 
+  it.each(["en", "zh-TW"] as const)(
+    "localizes a failed share preview and lets the host retry or start anyway in %s",
+    async (locale) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const requests = api();
+      const previewProject = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Error invoking remote method 'collab:preview'"))
+        .mockResolvedValueOnce({ shared: ["main.bp"], skipped: [] });
+      Object.assign(requests, { previewProject });
+      await act(async () =>
+        root.render(
+          createElement(CollabPanel, {
+            store,
+            api: requests,
+            locale,
+            projectName: "Robot",
+            projectId: "workspace-1",
+          }),
+        ),
+      );
+      await click("[data-testid=collab-start]");
+      const dialog = document.querySelector(".collab-create-dialog")!;
+      expect(dialog.textContent).toContain(collabCopy[locale].previewFailed);
+      expect(dialog.textContent).not.toContain("Error invoking");
+      expect(button(".collab-create-dialog button[type=submit]").disabled).toBe(false);
+      await click("[data-testid=collab-preview-retry]");
+      expect(previewProject).toHaveBeenCalledTimes(2);
+      expect(dialog.textContent).not.toContain(collabCopy[locale].previewFailed);
+      expect(dialog.textContent).toContain("main.bp");
+      vi.mocked(console.warn).mockRestore();
+    },
+  );
+
+  it.each(["en", "zh-TW"] as const)(
+    "shows a recent-room load failure with a retry in %s",
+    async (locale) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const requests = api();
+      vi.mocked(requests.getPreferences).mockRejectedValue(new Error("ipc"));
+      await act(async () =>
+        root.render(createElement(CollabPanel, { store, api: requests, locale })),
+      );
+      expect(document.querySelector("[data-testid=collab-recent-error]")?.textContent).toContain(
+        collabCopy[locale].recentRoomsLoadFailed,
+      );
+      expect(document.querySelector("[data-testid=collab-lobby]")?.textContent).not.toContain(
+        collabCopy[locale].noRecentRooms,
+      );
+      expect(document.querySelector("[data-testid=collab-open-project]")?.textContent).toBe(
+        collabCopy[locale].openProject,
+      );
+      vi.mocked(requests.getPreferences).mockResolvedValue({
+        displayName: "Ada",
+        recentRooms: [{ roomId: "room-a", projectName: "Robot", role: "editor", joinedAt: 1 }],
+      });
+      await click("[data-testid=collab-recent-retry]");
+      expect(document.querySelector("[data-testid=collab-recent-error]")).toBeNull();
+      expect(document.querySelectorAll("[data-testid=collab-recent-room]")).toHaveLength(1);
+      vi.mocked(console.warn).mockRestore();
+    },
+  );
+
+  it.each(["en", "zh-TW"] as const)(
+    "explains, rejoins and forgets recent rooms in %s",
+    async (locale) => {
+      const copy = collabCopy[locale];
+      const recentRooms = [
+        {
+          roomId: "room-a",
+          projectName: "Owned",
+          role: "host" as const,
+          joinedAt: 1,
+          canResume: true,
+        },
+        { roomId: "room-b", projectName: "Legacy", role: "host" as const, joinedAt: 2 },
+        {
+          roomId: "room-c",
+          projectName: "Invited",
+          role: "editor" as const,
+          joinedAt: 3,
+          inviteCode: "ABCD-EFGH-JK23",
+        },
+        { roomId: "room-d", projectName: "Lost", role: "viewer" as const, joinedAt: 4 },
+      ];
+      const requests = api();
+      vi.mocked(requests.getPreferences).mockResolvedValue({ displayName: "Ada", recentRooms });
+      let finish!: (value: unknown) => void;
+      Object.assign(requests, {
+        resumeRoom: vi.fn(() => new Promise((resolve) => (finish = resolve))),
+      });
+      await act(async () =>
+        root.render(createElement(CollabPanel, { store, api: requests, locale })),
+      );
+      const items = () => [...document.querySelectorAll("[data-testid=collab-recent-room]")];
+      const rejoin = (index: number) =>
+        items()[index]!.querySelector<HTMLButtonElement>("[data-testid=collab-rejoin]")!;
+      expect(items()).toHaveLength(4);
+      expect(items()[0]!.textContent).toContain(
+        copy.joinedAt(
+          new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(1),
+        ),
+      );
+      expect(items()[0]!.querySelector(".collab-recent-note")).toBeNull();
+      expect(items()[1]!.textContent).toContain(copy.legacyHostRoom);
+      expect(items()[2]!.textContent).toContain(copy.guestRejoinWithCode);
+      expect(items()[3]!.textContent).toContain(copy.guestNoInviteCode);
+      expect(rejoin(3).disabled).toBe(true);
+      expect(
+        document.getElementById(rejoin(3).getAttribute("aria-describedby")!)?.textContent,
+      ).toBe(copy.guestNoInviteCode);
+
+      await act(async () => rejoin(2).click());
+      expect(
+        document.querySelector<HTMLInputElement>("[data-testid=collab-invite-code]")?.value,
+      ).toBe("ABCD-EFGH-JK23");
+      await click(".collab-join-dialog button[type=button]");
+
+      await act(async () => rejoin(0).click());
+      expect(rejoin(0).textContent).toBe(copy.rejoining);
+      expect(rejoin(0).getAttribute("aria-busy")).toBe("true");
+      expect(rejoin(1).getAttribute("aria-busy")).toBe("false");
+      expect(rejoin(1).disabled).toBe(true);
+      await act(async () => finish({ ok: false, error: "room-closed" }));
+      expect(rejoin(0).textContent).toBe(copy.rejoin);
+      expect(document.querySelector(".collab-lobby > .collab-error")?.textContent).toBe(
+        copy.errors["room-closed"],
+      );
+
+      const forget = items()[3]!.querySelector<HTMLButtonElement>("[data-testid=collab-forget]")!;
+      expect(forget.getAttribute("aria-label")).toBe(copy.forgetRoomLabel("Lost"));
+      await act(async () => forget.click());
+      expect(items()).toHaveLength(3);
+      expect(requests.setPreferences).toHaveBeenLastCalledWith({
+        recentRooms: recentRooms.slice(0, 3),
+      });
+    },
+  );
+
+  it("shows a start error only once while the create dialog is open", async () => {
+    const requests = api();
+    vi.mocked(requests.createRoom).mockResolvedValue({ ok: false, error: "rate-limited" });
+    await act(async () =>
+      root.render(
+        createElement(CollabPanel, { store, api: requests, locale: "en", projectName: "Robot" }),
+      ),
+    );
+    await click("[data-testid=collab-start]");
+    await click(".collab-create-dialog button[type=submit]");
+    const message = collabCopy.en.errors["rate-limited"];
+    const alerts = () =>
+      [...document.querySelectorAll("[role=alert]")].filter(
+        (element) => element.textContent === message,
+      );
+    expect(alerts()).toHaveLength(1);
+    await click(".collab-create-dialog button[type=button]");
+    expect(alerts()).toHaveLength(1);
+  });
+
   it("hides administration from guests and explains terminal disconnects", async () => {
     const requests = api();
     store = new CollabStore(() => room.sessions[1]!);

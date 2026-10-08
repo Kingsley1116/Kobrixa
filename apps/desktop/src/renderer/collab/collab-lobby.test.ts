@@ -126,6 +126,119 @@ describe("CollabLobby", () => {
     expect(lobby.getSnapshot().displayName).toBe("Typed");
   });
 
+  it("reports loading and a failed load, then recovers on retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const room = { roomId: "room-a", projectName: "Robot", role: "editor" as const, joinedAt: 1 };
+    const api = fakeApi({ displayName: "Ada", recentRooms: [room] });
+    api.getPreferences.mockRejectedValueOnce(new Error("ipc"));
+    const lobby = new CollabLobby(api, vi.fn());
+    const loading = lobby.load();
+    expect(lobby.getSnapshot()).toMatchObject({ loading: true, loaded: false });
+    await loading;
+    expect(lobby.getSnapshot()).toMatchObject({
+      loading: false,
+      loaded: true,
+      recentRoomsError: "load",
+      recentRooms: [],
+    });
+    await lobby.load();
+    expect(lobby.getSnapshot()).toMatchObject({
+      loading: false,
+      recentRoomsError: null,
+      recentRooms: [room],
+    });
+    vi.mocked(console.warn).mockRestore();
+  });
+
+  it("lets only the latest of overlapping loads update the snapshot", async () => {
+    const api = fakeApi({ displayName: "Ada" });
+    let resolveFirst!: (value: CollabPreferences) => void;
+    api.getPreferences.mockImplementationOnce(
+      () => new Promise<CollabPreferences>((resolve) => (resolveFirst = resolve)),
+    );
+    const lobby = new CollabLobby(api, vi.fn());
+    const first = lobby.load();
+    await lobby.load();
+    resolveFirst({ displayName: "Stale", recentRooms: [] });
+    await first;
+    expect(lobby.getSnapshot()).toMatchObject({ loading: false, displayName: "Ada" });
+  });
+
+  it("forgets a recent room and restores it when saving fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const rooms = ["room-a", "room-b"].map((roomId) => ({
+      roomId,
+      projectName: roomId,
+      role: "editor" as const,
+      joinedAt: 1,
+    }));
+    const api = fakeApi({ displayName: "Ada", recentRooms: rooms });
+    const lobby = new CollabLobby(api, vi.fn());
+    await lobby.load();
+    expect(await lobby.forgetRoom("room-a")).toBe(true);
+    expect(lobby.getSnapshot().recentRooms.map((room) => room.roomId)).toEqual(["room-b"]);
+    expect(api.stored().recentRooms.map((room) => room.roomId)).toEqual(["room-b"]);
+    expect(await lobby.forgetRoom("room-missing")).toBe(false);
+    api.setPreferences.mockRejectedValueOnce(new Error("disk"));
+    expect(await lobby.forgetRoom("room-b")).toBe(false);
+    expect(lobby.getSnapshot()).toMatchObject({ recentRoomsError: "forget" });
+    expect(lobby.getSnapshot().recentRooms.map((room) => room.roomId)).toEqual(["room-b"]);
+    vi.mocked(console.warn).mockRestore();
+  });
+
+  it("keeps stored history when joining after a failed load", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const room = { roomId: "room-old", projectName: "Old", role: "editor" as const, joinedAt: 1 };
+    const api = fakeApi({ displayName: "Ada", recentRooms: [room] });
+    api.getPreferences.mockRejectedValueOnce(new Error("ipc"));
+    const lobby = new CollabLobby(api, vi.fn());
+    await lobby.load();
+    expect(await lobby.forgetRoom("room-old")).toBe(false);
+    lobby.setDisplayName("Ada");
+    expect(await lobby.joinRoom("ABCD-EFGH-JK23")).toBe(true);
+    await vi.waitFor(() =>
+      expect(api.stored().recentRooms.map((entry) => entry.roomId)).toEqual([
+        connection().roomId,
+        "room-old",
+      ]),
+    );
+    vi.mocked(console.warn).mockRestore();
+  });
+
+  it("does not forget a room while preferences are loading", async () => {
+    const room = { roomId: "room-a", projectName: "Robot", role: "editor" as const, joinedAt: 1 };
+    const api = fakeApi({ displayName: "Ada", recentRooms: [room] });
+    const lobby = new CollabLobby(api, vi.fn());
+    await lobby.load();
+    const loading = lobby.load();
+    expect(await lobby.forgetRoom("room-a")).toBe(false);
+    await loading;
+    expect(await lobby.forgetRoom("room-a")).toBe(true);
+    expect(lobby.getSnapshot().recentRooms).toEqual([]);
+  });
+
+  it("tracks which recent room is being resumed", async () => {
+    let finish!: (value: CollabResult<CollabConnection>) => void;
+    const api = {
+      ...fakeApi({ displayName: "Ada" }),
+      resumeRoom: vi.fn(
+        () => new Promise<CollabResult<CollabConnection>>((resolve) => (finish = resolve)),
+      ),
+    };
+    const lobby = new CollabLobby(api, vi.fn());
+    await lobby.load();
+    const resuming = lobby.resumeRoom("room-a");
+    await vi.waitFor(() => expect(api.resumeRoom).toHaveBeenCalled());
+    expect(lobby.getSnapshot()).toMatchObject({ pending: "join", resumingRoomId: "room-a" });
+    finish({ ok: false, error: "room-closed" });
+    expect(await resuming).toBe(false);
+    expect(lobby.getSnapshot()).toMatchObject({
+      pending: null,
+      resumingRoomId: null,
+      startError: "room-closed",
+    });
+  });
+
   it("starts a room, remembers it and hands the connection to the store", async () => {
     const api = fakeApi({ displayName: "Ada" });
     const start = vi.fn();

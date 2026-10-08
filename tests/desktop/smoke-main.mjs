@@ -153,6 +153,7 @@ let collabDeviceControl = null;
 // When set, preparing a room project reports these local changes until a resolution is given.
 let collabPrepareConflict = null;
 let collabPrepareCalls = [];
+let collabPreviewFailures = 0;
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -396,7 +397,13 @@ ipcMain.handle("smoke", async (_e, name, args) => {
       ...(resolution === "keep-copy" ? { backupPath: "/tmp/room-copy" } : {}),
     };
   }
-  if (name === "collabPreviewProject") return { shared: Object.keys(fixture.files), skipped: [] };
+  if (name === "collabPreviewProject") {
+    if (collabPreviewFailures > 0) {
+      collabPreviewFailures -= 1;
+      throw new Error("smoke: preview unavailable");
+    }
+    return { shared: Object.keys(fixture.files), skipped: [] };
+  }
   if (name === "collabCheckpoint") return;
   if (name === "collabCloseRoom") return { ok: true, value: null };
   if (name === "collabSaveCopy") return "/tmp/room-copy";
@@ -578,6 +585,9 @@ app
         collabPrepareConflict = changes;
       },
       takeCollabPrepareCalls: () => collabPrepareCalls.splice(0),
+      failNextCollabPreview: () => {
+        collabPreviewFailures = 1;
+      },
     };
     const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
