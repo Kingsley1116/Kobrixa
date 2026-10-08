@@ -1,6 +1,7 @@
 import type { Role } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
 import type { CollabErrorCode, CollabJoinChange } from "../../shared/collab.js";
+import type { CollabFileSyncErrorCode, CollabSkipReason } from "./file-sync.js";
 import type { CollabCloseReason, CollabStatus } from "./types.js";
 
 export type DisplayNameProblem = "empty" | "too-long" | "invalid";
@@ -100,6 +101,57 @@ const en = {
   noParticipants: "Waiting for others to join…",
   chipLabel: (status: string, online: number) =>
     `Collaboration: ${status}, ${online} ${online === 1 ? "person" : "people"} online. Open collaboration panel`,
+
+  sync: {
+    label: "Shared file sync",
+    syncing: "Syncing project files…",
+    errors: {
+      seed: () =>
+        "Couldn't share the project files. Check that the project folder is still available.",
+      read: (file?: string) =>
+        file ? `Couldn't read “${file}” from disk.` : "Couldn't read the project folder.",
+      write: (file?: string) => `Couldn't save the room's version of “${file ?? ""}” to disk.`,
+      busy: (file?: string) =>
+        `“${file ?? ""}” keeps changing on disk, so the room's version couldn't be saved. Close other programs that edit it, then retry.`,
+      tree: (file?: string) => `Couldn't create, move or delete “${file ?? ""}” on disk.`,
+      sync: () => "Shared files couldn't be synced to this computer.",
+    } satisfies Record<CollabFileSyncErrorCode, (file?: string) => string>,
+    details: "Details",
+    retry: "Retry sync",
+    retryOffline: "Reconnect to the room to retry.",
+    skipped: (count: number) => `${count} ${count === 1 ? "file" : "files"} not shared`,
+    skippedHint: "These files stay on this computer. Others in the room can't see them.",
+    skipReasons: {
+      format: "only .bp, .bpi, .bpm and .json files with simple names can be shared",
+      size: "larger than the 1 MiB file limit",
+      count: "over the 200-file room limit",
+      total: "over the 8 MiB room limit",
+    } satisfies Record<CollabSkipReason, string>,
+    replacedTitle: (count: number) =>
+      `The room's version replaced ${count} local ${count === 1 ? "file" : "files"}`,
+    replacedBody:
+      "These files had changes that weren't in the room. To get them back, open the file and choose Local history.",
+    trashedTitle: (count: number) =>
+      `${count} local ${count === 1 ? "item was" : "items were"} moved to the trash`,
+    trashedBody:
+      "They aren't part of the room. Restore them from the system Trash if you still need them.",
+    dismiss: "Dismiss",
+  },
+  removedFiles: {
+    title: (count: number) =>
+      count === 1
+        ? "A file with unsaved changes was deleted"
+        : `${count} files with unsaved changes were deleted`,
+    intro:
+      "Someone in the room deleted these files while you had unsaved changes. Keep your changes as a local copy or discard them.",
+    keep: "Keep as local copy",
+    keepHint:
+      "Saves a copy of the project, including your changes, outside the room and shows it in your file manager. It isn't shared.",
+    keeping: "Saving copy…",
+    discard: "Discard changes",
+    failed: "Couldn't save the copy. Try again, or discard the changes.",
+    saved: (target: string) => `Saved a local copy to ${target}`,
+  },
 
   errors: {
     "room-closed": "This room has been ended. Create a new room from your retained project.",
@@ -225,6 +277,47 @@ const zhTW: CollabCopy = {
   removeIntro: "對方將被中斷與此房間的連線。",
   noParticipants: "正在等待其他人加入…",
   chipLabel: (status, online) => `協作：${status}，${online} 人在線。開啟協作面板`,
+
+  sync: {
+    label: "共享檔案同步",
+    syncing: "正在同步專案檔案…",
+    errors: {
+      seed: () => "無法分享專案檔案。請確認專案資料夾仍然存在。",
+      read: (file) => (file ? `無法從磁碟讀取「${file}」。` : "無法讀取專案資料夾。"),
+      write: (file) => `無法將房間版本的「${file ?? ""}」儲存到磁碟。`,
+      busy: (file) =>
+        `「${file ?? ""}」在磁碟上不斷變更，無法儲存房間版本。請關閉其他正在編輯此檔案的程式後重試。`,
+      tree: (file) => `無法在磁碟上建立、移動或刪除「${file ?? ""}」。`,
+      sync: () => "無法將共享檔案同步到這台電腦。",
+    },
+    details: "詳細資訊",
+    retry: "重試同步",
+    retryOffline: "請先重新連線到房間，才能重試。",
+    skipped: (count) => `${count} 個檔案未分享`,
+    skippedHint: "這些檔案只保留在這台電腦上，房間內的其他人看不到。",
+    skipReasons: {
+      format: "只能分享名稱簡單的 .bp、.bpi、.bpm 與 .json 檔案",
+      size: "超過單一檔案 1 MiB 的限制",
+      count: "超過房間 200 個檔案的上限",
+      total: "超過房間 8 MiB 的總容量上限",
+    },
+    replacedTitle: (count) => `房間版本已取代 ${count} 個本機檔案`,
+    replacedBody: "這些檔案有房間中沒有的修改。如需找回，請開啟檔案並選擇「本機歷史」。",
+    trashedTitle: (count) => `已將 ${count} 個本機項目移至垃圾桶`,
+    trashedBody: "這些項目不屬於此房間。如仍需要，可從系統垃圾桶還原。",
+    dismiss: "關閉",
+  },
+  removedFiles: {
+    title: (count) =>
+      count === 1 ? "有未儲存修改的檔案已被刪除" : `${count} 個有未儲存修改的檔案已被刪除`,
+    intro: "房間內有人刪除了這些檔案，而你仍有未儲存的修改。你可以將修改保留為本機副本，或捨棄。",
+    keep: "保留為本機副本",
+    keepHint: "會在房間以外儲存一份包含你修改的專案副本，並在檔案管理員中顯示。此副本不會分享。",
+    keeping: "正在儲存副本…",
+    discard: "捨棄修改",
+    failed: "無法儲存副本。請再試一次，或捨棄修改。",
+    saved: (target) => `已將本機副本儲存到 ${target}`,
+  },
 
   errors: {
     "room-closed": "房間已結束。可以保留的專案建立新房間。",
