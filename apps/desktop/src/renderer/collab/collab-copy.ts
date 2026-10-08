@@ -2,6 +2,7 @@ import type { Role } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
 import type { CollabErrorCode } from "../../shared/collab.js";
 import type { CollabCloseReason, CollabStatus } from "./types.js";
+import type { ChatSendBlock } from "./chat.js";
 
 export type DisplayNameProblem = "empty" | "too-long" | "invalid";
 
@@ -82,6 +83,49 @@ const en = {
   noParticipants: "Waiting for others to join…",
   chipLabel: (status: string, online: number) =>
     `Collaboration: ${status}, ${online} ${online === 1 ? "person" : "people"} online. Open collaboration panel`,
+  chipIdleLabel: "Collaboration. Open collaboration panel",
+  chipName: "Collaborate",
+  /** Short toolbar labels; the full status is in the chip's accessible name and tooltip. */
+  chipStatus: {
+    connecting: "Connecting",
+    syncing: "Syncing",
+    connected: "Collaborate",
+    reconnecting: "Reconnecting",
+    closed: "Offline",
+  } satisfies Record<CollabStatus, string>,
+  chipUnread: (count: number) => `${count} unread ${count === 1 ? "message" : "messages"}`,
+  chipRequests: (count: number) => `${count} control ${count === 1 ? "request" : "requests"}`,
+  chipJoin: (parts: readonly string[]) => parts.join(", "),
+
+  chat: {
+    log: "Chat messages",
+    empty: "No messages yet. Say hello to your team.",
+    you: "You",
+    input: "Message",
+    placeholder: "Message the room (Enter to send, Shift+Enter for a new line)",
+    send: "Send",
+    sending: "Sending…",
+    justNow: "just now",
+    today: "Today",
+    yesterday: "Yesterday",
+    newMessages: "View new messages",
+    newMessagesLabel: (count: number) =>
+      `View ${count} new ${count === 1 ? "message" : "messages"}`,
+    tooLong: "Message is too long.",
+    blocked: {
+      closed: "You have left this room. Chat history is read-only.",
+      offline: "Not connected. Your draft is kept and can be sent once the connection is back.",
+      syncing: "Syncing the room. You can send once it finishes; your draft is kept.",
+      viewer: "Viewers can read the chat but can't send messages in this room.",
+    } satisfies Record<ChatSendBlock, string>,
+    sendNetwork: "Could not send. Check your connection; your draft is kept.",
+    sendRateLimited: "You're sending messages too quickly. Wait a moment and try again.",
+    sendRejected: (reason: string) => `Could not send. ${reason} Your draft is kept.`,
+    draftSaveFailed: "Could not save this draft. Retry; the text is kept in this window.",
+    draftPrepareFailed: "Could not save the draft. Please retry.",
+    draftUpdateFailed:
+      "Message sent, but the local draft could not be updated. Retry saving before quitting.",
+  },
 
   errors: {
     "room-closed": "This room has been ended. Create a new room from your retained project.",
@@ -181,6 +225,46 @@ const zhTW: CollabCopy = {
   removeIntro: "對方將被中斷與此房間的連線。",
   noParticipants: "正在等待其他人加入…",
   chipLabel: (status, online) => `協作：${status}，${online} 人在線。開啟協作面板`,
+  chipIdleLabel: "協作。開啟協作面板",
+  chipName: "協作",
+  chipStatus: {
+    connecting: "連線中",
+    syncing: "同步中",
+    connected: "協作",
+    reconnecting: "重新連線中",
+    closed: "離線",
+  },
+  chipUnread: (count) => `${count} 則未讀訊息`,
+  chipRequests: (count) => `${count} 個控制權請求`,
+  chipJoin: (parts) => parts.join("，"),
+
+  chat: {
+    log: "聊天訊息",
+    empty: "還沒有訊息，向大家打個招呼吧。",
+    you: "你",
+    input: "訊息",
+    placeholder: "傳送訊息給房間成員（Enter 傳送，Shift+Enter 換行）",
+    send: "傳送",
+    sending: "傳送中…",
+    justNow: "剛剛",
+    today: "今天",
+    yesterday: "昨天",
+    newMessages: "查看新訊息",
+    newMessagesLabel: (count) => `查看 ${count} 則新訊息`,
+    tooLong: "訊息太長。",
+    blocked: {
+      closed: "你已離開房間，聊天紀錄僅供閱讀。",
+      offline: "目前未連線。草稿會保留，恢復連線後即可傳送。",
+      syncing: "正在同步房間，完成後即可傳送；草稿會保留。",
+      viewer: "檢視者可以閱讀聊天，但無法在此房間傳送訊息。",
+    },
+    sendNetwork: "傳送失敗，請檢查網路連線；草稿已保留。",
+    sendRateLimited: "傳送太頻繁，請稍候再試。",
+    sendRejected: (reason) => `傳送失敗。${reason}草稿已保留。`,
+    draftSaveFailed: "無法保存聊天草稿，請重試；內容會保留在此視窗。",
+    draftPrepareFailed: "無法保存草稿，請重試。",
+    draftUpdateFailed: "訊息已傳送，但無法更新本機草稿。退出前請重試保存。",
+  },
 
   errors: {
     "room-closed": "房間已結束。可以保留的專案建立新房間。",
