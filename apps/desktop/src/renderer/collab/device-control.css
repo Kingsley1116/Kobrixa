@@ -46,3 +46,26 @@
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+
+.device-control-request-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.device-control-pending,
+.device-control-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.device-control-declined {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}

@@ -193,11 +193,23 @@ export const controlStateSchema = z
   .strict();
 export type ControlState = z.infer<typeof controlStateSchema>;
 
+/**
+ * JSON payload of a `MESSAGE_TYPE.control` WebSocket frame (client → server).
+ * `decline` (host only) removes a pending device-control request and sends the
+ * requester a `control-declined` notice. Servers ignore unknown commands.
+ */
+export const controlCommandSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("decline"), participantId: participantIdSchema }).strict(),
+]);
+export type ControlCommand = z.infer<typeof controlCommandSchema>;
+
 /** JSON payload of a `MESSAGE_TYPE.notice` WebSocket frame (server → client). */
 export const noticeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("kicked") }).strict(),
   z.object({ type: z.literal("role"), role: roleSchema }).strict(),
   z.object({ type: z.literal("room-closed") }).strict(),
+  /** The host declined this participant's device-control request (older clients ignore it). */
+  z.object({ type: z.literal("control-declined") }).strict(),
   z
     .object({
       type: z.literal("participants"),

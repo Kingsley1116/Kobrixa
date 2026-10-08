@@ -4,6 +4,7 @@ import {
   type PresenceState,
 } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
+import { collabCopy } from "./collab-copy.js";
 import { canEdit, sharedTypes, type CollabSession } from "./types.js";
 
 export interface DeviceControlRequest {
@@ -23,7 +24,12 @@ export interface DeviceControlSnapshot {
   isHost: boolean;
   /** This participant has a pending request. */
   requested: boolean;
+  /** The host declined this participant's latest request (until it requests again). */
+  declined: boolean;
   canRequest: boolean;
+  /** Connected and synced: control changes can be sent. */
+  connected: boolean;
+  isViewer: boolean;
 }
 
 const holderSchema = controlStateSchema.shape.holder;
@@ -42,6 +48,9 @@ export class DeviceControl {
   #key = "";
   /** Re-adds this participant's request if a concurrent write dropped it. */
   #wantsControl = false;
+  #declined = false;
+  /** Requests the host declined; hidden until the request leaves the document. */
+  readonly #dismissed = new Set<string>();
   readonly #dispose: Array<() => void> = [];
 
   constructor(readonly session: CollabSession) {
@@ -58,6 +67,12 @@ export class DeviceControl {
     this.#dispose.push(session.subscribe(changed));
     session.awareness.on("change", changed);
     this.#dispose.push(() => session.awareness.off("change", changed));
+    const declined = session.onControlDeclined?.(() => {
+      this.#wantsControl = false;
+      this.#declined = true;
+      this.#refresh();
+    });
+    if (declined) this.#dispose.push(declined);
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -76,6 +91,7 @@ export class DeviceControl {
   request(): void {
     if (!this.#snapshot.canRequest) return;
     this.#wantsControl = true;
+    this.#declined = false;
     const me = this.#me();
     const requests = this.#state().requests;
     if (!requests.includes(me)) this.#write({ requests: [...requests, me] });
@@ -89,6 +105,13 @@ export class DeviceControl {
     if (requests.includes(me)) this.#write({ requests: requests.filter((id) => id !== me) });
   }
 
+  /** Hides the "request declined" message. */
+  dismissDeclined(): void {
+    if (!this.#declined) return;
+    this.#declined = false;
+    this.#refresh();
+  }
+
   /** Host only: hands control to `participantId` and removes its request. */
   grant(participantId: string): void {
     if (!this.#connected() || !this.#isHost() || !holderSchema.safeParse(participantId).success)
@@ -99,6 +122,21 @@ export class DeviceControl {
     if (!member?.online || !canEdit(member.role)) return;
     const requests = this.#state().requests.filter((id) => id !== participantId);
     this.#write({ holder: participantId, requests });
+  }
+
+  /**
+   * Host only: declines `participantId`'s request. The room removes the request
+   * and tells the requester; the request is hidden locally right away, and also
+   * stays hidden (until the host reconnects) on servers that predate the decline
+   * command.
+   */
+  decline(participantId: string): void {
+    if (!this.#connected() || !this.#isHost()) return;
+    if (!this.#state().requests.includes(participantId)) return;
+    // Not sent (the socket just closed): keep showing the request so it can be retried.
+    if (this.session.declineControlRequest?.(participantId) === false) return;
+    this.#dismissed.add(participantId);
+    this.#refresh();
   }
 
   /** Host only: takes control back (also when the holder went offline). */
@@ -193,7 +231,7 @@ export class DeviceControl {
       : undefined;
     const requested = state.requests.includes(me) && !isHolder;
     const requests = state.requests
-      .filter((id) => id !== holder)
+      .filter((id) => id !== holder && !this.#dismissed.has(id))
       .filter((id) => {
         const requester = session.participants.find((item) => item.participantId === id);
         return requester?.online && canEdit(requester.role);
@@ -207,11 +245,21 @@ export class DeviceControl {
       isHolder,
       isHost,
       requested,
+      declined: this.#declined && !requested && !isHolder,
       canRequest: this.#connected() && canEdit(session.role) && !isHolder && !requested,
+      connected: this.#connected(),
+      isViewer: !canEdit(session.role),
     };
   }
 
   #refresh(): void {
+    if (this.#dismissed.size) {
+      // Forget a decline once its request leaves the document, and while disconnected:
+      // a new request can merge in on reconnect without the old one disappearing first.
+      if (!this.#connected()) this.#dismissed.clear();
+      const pending = new Set(this.#state().requests);
+      for (const id of this.#dismissed) if (!pending.has(id)) this.#dismissed.delete(id);
+    }
     const next = this.#compute();
     const key = JSON.stringify(next);
     if (key === this.#key) return;
@@ -223,9 +271,5 @@ export class DeviceControl {
 
 /** Notice shown on disabled device actions while another participant holds control. */
 export function deviceControlNotice(locale: Locale, holderName: string | null): string {
-  if (locale === "zh-TW")
-    return holderName ? `裝置控制權目前由 ${holderName} 持有` : "裝置控制權目前由其他協作者持有";
-  return holderName
-    ? `Device control is held by ${holderName}`
-    : "Device control is held by another collaborator";
+  return collabCopy[locale].deviceControlHeldBy(holderName);
 }

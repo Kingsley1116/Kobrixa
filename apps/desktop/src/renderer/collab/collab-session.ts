@@ -14,6 +14,7 @@ import {
   MESSAGE_TYPE,
   noticeSchema,
   participantColor,
+  type ControlCommand,
   type Notice,
   type PresenceState,
 } from "@kobrixa/collab-protocol";
@@ -140,6 +141,7 @@ class WebSocketCollabSession implements CollabSession {
   #refreshing = false;
   #pendingUpdates = new Set<ReturnType<typeof Y.decodeUpdate>>();
   #ackListeners = new Set<() => void>();
+  readonly #declinedListeners = new Set<() => void>();
   readonly #refreshConnection: CollabSessionOptions["refreshConnection"];
 
   constructor(
@@ -222,7 +224,23 @@ class WebSocketCollabSession implements CollabSession {
     this.awareness.destroy();
     this.doc.destroy();
     this.#listeners.clear();
+    this.#declinedListeners.clear();
   }
+
+  declineControlRequest(participantId: string): boolean {
+    if (!this.#isOpen() || this.#snapshot.role !== "host") return false;
+    const command: ControlCommand = { type: "decline", participantId };
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MESSAGE_TYPE.control);
+    encoding.writeVarString(encoder, JSON.stringify(command));
+    this.#send(encoding.toUint8Array(encoder));
+    return true;
+  }
+
+  onControlDeclined = (listener: () => void): (() => void) => {
+    this.#declinedListeners.add(listener);
+    return () => this.#declinedListeners.delete(listener);
+  };
 
   hasPendingUpdates(): boolean {
     return this.#pendingUpdates.size > 0;
@@ -473,6 +491,9 @@ class WebSocketCollabSession implements CollabSession {
         return;
       case "room-closed":
         this.#terminate("room-closed");
+        return;
+      case "control-declined":
+        for (const listener of [...this.#declinedListeners]) listener();
         return;
     }
   }

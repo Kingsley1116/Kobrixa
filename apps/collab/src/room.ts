@@ -3,6 +3,8 @@ import {
   COLLAB_LIMITS,
   DOC_KEYS,
   MESSAGE_TYPE,
+  controlCommandSchema,
+  controlStateSchema,
   displayNameSchema,
   inviteCodeSchema,
   kickRequestSchema,
@@ -69,6 +71,11 @@ type SocketAttachment = {
 };
 
 type AwarenessRecord = AwarenessEntry & { socketId: string };
+
+/** Storage key for a device-control decline not yet delivered to the requester. */
+function declinedKey(participantId: string): string {
+  return `control-declined:${participantId}`;
+}
 
 function error(status: number, code: ErrorResponse["error"]): Response {
   return Response.json({ error: code } satisfies ErrorResponse, { status });
@@ -403,6 +410,12 @@ export class CollabRoom extends DurableObject<CollabEnv> {
       clients: {},
     } satisfies SocketAttachment);
     await this.ctx.storage.deleteAlarm();
+    // Deliver a decline that happened while this participant had no open socket,
+    // before sync completes, so its client does not reassert the request.
+    if (await this.ctx.storage.get(declinedKey(participantId))) {
+      await this.ctx.storage.delete(declinedKey(participantId));
+      this.send(server, encodeNotice({ type: "control-declined" }));
+    }
 
     const doc = this.ensureDoc();
     const step1 = encoding.createEncoder();
@@ -442,6 +455,8 @@ export class CollabRoom extends DurableObject<CollabEnv> {
         this.handleSync(ws, decoder, participant);
       } else if (type === MESSAGE_TYPE.awareness) {
         this.handleAwareness(ws, attachment, decoding.readVarUint8Array(decoder));
+      } else if (type === MESSAGE_TYPE.control) {
+        this.handleControl(participant, decoding.readVarString(decoder));
       }
       // Other message types are server → client only; ignore them.
     } catch (cause) {
@@ -511,6 +526,43 @@ export class CollabRoom extends DurableObject<CollabEnv> {
     } else {
       throw new Error(`unknown sync message ${syncType}`);
     }
+  }
+
+  /**
+   * Host device-control commands. Commands from other roles, malformed commands
+   * and commands for requests that no longer exist are ignored: they are usually
+   * a stale view of a request the requester already cancelled.
+   */
+  private handleControl(actor: ParticipantRow, payload: string): void {
+    if (actor.role !== "host" || payload.length > 1024) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(payload);
+    } catch {
+      return;
+    }
+    const command = controlCommandSchema.safeParse(value);
+    if (!command.success) return;
+    const { participantId } = command.data;
+    const doc = this.ensureDoc();
+    const control = doc.getMap(DOC_KEYS.control);
+    const requests = controlStateSchema.shape.requests.safeParse(control.get("requests"));
+    if (!requests.success || !requests.data.includes(participantId)) return;
+    // Notify the requester before removing its request. Its DeviceControl would
+    // otherwise treat the removal as a lost concurrent write and reassert it.
+    const declined = encodeNotice({ type: "control-declined" });
+    const sockets = this.openSockets().filter(
+      (ws) => this.attachment(ws)?.participantId === participantId,
+    );
+    for (const ws of sockets) this.send(ws, declined);
+    // A requester that is reconnecting gets the notice on its next connection.
+    if (!sockets.length) void this.ctx.storage.put(declinedKey(participantId), true);
+    doc.transact(() =>
+      control.set(
+        "requests",
+        requests.data.filter((id) => id !== participantId),
+      ),
+    );
   }
 
   private handleAwareness(ws: WebSocket, attachment: SocketAttachment, update: Uint8Array): void {
