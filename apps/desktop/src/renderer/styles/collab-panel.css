@@ -450,6 +450,72 @@
   font-size: var(--font-small);
   overflow-wrap: anywhere;
 }
+.collab-invite-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.collab-invite-block > p {
+  margin: 0;
+}
+.collab-invite-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.collab-invite-label {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 600;
+}
+/* Short windows keep the chat readable; the hint stays in the code's description and the Copy tooltip. */
+@media (max-height: 760px) {
+  .collab-invite-share {
+    display: none;
+  }
+}
+.collab-invite-status:empty {
+  display: none;
+}
+.collab-invite-status {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.collab-invite-row button[data-copied] {
+  border-color: var(--success);
+  color: var(--success);
+}
+.collab-room-recovery,
+.collab-room-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.collab-room-recovery > p,
+.collab-room-error > p {
+  flex: 1 1 160px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.collab-room-error,
+.collab-room-message {
+  flex: 0 0 auto;
+}
+.collab-room-message {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.collab-room-message:empty {
+  margin-top: -10px;
+}
+.collab-leave-confirm header p {
+  margin: 0 0 6px;
+}
 .collab-people-page {
   min-height: 0;
   flex: 1;
