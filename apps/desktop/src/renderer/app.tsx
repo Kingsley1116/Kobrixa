@@ -91,6 +91,8 @@ import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/
 import { preserveRoom } from "./collab/preserve-room.js";
 import { sharedTypes } from "./collab/types.js";
 import { CollabSyncStatus } from "./collab/sync-status.js";
+import { RemovedFilesDialog, type RemovedFilesPrompt } from "./collab/removed-files-dialog.js";
+import { collabCopy } from "./collab/collab-copy.js";
 import { canEdit } from "./collab/types.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
@@ -282,6 +284,9 @@ export function App(): React.JSX.Element {
         adopt: (summary) => collabCallbacks.current.adopt(summary),
         onDiskWrite: (...args) => collabCallbacks.current.diskWrite(...args),
         onTreeChange: (result) => collabCallbacks.current.treeChange(result),
+        // Revisions the editor saved itself are not outside edits.
+        knownRevision: (id, file, revision) =>
+          revision !== null && sessions.get(id)?.files.baseline(file)?.revision === revision,
         report: (error) => collabCallbacks.current.report(error),
       }),
   );
@@ -1403,6 +1408,28 @@ export function App(): React.JSX.Element {
     if (text) sync.session.doc.transact(() => applyMinimalDiff(text, content));
   }
 
+  const [removedPrompts, setRemovedPrompts] = useState<RemovedFilesPrompt[]>([]);
+  const removedPromptId = useRef(0);
+
+  /** Saves unsaved text of remotely deleted files into a project copy outside the room. */
+  async function keepRemovedFiles(prompt: RemovedFilesPrompt): Promise<void> {
+    try {
+      // The copy includes drafts, so the deleted files reappear at their original paths.
+      // Draft writes go through the per-file queue that `treeChange` already cleared.
+      for (const { file, content } of prompt.files)
+        await enqueueDraftWrite(prompt.workspaceId, file, content);
+      const target = await window.kobrixa.collab.saveCopy(prompt.roomId, true);
+      if (sessions.activeId === prompt.workspaceId)
+        setStatus(collabCopy[locale].removedFiles.saved(target));
+    } finally {
+      const open = new Set(sessions.get(prompt.workspaceId)?.documents.getOpenFiles());
+      for (const { file } of prompt.files)
+        if (!open.has(file))
+          await enqueueDraftWrite(prompt.workspaceId, file, undefined).catch(() => undefined);
+    }
+    setRemovedPrompts((prompts) => prompts.filter((item) => item.id !== prompt.id));
+  }
+
   collabCallbacks.current = {
     adopt: async (summary) => {
       await flushDrafts();
@@ -1430,6 +1457,30 @@ export function App(): React.JSX.Element {
       if (!project) return;
       const { moved, removed } = result;
       const deleted = new Set(removed);
+      // The room deleted these files; ask before dropping text that only this editor has.
+      const unsaved = filesToSave(project.workspace.drafts, project.documents.getSnapshot())
+        .filter(([file]) => deleted.has(file))
+        .map(([file, content]) => ({ file, content }));
+      const roomId = collabFiles.for(result.workspace.id)?.session.connection.roomId;
+      if (unsaved.length && roomId) {
+        const prompt = {
+          id: ++removedPromptId.current,
+          workspaceId: result.workspace.id,
+          roomId,
+          files: unsaved,
+        };
+        setRemovedPrompts((prompts) => [...prompts, prompt]);
+      }
+      // Drop pending draft writes of deleted files so a late write cannot restore them.
+      for (const file of removed) {
+        const key = draftKey(result.workspace.id, file);
+        const pending = pendingDrafts.current.get(key);
+        latestDrafts.current.delete(key);
+        if (!pending && !draftWrites.current.has(key)) continue;
+        if (pending) window.clearTimeout(pending.timer);
+        pendingDrafts.current.delete(key);
+        void enqueueDraftWrite(result.workspace.id, file, undefined).catch(report);
+      }
       if (sessions.active === project) editorRef.current?.remapFiles(moved);
       else project.editor.remap(moved);
       project.files.remap(moved);
@@ -3587,6 +3638,17 @@ export function App(): React.JSX.Element {
               </button>
             </div>
             <CollabSyncStatus sync={collabBinding?.sync} locale={locale} />
+            {removedPrompts[0] && (
+              <RemovedFilesDialog
+                key={removedPrompts[0].id}
+                prompt={removedPrompts[0]}
+                locale={locale}
+                onKeep={keepRemovedFiles}
+                onDiscard={(prompt) =>
+                  setRemovedPrompts((prompts) => prompts.filter((item) => item.id !== prompt.id))
+                }
+              />
+            )}
             <CollabWorkspace
               store={collab}
               api={window.kobrixa.collab}
