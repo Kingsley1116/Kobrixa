@@ -55,14 +55,29 @@ async function checkRemoteDeleteOfUnsavedTab({ js, until, win, temporary }) {
 }
 
 export async function checkCollab(context) {
-  const { js, until, pause, win, temporary } = context;
+  const { js, until, pause, win, temporary, collabPreferences, failNextCollabPreview } = context;
   const original = await js("smoke.settingsStore.getSnapshot().values");
   await js(
     'smoke.settingsStore.set("rightPanel","collab"); smoke.settingsStore.set("locale","en")',
   );
   await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+  failNextCollabPreview();
   await js(click("[data-testid=collab-start]"));
   await until('Boolean(document.querySelector(".collab-create-dialog"))');
+  // A failed share preview is explained in plain language and can be retried.
+  await until('Boolean(document.querySelector("[data-testid=collab-preview-retry]"))');
+  assert.doesNotMatch(
+    await js('document.querySelector(".collab-create-dialog").textContent'),
+    /smoke: preview unavailable|Error invoking/,
+  );
+  assert.equal(
+    await js('document.querySelector(".collab-create-dialog button[type=submit]").disabled'),
+    false,
+  );
+  await js(click("[data-testid=collab-preview-retry]"));
+  await until(
+    '!document.querySelector("[data-testid=collab-preview-retry]") && Boolean(document.querySelector(".collab-create-dialog details summary"))',
+  );
   await js(input("[data-testid=collab-display-name]", "Ada Lovelace"));
   await until('!document.querySelector(".collab-create-dialog button[type=submit]").disabled');
   await js(click(".collab-create-dialog button[type=submit]"));
@@ -166,6 +181,19 @@ export async function checkCollab(context) {
   if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
     await js(click("[data-testid=collab-leave]"));
     await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+    // The room just left is listed with its join time and can be forgotten.
+    await until('document.querySelectorAll("[data-testid=collab-recent-room]").length === 1');
+    assert.match(
+      await js('document.querySelector("[data-testid=collab-recent-room]").textContent'),
+      /Joined |加入於 /,
+    );
+    assert.equal(
+      await js('document.querySelector("[data-testid=collab-rejoin]").getAttribute("aria-busy")'),
+      "false",
+    );
+    await js(click("[data-testid=collab-forget]"));
+    await until('document.querySelectorAll("[data-testid=collab-recent-room]").length === 0');
+    assert.equal(collabPreferences().recentRooms.length, 0);
     await checkJoinConflict({ js, until, win, temporary, ...context });
   }
   await js(
@@ -173,7 +201,7 @@ export async function checkCollab(context) {
   );
   win.setSize(1420, 900);
   console.log(
-    "PASS collaboration welcome entry, room lifecycle, persistent drafts, server-confirmed chat, keyboard menus, join conflict choices and 48 layout combinations",
+    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, join conflict choices and 48 layout combinations",
   );
 }
 
