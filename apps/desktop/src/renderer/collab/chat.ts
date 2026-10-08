@@ -1,4 +1,4 @@
-import type { CollabApi } from "../../shared/collab.js";
+import type { CollabApi, CollabErrorCode } from "../../shared/collab.js";
 import type * as Y from "yjs";
 import { COLLAB_LIMITS, chatMessageSchema, type ChatMessage } from "@kobrixa/collab-protocol";
 import { canEdit, sharedTypes, type CollabSession } from "./types.js";
@@ -8,13 +8,28 @@ export interface ChatSnapshot {
   readonly messages: readonly ChatMessage[];
   /** Messages from other participants that arrived while the chat was not visible. */
   readonly unread: number;
-  /** False for viewers: the server drops their document updates. */
+  /**
+   * False while disconnected or syncing. Viewers can send through the server
+   * (`sendChat`); only the in-memory transport, which writes to the document
+   * directly, is limited to roles that can edit.
+   */
   readonly canSend: boolean;
+  /** Why sending is unavailable, or null when `canSend` is true. */
+  readonly blocked: ChatSendBlock | null;
 }
+
+/** Why the composer is disabled: room left, connection down, still syncing, or read-only role. */
+export type ChatSendBlock = "closed" | "offline" | "syncing" | "viewer";
 
 export type ChatSendResult =
   | { ok: true; message: ChatMessage }
-  | { ok: false; reason: "empty" | "too-long" | "read-only" | "invalid" | "network" };
+  | { ok: false; reason: "empty" | "too-long" | "read-only" | "invalid" | "network" }
+  | { ok: false; reason: "rate-limited" }
+  /** The service refused the message; `error` says why. */
+  | { ok: false; reason: "rejected"; error: CollabErrorCode };
+
+/** Service errors that mean the message never reached the room because of connectivity. */
+const NETWORK_ERRORS: ReadonlySet<CollabErrorCode> = new Set(["network", "unavailable"]);
 
 export interface ChatControllerOptions {
   now?: () => number;
@@ -88,7 +103,7 @@ export class ChatController {
     this.#chat = sharedTypes(session.doc).chat;
     this.#now = options.now ?? Date.now;
     this.#randomId = options.randomId ?? (() => crypto.randomUUID());
-    this.#snapshot = { messages: [], unread: 0, canSend: false };
+    this.#snapshot = { messages: [], unread: 0, canSend: false, blocked: "syncing" };
     this.#chat.observe(this.#onChange);
     this.#unsubscribeSession = session.subscribe(this.#onChange);
     this.#refresh(false);
@@ -145,7 +160,11 @@ export class ChatController {
           id,
           text: trimmed,
         });
-        if (!response.ok) return { ok: false, reason: "network" };
+        if (!response.ok) {
+          if (response.error === "rate-limited") return { ok: false, reason: "rate-limited" };
+          if (NETWORK_ERRORS.has(response.error)) return { ok: false, reason: "network" };
+          return { ok: false, reason: "rejected", error: response.error };
+        }
         this.#seen.add(response.value.id);
         return { ok: true, message: response.value };
       } catch {
@@ -205,19 +224,33 @@ export class ChatController {
       else if (message.participantId !== this.#session.connection.participantId) unread++;
     }
     this.#seen = seen;
-    const canSend =
-      (!!this.#sendChat || canEdit(session.role)) &&
-      session.status === "connected" &&
-      session.synced;
+    const blocked: ChatSendBlock | null =
+      session.status === "closed"
+        ? "closed"
+        : session.status === "connecting" || session.status === "reconnecting"
+          ? "offline"
+          : session.status === "syncing" || !session.synced
+            ? "syncing"
+            : !this.#sendChat && !canEdit(session.role)
+              ? "viewer"
+              : null;
+    const canSend = blocked === null;
     const previous = this.#snapshot;
     const sameMessages =
       previous.messages.length === messages.length &&
       previous.messages.every((message, index) => message === messages[index]);
-    if (sameMessages && previous.unread === unread && previous.canSend === canSend) return;
+    if (
+      sameMessages &&
+      previous.unread === unread &&
+      previous.canSend === canSend &&
+      previous.blocked === blocked
+    )
+      return;
     this.#snapshot = Object.freeze({
       messages: sameMessages ? previous.messages : Object.freeze(messages),
       unread,
       canSend,
+      blocked,
     });
     if (emit) for (const listener of [...this.#listeners]) listener();
   }

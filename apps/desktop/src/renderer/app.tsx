@@ -91,12 +91,17 @@ import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/
 import { preserveRoom } from "./collab/preserve-room.js";
 import { sharedTypes } from "./collab/types.js";
 import { CollabSyncStatus } from "./collab/sync-status.js";
+import { RemovedFilesDialog, type RemovedFilesPrompt } from "./collab/removed-files-dialog.js";
+import { collabCopy } from "./collab/collab-copy.js";
 import { canEdit } from "./collab/types.js";
 import { createCollabSession } from "./collab/collab-session.js";
 import { CollabWorkspace } from "./collab/collab-workspace.js";
 import { chatDrafts } from "./collab/chat-drafts.js";
 import { CollabStatusChip } from "./collab/status-chip.js";
 import { DeviceControlBar, blockedNotice, useDeviceControl } from "./collab/device-control-bar.js";
+import { JoinConflictDialog } from "./collab/join-conflict-dialog.js";
+import { CollabStartError } from "./collab/collab-lobby.js";
+import type { CollabJoinChange, CollabJoinResolution } from "../shared/collab.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -218,6 +223,14 @@ export function App(): React.JSX.Element {
   const sessionSaveTimer = useRef<number | undefined>(undefined);
   const sessionWrites = useRef<Promise<void>>(Promise.resolve());
   const [pendingCloseProject, setPendingCloseProject] = useState<string>();
+  const [joinConflict, setJoinConflict] = useState<{
+    projectName: string;
+    changes: CollabJoinChange[];
+    resolve(resolution: CollabJoinResolution | null): void;
+  }>();
+  // Settles a pending join conflict as cancelled if it is replaced or the app unmounts.
+  const joinConflictResolve = useRef<(resolution: CollabJoinResolution | null) => void>(undefined);
+  useEffect(() => () => joinConflictResolve.current?.(null), []);
   const [closingProject, setClosingProject] = useState(false);
   const closingProjectRef = useRef(false);
   const [controller] = useState(() => new ExecutionController(window.kobrixa));
@@ -282,6 +295,9 @@ export function App(): React.JSX.Element {
         adopt: (summary) => collabCallbacks.current.adopt(summary),
         onDiskWrite: (...args) => collabCallbacks.current.diskWrite(...args),
         onTreeChange: (result) => collabCallbacks.current.treeChange(result),
+        // Revisions the editor saved itself are not outside edits.
+        knownRevision: (id, file, revision) =>
+          revision !== null && sessions.get(id)?.files.baseline(file)?.revision === revision,
         report: (error) => collabCallbacks.current.report(error),
       }),
   );
@@ -1403,6 +1419,28 @@ export function App(): React.JSX.Element {
     if (text) sync.session.doc.transact(() => applyMinimalDiff(text, content));
   }
 
+  const [removedPrompts, setRemovedPrompts] = useState<RemovedFilesPrompt[]>([]);
+  const removedPromptId = useRef(0);
+
+  /** Saves unsaved text of remotely deleted files into a project copy outside the room. */
+  async function keepRemovedFiles(prompt: RemovedFilesPrompt): Promise<void> {
+    try {
+      // The copy includes drafts, so the deleted files reappear at their original paths.
+      // Draft writes go through the per-file queue that `treeChange` already cleared.
+      for (const { file, content } of prompt.files)
+        await enqueueDraftWrite(prompt.workspaceId, file, content);
+      const target = await window.kobrixa.collab.saveCopy(prompt.roomId, true);
+      if (sessions.activeId === prompt.workspaceId)
+        setStatus(collabCopy[locale].removedFiles.saved(target));
+    } finally {
+      const open = new Set(sessions.get(prompt.workspaceId)?.documents.getOpenFiles());
+      for (const { file } of prompt.files)
+        if (!open.has(file))
+          await enqueueDraftWrite(prompt.workspaceId, file, undefined).catch(() => undefined);
+    }
+    setRemovedPrompts((prompts) => prompts.filter((item) => item.id !== prompt.id));
+  }
+
   collabCallbacks.current = {
     adopt: async (summary) => {
       await flushDrafts();
@@ -1430,6 +1468,30 @@ export function App(): React.JSX.Element {
       if (!project) return;
       const { moved, removed } = result;
       const deleted = new Set(removed);
+      // The room deleted these files; ask before dropping text that only this editor has.
+      const unsaved = filesToSave(project.workspace.drafts, project.documents.getSnapshot())
+        .filter(([file]) => deleted.has(file))
+        .map(([file, content]) => ({ file, content }));
+      const roomId = collabFiles.for(result.workspace.id)?.session.connection.roomId;
+      if (unsaved.length && roomId) {
+        const prompt = {
+          id: ++removedPromptId.current,
+          workspaceId: result.workspace.id,
+          roomId,
+          files: unsaved,
+        };
+        setRemovedPrompts((prompts) => [...prompts, prompt]);
+      }
+      // Drop pending draft writes of deleted files so a late write cannot restore them.
+      for (const file of removed) {
+        const key = draftKey(result.workspace.id, file);
+        const pending = pendingDrafts.current.get(key);
+        latestDrafts.current.delete(key);
+        if (!pending && !draftWrites.current.has(key)) continue;
+        if (pending) window.clearTimeout(pending.timer);
+        pendingDrafts.current.delete(key);
+        void enqueueDraftWrite(result.workspace.id, file, undefined).catch(report);
+      }
       if (sessions.active === project) editorRef.current?.remapFiles(moved);
       else project.editor.remap(moved);
       project.files.remap(moved);
@@ -3587,6 +3649,17 @@ export function App(): React.JSX.Element {
               </button>
             </div>
             <CollabSyncStatus sync={collabBinding?.sync} locale={locale} />
+            {removedPrompts[0] && (
+              <RemovedFilesDialog
+                key={removedPrompts[0].id}
+                prompt={removedPrompts[0]}
+                locale={locale}
+                onKeep={keepRemovedFiles}
+                onDiscard={(prompt) =>
+                  setRemovedPrompts((prompts) => prompts.filter((item) => item.id !== prompt.id))
+                }
+              />
+            )}
             <CollabWorkspace
               store={collab}
               api={window.kobrixa.collab}
@@ -3597,13 +3670,31 @@ export function App(): React.JSX.Element {
               onStart={async (connection) => {
                 const selected = sessions.activeId;
                 await flushDrafts();
-                const summary = await window.kobrixa.collab.prepareProject(
-                  connection.roomId,
-                  selected,
-                );
-                if (!summary) return false;
-                await collabCallbacks.current.adopt(summary);
-                collab.start({ ...connection, workspaceId: summary.id });
+                const prepare = (resolution?: CollabJoinResolution) =>
+                  window.kobrixa.collab.prepareProject(connection.roomId, selected, resolution);
+                let prepared = await prepare();
+                if (prepared.status === "conflict") {
+                  const { changes } = prepared;
+                  joinConflictResolve.current?.(null);
+                  let settle: (resolution: CollabJoinResolution | null) => void = () => {};
+                  const resolution = await new Promise<CollabJoinResolution | null>((resolve) => {
+                    settle = resolve;
+                    joinConflictResolve.current = resolve;
+                    setJoinConflict({ projectName: connection.projectName, changes, resolve });
+                  });
+                  if (joinConflictResolve.current === settle)
+                    joinConflictResolve.current = undefined;
+                  if (!resolution) return false;
+                  prepared = await prepare(resolution);
+                }
+                if (prepared.status === "cancelled") return false;
+                if (prepared.status === "error") throw new CollabStartError(prepared.error);
+                // A second conflict after choosing would mean the answer was ignored.
+                if (prepared.status !== "ready") throw new CollabStartError("prepare-failed");
+                await collabCallbacks.current.adopt(prepared.workspace);
+                collab.start({ ...connection, workspaceId: prepared.workspace.id });
+                if (prepared.backupPath)
+                  setStatus(collabCopy[locale].joinBackupSaved(prepared.backupPath));
                 return true;
               }}
               onLeavingChange={(leaving) => {
@@ -3810,6 +3901,17 @@ export function App(): React.JSX.Element {
             </button>
           </DialogActions>
         </Dialog>
+      )}
+      {joinConflict && (
+        <JoinConflictDialog
+          locale={locale}
+          projectName={joinConflict.projectName}
+          changes={joinConflict.changes}
+          onChoose={(resolution) => {
+            setJoinConflict(undefined);
+            joinConflict.resolve(resolution);
+          }}
+        />
       )}
       {pendingCloseProject && (
         <Dialog

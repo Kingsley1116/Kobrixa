@@ -19,6 +19,7 @@ import {
   CollabFileSyncManager,
   applyMinimalDiff,
   canShareFile,
+  shareLimit,
   openGuestWorkspace,
   type FileSyncWorkspaceApi,
 } from "./file-sync.js";
@@ -121,6 +122,15 @@ describe.sequential("collaborative file sync", () => {
 
   const read = (root: string, file: string) => readFile(path.join(root, file), "utf8");
 
+  async function historyTexts(
+    service: WorkspaceService,
+    workspaceId: string,
+    file: string,
+  ): Promise<string[]> {
+    const entries = await service.history(workspaceId, file);
+    return Promise.all(entries.map((entry) => service.historyContent(workspaceId, file, entry.id)));
+  }
+
   it("seeds the document from the host and mirrors it to the guest", async () => {
     const { host, guest, hostSession } = await shared();
     expect(host.getSnapshot()).toMatchObject({ phase: "syncing", pendingWrites: 0, skipped: [] });
@@ -158,6 +168,51 @@ describe.sequential("collaborative file sync", () => {
     await settle(host, guest);
     expect(await listTree(mirrorRoot)).not.toContain("stale.bp");
     expect(await read(mirrorRoot, "src/main.bp")).toBe("LCD.Clear()\n");
+  });
+
+  it("reports guest-only files moved to the trash when joining", async () => {
+    const room = createLinkedSessions(["host"], roomId);
+    const host = start(room.sessions[0] as LinkedSession, hostService, hostSummary.id);
+    await settle(host);
+    await mkdir(path.join(mirrorRoot, "src"), { recursive: true });
+    await writeFile(path.join(mirrorRoot, "src", "main.bp"), "offline edit\n");
+    await writeFile(path.join(mirrorRoot, "stale.bp"), "old");
+    await mkdir(path.join(mirrorRoot, "notes"));
+    await writeFile(path.join(mirrorRoot, "notes", "todo.bp"), "todo");
+    const guest = start(room.join("editor"), guestService, mirrorSummary.id);
+    await settle(host, guest);
+    expect(await read(mirrorRoot, "src/main.bp")).toBe("LCD.Clear()\n");
+    expect(await historyTexts(guestService, mirrorSummary.id, "src/main.bp")).toContain(
+      "offline edit\n",
+    );
+    // A mirror that lags the room is not reported as replaced: joining already offered a
+    // copy of local changes.
+    const { notices } = guest.getSnapshot();
+    expect(notices).toEqual([
+      expect.objectContaining({ kind: "trashed", files: ["notes", "stale.bp"] }),
+    ]);
+    expect(host.getSnapshot().notices).toEqual([]);
+    guest.dismissNotice(notices[0]!.id);
+    expect(guest.getSnapshot().notices).toEqual([]);
+  });
+
+  it("reports host project files the room replaced when the host rejoins", async () => {
+    const room = createLinkedSessions(["host"], roomId);
+    const session = room.sessions[0] as LinkedSession;
+    const first = start(session, hostService, hostSummary.id);
+    await settle(first);
+    first.dispose();
+    await writeFile(path.join(project, "src", "main.bp"), "edited while away\n");
+    const host = start(session, hostService, hostSummary.id);
+    await settle(host);
+    expect(await read(project, "src/main.bp")).toBe("LCD.Clear()\n");
+    // Files that already matched the room, like kobrixa.json, are not reported.
+    expect(host.getSnapshot().notices).toEqual([
+      expect.objectContaining({ kind: "replaced", files: ["src/main.bp"] }),
+    ]);
+    expect(await historyTexts(hostService, hostSummary.id, "src/main.bp")).toContain(
+      "edited while away\n",
+    );
   });
 
   it("writes remote text edits to disk on the other side", async () => {
@@ -226,6 +281,54 @@ describe.sequential("collaborative file sync", () => {
     await settle(host, guest);
     expect(await read(project, "src/main.bp")).toBe("LCD.Clear()\nLCD.Update()\n");
     expect(host.getSnapshot().error).toBeUndefined();
+    // The outside edit is reported and recoverable from Local History.
+    expect(host.getSnapshot().notices).toEqual([
+      expect.objectContaining({ kind: "replaced", files: ["src/main.bp"] }),
+    ]);
+    expect(await historyTexts(hostService, hostSummary.id, "src/main.bp")).toContain("external\n");
+    expect(guest.getSnapshot().notices).toEqual([]);
+  });
+
+  it("does not report the app's own saves of room text as outside edits", async () => {
+    const { host, guest, hostSession, guestSession } = await shared();
+    const hostText = sharedTypes(hostSession.doc).files.get("src/main.bp")!;
+    hostText.insert(0, "local ");
+    // The editor's regular save flow writes the room text without telling the sync.
+    const { revision } = await hostService.readFile(hostSummary.id, "src/main.bp");
+    await hostService.write(hostSummary.id, "src/main.bp", hostText.toString(), revision);
+    await settle(host, guest);
+    // Keep typing well past the save before a peer edit arrives.
+    for (let index = 0; index < 40; index++) hostText.insert(hostText.length, "'");
+    const guestText = sharedTypes(guestSession.doc).files.get("src/main.bp")!;
+    guestText.insert(guestText.length, "LCD.Update()\n");
+    await settle(host, guest);
+    expect(await read(project, "src/main.bp")).toBe(
+      `local LCD.Clear()\n${"'".repeat(40)}LCD.Update()\n`,
+    );
+    expect(host.getSnapshot().notices).toEqual([]);
+    expect(host.getSnapshot().error).toBeUndefined();
+  });
+
+  it("keeps an existing local rename target in Local History and reports it", async () => {
+    const { host, guest } = await shared();
+    // A host-only file that was never shared occupies the rename target.
+    await writeFile(path.join(project, "src", "lib", "tool.bpi"), "host only\n");
+    const renamed = await guestService.moveEntry(
+      mirrorSummary.id,
+      "src/lib/util.bpi",
+      "src/lib/tool.bpi",
+    );
+    expect(guest.recordMove(renamed)).toBe(true);
+    await settle(host, guest);
+    expect(await read(project, "src/lib/tool.bpi")).toBe("Sub Beep\nEndSub\n");
+    await expect(stat(path.join(project, "src/lib/util.bpi"))).rejects.toThrow();
+    expect(await historyTexts(hostService, hostSummary.id, "src/lib/tool.bpi")).toContain(
+      "host only\n",
+    );
+    expect(host.getSnapshot().notices).toEqual([
+      expect.objectContaining({ kind: "replaced", files: ["src/lib/tool.bpi"] }),
+    ]);
+    expect(host.getSnapshot().error).toBeUndefined();
   });
 
   it("pulls external host disk changes into the document as minimal diffs", async () => {
@@ -270,7 +373,24 @@ describe.sequential("collaborative file sync", () => {
     sharedTypes(guestSession.doc).files.get("src/main.bp")!.insert(0, "remote ");
     await settle(host, guest);
     expect(write).toHaveBeenCalledTimes(3);
+    expect(host.getSnapshot()).toMatchObject({
+      phase: "error",
+      errorCode: "busy",
+      errorFile: "src/main.bp",
+      notices: [],
+    });
     expect(host.getSnapshot().error).toContain("keeps changing on disk");
+  });
+
+  it("only allows retrying while connected", async () => {
+    const { host, guest, hostSession } = await shared();
+    expect(host.canRetry).toBe(true);
+    const refresh = vi.spyOn(hostService, "refresh");
+    hostSession.close("error");
+    expect(host.canRetry).toBe(false);
+    await host.retry();
+    expect(refresh).not.toHaveBeenCalled();
+    await settle(host, guest);
   });
 
   it("stops observing immediately while draining already received edits", async () => {
@@ -334,6 +454,7 @@ describe.sequential("collaborative file sync", () => {
     await writeFile(path.join(project, "big.json"), "x".repeat(COLLAB_LIMITS.fileBytes + 1));
     const { host, hostSession } = await shared();
     expect(host.getSnapshot().skipped).toEqual(["big.json"]);
+    expect(host.getSnapshot().skipReasons).toEqual({ "big.json": "size" });
     expect(sharedTypes(hostSession.doc).tree.has("big.json")).toBe(false);
   });
 
@@ -389,6 +510,7 @@ describe("shared file byte budget", () => {
     await sync.flush();
     expect(sharedTypes(room.sessions[0]!.doc).files.size).toBe(8);
     expect(sync.getSnapshot().skipped).toEqual(["file8.bp"]);
+    expect(sync.getSnapshot().skipReasons).toEqual({ "file8.bp": "total" });
     expect(sync.recordCreate("extra.bp", "file", "a")).toBe(false);
     sync.dispose();
     room.sessions[0]!.destroy();
@@ -407,6 +529,9 @@ describe("shared file byte budget", () => {
     files.get("file0.bp")!.delete(0, 3);
     expect(canShareFile(files, "extra.bp", "界")).toBe(true);
     expect(canShareFile(files, "extra.bp", "😀")).toBe(false);
+    expect(shareLimit(files, "extra.bp", "😀")).toBe("total");
+    expect(shareLimit(files, "notes.txt", "")).toBe("format");
+    expect(shareLimit(files, "file0.bp", "a".repeat(COLLAB_LIMITS.fileBytes + 1))).toBe("size");
     doc.destroy();
   });
 

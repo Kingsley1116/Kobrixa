@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useId,
   useLayoutEffect,
@@ -11,35 +12,14 @@ import {
 import { chatDrafts } from "./chat-drafts.js";
 import { COLLAB_LIMITS, type PresenceState } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
-import { chatControllerFor, chatTextLength, type ChatController } from "./chat.js";
+import {
+  chatControllerFor,
+  chatTextLength,
+  type ChatController,
+  type ChatSendResult,
+} from "./chat.js";
+import { collabCopy, collabErrorMessage, type CollabCopy } from "./collab-copy.js";
 import type { CollabSession } from "./types.js";
-
-const copy = {
-  en: {
-    log: "Chat messages",
-    empty: "No messages yet. Say hello to your team.",
-    you: "You",
-    input: "Message",
-    placeholder: "Message the room (Enter to send, Shift+Enter for a new line)",
-    send: "Send",
-    viewer: "Waiting for connection and sync. Your draft is kept.",
-    closed: "You have left this room. Chat history is read-only.",
-    tooLong: "Message is too long.",
-    justNow: "just now",
-  },
-  "zh-TW": {
-    log: "聊天訊息",
-    empty: "還沒有訊息，向大家打個招呼吧。",
-    you: "你",
-    input: "訊息",
-    placeholder: "傳送訊息給房間成員（Enter 傳送，Shift+Enter 換行）",
-    send: "傳送",
-    viewer: "等待連線與同步完成，你的草稿會保留。",
-    closed: "你已離開房間，聊天紀錄僅供閱讀。",
-    tooLong: "訊息太長。",
-    justNow: "剛剛",
-  },
-} satisfies Record<Locale, Record<string, string>>;
 
 /** Shows the character counter once a message is this close to the limit. */
 const COUNTER_THRESHOLD = 200;
@@ -87,21 +67,56 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-function relativeTime(at: number, now: number, locale: Locale): string {
-  const seconds = Math.round((now - at) / 1000);
-  if (seconds < 45) return copy[locale].justNow;
-  const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "short" });
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return format.format(-minutes, "minute");
+/** Local calendar day as `YYYY-MM-DD`, used to group messages under day separators. */
+function dayKey(at: number): string {
   const date = new Date(at);
-  if (new Date(now).toDateString() === date.toDateString())
-    return date.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
-  return date.toLocaleString(locale, {
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** "Today", "Yesterday", or the date (with the year only when it differs). */
+export function dayLabel(at: number, now: number, locale: Locale): string {
+  const copy = collabCopy[locale].chat;
+  const today = new Date(now);
+  if (dayKey(at) === dayKey(now)) return copy.today;
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (dayKey(at) === dayKey(yesterday.getTime())) return copy.yesterday;
+  const date = new Date(at);
+  return date.toLocaleDateString(locale, {
+    weekday: "short",
     month: "short",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
   });
+}
+
+/** Time within the message's day; recent messages use relative times. */
+export function messageTime(at: number, now: number, locale: Locale): string {
+  const seconds = Math.round((now - at) / 1000);
+  if (seconds < 45) return collabCopy[locale].chat.justNow;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60)
+    return new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "short" }).format(
+      -minutes,
+      "minute",
+    );
+  return new Date(at).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+}
+
+function sendErrorMessage(copy: CollabCopy, result: Exclude<ChatSendResult, { ok: true }>): string {
+  switch (result.reason) {
+    case "rate-limited":
+      return copy.chat.sendRateLimited;
+    case "rejected":
+      return copy.chat.sendRejected(collabErrorMessage(copy, result.error));
+    case "too-long":
+      return copy.chat.tooLong;
+    case "network":
+      return copy.chat.sendNetwork;
+    default:
+      // Not a connection problem: the message was refused locally or the room closed.
+      return copy.chat.sendFailed;
+  }
 }
 
 /** Room chat. Messages are rendered as plain text only. */
@@ -159,7 +174,8 @@ function ChatView({
   locale: Locale;
   controller: ChatController;
 }): React.JSX.Element {
-  const t = copy[locale];
+  const copy = collabCopy[locale];
+  const t = copy.chat;
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const colors = usePresenceColors(session);
   const now = useNow(30_000);
@@ -179,16 +195,13 @@ function ChatView({
       chatDrafts.set(draftKey, text);
       setSendError("");
     } catch {
-      setSendError(
-        locale === "zh-TW"
-          ? "無法保存聊天草稿，請重試；內容會保留在此視窗。"
-          : "Could not save this draft. Retry; the text is kept in this window.",
-      );
+      setSendError(t.draftSaveFailed);
     }
   };
   const log = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const counterId = useId();
+  const hintId = useId();
   useVisibility(log, controller);
   const self = session.connection.participantId;
 
@@ -224,9 +237,7 @@ function ChatView({
     try {
       messageId = chatDrafts.prepare(draftKey, sending);
     } catch {
-      setSendError(
-        locale === "zh-TW" ? "無法保存草稿，請重試。" : "Could not save the draft. Please retry.",
-      );
+      setSendError(t.draftPrepareFailed);
       return;
     }
     setPending(true);
@@ -234,134 +245,149 @@ function ChatView({
     const result = await controller.send(sending, messageId);
     setPending(false);
     if (!result.ok) {
-      setSendError(
-        locale === "zh-TW"
-          ? "傳送失敗，草稿已保留。請重試。"
-          : "Could not send. Your draft is kept; try again.",
-      );
+      setSendError(sendErrorMessage(copy, result));
       return;
     }
     try {
       if (chatDrafts.sent(draftKey, sending, messageId))
         setDraft((current) => (current === sending ? "" : current));
     } catch {
-      setSendError(
-        locale === "zh-TW"
-          ? "訊息已傳送，但無法更新本機草稿。退出前請重試保存。"
-          : "Message sent, but the local draft could not be updated. Retry saving before quitting.",
-      );
+      setSendError(t.draftUpdateFailed);
     }
     pinned.current = true;
     controller.setAtBottom(true);
     scrollToBottom();
   };
 
+  const hint = snapshot.blocked ? t.blocked[snapshot.blocked] : "";
+  const describedBy = [hint && hintId, showCounter && counterId].filter(Boolean).join(" ");
+
   return (
     <div className="collab-chat">
-      <div
-        ref={log}
-        className="collab-chat-log"
-        role="log"
-        aria-label={t.log}
-        tabIndex={0}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          if (element.clientHeight === 0) return;
-          pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
-          controller.setAtBottom(pinned.current);
-        }}
-      >
-        {snapshot.messages.length === 0 ? (
-          <p className="collab-chat-empty">{t.empty}</p>
-        ) : (
-          snapshot.messages.map((message) => {
-            const mine = message.participantId === self;
-            const color = colors.get(message.participantId);
-            return (
-              <article
-                key={message.id}
-                className={`collab-chat-message${mine ? " own" : ""}`}
-                style={color ? ({ "--participant": color } as CSSProperties) : undefined}
-              >
-                <header>
-                  <span className="collab-chat-name">{mine ? t.you : message.name}</span>
-                  <time
-                    dateTime={new Date(message.at).toISOString()}
-                    title={new Date(message.at).toLocaleString(locale)}
-                  >
-                    {relativeTime(message.at, now, locale)}
-                  </time>
-                </header>
-                <p className="collab-chat-text">{message.text}</p>
-              </article>
-            );
-          })
-        )}
-      </div>
-      {snapshot.unread > 0 && (
-        <button
-          onClick={() => {
-            pinned.current = true;
-            scrollToBottom();
-            controller.setAtBottom(true);
+      <div className="collab-chat-log-wrap">
+        <div
+          ref={log}
+          className="collab-chat-log"
+          role="log"
+          aria-label={t.log}
+          tabIndex={0}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            if (element.clientHeight === 0) return;
+            pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+            controller.setAtBottom(pinned.current);
           }}
         >
-          {locale === "zh-TW" ? "查看新訊息" : "View new messages"} ({snapshot.unread})
-        </button>
-      )}
+          {snapshot.messages.length === 0 ? (
+            <p className="collab-chat-empty">{t.empty}</p>
+          ) : (
+            snapshot.messages.map((message, index) => {
+              const mine = message.participantId === self;
+              const color = colors.get(message.participantId);
+              const previous = snapshot.messages[index - 1];
+              const newDay = !previous || dayKey(previous.at) !== dayKey(message.at);
+              return (
+                <Fragment key={message.id}>
+                  {newDay && (
+                    <p className="collab-chat-day" data-testid="collab-chat-day">
+                      <time dateTime={dayKey(message.at)}>{dayLabel(message.at, now, locale)}</time>
+                    </p>
+                  )}
+                  <article
+                    className={`collab-chat-message${mine ? " own" : ""}`}
+                    style={color ? ({ "--participant": color } as CSSProperties) : undefined}
+                  >
+                    <header>
+                      <span className="collab-chat-name">{mine ? t.you : message.name}</span>
+                      <time
+                        dateTime={new Date(message.at).toISOString()}
+                        title={new Date(message.at).toLocaleString(locale)}
+                      >
+                        {messageTime(message.at, now, locale)}
+                      </time>
+                    </header>
+                    <p className="collab-chat-text">{message.text}</p>
+                  </article>
+                </Fragment>
+              );
+            })
+          )}
+        </div>
+        {snapshot.unread > 0 && (
+          <button
+            type="button"
+            className="collab-chat-new"
+            data-testid="collab-chat-new"
+            aria-label={t.newMessagesLabel(snapshot.unread)}
+            onClick={() => {
+              pinned.current = true;
+              scrollToBottom();
+              controller.setAtBottom(true);
+            }}
+          >
+            <span>{t.newMessages}</span>
+            <span className="collab-chat-new-count" aria-hidden="true">
+              {snapshot.unread}
+            </span>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" />
+            </svg>
+          </button>
+        )}
+      </div>
       {sendError && (
         <p className="collab-error" role="alert">
           {sendError}
         </p>
       )}
-      {
-        <form
-          className="collab-chat-compose"
-          onSubmit={(event) => {
+      {hint && (
+        <p id={hintId} className="collab-chat-hint" data-testid="collab-chat-hint">
+          {hint}
+        </p>
+      )}
+      <form
+        className="collab-chat-compose"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <textarea
+          aria-label={t.input}
+          aria-describedby={describedBy || undefined}
+          aria-invalid={tooLong || undefined}
+          placeholder={t.placeholder}
+          rows={2}
+          value={draft}
+          onChange={(event) => changeDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
             event.preventDefault();
             void submit();
           }}
-        >
-          <textarea
-            aria-label={t.input}
-            aria-describedby={showCounter ? counterId : undefined}
-            aria-invalid={tooLong || undefined}
-            placeholder={t.placeholder}
-            rows={2}
-            value={draft}
-            onChange={(event) => changeDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              void submit();
-            }}
-          />
-          <div className="collab-chat-actions">
-            {showCounter && (
-              <span
-                id={counterId}
-                className={`collab-chat-counter${tooLong ? " over" : ""}`}
-                aria-live="polite"
-              >
-                {tooLong && <span className="collab-chat-sr">{t.tooLong} </span>}
-                {length}/{COLLAB_LIMITS.chatMessageLength}
-              </span>
-            )}
-            <button
-              type="submit"
-              className="primary"
-              disabled={pending || !snapshot.canSend || length === 0 || tooLong}
+        />
+        <div className="collab-chat-actions">
+          {showCounter && (
+            <span
+              id={counterId}
+              className={`collab-chat-counter${tooLong ? " over" : ""}`}
+              aria-live="polite"
             >
-              {t.send}
-            </button>
-          </div>
-        </form>
-      }
-      {!snapshot.canSend && (
-        <p className="collab-chat-hint">
-          {session.getSnapshot().status === "closed" ? t.closed : t.viewer}
-        </p>
-      )}
+              {tooLong && <span className="collab-chat-sr">{t.tooLong} </span>}
+              {length}/{COLLAB_LIMITS.chatMessageLength}
+            </span>
+          )}
+          <button
+            type="submit"
+            className="primary"
+            aria-describedby={hint ? hintId : undefined}
+            aria-busy={pending || undefined}
+            disabled={pending || !snapshot.canSend || length === 0 || tooLong}
+          >
+            {pending ? t.sending : t.send}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

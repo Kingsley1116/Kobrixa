@@ -30,6 +30,7 @@ import { UpdateOperationGate, type UpdateService } from "../updates/service.js";
 import { registerCollabIpc } from "./ipc.js";
 import { createCollabService } from "./runtime.js";
 import { CollabService } from "./service.js";
+import { CollabLocalError, type CollabProjects } from "./projects.js";
 import { loadCollabPreferences } from "./preferences.js";
 import { CollabTokenStore } from "./tokens.js";
 
@@ -159,9 +160,9 @@ afterEach(async () => {
   await rm(userData, { recursive: true, force: true });
 });
 
-function register(service: CollabService): void {
+function register(service: CollabService, projects?: CollabProjects, preparing = true): void {
   // While an update is being prepared, collab channels must stay reachable.
-  const updates = { preparing: true } as UpdateService;
+  const updates = { preparing } as UpdateService;
   registerIpc(
     () => renderer as never,
     {} as never,
@@ -173,7 +174,7 @@ function register(service: CollabService): void {
     undefined,
     undefined,
     undefined,
-    [(handle) => registerCollabIpc(handle, service)],
+    [(handle) => registerCollabIpc(handle, service, projects)],
   );
 }
 
@@ -358,4 +359,51 @@ it("passes passwords over IPC/HTTP without persisting them in recent rooms", asy
   expect(persisted).not.toContain(password);
   expect(persisted).not.toContain("password");
   await expect(readFile(path.join(userData, "collab-tokens.json"))).rejects.toThrow();
+});
+
+describe("collab project IPC", () => {
+  it("reports local project failures as codes instead of English errors", async () => {
+    const projects = {
+      bindCreated: vi.fn(async () => {
+        throw new CollabLocalError("identity-unsupported");
+      }),
+      prepare: vi.fn(async () => ({ status: "cancelled" })),
+    } as unknown as CollabProjects;
+    register(await createCollabService(userData, server.origin), projects);
+    const request = { name: "Host", projectName: "Robot" };
+    expect(await call("collab:create-room", request)).toEqual({
+      ok: false,
+      error: "project-required",
+    });
+    expect(server.seen).toHaveLength(0);
+    expect(await call("collab:create-room", request, "workspace-1")).toEqual({
+      ok: false,
+      error: "identity-unsupported",
+    });
+    // The half-created room is closed rather than left behind.
+    expect(server.seen.map((item) => item.url)).toEqual([
+      COLLAB_ROUTES.createRoom,
+      COLLAB_ROUTES.close(ROOM),
+    ]);
+  });
+
+  it("validates the join conflict resolution", async () => {
+    const prepare = vi.fn(async () => ({ status: "cancelled" }));
+    register(
+      await createCollabService(userData, server.origin),
+      {
+        prepare,
+      } as unknown as CollabProjects,
+      false,
+    );
+    for (const resolution of [undefined, "keep-copy", "replace"])
+      await call("collab:prepare-project", ROOM, "workspace-1", resolution);
+    expect(prepare.mock.calls).toEqual([
+      [ROOM, "workspace-1", undefined],
+      [ROOM, "workspace-1", "keep-copy"],
+      [ROOM, "workspace-1", "replace"],
+    ]);
+    await expect(call("collab:prepare-project", ROOM, undefined, "overwrite")).rejects.toThrow();
+    expect(prepare).toHaveBeenCalledTimes(3);
+  });
 });

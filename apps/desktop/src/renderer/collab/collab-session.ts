@@ -14,15 +14,17 @@ import {
   MESSAGE_TYPE,
   noticeSchema,
   participantColor,
+  type ControlCommand,
   type Notice,
   type PresenceState,
 } from "@kobrixa/collab-protocol";
 import type { CollabConnection, CollabResult } from "../../shared/collab.js";
-import type {
-  CollabCloseReason,
-  CollabSession,
-  CollabSessionSnapshot,
-  CollabStatus,
+import {
+  CollabPendingUpdatesError,
+  type CollabCloseReason,
+  type CollabSession,
+  type CollabSessionSnapshot,
+  type CollabStatus,
 } from "./types.js";
 
 /** The subset of the browser `WebSocket` the session uses. */
@@ -98,8 +100,9 @@ export function closeReasonForCode(code: number): CollabCloseReason | null {
     case CLOSE_CODE.roomClosed:
       return "room-closed";
     case CLOSE_CODE.roomFull:
+      return "room-full";
     case CLOSE_CODE.protocolMismatch:
-      return "error";
+      return "protocol-mismatch";
     default:
       return null;
   }
@@ -138,6 +141,7 @@ class WebSocketCollabSession implements CollabSession {
   #refreshing = false;
   #pendingUpdates = new Set<ReturnType<typeof Y.decodeUpdate>>();
   #ackListeners = new Set<() => void>();
+  readonly #declinedListeners = new Set<() => void>();
   readonly #refreshConnection: CollabSessionOptions["refreshConnection"];
 
   constructor(
@@ -220,7 +224,23 @@ class WebSocketCollabSession implements CollabSession {
     this.awareness.destroy();
     this.doc.destroy();
     this.#listeners.clear();
+    this.#declinedListeners.clear();
   }
+
+  declineControlRequest(participantId: string): boolean {
+    if (!this.#isOpen() || this.#snapshot.role !== "host") return false;
+    const command: ControlCommand = { type: "decline", participantId };
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MESSAGE_TYPE.control);
+    encoding.writeVarString(encoder, JSON.stringify(command));
+    this.#send(encoding.toUint8Array(encoder));
+    return true;
+  }
+
+  onControlDeclined = (listener: () => void): (() => void) => {
+    this.#declinedListeners.add(listener);
+    return () => this.#declinedListeners.delete(listener);
+  };
 
   hasPendingUpdates(): boolean {
     return this.#pendingUpdates.size > 0;
@@ -231,11 +251,7 @@ class WebSocketCollabSession implements CollabSession {
     await new Promise<void>((resolve, reject) => {
       const timer = globalThis.setTimeout(() => {
         this.#ackListeners.delete(check);
-        reject(
-          new Error(
-            "Some shared changes are still waiting for the server. Reconnect and retry before leaving.",
-          ),
-        );
+        reject(new CollabPendingUpdatesError());
       }, 10_000);
       const check = () => {
         if (!this.#pendingUpdates.size) {
@@ -247,6 +263,13 @@ class WebSocketCollabSession implements CollabSession {
       this.#ackListeners.add(check);
       check();
     });
+  }
+
+  reconnectNow(): void {
+    if (this.#destroyed || this.#snapshot.status !== "reconnecting" || this.#socket) return;
+    this.#cancelRetry();
+    this.#attempt = 0;
+    this.#open();
   }
 
   // --- socket lifecycle -------------------------------------------------------
@@ -393,11 +416,7 @@ class WebSocketCollabSession implements CollabSession {
       this.#setStatus("reconnecting");
       return;
     }
-    if (this.#snapshot.status === "reconnecting" && !this.#socket) {
-      this.#cancelRetry();
-      this.#attempt = 0;
-      this.#open();
-    }
+    this.reconnectNow();
   };
 
   // --- frames -----------------------------------------------------------------
@@ -472,6 +491,9 @@ class WebSocketCollabSession implements CollabSession {
         return;
       case "room-closed":
         this.#terminate("room-closed");
+        return;
+      case "control-declined":
+        for (const listener of [...this.#declinedListeners]) listener();
         return;
     }
   }

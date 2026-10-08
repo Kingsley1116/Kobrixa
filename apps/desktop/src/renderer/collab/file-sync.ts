@@ -5,7 +5,9 @@
  * - Remote document changes are written to the local workspace (the host's real project or
  *   a guest's `userData/collab/<room>` mirror) through the normal workspace API, so builds,
  *   the simulator and uploads keep working on plain files. The document is the source of
- *   truth while in a room: write conflicts are retried with the document content.
+ *   truth while in a room: write conflicts are retried with the document content. Local
+ *   content replaced that way (or guest-only files moved to the trash) is reported through
+ *   `notices`; the workspace keeps the previous text in Local History.
  * - Local file-tree actions (create, move/rename, trash) are mirrored into the document by
  *   `recordCreate` / `recordMove` / `recordTrash`; viewers cannot mutate the tree.
  *
@@ -20,7 +22,7 @@ import type {
   WorkspaceMutationResult,
   WorkspaceSummary,
 } from "../../shared/api.js";
-import type { CollabApi, CollabConnection } from "../../shared/collab.js";
+import type { CollabApi, CollabConnection, CollabSharePreview } from "../../shared/collab.js";
 import type { WorkspaceFileSnapshot } from "../../shared/workspace-files.js";
 import type { CollabStore } from "./store.js";
 import { canEdit, sharedTypes, type CollabSession, type SharedTypes } from "./types.js";
@@ -32,13 +34,41 @@ export type FileSyncWorkspaceApi = Pick<
 
 export type CollabFileSyncPhase = "idle" | "seeding" | "syncing" | "error";
 
+/** Why a file is not part of the shared document. */
+export type CollabSkipReason = CollabSharePreview["skipped"][number]["reason"];
+
+/** What failed; the renderer maps codes to localized copy. */
+export type CollabFileSyncErrorCode = "seed" | "read" | "write" | "busy" | "tree" | "sync";
+
+/**
+ * Local data the room replaced:
+ * - `replaced`: files whose local text differed from the room version and was overwritten
+ *   (the previous text is in Local History).
+ * - `trashed`: guest-only files moved to the OS trash when joining.
+ */
+export type CollabFileSyncNoticeKind = "replaced" | "trashed";
+
+export interface CollabFileSyncNotice {
+  id: number;
+  kind: CollabFileSyncNoticeKind;
+  files: readonly string[];
+}
+
 export interface CollabFileSyncSnapshot {
   phase: CollabFileSyncPhase;
   /** Debounced or in-flight disk operations. */
   pendingWrites: number;
   /** Files left out of the shared document (too many or too large). */
   skipped: readonly string[];
+  /** Reason for each entry of `skipped`. */
+  skipReasons: Readonly<Record<string, CollabSkipReason>>;
+  /** Undismissed reports of local content the room replaced, at most one per kind. */
+  notices: readonly CollabFileSyncNotice[];
+  /** Untranslated detail of the last failure, for diagnostics. */
   error?: string | undefined;
+  errorCode?: CollabFileSyncErrorCode | undefined;
+  /** File the failure concerns, when there is one. */
+  errorFile?: string | undefined;
 }
 
 export interface CollabFileSyncOptions {
@@ -52,11 +82,17 @@ export interface CollabFileSyncOptions {
   onDiskWrite?: (file: string, snapshot: WorkspaceFileSnapshot) => void;
   /** Called after this sync created, moved or trashed entries on disk. */
   onTreeChange?: (result: WorkspaceMutationResult) => void;
+  /** Room versions recognised by a previous sync of the same room (see `versions`). */
+  versions?: Map<string, Set<number>>;
+  /** True when the app itself wrote (or accepted) this disk revision, e.g. by saving. */
+  knownRevision?: (file: string, revision: string | null) => boolean;
 }
 
 const editableFile = /\.(bp|bpi|bpm|json)$/i;
 const MANIFEST = "kobrixa.json";
 const MAX_WRITE_ATTEMPTS = 3;
+/** Room versions remembered per file (see `#seen`); every keystroke adds one. */
+const SEEN_VERSIONS = 4096;
 
 function parentOf(entryPath: string): string {
   const index = entryPath.lastIndexOf("/");
@@ -83,21 +119,41 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/** Checks the UTF-8 room budget with replacement bytes subtracted. */
-export function canShareFile(files: Y.Map<Y.Text>, file: string, content: string): boolean {
+/** Non-cryptographic 53-bit string hash (cyrb53), used to recognise earlier room versions. */
+function hashText(text: string): number {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+/** Returns the limit `content` would break, checking the room budget with replacement bytes subtracted. */
+export function shareLimit(
+  files: Y.Map<Y.Text>,
+  file: string,
+  content: string,
+): CollabSkipReason | undefined {
   const bytes = byteLength(content);
-  if (
-    !validPath(file, "file") ||
-    bytes > COLLAB_LIMITS.fileBytes ||
-    (!files.has(file) && files.size >= COLLAB_LIMITS.files)
-  )
-    return false;
+  if (!validPath(file, "file")) return "format";
+  if (bytes > COLLAB_LIMITS.fileBytes) return "size";
+  if (!files.has(file) && files.size >= COLLAB_LIMITS.files) return "count";
   let total = bytes;
   for (const [path, text] of files) {
     if (path !== file) total += byteLength(text.toString());
-    if (total > COLLAB_LIMITS.roomFileBytes) return false;
+    if (total > COLLAB_LIMITS.roomFileBytes) return "total";
   }
-  return total <= COLLAB_LIMITS.roomFileBytes;
+  return undefined;
+}
+
+/** Checks the UTF-8 room budget with replacement bytes subtracted. */
+export function canShareFile(files: Y.Map<Y.Text>, file: string, content: string): boolean {
+  return shareLimit(files, file, content) === undefined;
 }
 
 function validPath(entryPath: string, kind: TreeEntry["kind"]): boolean {
@@ -162,8 +218,20 @@ export class CollabFileSync {
   readonly #disk = new Map<string, string>();
   /** Disk revision matching `#disk`, when known. */
   readonly #revisions = new Map<string, string | null>();
+  /**
+   * Hashes of recent room versions per file. The app saves shared files itself, so a disk
+   * revision this sync did not write is only an outside edit if the room never held it.
+   */
+  readonly #seen: Map<string, Set<number>>;
   readonly #cleanup: (() => void)[] = [];
-  #snapshot: CollabFileSyncSnapshot = { phase: "idle", pendingWrites: 0, skipped: [] };
+  #snapshot: CollabFileSyncSnapshot = {
+    phase: "idle",
+    pendingWrites: 0,
+    skipped: [],
+    skipReasons: {},
+    notices: [],
+  };
+  #noticeId = 0;
   #queue: Promise<void> = Promise.resolve();
   #inflight = 0;
   #started = false;
@@ -179,6 +247,12 @@ export class CollabFileSync {
   ) {
     this.#types = sharedTypes(session.doc);
     this.#debounceMs = options.debounceMs ?? 300;
+    this.#seen = options.versions ?? new Map();
+  }
+
+  /** Recent room versions, handed to the sync that replaces this one after a role reset. */
+  get versions(): Map<string, Set<number>> {
+    return this.#seen;
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -207,11 +281,14 @@ export class CollabFileSync {
       this.#onFiles(events, transaction);
     const onTree = (event: Y.YMapEvent<TreeEntry>, transaction: Y.Transaction) =>
       this.#onTree(event, transaction);
+    const onTransaction = (transaction: Y.Transaction) => this.#noteVersions(transaction);
     this.#types.files.observeDeep(onFiles);
     this.#types.tree.observe(onTree);
+    this.session.doc.on("afterTransaction", onTransaction);
     this.#cleanup.push(
       () => this.#types.files.unobserveDeep(onFiles),
       () => this.#types.tree.unobserve(onTree),
+      () => this.session.doc.off("afterTransaction", onTransaction),
       this.session.subscribe(() => this.#maybeBegin()),
     );
     this.#maybeBegin();
@@ -252,10 +329,21 @@ export class CollabFileSync {
     this.#update({ pendingWrites: this.#timers.size + this.#inflight });
   }
 
+  /** False while a retry cannot run (the room is not connected). */
+  get canRetry(): boolean {
+    return !this.#disposed && this.session.getSnapshot().status === "connected";
+  }
+
   async retry(): Promise<void> {
-    if (this.#disposed || this.session.getSnapshot().status !== "connected") return;
-    this.#update({ phase: "idle", error: undefined });
+    if (!this.canRetry) return;
+    this.#update({ phase: "idle", error: undefined, errorCode: undefined, errorFile: undefined });
     await this.#enqueue(() => this.#initialize());
+  }
+
+  /** Hides a notice once the user has read it. */
+  dismissNotice(id: number): void {
+    const notices = this.#snapshot.notices.filter((notice) => notice.id !== id);
+    if (notices.length !== this.#snapshot.notices.length) this.#update({ notices });
   }
 
   // ---- Local workspace → document ----
@@ -362,6 +450,11 @@ export class CollabFileSync {
     try {
       const summary = await this.#summary();
       const skipped: string[] = [];
+      const skipReasons: Record<string, CollabSkipReason> = {};
+      const skip = (file: string, reason: CollabSkipReason) => {
+        skipped.push(file);
+        skipReasons[file] = reason;
+      };
       const files: [string, string, string | null, string][] = [];
       let roomBytes = 0;
       const directories = summary.entries
@@ -370,11 +463,11 @@ export class CollabFileSync {
       for (const entry of summary.entries) {
         if (entry.kind !== "file") continue;
         if (!validPath(entry.path, "file")) {
-          skipped.push(entry.path);
+          skip(entry.path, "format");
           continue;
         }
         if (files.length >= COLLAB_LIMITS.files) {
-          skipped.push(entry.path);
+          skip(entry.path, "count");
           continue;
         }
         const snapshot = await this.api.readFile(this.workspaceId, entry.path);
@@ -382,7 +475,7 @@ export class CollabFileSync {
         const content = this.options.seedContent?.(entry.path) ?? snapshot.content;
         const bytes = byteLength(content);
         if (bytes > COLLAB_LIMITS.fileBytes || roomBytes + bytes > COLLAB_LIMITS.roomFileBytes) {
-          skipped.push(entry.path);
+          skip(entry.path, bytes > COLLAB_LIMITS.fileBytes ? "size" : "total");
           continue;
         }
         files.push([entry.path, content, snapshot.revision, snapshot.content]);
@@ -404,16 +497,16 @@ export class CollabFileSync {
         this.#disk.set(file, diskContent);
         this.#revisions.set(file, revision);
       }
-      this.#update({ skipped });
+      this.#update({ skipped, skipReasons });
     } catch (error) {
-      this.#update({ phase: "error", error: message(error) });
+      this.#fail(error, "seed");
     }
   }
 
   /** Brings the local workspace in line with the document after joining. */
   async #reconcile(removeExtras: boolean): Promise<void> {
     const entries = await this.#entries().catch((error: unknown) => {
-      this.#fail(error);
+      this.#fail(error, "read");
       return undefined;
     });
     if (!entries) return;
@@ -435,21 +528,30 @@ export class CollabFileSync {
       : [];
     // Entries whose kind changed must go first; other extras go last, after the shared
     // manifest is written (an implicit project's only entry file cannot be trashed).
-    await this.#trash(
-      extras.filter((entryPath) => desired.has(entryPath)),
-      entries,
+    // Guests are told which local entries went to the OS trash.
+    this.#notice(
+      "trashed",
+      await this.#trash(
+        extras.filter((entryPath) => desired.has(entryPath)),
+        entries,
+      ),
     );
     await this.#createDirectories(
       [...desired].filter(([, kind]) => kind === "directory").map(([entryPath]) => entryPath),
       entries,
     );
+    // A guest mirror normally just lags the room; joining already offers a copy when it
+    // has local changes, so only the host reports replaced files here.
     for (const [file, kind] of desired) {
       if (this.#disposed) return;
-      if (kind === "file") await this.#writeFromDoc(file, entries);
+      if (kind === "file") await this.#writeFromDoc(file, entries, !removeExtras);
     }
-    await this.#trash(
-      extras.filter((entryPath) => !desired.has(entryPath)),
-      entries,
+    this.#notice(
+      "trashed",
+      await this.#trash(
+        extras.filter((entryPath) => !desired.has(entryPath)),
+        entries,
+      ),
     );
   }
 
@@ -502,7 +604,7 @@ export class CollabFileSync {
     texts: Map<string, string>,
   ): Promise<void> {
     const entries = await this.#entries().catch((error: unknown) => {
-      this.#fail(error);
+      this.#fail(error, "read");
       return undefined;
     });
     if (!entries) return;
@@ -579,7 +681,7 @@ export class CollabFileSync {
         this.#adopt(result, entries);
         for (const [from, to] of Object.entries(result.moved)) this.#remapLocal(from, to);
       } catch (error) {
-        this.#fail(error);
+        this.#fail(error, "tree", target);
         // Fall back to create + trash.
         consumedSources.delete(source);
         for (const [entryPath] of added)
@@ -602,6 +704,9 @@ export class CollabFileSync {
         .map(([entryPath]) => entryPath),
       entries,
     );
+    // A target that already exists locally (e.g. a host file that was never shared) is
+    // overwritten like any outside edit: the write keeps its text in Local History and
+    // `#writeFromDoc` reports it as replaced.
     for (const [file, kind] of added) {
       if (this.#disposed) return;
       if (kind === "file" && !consumedTargets.has(file)) await this.#writeFromDoc(file, entries);
@@ -618,7 +723,7 @@ export class CollabFileSync {
       try {
         await this.#ensureDirectory(directory, entries);
       } catch (error) {
-        this.#fail(error);
+        this.#fail(error, "tree", directory);
       }
     }
   }
@@ -638,21 +743,25 @@ export class CollabFileSync {
     this.#adopt(result, entries);
   }
 
-  async #trash(paths: string[], entries: Map<string, WorkspaceEntry["kind"]>): Promise<void> {
+  /** Moves entries to the OS trash; returns the top-level paths that were trashed. */
+  async #trash(paths: string[], entries: Map<string, WorkspaceEntry["kind"]>): Promise<string[]> {
     const targets = paths.filter(
       (entryPath) => !paths.some((other) => other !== entryPath && within(other, entryPath)),
     );
+    const trashed: string[] = [];
     for (const entryPath of targets) {
-      if (this.#disposed) return;
+      if (this.#disposed) break;
       if (!entries.has(entryPath)) continue;
       try {
         const result = await this.api.trashEntry(this.workspaceId, entryPath);
         this.#adopt(result, entries);
         for (const removed of result.removed) this.#forget(removed);
+        trashed.push(entryPath);
       } catch (error) {
-        this.#fail(error);
+        this.#fail(error, "tree", entryPath);
       }
     }
+    return trashed;
   }
 
   #schedule(file: string): void {
@@ -669,12 +778,24 @@ export class CollabFileSync {
   }
 
   /** Writes the current document text using a bounded optimistic revision retry. */
-  async #writeFromDoc(file: string, known?: Map<string, WorkspaceEntry["kind"]>): Promise<void> {
+  async #writeFromDoc(
+    file: string,
+    known?: Map<string, WorkspaceEntry["kind"]>,
+    report = true,
+  ): Promise<void> {
     if (this.#disposed || !validPath(file, "file")) return;
     const currentContent = (): string | undefined =>
       treeKind(this.#types.tree.get(file)) === "file"
         ? this.#types.files.get(file)?.toString()
         : undefined;
+    // Disk text that neither this sync, the app nor the room produced is replaced below;
+    // report it.
+    const baseline = this.#disk.get(file);
+    let replaced = false;
+    const observe = (disk: WorkspaceFileSnapshot) => {
+      if (report && this.#outside(file, disk, baseline, currentContent())) replaced = true;
+    };
+    let busy = false;
     try {
       let expected = this.#revisions.get(file);
       for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
@@ -682,12 +803,13 @@ export class CollabFileSync {
         if (content === undefined || this.#disposed) return;
         if (this.#disk.get(file) === content && expected !== undefined) return;
         if (byteLength(content) > COLLAB_LIMITS.fileBytes) {
-          this.#skip(file);
+          this.#skip(file, "size");
           return;
         }
         if (expected === undefined) {
           const snapshot = await this.api.readFile(this.workspaceId, file);
           expected = snapshot.revision;
+          observe(snapshot);
           this.#remember(file, snapshot);
         }
         if (expected === null) {
@@ -713,7 +835,7 @@ export class CollabFileSync {
         content = currentContent();
         if (content === undefined || this.#disposed) return;
         if (byteLength(content) > COLLAB_LIMITS.fileBytes) {
-          this.#skip(file);
+          this.#skip(file, "size");
           return;
         }
         if (this.#disk.get(file) === content) return;
@@ -722,16 +844,19 @@ export class CollabFileSync {
         if (result.status === "saved" || result.snapshot.content === content) {
           this.#remember(file, result.snapshot);
           this.options.onDiskWrite?.(file, result.snapshot);
+          if (replaced && result.status === "saved") this.#notice("replaced", [file]);
           return;
         }
         // The shared document is authoritative while in a room, but every retry
         // still checks the observed revision. Repeated deletion is also bounded.
+        observe(result.snapshot);
         expected = result.snapshot.revision;
         if (expected === null) known = undefined;
       }
+      busy = true;
       throw new Error(`Could not save shared file '${file}': it keeps changing on disk.`);
     } catch (error) {
-      this.#fail(error);
+      this.#fail(error, busy ? "busy" : "write", file);
     }
   }
 
@@ -748,7 +873,7 @@ export class CollabFileSync {
       if (this.#timers.has(file) || !this.canMutate) return;
       this.session.doc.transact(() => applyMinimalDiff(text, snapshot.content!), this);
     } catch (error) {
-      this.#fail(error);
+      this.#fail(error, "read", file);
     }
   }
 
@@ -761,7 +886,7 @@ export class CollabFileSync {
       try {
         if (!this.#disposed) await action();
       } catch (error) {
-        this.#fail(error);
+        this.#fail(error, "sync");
       } finally {
         this.#inflight--;
         this.#update({ pendingWrites: this.#timers.size + this.#inflight });
@@ -793,9 +918,65 @@ export class CollabFileSync {
   }
 
   #fits(file: string, content: string): boolean {
-    if (canShareFile(this.#types.files, file, content)) return true;
-    this.#skip(file);
+    const limit = shareLimit(this.#types.files, file, content);
+    if (!limit) return true;
+    this.#skip(file, limit);
     return false;
+  }
+
+  /** Records a hash of every shared text a transaction changed. */
+  #noteVersions(transaction: Y.Transaction): void {
+    const files = new Set<string>();
+    for (const [type, keys] of transaction.changed) {
+      if (type === (this.#types.files as Y.AbstractType<unknown>)) {
+        for (const key of keys) if (key !== null) files.add(key);
+      } else if (type instanceof Y.Text && type.parent === this.#types.files) {
+        const key = type._item?.parentSub;
+        if (key) files.add(key);
+      }
+    }
+    for (const file of files) {
+      const text = this.#types.files.get(file);
+      if (!text) {
+        this.#seen.delete(file);
+        continue;
+      }
+      const hashes = this.#seen.get(file) ?? new Set<number>();
+      const hash = hashText(text.toString());
+      // Re-insert to keep the set ordered from oldest to newest.
+      hashes.delete(hash);
+      hashes.add(hash);
+      if (hashes.size > SEEN_VERSIONS) hashes.delete(hashes.values().next().value!);
+      this.#seen.set(file, hashes);
+    }
+  }
+
+  /** True when `disk` is local content that the room never held and is about to replace. */
+  #outside(
+    file: string,
+    disk: WorkspaceFileSnapshot,
+    baseline: string | undefined,
+    room: string | undefined,
+  ): boolean {
+    const content = disk.content;
+    if (content === null || room === undefined || content === room || content === baseline)
+      return false;
+    if (this.options.knownRevision?.(file, disk.revision)) return false;
+    return !this.#seen.get(file)?.has(hashText(content));
+  }
+
+  #notice(kind: CollabFileSyncNoticeKind, files: readonly string[]): void {
+    if (!files.length || this.#disposed) return;
+    const notices = [...this.#snapshot.notices];
+    const index = notices.findIndex((notice) => notice.kind === kind);
+    if (index < 0) notices.push({ id: ++this.#noticeId, kind, files: [...new Set(files)] });
+    else {
+      const existing = notices[index]!;
+      const merged = [...new Set([...existing.files, ...files])];
+      if (merged.length === existing.files.length) return;
+      notices[index] = { ...existing, files: merged };
+    }
+    this.#update({ notices });
   }
 
   #remember(file: string, snapshot: WorkspaceFileSnapshot): void {
@@ -821,22 +1002,24 @@ export class CollabFileSync {
       for (const key of [...map.keys()]) if (within(entryPath, key)) map.delete(key);
   }
 
-  #skip(file: string): void {
+  #skip(file: string, reason: CollabSkipReason): void {
     if (this.#snapshot.skipped.includes(file)) return;
-    this.#update({ skipped: [...this.#snapshot.skipped, file] });
+    this.#update({
+      skipped: [...this.#snapshot.skipped, file],
+      skipReasons: { ...this.#snapshot.skipReasons, [file]: reason },
+    });
   }
 
-  #fail(error: unknown): void {
-    this.#update({ phase: "error", error: message(error) });
+  #fail(error: unknown, code: CollabFileSyncErrorCode, file?: string): void {
+    this.#update({ phase: "error", error: message(error), errorCode: code, errorFile: file });
   }
 
   #update(patch: Partial<CollabFileSyncSnapshot>): void {
     const next = { ...this.#snapshot, ...patch };
     if (
-      next.phase === this.#snapshot.phase &&
-      next.pendingWrites === this.#snapshot.pendingWrites &&
-      next.skipped === this.#snapshot.skipped &&
-      next.error === this.#snapshot.error
+      (Object.keys(next) as (keyof CollabFileSyncSnapshot)[]).every(
+        (key) => next[key] === this.#snapshot[key],
+      )
     )
       return;
     this.#snapshot = next;
@@ -877,6 +1060,7 @@ export interface CollabFileSyncManagerDependencies {
   seedContent?: (workspaceId: string, file: string) => string | undefined;
   onDiskWrite?: (workspaceId: string, file: string, snapshot: WorkspaceFileSnapshot) => void;
   onTreeChange?: (result: WorkspaceMutationResult) => void;
+  knownRevision?: (workspaceId: string, file: string, revision: string | null) => boolean;
   report?: (error: unknown) => void;
   debounceMs?: number;
 }
@@ -947,13 +1131,13 @@ export class CollabFileSyncManager {
         workspaceId = summary.id;
       }
       if (!workspaceId || this.#session !== session) return;
-      this.#start(session, workspaceId);
+      this.#start(session, workspaceId, replaced && previous ? previous.sync : undefined);
     } catch (error) {
       if (this.#session === session) this.dependencies.report?.(error);
     }
   }
 
-  #start(session: CollabSession, workspaceId: string): void {
+  #start(session: CollabSession, workspaceId: string, previous?: CollabFileSync): void {
     const { dependencies } = this;
     const sync = new CollabFileSync(session, workspaceId, dependencies.workspace, {
       ...(dependencies.debounceMs !== undefined ? { debounceMs: dependencies.debounceMs } : {}),
@@ -963,6 +1147,13 @@ export class CollabFileSyncManager {
         : {}),
       onDiskWrite: (file, snapshot) => dependencies.onDiskWrite?.(workspaceId, file, snapshot),
       onTreeChange: (result) => dependencies.onTreeChange?.(result),
+      ...(previous ? { versions: previous.versions } : {}),
+      ...(dependencies.knownRevision
+        ? {
+            knownRevision: (file: string, revision: string | null) =>
+              dependencies.knownRevision!(workspaceId, file, revision),
+          }
+        : {}),
     });
     const readOnly = () =>
       session.getSnapshot().status !== "connected" ||

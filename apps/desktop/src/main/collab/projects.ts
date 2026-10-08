@@ -2,7 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { COLLAB_LIMITS, collabPathSchema } from "@kobrixa/collab-protocol";
-import type { CollabSharePreview } from "../../shared/collab.js";
+import type {
+  CollabJoinChange,
+  CollabJoinResolution,
+  CollabLocalErrorCode,
+  CollabPrepareResult,
+  CollabSharePreview,
+} from "../../shared/collab.js";
 import { dialog } from "electron";
 import type { WorkspaceSummary } from "../../shared/api.js";
 import { isIgnoredWorkspacePath } from "../workspace/search.js";
@@ -10,9 +16,33 @@ import type { WorkspaceService } from "../workspace/workspace.js";
 import type { CollabService } from "./service.js";
 import { CollabMirrors } from "./mirror.js";
 
+/** Carries a {@link CollabLocalErrorCode} across IPC as the error message. */
+export class CollabLocalError extends Error {
+  constructor(readonly code: CollabLocalErrorCode) {
+    super(code);
+    this.name = "CollabLocalError";
+  }
+}
+
+/** Files added, changed or removed in `current` relative to `baseline`, by path. */
+export function compareFingerprints(
+  current: Record<string, string>,
+  baseline: Record<string, string>,
+): CollabJoinChange[] {
+  const changes: CollabJoinChange[] = [];
+  for (const file of [...new Set([...Object.keys(current), ...Object.keys(baseline)])].sort()) {
+    if (!Object.hasOwn(baseline, file)) changes.push({ path: file, change: "added" });
+    else if (!Object.hasOwn(current, file)) changes.push({ path: file, change: "removed" });
+    else if (current[file] !== baseline[file]) changes.push({ path: file, change: "changed" });
+  }
+  return changes;
+}
+
 /** Protects local projects before a room's authoritative document can overwrite them. */
 export class CollabProjects {
   private bindings = new Map<string, string>();
+  /** Host project roots chosen in the folder picker but not yet confirmed by a join. */
+  private located = new Map<string, string>();
   private mirrors: CollabMirrors;
   constructor(
     private service: CollabService,
@@ -62,7 +92,7 @@ export class CollabProjects {
 
   async bindCreated(roomId: string, workspaceId: string): Promise<void> {
     const identity = this.service.identities.get(this.service.serverUrl(), roomId);
-    if (!identity) throw new Error("The server does not support saved room identities.");
+    if (!identity) throw new CollabLocalError("identity-unsupported");
     const summary = (await this.workspaces.refresh(workspaceId, {})).workspace;
     await this.service.identities.set({
       ...identity,
@@ -71,56 +101,61 @@ export class CollabProjects {
     });
   }
 
-  async prepare(roomId: string, _selectedWorkspace?: string): Promise<WorkspaceSummary | null> {
+  /**
+   * Opens the room's project. Local changes since the last sync are reported as
+   * a conflict until the caller chooses a `resolution`; "keep-copy" saves a
+   * separate copy first and aborts if that fails.
+   */
+  async prepare(
+    roomId: string,
+    _selectedWorkspace?: string,
+    resolution?: CollabJoinResolution,
+  ): Promise<CollabPrepareResult> {
     const restored = await this.service.resumeRoom(roomId);
-    if (!restored.ok) throw new Error(restored.error);
+    if (!restored.ok) return { status: "error", error: restored.error };
     const identity = this.service.identities.get(this.service.serverUrl(), roomId);
-    if (!identity) throw new Error("Saved room access is unavailable.");
+    if (!identity) return { status: "error", error: "identity-missing" };
+    const host = restored.value.role === "host";
     let summary: WorkspaceSummary;
-    if (restored.value.role === "host") {
-      if (identity.workspaceRoot) {
-        try {
-          summary = await this.workspaces.openDirectory(identity.workspaceRoot);
-        } catch {
-          const choice = await dialog.showOpenDialog({
-            title: "Locate the original shared project / 選擇原本分享的專案",
-            properties: ["openDirectory"],
-          });
-          if (choice.canceled || !choice.filePaths[0]) return null;
-          summary = await this.workspaces.openDirectory(choice.filePaths[0]);
-        }
-      } else {
-        throw new Error(
-          "The original project location was not saved. Open your preserved project and create a new room. / 原專案位置未保存，請開啟保留的專案並建立新房間。",
-        );
+    if (host) {
+      // A folder located while asking about a conflict is reused only for the answer.
+      if (!resolution) this.located.delete(roomId);
+      const saved = (resolution && this.located.get(roomId)) || identity.workspaceRoot;
+      if (!saved) return { status: "error", error: "project-location-missing" };
+      try {
+        summary = await this.workspaces.openDirectory(saved);
+      } catch {
+        const choice = await dialog.showOpenDialog({
+          title: "Locate the original shared project / 選擇原本分享的專案",
+          properties: ["openDirectory"],
+        });
+        if (choice.canceled || !choice.filePaths[0]) return { status: "cancelled" };
+        summary = await this.workspaces.openDirectory(choice.filePaths[0]);
       }
     } else summary = await this.mirrors.open(roomId, restored.value.projectName);
     const root = await this.workspaces.projectRoot(summary.id);
     this.bindings.set(roomId, summary.id);
-    const current = await this.fingerprint(summary);
-    if (
-      (Object.keys(current).length || Object.keys(identity.baseline ?? {}).length) &&
-      JSON.stringify(current) !== JSON.stringify(identity.baseline ?? {})
-    ) {
-      const answer = await dialog.showMessageBox({
-        type: "warning",
-        title: "Keep local changes / 保留本機修改",
-        message:
-          "Local files or drafts changed since the last room sync. / 本機檔案或草稿與上次同步不同。",
-        detail:
-          "A separate copy must be saved before joining. / 加入前會先保存獨立副本，成功後才同步房間內容。",
-        buttons: ["Keep a copy and join / 保留副本後加入", "Cancel / 取消"],
-        defaultId: 1,
-        cancelId: 1,
-      });
-      if (answer.response !== 0) return null;
-      await this.saveCopy(roomId);
+    const changes = compareFingerprints(await this.fingerprint(summary), identity.baseline ?? {});
+    let backupPath: string | undefined;
+    if (changes.length) {
+      if (!resolution) {
+        if (host) this.located.set(roomId, root);
+        return { status: "conflict", changes };
+      }
+      if (resolution === "keep-copy") {
+        try {
+          backupPath = await this.saveCopy(roomId);
+        } catch {
+          return { status: "error", error: "backup-failed" };
+        }
+      }
     }
+    this.located.delete(roomId);
     await this.service.identities.set({
       ...identity,
       workspaceRoot: root,
     });
-    return summary;
+    return { status: "ready", workspace: summary, ...(backupPath ? { backupPath } : {}) };
   }
 
   async checkpoint(roomId: string): Promise<void> {
@@ -135,14 +170,13 @@ export class CollabProjects {
     let id = this.bindings.get(roomId);
     if (!id) {
       const identity = this.service.identities.get(this.service.serverUrl(), roomId);
-      if (!identity?.workspaceRoot) throw new Error("Open the shared project first.");
+      if (!identity?.workspaceRoot) throw new CollabLocalError("project-unavailable");
       id = (await this.workspaces.openDirectory(identity.workspaceRoot)).id;
     }
     const root = await this.workspaces.projectRoot(id);
     const summary = (await this.workspaces.refresh(id, {})).workspace;
     const target = path.join(this.directory, "collab-backups", `${roomId}-${randomUUID()}`);
-    if (!path.relative(root, target).startsWith(".."))
-      throw new Error("The backup must be outside the project.");
+    if (!path.relative(root, target).startsWith("..")) throw new CollabLocalError("backup-failed");
     await mkdir(path.dirname(target), { recursive: true });
     await cp(root, target, {
       recursive: true,
@@ -154,7 +188,7 @@ export class CollabProjects {
       const destination = path.resolve(target, file);
       const relative = path.relative(target, destination);
       if (relative.startsWith("..") || path.isAbsolute(relative))
-        throw new Error("Invalid draft path.");
+        throw new CollabLocalError("backup-failed");
       await mkdir(path.dirname(destination), { recursive: true });
       await writeFile(destination, content);
     }

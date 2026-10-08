@@ -259,6 +259,75 @@
 .collab-join-dialog .collab-error {
   margin: 8px 0 0;
 }
+.collab-create-dialog input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.collab-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-block: 12px;
+}
+.collab-dialog-field > label {
+  display: block;
+}
+.collab-dialog-field small.collab-error {
+  color: var(--error);
+}
+.collab-password-row {
+  display: flex;
+  gap: 6px;
+}
+.collab-password-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.collab-password-toggle {
+  flex: 0 0 auto;
+  font-size: var(--font-small);
+}
+.collab-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 7px;
+  background: var(--editor);
+  font-size: var(--font-small);
+  line-height: 1.5;
+}
+.collab-callout p {
+  margin: 0;
+}
+.collab-share-summary,
+.collab-share-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-block: 12px;
+  font-size: var(--font-small);
+}
+.collab-share-summary p,
+.collab-share-status p,
+.collab-create-dialog .collab-dialog-note {
+  margin: 0;
+}
+.collab-share-status {
+  align-items: flex-start;
+}
+.collab-share-summary summary {
+  cursor: pointer;
+}
+.collab-share-path {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+}
+.collab-create-dialog .collab-dialog-note {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
 .collab-chip {
   gap: 5px;
   padding: 6px 8px;
@@ -381,6 +450,72 @@
   font-size: var(--font-small);
   overflow-wrap: anywhere;
 }
+.collab-invite-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.collab-invite-block > p {
+  margin: 0;
+}
+.collab-invite-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.collab-invite-label {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 600;
+}
+/* Short windows keep the chat readable; the hint stays in the code's description and the Copy tooltip. */
+@media (max-height: 760px) {
+  .collab-invite-share {
+    display: none;
+  }
+}
+.collab-invite-status:empty {
+  display: none;
+}
+.collab-invite-status {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+.collab-invite-row button[data-copied] {
+  border-color: var(--success);
+  color: var(--success);
+}
+.collab-room-recovery,
+.collab-room-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.collab-room-recovery > p,
+.collab-room-error > p {
+  flex: 1 1 160px;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.collab-room-error,
+.collab-room-message {
+  flex: 0 0 auto;
+}
+.collab-room-message {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.collab-room-message:empty {
+  margin-top: -10px;
+}
+.collab-leave-confirm header p {
+  margin: 0 0 6px;
+}
 .collab-people-page {
   min-height: 0;
   flex: 1;
@@ -410,13 +545,66 @@
 .collab-recent > li {
   flex-wrap: wrap;
 }
+.collab-recent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 1 auto;
+}
+.collab-recent button:disabled[aria-busy="true"] {
+  cursor: progress;
+}
+.collab-recent-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.92em;
+}
+.collab-recent-error button {
+  margin-inline-start: 4px;
+  padding: 2px 7px;
+}
 .collab-chip {
   max-width: 280px;
 }
+.collab-chip-label,
 .collab-chip-count {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.collab-chip-count {
+  color: var(--muted);
+}
+/* Unread chat and control requests get separate, distinguishable badges. */
+.collab-chip-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  color: var(--on-accent);
+  background: var(--accent);
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1;
+}
+.collab-chip-badge.requests {
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  box-shadow: inset 0 0 0 1px var(--warning);
+}
+.collab-chip-badge svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .bottom-activity {
   overflow-y: auto;
@@ -457,16 +645,91 @@
   font-size: var(--font-small);
 }
 
-.collab-sync-notice {
+.collab-sync {
+  display: flex;
   flex: 0 0 auto;
-  max-height: 128px;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40%;
   overflow: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-small);
+  line-height: 1.5;
+}
+.collab-sync p {
+  margin: 0;
+}
+.collab-sync-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   overflow-wrap: anywhere;
   margin: 0;
-  padding: 8px 12px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--warning);
+  border-radius: 4px;
+  background: var(--raised);
+}
+.collab-sync-notice[data-kind="error"] {
+  border-left-color: var(--error);
+}
+.collab-sync-notice:is(details) {
+  border-left-color: var(--muted);
 }
 .collab-sync-notice summary {
   cursor: pointer;
+}
+.collab-sync-notice ul {
+  max-height: 96px;
+  overflow: auto;
+  margin: 0;
+  padding-left: 18px;
+}
+.collab-sync-notice > button,
+.collab-sync-actions {
+  align-self: flex-start;
+}
+.collab-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.collab-sync-notice code {
+  font-size: var(--font-small);
+  white-space: pre-wrap;
+}
+.collab-sync-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.collab-sync-spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .collab-sync-spinner {
+    animation: collab-spin 0.9s linear infinite;
+  }
+}
+@keyframes collab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.collab-removed-files {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding-left: 20px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-height: 700px) {
