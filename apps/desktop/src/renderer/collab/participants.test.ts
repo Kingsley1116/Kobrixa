@@ -45,6 +45,7 @@ async function render(
   locale: "en" | "zh-TW",
   entries: readonly RosterEntry[],
   api: Api = { kick: vi.fn(ok), setRole: vi.fn(ok) },
+  closed = false,
 ): Promise<Api> {
   await act(async () =>
     root.render(
@@ -54,6 +55,7 @@ async function render(
         roomId: "room",
         entries,
         isHost: true,
+        closed,
       }),
     ),
   );
@@ -98,6 +100,9 @@ describe("Participants", () => {
       await render(locale, [host]);
       expect(query("[data-testid=collab-participants-loading]")).toBeNull();
       expect(document.body.textContent).toContain(collabCopy[locale].noParticipants);
+      // A session that closed before any roster arrived stops loading.
+      await render(locale, [], undefined, true);
+      expect(query("[data-testid=collab-participants-loading]")).toBeNull();
     },
   );
 

@@ -527,6 +527,7 @@ function Room({
           roomId={connection.roomId}
           entries={entries}
           isHost={isHost && snapshot.status === "connected"}
+          closed={snapshot.status === "closed"}
         />
       </div>
       <div
