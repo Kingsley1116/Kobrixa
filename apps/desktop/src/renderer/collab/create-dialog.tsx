@@ -113,7 +113,12 @@ export function CreateDialog({
         {error ? collabErrorMessage(copy, error) : ""}
       </p>
       <DialogActions>
-        <button type="button" disabled={pending} onClick={onClose}>
+        <button
+          type="button"
+          data-testid="collab-create-cancel"
+          disabled={pending}
+          onClick={onClose}
+        >
           {copy.cancel}
         </button>
         <button

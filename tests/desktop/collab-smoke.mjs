@@ -412,6 +412,13 @@ async function checkJoinConflict({
     { path: "lib/extra.bpm", change: "added" },
   ]);
   takeCollabPrepareCalls();
+  // Hosts confirm leaving because the room stays open for everyone else.
+  const leaveAsHost = async () => {
+    await js(click("[data-testid=collab-leave]"));
+    await until('Boolean(document.querySelector("[data-testid=collab-leave-confirmed]"))');
+    await js(click("[data-testid=collab-leave-confirmed]"));
+    await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+  };
   const start = async () => {
     await js(click("[data-testid=collab-start]"));
     await until('Boolean(document.querySelector(".collab-create-dialog"))');
@@ -443,15 +450,14 @@ async function checkJoinConflict({
     "",
   );
   assert.deepEqual(takeCollabPrepareCalls(), [null]);
-  await js(click(".collab-create-dialog button[type=button]"));
+  await js(click("[data-testid=collab-create-cancel]"));
   await until('!document.querySelector(".collab-create-dialog")');
   // Replace joins without a copy.
   await start();
   await js(click("[data-testid=collab-conflict-replace]"));
   await until('Boolean(document.querySelector("[data-testid=collab-room]"))');
   assert.deepEqual(takeCollabPrepareCalls(), [null, "replace"]);
-  await js(click("[data-testid=collab-leave]"));
-  await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+  await leaveAsHost();
   // Keep a copy joins and reports where the copy was saved.
   await start();
   await js(click("[data-testid=collab-conflict-keep]"));
@@ -460,7 +466,6 @@ async function checkJoinConflict({
   await until(
     'document.querySelector(".operation-status")?.title.includes("Local copy saved to /tmp/room-copy")',
   );
-  await js(click("[data-testid=collab-leave]"));
-  await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+  await leaveAsHost();
   setCollabPrepareConflict(null);
 }
