@@ -259,6 +259,75 @@
 .collab-join-dialog .collab-error {
   margin: 8px 0 0;
 }
+.collab-create-dialog input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.collab-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-block: 12px;
+}
+.collab-dialog-field > label {
+  display: block;
+}
+.collab-dialog-field small.collab-error {
+  color: var(--error);
+}
+.collab-password-row {
+  display: flex;
+  gap: 6px;
+}
+.collab-password-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.collab-password-toggle {
+  flex: 0 0 auto;
+  font-size: var(--font-small);
+}
+.collab-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 7px;
+  background: var(--editor);
+  font-size: var(--font-small);
+  line-height: 1.5;
+}
+.collab-callout p {
+  margin: 0;
+}
+.collab-share-summary,
+.collab-share-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-block: 12px;
+  font-size: var(--font-small);
+}
+.collab-share-summary p,
+.collab-share-status p,
+.collab-create-dialog .collab-dialog-note {
+  margin: 0;
+}
+.collab-share-status {
+  align-items: flex-start;
+}
+.collab-share-summary summary {
+  cursor: pointer;
+}
+.collab-share-path {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+}
+.collab-create-dialog .collab-dialog-note {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
 .collab-chip {
   gap: 5px;
   padding: 6px 8px;
