@@ -1,6 +1,7 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import type { Locale } from "../i18n/copy.js";
 import type { CollabApi } from "../../shared/collab.js";
+import { collabCopy } from "./collab-copy.js";
 import type { CollabStore } from "./store.js";
 import {
   DeviceControl,
@@ -77,75 +78,106 @@ export function DeviceControlBar({
   state: DeviceControlSnapshot;
   locale: Locale;
 }): React.JSX.Element {
-  const zh = locale === "zh-TW";
-  const connected = control.session.getSnapshot().status === "connected";
+  const copy = collabCopy[locale];
+  const hintId = useId();
   const holder = state.isHolder
-    ? zh
-      ? "你持有裝置控制權"
-      : "You have device control"
+    ? copy.deviceControlYours
     : deviceControlNotice(locale, state.holderName);
+  const canAskHost = !state.isHolder && !state.isHost && !state.requested;
+  // Explain disabled actions in visible text instead of a hover-only tooltip.
+  const hint = !state.connected
+    ? copy.deviceControlNotConnected
+    : canAskHost && state.isViewer
+      ? copy.requestControlViewer
+      : undefined;
+  const describedBy = (disabled: boolean) => (disabled && hint ? hintId : undefined);
   return (
-    <section className="device-control-bar" aria-label={zh ? "裝置控制權" : "Device control"}>
+    <section
+      className="device-control-bar"
+      aria-label={copy.deviceControl}
+      data-testid="device-control-bar"
+    >
       <p className="device-control-holder" role="status">
-        <span className={`status-dot ${state.isHolder ? "is-holder" : ""}`} />
-        <span>
-          {holder}
-          {!state.holderOnline && (zh ? "（離線）" : " (offline)")}
-        </span>
+        <span className={`status-dot ${state.isHolder ? "is-holder" : ""}`} aria-hidden="true" />
+        <span>{state.holderOnline ? holder : copy.deviceControlOffline(holder)}</span>
       </p>
+      {state.requested && (
+        <p className="device-control-pending" role="status" data-testid="device-control-pending">
+          {copy.controlRequestPending}
+        </p>
+      )}
+      {state.declined && (
+        <p className="device-control-declined" role="status" data-testid="device-control-declined">
+          <span>{copy.controlRequestDeclined}</span>
+          <button onClick={() => control.dismissDeclined()}>{copy.dismiss}</button>
+        </p>
+      )}
       <div className="device-control-actions">
-        {state.requested ? (
-          <button disabled={!connected} onClick={() => control.cancelRequest()}>
-            {zh ? "取消請求" : "Cancel request"}
+        {state.requested && (
+          <button
+            disabled={!state.connected}
+            aria-describedby={describedBy(!state.connected)}
+            onClick={() => control.cancelRequest()}
+            data-testid="device-control-cancel"
+          >
+            {copy.cancelControlRequest}
           </button>
-        ) : (
-          !state.isHolder &&
-          !state.isHost && (
-            <button
-              disabled={!state.canRequest}
-              title={
-                state.canRequest
-                  ? undefined
-                  : !connected
-                    ? zh
-                      ? "等待連線與同步完成"
-                      : "Waiting for connection and sync"
-                    : zh
-                      ? "檢視者無法請求控制權"
-                      : "Viewers cannot request control"
-              }
-              onClick={() => control.request()}
-            >
-              {zh ? "請求控制權" : "Request control"}
-            </button>
-          )
+        )}
+        {canAskHost && (
+          <button
+            disabled={!state.canRequest}
+            aria-describedby={describedBy(!state.canRequest)}
+            onClick={() => control.request()}
+            data-testid="device-control-request"
+          >
+            {copy.requestControl}
+          </button>
         )}
         {state.isHolder && !state.isHost && (
-          <button onClick={() => control.release()}>
-            {zh ? "交還控制權" : "Give back control"}
-          </button>
+          <button onClick={() => control.release()}>{copy.giveBackControl}</button>
         )}
         {state.isHost && !state.isHolder && (
-          <button disabled={!connected} onClick={() => control.reclaim()}>
-            {zh ? "收回控制權" : "Take back control"}
+          <button
+            disabled={!state.connected}
+            aria-describedby={describedBy(!state.connected)}
+            onClick={() => control.reclaim()}
+          >
+            {copy.takeBackControl}
           </button>
         )}
       </div>
       {state.isHost && state.requests.length > 0 && (
-        <ul className="device-control-requests" aria-label={zh ? "控制權請求" : "Control requests"}>
+        <ul className="device-control-requests" aria-label={copy.controlRequests}>
           {state.requests.map((request) => (
-            <li key={request.participantId}>
-              <span>{zh ? `${request.name} 請求控制權` : `${request.name} requests control`}</span>
-              <button
-                className="primary"
-                disabled={!connected}
-                onClick={() => control.grant(request.participantId)}
-              >
-                {zh ? "給予控制權" : "Give control"}
-              </button>
+            <li key={request.participantId} data-testid="device-control-request-item">
+              <span>{copy.controlRequestFrom(request.name)}</span>
+              <span className="device-control-request-actions">
+                <button
+                  disabled={!state.connected}
+                  aria-describedby={describedBy(!state.connected)}
+                  onClick={() => control.decline(request.participantId)}
+                  data-testid="device-control-decline"
+                >
+                  {copy.declineControl}
+                </button>
+                <button
+                  className="primary"
+                  disabled={!state.connected}
+                  aria-describedby={describedBy(!state.connected)}
+                  onClick={() => control.grant(request.participantId)}
+                  data-testid="device-control-grant"
+                >
+                  {copy.giveControl}
+                </button>
+              </span>
             </li>
           ))}
         </ul>
+      )}
+      {hint && (
+        <p id={hintId} className="device-control-hint" data-testid="device-control-hint">
+          {hint}
+        </p>
       )}
     </section>
   );

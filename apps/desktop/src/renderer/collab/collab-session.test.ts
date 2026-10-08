@@ -87,8 +87,15 @@ class FakeRelay {
       const update = decoding.readVarUint8Array(decoder);
       applyAwarenessUpdate(this.awareness, update, RELAY);
       for (const peer of this.live()) if (peer !== socket) peer.deliver(data);
+    } else if (type === MESSAGE_TYPE.control) {
+      this.controls.push({
+        token: socket.token,
+        command: JSON.parse(decoding.readVarString(decoder)),
+      });
     }
   }
+
+  readonly controls: { token: string; command: unknown }[] = [];
 
   notice(socket: FakeSocket, notice: Notice): void {
     const encoder = encoding.createEncoder();
@@ -311,6 +318,31 @@ describe("createCollabSession", () => {
     expect(a.getSnapshot().role).toBe("viewer");
     expect(a.awareness.getLocalState()).toMatchObject({ role: "viewer" });
     expect(b.awareness.getStates().get(a.doc.clientID)).toMatchObject({ role: "viewer" });
+  });
+
+  it("sends host decline commands and reports declined notices", async () => {
+    const { relay, open } = setup();
+    const host = open(1, "host");
+    const editor = open(2);
+    expect(host.declineControlRequest?.("participant-2")).toBe(false);
+    await flush();
+    expect(editor.declineControlRequest?.("participant-1")).toBe(false);
+    expect(host.declineControlRequest?.("participant-2")).toBe(true);
+    await flush();
+    expect(relay.controls).toEqual([
+      { token: "token 1/+=", command: { type: "decline", participantId: "participant-2" } },
+    ]);
+
+    const declined: string[] = [];
+    const unsubscribe = editor.onControlDeclined!(() => declined.push("editor"));
+    host.onControlDeclined!(() => declined.push("host"));
+    relay.notice(relay.sockets[1]!, { type: "control-declined" });
+    await flush();
+    expect(declined).toEqual(["editor"]);
+    unsubscribe();
+    relay.notice(relay.sockets[1]!, { type: "control-declined" });
+    await flush();
+    expect(declined).toEqual(["editor"]);
   });
 
   it("ignores invalid notices", async () => {

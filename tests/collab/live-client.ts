@@ -162,6 +162,16 @@ async function main(): Promise<void> {
     await until(() => hostControl.getSnapshot().isHolder, "host starts with control");
     guestControl.request();
     await until(() => hostControl.getSnapshot().requests.length === 1, "request reaches host");
+    hostControl.decline(guest.connection.participantId);
+    await until(
+      () => guestControl.getSnapshot().declined && !guestControl.getSnapshot().requested,
+      "decline reaches guest",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.deepEqual(hostTypes.control.get("requests"), [], "declined request stays removed");
+    assert.equal(hostControl.getSnapshot().requests.length, 0);
+    guestControl.request();
+    await until(() => hostControl.getSnapshot().requests.length === 1, "request after decline");
     hostControl.grant(guest.connection.participantId);
     await until(
       () => guestControl.getSnapshot().isHolder && !hostControl.getSnapshot().isHolder,
@@ -304,7 +314,7 @@ async function main(): Promise<void> {
       error: "room-closed",
     });
     console.log(
-      "Live collaboration passes: optional room passwords, persistent private recovery credentials, same host/viewer identity after desktop restart, end-room invalidation, desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
+      "Live collaboration passes: optional room passwords, persistent private recovery credentials, same host/viewer identity after desktop restart, end-room invalidation, desktop HTTP service, two real WebSockets, host seed, guest mirror, bidirectional text/tree, awareness, chat, control decline and grant, viewer enforcement, safe role promotion, kick, and server state/revocation across " +
         (remote ? "fresh client connections." : "a Worker restart."),
     );
   } finally {

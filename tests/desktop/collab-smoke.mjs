@@ -228,6 +228,24 @@ export async function checkCollab(context) {
       /^Actions for /,
     );
     await js(click(".collab-participant .more-button"));
+    // The host can decline; the requester stops waiting and learns why.
+    assert.equal(await js("window.__collabSmoke.peerControl.getSnapshot().requested"), true);
+    assert.equal(
+      await js('document.querySelector("[data-testid=device-control-decline]").textContent'),
+      "Decline",
+    );
+    await js(click("[data-testid=device-control-decline]"));
+    await until('!document.querySelector(".device-control-requests")');
+    assert.deepEqual(
+      await js(
+        "(() => { const s = window.__collabSmoke.peerControl.getSnapshot(); return { requested: s.requested, declined: s.declined }; })()",
+      ),
+      { requested: false, declined: true },
+    );
+    // Request again so the layout checks below include a pending request.
+    await js("window.__collabSmoke.peerControl.request()");
+    await until('Boolean(document.querySelector(".device-control-requests"))');
+    assert.equal(await js("window.__collabSmoke.peerControl.getSnapshot().declined"), false);
     // A peer's open file shows as "Editing …"; the host holds device control by default.
     const peerFile = await js(
       '(() => { const file = [...window.__collabSmoke.session.doc.getMap("files").keys()][0]; window.__collabSmoke.room.sessions[1].awareness.setLocalStateField("file", file); return file; })()',
