@@ -413,10 +413,44 @@
 .collab-chip {
   max-width: 280px;
 }
+.collab-chip-label,
 .collab-chip-count {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.collab-chip-count {
+  color: var(--muted);
+}
+/* Unread chat and control requests get separate, distinguishable badges. */
+.collab-chip-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  color: var(--on-accent);
+  background: var(--accent);
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1;
+}
+.collab-chip-badge.requests {
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  box-shadow: inset 0 0 0 1px var(--warning);
+}
+.collab-chip-badge svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .bottom-activity {
   overflow-y: auto;

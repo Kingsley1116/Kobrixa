@@ -263,3 +263,48 @@ it("keeps incoming messages unread while scrolled up or while the window is hidd
   host.setVisible(true);
   expect(host.getSnapshot().unread).toBe(0);
 });
+
+it("explains why sending is unavailable", () => {
+  const { editor, viewer, chats } = room();
+  const [, editorChat, viewerChat] = chats;
+  const update = (patch: Partial<ReturnType<LinkedSession["getSnapshot"]>>): void =>
+    (editor as unknown as { update(patch: object): void }).update(patch);
+  expect(editorChat.getSnapshot().blocked).toBeNull();
+  expect(viewerChat.getSnapshot().blocked).toBe("viewer");
+  update({ status: "reconnecting" });
+  expect(editorChat.getSnapshot()).toMatchObject({ canSend: false, blocked: "offline" });
+  update({ status: "syncing", synced: false });
+  expect(editorChat.getSnapshot()).toMatchObject({ canSend: false, blocked: "syncing" });
+  update({ status: "connected", synced: true });
+  expect(editorChat.getSnapshot()).toMatchObject({ canSend: true, blocked: null });
+  editor.close("left");
+  expect(editorChat.getSnapshot()).toMatchObject({ canSend: false, blocked: "closed" });
+  const serverViewer = new ChatController(viewer, {
+    sendChat: async () => ({ ok: false, error: "network" }),
+  });
+  expect(serverViewer.getSnapshot()).toMatchObject({ canSend: true, blocked: null });
+});
+
+it.each([
+  ["rate-limited", { ok: false, reason: "rate-limited" }],
+  ["network", { ok: false, reason: "network" }],
+  ["unavailable", { ok: false, reason: "network" }],
+  ["removed", { ok: false, reason: "rejected", error: "removed" }],
+  ["bad-request", { ok: false, reason: "rejected", error: "bad-request" }],
+] as const)("keeps the %s service error distinct", async (error, expected) => {
+  const { editor } = room();
+  const controller = new ChatController(editor, {
+    sendChat: async () => ({ ok: false, error }),
+  });
+  expect(await controller.send("hello")).toEqual(expected);
+});
+
+it("reports thrown transport failures as network errors", async () => {
+  const { editor } = room();
+  const controller = new ChatController(editor, {
+    sendChat: async () => {
+      throw new Error("ipc down");
+    },
+  });
+  expect(await controller.send("hello")).toEqual({ ok: false, reason: "network" });
+});
