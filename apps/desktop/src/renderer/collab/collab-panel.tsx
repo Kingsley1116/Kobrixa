@@ -27,6 +27,16 @@ type PanelProps = {
   control?: ReactNode;
 };
 
+function formatJoinedAt(joinedAt: number, locale: Locale): string {
+  try {
+    return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(
+      joinedAt,
+    );
+  } catch {
+    return new Date(joinedAt).toLocaleString();
+  }
+}
+
 export function CollabPanel(props: PanelProps): React.JSX.Element {
   const { store, api, locale, projectName } = props;
   const latest = useRef(props);
@@ -58,24 +68,26 @@ export function CollabPanel(props: PanelProps): React.JSX.Element {
   const [joinCode, setJoinCode] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [preview, setPreview] = useState<CollabSharePreview>();
-  const [previewError, setPreviewError] = useState("");
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
   useEffect(() => {
     if (!creating || !props.projectId) return;
     let active = true;
     setPreview(undefined);
-    setPreviewError("");
+    setPreviewFailed(false);
     void api.previewProject(props.projectId).then(
       (value) => {
         if (active) setPreview(value);
       },
       (error) => {
-        if (active) setPreviewError(String(error));
+        console.warn("Couldn't preview the shared project files", error);
+        if (active) setPreviewFailed(true);
       },
     );
     return () => {
       active = false;
     };
-  }, [creating, props.projectId, api]);
+  }, [creating, props.projectId, api, previewAttempt]);
   const busy = state.pending !== null;
   useEffect(() => {
     if (session) {
@@ -114,53 +126,108 @@ export function CollabPanel(props: PanelProps): React.JSX.Element {
         {projectName ? copy.startHint(projectName) : copy.startNeedsProject}
       </p>
       {!projectName && (
-        <button onClick={props.onOpenProject}>
-          {locale === "zh-TW" ? "開啟專案" : "Open project"}
+        <button data-testid="collab-open-project" onClick={props.onOpenProject}>
+          {copy.openProject}
         </button>
       )}
-      {state.startError && (
+      {state.startError && !creating && (
         <p className="collab-error" role="alert">
           {collabErrorMessage(copy, state.startError)}
         </p>
       )}
-      <section className="collab-section">
+      <section className="collab-section" aria-busy={state.loading}>
         <h3>{copy.recentRooms}</h3>
-        {!state.recentRooms.length && <p className="collab-muted">{copy.noRecentRooms}</p>}
-        <ul className="collab-recent">
-          {state.recentRooms.map((room) => (
-            <li key={room.roomId}>
-              <span className="collab-recent-main">
-                <strong className="collab-recent-name" title={room.projectName}>
-                  {room.projectName}
-                </strong>
-                <span className="collab-muted">{copy.roles[room.role]}</span>
-              </span>
-              <button
-                disabled={busy}
-                onClick={() => {
-                  if (room.canResume) void lobby.resumeRoom(room.roomId);
-                  else if (room.inviteCode) setJoinCode(room.inviteCode);
-                }}
-              >
-                {copy.rejoin}
-              </button>
-              {!room.canResume && room.role === "host" && (
-                <p className="collab-muted">
-                  {locale === "zh-TW"
-                    ? "舊版主持憑證未保存，無法以名稱或密碼恢復主持權。請開啟保留的專案並建立新房間。"
-                    : "This older room has no saved host credential. A name or password cannot restore ownership. Open your retained project to create a new room."}
-                </p>
-              )}
-            </li>
-          ))}
+        {state.loading && !state.recentRooms.length && (
+          <p className="collab-muted" role="status" data-testid="collab-recent-loading">
+            {copy.loadingRecentRooms}
+          </p>
+        )}
+        {state.recentRoomsError === "load" && !state.loading && (
+          <p
+            className="collab-error collab-recent-error"
+            role="alert"
+            data-testid="collab-recent-error"
+          >
+            {copy.recentRoomsLoadFailed}{" "}
+            <button data-testid="collab-recent-retry" onClick={() => void lobby.load()}>
+              {copy.retry}
+            </button>
+          </p>
+        )}
+        {state.recentRoomsError === "forget" && (
+          <p className="collab-error" role="alert" data-testid="collab-recent-error">
+            {copy.forgetRoomFailed}
+          </p>
+        )}
+        {state.loaded &&
+          !state.loading &&
+          state.recentRoomsError !== "load" &&
+          !state.recentRooms.length && <p className="collab-muted">{copy.noRecentRooms}</p>}
+        <ul className="collab-recent" data-testid="collab-recent">
+          {state.recentRooms.map((room) => {
+            const noteId = `collab-recent-note-${room.roomId}`;
+            const note = room.canResume
+              ? null
+              : room.role === "host"
+                ? copy.legacyHostRoom
+                : room.inviteCode
+                  ? copy.guestRejoinWithCode
+                  : copy.guestNoInviteCode;
+            const canRejoin = !!room.canResume || !!room.inviteCode;
+            const rejoining = state.resumingRoomId === room.roomId;
+            return (
+              <li key={room.roomId} data-testid="collab-recent-room">
+                <span className="collab-recent-main">
+                  <strong className="collab-recent-name" title={room.projectName}>
+                    {room.projectName}
+                  </strong>
+                  <span className="collab-muted">
+                    {copy.roles[room.role]} · {copy.joinedAt(formatJoinedAt(room.joinedAt, locale))}
+                  </span>
+                </span>
+                <span className="collab-recent-actions">
+                  <button
+                    data-testid="collab-rejoin"
+                    disabled={busy || !canRejoin}
+                    aria-busy={rejoining}
+                    aria-describedby={note ? noteId : undefined}
+                    onClick={() => {
+                      if (room.canResume) void lobby.resumeRoom(room.roomId);
+                      else if (room.inviteCode) {
+                        lobby.clearJoinError();
+                        setJoinCode(room.inviteCode);
+                      }
+                    }}
+                  >
+                    {rejoining ? copy.rejoining : copy.rejoin}
+                  </button>
+                  <button
+                    data-testid="collab-forget"
+                    disabled={busy || state.loading}
+                    aria-label={copy.forgetRoomLabel(room.projectName)}
+                    title={copy.forgetRoomLabel(room.projectName)}
+                    onClick={() => void lobby.forgetRoom(room.roomId)}
+                  >
+                    {copy.forgetRoom}
+                  </button>
+                </span>
+                {note && (
+                  <p id={noteId} className="collab-muted collab-recent-note">
+                    {note}
+                  </p>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </section>
       {creating && projectName && (
         <CreateDialog
           locale={locale}
           preview={preview}
-          previewError={previewError}
-          previewLoading={!!props.projectId && !preview}
+          previewError={previewFailed ? copy.previewFailed : ""}
+          previewLoading={!!props.projectId && !preview && !previewFailed}
+          onRetryPreview={() => setPreviewAttempt((attempt) => attempt + 1)}
           copy={copy}
           projectName={projectName}
           displayName={state.displayName}

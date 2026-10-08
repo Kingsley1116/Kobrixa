@@ -150,6 +150,7 @@ const search = createSearchFixture(fixtures, searchHelpers);
 const diagnostics = createDiagnosticsFixture(language);
 let collabPreferences = { displayName: "", recentRooms: [] };
 let collabDeviceControl = null;
+let collabPreviewFailures = 0;
 let updateState = {
   revision: 0,
   currentVersion: "1.0.0",
@@ -383,7 +384,13 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     return;
   }
   if (name === "collabPrepareProject") return workspace(firstId);
-  if (name === "collabPreviewProject") return { shared: Object.keys(fixture.files), skipped: [] };
+  if (name === "collabPreviewProject") {
+    if (collabPreviewFailures > 0) {
+      collabPreviewFailures -= 1;
+      throw new Error("smoke: preview unavailable");
+    }
+    return { shared: Object.keys(fixture.files), skipped: [] };
+  }
   if (name === "collabCheckpoint") return;
   if (name === "collabCloseRoom") return { ok: true, value: null };
   if (name === "collabSaveCopy") return "/tmp/room-copy";
@@ -561,6 +568,9 @@ app
       temporary,
       collabPreferences: () => collabPreferences,
       collabDeviceControl: () => collabDeviceControl,
+      failNextCollabPreview: () => {
+        collabPreviewFailures = 1;
+      },
     };
     const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {

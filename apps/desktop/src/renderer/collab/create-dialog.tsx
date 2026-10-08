@@ -12,6 +12,7 @@ export function CreateDialog({
   preview,
   previewLoading = false,
   previewError,
+  onRetryPreview,
   projectName,
   displayName,
   onName,
@@ -25,6 +26,7 @@ export function CreateDialog({
   preview?: CollabSharePreview | undefined;
   previewLoading?: boolean;
   previewError?: string;
+  onRetryPreview?(): void;
   projectName: string;
   displayName: string;
   onName?(name: string): void;
@@ -70,7 +72,16 @@ export function CreateDialog({
       {previewLoading && !previewError && (
         <p role="status">{locale === "zh-TW" ? "正在檢查分享檔案…" : "Checking files to share…"}</p>
       )}
-      {previewError && <p role="alert">{previewError}</p>}
+      {previewError && (
+        <p role="alert">
+          {previewError}{" "}
+          {onRetryPreview && (
+            <button type="button" data-testid="collab-preview-retry" onClick={onRetryPreview}>
+              {copy.retry}
+            </button>
+          )}
+        </p>
+      )}
       {preview && (
         <details open={preview.skipped.length > 0}>
           <summary>
