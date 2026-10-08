@@ -97,6 +97,10 @@ import { CollabWorkspace } from "./collab/collab-workspace.js";
 import { chatDrafts } from "./collab/chat-drafts.js";
 import { CollabStatusChip } from "./collab/status-chip.js";
 import { DeviceControlBar, blockedNotice, useDeviceControl } from "./collab/device-control-bar.js";
+import { JoinConflictDialog } from "./collab/join-conflict-dialog.js";
+import { CollabStartError } from "./collab/collab-lobby.js";
+import { collabCopy } from "./collab/collab-copy.js";
+import type { CollabJoinChange, CollabJoinResolution } from "../shared/collab.js";
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
@@ -218,6 +222,14 @@ export function App(): React.JSX.Element {
   const sessionSaveTimer = useRef<number | undefined>(undefined);
   const sessionWrites = useRef<Promise<void>>(Promise.resolve());
   const [pendingCloseProject, setPendingCloseProject] = useState<string>();
+  const [joinConflict, setJoinConflict] = useState<{
+    projectName: string;
+    changes: CollabJoinChange[];
+    resolve(resolution: CollabJoinResolution | null): void;
+  }>();
+  // Settles a pending join conflict as cancelled if it is replaced or the app unmounts.
+  const joinConflictResolve = useRef<(resolution: CollabJoinResolution | null) => void>(undefined);
+  useEffect(() => () => joinConflictResolve.current?.(null), []);
   const [closingProject, setClosingProject] = useState(false);
   const closingProjectRef = useRef(false);
   const [controller] = useState(() => new ExecutionController(window.kobrixa));
@@ -3597,13 +3609,31 @@ export function App(): React.JSX.Element {
               onStart={async (connection) => {
                 const selected = sessions.activeId;
                 await flushDrafts();
-                const summary = await window.kobrixa.collab.prepareProject(
-                  connection.roomId,
-                  selected,
-                );
-                if (!summary) return false;
-                await collabCallbacks.current.adopt(summary);
-                collab.start({ ...connection, workspaceId: summary.id });
+                const prepare = (resolution?: CollabJoinResolution) =>
+                  window.kobrixa.collab.prepareProject(connection.roomId, selected, resolution);
+                let prepared = await prepare();
+                if (prepared.status === "conflict") {
+                  const { changes } = prepared;
+                  joinConflictResolve.current?.(null);
+                  let settle: (resolution: CollabJoinResolution | null) => void = () => {};
+                  const resolution = await new Promise<CollabJoinResolution | null>((resolve) => {
+                    settle = resolve;
+                    joinConflictResolve.current = resolve;
+                    setJoinConflict({ projectName: connection.projectName, changes, resolve });
+                  });
+                  if (joinConflictResolve.current === settle)
+                    joinConflictResolve.current = undefined;
+                  if (!resolution) return false;
+                  prepared = await prepare(resolution);
+                }
+                if (prepared.status === "cancelled") return false;
+                if (prepared.status === "error") throw new CollabStartError(prepared.error);
+                // A second conflict after choosing would mean the answer was ignored.
+                if (prepared.status !== "ready") throw new CollabStartError("prepare-failed");
+                await collabCallbacks.current.adopt(prepared.workspace);
+                collab.start({ ...connection, workspaceId: prepared.workspace.id });
+                if (prepared.backupPath)
+                  setStatus(collabCopy[locale].joinBackupSaved(prepared.backupPath));
                 return true;
               }}
               onLeavingChange={(leaving) => {
@@ -3810,6 +3840,17 @@ export function App(): React.JSX.Element {
             </button>
           </DialogActions>
         </Dialog>
+      )}
+      {joinConflict && (
+        <JoinConflictDialog
+          locale={locale}
+          projectName={joinConflict.projectName}
+          changes={joinConflict.changes}
+          onChoose={(resolution) => {
+            setJoinConflict(undefined);
+            joinConflict.resolve(resolution);
+          }}
+        />
       )}
       {pendingCloseProject && (
         <Dialog

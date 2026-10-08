@@ -1,6 +1,6 @@
 import type { Role } from "@kobrixa/collab-protocol";
 import type { Locale } from "../i18n/copy.js";
-import type { CollabErrorCode } from "../../shared/collab.js";
+import type { CollabErrorCode, CollabJoinChange } from "../../shared/collab.js";
 import type { CollabCloseReason, CollabStatus } from "./types.js";
 
 export type DisplayNameProblem = "empty" | "too-long" | "invalid";
@@ -42,6 +42,24 @@ const en = {
   join: "Join",
   joining: "Joining…",
   cancel: "Cancel",
+
+  joinConflictTitle: "Local changes found",
+  joinConflictIntro: (project: string) =>
+    `Files in “${project}” changed on this computer since the last room sync. Joining syncs the room's version over them.`,
+  joinConflictFiles: (count: number) =>
+    `${count} ${count === 1 ? "file differs" : "files differ"} from the last sync`,
+  joinConflictChanges: {
+    added: "Added",
+    changed: "Changed",
+    removed: "Removed",
+  } satisfies Record<CollabJoinChange["change"], string>,
+  joinKeepCopy: "Keep a local copy, then join",
+  joinKeepCopyHint:
+    "Saves the current files and unsaved drafts to a separate folder first. If saving fails, nothing is changed.",
+  joinReplace: "Replace with room version",
+  joinReplaceHint:
+    "Overwrites the local changes without a separate copy. Earlier versions of overwritten files can still be restored from local history while it is turned on.",
+  joinBackupSaved: (path: string) => `Local copy saved to ${path}`,
 
   room: "Room",
   inviteCodeLabel: "Invite code",
@@ -88,6 +106,16 @@ const en = {
     removed: "Your room access was revoked. Ask the host for a new invitation.",
     "identity-missing":
       "This room has no saved recovery credential. Open your retained project to create a new room.",
+    "identity-unsupported":
+      "The collaboration service didn't provide a recovery credential, so the room was closed. Try again later.",
+    "project-required": "Open a project before starting a room.",
+    "project-location-missing":
+      "The original project location wasn't saved. Open your retained project and create a new room.",
+    "project-unavailable": "Open the shared project before saving a copy.",
+    "backup-failed":
+      "Couldn't save a local copy, so nothing was changed. Check free disk space and folder permissions, then try again.",
+    "prepare-failed":
+      "Couldn't open the room's project on this computer. Check that the folder is available, then try again.",
     network: "Can't reach the collaboration service. Check your internet connection.",
     unavailable: "Collaboration isn't available right now. Try again later.",
     "not-found": "No room matches that invite code. Check the code and try again.",
@@ -143,6 +171,22 @@ const zhTW: CollabCopy = {
   joining: "正在加入…",
   cancel: "取消",
 
+  joinConflictTitle: "發現本機修改",
+  joinConflictIntro: (project) =>
+    `自上次同步房間後，「${project}」在這台電腦上有檔案變更。加入後，房間版本會同步覆蓋這些檔案。`,
+  joinConflictFiles: (count) => `有 ${count} 個檔案與上次同步不同`,
+  joinConflictChanges: {
+    added: "新增",
+    changed: "修改",
+    removed: "刪除",
+  },
+  joinKeepCopy: "保留本機副本後加入",
+  joinKeepCopyHint: "先將目前的檔案與未儲存草稿另存到獨立資料夾；保存失敗時不會變更任何內容。",
+  joinReplace: "以房間版本取代",
+  joinReplaceHint:
+    "直接覆蓋本機修改，不另存副本。啟用本機歷史時，仍可從本機歷史還原被覆蓋檔案的先前版本。",
+  joinBackupSaved: (path) => `本機副本已保存至 ${path}`,
+
   room: "房間",
   inviteCodeLabel: "邀請碼",
   inviteShare: "分享此邀請碼；若有設定房間密碼，請一併告知對方。",
@@ -186,6 +230,12 @@ const zhTW: CollabCopy = {
     "room-closed": "房間已結束。可以保留的專案建立新房間。",
     removed: "你的房間存取權已撤銷，請向主持人取得新的邀請。",
     "identity-missing": "此房間沒有保存恢復憑證。請開啟保留的專案並建立新房間。",
+    "identity-unsupported": "協作服務未提供恢復憑證，房間已關閉。請稍後再試。",
+    "project-required": "請先開啟專案，才能建立房間。",
+    "project-location-missing": "未保存原專案位置。請開啟保留的專案並建立新房間。",
+    "project-unavailable": "請先開啟共享專案，再另存副本。",
+    "backup-failed": "無法保存本機副本，因此未做任何變更。請確認磁碟空間與資料夾權限後再試一次。",
+    "prepare-failed": "無法在這台電腦上開啟房間的專案。請確認資料夾可以存取後再試一次。",
     network: "無法連線到協作服務，請檢查網路連線。",
     unavailable: "協作功能目前無法使用，請稍後再試。",
     "not-found": "找不到符合此邀請碼的房間，請確認後再試一次。",
