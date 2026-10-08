@@ -63,9 +63,15 @@ export type LobbyError = CollabErrorCode | "unknown";
 
 export interface LobbySnapshot {
   loaded: boolean;
+  /** Preferences are being (re)loaded. */
+  loading: boolean;
+  /** Why the recent-room list may be stale: loading it or forgetting a room failed. */
+  recentRoomsError: "load" | "forget" | null;
   displayName: string;
   recentRooms: readonly CollabRecentRoom[];
   pending: "start" | "join" | null;
+  /** The recent room a pending resume request is for. */
+  resumingRoomId: string | null;
   startError: LobbyError | null;
   joinError: LobbyError | null;
 }
@@ -86,9 +92,12 @@ export interface LobbyOptions {
 export class CollabLobby {
   #snapshot: LobbySnapshot = {
     loaded: false,
+    loading: false,
+    recentRoomsError: null,
     displayName: "",
     recentRooms: [],
     pending: null,
+    resumingRoomId: null,
     startError: null,
     joinError: null,
   };
@@ -99,6 +108,7 @@ export class CollabLobby {
   #savedName: string | undefined;
   #edited = false;
   #disposed = false;
+  #loads = 0;
 
   constructor(
     private readonly api: LobbyApi,
@@ -118,18 +128,45 @@ export class CollabLobby {
 
   async load(): Promise<void> {
     this.#disposed = false;
+    // Only the latest of overlapping loads updates the snapshot.
+    const load = ++this.#loads;
+    this.#update({ loading: true });
     try {
       const preferences = await this.api.getPreferences();
-      if (this.#disposed) return;
+      if (this.#disposed || load !== this.#loads) return;
       this.#savedName = preferences.displayName;
       this.#update({
         loaded: true,
+        loading: false,
+        recentRoomsError: null,
         recentRooms: preferences.recentRooms ?? [],
         // Typing before preferences arrive wins over the stored name.
         ...(this.#edited ? {} : { displayName: preferences.displayName ?? "" }),
       });
-    } catch {
-      if (!this.#disposed) this.#update({ loaded: true });
+    } catch (error) {
+      console.warn("Couldn't load collaboration preferences", error);
+      if (!this.#disposed && load === this.#loads)
+        this.#update({ loaded: true, loading: false, recentRoomsError: "load" });
+    }
+  }
+
+  /** Removes a room from the recent list and persists the change. */
+  async forgetRoom(roomId: string): Promise<boolean> {
+    // A load in flight would bring the forgotten room back.
+    if (this.#snapshot.loading) return false;
+    const previous = this.#snapshot.recentRooms;
+    const recentRooms = previous.filter((room) => room.roomId !== roomId);
+    if (recentRooms.length === previous.length) return false;
+    this.#update({ recentRooms, recentRoomsError: null });
+    try {
+      await this.api.setPreferences({ recentRooms });
+      return true;
+    } catch (error) {
+      console.warn("Couldn't forget the recent room", error);
+      // Restore the entry unless the list changed meanwhile.
+      if (!this.#disposed && this.#snapshot.recentRooms === recentRooms)
+        this.#update({ recentRooms: previous, recentRoomsError: "forget" });
+      return false;
     }
   }
 
@@ -187,8 +224,12 @@ export class CollabLobby {
 
   async resumeRoom(roomId: string): Promise<boolean> {
     if (this.#snapshot.pending || !this.api.resumeRoom) return false;
-    this.#update({ pending: "join", startError: null });
-    return this.#connect("start", () => this.api.resumeRoom!(roomId));
+    this.#update({ pending: "join", startError: null, resumingRoomId: roomId });
+    try {
+      return await this.#connect("start", () => this.api.resumeRoom!(roomId));
+    } finally {
+      if (!this.#disposed) this.#update({ resumingRoomId: null });
+    }
   }
 
   clearJoinError(): void {
@@ -233,8 +274,25 @@ export class CollabLobby {
       return false;
     }
     this.#update({ pending: null });
-    void this.api.setPreferences({ recentRooms }).catch(() => undefined);
+    void this.#saveRecentRooms(recentRooms);
     return true;
+  }
+
+  /** Persists `recentRooms` without wiping a stored history that never loaded. */
+  async #saveRecentRooms(recentRooms: readonly CollabRecentRoom[]): Promise<void> {
+    let rooms = recentRooms;
+    if (this.#snapshot.recentRoomsError === "load") {
+      try {
+        const stored = (await this.api.getPreferences()).recentRooms ?? [];
+        rooms = [
+          ...recentRooms,
+          ...stored.filter((room) => !recentRooms.some((entry) => entry.roomId === room.roomId)),
+        ].slice(0, MAX_RECENT_ROOMS);
+      } catch {
+        return;
+      }
+    }
+    await this.api.setPreferences({ recentRooms: [...rooms] }).catch(() => undefined);
   }
 
   #update(patch: Partial<LobbySnapshot>): void {
