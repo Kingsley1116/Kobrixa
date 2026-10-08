@@ -71,6 +71,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+          # Electron's pinned node-gyp does not support Visual Studio 2026 yet.
+          - os: windows-2022
+            platform: win32
+            arch: x64
+          - os: macos-26
+            platform: darwin
+            arch: arm64
           - os: macos-26
             platform: darwin
             arch: x64
@@ -95,7 +105,11 @@ jobs:
         if: runner.arch == matrix.arch
         shell: bash
         run: |
-          pnpm test:desktop:packaged
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:desktop:packaged
+          else
+            pnpm test:desktop:packaged
+          fi
       - run: pnpm package:installers
       - run: pnpm package:archive
         env:

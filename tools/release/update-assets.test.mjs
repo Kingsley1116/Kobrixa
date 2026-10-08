@@ -79,3 +79,25 @@ test("switching Mac signing off removes stale update and ordinary ZIP outputs", 
     targetAssets(version, "darwin", "arm64").sort(),
   );
 });
+
+test("packaging arm64 followed by x64 preserves the arm64 update metadata", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-mac-multiarch-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const out = path.join(root, "apps/desktop/out");
+  await mkdir(path.join(out, "installers"), { recursive: true });
+  const version = "1.0.0";
+  for (const name of installerNames(version, "darwin", "arm64", { macos: true }))
+    await writeFile(path.join(out, "installers", name), "arm64 fixture");
+  await prepareUpdateAssets(version, "darwin", "arm64", { macos: true }, root);
+
+  const metadataPath = path.join(out, "release", updateMetadataName("darwin"));
+  const arm64Metadata = await readFile(metadataPath, "utf8");
+  assert.ok(arm64Metadata.includes(`Kobrixa-${version}-darwin-arm64-update.zip`));
+
+  for (const name of installerNames(version, "darwin", "x64", { macos: true }))
+    await writeFile(path.join(out, "installers", name), "x64 fixture");
+  await prepareUpdateAssets(version, "darwin", "x64", { macos: true }, root);
+
+  const preservedMetadata = await readFile(metadataPath, "utf8");
+  assert.equal(preservedMetadata, arm64Metadata);
+});

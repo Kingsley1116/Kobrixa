@@ -93,9 +93,12 @@ export async function prepareUpdateAssets(version, platform, arch, modes, root =
     await cp(path.join(out, "installers", name), file);
     await writeFile(`${file}.sha256`, `${await sha256(file)}  ${name}\n`);
   }
-  if (platform !== "darwin" || (modes.macos && arch !== "x64"))
+  if (platform !== "darwin") {
     await writeUpdateMetadata(path.join(out, "release"), version, platform, arch);
-  else await rm(path.join(out, "release", updateMetadataName(platform)), { force: true });
+  } else if (arch !== "x64") {
+    if (modes.macos) await writeUpdateMetadata(path.join(out, "release"), version, platform, arch);
+    else await rm(path.join(out, "release", updateMetadataName(platform)), { force: true });
+  }
   await verifyTargetAssets(path.join(out, "release"), version, platform, arch, modes);
 }
 if (isMain(import.meta))
