@@ -509,7 +509,7 @@ function Room({
           value,
           id: `collab-view-${value}`,
           panelId: `collab-page-${value}`,
-          label: value === "people" ? copy.people : copy.chat,
+          label: value === "people" ? copy.people : copy.chatTab,
           ...(value === "chat" && chatState.unread ? { badge: chatState.unread } : {}),
         }))}
       />
