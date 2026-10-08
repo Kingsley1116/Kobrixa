@@ -111,8 +111,11 @@ function sendErrorMessage(copy: CollabCopy, result: Exclude<ChatSendResult, { ok
       return copy.chat.sendRejected(collabErrorMessage(copy, result.error));
     case "too-long":
       return copy.chat.tooLong;
-    default:
+    case "network":
       return copy.chat.sendNetwork;
+    default:
+      // Not a connection problem: the message was refused locally or the room closed.
+      return copy.chat.sendFailed;
   }
 }
 

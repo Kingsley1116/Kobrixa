@@ -16,12 +16,15 @@ export function Participants({
   roomId,
   entries,
   isHost,
+  closed = false,
 }: {
   copy: CollabCopy;
   api: Pick<CollabApi, "kick" | "setRole">;
   roomId: string;
   entries: readonly RosterEntry[];
   isHost: boolean;
+  /** A closed session never receives a roster, so it must not look like it is loading. */
+  closed?: boolean;
 }): React.JSX.Element {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<Failure>(null);
@@ -57,7 +60,7 @@ export function Participants({
     );
 
   const [showOffline, setShowOffline] = useState(false);
-  const loading = rosterLoading(entries);
+  const loading = !closed && rosterLoading(entries);
   const offline = entries.filter((entry) => !entry.online);
   const visible = [...entries.filter((entry) => entry.online), ...(showOffline ? offline : [])];
   const others = entries.filter((entry) => !entry.self);
