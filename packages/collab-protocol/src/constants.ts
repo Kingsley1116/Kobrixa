@@ -26,6 +26,11 @@ export const MESSAGE_TYPE = {
   awareness: 1,
   /** Server → client: varint type, then a JSON string matching `noticeSchema`. */
   notice: 2,
+  /**
+   * Client → server: varint type, then a JSON string matching `controlCommandSchema`.
+   * Servers that predate this type ignore the frame.
+   */
+  control: 3,
 } as const;
 
 /** WebSocket close codes used by the room. */

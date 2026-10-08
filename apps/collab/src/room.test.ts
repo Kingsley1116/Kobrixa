@@ -271,6 +271,16 @@ class Client {
     if (this.closeCode === null) this.ws.send(frame);
   }
 
+  sendControl(command: unknown) {
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MESSAGE_TYPE.control);
+    encoding.writeVarString(
+      encoder,
+      typeof command === "string" ? command : JSON.stringify(command),
+    );
+    this.send(encoding.toUint8Array(encoder));
+  }
+
   close() {
     this.awareness.destroy();
     if (this.closeCode === null) this.ws.close(1000, "bye");
@@ -638,6 +648,82 @@ describe("CollabRoom authorization and lifecycle", () => {
       expect(client.closeCode).toBeNull();
       client.close();
     }
+  });
+
+  test("lets only the host decline a request and notifies the requester before removal", async () => {
+    await initRoom("decline");
+    const otherId = "other-0001";
+    await post("decline", "/join", { participantId: GUEST, name: "Guest" });
+    await post("decline", "/join", { participantId: otherId, name: "Other" });
+    const host = await Client.connect("decline", HOST, "host");
+    const guest = await Client.connect("decline", GUEST);
+    const other = await Client.connect("decline", otherId);
+    const requests = (client: Client) =>
+      client.doc.getMap(DOC_KEYS.control).get("requests") as string[];
+    guest.doc.getMap(DOC_KEYS.control).set("requests", [GUEST]);
+    await waitFor(() => requests(other).includes(GUEST), "request synchronized");
+    other.doc.getMap(DOC_KEYS.control).set("requests", [GUEST, otherId]);
+    await waitFor(() => requests(host).length === 2, "both requests synchronized");
+
+    // Editors cannot decline: the later cancel on the same socket proves it was processed.
+    other.sendControl({ type: "decline", participantId: GUEST });
+    other.doc.getMap(DOC_KEYS.control).set("requests", [GUEST]);
+    await waitFor(() => requests(host).length === 1, "editor cancel processed");
+    expect(requests(host)).toEqual([GUEST]);
+    expect(guest.lastNotice("control-declined")).toBeUndefined();
+    other.doc.getMap(DOC_KEYS.control).set("requests", [GUEST, otherId]);
+    await waitFor(() => requests(host).length === 2, "editor request restored");
+
+    // Malformed, unknown and stale host commands are ignored.
+    host.sendControl("{");
+    host.sendControl({ type: "decline", participantId: "../bad" });
+    host.sendControl({ type: "grant", participantId: GUEST });
+    host.sendControl({ type: "decline", participantId: "missing-0001" });
+    let noticeBeforeRemoval: boolean | undefined;
+    guest.doc.getMap(DOC_KEYS.control).observe(() => {
+      if (!requests(guest).includes(GUEST))
+        noticeBeforeRemoval = guest.lastNotice("control-declined") !== undefined;
+    });
+    host.sendControl({ type: "decline", participantId: GUEST });
+    await waitFor(() => !requests(host).includes(GUEST), "request declined");
+    await waitFor(() => noticeBeforeRemoval !== undefined, "requester observed removal");
+    expect(noticeBeforeRemoval).toBe(true);
+    expect(requests(host)).toEqual([otherId]);
+    expect(guest.notices.filter((notice) => notice.type === "control-declined")).toHaveLength(1);
+    expect(other.lastNotice("control-declined")).toBeUndefined();
+    expect(host.lastNotice("control-declined")).toBeUndefined();
+    for (const client of [host, guest, other]) {
+      expect(client.closeCode).toBeNull();
+      client.close();
+    }
+  });
+
+  test("delivers a decline to a requester that reconnects after it", async () => {
+    await initRoom("decline-offline");
+    await post("decline-offline", "/join", { participantId: GUEST, name: "Guest" });
+    const host = await Client.connect("decline-offline", HOST, "host");
+    const guest = await Client.connect("decline-offline", GUEST);
+    const requests = (client: Client) =>
+      client.doc.getMap(DOC_KEYS.control).get("requests") as string[] | undefined;
+    guest.doc.getMap(DOC_KEYS.control).set("requests", [GUEST]);
+    await waitFor(() => requests(host)?.includes(GUEST) === true, "request synchronized");
+    guest.close();
+    await waitFor(
+      () =>
+        host
+          .lastNotice("participants")
+          ?.participants.some((p) => p.participantId === GUEST && !p.online) === true,
+      "guest offline",
+    );
+    host.sendControl({ type: "decline", participantId: GUEST });
+    await waitFor(() => requests(host)?.length === 0, "request declined");
+    const again = await Client.connect("decline-offline", GUEST);
+    await waitFor(() => again.lastNotice("control-declined") !== undefined, "decline delivered");
+    again.close();
+    const third = await Client.connect("decline-offline", GUEST);
+    await waitFor(() => third.lastNotice("role") !== undefined, "third connection ready");
+    expect(third.lastNotice("control-declined")).toBeUndefined();
+    for (const client of [host, third]) client.close();
   });
 
   test("keeps legitimate own requests when a stale array contains a demoted requester", async () => {

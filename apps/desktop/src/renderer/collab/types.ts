@@ -56,6 +56,13 @@ export interface CollabSession {
   /** Waits for local document updates to be accepted by the server. */
   flush?(): Promise<void>;
   hasPendingUpdates?(): boolean;
+  /**
+   * Host only: asks the server to decline `participantId`'s device-control
+   * request. Returns false when the command could not be sent (not connected).
+   */
+  declineControlRequest?(participantId: string): boolean;
+  /** Notified when the host declines this participant's device-control request. */
+  onControlDeclined?(listener: () => void): () => void;
   /** Leaves the room; status becomes `closed` with reason `left`. */
   disconnect(): void;
   /** Disconnects and releases the doc and awareness. */

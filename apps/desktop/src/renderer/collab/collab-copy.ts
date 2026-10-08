@@ -83,6 +83,25 @@ const en = {
   chipLabel: (status: string, online: number) =>
     `Collaboration: ${status}, ${online} ${online === 1 ? "person" : "people"} online. Open collaboration panel`,
 
+  deviceControl: "Device control",
+  deviceControlYours: "You have device control",
+  deviceControlHeldBy: (name: string | null) =>
+    name ? `Device control is held by ${name}` : "Device control is held by another collaborator",
+  deviceControlOffline: (holder: string) => `${holder} (offline)`,
+  requestControl: "Request control",
+  requestControlViewer: "Viewers can't request control. Ask the host to make you an editor.",
+  deviceControlNotConnected: "Device control can change once the room is connected and synced.",
+  controlRequestPending: "Waiting for the host to respond…",
+  cancelControlRequest: "Cancel request",
+  controlRequestDeclined: "The host declined your request.",
+  dismiss: "Dismiss",
+  giveBackControl: "Give back control",
+  takeBackControl: "Take back control",
+  controlRequests: "Control requests",
+  controlRequestFrom: (name: string) => `${name} requests control`,
+  giveControl: "Give control",
+  declineControl: "Decline",
+
   errors: {
     "room-closed": "This room has been ended. Create a new room from your retained project.",
     removed: "Your room access was revoked. Ask the host for a new invitation.",
@@ -181,6 +200,25 @@ const zhTW: CollabCopy = {
   removeIntro: "對方將被中斷與此房間的連線。",
   noParticipants: "正在等待其他人加入…",
   chipLabel: (status, online) => `協作：${status}，${online} 人在線。開啟協作面板`,
+
+  deviceControl: "裝置控制權",
+  deviceControlYours: "你持有裝置控制權",
+  deviceControlHeldBy: (name) =>
+    name ? `裝置控制權目前由 ${name} 持有` : "裝置控制權目前由其他協作者持有",
+  deviceControlOffline: (holder) => `${holder}（離線）`,
+  requestControl: "請求控制權",
+  requestControlViewer: "檢視者無法請求控制權，請主持人將你設為編輯者。",
+  deviceControlNotConnected: "房間連線並同步完成後，才能變更裝置控制權。",
+  controlRequestPending: "正在等待主持人回應…",
+  cancelControlRequest: "取消請求",
+  controlRequestDeclined: "主持人拒絕了你的請求。",
+  dismiss: "關閉",
+  giveBackControl: "交還控制權",
+  takeBackControl: "收回控制權",
+  controlRequests: "控制權請求",
+  controlRequestFrom: (name) => `${name} 請求控制權`,
+  giveControl: "給予控制權",
+  declineControl: "拒絕",
 
   errors: {
     "room-closed": "房間已結束。可以保留的專案建立新房間。",
