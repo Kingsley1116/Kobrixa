@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeRoster, onlineCount } from "./roster.js";
+import { mergeRoster, onlineCount, rosterLoading } from "./roster.js";
 import { createLinkedSessions } from "./testing.js";
 
 describe("mergeRoster", () => {
@@ -54,7 +54,48 @@ describe("mergeRoster", () => {
     expect(
       mergeRoster([], [{ participantId: "guest", name: "Guest", role: "editor" }], "self"),
     ).toEqual([
-      { participantId: "guest", name: "Guest", role: "editor", online: true, self: false },
+      {
+        participantId: "guest",
+        name: "Guest",
+        role: "editor",
+        online: true,
+        provisional: true,
+        self: false,
+      },
+    ]);
+  });
+
+  it("reports loading until the first server roster arrives", () => {
+    expect(rosterLoading([])).toBe(true);
+    const early = mergeRoster([], [{ participantId: "self", name: "Me", role: "host" }], "self");
+    expect(rosterLoading(early)).toBe(true);
+    const roster = mergeRoster(
+      [{ participantId: "self", name: "Me", role: "host", online: true }],
+      [],
+      "self",
+    );
+    expect(rosterLoading(roster)).toBe(false);
+  });
+
+  it("shows the open file of online participants and marks the device-control holder", () => {
+    const entries = mergeRoster(
+      [
+        { participantId: "editor-01", name: "Eve", role: "editor", online: true },
+        { participantId: "editor-02", name: "Ed", role: "editor", online: false },
+        { participantId: "editor-03", name: "Al", role: "editor", online: true },
+      ],
+      [
+        { participantId: "editor-01", name: "Eve", role: "editor", file: "src/main.bp" },
+        { participantId: "editor-02", name: "Ed", role: "editor", file: "stale.bp" },
+        { participantId: "editor-03", name: "Al", role: "editor", file: "../escape.bp" },
+      ],
+      "someone-else",
+      "editor-01",
+    );
+    expect(entries.map((entry) => [entry.name, entry.file, entry.controlHolder])).toEqual([
+      ["Eve", "src/main.bp", true],
+      ["Al", undefined, undefined],
+      ["Ed", undefined, undefined],
     ]);
   });
 
