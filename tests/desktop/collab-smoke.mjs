@@ -24,7 +24,8 @@ export async function checkCollabWelcome({ js, until, win, temporary }) {
   await js('smoke.settingsStore.set("rightPanel", null)');
 }
 
-export async function checkCollab({ js, until, pause, win, temporary }) {
+export async function checkCollab(context) {
+  const { js, until, pause, win, temporary } = context;
   const original = await js("smoke.settingsStore.getSnapshot().values");
   await js(
     'smoke.settingsStore.set("rightPanel","collab"); smoke.settingsStore.set("locale","en")',
@@ -134,12 +135,81 @@ export async function checkCollab({ js, until, pause, win, temporary }) {
   if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
     await js(click("[data-testid=collab-leave]"));
     await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+    await checkJoinConflict({ js, until, win, temporary, ...context });
   }
   await js(
     `for (const [key,value] of Object.entries(${JSON.stringify(original)})) smoke.settingsStore.set(key,value)`,
   );
   win.setSize(1420, 900);
   console.log(
-    "PASS collaboration welcome entry, room lifecycle, persistent drafts, server-confirmed chat, keyboard menus and 48 layout combinations",
+    "PASS collaboration welcome entry, room lifecycle, persistent drafts, server-confirmed chat, keyboard menus, join conflict choices and 48 layout combinations",
   );
+}
+
+/** Starting a room over local changes offers keep-copy, replace and cancel. */
+async function checkJoinConflict({
+  js,
+  until,
+  win,
+  temporary,
+  setCollabPrepareConflict,
+  takeCollabPrepareCalls,
+}) {
+  await js('smoke.settingsStore.set("locale","en")');
+  setCollabPrepareConflict([
+    { path: "main.bp", change: "changed" },
+    { path: "lib/extra.bpm", change: "added" },
+  ]);
+  takeCollabPrepareCalls();
+  const start = async () => {
+    await js(click("[data-testid=collab-start]"));
+    await until('Boolean(document.querySelector(".collab-create-dialog"))');
+    await until('!document.querySelector(".collab-create-dialog button[type=submit]").disabled');
+    await js(click(".collab-create-dialog button[type=submit]"));
+    await until('Boolean(document.querySelector(".collab-join-conflict-dialog"))');
+  };
+  await start();
+  assert.match(
+    await js('document.querySelector("[data-testid=collab-conflict-files]").textContent'),
+    /main\.bp — Changed.*lib\/extra\.bpm — Added/,
+  );
+  assert.equal(
+    await js('document.activeElement?.getAttribute("data-testid")'),
+    "collab-conflict-keep",
+  );
+  await fs.writeFile(
+    path.join(temporary, "collab-join-conflict.png"),
+    (await win.webContents.capturePage()).toPNG(),
+  );
+  // Cancel returns to the lobby without an error or a session.
+  await js(click("[data-testid=collab-conflict-cancel]"));
+  await until(
+    '!document.querySelector(".collab-join-conflict-dialog") && !document.querySelector(".collab-create-dialog button[type=submit]").disabled',
+  );
+  assert.equal(await js('Boolean(document.querySelector("[data-testid=collab-room]"))'), false);
+  assert.equal(
+    await js('document.querySelector("[data-testid=collab-create-error]").textContent'),
+    "",
+  );
+  assert.deepEqual(takeCollabPrepareCalls(), [null]);
+  await js(click(".collab-create-dialog button[type=button]"));
+  await until('!document.querySelector(".collab-create-dialog")');
+  // Replace joins without a copy.
+  await start();
+  await js(click("[data-testid=collab-conflict-replace]"));
+  await until('Boolean(document.querySelector("[data-testid=collab-room]"))');
+  assert.deepEqual(takeCollabPrepareCalls(), [null, "replace"]);
+  await js(click("[data-testid=collab-leave]"));
+  await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+  // Keep a copy joins and reports where the copy was saved.
+  await start();
+  await js(click("[data-testid=collab-conflict-keep]"));
+  await until('Boolean(document.querySelector("[data-testid=collab-room]"))');
+  assert.deepEqual(takeCollabPrepareCalls(), [null, "keep-copy"]);
+  await until(
+    'document.querySelector(".operation-status")?.title.includes("Local copy saved to /tmp/room-copy")',
+  );
+  await js(click("[data-testid=collab-leave]"));
+  await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
+  setCollabPrepareConflict(null);
 }

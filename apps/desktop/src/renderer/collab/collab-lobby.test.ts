@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollabConnection, CollabPreferences, CollabResult } from "../../shared/collab.js";
 import {
   CollabLobby,
+  CollabStartError,
+  localCollabError,
   MAX_RECENT_ROOMS,
   displayNameProblem,
   formatInviteCode,
@@ -161,10 +163,43 @@ describe("CollabLobby", () => {
     expect(lobby.getSnapshot()).toMatchObject({ pending: null, startError: "rate-limited" });
     api.joinRoom.mockRejectedValueOnce(new Error("ipc"));
     expect(await lobby.joinRoom("ABCD-EFGH-JK23")).toBe(false);
-    expect(lobby.getSnapshot().joinError).toBe("network");
+    // A rejected IPC call is a local failure, not a network one.
+    expect(lobby.getSnapshot().joinError).toBe("unknown");
+    api.createRoom.mockRejectedValueOnce(
+      new Error("Error invoking remote method 'collab:create-room': Error: project-required"),
+    );
+    expect(await lobby.startRoom("Robot")).toBe(false);
+    expect(lobby.getSnapshot().startError).toBe("project-required");
     lobby.clearJoinError();
     expect(lobby.getSnapshot().joinError).toBeNull();
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("returns quietly when starting is cancelled and reports preparation failures", async () => {
+    const api = fakeApi({ displayName: "Ada" });
+    const start = vi.fn().mockResolvedValueOnce(false);
+    const lobby = new CollabLobby(api, start);
+    await lobby.load();
+    expect(await lobby.startRoom("Robot")).toBe(false);
+    expect(lobby.getSnapshot()).toMatchObject({ pending: null, startError: null });
+    start.mockRejectedValueOnce(new CollabStartError("backup-failed"));
+    expect(await lobby.startRoom("Robot")).toBe(false);
+    expect(lobby.getSnapshot().startError).toBe("backup-failed");
+    start.mockRejectedValueOnce(new Error("Error invoking remote method 'x': Error: EACCES"));
+    expect(await lobby.joinRoom("ABCD-EFGH-JK23")).toBe(false);
+    expect(lobby.getSnapshot()).toMatchObject({ pending: null, joinError: "prepare-failed" });
+    expect(collabErrorMessage(collabCopy.en, "prepare-failed")).toMatch(/project/);
+  });
+
+  it("recovers local error codes from IPC rejections only", () => {
+    expect(localCollabError(new Error("backup-failed"))).toBe("backup-failed");
+    expect(
+      localCollabError(
+        new Error("Error invoking remote method 'a': CollabLocalError: project-unavailable"),
+      ),
+    ).toBe("project-unavailable");
+    expect(localCollabError(new Error("not a backup-failed"))).toBeUndefined();
+    expect(localCollabError("network")).toBeUndefined();
   });
 
   it("joins with a normalized code and keeps the code on the connection", async () => {
