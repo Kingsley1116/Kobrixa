@@ -1,8 +1,14 @@
 import {
   COLLAB_ROUTES,
-  createRoomResponseSchema,
+  resumableCreateResponseSchema,
   errorResponseSchema,
-  joinResponseSchema,
+  resumableJoinResponseSchema,
+  resumeResponseSchema,
+  chatMessageSchema,
+  COLLAB_CAPABILITY_HEADER,
+  COLLAB_RESUME_CAPABILITY,
+  type SendChatRequest,
+  type ChatMessage,
   kickRequestSchema,
   type CreateRoomRequest,
   type ErrorResponse,
@@ -18,6 +24,7 @@ import type {
 } from "../../shared/collab.js";
 import { addRecentRoom, type CollabPreferencesStore } from "./preferences.js";
 import type { CollabTokenStore } from "./tokens.js";
+import { CollabIdentityStore } from "./identities.js";
 
 export const COLLAB_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -28,6 +35,7 @@ export interface CollabServiceOptions {
   serverUrl: string;
   preferences: CollabPreferencesStore;
   tokens: CollabTokenStore;
+  identities?: CollabIdentityStore;
   fetch: CollabFetch;
   timeoutMs?: number;
   now?: () => number;
@@ -56,10 +64,12 @@ const describe = (error: unknown): string =>
 export class CollabService {
   private readonly timeoutMs: number;
   private readonly now: () => number;
+  readonly identities: CollabIdentityStore;
 
   constructor(private readonly options: CollabServiceOptions) {
     this.timeoutMs = options.timeoutMs ?? COLLAB_REQUEST_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
+    this.identities = options.identities ?? new CollabIdentityStore();
   }
 
   serverUrl(): string {
@@ -67,7 +77,14 @@ export class CollabService {
   }
 
   getPreferences(): CollabPreferences {
-    return this.options.preferences.get();
+    const preferences = this.options.preferences.get();
+    return {
+      ...preferences,
+      recentRooms: preferences.recentRooms.map((room) => ({
+        ...room,
+        canResume: !!this.identities.get(this.serverUrl(), room.roomId),
+      })),
+    };
   }
 
   setPreferences(patch: unknown): Promise<CollabPreferences> {
@@ -75,7 +92,12 @@ export class CollabService {
   }
 
   async createRoom(request: CreateRoomRequest): Promise<CollabResult<CollabConnection>> {
-    const response = await this.post(COLLAB_ROUTES.createRoom, request, createRoomResponseSchema);
+    this.identities.assertAvailable();
+    const response = await this.post(
+      COLLAB_ROUTES.createRoom,
+      request,
+      resumableCreateResponseSchema,
+    );
     if (!response.ok) return response;
     const room = response.value;
     const connection: CollabConnection = {
@@ -89,12 +111,19 @@ export class CollabService {
       inviteCode: room.inviteCode,
       expiresAt: room.expiresAt,
     };
-    await this.remember(connection);
+    try {
+      await this.remember(connection, room.resumeCredential);
+    } catch (error) {
+      await this.post(COLLAB_ROUTES.close(room.roomId), {}, undefined, room.hostToken);
+      throw error;
+    }
     return { ok: true, value: connection };
   }
 
   async joinRoom(request: JoinRequest): Promise<CollabResult<CollabConnection>> {
-    const response = await this.post(COLLAB_ROUTES.join, request, joinResponseSchema);
+    const identity = this.identities.byInvite(this.serverUrl(), request.inviteCode);
+    if (identity) return this.resumeRoom(identity.roomId);
+    const response = await this.post(COLLAB_ROUTES.join, request, resumableJoinResponseSchema);
     if (!response.ok) return response;
     const room = response.value;
     const connection: CollabConnection = {
@@ -108,8 +137,38 @@ export class CollabService {
       inviteCode: request.inviteCode,
       expiresAt: room.expiresAt,
     };
+    await this.remember(connection, room.resumeCredential);
+    return { ok: true, value: connection };
+  }
+
+  async resumeRoom(roomId: string): Promise<CollabResult<CollabConnection>> {
+    const identity = this.identities.get(this.serverUrl(), roomId);
+    if (!identity) return failure("identity-missing");
+    const response = await this.post(
+      COLLAB_ROUTES.resume(roomId),
+      { participantId: identity.participantId, credential: identity.credential },
+      resumeResponseSchema,
+    );
+    if (!response.ok) return response;
+    const connection: CollabConnection = { ...response.value, serverUrl: this.serverUrl() };
     await this.remember(connection);
     return { ok: true, value: connection };
+  }
+
+  async closeRoom(roomId: string): Promise<CollabResult<null>> {
+    return this.hostAction(roomId, COLLAB_ROUTES.close(roomId), {});
+  }
+
+  async sendChat(roomId: string, message: SendChatRequest): Promise<CollabResult<ChatMessage>> {
+    const token = await this.access(roomId);
+    if (!token.ok) return token;
+    return this.post(COLLAB_ROUTES.chat(roomId), message, chatMessageSchema, token.value.token);
+  }
+
+  private async access(roomId: string) {
+    const token = await this.options.tokens.get(roomId);
+    if (token && token.expiresAt > this.now()) return { ok: true as const, value: token };
+    return this.resumeRoom(roomId);
   }
 
   kick(roomId: string, participantId: string): Promise<CollabResult<null>> {
@@ -130,14 +189,24 @@ export class CollabService {
     route: string,
     body: unknown,
   ): Promise<CollabResult<null>> {
-    const stored = await this.options.tokens.get(roomId);
-    if (!stored || stored.role !== "host")
+    const access = await this.access(roomId);
+    if (!access.ok) return access;
+    const stored = access.value;
+    if (stored.role !== "host")
       return failure("forbidden", "Only the host of this room can do that.");
     const response = await this.post(route, body, undefined, stored.token);
     return response.ok ? { ok: true, value: null } : response;
   }
 
-  private async remember(connection: CollabConnection): Promise<void> {
+  private async remember(connection: CollabConnection, credential?: string): Promise<void> {
+    if (credential && connection.inviteCode)
+      await this.identities.set({
+        serverUrl: this.serverUrl(),
+        roomId: connection.roomId,
+        participantId: connection.participantId,
+        credential,
+        inviteCode: connection.inviteCode,
+      });
     await this.options.tokens.set(connection.roomId, {
       token: connection.token,
       participantId: connection.participantId,
@@ -177,6 +246,7 @@ export class CollabService {
         headers: {
           "content-type": "application/json",
           accept: "application/json",
+          [COLLAB_CAPABILITY_HEADER]: COLLAB_RESUME_CAPABILITY,
           ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
         },
         body: JSON.stringify(body),

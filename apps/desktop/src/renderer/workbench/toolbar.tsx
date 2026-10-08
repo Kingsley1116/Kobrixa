@@ -14,6 +14,7 @@ export function Toolbar({
   appearance,
   shortcutHint,
   onSaveAll,
+  onSaveCopy,
   name,
   locked,
   projectLocked = locked,
@@ -34,6 +35,7 @@ export function Toolbar({
   onDelete,
   onCancel,
   onDevice,
+  devicePanelOpen = false,
   collab,
 }: {
   t: Copy;
@@ -41,6 +43,7 @@ export function Toolbar({
   appearance: ReactNode;
   shortcutHint(command: AppCommand): string;
   onSaveAll(): void;
+  onSaveCopy?: (() => void) | undefined;
   name: string | undefined;
   locked: boolean;
   projectLocked?: boolean;
@@ -62,7 +65,8 @@ export function Toolbar({
   onDelete(): void;
   onCancel(): void;
   onDevice(): void;
-  /** Collaboration status chip; renders nothing outside a room. */
+  devicePanelOpen?: boolean;
+  /** Persistent collaboration entry, with room status when connected. */
   collab?: ReactNode;
 }): React.JSX.Element {
   const hint = (label: string, command: AppCommand) =>
@@ -93,25 +97,26 @@ export function Toolbar({
       </nav>
       <div className="run-actions">
         {collab}
+        <button
+          className={`connection-chip ${state.session ? "is-connected" : ""}`}
+          onClick={onDevice}
+          aria-expanded={devicePanelOpen}
+          title={hint(t.showDevice, "device")}
+        >
+          <span className="status-dot" />
+          EV3{" "}
+          <span className="connection-label">
+            {state.recovery
+              ? state.recovery.state === "waiting"
+                ? t.connectionStates.waiting
+                : t.connectionStates.reconnecting
+              : state.session
+                ? t.connectionStates.connected
+                : t.connectionStates.disconnected}
+          </span>
+        </button>
         {name && (
           <>
-            <button
-              className={`connection-chip ${state.session ? "is-connected" : ""}`}
-              onClick={onDevice}
-              title={hint(t.showDevice, "device")}
-            >
-              <span className="status-dot" />
-              EV3{" "}
-              <span className="connection-label">
-                {state.recovery
-                  ? state.recovery.state === "waiting"
-                    ? t.connectionStates.waiting
-                    : t.connectionStates.reconnecting
-                  : state.session
-                    ? t.connectionStates.connected
-                    : t.connectionStates.disconnected}
-              </span>
-            </button>
             {SIMULATOR_ENABLED && (
               <button
                 disabled={deviceLocked}
@@ -149,6 +154,11 @@ export function Toolbar({
               </button>
             )}
             <ActionMenu label={t.advanced}>
+              {onSaveCopy && (
+                <button role="menuitem" onClick={onSaveCopy}>
+                  {locale === "zh-TW" ? "另存共享專案副本" : "Save shared project copy"}
+                </button>
+              )}
               <button
                 role="menuitem"
                 disabled={locked}

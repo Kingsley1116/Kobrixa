@@ -49,6 +49,7 @@ interface Seen {
 /** Minimal stand-in for `apps/collab` that speaks the protocol schemas. */
 class FakeCollabServer {
   readonly seen: Seen[] = [];
+  resumable = false;
   mode: "ok" | "invalid" | "html-502" | "error-json" | "hang" = "ok";
   private server: Server = createServer((request, response) => void this.serve(request, response));
   origin = "";
@@ -94,6 +95,7 @@ class FakeCollabServer {
         inviteCode: INVITE,
         participantId: HOST,
         hostToken: "host-token",
+        ...(this.resumable ? { resumeCredential: "r".repeat(43) } : {}),
         expiresAt: EXPIRES,
       });
     }
@@ -110,6 +112,17 @@ class FakeCollabServer {
         expiresAt: EXPIRES,
       });
     }
+    if (request.url === COLLAB_ROUTES.resume(ROOM) && this.resumable)
+      return json(200, {
+        roomId: ROOM,
+        participantId: HOST,
+        role: "host",
+        name: "Host",
+        projectName: "Robot",
+        inviteCode: INVITE,
+        token: "host-token",
+        expiresAt: Date.now() + 3_600_000,
+      });
     const admin = /^\/rooms\/([^/]+)\/(kick|role)$/.exec(request.url ?? "");
     if (admin) {
       if (request.headers.authorization !== "Bearer host-token")
@@ -225,7 +238,10 @@ describe("collab IPC against a fake collaboration service", () => {
     await expect(readFile(path.join(userData, "collab-tokens.json"))).rejects.toThrow();
 
     await call("collab:leave", ROOM);
-    expect(await call("collab:kick", ROOM, GUEST)).toMatchObject({ ok: false, error: "forbidden" });
+    expect(await call("collab:kick", ROOM, GUEST)).toMatchObject({
+      ok: false,
+      error: "identity-missing",
+    });
     expect(server.seen).toHaveLength(5);
     expect(
       ((await call("collab:preferences")) as { recentRooms: unknown[] }).recentRooms,
@@ -241,17 +257,22 @@ describe("collab IPC against a fake collaboration service", () => {
         participantId: HOST,
         role: "editor",
       }),
-    ).toMatchObject({ ok: false, error: "forbidden" });
+    ).toMatchObject({ ok: false, error: "identity-missing" });
     expect(server.seen).toHaveLength(1);
   });
 
-  it("forgets host credentials on a new app process without touching the keychain", async () => {
+  it("restores host identity after leaving and restarting without touching the keychain", async () => {
+    server.resumable = true;
     register(await createCollabService(userData, server.origin));
     await call("collab:create-room", { name: "Host", projectName: "Robot" });
     expect(await call("collab:kick", ROOM, GUEST)).toEqual({ ok: true, value: null });
     await expect(readFile(path.join(userData, "collab-tokens.json"))).rejects.toThrow();
+    await call("collab:leave", ROOM);
     register(await createCollabService(userData, server.origin));
-    expect(await call("collab:kick", ROOM, GUEST)).toMatchObject({ ok: false, error: "forbidden" });
+    expect(await call("collab:kick", ROOM, GUEST)).toEqual({ ok: true, value: null });
+    const resumed = await call("collab:resume-room", ROOM);
+    expect(resumed).toMatchObject({ ok: true, value: { role: "host", participantId: HOST } });
+    expect(JSON.stringify(resumed)).not.toContain("resumeCredential");
   });
 
   it("rejects invalid arguments before any request", async () => {

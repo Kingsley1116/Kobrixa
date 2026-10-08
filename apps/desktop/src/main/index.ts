@@ -25,6 +25,7 @@ import { MainProcessCloseGuard } from "./window/main-close.js";
 import { rendererContentSecurityPolicy } from "./window/csp.js";
 import { resolveCollabServerUrl } from "./collab/server-url.js";
 import { createCollabService } from "./collab/runtime.js";
+import { CollabProjects } from "./collab/projects.js";
 import { registerCollabIpc } from "./collab/ipc.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -300,7 +301,14 @@ void app.whenReady().then(async () => {
       rendererCanFlush = true;
     },
     { monitor, lab: sensorLab, motors },
-    [(handle) => registerCollabIpc(handle, collab)],
+    [
+      (handle) =>
+        registerCollabIpc(
+          handle,
+          collab,
+          new CollabProjects(collab, workspaces, app.getPath("userData")),
+        ),
+    ],
   );
   const flushDeviceWork = async () => {
     await motors.flush();

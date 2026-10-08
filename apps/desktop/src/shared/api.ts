@@ -53,6 +53,8 @@ export type MonitorResult<T> =
   | { status: "error"; category: DeviceErrorCategory; message: string };
 
 export interface WorkspaceSummary {
+  /** Local mirror of a collaboration room, including when opened offline. */
+  sharedRoomId?: string;
   id: string;
   name: string;
   rootLabel: string;

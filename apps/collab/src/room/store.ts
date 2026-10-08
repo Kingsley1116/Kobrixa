@@ -1,4 +1,4 @@
-import type { Role } from "@kobrixa/collab-protocol";
+import { chatMessageSchema, type ChatMessage, type Role } from "@kobrixa/collab-protocol";
 import type { PasswordVerifier } from "../password.js";
 
 export const PASSWORD_ATTEMPTS_PER_MINUTE = 20;
@@ -51,6 +51,15 @@ export class RoomStore {
   constructor(private readonly sql: SqlStorage) {}
 
   migrate(): void {
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS chat_receipts (id TEXT PRIMARY KEY, message TEXT NOT NULL)`,
+    );
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS room_identities (
+      participant_id TEXT PRIMARY KEY, credential_hash TEXT NOT NULL
+    )`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS room_closed (
+      id INTEGER PRIMARY KEY CHECK (id = 1), closed_at INTEGER NOT NULL
+    )`);
     // Separate tables keep existing rooms passwordless without rewriting room metadata.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS room_password (
       id INTEGER PRIMARY KEY CHECK (id = 1), verifier TEXT NOT NULL
@@ -170,6 +179,52 @@ export class RoomStore {
       )
       .toArray()[0];
     return row ? toParticipant(row) : null;
+  }
+
+  chatReceipt(id: string): ChatMessage | undefined {
+    const row = this.sql
+      .exec<{ message: string }>("SELECT message FROM chat_receipts WHERE id = ?", id)
+      .toArray()[0];
+    return row ? chatMessageSchema.parse(JSON.parse(row.message)) : undefined;
+  }
+
+  rememberChat(message: ChatMessage): void {
+    this.sql.exec(
+      "INSERT INTO chat_receipts (id, message) VALUES (?, ?)",
+      message.id,
+      JSON.stringify(message),
+    );
+  }
+
+  setCredential(id: string, hash: string): void {
+    this.sql.exec(
+      "INSERT INTO room_identities (participant_id, credential_hash) VALUES (?, ?)",
+      id,
+      hash,
+    );
+  }
+
+  credential(id: string): string | undefined {
+    return this.sql
+      .exec<{ credential_hash: string }>(
+        "SELECT credential_hash FROM room_identities WHERE participant_id = ?",
+        id,
+      )
+      .toArray()[0]?.credential_hash;
+  }
+
+  isClosed(): boolean {
+    return this.sql.exec("SELECT id FROM room_closed").toArray().length > 0;
+  }
+
+  close(): void {
+    this.sql.exec("INSERT OR IGNORE INTO room_closed (id, closed_at) VALUES (1, ?)", Date.now());
+    this.sql.exec("UPDATE participants SET revoked = 1");
+    this.sql.exec("DELETE FROM room_identities");
+    this.sql.exec("DELETE FROM chat_receipts");
+    this.sql.exec("DELETE FROM doc_updates");
+    this.sql.exec("DELETE FROM awareness");
+    this.sql.exec("DELETE FROM room_password");
   }
 
   /** Participants that were not kicked, in join order. */

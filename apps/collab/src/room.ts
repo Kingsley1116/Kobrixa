@@ -11,6 +11,8 @@ import {
   roomIdSchema,
   roomPasswordSchema,
   setRoleRequestSchema,
+  sendChatRequestSchema,
+  type ChatMessage,
   type ErrorResponse,
   type Notice,
 } from "@kobrixa/collab-protocol";
@@ -44,6 +46,7 @@ const initRequestSchema = z
     inviteCode: inviteCodeSchema,
     host: z.object({ participantId: participantIdSchema, name: displayNameSchema }).strict(),
     password: roomPasswordSchema.optional(),
+    credentialHash: z.string().length(43).optional(),
   })
   .strict();
 
@@ -53,6 +56,7 @@ const joinRequestSchema = z
     name: displayNameSchema,
     password: roomPasswordSchema.optional(),
     clientKey: z.string().min(1).max(64).default("internal"),
+    credentialHash: z.string().length(43).optional(),
   })
   .strict();
 
@@ -132,12 +136,19 @@ export class CollabRoom extends DurableObject<CollabEnv> {
     try {
       if (request.method === "GET" && pathname === "/ws") return await this.acceptSocket(request);
       if (request.method === "POST") {
+        if (pathname !== "/init" && this.store.isClosed()) return error(410, "room-closed");
         const body: unknown = await request.json().catch(() => undefined);
         switch (pathname) {
           case "/init":
             return await this.init(body);
           case "/join":
             return await this.join(body);
+          case "/resume":
+            return this.resume(body);
+          case "/close":
+            return this.isHost(request) ? await this.closeRoom() : error(403, "forbidden");
+          case "/chat":
+            return this.chat(request, body);
           case "/kick":
             return this.isHost(request) ? this.kick(body) : error(403, "forbidden");
           case "/role":
@@ -187,6 +198,8 @@ export class CollabRoom extends DurableObject<CollabEnv> {
         joinedAt: now,
       });
       if (verifier) this.store.setPassword(verifier);
+      if (parsed.data.credentialHash)
+        this.store.setCredential(host.participantId, parsed.data.credentialHash);
       this.store.appendUpdate(snapshot);
     });
     await this.scheduleIdleCleanup();
@@ -213,6 +226,7 @@ export class CollabRoom extends DurableObject<CollabEnv> {
       if (!(await verifyPassword(secret, meta.roomId, password, verifier)))
         return error(401, "invalid-password");
       // An idle-room alarm may run while the password is being derived.
+      if (this.store.isClosed()) return error(410, "room-closed");
       const current = this.store.meta();
       if (!current || current.createdAt !== meta.createdAt || current.roomId !== meta.roomId)
         return error(404, "not-found");
@@ -227,13 +241,93 @@ export class CollabRoom extends DurableObject<CollabEnv> {
       }
       return Response.json({ role: existing.role, projectName: meta.projectName });
     }
-    if (this.store.activeParticipants().length >= COLLAB_LIMITS.participants) {
+    if (this.onlineParticipants().size >= COLLAB_LIMITS.participants) {
       return error(409, "room-full");
     }
     this.store.addParticipant({ participantId, name, role: "editor", joinedAt: Date.now() });
+    if (parsed.data.credentialHash)
+      this.store.setCredential(participantId, parsed.data.credentialHash);
     this.broadcastParticipants();
     if (this.openSockets().length === 0) await this.scheduleIdleCleanup();
     return Response.json({ role: "editor", projectName: meta.projectName });
+  }
+
+  private resume(body: unknown): Response {
+    const parsed = z
+      .object({ participantId: participantIdSchema, credentialHash: z.string().length(43) })
+      .safeParse(body);
+    if (!parsed.success) return error(400, "bad-request");
+    const meta = this.store.meta();
+    if (!meta) return error(404, "not-found");
+    const participant = this.store.participant(parsed.data.participantId);
+    const hash = this.store.credential(parsed.data.participantId);
+    if (
+      !hash ||
+      !crypto.subtle.timingSafeEqual(
+        new TextEncoder().encode(hash),
+        new TextEncoder().encode(parsed.data.credentialHash),
+      )
+    )
+      return error(401, "unauthorized");
+    if (!participant || participant.revoked) return error(403, "removed");
+    return Response.json({
+      participantId: participant.participantId,
+      role: participant.role,
+      name: participant.name,
+      projectName: meta.projectName,
+      inviteCode: meta.inviteCode,
+    });
+  }
+
+  private async closeRoom(): Promise<Response> {
+    this.doc?.destroy();
+    this.doc = null;
+    this.ctx.storage.transactionSync(() => this.store.close());
+    for (const socket of this.openSockets()) {
+      this.send(socket, encodeNotice({ type: "room-closed" }));
+      this.closeSocket(socket, CLOSE_CODE.roomClosed, "room closed");
+    }
+    this.awareness.clear();
+    await this.scheduleIdleCleanup();
+    return Response.json({});
+  }
+
+  private chat(request: Request, body: unknown): Response {
+    const actor = this.store.participant(request.headers.get("X-Collab-Participant") ?? "");
+    if (!actor || actor.revoked) return error(403, "removed");
+    if (!this.onlineParticipants().has(actor.participantId)) return error(409, "bad-request");
+    const parsed = sendChatRequestSchema.safeParse(body);
+    if (!parsed.success) return error(400, "bad-request");
+    const doc = this.ensureDoc();
+    const chat = doc.getArray<ChatMessage>(DOC_KEYS.chat);
+    const existing =
+      this.store.chatReceipt(parsed.data.id) ??
+      chat.toArray().find((message) => message.id === parsed.data.id);
+    if (existing)
+      return existing.participantId === actor.participantId && existing.text === parsed.data.text
+        ? Response.json(existing)
+        : error(400, "bad-request");
+    const message: ChatMessage = {
+      ...parsed.data,
+      participantId: actor.participantId,
+      name: actor.name,
+      at: Date.now(),
+    };
+    doc.transact(() => {
+      chat.push([message]);
+      if (chat.length > COLLAB_LIMITS.chatMessages)
+        chat.delete(0, chat.length - COLLAB_LIMITS.chatMessages);
+    });
+    this.store.rememberChat(message);
+    return Response.json(message);
+  }
+
+  private onlineParticipants(): Set<string> {
+    return new Set(
+      this.openSockets()
+        .map((socket) => this.attachment(socket)?.participantId)
+        .filter((id): id is string => !!id),
+    );
   }
 
   private kick(body: unknown): Response {
@@ -284,14 +378,21 @@ export class CollabRoom extends DurableObject<CollabEnv> {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
     // Rejections are delivered as close codes: browsers only see 1006 for a failed upgrade.
-    if (!this.store.meta()) return rejectSocket(CLOSE_CODE.roomClosed, "room closed");
+    if (!this.store.meta() || this.store.isClosed())
+      return rejectSocket(CLOSE_CODE.roomClosed, "room closed");
     const participantId = request.headers.get("X-Collab-Participant") ?? "";
     const participant = this.store.participant(participantId);
     if (!participant || participant.revoked) {
       return rejectSocket(CLOSE_CODE.unauthorized, "unauthorized");
     }
-    if (this.openSockets().length >= COLLAB_LIMITS.participants) {
+    const online = this.onlineParticipants();
+    if (!online.has(participantId) && online.size >= COLLAB_LIMITS.participants) {
       return rejectSocket(CLOSE_CODE.roomFull, "room full");
+    }
+
+    for (const previous of this.openSockets()) {
+      if (this.attachment(previous)?.participantId === participantId)
+        this.closeSocket(previous, CLOSE_CODE.sessionReplaced, "session replaced");
     }
 
     const { 0: client, 1: server } = new WebSocketPair();

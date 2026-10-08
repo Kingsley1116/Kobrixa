@@ -9,8 +9,17 @@ const api: KobrixaApi = {
     serverUrl: () => ipcRenderer.invoke("collab:server-url"),
     getPreferences: () => ipcRenderer.invoke("collab:preferences"),
     setPreferences: (patch) => ipcRenderer.invoke("collab:set-preferences", patch),
-    createRoom: (request) => ipcRenderer.invoke("collab:create-room", request),
+    createRoom: (request, workspaceId) =>
+      ipcRenderer.invoke("collab:create-room", request, workspaceId),
     joinRoom: (request) => ipcRenderer.invoke("collab:join-room", request),
+    previewProject: (workspaceId) => ipcRenderer.invoke("collab:preview-project", workspaceId),
+    prepareProject: (roomId, workspaceId) =>
+      ipcRenderer.invoke("collab:prepare-project", roomId, workspaceId),
+    checkpoint: (roomId) => ipcRenderer.invoke("collab:checkpoint", roomId),
+    saveCopy: (roomId, reveal) => ipcRenderer.invoke("collab:save-copy", roomId, reveal),
+    resumeRoom: (roomId) => ipcRenderer.invoke("collab:resume-room", roomId),
+    closeRoom: (roomId) => ipcRenderer.invoke("collab:close-room", roomId),
+    sendChat: (roomId, message) => ipcRenderer.invoke("collab:send-chat", roomId, message),
     kick: (roomId, participantId) => ipcRenderer.invoke("collab:kick", roomId, participantId),
     setRole: (roomId, request) => ipcRenderer.invoke("collab:set-role", roomId, request),
     leave: (roomId) => ipcRenderer.invoke("collab:leave", roomId),

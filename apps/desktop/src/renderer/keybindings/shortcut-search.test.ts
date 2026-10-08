@@ -66,7 +66,7 @@ describe("shortcut discovery", () => {
   it("combines source and status filters including intentionally unbound commands", () => {
     const overrides = { "actions.find": [], "kobrixa.save": [["Alt+KeyS"]] };
     expect(filter({ source: "editor", status: "modified" }, overrides)).toEqual(["actions.find"]);
-    expect(filter({ status: "unassigned" }, overrides)).toEqual(["actions.find"]);
+    expect(filter({ status: "unassigned" }, overrides)).toEqual(["kobrixa.collab", "actions.find"]);
     expect(shortcutStatus(editor, overrides)).toBe("unbound");
     expect(shortcutStatus({ ...editor, defaults: [] }, {})).toBe("unassigned");
     expect(shortcutStatus(editor, {})).toBe("default");

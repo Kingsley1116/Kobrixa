@@ -148,13 +148,31 @@ export async function checkDiagnostics({
   const missingParenthesis = "LCD.Clear(\n";
   await setSource(missingParenthesis, "BP1043");
   await readyFix();
-  await js("ed.setPosition({lineNumber:1,column:11});ed.focus()");
-  await key(".", [mod]);
-  await until(
-    "ed.getValue()==='LCD.Clear()\\n' || Array.from(document.querySelectorAll('.action-widget')).some(element=>element.getBoundingClientRect().height>0)",
-  );
-  if (await js("ed.getValue()!=='LCD.Clear()\\n'")) await key("Enter");
-  await until("ed.getValue()==='LCD.Clear()\\n'");
+  // A background analysis may invalidate the native action between opening the
+  // menu and accepting it. Retry only that explicit stale-snapshot rejection;
+  // an unexpected error or a missing action still fails this scenario.
+  await js(`window.quickFixStale = false; window.captureQuickFixStale = event => {
+    if (String(event.reason?.message).includes("workspace changed while preparing the edit")) window.quickFixStale = true;
+  }; window.addEventListener("unhandledrejection", window.captureQuickFixStale)`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await js("window.quickFixStale=false;ed.setPosition({lineNumber:1,column:11});ed.focus()");
+    await key(".", [mod]);
+    await until(
+      "ed.getValue()==='LCD.Clear()\\n' || Array.from(document.querySelectorAll('.action-widget')).some(element=>element.getBoundingClientRect().height>0)",
+    );
+    if (await js("ed.getValue()!=='LCD.Clear()\\n'")) await key("Enter");
+    await until("ed.getValue()==='LCD.Clear()\\n' || window.quickFixStale");
+    if (await js("ed.getValue()==='LCD.Clear()\\n'")) break;
+    assert.equal(
+      await js("ed.getValue()"),
+      missingParenthesis,
+      "Stale actions must not modify text",
+    );
+    await key("Escape");
+    await readyFix();
+  }
+  await js('window.removeEventListener("unhandledrejection", window.captureQuickFixStale)');
+  assert.equal(await js("ed.getValue()"), "LCD.Clear()\n");
   await waitMain(
     () => fixture.drafts["main.bp"] === "LCD.Clear()\n",
     "Quick fix did not persist a recovery draft",
@@ -267,7 +285,7 @@ export async function checkDiagnostics({
 
   win.setSize(980, 650);
   await js(
-    "smoke.settingsStore.set('uiScale',125);smoke.settingsStore.set('problemsHeight',320);smoke.settingsStore.set('deviceOpen',false)",
+    "smoke.settingsStore.set('uiScale',125);smoke.settingsStore.set('problemsHeight',320);smoke.settingsStore.set('rightPanel',null)",
   );
   await until("window.outerWidth===980 && window.outerHeight===650");
   for (const locale of ["en", "zh-TW"])

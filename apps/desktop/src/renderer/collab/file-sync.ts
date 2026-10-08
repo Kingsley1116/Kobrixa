@@ -38,7 +38,7 @@ export interface CollabFileSyncSnapshot {
   pendingWrites: number;
   /** Files left out of the shared document (too many or too large). */
   skipped: readonly string[];
-  error?: string;
+  error?: string | undefined;
 }
 
 export interface CollabFileSyncOptions {
@@ -192,7 +192,11 @@ export class CollabFileSync {
   get canMutate(): boolean {
     const snapshot = this.session.getSnapshot();
     return (
-      !this.#disposed && !this.#stopping && snapshot.status !== "closed" && canEdit(snapshot.role)
+      !this.#disposed &&
+      !this.#stopping &&
+      snapshot.status === "connected" &&
+      snapshot.synced &&
+      canEdit(snapshot.role)
     );
   }
 
@@ -246,6 +250,12 @@ export class CollabFileSync {
       await queue;
     } while (queue !== this.#queue);
     this.#update({ pendingWrites: this.#timers.size + this.#inflight });
+  }
+
+  async retry(): Promise<void> {
+    if (this.#disposed || this.session.getSnapshot().status !== "connected") return;
+    this.#update({ phase: "idle", error: undefined });
+    await this.#enqueue(() => this.#initialize());
   }
 
   // ---- Local workspace → document ----
@@ -358,7 +368,11 @@ export class CollabFileSync {
         .filter((entry) => entry.kind === "directory" && validPath(entry.path, "directory"))
         .map((entry) => entry.path);
       for (const entry of summary.entries) {
-        if (entry.kind !== "file" || !validPath(entry.path, "file")) continue;
+        if (entry.kind !== "file") continue;
+        if (!validPath(entry.path, "file")) {
+          skipped.push(entry.path);
+          continue;
+        }
         if (files.length >= COLLAB_LIMITS.files) {
           skipped.push(entry.path);
           continue;
@@ -813,7 +827,7 @@ export class CollabFileSync {
   }
 
   #fail(error: unknown): void {
-    this.#update({ error: message(error) });
+    this.#update({ phase: "error", error: message(error) });
   }
 
   #update(patch: Partial<CollabFileSyncSnapshot>): void {
@@ -920,7 +934,7 @@ export class CollabFileSyncManager {
     try {
       await draining;
       if (this.#session !== session) return;
-      let workspaceId: string | undefined = retainedWorkspaceId;
+      let workspaceId: string | undefined = retainedWorkspaceId ?? session.connection.workspaceId;
       if (!workspaceId && session.connection.role === "host")
         workspaceId = this.dependencies.activeWorkspaceId();
       else if (!workspaceId) {
@@ -951,7 +965,9 @@ export class CollabFileSyncManager {
       onTreeChange: (result) => dependencies.onTreeChange?.(result),
     });
     const readOnly = () =>
-      session.getSnapshot().status === "closed" || !canEdit(session.getSnapshot().role);
+      session.getSnapshot().status !== "connected" ||
+      !session.getSnapshot().synced ||
+      !canEdit(session.getSnapshot().role);
     this.#binding = { session, workspaceId, sync, readOnly: readOnly() };
     this.#unsubscribeSession = session.subscribe(() => {
       const binding = this.#binding;

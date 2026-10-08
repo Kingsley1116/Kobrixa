@@ -158,13 +158,19 @@ export const ProjectTree = forwardRef<ProjectTreeHandle, ProjectTreeProps>(funct
 
   function select(entryPath: string, focus = false): void {
     onSelectedPath(entryPath);
-    if (focus)
-      window.requestAnimationFrame(() => {
-        const item = itemRefs.current.get(entryPath);
-        // A quick F2 can open the rename field before this deferred row focus runs.
-        // Do not steal focus from that field and cancel the rename on blur.
-        if (!item?.querySelector("input")) item?.focus();
-      });
+    if (!focus) return;
+    const item = itemRefs.current.get(entryPath);
+    if (item) {
+      // Existing rows can focus immediately, before opening the file moves focus
+      // into the editor. Deferring this would redirect the next editor shortcut.
+      if (!item.querySelector("input")) item.focus();
+      return;
+    }
+    const previousFocus = document.activeElement;
+    window.requestAnimationFrame(() => {
+      const next = itemRefs.current.get(entryPath);
+      if (document.activeElement === previousFocus && !next?.querySelector("input")) next?.focus();
+    });
   }
 
   function protectedEntry(entryPath: string): boolean {

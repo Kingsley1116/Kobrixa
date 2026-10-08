@@ -40,6 +40,7 @@ export const appCommandInfo = {
   files: "Mod+KeyB",
   problems: "Mod+KeyJ",
   device: "Mod+Shift+KeyE",
+  collab: "",
   format: "Alt+Shift+KeyF",
   nextProblem: "F8",
   previousProblem: "Shift+F8",
@@ -60,7 +61,9 @@ export function appCommands(mac: boolean): KeyboardCommand[] {
       label: COMMAND_LABELS[`kobrixa.${id}`]![0],
       source: "workbench",
       contexts: [{ when: "editorFocus" }],
-      defaults: [{ keys: binding.replaceAll("Mod", mac ? "Meta" : "Ctrl").split(" ") }],
+      defaults: binding
+        ? [{ keys: binding.replaceAll("Mod", mac ? "Meta" : "Ctrl").split(" ") }]
+        : [],
     }));
 }
 export const commandLabel = (command: KeyboardCommand, locale: Locale): string =>

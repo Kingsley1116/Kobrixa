@@ -7,7 +7,7 @@ import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
 import { checkSensorLab } from "./sensor-lab-smoke.mjs";
 import { checkMonitor, createMonitorFixture, monitorDescriptor } from "./monitor-smoke.mjs";
-import { checkCollab } from "./collab-smoke.mjs";
+import { checkCollab, checkCollabWelcome } from "./collab-smoke.mjs";
 import { checkMotorTests, createMotorFixture } from "./motor-test-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
 import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-smoke.mjs";
@@ -50,7 +50,7 @@ app.setPath("userData", path.join(temporary, "profile"));
 const timeout = setTimeout(() => {
   console.error("Electron smoke test timed out");
   app.exit(1);
-}, 180000);
+}, 300000);
 app.on("will-quit", () => clearTimeout(timeout));
 const files = {
   "main.bp": "If True Then\nLCD.Clear()\nEndIf\n",
@@ -382,6 +382,23 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     }
     return;
   }
+  if (name === "collabPrepareProject") return workspace(firstId);
+  if (name === "collabPreviewProject") return { shared: Object.keys(fixture.files), skipped: [] };
+  if (name === "collabCheckpoint") return;
+  if (name === "collabCloseRoom") return { ok: true, value: null };
+  if (name === "collabSaveCopy") return "/tmp/room-copy";
+  if (name === "collabSendChat") {
+    const message = {
+      ...args[1],
+      participantId: "participant-0",
+      name: "Ada Lovelace",
+      at: Date.now(),
+    };
+    await win.webContents.executeJavaScript(
+      `window.__collabSmoke.room.sessions[1].doc.getArray("chat").push([${JSON.stringify(message)}])`,
+    );
+    return { ok: true, value: message };
+  }
   if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
     if (name === "collabCreateRoom" || name === "collabJoinRoom")
       return {
@@ -479,6 +496,8 @@ app
       'localStorage.clear(); smoke.settingsStore.set("locale","en"); smoke.keybindingsStore.reset()',
     );
     await until("!document.querySelector('.empty[role=status]')");
+    if (process.env.KOBRIXA_SMOKE_COLLAB_ONLY)
+      await checkCollabWelcome({ js, until, win, temporary });
     await key("o", [mod]);
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");

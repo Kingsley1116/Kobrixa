@@ -486,3 +486,19 @@ it("forwards optional passwords and reports required, invalid and throttled join
   expect(limited.res.status).toBe(429);
   expect(limited.res.headers.get("Retry-After")).toBe("60");
 });
+
+it("adds recovery credentials only when the desktop advertises resume-v1", async () => {
+  const legacy = await createRoom();
+  expect(createRoomResponseSchema.safeParse(legacy).success).toBe(true);
+  expect(legacy).not.toHaveProperty("resumeCredential");
+  const headers = { "X-Collab-Capabilities": "resume-v1" };
+  const created = await call("/rooms", { headers, body: { name: "Host", projectName: "Modern" } });
+  expect(created.res.status).toBe(201);
+  expect(created.json?.resumeCredential).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  const joined = await call("/rooms/join", {
+    headers,
+    body: { name: "Guest", inviteCode: created.json?.inviteCode },
+  });
+  expect(joined.json?.resumeCredential).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(joined.json?.resumeCredential).not.toBe(created.json?.resumeCredential);
+});

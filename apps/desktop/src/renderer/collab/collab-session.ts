@@ -17,7 +17,7 @@ import {
   type Notice,
   type PresenceState,
 } from "@kobrixa/collab-protocol";
-import type { CollabConnection } from "../../shared/collab.js";
+import type { CollabConnection, CollabResult } from "../../shared/collab.js";
 import type {
   CollabCloseReason,
   CollabSession,
@@ -47,6 +47,7 @@ export interface CollabNetworkMonitor {
 
 export interface CollabSessionOptions {
   WebSocket?: CollabSocketConstructor;
+  refreshConnection?(roomId: string): Promise<CollabResult<CollabConnection>>;
   setTimeout?: (callback: () => void, ms: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
   /** Returns a number in [0, 1); used for backoff jitter. */
@@ -88,6 +89,8 @@ export function hashString(value: string): number {
 /** Maps a server close code to a terminal reason, or `null` when the client should retry. */
 export function closeReasonForCode(code: number): CollabCloseReason | null {
   switch (code) {
+    case CLOSE_CODE.sessionReplaced:
+      return "session-replaced";
     case CLOSE_CODE.kicked:
       return "kicked";
     case CLOSE_CODE.unauthorized:
@@ -132,11 +135,16 @@ class WebSocketCollabSession implements CollabSession {
   #attempt = 0;
   #started = false;
   #destroyed = false;
+  #refreshing = false;
+  #pendingUpdates = new Set<ReturnType<typeof Y.decodeUpdate>>();
+  #ackListeners = new Set<() => void>();
+  readonly #refreshConnection: CollabSessionOptions["refreshConnection"];
 
   constructor(
     readonly connection: CollabConnection,
     options: CollabSessionOptions,
   ) {
+    this.#refreshConnection = options.refreshConnection;
     const WebSocketImpl =
       options.WebSocket ??
       (globalThis as { WebSocket?: CollabSocketConstructor }).WebSocket ??
@@ -214,12 +222,71 @@ class WebSocketCollabSession implements CollabSession {
     this.#listeners.clear();
   }
 
+  hasPendingUpdates(): boolean {
+    return this.#pendingUpdates.size > 0;
+  }
+
+  async flush(): Promise<void> {
+    if (!this.#pendingUpdates.size) return;
+    await new Promise<void>((resolve, reject) => {
+      const timer = globalThis.setTimeout(() => {
+        this.#ackListeners.delete(check);
+        reject(
+          new Error(
+            "Some shared changes are still waiting for the server. Reconnect and retry before leaving.",
+          ),
+        );
+      }, 10_000);
+      const check = () => {
+        if (!this.#pendingUpdates.size) {
+          globalThis.clearTimeout(timer);
+          this.#ackListeners.delete(check);
+          resolve();
+        }
+      };
+      this.#ackListeners.add(check);
+      check();
+    });
+  }
+
   // --- socket lifecycle -------------------------------------------------------
 
   #open(): void {
     // Expired tokens are rejected at the HTTP upgrade, which only surfaces as 1006.
-    if (Date.now() >= this.connection.expiresAt) {
-      this.#terminate("unauthorized");
+    if (Date.now() >= this.connection.expiresAt - (this.#refreshConnection ? 60_000 : 0)) {
+      if (!this.#refreshConnection) {
+        this.#terminate("unauthorized");
+        return;
+      }
+      if (this.#refreshing) return;
+      this.#refreshing = true;
+      void this.#refreshConnection(this.connection.roomId)
+        .then((result) => {
+          if (this.#destroyed || this.#snapshot.status === "closed") return;
+          if (!result.ok) {
+            if (
+              result.error === "network" ||
+              result.error === "unavailable" ||
+              result.error === "rate-limited"
+            )
+              this.#scheduleReconnect();
+            else
+              this.#terminate(
+                result.error === "removed"
+                  ? "kicked"
+                  : result.error === "room-closed"
+                    ? "room-closed"
+                    : "unauthorized",
+              );
+            return;
+          }
+          Object.assign(this.connection, result.value);
+          this.#open();
+        })
+        .catch(() => this.#scheduleReconnect())
+        .finally(() => {
+          this.#refreshing = false;
+        });
       return;
     }
     if (this.#snapshot.status !== "reconnecting") this.#setStatus("connecting");
@@ -238,7 +305,9 @@ class WebSocketCollabSession implements CollabSession {
       this.#setStatus("syncing");
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, MESSAGE_TYPE.sync);
-      syncProtocol.writeSyncStep1(encoder, this.doc);
+      const syncDoc = this.#pendingUpdates.size ? new Y.Doc() : this.doc;
+      syncProtocol.writeSyncStep1(encoder, syncDoc);
+      if (syncDoc !== this.doc) syncDoc.destroy();
       this.#send(encoding.toUint8Array(encoder));
       if (this.awareness.getLocalState() !== null) this.#sendAwareness([this.doc.clientID]);
     };
@@ -338,6 +407,32 @@ class WebSocketCollabSession implements CollabSession {
     const type = decoding.readVarUint(decoder);
     switch (type) {
       case MESSAGE_TYPE.sync: {
+        const probe = decoding.createDecoder(data);
+        decoding.readVarUint(probe);
+        const kind = decoding.readVarUint(probe);
+        if (kind === syncProtocol.messageYjsUpdate || kind === syncProtocol.messageYjsSyncStep2) {
+          const update = decoding.readVarUint8Array(probe);
+          const acknowledged = Y.decodeUpdate(update);
+          const clock = Y.parseUpdateMeta(update).to;
+          for (const pending of this.#pendingUpdates) {
+            const structsAccepted = pending.structs.every(
+              (struct) => (clock.get(struct.id.client) ?? 0) >= struct.id.clock + struct.length,
+            );
+            const deletesAccepted = [...pending.ds.clients].every(([id, ranges]) =>
+              ranges.every((range) =>
+                acknowledged.ds.clients
+                  .get(id)
+                  ?.some(
+                    (known) =>
+                      known.clock <= range.clock &&
+                      known.clock + known.len >= range.clock + range.len,
+                  ),
+              ),
+            );
+            if (structsAccepted && deletesAccepted) this.#pendingUpdates.delete(pending);
+          }
+          for (const notify of this.#ackListeners) notify();
+        }
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MESSAGE_TYPE.sync);
         const syncType = syncProtocol.readSyncMessage(decoder, encoder, this.doc, this);
@@ -383,6 +478,7 @@ class WebSocketCollabSession implements CollabSession {
 
   #onDocUpdate = (update: Uint8Array, origin: unknown): void => {
     if (origin === this || !this.#isOpen()) return;
+    this.#pendingUpdates.add(Y.decodeUpdate(update));
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MESSAGE_TYPE.sync);
     syncProtocol.writeUpdate(encoder, update);

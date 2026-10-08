@@ -7,6 +7,14 @@ import {
   roleSchema,
   roomIdSchema,
   setRoleRequestSchema,
+  COLLAB_CAPABILITY_HEADER,
+  COLLAB_RESUME_CAPABILITY,
+  resumeRequestSchema,
+  sendChatRequestSchema,
+  errorResponseSchema,
+  displayNameSchema,
+  participantIdSchema,
+  inviteCodeSchema,
 } from "@kobrixa/collab-protocol";
 import type {
   CreateRoomResponse,
@@ -45,7 +53,27 @@ const joinDoResponseSchema = z.object({ role: roleSchema, projectName: z.string(
 const INIT_ATTEMPTS = 3;
 
 /** `/rooms/:roomId/<action>` for the room-scoped routes. */
-const ROOM_ROUTE = /^\/rooms\/([^/]+)\/(kick|role|ws)$/;
+const ROOM_ROUTE = /^\/rooms\/([^/]+)\/(kick|role|ws|resume|close|chat)$/;
+
+function resumable(request: Request): boolean {
+  return (
+    request.headers
+      .get(COLLAB_CAPABILITY_HEADER)
+      ?.split(",")
+      .map((s) => s.trim())
+      .includes(COLLAB_RESUME_CAPABILITY) ?? false
+  );
+}
+
+async function credentialHash(secret: string, roomId: string, credential: string): Promise<string> {
+  return base64urlEncode(await hmac(secret, `resume:${roomId}:${credential}`));
+}
+
+async function roomError(response: Response): Promise<void> {
+  if (response.ok) return;
+  const body = errorResponseSchema.safeParse(await response.json().catch(() => null));
+  throw new HttpError(response.status, body.success ? body.data.error : "internal");
+}
 
 type Room = DurableObjectStub;
 
@@ -118,6 +146,7 @@ async function createRoom(
 ): Promise<Response> {
   const { name, projectName, password } = await readJson(request, createRoomRequestSchema);
   const participantId = randomId(16);
+  const credential = resumable(request) ? randomId(32) : undefined;
   // A 409 means the derived room already exists (an invite-code collision); retry.
   for (let attempt = 0; attempt < INIT_ATTEMPTS; attempt++) {
     const inviteCode = generateInviteCode();
@@ -128,6 +157,7 @@ async function createRoom(
       inviteCode,
       host: { participantId, name },
       password,
+      ...(credential ? { credentialHash: await credentialHash(secret, roomId, credential) } : {}),
     });
     if (response.status === 409) {
       await response.body?.cancel();
@@ -147,7 +177,10 @@ async function createRoom(
       hostToken: token,
       expiresAt: payload.exp,
     };
-    return Response.json(body, { status: 201 });
+    return Response.json(
+      { ...body, ...(credential ? { resumeCredential: credential } : {}) },
+      { status: 201 },
+    );
   }
   throw new HttpError(500, "internal", "Could not allocate a room");
 }
@@ -161,6 +194,7 @@ async function joinRoom(
   const { inviteCode, name, password } = await readJson(request, joinRequestSchema);
   const roomId = await deriveRoomId(secret, inviteCode);
   const participantId = randomId(16);
+  const credential = resumable(request) ? randomId(32) : undefined;
   const clientKey = base64urlEncode(
     await hmac(secret, `join-client:${request.headers.get("CF-Connecting-IP") ?? "unknown"}`),
   );
@@ -169,7 +203,12 @@ async function joinRoom(
     name,
     password,
     clientKey,
+    ...(credential ? { credentialHash: await credentialHash(secret, roomId, credential) } : {}),
   });
+  if (response.status === 410) {
+    await response.body?.cancel();
+    throw new HttpError(410, resumable(request) ? "room-closed" : "expired");
+  }
   if (response.status === 401) {
     const body = (await response.json()) as { error?: string };
     if (body.error === "password-required" || body.error === "invalid-password")
@@ -201,7 +240,52 @@ async function joinRoom(
     projectName,
     expiresAt: payload.exp,
   };
-  return Response.json(body);
+  return Response.json({ ...body, ...(credential ? { resumeCredential: credential } : {}) });
+}
+
+async function resumeRoom(
+  request: Request,
+  env: CollabEnv,
+  secret: string,
+  roomId: string,
+  now: number,
+): Promise<Response> {
+  const body = await readJson(request, resumeRequestSchema);
+  const response = await callRoom(roomStub(env, roomId), "/resume", {
+    participantId: body.participantId,
+    credentialHash: await credentialHash(secret, roomId, body.credential),
+  });
+  await roomError(response);
+  const member = z
+    .object({
+      participantId: participantIdSchema,
+      role: roleSchema,
+      name: displayNameSchema,
+      projectName: z.string(),
+      inviteCode: inviteCodeSchema,
+    })
+    .parse(await response.json());
+  const { token, payload } = await signToken(
+    secret,
+    { roomId, participantId: member.participantId, role: member.role, name: member.name },
+    now,
+  );
+  return Response.json({ ...member, roomId, token, expiresAt: payload.exp });
+}
+
+async function memberAction(
+  request: Request,
+  env: CollabEnv,
+  secret: string,
+  roomId: string,
+  action: "close" | "chat",
+  now: number,
+): Promise<Response> {
+  const auth = await authorize(secret, bearer(request), roomId, now);
+  const body = action === "chat" ? await readJson(request, sendChatRequestSchema) : {};
+  const response = await callRoom(roomStub(env, roomId), `/${action}`, body, auth.participantId);
+  await roomError(response);
+  return Response.json(await response.json());
 }
 
 async function hostAction(
@@ -312,6 +396,12 @@ async function route(
     return connect(request, env, requireSecret(env), roomId, now);
   }
   if (method !== "POST") throw methodNotAllowed("POST");
+  if (action === "resume") {
+    rateLimit(options.joinLimiter ?? defaultJoinLimiter, request, now);
+    return resumeRoom(request, env, requireSecret(env), roomId, now);
+  }
+  if (action === "close" || action === "chat")
+    return memberAction(request, env, requireSecret(env), roomId, action, now);
   return hostAction(request, env, requireSecret(env), roomId, action as "kick" | "role", now);
 }
 
