@@ -246,6 +246,13 @@ function Room({
     console.warn("[collab] Room action failed", failure);
     return failure instanceof CollabPendingUpdatesError ? copy.pendingUpdates : fallback;
   };
+  /** Set once a closed session's unsent edits were preserved, so retries don't save duplicate copies. */
+  const preserved = useRef(false);
+  const preserve = async (): Promise<void> => {
+    if (preserved.current) return;
+    await onLeave?.();
+    if (session.getSnapshot().status === "closed") preserved.current = true;
+  };
   const leave = async (end = false): Promise<void> => {
     if (busyRef.current) return;
     setBusy(end ? "end" : "leave");
@@ -253,14 +260,12 @@ function Room({
     setError(null);
     setMessage("");
     try {
-      await onLeave?.();
+      await preserve();
       if (end) {
         const result = await api.closeRoom(connection.roomId);
         if (!result.ok) {
-          setError({
-            text: collabErrorMessage(copy, result.error),
-            retry: () => void leave(true),
-          });
+          // Shown inside the end-room dialog, whose End button is the retry.
+          setError({ text: collabErrorMessage(copy, result.error) });
           return;
         }
       }
@@ -288,7 +293,7 @@ function Room({
     const retry = (): void => void rejoin();
     try {
       // Preserve unconfirmed edits before a new session replaces this one.
-      await onLeave?.();
+      await preserve();
       let result: CollabResult<CollabConnection>;
       try {
         result = await api.resumeRoom(connection.roomId);
@@ -545,7 +550,9 @@ function Room({
           descriptionId="collab-end-intro"
           intro={<p id="collab-end-intro">{copy.endRoomIntro}</p>}
           onClose={() => {
-            if (!busyRef.current) setConfirmEnd(false);
+            if (busyRef.current) return;
+            setConfirmEnd(false);
+            setError(null);
           }}
         >
           <DialogActions>
@@ -553,7 +560,10 @@ function Room({
               type="button"
               data-modal-initial
               disabled={busy !== null}
-              onClick={() => setConfirmEnd(false)}
+              onClick={() => {
+                setConfirmEnd(false);
+                setError(null);
+              }}
             >
               {copy.cancel}
             </button>

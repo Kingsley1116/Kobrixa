@@ -304,7 +304,8 @@ describe("collaboration panel", () => {
     expect(text("[data-testid=collab-room-error]")).toBe(copy.errors.network);
     expect(onStart).not.toHaveBeenCalled();
     await click("[data-testid=collab-room-retry]");
-    expect(onLeave).toHaveBeenCalledTimes(2);
+    // Unsent edits of the closed session are preserved once, not on every retry.
+    expect(onLeave).toHaveBeenCalledTimes(1);
     expect(requests.resumeRoom).toHaveBeenLastCalledWith(room.sessions[0]!.connection.roomId);
     expect(onStart).toHaveBeenCalledWith(room.sessions[0]!.connection);
     expect(document.querySelector("[data-testid=collab-room-error]")).toBeNull();
@@ -375,8 +376,17 @@ describe("collaboration panel", () => {
       expect(text("[data-testid=collab-end-confirm]")).toBe(copy.endRoom);
       expect(document.querySelectorAll("[role=alert]")).toHaveLength(1);
       expect(text(".collab-end-confirm [role=alert]")).toBe(copy.errors.forbidden);
+      expect(document.querySelector("[data-testid=collab-room-retry]")).toBeNull();
+      vi.mocked(requests.closeRoom).mockResolvedValueOnce({ ok: false, error: "forbidden" });
       await click("[data-testid=collab-end-confirm]");
-      expect(requests.closeRoom).toHaveBeenCalledTimes(2);
+      // Cancelling drops the error instead of leaving an unconfirmed retry behind.
+      await click(".collab-end-confirm [data-modal-initial]");
+      expect(document.querySelector(".collab-end-confirm")).toBeNull();
+      expect(document.querySelector("[data-testid=collab-room-error]")).toBeNull();
+      await click(".collab-room-footer .more-button");
+      await click(".collab-room-footer [role=menuitem].danger");
+      await click("[data-testid=collab-end-confirm]");
+      expect(requests.closeRoom).toHaveBeenCalledTimes(3);
       expect(document.querySelector("[data-testid=collab-lobby]")).not.toBeNull();
     },
   );
