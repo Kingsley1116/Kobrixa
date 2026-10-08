@@ -1,5 +1,6 @@
 /* Remote participants in a collaboration session. Per-participant colors and
-   labels are injected by renderer/collab/remote-cursors.ts. */
+   labels are injected by renderer/collab/remote-cursors.ts. Name labels show
+   while hovering the caret or briefly after the participant moves. */
 .kobrixa-remote-selection {
   border-radius: 2px;
 }
@@ -10,6 +11,16 @@
   margin-left: -1px;
   margin-right: -1px;
   box-sizing: border-box;
+}
+
+/* Wider invisible hover target around the 2px caret. */
+.kobrixa-remote-caret::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 8px;
 }
 
 .kobrixa-remote-caret::after {
@@ -26,5 +37,70 @@
   line-height: 15px;
   white-space: nowrap;
   pointer-events: none;
-  opacity: 0.9;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.kobrixa-remote-caret:hover::after,
+.kobrixa-remote-caret-active::after {
+  opacity: 0.95;
+}
+
+/* The first line has no room above it inside the editor viewport. */
+.kobrixa-remote-caret-below::after {
+  top: 100%;
+  bottom: auto;
+  border-radius: 0 3px 3px 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kobrixa-remote-caret::after {
+    transition: none;
+  }
+}
+
+/* Participants list extras (base layout lives in collab-panel.css). */
+.collab-editing {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-scale));
+}
+
+.collab-control-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.6;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.collab-row-spinner {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0 7px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .collab-row-spinner {
+    animation: collab-row-spin 0.8s linear infinite;
+  }
+}
+
+@keyframes collab-row-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Keep the live region in the accessibility tree while it has nothing to say. */
+.collab-section > [role="status"]:empty {
+  margin: 0;
 }

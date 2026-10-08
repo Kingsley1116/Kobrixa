@@ -160,7 +160,46 @@ export async function checkCollab(context) {
     await js(click(".collab-participant .more-button"));
     await until('Boolean(document.querySelector(".collab-participant [role=menu]"))');
     assert.match(await js('document.activeElement?.getAttribute("role") ?? ""'), /menuitem/);
+    assert.match(
+      await js('document.querySelector(".collab-participant .more-button").ariaLabel'),
+      /^Actions for /,
+    );
     await js(click(".collab-participant .more-button"));
+    // A peer's open file shows as "Editing …"; the host holds device control by default.
+    const peerFile = await js(
+      '(() => { const file = [...window.__collabSmoke.session.doc.getMap("files").keys()][0]; window.__collabSmoke.room.sessions[1].awareness.setLocalStateField("file", file); return file; })()',
+    );
+    await until(
+      `[...document.querySelectorAll("[data-testid=collab-participant-file]")].some((item) => item.textContent === ${JSON.stringify(`Editing ${peerFile}`)})`,
+    );
+    assert.equal(
+      await js('document.querySelectorAll("[data-testid=collab-control-badge]").length'),
+      1,
+    );
+    await fs.writeFile(
+      path.join(temporary, "collab-participants.png"),
+      (await win.webContents.capturePage()).toPNG(),
+    );
+    // Demoting asks for confirmation, then reports success.
+    await js(click(".collab-participant .more-button"));
+    await until('Boolean(document.querySelector(".collab-participant [role=menu]"))');
+    await js(click(".collab-participant [role=menuitem]:not(.danger)"));
+    await until('Boolean(document.querySelector(".collab-demote-confirm"))');
+    assert.equal(
+      await js('document.querySelector(".collab-demote-confirm").getAttribute("role")'),
+      "alertdialog",
+    );
+    await js(click("[data-testid=collab-demote-confirm]"));
+    await until(
+      'document.querySelector("[data-testid=collab-participants-status]")?.textContent.includes("is now a viewer")',
+    );
+    await until('Boolean(document.querySelector(".collab-participant .collab-role-viewer"))');
+    await js(click(".collab-participant .more-button"));
+    await until('Boolean(document.querySelector(".collab-participant [role=menu]"))');
+    await js(click(".collab-participant [role=menuitem]:not(.danger)"));
+    await until(
+      'document.querySelector("[data-testid=collab-participants-status]")?.textContent.includes("is now an editor")',
+    );
   }
   // Exercise every requested size, width, language, theme and scale combination.
   for (const [width, height] of [
@@ -273,7 +312,7 @@ export async function checkCollab(context) {
   );
   win.setSize(1420, 900);
   console.log(
-    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, reconnect and closed-room recovery, join conflict choices and 48 layout combinations",
+    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, reconnect and closed-room recovery, join conflict choices, participant activity, confirmed demotion and 48 layout combinations",
   );
 }
 
