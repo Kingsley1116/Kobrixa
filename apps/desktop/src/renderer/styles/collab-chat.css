@@ -22,6 +22,70 @@
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* Positions the "View new messages" pill over the bottom of the log. */
+.collab-chat-log-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.collab-chat-new {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
+  font-size: var(--font-small);
+  font-weight: 600;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.collab-chat-new > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.collab-chat-new:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.collab-chat-new-count {
+  font-variant-numeric: tabular-nums;
+}
+.collab-chat-new svg {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.collab-chat-day {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 600;
+}
+.collab-chat-day::before,
+.collab-chat-day::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
 .collab-chat-empty {
   margin: auto;
   color: var(--muted);

@@ -154,7 +154,70 @@ export async function checkCollab(context) {
     await until(
       'document.querySelector(".collab-chat-log").textContent.includes("draft that survives")',
     );
+    // Messages sit under a "Today" separator and show only the time.
+    assert.deepEqual(
+      await js(
+        '[...document.querySelectorAll("[data-testid=collab-chat-day]")].map(e => e.textContent)',
+      ),
+      ["Today"],
+    );
+    assert.equal(
+      await js('document.querySelector("[data-testid=collab-chip-label]").textContent'),
+      "Collaborate",
+    );
+    assert.equal(
+      await js('Boolean(document.querySelector("[data-testid=collab-chip-unread]"))'),
+      false,
+    );
+    // Reading older messages: new ones raise a floating pill instead of scrolling.
+    await js(
+      'Promise.all(Array.from({length: 30}, (_, i) => window.__collabSmoke.peerChat.send("peer filler " + i)))',
+    );
+    await until(
+      '(() => { const log = document.querySelector(".collab-chat-log"); return log.scrollHeight > log.clientHeight + 40 && log.scrollHeight - log.scrollTop - log.clientHeight < 24; })()',
+    );
+    await js(
+      '(() => { const log = document.querySelector(".collab-chat-log"); log.scrollTop = 0; log.dispatchEvent(new Event("scroll")); })()',
+    );
+    await js('window.__collabSmoke.peerChat.send("while you were reading")');
+    await until('Boolean(document.querySelector("[data-testid=collab-chat-new]"))');
+    await fs.writeFile(
+      path.join(temporary, "chat-new-messages.png"),
+      (await win.webContents.capturePage()).toPNG(),
+    );
+    assert.equal(
+      await js(
+        '(() => { const pill = document.querySelector("[data-testid=collab-chat-new]").getBoundingClientRect(), log = document.querySelector(".collab-chat-log").getBoundingClientRect(); return pill.bottom <= log.bottom && pill.top >= log.top && getComputedStyle(document.querySelector("[data-testid=collab-chat-new]")).position === "absolute"; })()',
+      ),
+      true,
+      "new-message pill floats over the log",
+    );
+    // Whether earlier messages count as read depends on the window being shown,
+    // so compare the chip with the pill rather than with a fixed number.
+    const unread = await js(
+      'document.querySelector("[data-testid=collab-chat-new] .collab-chat-new-count").textContent',
+    );
+    assert.match(unread, /^[1-9]\d*$/);
+    assert.equal(
+      await js('document.querySelector("[data-testid=collab-chip-unread]")?.textContent'),
+      unread,
+    );
+    assert.match(
+      await js('document.querySelector("[data-testid=collab-chip]").getAttribute("aria-label")'),
+      new RegExp(`, ${unread} unread messages?$`),
+    );
+    await js(click("[data-testid=collab-chat-new]"));
+    await until(
+      '(() => { const log = document.querySelector(".collab-chat-log"); return log.scrollHeight - log.scrollTop - log.clientHeight < 24; })()',
+    );
     await js("window.__collabSmoke.peerControl.request()");
+    await until(
+      'document.querySelector("[data-testid=collab-chip-requests]")?.textContent === "1"',
+    );
+    assert.match(
+      await js('document.querySelector("[data-testid=collab-chip]").getAttribute("aria-label")'),
+      /, 1 control request$/,
+    );
     await js(click("#collab-view-people"));
     await until('Boolean(document.querySelector(".device-control-requests"))');
     await js(click(".collab-participant .more-button"));
@@ -312,7 +375,7 @@ export async function checkCollab(context) {
   );
   win.setSize(1420, 900);
   console.log(
-    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, reconnect and closed-room recovery, join conflict choices, participant activity, confirmed demotion and 48 layout combinations",
+    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, reconnect and closed-room recovery, join conflict choices, participant activity, confirmed demotion, day separators, new-message pill, separate chip badges and 48 layout combinations",
   );
 }
 
