@@ -26,6 +26,10 @@ export interface LinkedSession extends CollabSession {
   setRole(role: Role): void;
   /** Simulates the server closing this session. */
   close(reason: CollabCloseReason): void;
+  /** Simulates a lost connection; the session waits in `reconnecting`. */
+  drop(): void;
+  /** Restores a dropped session and exchanges the state missed meanwhile. */
+  reconnectNow(): void;
 }
 
 export interface LinkedRoom {
@@ -145,10 +149,31 @@ class FakeSession implements LinkedSession {
   }
 
   close(reason: CollabCloseReason): void {
-    if (!this.#live()) return;
+    if (this.#snapshot.status === "closed") return;
     for (const peer of this.#peers())
       removeAwarenessStates(peer.awareness, [this.doc.clientID], RELAY);
     this.update({ status: "closed", closeReason: reason });
+    this.onRoster();
+  }
+
+  drop(): void {
+    if (!this.#live()) return;
+    for (const peer of this.#peers())
+      removeAwarenessStates(peer.awareness, [this.doc.clientID], RELAY);
+    this.update({ status: "reconnecting" });
+    this.onRoster();
+  }
+
+  reconnectNow(): void {
+    if (this.#snapshot.status !== "reconnecting") return;
+    this.update({ status: "connected" });
+    for (const peer of this.#peers()) {
+      if (this.#snapshot.role !== "viewer")
+        Y.applyUpdate(peer.doc, Y.encodeStateAsUpdate(this.doc), RELAY);
+      Y.applyUpdate(this.doc, Y.encodeStateAsUpdate(peer.doc), RELAY);
+    }
+    const state = this.awareness.getLocalState();
+    if (state) this.awareness.setLocalState({ ...state });
     this.onRoster();
   }
 

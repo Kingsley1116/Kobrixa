@@ -18,11 +18,12 @@ import {
   type PresenceState,
 } from "@kobrixa/collab-protocol";
 import type { CollabConnection, CollabResult } from "../../shared/collab.js";
-import type {
-  CollabCloseReason,
-  CollabSession,
-  CollabSessionSnapshot,
-  CollabStatus,
+import {
+  CollabPendingUpdatesError,
+  type CollabCloseReason,
+  type CollabSession,
+  type CollabSessionSnapshot,
+  type CollabStatus,
 } from "./types.js";
 
 /** The subset of the browser `WebSocket` the session uses. */
@@ -98,8 +99,9 @@ export function closeReasonForCode(code: number): CollabCloseReason | null {
     case CLOSE_CODE.roomClosed:
       return "room-closed";
     case CLOSE_CODE.roomFull:
+      return "room-full";
     case CLOSE_CODE.protocolMismatch:
-      return "error";
+      return "protocol-mismatch";
     default:
       return null;
   }
@@ -231,11 +233,7 @@ class WebSocketCollabSession implements CollabSession {
     await new Promise<void>((resolve, reject) => {
       const timer = globalThis.setTimeout(() => {
         this.#ackListeners.delete(check);
-        reject(
-          new Error(
-            "Some shared changes are still waiting for the server. Reconnect and retry before leaving.",
-          ),
-        );
+        reject(new CollabPendingUpdatesError());
       }, 10_000);
       const check = () => {
         if (!this.#pendingUpdates.size) {
@@ -247,6 +245,13 @@ class WebSocketCollabSession implements CollabSession {
       this.#ackListeners.add(check);
       check();
     });
+  }
+
+  reconnectNow(): void {
+    if (this.#destroyed || this.#snapshot.status !== "reconnecting" || this.#socket) return;
+    this.#cancelRetry();
+    this.#attempt = 0;
+    this.#open();
   }
 
   // --- socket lifecycle -------------------------------------------------------
@@ -393,11 +398,7 @@ class WebSocketCollabSession implements CollabSession {
       this.#setStatus("reconnecting");
       return;
     }
-    if (this.#snapshot.status === "reconnecting" && !this.#socket) {
-      this.#cancelRetry();
-      this.#attempt = 0;
-      this.#open();
-    }
+    this.reconnectNow();
   };
 
   // --- frames -----------------------------------------------------------------

@@ -215,6 +215,42 @@ export async function checkCollab(context) {
             }
           }
   if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
+    await js('smoke.settingsStore.set("locale","en")');
+    assert.match(
+      await js('document.querySelector(".collab-invite-label").textContent'),
+      /Invite code/,
+    );
+    await js("window.__collabSmoke.session.drop()");
+    await until('Boolean(document.querySelector("[data-testid=collab-reconnect-now]"))');
+    assert.match(
+      await js('document.querySelector("[data-testid=collab-reconnecting]").textContent'),
+      /Editing is paused/,
+    );
+    await js(click("[data-testid=collab-reconnect-now]"));
+    await until(
+      'document.querySelector("[data-testid=collab-status]").dataset.status === "connected"',
+    );
+    await js('window.__collabSmoke.session.close("error")');
+    await until('Boolean(document.querySelector("[data-testid=collab-rejoin]"))');
+    await js(click("[data-testid=collab-rejoin]"));
+    // The smoke service refuses to resume, so the localized error offers a retry.
+    await until(
+      'document.querySelector("[data-testid=collab-room-error]")?.textContent.includes("isn\'t available")',
+    );
+    assert.equal(
+      await js('Boolean(document.querySelector("[data-testid=collab-room-retry]"))'),
+      true,
+    );
+    await js(click(".collab-room-footer .more-button"));
+    await until('Boolean(document.querySelector("[data-testid=collab-save-copy]"))');
+    await js(click("[data-testid=collab-save-copy]"));
+    await until(
+      'document.querySelector("[data-testid=collab-room-message]").textContent.includes("room-copy")',
+    );
+    await fs.writeFile(
+      path.join(temporary, "collab-closed-recovery.png"),
+      (await win.webContents.capturePage()).toPNG(),
+    );
     await js(click("[data-testid=collab-leave]"));
     await until('Boolean(document.querySelector("[data-testid=collab-lobby]"))');
     // The room just left is listed with its join time and can be forgotten.
@@ -237,7 +273,7 @@ export async function checkCollab(context) {
   );
   win.setSize(1420, 900);
   console.log(
-    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, join conflict choices and 48 layout combinations",
+    "PASS collaboration welcome entry, share preview retry, room lifecycle, recent-room forget, persistent drafts, server-confirmed chat, keyboard menus, reconnect and closed-room recovery, join conflict choices and 48 layout combinations",
   );
 }
 
