@@ -56,6 +56,7 @@ vi.mock("monaco-editor", () => ({
     registerHoverProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerSignatureHelpProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerDefinitionProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerDocumentSymbolProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerReferenceProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerRenameProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerCodeActionProvider: vi.fn(() => ({ dispose: vi.fn() })),
