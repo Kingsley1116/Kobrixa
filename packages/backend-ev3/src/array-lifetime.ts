@@ -13,7 +13,12 @@ export function hasCallLocalArrays(fn: IRFunction): boolean {
     fn.locals.filter((local) => local.type.kind === "array").map((local) => local.name),
   );
   const isLocalArray = (value: IRValue) => value.kind === "variable" && arrays.has(value.name);
-  const producers = new Set(["Sensor.ReadRaw", "Sensor.ReadI2CRegisters", "Sensor.CommunicateI2C"]);
+  const producers = new Set([
+    "Sensor.ReadRaw",
+    "Sensor.ReadI2CRegisters",
+    "Sensor.CommunicateI2C",
+    "EV3File.ReadNumberArray",
+  ]);
   const borrowedArgument = new Map([
     ["Row.Read", 0],
     ["Row.Write", 0],
@@ -22,6 +27,7 @@ export function hasCallLocalArrays(fn: IRFunction): boolean {
     ["Sensor.SendUARTData", 2],
     ["Sensor.CommunicateI2C", 4],
     ["Sensor.WriteI2CRegisters", 4],
+    ["EV3File.WriteNumberArray", 2],
   ]);
   for (const instruction of block.instructions) {
     const localTarget = "target" in instruction && arrays.has(instruction.target ?? "");

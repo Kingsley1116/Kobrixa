@@ -10,6 +10,8 @@ Run `pnpm test:bytecode` from the repository root. This builds the compiler pack
 - `diagnostic-examples.test.mjs`: every corrected Basic Plus example in the shared diagnostic catalog compiles through the frontend and backend to a structurally valid native RBF.
 - `robot-bytecode.test.mjs`: project initialization, buttons, scheduling, gyro, camera, steering and odometry checks.
 - `movement-bytecode.test.mjs`: 5,460 steering combinations, nine repeated calls, two turns and four timed moves.
+- `motor-bytecode.test.mjs`: literal/computed motor addresses, daisy-chain layers, legacy port selection, zero-speed synchronization, and speed/steering bounds with optimization enabled and disabled.
+- `api-bytecode.test.mjs`: computed sensor indexes, numeric precision, assertions, file-array ownership, and display/button/speaker/timer/mailbox contracts with optimization enabled and disabled.
 
 All tests run offline using the independent opcode schema in `fixtures/opcodes.json`; see `fixtures/PROVENANCE.md`. Shared helpers perform no tests or builds when imported and do not read CLI arguments.
 

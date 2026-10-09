@@ -72,13 +72,9 @@ export function scalarOperation(
       case "remainder":
         return Math.fround(f(0) % f(1));
       case "max":
-        return Math.fround(
-          Math.fround(Math.fround(f(0) + f(1)) + Math.abs(Math.fround(f(0) - f(1)))) / 2,
-        );
+        return Math.max(f(0), f(1));
       case "min":
-        return Math.fround(
-          Math.fround(Math.fround(f(0) + f(1)) - Math.abs(Math.fround(f(0) - f(1)))) / 2,
-        );
+        return Math.min(f(0), f(1));
       case "getrandomnumber": {
         const bound = (Math.trunc(n(0)) << 16) >> 16;
         if (bound < 1) throw new Error("Math.GetRandomNumber requires a positive 16-bit bound.");
