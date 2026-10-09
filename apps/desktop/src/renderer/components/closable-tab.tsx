@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import type { HTMLAttributes, KeyboardEvent, ReactNode, Ref } from "react";
 
 export function ClosableTab({
   children,
@@ -12,6 +12,8 @@ export function ClosableTab({
   controls,
   className = "",
   ref,
+  dragProps,
+  onKeyDown,
 }: {
   children: ReactNode;
   active: boolean;
@@ -24,9 +26,12 @@ export function ClosableTab({
   controls?: string;
   className?: string;
   ref?: Ref<HTMLDivElement> | undefined;
+  /** Drag-and-drop handlers for reorderable tab strips. */
+  dragProps?: HTMLAttributes<HTMLDivElement> & { draggable?: boolean };
+  onKeyDown?(event: KeyboardEvent<HTMLButtonElement>): void;
 }): React.JSX.Element {
   return (
-    <div className={`tab ${className} ${active ? "active" : ""}`.trim()} ref={ref}>
+    <div className={`tab ${className} ${active ? "active" : ""}`.trim()} ref={ref} {...dragProps}>
       <button
         type="button"
         className="tab-select"
@@ -35,6 +40,7 @@ export function ClosableTab({
         aria-controls={controls}
         title={title}
         onClick={onSelect}
+        onKeyDown={onKeyDown}
       >
         {children}
       </button>

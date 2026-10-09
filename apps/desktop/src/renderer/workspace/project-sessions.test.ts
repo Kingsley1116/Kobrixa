@@ -54,3 +54,33 @@ it("chooses the right neighbour, then the left, and includes closed recovery dra
   expect(sessions.active).toBeUndefined();
   expect(sessions.snapshot()).toEqual({ projects: [] });
 });
+
+it("reorders open projects without changing the active project", () => {
+  const sessions = new ProjectSessions();
+  for (const id of ["a", "b", "c"]) sessions.add(workspace(id));
+  sessions.activate("b");
+  let notified = 0;
+  sessions.subscribe(() => notified++);
+  sessions.move("a", 2);
+  expect(sessions.getSnapshot().map((item) => item.workspace.id)).toEqual(["b", "c", "a"]);
+  expect(sessions.snapshot().projects.map((view) => view.workspaceId)).toEqual(["b", "c", "a"]);
+  expect(sessions.activeId).toBe("b");
+  expect(notified).toBe(1);
+  sessions.move("missing", 0);
+  expect(notified).toBe(1);
+});
+
+it("persists reordered document tabs as the open file order", () => {
+  const session = new ProjectSessions().add(workspace("a"));
+  session.documents.replace([
+    { file: "a.bp", content: "A*", saved: "A" },
+    { file: "b.bp", content: "B", saved: "B" },
+  ]);
+  const [first, second] = session.documents.getSnapshot();
+  session.documents.replace([second!, first!]);
+  expect(session.snapshot().files).toEqual(["b.bp", "a.bp"]);
+  expect(session.documents.getSnapshot().map((tab) => [tab.file, tab.dirty])).toEqual([
+    ["b.bp", false],
+    ["a.bp", true],
+  ]);
+});

@@ -1,5 +1,6 @@
 import type { WorkspaceSummary, WorkspaceView, WorkspaceSessionState } from "../../shared/api.js";
 import { Documents } from "../editor/documents.js";
+import { moveItem } from "../components/tab-reorder.js";
 import { EditorModels } from "../editor/editor-models.js";
 import { FileVersions } from "./file-versions.js";
 
@@ -71,6 +72,12 @@ export class ProjectSessions {
   activate(id: string | undefined): void {
     if (id !== undefined && !this.get(id)) throw new Error("Project is not open.");
     this.activeId = id;
+    this.changed();
+  }
+  move(id: string, to: number): void {
+    const from = this.projects.findIndex((item) => item.workspace.id === id);
+    if (from < 0 || from === to) return;
+    this.projects = moveItem(this.projects, from, to);
     this.changed();
   }
   nextAfterClose(id: string): string | undefined {

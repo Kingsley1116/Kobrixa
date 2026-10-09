@@ -16,6 +16,7 @@ import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
 import { ResizeHandle } from "./components/resize-handle.js";
 import { ClosableTab } from "./components/closable-tab.js";
+import { moveItem, useTabReorder } from "./components/tab-reorder.js";
 import { Dialog, DialogActions } from "./components/dialog.js";
 import { useKeyboard } from "./keybindings/keyboard-state.js";
 import type { AppCommand } from "./keybindings/keybindings.js";
@@ -383,6 +384,11 @@ export function App(): React.JSX.Element {
   const setTabs = (value: Tab[] | ((previous: Tab[]) => Tab[])): void => {
     documents.replace(typeof value === "function" ? value(documents.getSnapshot()) : value);
   };
+  const tabReorder = useTabReorder({
+    count: tabs.length,
+    disabled: locked,
+    onMove: (from, to) => setTabs((previous) => moveItem(previous, from, to)),
+  });
   const [writeQueue] = useState(() => new FileWriteQueue());
   useEffect(() => {
     if (!simulator) return;
@@ -3027,6 +3033,7 @@ export function App(): React.JSX.Element {
           }
           onSelect={selectProject}
           onClose={requestCloseProject}
+          onMove={(id, to) => sessions.move(id, to)}
         />
         {execution.operationWorkspaceId &&
           execution.operationWorkspaceId !== workspace?.id &&
@@ -3344,13 +3351,26 @@ export function App(): React.JSX.Element {
               </div>
 
               <div className="tabs" role="tablist" aria-label={t.files}>
-                {tabs.map((tab) => {
+                {tabs.map((tab, index) => {
                   const selected = !settingsActive && tab.file === activeFile;
                   const tabDirty = tab.dirty;
+                  const { className: dragClass, ...dragProps } = tabReorder.itemProps(index);
                   return (
                     <ClosableTab
                       active={selected}
                       key={tab.file}
+                      className={dragClass}
+                      dragProps={dragProps}
+                      onKeyDown={(event) => {
+                        const moved = tabReorder.keyDown(index, event);
+                        if (moved === undefined) return;
+                        const tabBar = event.currentTarget.closest('[role="tablist"]');
+                        window.requestAnimationFrame(() =>
+                          tabBar
+                            ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+                            [moved]?.focus(),
+                        );
+                      }}
                       ref={selected ? activeTabRef : undefined}
                       title={tab.file}
                       onSelect={() => {
