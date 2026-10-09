@@ -2,8 +2,7 @@
   display: flex;
   flex-direction: column;
 }
-.file-change-stage > .editor {
-  height: auto;
+.file-change-stage > .editor-panes {
   flex: 1;
 }
 .file-change-banner {

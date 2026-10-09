@@ -115,6 +115,7 @@ import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
 import { Breadcrumbs } from "./editor/breadcrumbs.js";
+import { SplitEditor } from "./editor/split-editor.js";
 import { AnalysisTransport } from "./editor/analysis-transport.js";
 import type { WorkspaceEditContext } from "./editor/workspace-edits.js";
 import { Documents, CursorStore, type DocumentTab } from "./editor/documents.js";
@@ -562,6 +563,9 @@ export function App(): React.JSX.Element {
   const [selectedEntry, setSelectedEntry] = useState("");
   const [pendingCloseFile, setPendingCloseFile] = useState<string>();
   const [tabMenu, setTabMenu] = useState<{ file: string; x: number; y: number }>();
+  const [splitFile, setSplitFile] = useState<string>();
+  // Each project starts unsplit; a file of the same name elsewhere is a different buffer.
+  useEffect(() => setSplitFile(undefined), [workspace?.id]);
   const [closingTab, setClosingTab] = useState(false);
   const [selectedTreePath, setSelectedTreePath] = useState("");
   const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(() => new Set([""]));
@@ -3448,10 +3452,31 @@ export function App(): React.JSX.Element {
                   <span aria-hidden="true">☰</span>
                   {t.files}
                 </button>
-                <div className="breadcrumb" title={active?.file}>
-                  {active?.file ?? workspace.name}
-                </div>
+                {active && !settingsActive ? (
+                  <Breadcrumbs
+                    file={active.file}
+                    analysisSession={analysisSession}
+                    cursor={cursorStore}
+                    locale={locale}
+                    onReveal={(range) => {
+                      editorRef.current?.reveal(range);
+                      editorRef.current?.focus();
+                    }}
+                  />
+                ) : (
+                  <div className="breadcrumb">{workspace.name}</div>
+                )}
                 <div className="editor-tools">
+                  <button
+                    className="icon-button"
+                    aria-pressed={Boolean(splitFile)}
+                    disabled={settingsActive || !active}
+                    aria-label={locale === "zh-TW" ? "分割編輯器" : "Split editor"}
+                    title={locale === "zh-TW" ? "分割編輯器" : "Split editor"}
+                    onClick={() => setSplitFile(splitFile ? undefined : active?.file)}
+                  >
+                    <span aria-hidden="true">◫</span>
+                  </button>
                   <button
                     className="local-history-trigger"
                     disabled={settingsActive || !active || locked}
@@ -3601,6 +3626,7 @@ export function App(): React.JSX.Element {
                           pinned ? (zh ? "取消固定" : "Unpin") : zh ? "固定分頁" : "Pin tab",
                           () => setTabPinned(file, !pinned),
                         )}
+                        {item(zh ? "在右側分割開啟" : "Open to the side", () => setSplitFile(file))}
                         <hr />
                         {item(zh ? "關閉" : "Close", () => requestCloseTab(file), locked || pinned)}
                         {item(
@@ -3664,56 +3690,64 @@ export function App(): React.JSX.Element {
                       {t.phases[execution.phase]} <span>{t.locked}</span>
                     </div>
                   )}
-                  {active && (
-                    <Breadcrumbs
-                      file={active.file}
-                      analysisSession={analysisSession}
-                      cursor={cursorStore}
-                      locale={locale}
-                      onReveal={(range) => {
-                        editorRef.current?.reveal(range);
-                        editorRef.current?.focus();
-                      }}
-                    />
-                  )}
-                  {active ? (
-                    <Editor
-                      locale={locale}
-                      onQuickFixes={(snapshot, diagnostic, signal) =>
-                        analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
-                      }
-                      key={workspace.id}
-                      retainedModels={activeSession!.editor}
-                      focusOnMount={focusEditorOnMount.current}
-                      onViewChange={scheduleSessionSave}
-                      ref={editorRef}
-                      theme={resolvedTheme}
-                      editorOptions={settings}
-                      onEditorReady={keyboard.bindEditor}
-                      onBlur={(file) => requestFocusSave(file, workspace.id)}
-                      fontSize={codeSize}
-                      wordWrap={settings.wordWrap}
-                      indentSize={settings.indentSize}
-                      reducedMotion={reducedMotion}
-                      readOnly={locked || projectBusy || managingEntries || collabReadOnly}
-                      collabSession={sharedProject ? collabSession : null}
-                      onCollabLimit={(file) => report(sharedFileLimitError(file))}
-                      file={active.file}
-                      documents={documents}
-                      analysisSession={analysisSession}
-                      completionSession={completionSession}
-                      openFiles={openFiles}
-                      diagnostics={diagnostics}
-                      focusTarget={focusTarget}
-                      ariaLabel={t.editorLabel}
-                      onChange={(file) => updateActive(file, workspace.id)}
-                      onOpenLocation={openLocation}
-                      onWorkspaceEdit={applyWorkspaceEdit}
-                      onCursorChange={cursorStore.update}
-                    />
-                  ) : (
-                    <div className="empty">{t.chooseFile}</div>
-                  )}
+                  <div className={`editor-panes ${splitFile && active ? "split" : ""}`}>
+                    {active ? (
+                      <Editor
+                        locale={locale}
+                        onQuickFixes={(snapshot, diagnostic, signal) =>
+                          analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
+                        }
+                        key={workspace.id}
+                        retainedModels={activeSession!.editor}
+                        focusOnMount={focusEditorOnMount.current}
+                        onViewChange={scheduleSessionSave}
+                        ref={editorRef}
+                        theme={resolvedTheme}
+                        editorOptions={settings}
+                        onEditorReady={keyboard.bindEditor}
+                        onBlur={(file) => requestFocusSave(file, workspace.id)}
+                        fontSize={codeSize}
+                        wordWrap={settings.wordWrap}
+                        indentSize={settings.indentSize}
+                        reducedMotion={reducedMotion}
+                        readOnly={locked || projectBusy || managingEntries || collabReadOnly}
+                        collabSession={sharedProject ? collabSession : null}
+                        onCollabLimit={(file) => report(sharedFileLimitError(file))}
+                        file={active.file}
+                        documents={documents}
+                        analysisSession={analysisSession}
+                        completionSession={completionSession}
+                        openFiles={openFiles}
+                        diagnostics={diagnostics}
+                        focusTarget={focusTarget}
+                        ariaLabel={t.editorLabel}
+                        onChange={(file) => updateActive(file, workspace.id)}
+                        onOpenLocation={openLocation}
+                        onWorkspaceEdit={applyWorkspaceEdit}
+                        onCursorChange={cursorStore.update}
+                      />
+                    ) : (
+                      <div className="empty">{t.chooseFile}</div>
+                    )}
+                    {active && splitFile && tabs.some((tab) => tab.file === splitFile) && (
+                      <SplitEditor
+                        key={workspace.id}
+                        file={splitFile}
+                        files={tabs.map((tab) => tab.file)}
+                        modelFor={(file) => editorRef.current?.modelFor(file)}
+                        locale={locale}
+                        readOnly={locked || projectBusy || managingEntries || collabReadOnly}
+                        fontSize={codeSize}
+                        wordWrap={settings.wordWrap}
+                        reducedMotion={reducedMotion}
+                        editorOptions={settings}
+                        onEditorReady={keyboard.bindEditor}
+                        onBlur={(file) => requestFocusSave(file, workspace.id)}
+                        onFile={setSplitFile}
+                        onClose={() => setSplitFile(undefined)}
+                      />
+                    )}
+                  </div>
                 </div>
 
                 {simulator && (

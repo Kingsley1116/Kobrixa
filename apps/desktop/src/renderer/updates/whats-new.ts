@@ -17,12 +17,12 @@ export const WHATS_NEW: readonly WhatsNewEntry[] = [
         en: "Right-click a file tab to pin it, close others or tabs to the right, copy its path or reveal it in the file tree.",
       },
       {
-        zh: "編輯器上方的導覽列顯示目前所在的 Sub，點一下即可跳到其他 Sub、變數或標籤。",
-        en: "The breadcrumb bar above the editor shows the current Sub; click it to jump to any Sub, variable or label.",
+        zh: "編輯器工具列會顯示游標所在的 Sub；按「符號」可跳到檔案中的任何 Sub、變數或標籤，也可按 Cmd／Ctrl+Shift+O。",
+        en: "The editor toolbar shows the Sub around the cursor; use Symbols (or Cmd/Ctrl+Shift+O) to jump to any Sub, variable or label in the file.",
       },
       {
-        zh: "分割編輯器：並排查看兩個檔案（編輯器右上角的分割按鈕，或分頁右鍵選單）。",
-        en: "Split the editor to view two files side by side (split button at the top right, or the tab menu).",
+        zh: "分割編輯器：並排查看兩個檔案，或同一檔案的兩個位置（工具列的 ◫ 按鈕，或分頁右鍵選單的「在右側分割開啟」）。",
+        en: "Split the editor to view two files, or two places in one file, side by side (◫ in the toolbar, or Open to the side in the tab menu).",
       },
       {
         zh: "連接 EV3 後，狀態列會顯示連線方式與電量，電量偏低時會提醒。",
