@@ -1,6 +1,6 @@
 # Typed file record / 混合型別檔案記錄
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Text line, byte and numeric array round trip／文字行、位元組與數字陣列往返
 

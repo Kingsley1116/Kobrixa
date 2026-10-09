@@ -6,7 +6,7 @@ Run `pnpm test:bytecode` from the repository root. This builds the compiler pack
 - `optimization.test.mjs`: optimized/unoptimized execution comparisons, function pruning and retained roots, nested threads, scalar copy forwarding, temporary/scratch-memory bounds, branch/loop liveness, deterministic output, and diagnostics in unused functions.
 - `array-lifetime.test.mjs`: repeated sensor polling under a 250-array budget, transfer-buffer cleanup, and preservation of arrays that escape a helper.
 - `i2c-bytecode.test.mjs`: firmware reply reversal, Pixy2 signature/largest-block/RGB layouts, unsigned byte values, and single/full-buffer reads.
-- `example-bytecode.test.mjs`: literal-byte VM checks and all scenarios in the new-example and Clev3r-parity selection files.
+- `example-bytecode.test.mjs`: literal-byte VM checks for floating-point moves, native call descriptor alignment, worker lifetime, numeric narrowing, shifts, trigonometry, and subcall exclusion.
 - `diagnostic-examples.test.mjs`: every corrected Basic Plus example in the shared diagnostic catalog compiles through the frontend and backend to a structurally valid native RBF.
 - `robot-bytecode.test.mjs`: project initialization, buttons, scheduling, gyro, camera, steering and odometry checks.
 - `movement-bytecode.test.mjs`: 5,460 steering combinations, nine repeated calls, two turns and four timed moves.
@@ -19,4 +19,4 @@ Robot-control and movement tests compile the checked-in `fixtures/robot-control`
 
 The robot fixture explicitly retains the movement and math helpers that tests invoke directly through the VM. Other optimizations remain enabled, and function IDs are resolved from the emitted listing.
 
-The report-producing CLI remains available through `tools/run-example-bytecode.mjs` and the existing `pnpm examples:audit` / `pnpm examples:parity:audit` commands. Those commands still accept external firmware tables and an output directory.
+The report-producing CLI remains available through `tools/run-example-bytecode.mjs`. It accepts external firmware tables and an output directory.

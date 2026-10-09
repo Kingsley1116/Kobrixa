@@ -1,1 +1,4 @@
+' Independently authored Kobrixa example
+' Numeric limit shared through Include.
+
 limit = 21

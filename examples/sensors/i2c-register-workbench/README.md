@@ -1,6 +1,6 @@
 # I2C register workbench / I2C 暫存器工作台
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Single/multiple register reads and writes with round trip／單一多筆暫存器讀寫與回讀
 

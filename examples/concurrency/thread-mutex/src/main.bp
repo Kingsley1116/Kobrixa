@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' A background Sub and main coordinate display access with a mutex.
+Folder "prjs" "Kobrixa"
+
 mutex = Thread.CreateMutex()
 Thread.Run = Blink
 

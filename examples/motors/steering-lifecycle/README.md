@@ -1,6 +1,6 @@
 # Steering lifecycle / 轉向控制週期
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Continuous, blocking and scheduled steering／連續、阻塞與排程轉向
 

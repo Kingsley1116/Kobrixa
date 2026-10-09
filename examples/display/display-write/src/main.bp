@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' LCD.Write uses black text and the default font.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Write(8, 18, "Simple black text")
 LCD.Write(8, 38, "with LCD.Write")

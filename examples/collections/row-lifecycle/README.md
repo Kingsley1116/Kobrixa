@@ -1,6 +1,6 @@
 # Row lifecycle / Row 完整生命週期
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Create, fill, resize, read, size and delete／建立填值、改變大小、讀取、大小與釋放
 

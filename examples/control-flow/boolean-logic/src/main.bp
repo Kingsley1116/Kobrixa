@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Combine Boolean values with And and Not.
+Folder "prjs" "Kobrixa"
+
 armed = true
 blocked = false
 LCD.Clear()

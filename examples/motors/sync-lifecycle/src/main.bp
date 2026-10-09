@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Start, adjust, and stop a synchronized pair on motors A and D.
+Folder "prjs" "Kobrixa"
+
 Motor.Schedule("A", 15, 10, 60, 10, true)
 Motor.Wait("A")
 Motor.StartSync("AD", 20, 10)

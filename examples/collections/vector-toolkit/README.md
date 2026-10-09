@@ -1,6 +1,6 @@
 # Vector toolkit / 向量工具組
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Text initialization, padding, addition, sort and matrix product／文字初始化補零、加法、排序與矩陣乘法
 

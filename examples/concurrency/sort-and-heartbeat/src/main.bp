@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Sort a Vector while a background thread shows a heartbeat.
+Folder "prjs" "Kobrixa"
+
 finished = false
 Thread.Run = Heartbeat
 values = Vector.Data(6, "9 2 8 1 7 3")

@@ -1,7 +1,11 @@
-# daisy-chain
+# Daisy chain
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-## Clev3r topic counterparts / Clev3r 主題對照
+Control a second EV3 brick connected through a USB daisy chain.
 
-- [two-brick-control](./two-brick-control/) — Two-brick control／雙本體串接控制
+## Projects
+
+| Example                                   | What it teaches                  | Hardware                     |
+| ----------------------------------------- | -------------------------------- | ---------------------------- |
+| [two-brick-control](./two-brick-control/) | Layer-aware input 5 and motor A2 | Two daisy-chained EV3 bricks |

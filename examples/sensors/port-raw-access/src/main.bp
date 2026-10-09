@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Read raw sensor values through port-specific objects.
+Folder "prjs" "Kobrixa"
+
 Sensor.SetMode(1, 4)
 number red
 number green

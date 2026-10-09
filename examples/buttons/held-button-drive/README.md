@@ -1,6 +1,6 @@
 # Held-button drive / 按住按鍵驅動
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Current button string chooses power; finite polling and stop／以目前按鍵字串選擇功率，有限輪詢並停止
 

@@ -1,6 +1,6 @@
 # Paired trajectories / 雙馬達軌跡
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Schedule both motors before waiting; compute motion parameters／先排程雙馬達再等待，並計算移動參數
 

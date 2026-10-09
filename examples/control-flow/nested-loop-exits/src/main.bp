@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Leave inner and outer loops early and count the visits.
+Folder "prjs" "Kobrixa"
+
 total = 0
 visits = 0
 For outer = 1 To 3

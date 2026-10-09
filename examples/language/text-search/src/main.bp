@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Search text and slice out the part after a separator.
+Folder "prjs" "Kobrixa"
+
 source = "EV3:ready"
 position = Text.GetIndexOf(source, ":")
 state = Text.GetSubTextToEnd(source, position + 1)

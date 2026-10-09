@@ -1,6 +1,6 @@
 # Text search and slicing / 文字搜尋與擷取
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Text positions are one-based; a missing search returns zero. Array positions in other lessons are zero-based.／文字位置從 1 起算，找不到時回傳 0；其他課程的陣列索引則從 0 起算。
 

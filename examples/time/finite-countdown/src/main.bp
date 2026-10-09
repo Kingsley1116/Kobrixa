@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Count down a fixed number of seconds on the display.
+Folder "prjs" "Kobrixa"
+
 started = EV3.Time
 LCD.Clear()
 For remaining = 3 To 1 Step -1

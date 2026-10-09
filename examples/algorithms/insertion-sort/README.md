@@ -1,6 +1,6 @@
 # Insertion sort / 插入排序
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Sort duplicates, zero, and a negative value using zero-based indexing. Check the index before reading the array.／使用從零起算的索引排序重複值、零與負數；先檢查索引再讀取陣列。
 

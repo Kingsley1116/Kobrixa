@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Combine nested imports with included settings files.
+Folder "prjs" "Kobrixa"
+
 Include "settings/limits"
 Include "settings/label"
 Import "modules/formatter"

@@ -115,18 +115,6 @@ Resources are limited to 64 files and 1 MiB total per program. Instruction, thre
 
 This is not a native `.rbf` firmware emulator. Host system commands, physical I2C/UART/third-party communication, daisy-chain hardware and external networking are unsupported. Missing assets, unsupported calls and runtime errors report their cause and available source location instead of returning invented success.
 
-### Main_Simple_L_2026 compatibility
-
-The program and its `Init`, `Move_3`, `Sensor`, `Songs` and `Mods` dependencies can be compiled together. Configure S1 as Pixy2 (orange signature 1, purple 2), S2 as a reversed gyro, S3/S4 as color sensors, left drive B reversed and right drive C normal. Enable grip wheel behavior. A can use the simplified shooter; D's selector mechanism is not physically modeled.
-
-The compatibility checks use a separate in-memory scene with A1 explicitly assigned `Main_Simple_L_2026.bp`; they do not replace a saved four-opponent scene. The starting pose is in the upper-left court, facing right. The 56 mm wheel diameter, 120 mm wheel spacing and 1:1 gearing are provisional, not measured hardware calibration. Direction tests cover forward/reverse motion, left/right turns and gyro correction through the existing program modules; a long run alone does not establish a correct route.
-
-The `State_BACK_TO_BOTTOM` reverse loop must also exit when encoders stall: `While Y > 450 And is_stuck = "False"`. With only `Y > 450`, a barrier can stop odometry above that threshold indefinitely while the runtime still reports running. Validate route progress, not just absence of runtime errors.
-
-The gyro accepts `Sensor.SendUARTData(port, 1, [17])` as an angle reset; subsequent angle reads use the new zero while angular rate is preserved. Gyro **Reverse direction** changes both angle and rate. Other UART commands remain unsupported. Text flags such as `"True"` can be compared with Boolean `True` using `=` or `<>`, consistently in the simulator and native build; comparisons remain case-sensitive.
-
-After Start, wait for **READY!**, then click and release the simulated **Enter** button to begin the route. **Down** runs the program's Pixy2 diagnostic. Reset/recompile restarts the program and requires Enter again. A rule violation still pauses the world; Start explicitly continues as practice. The source's X/Y values are summed encoder degrees, not field millimetres. Wheel dimensions, gearing and camera calibration must match the robot before using the path as a physical prediction.
-
 ## Examples and rule sources
 
 The [simulation examples](../../examples/simulation/README.md) cover a differential route, omnidirectional movement, vision search, Pixy2 I2C blocks, a motor shooter and two-robot Mailbox cooperation. Open any lesson from the IDE example library and press Alt+F5 to load its included scene.

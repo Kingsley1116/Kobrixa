@@ -1,6 +1,6 @@
 # Compass heading error / 羅盤方位誤差
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Two-byte compass heading and signed wraparound／雙位元組方位與正負環繞誤差
 

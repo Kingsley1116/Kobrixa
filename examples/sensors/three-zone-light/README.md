@@ -1,6 +1,6 @@
 # Three-zone reflected light / 三段反射光分類
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Read once and test both threshold boundaries; no motors move.／讀取一次並測試兩個門檻的邊界。
 

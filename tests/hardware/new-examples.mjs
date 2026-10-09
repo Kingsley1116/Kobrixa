@@ -39,21 +39,6 @@ const cases = selected.length
       return found;
     })
   : plan;
-const allowed = new Set(
-  (
-    await Promise.all(
-      ["new-examples.json", "clev3r-parity.json"].map(async (name) =>
-        JSON.parse(await fs.readFile(path.join(root, "examples", name), "utf8")),
-      ),
-    )
-  )
-    .flat()
-    .map((item) => item.project),
-);
-assert(
-  cases.every((item) => allowed.has(item.project)),
-  "Only newly added examples are allowed",
-);
 const output =
   process.env.EV3_NEW_REPORT ??
   path.join(

@@ -1,6 +1,6 @@
 # Infrared direction and strength / 紅外線方向與強度
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 AC direction 0–9 and odd/even sector strength／AC 方向 0–9 與奇偶區段強度
 

@@ -15,10 +15,6 @@ Follow the lessons in this order for a complete EV3 course. Each project can be 
 - If media is missing, run `pnpm assets:build`, rebuild the media project, then upload again; deployment sends assets before the `.rbf`.／媒體缺失時，執行 `pnpm assets:build`、重新建置媒體專案再上傳；部署會先傳送素材再傳送 `.rbf`。
 - Cross-brick mailboxes, Daisy-chain, and third-party sensors are intentionally not part of this core course.／跨主機 mailbox、Daisy-chain 與第三方感測器刻意不列入本核心課程。
 
-## Practice and bytecode checks / 練習與字節碼檢查
+## Practice / 練習
 
-The [20 new lessons](NEW-EXAMPLES.md) add boundary cases, algorithms, numeric and string data, and finite hardware programs. Start with loop boundaries, then algorithms, functions and collections; run sensor and motor lessons only with the listed devices.／[20 個新課程](NEW-EXAMPLES.md)補充邊界情況、演算法、數字與文字資料及有限次硬體程式。建議依序練習迴圈邊界、演算法、函式及集合，最後再接上指定裝置執行感測器與馬達課程。
-
-## Expanded curriculum / 擴充課程
-
-See [Clev3r curriculum parity](CLEV3R-PARITY.md): 41 further projects cover every reference main program and helper/media role. Together with the first 20 lessons, 61 new projects cover all 122 reference API names. Original 53-example results remain outside the audit.／另 41 個新專案完整對照參考主程式、輔助檔與素材角色；加上首批 20 個，共 61 個新專案涵蓋 122 個參考 API。原有 53 個範例結果不在稽核範圍。
+The [examples index](README.md) groups every lesson by category. It covers boundary cases, algorithms, numeric and string data, and finite hardware programs. Start with loop boundaries, then algorithms, functions and collections; run sensor and motor lessons only with the listed devices.／[範例索引](README.zh-TW.md)依分類列出所有課程，其中包含邊界情況、演算法、數字與文字資料及有限次硬體程式。建議依序練習迴圈邊界、演算法、函式及集合，最後再接上指定裝置執行感測器與馬達課程。

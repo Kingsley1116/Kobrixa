@@ -1,6 +1,6 @@
 # Compute and draw benchmark / 運算繪圖基準
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Arithmetic, trigonometry, arrays, sort, matrices and elapsed timing／算術、三角函數、陣列排序矩陣與計時
 

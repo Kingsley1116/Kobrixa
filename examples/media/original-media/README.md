@@ -12,7 +12,7 @@ Deploy and play Kobrixa's original EV3 image and sound assets.／部署並播放
 
 ## Hardware acceptance / 實機驗收
 
-Requires an EV3 brick. Record firmware, transport, date, and observed result in `HARDWARE-ACCEPTANCE.md`.／需 EV3 本體；請在 `HARDWARE-ACCEPTANCE.md` 記錄韌體、傳輸方式、日期與觀察結果。
+Requires an EV3 brick.／需 EV3 本體。
 
 ## Source and license / 原始檔與授權
 

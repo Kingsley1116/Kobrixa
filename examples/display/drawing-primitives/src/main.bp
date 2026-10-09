@@ -1,3 +1,7 @@
+' Independently authored Kobrixa example
+' Draw pixels, rectangles, inverted areas, and filled circles.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Pixel(1, 8, 8)
 LCD.Rect(1, 16, 16, 58, 36)

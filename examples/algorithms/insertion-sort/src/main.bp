@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Sort a five-element Vector in place with insertion sort.
+Folder "prjs" "Kobrixa"
+
 number[] values
 values = Vector.Init(5, 0)
 values[0] = 7

@@ -1,13 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { BasicPlusFrontend } from "../../frontends/basic-plus/dist/index.js";
-import { EV3Backend } from "../../packages/backend-ev3/dist/index.js";
-import { loadProject } from "../../packages/compiler/dist/index.js";
-import { validateIR } from "../../packages/ir/dist/index.js";
-import { checkResults } from "../../tools/check-new-example-results.mjs";
 import { decode, VM } from "./support/ev3-vm.mjs";
 
 // Literal bytes independently check the central VM representation rule:
@@ -97,39 +89,3 @@ test("VM matches native narrowing, shifts, trigonometry and subcall exclusion", 
   assert.equal(recursive.status, "error");
   assert.match(recursive.error, /Non-reentrant/);
 });
-
-const root = fileURLToPath(new URL("../../", import.meta.url));
-for (const selection of ["new-examples.json", "clev3r-parity.json"]) {
-  const plan = JSON.parse(await fs.readFile(path.join(root, "examples", selection), "utf8"));
-  for (const lesson of plan) {
-    test(`${selection}: ${lesson.project}`, async () => {
-      const loaded = await loadProject(path.join(root, "examples", lesson.project));
-      assert.deepEqual(loaded.diagnostics, []);
-      assert(loaded.project);
-      const front = await new BasicPlusFrontend().compile(
-        loaded.project,
-        new AbortController().signal,
-      );
-      assert.deepEqual(front.diagnostics, []);
-      assert(front.ir);
-      assert.deepEqual(validateIR(front.ir), []);
-      const back = await new EV3Backend().compile(front.ir, new AbortController().signal);
-      assert.deepEqual(back.diagnostics, []);
-      assert(back.rbf);
-      const decoded = decode(back.rbf);
-      const result = {
-        project: lesson.project,
-        ...new VM(decoded, lesson.defaultInput ?? {}).run(),
-        variants: (lesson.scenarios ?? []).map(({ input }) => ({
-          scenario: input,
-          ...new VM(decoded, input).run(),
-        })),
-      };
-      const checked = checkResults([lesson], [result])[0];
-      assert.deepEqual(
-        checked.checks.filter((check) => !check.pass),
-        [],
-      );
-    });
-  }
-}

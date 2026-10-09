@@ -14,9 +14,9 @@ Run commands from the repository root.
 Project paths are relative to `examples/`. The hardware plan is separate from the
 offline VM expectations because it describes actual sensor inputs and RAM readback.
 
-Read [the hardware acceptance notes](../../examples/HARDWARE-ACCEPTANCE.md) before
-running a script; they describe port assignments, required fixture states and motor
-restrictions. Firmware completion does not establish visual or audio correctness.
+Before running a script, check each example's README for port assignments, required
+fixture states and motor restrictions. Firmware completion does not establish visual or
+audio correctness.
 
 The three example-checking scripts currently default to dated report paths under
 `docs/audits/`; create that directory before running them. `EV3_CERT_REPORT` and

@@ -1,3 +1,7 @@
+' Independently authored Kobrixa example
+' Initialize, sort, and multiply a number Vector.
+Folder "prjs" "Kobrixa"
+
 number[] values
 values = Vector.Init(4, 3)
 sorted = Vector.Sort(4, values)

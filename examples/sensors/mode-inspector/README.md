@@ -1,6 +1,6 @@
 # Sensor mode inspector / 感測模式檢視器
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Identity, busy flag, mode switching and percentage／身分、忙碌、切換模式與百分比
 

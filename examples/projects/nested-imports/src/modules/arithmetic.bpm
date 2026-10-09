@@ -1,3 +1,6 @@
+' Independently authored Kobrixa example
+' Arithmetic module imported by the formatter module.
+
 Function Twice(in number input)
   Return input * 2
 EndFunction

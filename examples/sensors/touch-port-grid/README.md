@@ -1,6 +1,6 @@
 # Touch sensor port grid / 觸碰感測器埠格線
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Read all four physical ports and render each state／讀取四個實體埠並顯示狀態
 

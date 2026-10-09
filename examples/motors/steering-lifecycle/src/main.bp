@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Start, adjust, and stop a steering pair on motors A and D.
+Folder "prjs" "Kobrixa"
+
 Motor.StartSteer("AD", 20, 25)
 Program.Delay(80)
 Motor.Stop("AD", true)

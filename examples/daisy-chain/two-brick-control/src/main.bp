@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Read a sensor and drive a motor on a daisy-chained second brick.
+Folder "prjs" "Kobrixa"
+
 remoteMotor = "A2"
 value = Sensor.ReadPercent(5)
 LCD.Text(1, 4, 16, 1, "Remote: " + value)

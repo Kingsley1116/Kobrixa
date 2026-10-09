@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Skip odd numbers and stop after the first three even numbers.
+Folder "prjs" "Kobrixa"
+
 count = 0
 For value = 1 To 10
   If Math.Remainder(value, 2) <> 0 Then

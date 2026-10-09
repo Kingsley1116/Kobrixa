@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Show which brick button is held when the program starts.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 If Button.IsPressed("L") Then
   LCD.Text(1, 4, 12, 1, "Left")

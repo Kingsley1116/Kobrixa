@@ -1,6 +1,6 @@
 # RGB function inputs / RGB 函式輸入
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 RGB mode and three output channels／RGB 模式與三通道輸出
 

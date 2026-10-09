@@ -1,6 +1,6 @@
 # Elapsed intervals / 經過時間區間
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Repeated elapsed measurements and buffered display／重複測量時間差與緩衝顯示
 

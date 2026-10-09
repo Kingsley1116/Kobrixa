@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Capstone: use brick buttons to briefly drive A+D. Lift wheels before testing.
+Folder "prjs" "Kobrixa"
+
 Buttons.Flush()
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "Press Enter to drive")

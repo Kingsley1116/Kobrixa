@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Chain Functions by passing out parameters into the next call.
+Folder "prjs" "Kobrixa"
+
 number answer
 Combine(12, 7, answer)
 PrintValue(answer)

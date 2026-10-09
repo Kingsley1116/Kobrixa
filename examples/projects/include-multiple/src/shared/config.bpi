@@ -1,4 +1,6 @@
+' Independently authored Kobrixa example
 ' Shared numeric settings. Include paths omit the .bpi extension.
+
 motorSpeed = 25
 motorDegrees = 120
 pauseMs = 150

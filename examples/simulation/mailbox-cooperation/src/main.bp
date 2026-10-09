@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' A1 Scout and A2 Runner compile from two entries in this one project.
+Folder "prjs" "Kobrixa"
+
 ' 同一專案的兩個入口分別控制 A1 偵察車與 A2 移動車。
 If Sensor.GetName(4) <> "KOBRIXA-VISION" Then
   LCD.Text(1, 0, 0, 0, "Use 2D simulator")

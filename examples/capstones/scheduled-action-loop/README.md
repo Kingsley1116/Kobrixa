@@ -1,6 +1,6 @@
 # Scheduled action loop / 排程動作迴圈
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Finite sensor-driven motor actions plus periodic LED feedback／有限感測馬達動作與週期 LED 回饋
 

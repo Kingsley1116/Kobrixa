@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Start a long tone and stop it before its requested duration.
+Folder "prjs" "Kobrixa"
+
 Speaker.Tone(30, 440, 1200)
 Program.Delay(180)
 Speaker.Stop()

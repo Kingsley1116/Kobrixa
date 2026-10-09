@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Play an arpeggio whose pitches are computed from a base frequency.
+Folder "prjs" "Kobrixa"
+
 For multiplier = 1 To 3
   frequency = 220 * multiplier
   Speaker.Tone(15, frequency, 100)

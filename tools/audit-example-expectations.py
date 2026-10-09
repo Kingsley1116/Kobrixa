@@ -61,7 +61,7 @@ for r in rs:
  if name=='motor-start-stop':ck('speed',args('OUTPUT_SPEED'),[[0,9,22]]);ck('brake',args('OUTPUT_STOP'),[[0,9,1]])
  if name=='motor-steer-sync':ck('sync operands',args('OUTPUT_STEP_SYNC'),[[0,9,35,25,360,1],[0,9,30,66,180,1]]);ck('wait count',len(args('OUTPUT_READY')),2)
  if name=='motor-counter':ck('positive branch',[a[3] for a in args('UI_DRAW.TEXT')],['Encoder is positive']);ck('zero branch',[a[3] for a in args('UI_DRAW.TEXT',r['variants'][0]['trace'])],['Encoder is zero/negative'])
- if name=='original-media':ck('bitmap path',args('UI_DRAW.BMPFILE')[0][3],'/home/root/lms2012/prjs/assets/deploy/kobrixa-mascot.rgf');ck('sound path',args('SOUND.PLAY')[0][1],'assets/deploy/kobrixa-chime')
+ if name=='original-media':ck('bitmap path',args('UI_DRAW.BMPFILE')[0][3],'/home/root/lms2012/prjs/Kobrixa/assets/deploy/kobrixa-mascot.rgf');ck('sound path',args('SOUND.PLAY')[0][1],'assets/deploy/kobrixa-chime')
  if name=='double-buffer-animation':ck('one update per frame',len(args('UI_DRAW.UPDATE')),4)
  if name in ['raw-and-mode','sensor-details']:
   for variant in r['variants']:

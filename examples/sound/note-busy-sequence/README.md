@@ -1,6 +1,6 @@
 # Note and busy sequence / 音符與忙碌狀態序列
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Named note, numeric tone, busy polling and ready wait／音名、頻率、忙碌輪詢與等待
 

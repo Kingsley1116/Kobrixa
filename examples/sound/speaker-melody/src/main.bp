@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Notes wait for completion before the next note begins.
+Folder "prjs" "Kobrixa"
+
 Speaker.Note(30, "C4", 160)
 Speaker.Wait()
 Speaker.Note(30, "E4", 160)

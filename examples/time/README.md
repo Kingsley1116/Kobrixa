@@ -1,16 +1,14 @@
-# Time / 時間
+# Time
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-Measure elapsed time with independent timer slots.／使用獨立計時器槽測量經過時間。
+Measure elapsed time with independent timer slots.
 
-- [timer-slots](./timer-slots/) — Reset and read timer slot 1.／重設並讀取計時器槽 1。
+## Projects
 
-## New lessons / 新課程
-
-- [finite-countdown](./finite-countdown/) — Finite countdown／有限倒數。
-
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [elapsed-intervals](./elapsed-intervals/) — Elapsed intervals／經過時間區間
-- [independent-timers](./independent-timers/) — Independent timer slots／獨立計時槽
+| Example                                     | What it teaches                          | Hardware |
+| ------------------------------------------- | ---------------------------------------- | -------- |
+| [timer-slots](./timer-slots/)               | Reset and read timer slot 1              | Display  |
+| [finite-countdown](./finite-countdown/)     | Clock differences versus requested waits | Display  |
+| [elapsed-intervals](./elapsed-intervals/)   | Repeated elapsed-time measurements       | Display  |
+| [independent-timers](./independent-timers/) | Independent timer slots 1 and 9          | Display  |

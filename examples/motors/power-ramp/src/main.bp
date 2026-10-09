@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Ramp motor A's power up in steps of 10.
+Folder "prjs" "Kobrixa"
+
 For power = 10 To 30 Step 10
   Motor.StartPower("A", power)
   Program.Delay(100)

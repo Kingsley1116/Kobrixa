@@ -1,6 +1,6 @@
 # Function output parameters / 函式輸出參數
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Typed output parameters return both a number and text to the same caller on repeated calls.／型別化輸出參數在重複呼叫中，將數字與文字傳回呼叫端。
 

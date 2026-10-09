@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Basic Plus keywords, identifiers, and APIs are case-insensitive.
+Folder "prjs" "Kobrixa"
+
 CoUnT = 0
 lCd.ClEaR()
 wHiLe count < 3

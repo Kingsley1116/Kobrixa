@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Compare Break and Continue across For, While, and nested loops.
+Folder "prjs" "Kobrixa"
+
 forSum = 0
 For i = 1 To 8
   If i = 2 Then

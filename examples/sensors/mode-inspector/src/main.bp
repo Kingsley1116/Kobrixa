@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Inspect a sensor's type and mode, then read its value.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(1)
 LCD.Text(1, 4, 8, 1, Sensor.GetName(1))
 LCD.Text(1, 4, 28, 1, "Type: " + Sensor.GetType(1))

@@ -1,6 +1,6 @@
 # Two-brick control / 雙本體串接控制
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Layer-aware input 5 and motor A2; start/stop branches／輸入 5 與馬達 A2 的分層定址與啟停分支
 

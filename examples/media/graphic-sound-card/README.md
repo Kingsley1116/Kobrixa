@@ -1,6 +1,6 @@
 # Graphic and sound card / 圖形音效卡
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Bundled original RGF/RSF assets and playback／原創 RGF、RSF 素材與播放
 

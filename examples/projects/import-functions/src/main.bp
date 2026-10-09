@@ -1,4 +1,7 @@
 ' Independently authored Kobrixa example
+' Import a Function from a module and display its result.
+Folder "prjs" "Kobrixa"
+
 Import "lib/message"
 
 message = Greeting("Kobrixa")

@@ -1,6 +1,6 @@
 # Power ramp / 功率漸增
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Bound continuous motor commands with finite delays and an explicit brake.／使用有限次等待及明確煞車，限制連續馬達命令。
 

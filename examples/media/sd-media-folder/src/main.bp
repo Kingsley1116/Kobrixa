@@ -1,5 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Load media relative to a Folder on the SD card.
 Folder "sd" "KobrixaSDCard"
+
 LCD.Clear()
 LCD.BmpFile(1, 0, 0, "assets/card")
 Speaker.Play(20, "assets/ping")

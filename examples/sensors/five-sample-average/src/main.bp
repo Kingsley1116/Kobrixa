@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Average five reflected-light samples from a sensor.
+Folder "prjs" "Kobrixa"
+
 Sensor.SetMode(1, 0)
 Sensor.Wait(1)
 number total

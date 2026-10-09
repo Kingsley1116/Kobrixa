@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Schedule matching trajectories for two motors in phases.
+Folder "prjs" "Kobrixa"
+
 For phase = 1 To 2
   degrees = Math.Round(45 + 15 * Math.Sin(phase * Math.PI / 2))
   Motor.SchedulePower("A", 20, 0, degrees, 0, true)

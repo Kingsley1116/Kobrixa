@@ -116,13 +116,18 @@ try {
         visualAudio: "pending human observation",
       },
       backups = new Map(),
-      remote = "/home/root/lms2012/prjs/kxc_" + randomBytes(4).toString("hex") + ".rbf";
+      executable = "kxc_" + randomBytes(4).toString("hex") + ".rbf";
+    // The source Folder directive decides where the program and its relative files live.
+    let directory = "/home/root/lms2012/prjs",
+      remote = directory + "/" + executable;
     report.cases.push(row);
     try {
       const loaded = await loadProject(path.join(root, "examples", project));
       if (!loaded.project) throw Error(JSON.stringify(loaded.diagnostics));
       const front = await new BasicPlusFrontend().compile(loaded.project, signal);
       if (!front.ir || front.diagnostics.length) throw Error(JSON.stringify(front.diagnostics));
+      directory = front.ir.program.runtimeDirectory ?? directory;
+      remote = directory + "/" + executable;
       const calls = front.ir.functions.flatMap((f) =>
         f.blocks.flatMap((b) => b.instructions.filter((i) => i.op === "ev3-call")),
       );
@@ -191,12 +196,9 @@ try {
             ? ["KobrixaExample.txt"]
             : [];
       for (const n of names)
-        backups.set(
-          "/home/root/lms2012/prjs/" + n,
-          await readRemote("/home/root/lms2012/prjs/" + n),
-        );
+        backups.set(directory + "/" + n, await readRemote(directory + "/" + n));
       for (const asset of loaded.project.assets) {
-        const dest = "/home/root/lms2012/prjs/" + asset.path;
+        const dest = directory + "/" + asset.path;
         backups.set(dest, await readRemote(dest));
         const data = await fs.readFile(asset.absolutePath);
         (row.assets ??= []).push({
@@ -267,7 +269,7 @@ try {
         if (!row.encoderPassed) throw Error("Encoder displacement mismatch");
       }
       if (names.length) {
-        const data = await readRemote("/home/root/lms2012/prjs/" + names[0]);
+        const data = await readRemote(directory + "/" + names[0]);
         row.writtenBytes = data?.toString("hex");
         const wanted =
           project === "files/binary-record"

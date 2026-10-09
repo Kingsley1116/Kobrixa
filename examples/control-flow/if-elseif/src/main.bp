@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Select exactly one branch from an If / ElseIf / Else chain.
+Folder "prjs" "Kobrixa"
+
 level = 2
 LCD.Clear()
 If level = 1 Then

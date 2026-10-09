@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Inspect the connected sensor on input port 4 after it is ready.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(4)
 name = Sensor.GetName(4)
 type = Sensor.GetType(4)

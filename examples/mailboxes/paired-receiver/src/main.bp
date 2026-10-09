@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Receive text and number messages from the paired sender brick.
+Folder "prjs" "Kobrixa"
+
 textBox = Mailbox.Create("KobrixaText")
 numberBox = Mailbox.CreateForNumber("KobrixaNumber")
 For attempt = 1 To 100

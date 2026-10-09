@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Update a value with compound assignment operators.
+Folder "prjs" "Kobrixa"
+
 number value
 value = 10
 value += 5

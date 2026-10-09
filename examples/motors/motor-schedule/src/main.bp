@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Lift the robot first. Schedule a controlled A+D movement and wait for it.
+Folder "prjs" "Kobrixa"
+
 Motor.Schedule("AD", 25, 60, 360, 60, true)
 Motor.Wait("AD")
 Motor.Stop("AD", true)

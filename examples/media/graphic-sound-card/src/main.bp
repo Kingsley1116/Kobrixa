@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Show a bitmap and play a sound from the project's assets.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.BmpFile(1, 0, 0, "assets/card")
 Speaker.Play(20, "assets/ping")

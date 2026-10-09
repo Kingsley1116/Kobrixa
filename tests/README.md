@@ -19,7 +19,6 @@ tests/
 | -------------------------------------------------------------------- | ------------------------------------------------------------ |
 | `pnpm test`                                                          | Package tests and the offline bytecode suite; also run in CI |
 | `pnpm test:bytecode`                                                 | Build compiler packages and run the offline bytecode suite   |
-| `pnpm test:examples:audit`                                           | Test the example-report checker in `tools/`                  |
 | `pnpm test:hardware -- --transport=usb --artifact=/path/program.rbf` | Upload, run, stop and delete an artifact on a connected EV3  |
 
 See [bytecode/README.md](bytecode/README.md) for offline coverage and

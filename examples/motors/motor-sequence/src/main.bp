@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Lift the robot before running. Each blocking move finishes in order.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "A then D")
 LCD.Update()

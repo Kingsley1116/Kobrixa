@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Lift the robot before the first run. Motors A and D move together.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "Moving motors A + D")
 LCD.Update()

@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Exercise character codes and the complete set of Byte operations.
+Folder "prjs" "Kobrixa"
+
 Assert.Equal(Text.GetCharacter(65), "A", "ASCII character")
 Assert.Equal(Text.GetCharacterCode("A"), 65, "ASCII code")
 number high

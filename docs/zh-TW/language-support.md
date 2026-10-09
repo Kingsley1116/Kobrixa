@@ -58,11 +58,11 @@ Clean-room 前端的目標是與支援的舊版程式行為相容，包括：
 
 除法（`/`）即使使用整數運算元也會產生浮點結果，例如 `7 / 2` 為 `3.5`。同一函式的數值回傳分支共用推論出的表示方式；含浮點回傳分支時，整數分支會提升為浮點。整數與布林回傳值使用對應的 EV3 呼叫參數寬度；不相容的回傳型別會回報 `BP2010`。
 
-文字搜尋與擷取的位置從 1 起算。`Text.GetIndexOf` 找不到時回傳 0；`Text.GetSubText` 會將過長的擷取範圍限制於來源尾端，起點無效或長度不為正數時回傳空字串。搜尋成功的分支依照韌體的字串相等結果判斷。可執行案例與字節碼預期值請見[新增範例課程](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/NEW-EXAMPLES.md)。
+文字搜尋與擷取的位置從 1 起算。`Text.GetIndexOf` 找不到時回傳 0；`Text.GetSubText` 會將過長的擷取範圍限制於來源尾端，起點無效或長度不為正數時回傳空字串。搜尋成功的分支依照韌體的字串相等結果判斷。可執行案例請見[文字搜尋範例](https://github.com/Kingsley1116/Kobrixa/tree/main/examples/language/text-search)。
 
 ## 範例驗證的執行支援
 
-[擴充課程](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/CLEV3R-PARITY.md) 記錄以下行為的範例與字節碼預期值：
+[隨附範例](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/README.zh-TW.md)涵蓋以下行為：
 
 - 遞迴群組支援同時 32 層，超限明確停止；原生函式物件不可重入。
 - 互斥鎖取得透過共用原生子呼叫序列化。
@@ -70,4 +70,4 @@ Clean-room 前端的目標是與支援的舊版程式行為相容，包括：
 - Byte、I²C 與檔案位元組保留 0–255 範圍。
 - 入口來源的 `Folder` 設定內建或 SD 部署與執行路徑。
 
-自動編譯與字節碼檢查只驗證其涵蓋的項目；實體觀察結果與剩餘限制另記錄於[實機驗收文件](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md)。
+自動編譯與字節碼檢查只驗證其涵蓋的項目；實際硬體行為仍需實機驗收確認。

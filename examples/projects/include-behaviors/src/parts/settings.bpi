@@ -1,3 +1,6 @@
+' Independently authored Kobrixa example
+' Motor settings and a short start-up check inserted into the main program.
+
 speed = 15
 MotorA.IsMedium()
 MotorB.IsMedium()

@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' A finite While loop draws five circles from left to right.
+Folder "prjs" "Kobrixa"
+
 index = 0
 LCD.Clear()
 While index < 5

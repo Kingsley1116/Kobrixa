@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Font values are 0 (tiny), 1 (small), and 2 (big).
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Text(1, 8, 6, 0, "Tiny font")
 LCD.Text(1, 8, 28, 1, "Small font")

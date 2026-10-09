@@ -1,6 +1,6 @@
 # Button-controlled cursor / 按鍵控制游標
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Button-driven state, double-buffered animation and exit／按鍵狀態、雙緩衝動畫與離開
 

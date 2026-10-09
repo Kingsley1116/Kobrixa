@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Original Kobrixa media lesson. Deploy copies assets before this program.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.BmpFile(1, 0, 0, "assets/deploy/kobrixa-mascot")
 LCD.Update()

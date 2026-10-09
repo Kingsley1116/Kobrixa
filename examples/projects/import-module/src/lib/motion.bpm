@@ -1,3 +1,6 @@
+' Independently authored Kobrixa example
+' Private motion helper that converts steps to motor degrees.
+
 Private
 Function SafeSteps(in number count)
   Return count * 120

@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Classify reflected light into dark, middle, and bright zones.
+Folder "prjs" "Kobrixa"
+
 Sensor.SetMode(1, 0)
 Sensor.Wait(1)
 value = Sensor.ReadPercent(1)

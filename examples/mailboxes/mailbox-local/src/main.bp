@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Create a text mailbox. A second EV3 program may send to this mailbox by name.
+Folder "prjs" "Kobrixa"
+
 inbox = Mailbox.Create("kobrixa-demo")
 available = Mailbox.IsAvailable(inbox)
 

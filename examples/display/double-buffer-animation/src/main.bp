@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Stop automatic updates so each frame appears together.
+Folder "prjs" "Kobrixa"
+
 For frame = 1 To 4
   LCD.StopUpdate()
   LCD.Clear()

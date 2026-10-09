@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Creates a small binary record in the project directory.
+Folder "prjs" "Kobrixa"
+
 handle = EV3File.OpenWrite("lesson.bin")
 EV3File.WriteByte(handle, 42)
 EV3File.Close(handle)

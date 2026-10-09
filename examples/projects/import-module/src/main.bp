@@ -1,3 +1,7 @@
+' Independently authored Kobrixa example
+' Import a module whose Functions are private to the project.
+Folder "prjs" "Kobrixa"
+
 Import "lib/motion"
 steps = SafeSteps(3)
 LCD.Clear()

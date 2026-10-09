@@ -1,3 +1,6 @@
+' Independently authored Kobrixa example
+' Calibration helper that clamps a value to the 0-100 percent range.
+
 Function ClampPercent(in number value)
   If value < 0 Then
     Return 0

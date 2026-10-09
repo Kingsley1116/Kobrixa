@@ -1,6 +1,6 @@
 # Brick greeting / 本體問候
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Brick name in a welcome message／以本體名稱組成問候
 

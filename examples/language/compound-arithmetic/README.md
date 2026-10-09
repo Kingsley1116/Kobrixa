@@ -1,6 +1,6 @@
 # Compound arithmetic / 複合賦值運算
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Follow each assignment and preserve fractional division; floor of a negative value rounds downward.／追蹤各次賦值、保留除法小數，並觀察負數的向下取整。
 

@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Press any brick button to continue.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "Press an EV3 button")
 LCD.Update()

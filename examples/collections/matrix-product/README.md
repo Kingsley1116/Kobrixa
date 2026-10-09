@@ -1,6 +1,6 @@
 # Matrix multiplication / 矩陣乘法
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Row-major 2×2 matrices: [[1,2],[3,4]] × [[5,6],[7,8]]. The three dimensions are result rows, result columns, and shared inner dimension.／以列優先儲存 2×2 矩陣；三個維度參數依序為結果列數、結果欄數及共用內積維度。
 
