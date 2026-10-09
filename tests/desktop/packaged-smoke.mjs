@@ -195,7 +195,7 @@ try {
     await js('document.querySelector(".settings-trigger").click()');
     await pause(250);
     await js(
-      'Array.from(document.querySelectorAll(".settings-categories button")).find(button => button.textContent === "Updates" || button.textContent === "更新").click()',
+      'Array.from(document.querySelectorAll(".settings-categories button")).find(button => button.textContent === "About & updates" || button.textContent === "關於與更新").click()',
     );
     await pause(100);
     assert.equal(await js('Boolean(document.querySelector("#settings-updates"))'), true);
