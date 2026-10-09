@@ -1,0 +1,53 @@
+/** Highlights bundled with the app, newest first. Each entry is shown once after updating to it. */
+export interface WhatsNewEntry {
+  version: string;
+  items: Array<{ zh: string; en: string }>;
+}
+
+export const WHATS_NEW: readonly WhatsNewEntry[] = [
+  {
+    version: "0.1.0-v1-candidate.16",
+    items: [
+      {
+        zh: "拖曳專案或檔案分頁即可重新排序；焦點在分頁上時也可按 Alt+Shift+←／→。",
+        en: "Drag project or file tabs to reorder them, or press Alt+Shift+←/→ while a tab has focus.",
+      },
+      {
+        zh: "在檔案分頁按右鍵：固定分頁、關閉其他／右側分頁、複製路徑、在檔案樹中顯示。",
+        en: "Right-click a file tab to pin it, close others or tabs to the right, copy its path or reveal it in the file tree.",
+      },
+      {
+        zh: "編輯器上方的導覽列顯示目前所在的 Sub，點一下即可跳到其他 Sub、變數或標籤。",
+        en: "The breadcrumb bar above the editor shows the current Sub; click it to jump to any Sub, variable or label.",
+      },
+      {
+        zh: "分割編輯器：並排查看兩個檔案（編輯器右上角的分割按鈕，或分頁右鍵選單）。",
+        en: "Split the editor to view two files side by side (split button at the top right, or the tab menu).",
+      },
+      {
+        zh: "連接 EV3 後，狀態列會顯示連線方式與電量，電量偏低時會提醒。",
+        en: "With an EV3 connected, the status bar shows the connection and battery level, and warns when it runs low.",
+      },
+    ],
+  },
+];
+
+export const WHATS_NEW_SEEN_KEY = "kobrixa-whats-new-seen";
+
+/**
+ * Entries newer than the last acknowledged version, up to the running one. Without a
+ * record (fresh install or an update from a build that predates this), only the running
+ * version's own highlights are shown.
+ */
+export function pendingWhatsNew(
+  entries: readonly WhatsNewEntry[],
+  current: string,
+  lastSeen: string | null,
+): WhatsNewEntry[] {
+  if (lastSeen === current) return [];
+  const start = entries.findIndex((entry) => entry.version === current);
+  if (start < 0) return [];
+  if (lastSeen === null) return [entries[start]!];
+  const end = entries.findIndex((entry) => entry.version === lastSeen);
+  return entries.slice(start, end < start ? undefined : end);
+}

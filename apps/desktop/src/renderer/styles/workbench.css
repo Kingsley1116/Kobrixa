@@ -2863,6 +2863,23 @@ footer {
   box-shadow: 0 4px 20px #0003;
 }
 
+.update-notice.whats-new {
+  flex-direction: column;
+  align-items: stretch;
+  max-width: min(440px, calc(100vw - 40px));
+}
+.whats-new ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.whats-new-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* One header contains project tabs and notices without stealing the editor's grid row. */
 .app-shell,
 .app-shell.has-settings-error {

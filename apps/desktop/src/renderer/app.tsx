@@ -12,6 +12,12 @@ import { FileConflictDialog, LocalHistoryDialog } from "./workspace/file-review-
 import type { LocalHistoryEntry, WorkspaceFileSnapshot } from "../shared/workspace-files.js";
 import "./workspace/file-changes.css";
 import { useUpdates } from "./updates/updates.js";
+import {
+  pendingWhatsNew,
+  WHATS_NEW,
+  WHATS_NEW_SEEN_KEY,
+  type WhatsNewEntry,
+} from "./updates/whats-new.js";
 import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
 import { ResizeHandle } from "./components/resize-handle.js";
@@ -154,6 +160,29 @@ export function App(): React.JSX.Element {
     undefined,
   );
   const updates = useUpdates();
+  const [whatsNew, setWhatsNew] = useState<WhatsNewEntry[]>([]);
+  const whatsNewChecked = useRef(false);
+  useEffect(() => {
+    if (!updates || whatsNewChecked.current || updates.reason === "development") return;
+    whatsNewChecked.current = true;
+    let seen: string | null = null;
+    try {
+      seen = localStorage.getItem(WHATS_NEW_SEEN_KEY);
+    } catch {
+      // Unavailable storage only means highlights may show again.
+    }
+    const pending = pendingWhatsNew(WHATS_NEW, updates.currentVersion, seen);
+    if (pending.length) setWhatsNew(pending);
+    else acknowledgeWhatsNew(updates.currentVersion);
+  }, [updates]);
+  function acknowledgeWhatsNew(version: string): void {
+    setWhatsNew([]);
+    try {
+      localStorage.setItem(WHATS_NEW_SEEN_KEY, version);
+    } catch {
+      // See above.
+    }
+  }
   const filePreferences = useFilePreferences();
   const filePreferencesRef = useRef(filePreferences.value);
   filePreferencesRef.current = filePreferences.value;
@@ -3205,6 +3234,42 @@ export function App(): React.JSX.Element {
               </button>
             </aside>
           )}
+        {updates && whatsNew.length > 0 && (
+          <aside
+            className="update-notice whats-new"
+            aria-labelledby="whats-new-title"
+            hidden={
+              ["ready", "manual"].includes(updates.phase) &&
+              dismissedUpdate !== `${updates.version}:${updates.phase}`
+            }
+          >
+            <strong id="whats-new-title">
+              {locale === "zh-TW"
+                ? `Kobrixa ${updates.currentVersion} 新功能`
+                : `What's new in Kobrixa ${updates.currentVersion}`}
+            </strong>
+            <ul>
+              {whatsNew.flatMap((entry) =>
+                entry.items.map((item) => (
+                  <li key={`${entry.version}:${item.en}`}>
+                    {locale === "zh-TW" ? item.zh : item.en}
+                  </li>
+                )),
+              )}
+            </ul>
+            <div className="whats-new-actions">
+              <button onClick={() => void window.kobrixa.updates.openRelease().catch(report)}>
+                {locale === "zh-TW" ? "完整版本說明" : "Full release notes"}
+              </button>
+              <button
+                className="primary"
+                onClick={() => acknowledgeWhatsNew(updates.currentVersion)}
+              >
+                {locale === "zh-TW" ? "知道了" : "Got it"}
+              </button>
+            </div>
+          </aside>
+        )}
         {confirmUpdate && (
           <Dialog
             title={locale === "zh-TW" ? "儲存並更新" : "Save and update"}
