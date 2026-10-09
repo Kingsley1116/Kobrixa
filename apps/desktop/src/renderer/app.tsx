@@ -114,6 +114,7 @@ import type { CollabJoinChange, CollabJoinResolution } from "../shared/collab.js
 import { Picker } from "./components/picker.js";
 import { CompletionSession } from "./editor/completion-session.js";
 import { AnalysisSession } from "./editor/analysis-session.js";
+import { Breadcrumbs } from "./editor/breadcrumbs.js";
 import { AnalysisTransport } from "./editor/analysis-transport.js";
 import type { WorkspaceEditContext } from "./editor/workspace-edits.js";
 import { Documents, CursorStore, type DocumentTab } from "./editor/documents.js";
@@ -3662,6 +3663,18 @@ export function App(): React.JSX.Element {
                     <div className="editor-lock" role="status">
                       {t.phases[execution.phase]} <span>{t.locked}</span>
                     </div>
+                  )}
+                  {active && (
+                    <Breadcrumbs
+                      file={active.file}
+                      analysisSession={analysisSession}
+                      cursor={cursorStore}
+                      locale={locale}
+                      onReveal={(range) => {
+                        editorRef.current?.reveal(range);
+                        editorRef.current?.focus();
+                      }}
+                    />
                   )}
                   {active ? (
                     <Editor

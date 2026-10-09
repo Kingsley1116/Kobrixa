@@ -19,6 +19,7 @@ import { QUICK_FIX_CODES, sameDiagnostic, type QuickFixReply } from "../../share
 import type { Diagnostic } from "@kobrixa/compiler";
 import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
 import { quickFixTitle } from "./diagnostic-presentation.js";
+import { documentOutline, type OutlineItem } from "./outline.js";
 import type { EditorAnalysis } from "./editor.js";
 import type { SourceRange } from "@kobrixa/compiler";
 
@@ -155,6 +156,31 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
         signatureHelpTriggerCharacters: ["(", ","],
         signatureHelpRetriggerCharacters: [")"],
         provideSignatureHelp: (m, p, t) => this.signature(m, p, t),
+      }),
+      monaco.languages.registerDocumentSymbolProvider(selector, {
+        displayName: "BASIC+",
+        provideDocumentSymbols: async (model, token) => {
+          const current = await this.ready(model, token);
+          if (!current) return [];
+          const source = current.snapshot.analysis.index.sources[current.file] ?? "";
+          const kinds = {
+            sub: monaco.languages.SymbolKind.Function,
+            function: monaco.languages.SymbolKind.Function,
+            method: monaco.languages.SymbolKind.Method,
+            variable: monaco.languages.SymbolKind.Variable,
+            label: monaco.languages.SymbolKind.Key,
+          } as const;
+          const convert = (item: OutlineItem): monaco.languages.DocumentSymbol => ({
+            name: item.name,
+            detail: "",
+            kind: kinds[item.kind],
+            tags: [],
+            range: model.validateRange(editorRange(item.range, source)),
+            selectionRange: model.validateRange(editorRange(item.selectionRange, source)),
+            children: item.children.map(convert),
+          });
+          return documentOutline(current.snapshot.analysis.index, current.file).map(convert);
+        },
       }),
       monaco.languages.registerDefinitionProvider(selector, {
         provideDefinition: (m, p, t) => this.definition(m, p, t),
