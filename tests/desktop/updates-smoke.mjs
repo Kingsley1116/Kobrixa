@@ -19,7 +19,7 @@ export async function checkUpdates({
   );
   await until('Boolean(document.querySelector(".settings-page:not([hidden])"))');
   await js(
-    'Array.from(document.querySelectorAll(".settings-categories button")).find(b=>b.textContent==="Updates").click()',
+    'Array.from(document.querySelectorAll(".settings-categories button")).find(b=>b.textContent==="About & updates").click()',
   );
   await until('Boolean(document.querySelector("#updates-enabled"))');
   assert.equal(
@@ -37,7 +37,7 @@ export async function checkUpdates({
     (await win.webContents.capturePage()).toPNG(),
   );
   await js('smoke.settingsStore.set("locale","zh-TW")');
-  await until('document.querySelector("#settings-updates").textContent==="更新"');
+  await until('document.querySelector("#settings-updates").textContent==="關於與更新"');
   assert.match(
     await js('document.querySelector("#settings-updates").parentElement.textContent'),
     /正在下載 1.1.0：42%/,
