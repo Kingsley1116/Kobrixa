@@ -24,7 +24,7 @@ export const CATEGORY_LABELS = {
   fileHistory: ["檔案與歷史", "Files & history"],
   layout: ["工作區布局", "Workspace layout"],
   device: ["EV3 與執行", "EV3 & execution"],
-  updates: ["更新", "Updates"],
+  updates: ["關於與更新", "About & updates"],
 } as const satisfies Record<string, Text>;
 export type SettingsCategory = keyof typeof CATEGORY_LABELS;
 export type SettingValue = string | number | boolean | null;
@@ -587,6 +587,7 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
   {
     id: "updates.enabled",
     controlId: "updates-enabled",
+    keywords: "about 關於 version 版本 update 更新",
     source: "updates",
     category: "updates",
     label: ["自動檢查並下載", "Automatically check and download"],
@@ -601,6 +602,7 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
   {
     id: "updates.channel",
     controlId: "updates-preview",
+    keywords: "about 關於 version 版本 update 更新",
     source: "updates",
     category: "updates",
     label: ["接收預覽版更新", "Receive preview updates"],

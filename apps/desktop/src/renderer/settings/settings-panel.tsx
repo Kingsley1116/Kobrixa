@@ -28,7 +28,7 @@ const languageOptions: { value: Locale; label: string }[] = [
 export const settingsCopy = {
   en: {
     title: "Settings",
-    updates: "Updates",
+    updates: "About & updates",
     close: "Close settings",
     language: "Language",
     appearance: "General & appearance",
@@ -66,7 +66,7 @@ export const settingsCopy = {
   },
   "zh-TW": {
     title: "設定",
-    updates: "更新",
+    updates: "關於與更新",
     close: "關閉設定",
     language: "語言",
     appearance: "一般與外觀",
@@ -537,21 +537,25 @@ export function SettingsPanel({
                         )}
                       </p>
                     )}
+                    {group === "updates" && category === "updates" && !searching && (
+                      <>
+                        <UpdatesPanel
+                          state={updates}
+                          locale={settings.locale}
+                          busy={updateBusy}
+                          onInstall={onInstallUpdate}
+                        />
+                        <h3 className="settings-subheading">
+                          {local("更新偏好", "Update preferences")}
+                        </h3>
+                      </>
+                    )}
                     {groupEntries.map(row)}
                     {group === "layout" && !searching && (
                       <div className="settings-reset">
                         <button onClick={onReset}>{t.reset}</button>
                         <p>{t.resetHint}</p>
                       </div>
-                    )}
-                    {group === "updates" && category === "updates" && !searching && (
-                      <UpdatesPanel
-                        state={updates}
-                        locale={settings.locale}
-                        busy={updateBusy}
-                        onInstall={onInstallUpdate}
-                        showPreferences={false}
-                      />
                     )}
                   </section>
                 );
