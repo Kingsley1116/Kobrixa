@@ -23,7 +23,8 @@ export function Icon({
     | "zoom-in"
     | "zoom-out"
     | "fit"
-    | "layers";
+    | "layers"
+    | "pin";
 }): React.JSX.Element {
   const paths = {
     settings:
@@ -49,6 +50,7 @@ export function Icon({
     "zoom-out": "M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0Zm-1.8 4.2L20 20M8 11h6",
     fit: "M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5",
     layers: "m12 4 9 5-9 5-9-5Zm-9 9 9 5 9-5",
+    pin: "M9 3h6l-1 6 3 3H7l3-3ZM12 12v9",
   };
   return (
     <svg

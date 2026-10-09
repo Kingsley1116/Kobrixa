@@ -104,3 +104,32 @@ describe("document buffers independent of React", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });
+
+it("keeps pinned tabs first and preserves pin state when callers omit it", () => {
+  const documents = new Documents();
+  documents.replace([
+    { file: "a.bp", content: "", saved: "" },
+    { file: "b.bp", content: "", saved: "" },
+    { file: "c.bp", content: "", saved: "" },
+  ]);
+  documents.replace(
+    documents.getSnapshot().map((tab) => (tab.file === "c.bp" ? { ...tab, pinned: true } : tab)),
+  );
+  expect(documents.getOpenFiles()).toEqual(["c.bp", "a.bp", "b.bp"]);
+  expect(documents.getPinnedFiles()).toEqual(["c.bp"]);
+  // A rename or content update without `pinned` keeps the tab pinned.
+  documents.replace([
+    { file: "c.bp", content: "x", saved: "" },
+    { file: "a.bp", content: "", saved: "" },
+    { file: "b.bp", content: "", saved: "" },
+  ]);
+  expect(documents.getSnapshot()[0]).toMatchObject({ file: "c.bp", pinned: true, dirty: true });
+  // Moving an unpinned tab ahead of a pinned one is clamped to its own group.
+  documents.replace([
+    { file: "b.bp", content: "", saved: "" },
+    ...documents.getSnapshot().filter((tab) => tab.file !== "b.bp"),
+  ]);
+  expect(documents.getOpenFiles()).toEqual(["c.bp", "b.bp", "a.bp"]);
+  documents.replace(documents.getSnapshot().map((tab) => ({ ...tab, pinned: false })));
+  expect(documents.getPinnedFiles()).toEqual([]);
+});

@@ -80,6 +80,7 @@ export interface EditorLocation {
 export interface WorkspaceView {
   workspaceId: string;
   files: string[];
+  pinnedFiles?: string[] | undefined;
   activeFile?: string | undefined;
   selectedTreePath: string;
   expandedTreePaths: string[];

@@ -14,6 +14,7 @@ const position = z.number().int().min(1).max(100_000_000);
 export const workspaceViewSchema = z.object({
   workspaceId: z.string().uuid(),
   files: z.array(relativePath.min(1)).max(10000),
+  pinnedFiles: z.array(relativePath.min(1)).max(10000).optional(),
   activeFile: relativePath.min(1).optional(),
   selectedTreePath: relativePath,
   expandedTreePaths: z.array(relativePath).max(10000),

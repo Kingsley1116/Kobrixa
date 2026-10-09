@@ -34,6 +34,7 @@ export class ProjectSession {
     return {
       ...this.view,
       files: [...this.documents.getOpenFiles()],
+      pinnedFiles: [...this.documents.getPinnedFiles()],
       locations: { ...this.editor.locations },
     };
   }
