@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { Locale } from "../i18n/copy.js";
 
 export function ProjectTabs({
@@ -6,6 +6,7 @@ export function ProjectTabs({
   activeId,
   disabled,
   locale,
+  settingsTab,
   onSelect,
   onClose,
 }: {
@@ -20,6 +21,8 @@ export function ProjectTabs({
   activeId: string | undefined;
   disabled: boolean;
   locale: Locale;
+  /** Rendered after the projects so settings sit at the project level. */
+  settingsTab?: ReactNode;
   onSelect(id: string, focusEditor?: boolean): void;
   onClose(id: string): void;
 }): React.JSX.Element | null {
@@ -29,7 +32,7 @@ export function ProjectTabs({
       ?.querySelector('[aria-selected="true"]')
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeId]);
-  if (!projects.length) return null;
+  if (!projects.length && !settingsTab) return null;
   return (
     <div
       ref={root}
@@ -85,6 +88,7 @@ export function ProjectTabs({
           </button>
         </div>
       ))}
+      {settingsTab}
     </div>
   );
 }
