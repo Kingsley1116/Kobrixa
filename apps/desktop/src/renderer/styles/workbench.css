@@ -2892,6 +2892,31 @@ footer {
   padding: 4px 7px;
   margin-right: 3px;
 }
+.tab.dragging,
+.project-tab.dragging {
+  opacity: 0.5;
+}
+.tab.drop-before,
+.tab.drop-after,
+.project-tab.drop-before,
+.project-tab.drop-after {
+  position: relative;
+}
+:is(.tab, .project-tab):is(.drop-before, .drop-after)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+:is(.tab, .project-tab).drop-before::before {
+  left: -1px;
+}
+:is(.tab, .project-tab).drop-after::before {
+  right: -1px;
+}
 .project-phase {
   color: var(--accent);
   font-size: var(--font-small);
