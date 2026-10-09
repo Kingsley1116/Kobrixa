@@ -463,27 +463,27 @@ class ObjectAssembler {
     return lv(scratch);
   }
 
-  private motorPercentage(value: IRValue): number[] | undefined {
+  private boundedMotorInteger(value: IRValue, limit: number): number[] | undefined {
     if (value.kind === "number" || value.kind === "integer")
-      return lc(Math.trunc(Math.max(-100, Math.min(100, value.value))));
+      return lc(Math.trunc(Math.max(-limit, Math.min(limit, value.value))));
     const source = this.integerParameter(value);
     if (!source) return undefined;
-    // OUTPUT_* reads a signed DATA8, not DATA32. Merely pointing it at an
-    // integer wraps e.g. -160 to +96, reversing the requested direction.
+    // OUTPUT_* reads DATA8 speed/power and DATA16 steering. Bound the full
+    // integer before narrowing so overflow cannot reverse the direction.
     const bounded = this.scratch(4);
     const outside = this.scratch(1);
     const upper = this.newLabel("motor-upper-limit");
     const done = this.newLabel("motor-percentage-ready");
     this.bytes.push(OP.MOVE_32_32, ...source, ...lv(bounded));
-    this.bytes.push(OP.CP_LT_32, ...lv(bounded), ...lc(-100), ...lv(outside));
+    this.bytes.push(OP.CP_LT_32, ...lv(bounded), ...lc(-limit), ...lv(outside));
     this.bytes.push(OP.JR_FALSE, ...lv(outside));
     this.addPatch(upper);
-    this.bytes.push(OP.MOVE_32_32, ...lc(-100), ...lv(bounded));
+    this.bytes.push(OP.MOVE_32_32, ...lc(-limit), ...lv(bounded));
     this.markLabel(upper);
-    this.bytes.push(OP.CP_GT_32, ...lv(bounded), ...lc(100), ...lv(outside));
+    this.bytes.push(OP.CP_GT_32, ...lv(bounded), ...lc(limit), ...lv(outside));
     this.bytes.push(OP.JR_FALSE, ...lv(outside));
     this.addPatch(done);
-    this.bytes.push(OP.MOVE_32_32, ...lc(100), ...lv(bounded));
+    this.bytes.push(OP.MOVE_32_32, ...lc(limit), ...lv(bounded));
     this.markLabel(done);
     return lv(bounded);
   }
@@ -536,9 +536,13 @@ class ObjectAssembler {
     speed1: IRValue,
     speed2: IRValue,
   ): { speed: number[]; turn: number[] } | undefined {
-    const first = this.floatParameter(speed1);
-    const second = this.floatParameter(speed2);
-    if (!first || !second) return undefined;
+    const boundedFirst = this.boundedMotorInteger(speed1, 100);
+    const boundedSecond = this.boundedMotorInteger(speed2, 100);
+    if (!boundedFirst || !boundedSecond) return undefined;
+    const first = lv(this.scratch(4));
+    const second = lv(this.scratch(4));
+    this.bytes.push(OP.MOVE_32_F, ...boundedFirst, ...first);
+    this.bytes.push(OP.MOVE_32_F, ...boundedSecond, ...second);
     const absoluteFirst = this.scratch(4);
     const absoluteSecond = this.scratch(4);
     const chooseFirst = this.scratch(1);
@@ -549,6 +553,7 @@ class ObjectAssembler {
     const speed = this.scratch(4);
     const isZero = this.scratch(1);
     const zeroFloat = this.scratch(4);
+    const divisor = this.scratch(4);
     const difference = this.scratch(4);
     const turnFloat = this.scratch(4);
     const speedByte = this.scratch(1);
@@ -563,10 +568,11 @@ class ObjectAssembler {
     this.bytes.push(OP.ADD_F, ...lv(firstContribution), ...lv(secondContribution), ...lv(speed));
     this.bytes.push(OP.CP_EQ_F, ...lv(speed), ...lcf(0), ...lv(isZero));
     this.bytes.push(OP.MOVE_8_F, ...lv(isZero), ...lv(zeroFloat));
-    this.bytes.push(OP.ADD_F, ...lv(speed), ...lv(zeroFloat), ...lv(speed));
+    // Avoid division by zero without changing the requested stopped speed.
+    this.bytes.push(OP.ADD_F, ...lv(speed), ...lv(zeroFloat), ...lv(divisor));
     this.bytes.push(OP.SUB_F, ...first, ...second, ...lv(difference));
     this.bytes.push(OP.MUL_F, ...lcf(100), ...lv(difference), ...lv(turnFloat));
-    this.bytes.push(OP.DIV_F, ...lv(turnFloat), ...lv(speed), ...lv(turnFloat));
+    this.bytes.push(OP.DIV_F, ...lv(turnFloat), ...lv(divisor), ...lv(turnFloat));
     this.bytes.push(OP.MOVE_F_8, ...lv(speed), ...lv(speedByte));
     this.bytes.push(OP.MOVE_F_16, ...lv(turnFloat), ...lv(turnWord));
     return { speed: lv(speedByte), turn: lv(turnWord) };
@@ -575,38 +581,101 @@ class ObjectAssembler {
   private motorAddress(
     value: IRValue,
   ): { layer: number[]; mask: number[]; port: number[] } | undefined {
-    const fixedMask = motorMask(value);
-    if (fixedMask !== undefined) {
-      // Commands accept a port mask (for example "AB").  Operations that
-      // need one physical port use the first selected port, as Clev3r does.
-      const port = Math.max(0, Math.floor(Math.log2(fixedMask)));
-      return { layer: lc(0), mask: lc(fixedMask), port: lc(port) };
+    if (value.kind === "string") {
+      const match = /^([ABCD]+)([1-4])?$/i.exec(value.value);
+      if (!match) return undefined;
+      const mask = motorMask({ kind: "string", value: match[1]! })!;
+      // Preserve the existing highest-selected-port behavior for reads.
+      const port = Math.floor(Math.log2(mask));
+      return { layer: lc(Number(match[2] ?? 1) - 1), mask: lc(mask), port: lc(port) };
     }
     if (value.kind !== "variable" || this.typeOf(value)?.kind !== "string") return undefined;
     const allocation = this.allocationFor(value.name);
     if (!allocation) return undefined;
-    const letter = this.scratch(4);
+    const character = this.scratch(4);
+    const index = this.scratch(4);
     const port = this.scratch(4);
-    const shift = this.scratch(1);
+    const bit = this.scratch(1);
     const mask = this.scratch(1);
-    const layerCharacter = this.scratch(4);
     const layer = this.scratch(4);
-    const noLayer = this.newLabel("motor-no-layer");
-    const done = this.newLabel("motor-layer-done");
-    this.bytes.push(OP.MOVE_8_32, ...this.location(allocation), ...lv(letter));
-    this.bytes.push(OP.SUB_32, ...lv(letter), ...lc(65), ...lv(port));
-    this.bytes.push(OP.MOVE_32_8, ...lv(port), ...lv(shift));
-    this.bytes.push(OP.RL_8, ...lc(1), ...lv(shift), ...lv(mask));
-    this.bytes.push(OP.MOVE_8_32, ...this.location(allocation, 1), ...lv(layerCharacter));
-    this.bytes.push(OP.CP_NEQ_32, ...lv(layerCharacter), ...lc(0), ...lv(shift));
-    this.bytes.push(OP.JR_FALSE, ...lv(shift));
-    this.addPatch(noLayer);
-    this.bytes.push(OP.SUB_32, ...lv(layerCharacter), ...lc(49), ...lv(layer));
-    this.bytes.push(OP.JR);
-    this.addPatch(done);
-    this.markLabel(noLayer);
+    const condition = this.scratch(1);
+    const loop = this.newLabel("motor-address-loop");
+    const suffix = this.newLabel("motor-address-suffix");
+    const next = this.newLabel("motor-address-next");
+    const invalid = this.newLabel("motor-address-invalid");
+    const done = this.newLabel("motor-address-done");
+    const readCharacter = () => {
+      this.bytes.push(
+        OP.CP_LT_32,
+        ...lv(index),
+        ...lc(allocation.offset + STRING_BYTES),
+        ...lv(condition),
+      );
+      this.bytes.push(OP.JR_FALSE, ...lv(condition));
+      this.addPatch(invalid);
+      this.bytes.push(
+        OP.MEMORY_READ,
+        ...lc(1),
+        ...lc(allocation.scope === "global" ? 0 : this.objectId),
+        ...lv(index),
+        ...lc(1),
+        ...lv(character),
+      );
+    };
+    this.bytes.push(OP.MOVE_32_32, ...lc(0), ...lv(character));
+    this.bytes.push(OP.MOVE_32_32, ...lc(allocation.offset), ...lv(index));
+    this.bytes.push(OP.MOVE_32_32, ...lc(0), ...lv(port));
+    this.bytes.push(OP.MOVE_8_8, ...lc(0), ...lv(mask));
     this.bytes.push(OP.MOVE_32_32, ...lc(0), ...lv(layer));
+    this.markLabel(loop);
+    readCharacter();
+    this.bytes.push(OP.CP_EQ_32, ...lv(character), ...lc(0), ...lv(condition));
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(done);
+    this.bytes.push(OP.CP_LTEQ_32, ...lv(character), ...lc(52), ...lv(condition));
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(suffix);
+    this.bytes.push(OP.AND_32, ...lv(character), ...lc(0xdf), ...lv(character));
+    this.bytes.push(OP.SUB_32, ...lv(character), ...lc(65), ...lv(character));
+    this.bytes.push(OP.CP_LT_32, ...lv(character), ...lc(0), ...lv(condition));
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(invalid);
+    this.bytes.push(OP.CP_GT_32, ...lv(character), ...lc(3), ...lv(condition));
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(invalid);
+    this.bytes.push(OP.RL_8, ...lc(1), ...lv(character), ...lv(bit));
+    this.bytes.push(OP.OR_8, ...lv(mask), ...lv(bit), ...lv(mask));
+    this.bytes.push(OP.CP_GT_32, ...lv(character), ...lv(port), ...lv(condition));
+    this.bytes.push(OP.JR_FALSE, ...lv(condition));
+    this.addPatch(next);
+    this.bytes.push(OP.MOVE_32_32, ...lv(character), ...lv(port));
+    this.markLabel(next);
+    this.bytes.push(OP.ADD_32, ...lv(index), ...lc(1), ...lv(index));
+    this.bytes.push(OP.MOVE_32_32, ...lc(0), ...lv(character));
+    this.bytes.push(OP.JR);
+    this.addPatch(loop);
+    this.markLabel(suffix);
+    this.bytes.push(OP.CP_LT_32, ...lv(character), ...lc(49), ...lv(condition));
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(invalid);
+    this.bytes.push(OP.SUB_32, ...lv(character), ...lc(49), ...lv(layer));
+    this.bytes.push(OP.ADD_32, ...lv(index), ...lc(1), ...lv(index));
+    readCharacter();
+    this.bytes.push(OP.CP_EQ_32, ...lv(character), ...lc(0), ...lv(condition));
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(done);
+    this.markLabel(invalid);
+    this.bytes.push(OP.MOVE_8_8, ...lc(0), ...lv(mask));
     this.markLabel(done);
+    this.bytes.push(OP.CP_NEQ_8, ...lv(mask), ...lc(0), ...lv(condition));
+    const valid = this.newLabel("motor-address-valid");
+    this.bytes.push(OP.JR_TRUE, ...lv(condition));
+    this.addPatch(valid);
+    // Invalid computed addresses select no outputs; reads use an out-of-range
+    // positive port, never a negative firmware array index.
+    this.bytes.push(OP.MOVE_32_32, ...lc(0), ...lv(layer));
+    this.bytes.push(OP.MOVE_32_32, ...lc(4), ...lv(port));
+    this.markLabel(valid);
     return { layer: lv(layer), mask: lv(mask), port: lv(port) };
   }
 
@@ -1135,7 +1204,12 @@ class ObjectAssembler {
           ? 1
           : -1;
     if (motorPercentageIndex >= 0)
-      args[motorPercentageIndex] = this.motorPercentage(instruction.args[motorPercentageIndex]!);
+      args[motorPercentageIndex] = this.boundedMotorInteger(
+        instruction.args[motorPercentageIndex]!,
+        100,
+      );
+    if (/^Motor\.(Start|Schedule|Move)Steer$/.test(instruction.operation))
+      args[2] = this.boundedMotorInteger(instruction.args[2]!, 200);
     const arg = (index: number): number[] => args[index]!;
     const floatArg = (index: number): number[] | undefined =>
       this.floatParameter(instruction.args[index]!);
@@ -1189,7 +1263,8 @@ class ObjectAssembler {
           ...lc(0),
           ...lc(mask),
         );
-      else if (method === "ResetCount") this.bytes.push(OP.OUTPUT_RESET, ...lc(0), ...lc(mask));
+      // GetTacho reads the sensor counter, which OUTPUT_RESET does not clear.
+      else if (method === "ResetCount") this.bytes.push(OP.OUTPUT_CLR_COUNT, ...lc(0), ...lc(mask));
       else if (method === "SetDirectPolarity")
         this.bytes.push(OP.OUTPUT_POLARITY, ...lc(0), ...lc(mask), ...lc(1));
       else if (method === "SetReversPolarity")
@@ -1218,9 +1293,12 @@ class ObjectAssembler {
       return;
     }
     switch (instruction.operation) {
-      case "Assert.Failed":
-        this.assertionFailure(arg(0));
+      case "Assert.Failed": {
+        const message = this.textParameter(instruction.args[0]!);
+        if (!message) break;
+        this.assertionFailure(message);
         return;
+      }
       case "Assert.Equal":
       case "Assert.NotEqual":
       case "Assert.Less":
@@ -1231,15 +1309,33 @@ class ObjectAssembler {
         const passed = this.scratch(1);
         const leftType = this.typeOf(instruction.args[0]!)?.kind;
         const rightType = this.typeOf(instruction.args[1]!)?.kind;
-        if (
-          (instruction.operation === "Assert.Equal" ||
-            instruction.operation === "Assert.NotEqual") &&
-          leftType === "string" &&
-          rightType === "string"
-        ) {
+        const equality =
+          instruction.operation === "Assert.Equal" || instruction.operation === "Assert.NotEqual";
+        if (equality && leftType === "string" && rightType === "string") {
           this.bytes.push(OP.STRING, ...lc(STRING.COMPARE), ...arg(0), ...arg(1), ...lv(passed));
           if (instruction.operation === "Assert.NotEqual")
             this.bytes.push(OP.CP_EQ_8, ...lv(passed), ...lc(0), ...lv(passed));
+        } else if (equality && leftType === "boolean" && rightType === "boolean") {
+          this.bytes.push(
+            instruction.operation === "Assert.Equal" ? OP.CP_EQ_8 : OP.CP_NEQ_8,
+            ...arg(0),
+            ...arg(1),
+            ...lv(passed),
+          );
+        } else if (
+          equality &&
+          (leftType === "string" ||
+            rightType === "string" ||
+            leftType === "boolean" ||
+            rightType === "boolean")
+        ) {
+          // Like preview assertions, equality does not coerce text or Booleans
+          // into numeric values. Never read their storage as a DATA32.
+          this.bytes.push(
+            OP.MOVE_8_8,
+            ...lc(instruction.operation === "Assert.NotEqual" ? 1 : 0),
+            ...lv(passed),
+          );
         } else if (instruction.operation === "Assert.Near") {
           const left = this.floatParameter(instruction.args[0]!);
           const right = this.floatParameter(instruction.args[1]!);
@@ -1281,7 +1377,9 @@ class ObjectAssembler {
         this.bytes.push(OP.JR);
         this.addPatch(done);
         this.markLabel(failed);
-        this.assertionFailure(arg(2));
+        const message = this.textParameter(instruction.args[2]!);
+        if (!message) break;
+        this.assertionFailure(message);
         this.markLabel(done);
         return;
       }
@@ -1954,15 +2052,18 @@ class ObjectAssembler {
         this.unsignedByte(lv(text), this.location(target));
         return;
       }
-      case "EV3File.ConvertToNumber":
+      case "EV3File.ConvertToNumber": {
         if (!target) break;
+        const text = this.textParameter(instruction.args[0]!);
+        if (!text) break;
         this.bytes.push(
           OP.STRING,
           ...lc(STRING.STRING_TO_VALUE),
-          ...arg(0),
+          ...text,
           ...this.location(target),
         );
         return;
+      }
       case "EV3File.ReadNumberArray": {
         if (!target) break;
         const array = this.scratch(2);
@@ -2005,11 +2106,13 @@ class ObjectAssembler {
           this.bytes.push(OP.ADD_32, ...lv(offset), ...lv(index), ...lv(destination));
           this.bytes.push(OP.ARRAY_WRITE, ...lv(array), ...lv(destination), ...lv(value));
         });
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(chunkArray));
         this.bytes.push(OP.ADD_32, ...lv(offset), ...lv(chunk), ...lv(offset));
         this.bytes.push(OP.JR);
         this.addPatch(loop);
         this.markLabel(done);
         this.bytes.push(OP.MOVE_16_32, ...lv(array), ...this.location(target));
+        this.retainCallLocalArray(lv(array), target);
         return;
       }
       case "EV3File.WriteNumberArray": {
@@ -2062,6 +2165,7 @@ class ObjectAssembler {
           ...lv(bytes),
           ...lh(chunkArray),
         );
+        this.bytes.push(OP.ARRAY, ...lc(ARRAY.DELETE), ...lv(chunkArray));
         this.bytes.push(OP.ADD_32, ...lv(offset), ...lv(chunk), ...lv(offset));
         this.bytes.push(OP.JR);
         this.addPatch(loop);
@@ -2398,19 +2502,28 @@ class ObjectAssembler {
         const left = floatArg(0);
         const right = floatArg(1);
         if (!left || !right) break;
-        const difference = this.scratch(4);
-        const absolute = this.scratch(4);
-        const sum = this.scratch(4);
-        this.bytes.push(OP.SUB_F, ...left, ...right, ...lv(difference));
-        this.bytes.push(OP.MATH, ...lc(MATH.ABS), ...lv(difference), ...lv(absolute));
-        this.bytes.push(OP.ADD_F, ...left, ...right, ...lv(sum));
+        const chooseRight = this.scratch(1);
+        const rightIsNaN = this.scratch(1);
+        const useLeft = this.newLabel("math-minmax-left");
+        const done = this.newLabel("math-minmax-done");
+        // Select an operand directly: (a + b +/- abs(a - b)) / 2 loses
+        // precision and can overflow even when both inputs are finite.
         this.bytes.push(
-          instruction.operation === "Math.Max" ? OP.ADD_F : OP.SUB_F,
-          ...lv(sum),
-          ...lv(absolute),
-          ...this.location(target),
+          instruction.operation === "Math.Max" ? OP.CP_GT_F : OP.CP_LT_F,
+          ...right,
+          ...left,
+          ...lv(chooseRight),
         );
-        this.bytes.push(OP.DIV_F, ...this.location(target), ...lcf(2), ...this.location(target));
+        this.bytes.push(OP.CP_NEQ_F, ...right, ...right, ...lv(rightIsNaN));
+        this.bytes.push(OP.OR_8, ...lv(chooseRight), ...lv(rightIsNaN), ...lv(chooseRight));
+        this.bytes.push(OP.JR_FALSE, ...lv(chooseRight));
+        this.addPatch(useLeft);
+        this.bytes.push(OP.MOVE_F_F, ...right, ...this.location(target));
+        this.bytes.push(OP.JR);
+        this.addPatch(done);
+        this.markLabel(useLeft);
+        this.bytes.push(OP.MOVE_F_F, ...left, ...this.location(target));
+        this.markLabel(done);
         return;
       }
       case "Math.Abs":
@@ -2813,26 +2926,26 @@ class ObjectAssembler {
         return;
       }
       case "Motor.StartPower": {
-        const mask = motorMask(instruction.args[0]!);
-        if (!mask) break;
+        const motor = this.motorAddress(instruction.args[0]!);
+        if (!motor) break;
         this.bytes.push(
           OP.OUTPUT_POWER,
-          ...lc(0),
-          ...lc(mask),
+          ...motor.layer,
+          ...motor.mask,
           ...arg(1),
           OP.OUTPUT_START,
-          ...lc(0),
-          ...lc(mask),
+          ...motor.layer,
+          ...motor.mask,
         );
         return;
       }
       case "Motor.StartSteer": {
-        const mask = motorMask(instruction.args[0]!);
-        if (!mask) break;
+        const motor = this.motorAddress(instruction.args[0]!);
+        if (!motor) break;
         this.bytes.push(
           OP.OUTPUT_STEP_SYNC,
-          ...lc(0),
-          ...lc(mask),
+          ...motor.layer,
+          ...motor.mask,
           ...arg(1),
           ...arg(2),
           ...lc(0),
@@ -2841,14 +2954,14 @@ class ObjectAssembler {
         return;
       }
       case "Motor.StartSync": {
-        const mask = motorMask(instruction.args[0]!);
-        if (!mask) break;
+        const motor = this.motorAddress(instruction.args[0]!);
+        if (!motor) break;
         const values = this.motorSyncParameters(instruction.args[1]!, instruction.args[2]!);
         if (!values) break;
         this.bytes.push(
           OP.OUTPUT_STEP_SYNC,
-          ...lc(0),
-          ...lc(mask),
+          ...motor.layer,
+          ...motor.mask,
           ...values.speed,
           ...values.turn,
           ...lc(0),
@@ -3342,8 +3455,10 @@ class ObjectAssembler {
           ...lv(raw + 24),
           ...lv(raw + 28),
         );
-        const requested = this.parameter(index);
-        if (!requested) break;
+        const requested = lv(this.scratch(4));
+        // The public index parameter is integral even when a BASIC PLUS
+        // function passes a number. Snapshot it before overwriting the result.
+        this.bytes.push(OP.MOVE_32_32, ...arg(1), ...requested);
         this.bytes.push(OP.MOVE_32_32, ...lc(0), ...this.location(target));
         this.bytes.push(OP.CP_GTEQ_32, ...requested, ...lc(0), ...lv(valid));
         this.bytes.push(OP.JR_FALSE, ...lv(valid));

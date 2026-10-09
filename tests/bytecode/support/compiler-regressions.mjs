@@ -177,6 +177,17 @@ Motor.MoveSteer("BC", power, 50, 90, "True")
       ["OUTPUT_STEP_SYNC", 0, 6, 100, 50, 90, 1],
     ],
   },
+  ...["A", "B", "C", "D"].map((port, index) => ({
+    name: `Motor${port}.ResetCount clears the same tacho counter as Motor.ResetCount`,
+    source: `Motor${port}.ResetCount()
+Motor.ResetCount("${port}")
+`,
+    texts: [],
+    motorCommands: [
+      ["OUTPUT_CLR_COUNT", 0, 1 << index],
+      ["OUTPUT_CLR_COUNT", 0, 1 << index],
+    ],
+  })),
   {
     name: "numeric outputs widen variables initialized with integer literals",
     source: `value = 0
@@ -314,7 +325,7 @@ export async function runCompilerRegression(fixture, execute, backendOptions = {
   if (fixture.motorCommands)
     assert.deepEqual(
       run.trace
-        .filter((entry) => /^OUTPUT_(POWER|SPEED|STEP_)/.test(entry.op))
+        .filter((entry) => /^OUTPUT_(POWER|SPEED|STEP_|RESET|CLR_COUNT)/.test(entry.op))
         .map((entry) => [entry.op, ...entry.args]),
       fixture.motorCommands,
       fixture.name,
