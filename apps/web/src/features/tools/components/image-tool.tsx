@@ -423,8 +423,8 @@ export function ImageTool({
                   max={255}
                   onChange={(threshold) => update({ threshold })}
                   hint={t(
-                    "調高 → 更多黑色；調低 → 更多白色。",
-                    "Higher → more black; lower → more white.",
+                    "調高可增加黑色；調低可增加白色。",
+                    "Higher values add black; lower values add white.",
                   )}
                 />
               ) : settings.mode === "auto" && result ? (

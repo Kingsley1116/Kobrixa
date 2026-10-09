@@ -1,3 +1,4 @@
+import { Icon } from "../../components/ui/icon.js";
 import {
   DIAGNOSTIC_HELP,
   DIAGNOSTIC_HELP_VARIANTS,
@@ -157,7 +158,9 @@ function DiagnosticIndex({ locale }: { locale: DiagnosticLocale }) {
                   <strong>{entry.title[locale]}</strong>
                   <p>{entry.cause[locale]}</p>
                 </div>
-                <span aria-hidden="true">→</span>
+                <span aria-hidden="true">
+                  <Icon name="arrow" />
+                </span>
               </AppLink>
             </li>
           ))}
@@ -258,7 +261,7 @@ export function DiagnosticsPage({
         <code>{code}</code>
         <p>{t.unknownBody}</p>
         <AppLink className="back-link" href={diagnosticPath(locale)}>
-          ← {t.back}
+          <Icon name="arrow-left" /> {t.back}
         </AppLink>
       </article>
     );
@@ -266,7 +269,7 @@ export function DiagnosticsPage({
   return (
     <article className="diagnostics-reference diagnostics-detail">
       <AppLink className="back-link" href={diagnosticPath(locale)}>
-        ← {t.back}
+        <Icon name="arrow-left" /> {t.back}
       </AppLink>
       <header className="diagnostics-header">
         <code>{entry.code}</code>

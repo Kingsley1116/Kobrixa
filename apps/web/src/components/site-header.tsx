@@ -1,3 +1,4 @@
+import { Icon } from "./ui/icon.js";
 import { Link, NavLink } from "react-router";
 import "./site-header.css";
 
@@ -67,7 +68,10 @@ export function SiteHeader({
             target="_blank"
             rel="noreferrer"
           >
-            GitHub <span aria-hidden="true">↗</span>
+            GitHub{" "}
+            <span aria-hidden="true">
+              <Icon name="external" />
+            </span>
           </a>
           <button
             className="app-navbar-language"

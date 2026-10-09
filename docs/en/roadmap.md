@@ -4,6 +4,8 @@
 
 The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Production signing credentials and the complete clean-machine/hardware acceptance matrix remain release gates.
 
+The candidate also includes the [local WRO simulator](offline-preview.md), [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Candidate.14 updates collaboration rooms, local-change handling and control requests. Automated tests for these candidate features do not replace physical EV3 acceptance.
+
 ## Phase 0 — foundation in place
 
 - Electron, React, TypeScript and Monaco run in a pinned Node.js/pnpm workspace.
@@ -53,7 +55,7 @@ Exit: compiler and device APIs are stable enough for independent CLI and desktop
 ## Long-term exploration
 
 - Bluetooth transport
-- EV3 simulator and virtual devices
+- Broader virtual-device support and firmware emulation beyond the existing local WRO simulator
 - Blockly-style editor that targets the same IR
 - Classroom deployment and device-fleet tools
 - Additional LEGO-compatible hubs through separate backends

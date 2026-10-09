@@ -4,7 +4,7 @@
 
 Kobrixa IDE gives students and makers a dependable, understandable path from EV3 source code to a running robot. The product favors a short feedback loop, actionable errors, offline use, and predictable physical-device behavior over a broad collection of partially supported features.
 
-The current v1 candidate implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports and remote file management. Full platform support still depends on the physical-brick acceptance matrix. Release signing is integrated but requires production credentials and external verification before a download can be described as signed.
+The current v1 candidate implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports, remote file management, a local WRO simulator, Sensor Lab, motor testing and cloud collaboration. Full platform support still depends on the physical-brick acceptance matrix. Release signing is integrated but requires production credentials and external verification before a download can be described as signed.
 
 ## Primary users
 
@@ -12,7 +12,7 @@ The current v1 candidate implements Basic Plus editing and compilation, project 
 - A maker maintaining or extending an existing `.bp` robot program.
 - A mentor who needs examples and repeatable setup across Windows, macOS, and Linux.
 
-Advanced language tooling, classroom fleet management, and cloud collaboration are not v1 priorities.
+Additional language frontends and classroom fleet management remain future directions. Optional cloud collaboration is included in the candidate; individual editing, compilation and local simulation remain available offline.
 
 ## v1 user journey
 
@@ -58,6 +58,16 @@ Desktop compilation runs in a dedicated worker, with progress and cooperative ca
 - Browse remote files, transfer files or folders, and preview conflicts before batch transfers.
 - Time out stalled operations and distinguish permission, discovery, connection, protocol, transfer, and device errors.
 
+### Local simulation and device experiments
+
+- [Local WRO simulator](offline-preview.md): run Basic Plus offline, configure multiple robots, and inspect sensors, LCD output, variables and source locations. Physics and sensors are approximate; this is not a native `.rbf` firmware emulator and does not replace hardware acceptance.
+- [Sensor Lab](sensor-lab.md): record and compare sensor readings and motor counts, export CSV, apply two-point calibration and zeroing, and generate copyable Basic Plus examples.
+- [Motor testing](motor-test.md): use jog, timed and angle controls with results and stop status; physical acceptance remains separate.
+
+### Cloud collaboration
+
+[Cloud collaboration](collaboration.md) is included from candidate.12. Invite codes and optional passwords enable shared text projects, cursors, chat and EV3 control. Candidate.13 adds room identity recovery; candidate.14 adds local-change choices before rejoining, host rejection of control requests and an updated room panel. Collaboration requires internet access and stores project and chat content on the service; individual offline work does not depend on it.
+
 ### Desktop distribution
 
 - Package Windows x64 NSIS/ZIP, macOS Apple Silicon DMG and Linux x64 AppImage/tar.gz, with update metadata and SHA256SUMS.txt.
@@ -71,8 +81,8 @@ See [installation and recovery](../en/installation.md) and the [code signing pol
 
 - Bluetooth transport
 - Blockly or another block editor
-- Cloud accounts, synchronization, or collaboration
-- A source-level debugger or simulator
+- A cloud account system or general-purpose file synchronization
+- Source-level stepping on physical EV3 hardware or full firmware emulation
 - Python, TypeScript, or C++ compilation
 - Classroom fleet management
 - Importing proprietary project formats beyond supported `.bp` source files

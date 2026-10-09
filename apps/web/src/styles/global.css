@@ -209,6 +209,8 @@ h2 {
   background-size: 100% 1.75rem;
 }
 .code-lines {
+  display: flex;
+  flex-direction: column;
   padding-right: 0.85rem;
   color: #aaa195;
   font:
@@ -234,6 +236,11 @@ h2 {
 .workbench b {
   color: #9b6417;
   font-weight: 500;
+}
+.ui-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: -0.15em;
 }
 .workbench-status {
   display: flex;
@@ -272,6 +279,10 @@ h2 {
 .brick-screen i {
   color: #2457d6;
   font-style: normal;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: currentColor;
 }
 .brick-controls {
   display: flex;
@@ -1070,6 +1081,9 @@ h2 {
   gap: 1rem;
   margin: 3rem 0 5rem;
 }
+.start-checklist.product-guides {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .start-checklist > div {
   padding: 1.5rem;
   border: 1.5px solid #1e2933;
@@ -1301,7 +1315,8 @@ h2 {
   .tutorial-overview {
     padding: 3rem 1.25rem 4rem;
   }
-  .start-checklist {
+  .start-checklist,
+  .start-checklist.product-guides {
     grid-template-columns: 1fr;
     margin: 2rem 0 3.5rem;
   }

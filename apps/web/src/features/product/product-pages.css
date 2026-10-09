@@ -123,9 +123,16 @@
   color: #a7b4bd;
 }
 .code-dots {
-  letter-spacing: 4px;
+  display: inline-flex;
+  gap: 4px;
   color: #d1ac68;
   margin-right: 12px;
+}
+.code-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .product-code pre {
   overflow: auto;

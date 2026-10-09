@@ -1,3 +1,4 @@
+import { Icon } from "../../components/ui/icon.js";
 import { PolicyNotice } from "../../components/legal-links.js";
 import { Select } from "../../components/ui/select.js";
 import { AudioPlayer } from "../../components/ui/audio-player.js";
@@ -100,7 +101,7 @@ function EntryDetail({
   return (
     <article className="gallery-detail">
       <Link className="gallery-back" to="/gallery">
-        ← {t("返回素材庫", "Back to gallery")}
+        <Icon name="arrow-left" /> {t("返回素材庫", "Back to gallery")}
       </Link>
       <div className="gallery-detail-head">
         <div>
@@ -364,7 +365,9 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
                 </button>
               </>
             ) : auth?.loginAvailable ? (
-              <a href="/api/auth/github">{t("GitHub 登入", "Sign in with GitHub")} ↗</a>
+              <a href="/api/auth/github">
+                {t("GitHub 登入", "Sign in with GitHub")} <Icon name="external" />
+              </a>
             ) : auth ? (
               <span className="gallery-muted">{t("登入服務待設定", "Sign-in not configured")}</span>
             ) : null}

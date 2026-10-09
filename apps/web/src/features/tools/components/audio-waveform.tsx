@@ -1,3 +1,4 @@
+import { Icon } from "../../../components/ui/icon.js";
 import { useMemo, useRef, useState } from "react";
 import { MAX_DURATION, MAX_SAMPLES, SAMPLE_RATE } from "../lib/media.js";
 import { clamp, waveformPeaks } from "../lib/media-processing.js";
@@ -148,7 +149,7 @@ export function Waveform({
           disabled={window.span <= Math.min(0.25, duration)}
           onClick={() => navigate(window.start + window.span / 4, window.span / 2)}
         >
-          ＋
+          <Icon name="plus" />
         </button>
         <button
           type="button"
@@ -157,7 +158,7 @@ export function Waveform({
           disabled={!zoomed}
           onClick={() => navigate(window.start - window.span / 2, window.span * 2)}
         >
-          −
+          <Icon name="minus" />
         </button>
         <button
           type="button"
@@ -321,7 +322,9 @@ export function Waveform({
                 update(next);
               }}
             >
-              <span aria-hidden="true">Ⅱ</span>
+              <span aria-hidden="true">
+                <Icon name="grip" />
+              </span>
             </div>
           ))}
         {panning && (
@@ -354,10 +357,11 @@ export function Waveform({
         )}
         {gesture.feedback && (
           <div className="wave-drag-feedback" role="status">
+            {gesture.feedback === "left" && <Icon name="arrow-left" />}
             {gesture.feedback === "left"
-              ? t("← 自動向前捲動", "← Scrolling earlier")
+              ? t("自動向前捲動", "Scrolling earlier")
               : gesture.feedback === "right"
-                ? t("自動向後捲動 →", "Scrolling later →")
+                ? t("自動向後捲動", "Scrolling later")
                 : gesture.feedback === "limit"
                   ? !split && selectionLength >= MAX_DURATION - 1 / SAMPLE_RATE
                     ? t("已達單檔 8.19 秒上限", "Single-file limit reached: 8.19 s")
@@ -365,6 +369,7 @@ export function Waveform({
                   : gesture.feedback === "moving"
                     ? t("移動片段 · 長度不變", "Moving clip · length preserved")
                     : t("調整裁切範圍", "Trimming selection")}
+            {gesture.feedback === "right" && <Icon name="arrow" />}
           </div>
         )}
         {cursor >= window.start && cursor <= windowEnd && (
@@ -384,7 +389,7 @@ export function Waveform({
           onClick={() => navigate(window.start - window.span / 2)}
           aria-label={t("查看前一段", "View earlier audio")}
         >
-          ←
+          <Icon name="arrow-left" />
         </button>
         <input
           className="ui-range"
@@ -405,7 +410,7 @@ export function Waveform({
           onClick={() => navigate(window.start + window.span / 2)}
           aria-label={t("查看後一段", "View later audio")}
         >
-          →
+          <Icon name="arrow" />
         </button>
       </div>
       <div className="wave-context">

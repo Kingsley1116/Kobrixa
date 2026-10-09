@@ -1,3 +1,4 @@
+import { Icon, type IconName } from "../../components/ui/icon.js";
 import { AppLink } from "../../components/app-link.js";
 import { useEffect, useState } from "react";
 import { SiteHeader } from "../../components/site-header.js";
@@ -16,20 +17,27 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
   useEffect(() => {
     document.title = locale === "zh-TW" ? "功能 — Kobrixa" : "Features — Kobrixa";
   }, [locale]);
-  const features = [
+  const features: {
+    tag: string;
+    icon: IconName;
+    title: string;
+    body: string;
+    link: string;
+    label: string;
+  }[] = [
     {
-      number: "01",
+      icon: "code",
       tag: "EDITOR",
       title: t("在本機，專心寫程式。", "A focused place to write."),
       body: t(
-        "編輯 Basic Plus 原始碼，查看程式診斷；編輯器與編譯器不需要雲端帳號。",
-        "Edit Basic Plus source and inspect diagnostics. The editor and compiler work without a cloud account.",
+        "在多個專案間切換，保留分頁與草稿。使用補全、雙語離線診斷與 Quick Fix；編輯器與編譯器不需要雲端帳號。",
+        "Switch between projects while keeping tabs and drafts. Use completion, bilingual offline diagnostics and Quick Fix without a cloud account.",
       ),
       link: "/docs/tutorial/first-program",
       label: t("寫第一個程式", "Write your first program"),
     },
     {
-      number: "02",
+      icon: "build",
       tag: "COMPILER",
       title: t("從 .bp 到原生 .rbf。", "From .bp to native .rbf."),
       body: t(
@@ -40,18 +48,51 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
       label: t("了解語言支援", "Explore language support"),
     },
     {
-      number: "03",
+      icon: "device",
       tag: "CONNECTION",
       title: t("把程式帶到機器人上。", "Put your code on the brick."),
       body: t(
-        "透過 USB 或 Wi-Fi 連接 EV3，執行上傳、啟動與停止流程。三平台實機相容性仍在候選版驗證中。",
-        "Connect to EV3 over USB or Wi-Fi to upload, run and stop programs. Physical compatibility across all three platforms remains under candidate validation.",
+        "透過 USB 或 Wi-Fi 上傳、執行、停止程式及管理 EV3 檔案。內建馬達點動、定時與角度測試；三平台實機矩陣仍待完成。",
+        "Upload, run and stop programs and manage EV3 files over USB or Wi-Fi. Test motors with jog, timed and angle controls; the three-platform hardware matrix remains pending.",
       ),
       link: "/docs/reference/device-support",
       label: t("查看裝置支援", "Check device support"),
     },
     {
-      number: "04",
+      icon: "simulator",
+      tag: "LOCAL SIMULATOR",
+      title: t("沒有 EV3，也能先試跑。", "Try your program before connecting."),
+      body: t(
+        "按 Alt+F5 開啟本地 WRO Double Tennis 2026 模擬器。支援差速與全向驅動、多機程式、感測器及變數檢視；物理為近似，不能取代實機驗證。",
+        "Open the local WRO Double Tennis 2026 simulator with Alt+F5. Explore differential and omni drives, multiple robot programs, sensors and variables. Approximate physics does not replace physical testing.",
+      ),
+      link: "/docs/reference/offline-preview",
+      label: t("探索本地模擬器", "Explore the local simulator"),
+    },
+    {
+      icon: "users",
+      tag: "COLLABORATION",
+      title: t("同一個專案，一起完成。", "Work on the same project together."),
+      body: t(
+        "不需帳號，以邀請碼與選填密碼共同編輯、聊天及分配 EV3 控制權。candidate.14 提供本機變更處理與更新的房間面板；協作需要網路連線。",
+        "Co-edit, chat and share EV3 control using an invite code and optional password, without an account. Candidate.14 adds local-change choices and an updated room panel. Collaboration requires internet access.",
+      ),
+      link: "/docs/reference/collaboration",
+      label: t("了解雲端協作", "Explore cloud collaboration"),
+    },
+    {
+      icon: "chart",
+      tag: "SENSOR LAB",
+      title: t("把讀值，變成看得見的曲線。", "Turn readings into visible patterns."),
+      body: t(
+        "記錄感測器與馬達計數、比較實驗曲線，並匯出 CSV。兩點校正與歸零可產生 Basic Plus 範例，方便帶回程式使用。",
+        "Record sensor readings and motor counts, compare experiments and export CSV. Generate Basic Plus examples for two-point calibration and zeroing.",
+      ),
+      link: "/docs/reference/sensor-lab",
+      label: t("使用 Sensor Lab", "Use Sensor Lab"),
+    },
+    {
+      icon: "audio",
       tag: "MEDIA STUDIO",
       title: t("讓 EV3 有畫面，也有聲音。", "Give your EV3 a face and a voice."),
       body: t(
@@ -62,7 +103,18 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
       label: t("開啟媒體工作室", "Open the media studio"),
     },
     {
-      number: "05",
+      icon: "image",
+      tag: "COMMUNITY GALLERY",
+      title: t("讓素材，也能一起分享。", "Share what your robot shows and plays."),
+      body: t(
+        "瀏覽與下載已審核的 EV3 圖片、音訊及播放範例。用 GitHub 登入後可提交作品，經審核後以 CC BY 4.0 公開分享。",
+        "Browse and download reviewed EV3 images, audio and playback examples. Sign in with GitHub to submit your own work for review and publication under CC BY 4.0.",
+      ),
+      link: "/gallery",
+      label: t("瀏覽社群素材庫", "Browse the community gallery"),
+    },
+    {
+      icon: "book",
       tag: "LEARNING",
       title: t("從小練習，走到完整專案。", "Start small. Build something real."),
       body: t(
@@ -71,17 +123,6 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
       ),
       link: "/docs/tutorial",
       label: t("瀏覽學習路徑", "Explore the learning path"),
-    },
-    {
-      number: "06",
-      tag: "OPEN SOURCE",
-      title: t("看得見，也改得動。", "Open to explore and improve."),
-      body: t(
-        "Kobrixa 的原創程式碼採 Apache-2.0 授權。你可以閱讀原始碼、從本機建置，並參與測試與開發。",
-        "Original Kobrixa code is licensed under Apache-2.0. Read the source, build locally and contribute to testing and development.",
-      ),
-      link: github,
-      label: t("查看原始碼", "View the source"),
     },
   ];
   return (
@@ -103,23 +144,34 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
             </p>
             <div className="product-actions">
               <AppLink className="product-button primary" href="/download">
-                {t("取得 Kobrixa", "Get Kobrixa")} <span>↗</span>
+                {t("取得 Kobrixa", "Get Kobrixa")}{" "}
+                <span>
+                  <Icon name="external" />
+                </span>
               </AppLink>
               <AppLink className="product-button secondary" href="/docs">
-                {t("開始學習", "Start learning")} <span>→</span>
+                {t("開始學習", "Start learning")}{" "}
+                <span>
+                  <Icon name="arrow" />
+                </span>
               </AppLink>
             </div>
             <p className="product-note">
-              {t("v1 候選版 · 本機優先 · Apache-2.0", "v1 candidate · Local-first · Apache-2.0")}
+              v{metadata.version} · {t("本機優先", "Local-first")} · Apache-2.0
             </p>
           </div>
           <div className="feature-visual">
             <div className="visual-caption">
-              <span className="visual-dot" /> BASIC PLUS → EV3
+              <span className="visual-dot" /> BASIC PLUS <Icon name="arrow" /> EV3
             </div>
             <div className="product-code">
               <div>
-                <span className="code-dots">● ● ●</span> original-media.bp
+                <span className="code-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>{" "}
+                original-media.bp
               </div>
               <pre>
                 <code>{mediaCode}</code>
@@ -135,11 +187,15 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
               <span>
                 .bp <small>{t("原始碼", "Source")}</small>
               </span>
-              <i aria-hidden="true">→</i>
+              <i aria-hidden="true">
+                <Icon name="arrow" />
+              </i>
               <span>
                 .rbf <small>{t("建置成品", "Build")}</small>
               </span>
-              <i aria-hidden="true">→</i>
+              <i aria-hidden="true">
+                <Icon name="arrow" />
+              </i>
               <span>
                 EV3 <small>{t("實際動作", "Motion")}</small>
               </span>
@@ -160,11 +216,14 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
             </p>
           </div>
           <div className="capability-grid">
-            {features.map((feature) => (
+            {features.map((feature, index) => (
               <article className="capability-card" key={feature.tag}>
                 <div className="capability-meta">
-                  <span>{feature.number}</span>
+                  <span>
+                    <Icon name={feature.icon} size={20} />
+                  </span>
                   <span>{feature.tag}</span>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
                 </div>
                 <h3>{feature.title}</h3>
                 <p>{feature.body}</p>
@@ -174,7 +233,10 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
                     ? { target: "_blank", rel: "noreferrer" }
                     : {})}
                 >
-                  {feature.label} <span aria-hidden="true">↗</span>
+                  {feature.label}{" "}
+                  <span aria-hidden="true">
+                    <Icon name="external" />
+                  </span>
                 </AppLink>
               </article>
             ))}
@@ -187,13 +249,13 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
             <h2>{t("把現在做好，再走向下一步。", "Build the foundation. Then go further.")}</h2>
             <p>
               {t(
-                "v1 聚焦 Basic Plus 與 EV3 原生執行流程。Python、TypeScript 和 C++ 前端，以及藍牙、模擬器與積木編輯器屬於後續規劃，目前尚未提供。",
-                "v1 focuses on Basic Plus and native EV3 execution. Python, TypeScript and C++ frontends, along with Bluetooth, a simulator and a block editor, are future plans and are not available yet.",
+                "目前候選版已包含本地模擬器、雲端協作與設備實驗工具。接下來持續完成 Basic Plus 相容覆蓋、三平台實機驗收與發布驗證。Python、TypeScript、C++ 前端、藍牙與積木編輯器仍屬未來規劃。",
+                "The current candidate includes local simulation, cloud collaboration and device experiments. Work continues on Basic Plus compatibility, three-platform hardware acceptance and release verification. Python, TypeScript and C++ frontends, Bluetooth and a block editor remain future plans.",
               )}
             </p>
           </div>
           <AppLink className="product-button secondary" href="/docs/reference/roadmap">
-            {t("查看開發路線圖", "View the roadmap")} →
+            {t("查看開發路線圖", "View the roadmap")} <Icon name="arrow" />
           </AppLink>
         </section>
       </main>
@@ -226,7 +288,10 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
             </p>
             <div className="product-actions">
               <AppLink className="product-button primary" href={`${github}/releases`}>
-                {t("查看已發布版本", "View published releases")} <span>↗</span>
+                {t("查看已發布版本", "View published releases")}{" "}
+                <span>
+                  <Icon name="external" />
+                </span>
               </AppLink>
               <AppLink
                 className="product-button secondary"
@@ -234,10 +299,10 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
                 target="_blank"
                 rel="noreferrer"
               >
-                {t("下載原始碼 ZIP", "Download source ZIP")} ↓
+                {t("下載原始碼 ZIP", "Download source ZIP")} <Icon name="download" />
               </AppLink>
               <AppLink className="product-inline-link" href="/docs/reference/code-signing">
-                Code signing policy ↗
+                Code signing policy <Icon name="external" />
               </AppLink>
             </div>
           </div>
@@ -266,14 +331,18 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
               </h2>
             </div>
             <AppLink className="product-inline-link" href="/docs/reference/installation">
-              {t("安裝與復原說明", "Installation & recovery")} ↗
+              {t("安裝與復原說明", "Installation & recovery")} <Icon name="external" />
             </AppLink>
           </div>
           <div className="download-platforms">
             {["Windows", "macOS", "Linux"].map((platform, index) => (
               <article key={platform} className="download-platform">
                 <span className="platform-glyph" aria-hidden="true">
-                  {["⊞", "⌘", ">_"][index]}
+                  <Icon
+                    name={
+                      platform === "Windows" ? "windows" : platform === "macOS" ? "mac" : "terminal"
+                    }
+                  />
                 </span>
                 <h3>{platform}</h3>
                 <span className="platform-state">
@@ -291,7 +360,7 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
                       )}
                 </p>
                 <AppLink href={`${github}/releases`}>
-                  {t("查看版本與下載", "View releases and downloads")} ↗
+                  {t("查看版本與下載", "View releases and downloads")} <Icon name="external" />
                 </AppLink>
               </article>
             ))}
@@ -314,7 +383,7 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
               )}
             </p>
             <AppLink className="product-inline-link" href="/docs/reference/installation">
-              {t("閱讀完整安裝說明", "Read the installation guide")} ↗
+              {t("閱讀完整安裝說明", "Read the installation guide")} <Icon name="external" />
             </AppLink>
           </div>
           <div className="source-terminal">
@@ -374,7 +443,9 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
                 "Prepare an EV3 and a USB connection, or put the computer and EV3 on the same trusted Wi-Fi network. Then follow the first tutorial.",
               )}
             </p>
-            <AppLink href="/docs/tutorial/getting-ready">{t("開始使用", "Get started")} →</AppLink>
+            <AppLink href="/docs/tutorial/getting-ready">
+              {t("開始使用", "Get started")} <Icon name="arrow" />
+            </AppLink>
           </article>
         </section>
         <div className="web-tools-callout">
@@ -388,7 +459,7 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
             </p>
           </div>
           <AppLink className="product-button secondary" href="/tools">
-            {t("開啟工具", "Open tools")} →
+            {t("開啟工具", "Open tools")} <Icon name="arrow" />
           </AppLink>
         </div>
       </main>

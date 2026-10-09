@@ -1,3 +1,4 @@
+import { Icon } from "../../components/ui/icon.js";
 import { useEffect } from "react";
 import { Link } from "react-router";
 import ReactMarkdown from "react-markdown";
@@ -36,7 +37,9 @@ export function LegalPage({ kind, locale, onLocaleChange }: PageContext & { kind
             <Link to="/privacy" aria-current={kind === "privacy" ? "page" : undefined}>
               {zh ? "隱私政策" : "Privacy Policy"}
             </Link>
-            <Link to="/gallery">{zh ? "前往素材庫 →" : "Go to Gallery →"}</Link>
+            <Link to="/gallery">
+              {zh ? "前往素材庫" : "Go to Gallery"} <Icon name="arrow" />
+            </Link>
           </div>
         </header>
         <nav className="legal-contents" aria-label={zh ? "本頁目錄" : "On this page"}>
