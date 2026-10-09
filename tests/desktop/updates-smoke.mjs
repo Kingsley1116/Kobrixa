@@ -58,7 +58,7 @@ export async function checkUpdates({
     'ed.setValue("LCD.Clear() // before update");document.querySelector(".settings-trigger").click()',
   );
   const restart =
-    'Array.from(document.querySelectorAll(".update-actions button")).find(b=>b.textContent==="重新啟動並更新").click()';
+    'Array.from(document.querySelectorAll(".update-status-action button")).find(b=>b.textContent==="重新啟動並更新").click()';
   await js(restart);
   await until('Boolean(document.querySelector(".modal-card"))');
   await js('document.querySelector(".modal-actions button:first-child").click()');
