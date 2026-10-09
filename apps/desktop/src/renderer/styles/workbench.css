@@ -703,25 +703,56 @@ button.danger:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
 }
-.editor-stage > .editor,
-.editor-stage > .empty {
+.editor-panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.editor-panes > .editor,
+.editor-panes > .empty {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+}
+.split-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+}
+.split-editor > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.split-editor > header select {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--font-small);
+}
+.split-editor > header button {
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.split-editor > .editor {
   flex: 1;
   min-height: 0;
   height: auto;
 }
 .breadcrumbs {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 26px;
-  padding: 0 12px;
+  gap: 4px;
+}
+.breadcrumbs > span {
   overflow: hidden;
-  color: var(--muted);
-  font-size: var(--font-small);
-  white-space: nowrap;
-  border-bottom: 1px solid var(--border);
+  text-overflow: ellipsis;
 }
 .breadcrumbs .breadcrumb-file {
   color: var(--text);

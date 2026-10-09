@@ -30,7 +30,8 @@ export function useKeyboard(run: (command: AppCommand) => void, blocked: boolean
   const [capturing, setCapturing] = useState(false);
   const latest = useRef({ run, blocked, capturing });
   latest.current = { run, blocked, capturing };
-  const instance = useRef<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
+  // The main editor and, while the editor is split, the side editor.
+  const editors = useRef(new Set<monaco.editor.IStandaloneCodeEditor>());
   const cancelPending = useRef(() => {});
   const context = useRef<KeyboardContext>({ ...KEYBOARD_DEFAULT });
   const sync = useCallback((patch: Partial<KeyboardContext>) => {
@@ -39,7 +40,7 @@ export function useKeyboard(run: (command: AppCommand) => void, blocked: boolean
   }, []);
   const bindEditor = useCallback(
     (editor: monaco.editor.IStandaloneCodeEditor) => {
-      instance.current = editor;
+      editors.current.add(editor);
       const modal = editor.createContextKey<boolean>("kobrixa.modal", false);
       const focused = () => {
         modal.set(isModalOpen());
@@ -56,7 +57,7 @@ export function useKeyboard(run: (command: AppCommand) => void, blocked: boolean
       return () => {
         subscriptions.forEach((item) => item.dispose());
         modal.reset();
-        instance.current = undefined;
+        editors.current.delete(editor);
         cancelEditorChord();
         sync({ editorFocused: false, chordPending: false });
       };
@@ -141,7 +142,7 @@ export function useKeyboard(run: (command: AppCommand) => void, blocked: boolean
         event.stopPropagation();
         return;
       }
-      if (instance.current?.hasWidgetFocus()) {
+      if ([...editors.current].some((editor) => editor.hasWidgetFocus())) {
         // Let Monaco resolve the command and its native context, then impose our chord timeout.
         queueMicrotask(() => {
           const pending = editorChordPending();

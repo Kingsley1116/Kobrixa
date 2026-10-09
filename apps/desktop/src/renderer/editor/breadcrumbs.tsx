@@ -49,7 +49,11 @@ export function Breadcrumbs({
     ...item.children.map((child) => ({ item: child, depth: 1 })),
   ]);
   return (
-    <nav className="breadcrumbs" aria-label={zh ? "檔案位置" : "File location"}>
+    <nav
+      className="breadcrumb breadcrumbs"
+      title={file}
+      aria-label={zh ? "檔案位置" : "File location"}
+    >
       {segments.map((segment, index) => (
         <Fragment key={index}>
           {index > 0 && <span aria-hidden="true">›</span>}

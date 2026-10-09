@@ -115,6 +115,8 @@ export interface EditorHandle {
   format(): Promise<void>;
   reveal(range: Diagnostic["range"]): void;
   remapFiles(moved: Readonly<Record<string, string>>): void;
+  /** The shared model of an open file, for a side editor showing the same buffer. */
+  modelFor(file: string): monaco.editor.ITextModel | undefined;
 }
 
 export interface EditorAnalysis {
@@ -430,6 +432,10 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         await editor.current?.getAction("editor.action.formatDocument")?.run();
       },
       reveal,
+      modelFor: (file) =>
+        editor.current && documents.getOpenFiles().includes(file)
+          ? ensureModel(file, documents.reader(file)())
+          : undefined,
       remapFiles: (moved) => {
         ownedModels.remap(moved);
         features.current?.update(undefined);
