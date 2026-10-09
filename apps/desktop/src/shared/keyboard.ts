@@ -51,10 +51,14 @@ export function reservedStroke(stroke: string, mac: boolean): boolean {
     : ["Ctrl+KeyQ", "Alt+F4", "Alt+Tab", "Ctrl+Alt+Delete"];
   return reserved.includes(stroke) || (!mac && stroke.includes("Meta+"));
 }
+// macOS runs clipboard commands through the Edit menu, so the editor depends on them.
+const MAC_CLIPBOARD_STROKES = ["Meta+KeyC", "Meta+KeyV", "Meta+KeyX"];
 export function ignoreMenuShortcut(context: KeyboardContext, stroke: string, mac = false): boolean {
   if (context.capturing) return true;
   if (reservedStroke(stroke, mac)) return false;
-  return context.editorFocused || context.chordPending || context.managedKeys.includes(stroke);
+  if (context.chordPending || context.managedKeys.includes(stroke)) return true;
+  if (mac && MAC_CLIPBOARD_STROKES.includes(stroke)) return false;
+  return context.editorFocused;
 }
 
 export function sequencesOverlap(a: KeySequence, b: KeySequence): boolean {
