@@ -1,11 +1,7 @@
 // Limited EV3 interpreter for tests; device operations use deterministic stubs.
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import { inspectRbf } from "../../../packages/backend-ev3/dist/index.js";
-const schema = JSON.parse(
-  fs.readFileSync(new URL("../fixtures/opcodes.json", import.meta.url), "utf8"),
-);
-const defaultTables = { ops: new Map(schema.ops), subs: new Map(schema.subs) };
+import { defaultTables } from "./instructions.mjs";
 export function firmwareTables(h, c) {
   const nums = Object.fromEntries(
     [...h.matchAll(/^\s*(\w+)\s*=\s*(0x[\da-f]+|\d+)\s*,/gim)].map((m) => [m[1], Number(m[2])]),
