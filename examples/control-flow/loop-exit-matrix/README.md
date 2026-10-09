@@ -1,6 +1,6 @@
 # Loop exit matrix / 迴圈跳出矩陣
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 For/While both exercise Break and Continue／兩種迴圈均示範跳出與略過
 

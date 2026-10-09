@@ -1,6 +1,6 @@
 # Media storage: sd / 媒體儲存：sd
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Folder directive chooses deployment and relative media base／Folder 選擇部署路徑與相對媒體位置
 

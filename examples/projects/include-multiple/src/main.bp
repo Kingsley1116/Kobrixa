@@ -1,4 +1,7 @@
 ' Independently authored Kobrixa example
+' Include several shared files before the main program body.
+Folder "prjs" "Kobrixa"
+
 Include "shared/config"
 Include "shared/banner"
 

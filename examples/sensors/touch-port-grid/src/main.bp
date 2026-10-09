@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Show the state of touch sensors on every input port as a grid.
+Folder "prjs" "Kobrixa"
+
 LCD.StopUpdate()
 LCD.Clear()
 For port = 1 To 4

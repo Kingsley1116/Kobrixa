@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Advanced lesson: use only with a documented I2C device on input 1.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(1)
 deviceId = Sensor.ReadI2CRegister(1, 2, 0)
 LCD.Clear()

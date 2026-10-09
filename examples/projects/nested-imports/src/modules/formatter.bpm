@@ -1,3 +1,6 @@
+' Independently authored Kobrixa example
+' Formatter module that imports the arithmetic module.
+
 Import "arithmetic"
 Function FormatValue(in number input)
   Return "Range: " + Twice(input)

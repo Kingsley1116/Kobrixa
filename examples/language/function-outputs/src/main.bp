@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Return several results from a Function through out parameters.
+Folder "prjs" "Kobrixa"
+
 number doubled
 string label
 Describe(6, doubled, label)

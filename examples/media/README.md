@@ -1,13 +1,14 @@
-# Media / 媒體
+# Media
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-Use original, reproducible EV3 graphics and sounds.／使用原創且可重建的 EV3 圖像與聲音。
+Use original, reproducible EV3 graphics and sounds.
 
-- [original-media](./original-media/) — Build, deploy, display, and play original media.／建置、部署、顯示並播放原創媒體。
+## Projects
 
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [graphic-sound-card](./graphic-sound-card/) — Graphic and sound card／圖形音效卡
-- [internal-media-folder](./internal-media-folder/) — Media storage: prjs／媒體儲存：prjs
-- [sd-media-folder](./sd-media-folder/) — Media storage: sd／媒體儲存：sd
+| Example                                           | What it teaches                                     | Hardware                            |
+| ------------------------------------------------- | --------------------------------------------------- | ----------------------------------- |
+| [original-media](./original-media/)               | Deploy and play original image and sound assets     | Display and speaker; deploys assets |
+| [graphic-sound-card](./graphic-sound-card/)       | Bundled RGF/RSF assets and playback                 | Display and speaker; deploys assets |
+| [internal-media-folder](./internal-media-folder/) | `Folder` chooses internal deployment and media base | Deploys to `prjs/KobrixaCard`       |
+| [sd-media-folder](./sd-media-folder/)             | `Folder` chooses SD card deployment and media base  | Writable EV3 SD card                |

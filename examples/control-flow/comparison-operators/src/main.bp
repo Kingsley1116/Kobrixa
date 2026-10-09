@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Parentheses make the two comparisons easy to read.
+Folder "prjs" "Kobrixa"
+
 value = 10
 LCD.Clear()
 If (value >= 5) And (value <> 7) Then

@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Sample the held brick buttons and drive motors while Up or Down is held.
+Folder "prjs" "Kobrixa"
+
 For sample = 1 To 3
   pressed = Buttons.Current()
   If Text.IsSubText(pressed, "U") Then

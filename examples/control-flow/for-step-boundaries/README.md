@@ -1,6 +1,6 @@
 # For loop boundaries / For 迴圈邊界
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Literal positive and negative steps include their endpoint; reversed ranges execute zero times.／正負常數步長包含終點；方向相反的範圍不執行迴圈。
 

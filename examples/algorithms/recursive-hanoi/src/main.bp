@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Solve three-disc Towers of Hanoi recursively and count the moves.
+Folder "prjs" "Kobrixa"
+
 moves = 0
 Solve(3, 0, 2, 1)
 LCD.Text(1, 4, 100, 1, "Moves: " + moves)

@@ -1,6 +1,6 @@
 # Recursive Hanoi / 遞迴河內塔
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Recursive divide-and-conquer moves with a visual board／遞迴分治移動與圖形棋盤
 

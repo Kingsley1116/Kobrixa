@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Writes one line to KobrixaExample.txt in the EV3 project directory, then reads it back.
+Folder "prjs" "Kobrixa"
+
 handle = EV3File.OpenWrite("KobrixaExample.txt")
 EV3File.WriteLine(handle, "Hello from Kobrixa")
 EV3File.Close(handle)

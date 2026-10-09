@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Draw a small target using lines and circles.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Circle(1, 89, 55, 30)
 LCD.Circle(1, 89, 55, 14)

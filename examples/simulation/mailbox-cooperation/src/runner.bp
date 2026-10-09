@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Runner receives a distance and moves along its own parallel lane.
+Folder "prjs" "Kobrixa"
+
 ' 移動車接收距離，沿自己的平行車道前進。
 distanceBox = Mailbox.CreateForNumber("distance")
 Mailbox.Connect("Scout")

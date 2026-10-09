@@ -1,6 +1,6 @@
 # Fractional coordinates / 小數座標
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Positive fractional coordinates are converted to integer operands; draw the complete frame before updating.／正小數座標會轉為整數參數；整幀繪製完成後才更新。
 

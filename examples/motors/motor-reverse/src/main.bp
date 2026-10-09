@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Lift the robot before running. A negative speed reverses motor A.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "Motor A reverse")
 LCD.Update()

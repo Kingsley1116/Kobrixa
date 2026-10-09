@@ -1,6 +1,6 @@
 # Sort and heartbeat / 排序與背景心跳
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Concurrent finite worker while sorting, then join／排序時執行有限背景工作並等待完成
 

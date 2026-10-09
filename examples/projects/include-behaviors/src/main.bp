@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Include shared settings and feedback behaviors into a robot program.
+Folder "prjs" "Kobrixa"
+
 Include "parts/settings"
 Include "parts/feedback"
 Motor.Move("A", speed, 90, true)

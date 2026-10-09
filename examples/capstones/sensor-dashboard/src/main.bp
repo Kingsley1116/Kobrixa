@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Capstone: color sensor on input 1; display its current percentage.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(1)
 reading = Sensor.ReadPercent(1)
 LCD.Clear()

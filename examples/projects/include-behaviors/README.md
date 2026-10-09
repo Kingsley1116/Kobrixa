@@ -1,6 +1,6 @@
 # Included robot behaviors / 引用機器人行為
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Two .bpi files share motor settings and RGB outputs／兩個 .bpi 共用馬達設定與 RGB 輸出
 

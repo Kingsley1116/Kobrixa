@@ -1,6 +1,6 @@
 # Raw channel dashboard / 原始通道儀表板
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Percent and multichannel raw values with explicit mode／百分比、多通道原始值與明確模式
 

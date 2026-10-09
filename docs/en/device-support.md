@@ -10,7 +10,7 @@
 
 Support is not considered shipped until automated transport tests and physical reference-brick tests pass on that platform.
 
-The shared USB and Wi-Fi transports already exist in `packages/device`. The [hardware acceptance record](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md) includes USB example runs and documents their limits; it does not complete the three-platform USB/Wi-Fi matrix. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
+The shared USB and Wi-Fi transports already exist in `packages/device`. The three-platform USB/Wi-Fi acceptance matrix is not yet complete. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
 
 ## USB
 

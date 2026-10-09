@@ -1,8 +1,12 @@
-# hitechnic
+# HiTechnic
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-## Clev3r topic counterparts / Clev3r 主題對照
+Read HiTechnic third-party sensors over I2C.
 
-- [compass-heading](./compass-heading/) — Compass heading error／羅盤方位誤差
-- [infrared-direction](./infrared-direction/) — Infrared direction and strength／紅外線方向與強度
+## Projects
+
+| Example                                     | What it teaches                              | Hardware                                 |
+| ------------------------------------------- | -------------------------------------------- | ---------------------------------------- |
+| [compass-heading](./compass-heading/)       | Two-byte heading and signed wraparound error | HiTechnic Compass on 1                   |
+| [infrared-direction](./infrared-direction/) | AC direction and sector strength             | HiTechnic IRSeeker V2 on 2 and IR beacon |

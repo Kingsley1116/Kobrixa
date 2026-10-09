@@ -1,6 +1,6 @@
 # Synchronization lifecycle / 同步控制週期
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 StartSync, MoveSync, ScheduleSync and explicit wait／連續、阻塞、排程同步与等待
 

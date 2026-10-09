@@ -1,3 +1,7 @@
+' Independently authored Kobrixa example
+' Define a local Function and display its return value.
+Folder "prjs" "Kobrixa"
+
 result = Double(21)
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "Double: " + result)

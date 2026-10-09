@@ -1,3 +1,7 @@
+' Independently authored Kobrixa example
+' Move sideways with four tangential omni wheels in the simulator.
+Folder "prjs" "Kobrixa"
+
 ' Four tangential omni wheels / 四顆切向全向輪：A front 前、B left 左、C rear 後、D right 右。
 ' All four ports are drive wheels: this scene has no shooter. / 四埠皆為驅動輪，不配置發射器。
 LCD.Clear()

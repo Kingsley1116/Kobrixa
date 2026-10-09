@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Compute minimum, maximum, and sum statistics over a Row.
+Folder "prjs" "Kobrixa"
+
 row = Row.Init(4, 0)
 Row.Write(row, 0, -2)
 Row.Write(row, 1, 4)

@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Invert motor A's polarity and read back its feedback.
+Folder "prjs" "Kobrixa"
+
 Motor.Invert("A")
 Motor.Start("A", 20)
 Program.Delay(100)

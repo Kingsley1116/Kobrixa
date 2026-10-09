@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Combine Vector.Data, Init, Add, and other Vector operations.
+Folder "prjs" "Kobrixa"
+
 a = Vector.Data(4, "3 -1 2")
 b = Vector.Init(4, 2)
 sum = Vector.Add(4, a, b)

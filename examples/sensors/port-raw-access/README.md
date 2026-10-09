@@ -1,6 +1,6 @@
 # Port-specific raw access / 指定埠原始值存取
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Sensor1–4 Raw1/Raw3 and numeric outputs／Sensor1–4 Raw1、Raw3 與數字輸出
 

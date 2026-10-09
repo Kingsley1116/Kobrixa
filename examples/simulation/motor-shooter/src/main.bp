@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' A nearby ball is loaded in the scene; D drives the launcher.
+Folder "prjs" "Kobrixa"
+
 ' 場景已在發射口附近放球，D 埠負責發射機構。
 ' The configured positive 180-degree shaft stroke triggers one shot.
 ' 正向累積 180 度馬達行程會觸發一次發射，反轉回位不會觸發。

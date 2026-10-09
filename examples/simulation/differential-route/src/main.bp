@@ -1,3 +1,7 @@
+' Independently authored Kobrixa example
+' Drive a differential chassis along a route in the simulator.
+Folder "prjs" "Kobrixa"
+
 ' Differential route / 差速底盤路線：B = left 左輪，C = right 右輪。
 ' Scene wheels: 56 mm diameter, 120 mm track, 1:1 gearing.
 ' 場景：輪徑 56 mm、輪距 120 mm、齒比 1:1。

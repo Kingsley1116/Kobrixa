@@ -1,6 +1,6 @@
 ' Independently authored Kobrixa example
 ' Keep the EV3 Gyro Sensor still on input port 1 while it initializes.
-folder "prjs" "KobrixaExample"
+Folder "prjs" "Kobrixa"
 
 Sensor.Wait(1)
 Program.Delay(1000)

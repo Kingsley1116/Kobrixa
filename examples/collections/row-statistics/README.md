@@ -1,6 +1,6 @@
 # Row statistics / Row 統計
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Compute mean, minimum, and maximum, then release the dynamic Row.／計算平均、最小及最大值，最後釋放動態 Row。
 

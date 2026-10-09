@@ -1,6 +1,6 @@
 # Encoder profile / 編碼器曲線
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Reset count, schedule power, record encoder samples and draw／歸零、功率排程、記錄編碼器與繪圖
 

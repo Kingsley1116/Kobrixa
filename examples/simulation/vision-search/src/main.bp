@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Synthetic vision is a simulator extension, not a stock EV3 camera.
+Folder "prjs" "Kobrixa"
+
 ' 合成視覺是模擬器擴充，不是 EV3 原生相機；實機上辨識不到時直接結束。
 If Sensor.GetName(4) <> "KOBRIXA-VISION" Then
   LCD.Text(1, 0, 0, 0, "Use 2D simulator")

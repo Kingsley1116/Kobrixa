@@ -1,13 +1,14 @@
-# Capstones / 整合專題
+# Capstones
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-Build a complete small robot behavior after completing the prerequisite lessons.／完成先備課程後，建立完整的小型機器人行為。
+Build a complete small robot behavior after completing the prerequisite lessons.
 
-- [button-car](./button-car/) — Brick-button controlled two-motor car.／用本體按鍵控制雙馬達小車。
-- [sensor-dashboard](./sensor-dashboard/) — Visual sensor percentage dashboard.／視覺化感測器百分比儀表板。
-- [obstacle-rover](./obstacle-rover/) — Stop a rover when a touch sensor detects an obstacle.／觸碰感測器偵測障礙時停止小車。
+## Projects
 
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [scheduled-action-loop](./scheduled-action-loop/) — Scheduled action loop／排程動作迴圈
+| Example                                           | What it teaches                               | Hardware                          |
+| ------------------------------------------------- | --------------------------------------------- | --------------------------------- |
+| [button-car](./button-car/)                       | Drive a two-motor car with brick buttons      | Brick buttons; motors A and D     |
+| [sensor-dashboard](./sensor-dashboard/)           | A visual sensor percentage dashboard          | Color sensor on 1                 |
+| [obstacle-rover](./obstacle-rover/)               | Stop a rover when the touch sensor is pressed | Touch sensor on 1; motors A and D |
+| [scheduled-action-loop](./scheduled-action-loop/) | Sensor-driven motor actions with LED feedback | Touch sensor on 1; motor A        |

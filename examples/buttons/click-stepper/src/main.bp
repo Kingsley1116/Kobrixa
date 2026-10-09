@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Wait for button clicks and step a value with each one.
+Folder "prjs" "Kobrixa"
+
 Buttons.Flush()
 Buttons.Wait()
 click = Buttons.GetClicks()

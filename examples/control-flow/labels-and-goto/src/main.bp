@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Jump over an operation and continue at a named label.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 Goto Ready
 Speaker.Tone(30, 110, 500)

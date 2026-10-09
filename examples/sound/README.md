@@ -1,21 +1,15 @@
-# Sound / 聲音
+# Sound
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
 Use integer frequency, volume, duration, delay, and stop operations with the built-in EV3 speaker.
 
-使用 EV3 內建喇叭練習整數頻率、音量、持續時間、等待與停止操作。
+## Projects
 
-## Projects / 專案
-
-- [speaker-scale](./speaker-scale/) — Raise the pitch with a finite loop.／以有限迴圈逐步提高音調。
-- [speaker-interrupt](./speaker-interrupt/) — Stop a long tone before its requested duration.／在長音調結束前將它停止。
-- [speaker-melody](./speaker-melody/) — Play a short sequence of named notes.／播放一段簡短的具名音符序列。
-
-## New lessons / 新課程
-
-- [computed-arpeggio](./computed-arpeggio/) — Computed arpeggio／計算琶音。
-
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [note-busy-sequence](./note-busy-sequence/) — Note and busy sequence／音符與忙碌狀態序列
+| Example                                     | What it teaches                              | Hardware |
+| ------------------------------------------- | -------------------------------------------- | -------- |
+| [speaker-scale](./speaker-scale/)           | A four-note scale with arithmetic            | Speaker  |
+| [speaker-interrupt](./speaker-interrupt/)   | Stop a long tone early                       | Speaker  |
+| [speaker-melody](./speaker-melody/)         | Named notes and `Speaker.Wait`               | Speaker  |
+| [computed-arpeggio](./computed-arpeggio/)   | Tone pitches computed from a loop variable   | Speaker  |
+| [note-busy-sequence](./note-busy-sequence/) | Named notes, numeric tones, and busy polling | Speaker  |

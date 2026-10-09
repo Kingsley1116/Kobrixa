@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Import a calibration Function and clamp sensor readings with it.
+Folder "prjs" "Kobrixa"
+
 Import "lib/calibration"
 low = ClampPercent(-10)
 mid = ClampPercent(42.5)

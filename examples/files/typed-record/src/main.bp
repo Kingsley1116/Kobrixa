@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Write and read a file record that mixes text and numbers.
+Folder "prjs" "Kobrixa"
+
 values = Vector.Data(3, "1.5 -2 8")
 file = EV3File.OpenWrite("typed-record.dat")
 EV3File.WriteLine(file, "sample")

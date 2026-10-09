@@ -1,29 +1,23 @@
-# Motors / 馬達
+# Motors
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
 > Safety: lift the robot before the first run so every connected motor can turn freely. Verify the listed ports before upload.
 
-> 安全提醒：第一次執行前請架高機器人，讓所有連接的馬達都能自由轉動；上傳前請確認列出的連接埠。
+## Projects
 
-## Projects / 專案
-
-- [motor-move](./motor-move/) — Blocking movement on motors A and D.／在 A、D 馬達執行阻塞式移動。
-- [motor-start-stop](./motor-start-stop/) — Start A and D continuously, then brake.／持續啟動 A、D 馬達後煞車。
-- [motor-reverse](./motor-reverse/) — Reverse motor A with a negative speed.／以負速度反轉 A 馬達。
-- [motor-sequence](./motor-sequence/) — Move motors A and D in sequence.／依序移動 A、D 馬達。
-- [motor-counter](./motor-counter/) — Read and branch on motor A's encoder count.／讀取 A 馬達編碼器並據此分支。
-- [motor-steer-sync](./motor-steer-sync/) — Make coordinated A and D steering and synchronized moves.／協調 A、D 馬達的轉向與同步移動。
-- [motor-schedule](./motor-schedule/) — Schedule a ramped motor movement and wait for completion.／排程帶有加減速的馬達移動並等待完成。
-
-## New lessons / 新課程
-
-- [power-ramp](./power-ramp/) — Power ramp／功率漸增。
-
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [encoder-profile](./encoder-profile/) — Encoder profile／編碼器曲線
-- [polarity-feedback](./polarity-feedback/) — Motor polarity and feedback／馬達極性與回饋
-- [steering-lifecycle](./steering-lifecycle/) — Steering lifecycle／轉向控制週期
-- [sync-lifecycle](./sync-lifecycle/) — Synchronization lifecycle／同步控制週期
-- [paired-trajectories](./paired-trajectories/) — Paired trajectories／雙馬達軌跡
+| Example                                       | What it teaches                                | Hardware               |
+| --------------------------------------------- | ---------------------------------------------- | ---------------------- |
+| [motor-move](./motor-move/)                   | Blocking movement, delay, and brake            | Motors A and D         |
+| [motor-start-stop](./motor-start-stop/)       | Start motors continuously, then stop safely    | Motors A and D         |
+| [motor-reverse](./motor-reverse/)             | Negative speed and reverse movement            | Motor A                |
+| [motor-sequence](./motor-sequence/)           | Two blocking moves in sequence                 | Motors A and D         |
+| [motor-counter](./motor-counter/)             | Read a motor encoder and branch with `If`      | Motor A                |
+| [motor-steer-sync](./motor-steer-sync/)       | Coordinated steering and synchronized movement | Motors A and D         |
+| [motor-schedule](./motor-schedule/)           | A ramped, scheduled movement                   | Motors A and D         |
+| [power-ramp](./power-ramp/)                   | Bounded open-loop power steps                  | Motor A                |
+| [encoder-profile](./encoder-profile/)         | Record encoder samples during a power schedule | Motor A                |
+| [polarity-feedback](./polarity-feedback/)     | Invert polarity, read feedback, and restore    | Motor A                |
+| [steering-lifecycle](./steering-lifecycle/)   | Continuous, blocking, and scheduled steering   | Matched motors A and D |
+| [sync-lifecycle](./sync-lifecycle/)           | Continuous, blocking, and scheduled sync       | Matched motors A and D |
+| [paired-trajectories](./paired-trajectories/) | Schedule two motors before waiting             | Motors A and D         |

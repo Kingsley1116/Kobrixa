@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Multiply two 2x2 matrices stored in Vectors.
+Folder "prjs" "Kobrixa"
+
 number[] left
 number[] right
 left = Vector.Init(4, 0)

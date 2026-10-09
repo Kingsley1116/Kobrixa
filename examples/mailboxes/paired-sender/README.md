@@ -1,6 +1,6 @@
 # Paired mailbox sender / 配對信箱發送端
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Connect then transmit matching text and numeric payloads／連線後傳送配對的文字與數字資料
 

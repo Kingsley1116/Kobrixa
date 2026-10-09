@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Move a cursor across the display with the left and right buttons.
+Folder "prjs" "Kobrixa"
+
 x = 40
 For frame = 1 To 3
   pressed = Buttons.Current()

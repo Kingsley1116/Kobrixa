@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Lift the robot before running. Motors A and D run briefly, then brake.
+Folder "prjs" "Kobrixa"
+
 Motor.Start("AD", 22)
 Program.Delay(500)
 Motor.Stop("AD", "True")

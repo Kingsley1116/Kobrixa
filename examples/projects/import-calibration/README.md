@@ -1,6 +1,6 @@
 # Imported calibration / 匯入校正函式
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 An imported function keeps values inside 0–100 with early returns while preserving valid fractions.／匯入函式以提早回傳將值限制於 0–100，同時保留有效的小數值。
 

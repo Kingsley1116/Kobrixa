@@ -1,14 +1,13 @@
-# Algorithms / 演算法
+# Algorithms
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-## New lessons / 新課程
+## Projects
 
-- [euclidean-gcd](./euclidean-gcd/) — Euclidean GCD／輾轉相除法。
-- [fibonacci-sequence](./fibonacci-sequence/) — Fibonacci sequence／費氏數列。
-- [prime-count](./prime-count/) — Prime counting／質數計數。
-- [insertion-sort](./insertion-sort/) — Insertion sort／插入排序。
-
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [recursive-hanoi](./recursive-hanoi/) — Recursive Hanoi／遞迴河內塔
+| Example                                     | What it teaches                                         | Hardware |
+| ------------------------------------------- | ------------------------------------------------------- | -------- |
+| [euclidean-gcd](./euclidean-gcd/)           | Euclid's algorithm with a reusable Function             | Display  |
+| [fibonacci-sequence](./fibonacci-sequence/) | State updates through a temporary variable              | Display  |
+| [prime-count](./prime-count/)               | Trial division with nested loops and early exit         | Display  |
+| [insertion-sort](./insertion-sort/)         | Zero-based insertion sort with duplicates and negatives | Display  |
+| [recursive-hanoi](./recursive-hanoi/)       | Recursive divide and conquer on a visual board          | Display  |

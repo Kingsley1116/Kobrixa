@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Build the first Fibonacci numbers by repeatedly adding the previous two terms.
+Folder "prjs" "Kobrixa"
+
 previous = 0
 current = 1
 sequence = ""

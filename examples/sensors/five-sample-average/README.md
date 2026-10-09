@@ -1,6 +1,6 @@
 # Five-sample average / 五次取樣平均
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Average a finite set of samples with a floating-point accumulator.／使用浮點累加器計算有限次取樣的平均。
 

@@ -1,6 +1,6 @@
 # Byte sequence round trip / 位元組序列讀寫
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Verify three sequential reads, including a zero byte; close both file handles.／驗證包含零位元組的三次循序讀取，並關閉讀寫檔案控制代碼。
 

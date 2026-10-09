@@ -1,6 +1,6 @@
 # Finite countdown / 有限倒數
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Subtract two clock readings and distinguish requested waits from wall-clock duration.／以兩次時鐘讀值相減，區分要求的等待時間與實際經過時間。
 

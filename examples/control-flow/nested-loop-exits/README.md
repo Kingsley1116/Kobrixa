@@ -1,6 +1,6 @@
 # Nested loop exits / 巢狀迴圈跳出
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 `Break` and `Continue` affect only the inner loop.／`Break` 與 `Continue` 僅作用於最內層迴圈。
 

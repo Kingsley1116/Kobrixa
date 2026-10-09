@@ -1,4 +1,7 @@
 ' Independently authored Kobrixa example
+' Show a greeting and a line on the EV3 display.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Text(1, 8, 18, 1, "Hello from Kobrixa")
 LCD.Line(1, 8, 38, 165, 38)

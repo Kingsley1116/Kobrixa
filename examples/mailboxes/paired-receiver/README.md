@@ -1,6 +1,6 @@
 # Paired mailbox receiver / 配對信箱接收端
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Create text and numeric mailboxes, poll and receive both／建立文字與數字信箱、輪詢並接收
 

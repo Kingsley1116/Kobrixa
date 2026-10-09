@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Greet the user by showing the brick name on the display.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 LCD.Write(4, 16, "Welcome " + EV3.BrickName)
 Program.Delay(1000)

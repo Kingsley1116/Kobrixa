@@ -1,6 +1,6 @@
 # Display function / 顯示函式
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Typed numeric and string inputs／數字與文字輸入參數
 

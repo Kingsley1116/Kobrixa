@@ -1,7 +1,11 @@
-# benchmarks
+# Benchmarks
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-## Clev3r topic counterparts / Clev3r 主題對照
+Measure compiler output on a fixed compute and drawing workload.
 
-- [compute-and-draw](./compute-and-draw/) — Compute and draw benchmark／運算繪圖基準
+## Projects
+
+| Example                                 | What it teaches                                      | Hardware |
+| --------------------------------------- | ---------------------------------------------------- | -------- |
+| [compute-and-draw](./compute-and-draw/) | Arithmetic, trigonometry, sort, matrices, and timing | Display  |

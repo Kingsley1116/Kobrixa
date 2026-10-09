@@ -1,6 +1,6 @@
 # Fibonacci sequence / 費氏數列
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Compute eight values with simultaneous-state updates through a temporary variable.／使用暫存變數保留舊狀態，計算八項數值。
 

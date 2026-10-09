@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Write a byte sequence to a file and read it back.
+Folder "prjs" "Kobrixa"
+
 handle = EV3File.OpenWrite("byte-sequence.bin")
 EV3File.WriteByte(handle, 0)
 EV3File.WriteByte(handle, 42)

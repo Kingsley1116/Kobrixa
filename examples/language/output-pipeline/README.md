@@ -1,6 +1,6 @@
 # Output parameter pipeline / 輸出參數串接
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 A numeric out parameter feeds another function／數字輸出參數傳給另一函式
 

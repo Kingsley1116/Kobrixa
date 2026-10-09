@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Count and sum the prime numbers from 2 to 20 by trial division.
+Folder "prjs" "Kobrixa"
+
 count = 0
 sum = 0
 For candidate = 2 To 20

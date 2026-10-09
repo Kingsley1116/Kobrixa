@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Capstone: touch sensor on 1 stops motors A+D. Lift wheels before testing.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(1)
 Motor.Start("AD", 25)
 For sample = 1 To 50

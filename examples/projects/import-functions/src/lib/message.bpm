@@ -1,4 +1,6 @@
+' Independently authored Kobrixa example
 ' An imported Function can return a value to the main project.
+
 Function Greeting(in string name)
   Return Text.Append("Hello, ", name)
 EndFunction

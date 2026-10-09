@@ -1,5 +1,4 @@
 import { readFile, readdir } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,75 +8,14 @@ import { BuildSession, loadProject } from "@kobrixa/compiler";
 import { validateIR } from "@kobrixa/ir";
 
 const repositoryRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
-const newExamples = JSON.parse(
-  readFileSync(path.join(repositoryRoot, "examples/new-examples.json"), "utf8"),
-) as Array<{ project: string; checks: unknown[] }>;
-const parityExamples = JSON.parse(
-  readFileSync(path.join(repositoryRoot, "examples/clev3r-parity.json"), "utf8"),
-) as Array<{ project: string; checks: unknown[]; reference: string }>;
-const documentedExamples = [
-  ...parityExamples.map((example) => example.project),
-  ...newExamples.map((example) => example.project),
-  "buttons/button-feedback",
-  "capstones/button-car",
-  "capstones/obstacle-rover",
-  "capstones/sensor-dashboard",
-  "collections/row-vector",
-  "collections/vector-workbench",
-  "control-flow/boolean-logic",
-  "control-flow/break-and-continue",
-  "control-flow/comparison-operators",
-  "control-flow/control-flow",
-  "control-flow/if-elseif",
-  "control-flow/labels-and-goto",
-  "control-flow/nested-control",
-  "control-flow/while-loop",
-  "display/display-fonts",
-  "display/display-shapes",
-  "display/display-write",
-  "display/double-buffer-animation",
-  "display/drawing-primitives",
-  "files/file-round-trip",
-  "files/binary-record",
-  "getting-started/hello-ev3",
-  "language/case-insensitive",
-  "language/byte-logic",
-  "language/text-and-math",
-  "language/local-functions",
-  "mailboxes/mailbox-local",
-  "motors/motor-counter",
-  "motors/motor-move",
-  "motors/motor-reverse",
-  "motors/motor-sequence",
-  "motors/motor-start-stop",
-  "motors/motor-steer-sync",
-  "motors/motor-schedule",
-  "media/original-media",
-  "program/program-end",
-  "projects/include-multiple",
-  "projects/include-settings",
-  "projects/import-functions",
-  "projects/import-module",
-  "program/brick-status",
-  "sensors/color-sensor",
-  "sensors/gyro-sensor",
-  "sensors/sensor-sampling",
-  "sensors/sensor-threshold",
-  "sensors/sensor-details",
-  "sensors/i2c-registers",
-  "sensors/raw-and-mode",
-  "sound/speaker-melody",
-  "sound/speaker-interrupt",
-  "sound/speaker-scale",
-  "concurrency/thread-mutex",
-  "time/timer-slots",
-  "simulation/differential-route",
-  "simulation/omni-lateral",
-  "simulation/vision-search",
-  "simulation/pixy2-search",
-  "simulation/motor-shooter",
-  "simulation/mailbox-cooperation",
-].sort();
+const examplesRoot = path.join(repositoryRoot, "examples");
+const exampleHeader = "' Independently authored Kobrixa example";
+// Media lessons that demonstrate choosing their own storage keep a dedicated Folder.
+const runtimeDirectories: Record<string, string> = {
+  "media/internal-media-folder": "/home/root/lms2012/prjs/KobrixaCard",
+  "media/sd-media-folder": "/home/root/lms2012/prjs/SD_Card/KobrixaSDCard",
+};
+const defaultRuntimeDirectory = "/home/root/lms2012/prjs/Kobrixa";
 const documentedCategories = [
   "benchmarks",
   "daisy-chain",
@@ -116,89 +54,65 @@ async function findExampleProjects(root: string, relative = ""): Promise<string[
   return children.flat();
 }
 
+async function findSources(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const children = await Promise.all(
+    entries.map((entry) => {
+      const child = path.join(directory, entry.name);
+      if (entry.isDirectory()) return entry.name === "build" ? [] : findSources(child);
+      return /\.(bp|bpi|bpm)$/.test(entry.name) ? [child] : [];
+    }),
+  );
+  return children.flat();
+}
+
 describe("shipped examples", () => {
-  it("compiles newly added examples and checks their lesson documentation", async () => {
-    expect(newExamples).toHaveLength(20);
-    const index = await readFile(path.join(repositoryRoot, "examples/NEW-EXAMPLES.md"), "utf8");
-    for (const example of newExamples) {
-      const projectPath = path.join(repositoryRoot, "examples", example.project);
-      expect(index, example.project).toContain(`](${example.project}/)`);
-      const readme = await readFile(path.join(projectPath, "README.md"), "utf8");
-      expect(readme).toContain("Expected result / 預期結果");
-      expect(example.checks.length).toBeGreaterThan(0);
-      const loaded = await loadProject(projectPath);
-      expect(loaded.diagnostics, example.project).toEqual([]);
-      const front = await new BasicPlusFrontend().compile(
-        loaded.project!,
-        new AbortController().signal,
-      );
-      expect(front.diagnostics, example.project).toEqual([]);
-      expect(validateIR(front.ir!), example.project).toEqual([]);
-      const back = await new EV3Backend().compile(front.ir!, new AbortController().signal);
-      expect(back.diagnostics, example.project).toEqual([]);
-      expect(inspectRbf(back.rbf!).objectCount, example.project).toBeGreaterThan(0);
-    }
-  });
-
-  it("builds the 41 Clev3r topic counterparts with lesson notes and Folder deployment metadata", async () => {
-    expect(parityExamples).toHaveLength(41);
-    const index = await readFile(path.join(repositoryRoot, "examples/CLEV3R-PARITY.md"), "utf8");
-    for (const lesson of parityExamples) {
-      const projectPath = path.join(repositoryRoot, "examples", lesson.project);
-      expect(index).toContain(`](${lesson.project}/)`);
-      expect(await readFile(path.join(projectPath, "README.md"), "utf8")).toContain(
-        "Expected result / 預期結果",
-      );
-      const loaded = await loadProject(projectPath);
-      expect(loaded.diagnostics).toEqual([]);
-      const result = await new BuildSession(new BasicPlusFrontend(), new EV3Backend()).compile(
-        loaded.project!,
-      );
-      expect(result.diagnostics, lesson.project).toEqual([]);
-      expect(result.success, lesson.project).toBe(true);
-      const image = result.artifacts.find((artifact) => artifact.kind === "rbf")!;
-      expect(inspectRbf(await readFile(image.path)).objectCount).toBeGreaterThan(0);
-      if (lesson.project.endsWith("media-folder")) {
-        expect(result.runtimeDirectory).toBe(
-          lesson.project.includes("sd-")
-            ? "/home/root/lms2012/prjs/SD_Card/KobrixaSDCard"
-            : "/home/root/lms2012/prjs/KobrixaCard",
-        );
-        expect(
-          result.artifacts
-            .filter((artifact) => artifact.kind === "asset")
-            .map((artifact) => artifact.remotePath)
-            .sort(),
-        ).toEqual(["assets/card.rgf", "assets/ping.rsf"]);
-      }
-    }
-  });
-
-  it("compiles every example to a valid native RBF image", async () => {
-    const examplesRoot = path.join(repositoryRoot, "examples");
+  it("links every example from the bilingual and category indexes", async () => {
     const examples = (await findExampleProjects(examplesRoot)).sort();
-    expect(examples).toEqual(documentedExamples);
+    expect(examples.length).toBeGreaterThan(0);
     const indexes = await Promise.all(
       ["README.md", "README.zh-TW.md"].map((name) =>
         readFile(path.join(examplesRoot, name), "utf8"),
       ),
     );
-    for (const projectPath of documentedExamples) {
-      for (const index of indexes) expect(index).toContain(`](${projectPath}/)`);
+    for (const projectPath of examples) {
+      expect(documentedCategories, projectPath).toContain(projectPath.split("/")[0]);
+      for (const index of indexes) expect(index, projectPath).toContain(`](${projectPath}/)`);
     }
+    // Each language links to its own category page, which links back and to its translation.
+    const languages = [
+      { index: indexes[0]!, file: "README.md", other: "README.zh-TW.md", entry: "" },
+      { index: indexes[1]!, file: "README.zh-TW.md", other: "README.md", entry: "README.zh-TW.md" },
+    ];
     for (const category of documentedCategories) {
-      for (const index of indexes) expect(index).toContain(`href="./${category}/"`);
-      const categoryIndex = await readFile(path.join(examplesRoot, category, "README.md"), "utf8");
-      expect(categoryIndex).toContain('href="../README.md"');
-      expect(categoryIndex).toContain('href="../README.zh-TW.md"');
-      for (const projectPath of documentedExamples.filter((item) =>
-        item.startsWith(`${category}/`),
-      )) {
-        expect(categoryIndex).toContain(`](./${path.basename(projectPath)}/)`);
+      for (const { index, file, other, entry } of languages) {
+        expect(index).toContain(`href="./${category}/${entry}"`);
+        const categoryIndex = await readFile(path.join(examplesRoot, category, file), "utf8");
+        expect(categoryIndex, `${category}/${file}`).toContain(`href="../${file}"`);
+        expect(categoryIndex, `${category}/${file}`).toContain(`href="./${other}"`);
+        for (const projectPath of examples.filter((item) => item.startsWith(`${category}/`))) {
+          expect(categoryIndex).toContain(`](./${path.basename(projectPath)}/)`);
+        }
       }
     }
+  });
 
-    for (const projectPath of examples) {
+  it("starts every source file with the shared example header", async () => {
+    const sources = await findSources(examplesRoot);
+    expect(sources.length).toBeGreaterThan(0);
+    for (const source of sources) {
+      const name = path.relative(examplesRoot, source);
+      const [first, second, third] = (await readFile(source, "utf8")).split(/\r?\n/);
+      expect(first, name).toBe(exampleHeader);
+      expect(second, name).toMatch(/^' \S/);
+      // Included and imported files must not repeat the entry program's Folder.
+      if (source.endsWith(".bp")) expect(third, name).toMatch(/^Folder "(prjs|sd)" "[^"]+"$/);
+      else expect(third, name).toBe("");
+    }
+  });
+
+  it("compiles every example to a valid native RBF image in its Folder", async () => {
+    for (const projectPath of (await findExampleProjects(examplesRoot)).sort()) {
       const loaded = await loadProject(path.join(examplesRoot, projectPath));
       expect(loaded.diagnostics, projectPath).toEqual([]);
       expect(loaded.project, projectPath).toBeDefined();
@@ -211,10 +125,24 @@ describe("shipped examples", () => {
       expect(frontend.ir, projectPath).toBeDefined();
       expect(validateIR(frontend.ir!), projectPath).toEqual([]);
 
-      const backend = await new EV3Backend().compile(frontend.ir!, new AbortController().signal);
-      expect(backend.diagnostics, projectPath).toEqual([]);
-      expect(backend.rbf, projectPath).toBeDefined();
-      expect(inspectRbf(backend.rbf!).objectCount, projectPath).toBeGreaterThan(0);
+      const result = await new BuildSession(new BasicPlusFrontend(), new EV3Backend()).compile(
+        loaded.project!,
+      );
+      expect(result.diagnostics, projectPath).toEqual([]);
+      expect(result.success, projectPath).toBe(true);
+      expect(result.runtimeDirectory, projectPath).toBe(
+        runtimeDirectories[projectPath] ?? defaultRuntimeDirectory,
+      );
+      const image = result.artifacts.find((artifact) => artifact.kind === "rbf")!;
+      expect(inspectRbf(await readFile(image.path)).objectCount, projectPath).toBeGreaterThan(0);
+      if (projectPath in runtimeDirectories) {
+        expect(
+          result.artifacts
+            .filter((artifact) => artifact.kind === "asset")
+            .map((artifact) => artifact.remotePath)
+            .sort(),
+        ).toEqual(["assets/card.rgf", "assets/ping.rsf"]);
+      }
     }
   });
 });

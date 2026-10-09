@@ -1,6 +1,6 @@
 # Computed arpeggio / 計算琶音
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Derive tone parameters from a loop variable and wait for each note to complete.／從迴圈變數計算音高，等待每個音符播放完成。
 

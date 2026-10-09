@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Wait for the touch sensor on input port 1, then read its percentage value.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(1)
 reading = Sensor.ReadPercent(1)
 

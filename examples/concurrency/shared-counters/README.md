@@ -1,6 +1,6 @@
 # Concurrent shared counters / 並行共享計數器
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Two worker threads, main-thread join and mutex-protected shared writes／兩個工作執行緒、主程式等待與互斥共享写入
 

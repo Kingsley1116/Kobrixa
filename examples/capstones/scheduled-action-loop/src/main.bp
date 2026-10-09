@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Run a timed loop that reacts to a sensor reading on each tick.
+Folder "prjs" "Kobrixa"
+
 started = EV3.Time
 For tick = 0 To 3
   If Sensor.ReadPercent(1) >= 50 Then

@@ -10,7 +10,7 @@
 
 只有在該平台的自動 transport 測試和實體參考 EV3 測試都通過後，才能宣告已提供支援。
 
-共用 USB 與 Wi-Fi transport 已存在於 `packages/device`。[實機驗收紀錄](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md) 已包含 USB 範例執行結果及其限制，但尚未完成三平台 USB／Wi-Fi 矩陣。每次驗收應記錄作業系統、韌體、傳輸方式、確切應用程式版本與觀察結果。桌面簽章有效性另依[程式碼簽章政策](../zh-TW/code-signing.md)驗證。
+共用 USB 與 Wi-Fi transport 已存在於 `packages/device`。三平台 USB／Wi-Fi 驗收矩陣尚未完成。每次驗收應記錄作業系統、韌體、傳輸方式、確切應用程式版本與觀察結果。桌面簽章有效性另依[程式碼簽章政策](../zh-TW/code-signing.md)驗證。
 
 ## USB
 

@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Create, write, resize, and read a Row through its full lifecycle.
+Folder "prjs" "Kobrixa"
+
 row = Row.Init(2, 6)
 Row.Write(row, 1, 9)
 Row.Resize(row, 4)

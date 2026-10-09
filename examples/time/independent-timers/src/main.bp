@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Run independent timer slots and compare their readings.
+Folder "prjs" "Kobrixa"
+
 Time.Reset1()
 Program.Delay(30)
 Time.Reset9()

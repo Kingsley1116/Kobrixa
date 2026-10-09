@@ -58,11 +58,11 @@ An unsupported feature is an error, never a warning followed by altered executio
 
 Division (`/`) produces a floating-point result even with integer operands: `7 / 2` is `3.5`. All numeric return branches in a function share one inferred representation; a floating-point branch widens integer branches. Integer and Boolean returns use their matching EV3 call parameter widths. Incompatible return kinds report `BP2010`.
 
-Text search and slicing use one-based positions. `Text.GetIndexOf` returns zero for a missing match; `Text.GetSubText` truncates the requested length at the source end and returns empty text for an invalid start or nonpositive length. A successful search branches on the firmware string equality result. Executable cases and bytecode expectations are in the [new example curriculum](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/NEW-EXAMPLES.md).
+Text search and slicing use one-based positions. `Text.GetIndexOf` returns zero for a missing match; `Text.GetSubText` truncates the requested length at the source end and returns empty text for an invalid start or nonpositive length. A successful search branches on the firmware string equality result. Executable cases are in the [text-search example](https://github.com/Kingsley1116/Kobrixa/tree/main/examples/language/text-search).
 
 ## Example-driven runtime support
 
-The [expanded curriculum](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/CLEV3R-PARITY.md) records examples and bytecode expectations for these behaviors:
+The [shipped examples](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/README.md) exercise these behaviors:
 
 - Recursive call groups support 32 simultaneous frames and stop explicitly on overflow; native function objects are not reentrant.
 - Mutex acquisition is serialized through a shared native subcall.
@@ -70,4 +70,4 @@ The [expanded curriculum](https://github.com/Kingsley1116/Kobrixa/blob/main/exam
 - Byte, I²C and file byte values preserve the 0–255 range.
 - `Folder` in the entry source selects internal or SD deployment and runtime paths.
 
-Automated compilation and bytecode checks establish only their tested properties. Physical observations and remaining limitations are recorded separately in the [hardware acceptance notes](https://github.com/Kingsley1116/Kobrixa/blob/main/examples/HARDWARE-ACCEPTANCE.md).
+Automated compilation and bytecode checks establish only their tested properties; physical behavior still requires a hardware acceptance run.

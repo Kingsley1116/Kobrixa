@@ -1,6 +1,6 @@
 # Click-driven stepper / 點擊步進控制
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Flush/wait/consume clicks, inspect held state and move a fixed distance／清除等待消耗點擊、讀目前狀態並定距移動
 

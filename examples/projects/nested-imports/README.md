@@ -1,6 +1,6 @@
 # Nested imports and includes / 巢狀匯入與引用
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Two includes and a module importing another module／兩個引用檔與模組相互匯入
 

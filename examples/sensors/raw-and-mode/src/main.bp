@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Connect a color sensor to input 4. Mode 2 is the EV3 Color mode.
+Folder "prjs" "Kobrixa"
+
 Sensor.SetMode(4, 2)
 Sensor.Wait(4)
 raw = Sensor.ReadRaw(4, 2)

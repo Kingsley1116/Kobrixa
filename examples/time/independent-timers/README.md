@@ -1,6 +1,6 @@
 # Independent timer slots / 獨立計時槽
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Reset and read independent Time slots 1 and 9／重設讀取互相獨立的 Time 1 與 9
 

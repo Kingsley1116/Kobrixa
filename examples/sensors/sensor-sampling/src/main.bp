@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Sample a touch sensor on input port 1 four times.
+Folder "prjs" "Kobrixa"
+
 Sensor.Wait(1)
 For sample = 1 To 4
   reading = Sensor.ReadPercent(1)

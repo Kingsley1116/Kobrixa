@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Timer slots measure independent elapsed intervals in milliseconds.
+Folder "prjs" "Kobrixa"
+
 Time.Reset1()
 Program.Delay(120)
 elapsed = Time.Get1()

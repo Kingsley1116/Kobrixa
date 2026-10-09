@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Explore For loop boundaries with positive and negative Step values.
+Folder "prjs" "Kobrixa"
+
 descending = 0
 For value = 5 To 1 Step -2
   descending += value

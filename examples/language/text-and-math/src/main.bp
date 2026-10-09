@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Compose text from a math result and inspect the resulting text length.
+Folder "prjs" "Kobrixa"
+
 power = Math.Power(2, 8)
 label = Text.Append("2^8 = ", power)
 length = Text.GetLength(label)

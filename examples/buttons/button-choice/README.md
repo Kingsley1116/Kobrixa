@@ -1,6 +1,6 @@
 # Button choice / 按鍵選擇
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Read button state without an unbounded wait.／直接讀取按鍵狀態，不使用無限等待。
 

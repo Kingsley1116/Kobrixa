@@ -1,4 +1,7 @@
+' Independently authored Kobrixa example
 ' Pixy2 for LEGO: I2C address 1, signature 1 at register 81.
+Folder "prjs" "Kobrixa"
+
 ' Pixy2 LEGO：I2C 位址 1，色碼 1 使用暫存器 81。
 ' This probe never starts motors. / 此探測範例不會啟動馬達。
 If Sensor.GetName(4) <> "Pixy2" Then

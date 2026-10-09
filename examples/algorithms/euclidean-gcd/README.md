@@ -1,6 +1,6 @@
 # Euclidean GCD / 輾轉相除法
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Use a terminating `While` loop and a reusable function; include zero and negative inputs.／使用可終止的 `While` 與可重用函式，包含零及負數輸入。
 

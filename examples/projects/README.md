@@ -1,25 +1,19 @@
-# Projects and includes / 專案與 Include
+# Projects and includes
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-Split a program into project-relative `.bpi` files. Include names omit the extension, matching the public Basic Plus syntax.
+Split a program into project-relative `.bpi` include files and `.bpm` import modules. Include and Import names omit the extension, matching the public Basic Plus syntax.
 
-將程式拆分為專案相對的 `.bpi` 檔案；Include 名稱依公開 Basic Plus 語法省略副檔名。
+Lift the robot before running projects that drive motors so they can turn safely.
 
-Lift the robot before running either project so connected motors can turn safely.／執行前請架高機器人，確保連接的馬達可以安全轉動。
+## Projects
 
-## Projects / 專案
-
-- [include-settings](./include-settings/) — Load one shared settings file.／載入一個共用設定檔。
-- [include-multiple](./include-multiple/) — Load configuration and startup operations from two files.／從兩個檔案載入設定與啟動操作。
-- [import-functions](./import-functions/) — Import a `.bpm` Function and use its return value.／匯入 `.bpm` Function 並使用回傳值。
-- [import-module](./import-module/) — Use a private helper from an imported module.／使用匯入模組中的 private helper。
-
-## New lessons / 新課程
-
-- [import-calibration](./import-calibration/) — Imported calibration／匯入校正函式。
-
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [include-behaviors](./include-behaviors/) — Included robot behaviors／引用機器人行為
-- [nested-imports](./nested-imports/) — Nested imports and includes／巢狀匯入與引用
+| Example                                     | What it teaches                                      | Hardware                                 |
+| ------------------------------------------- | ---------------------------------------------------- | ---------------------------------------- |
+| [include-settings](./include-settings/)     | One extension-free `Include` and shared values       | Motors A and D                           |
+| [include-multiple](./include-multiple/)     | Multiple project-relative `.bpi` files               | Motor A                                  |
+| [include-behaviors](./include-behaviors/)   | Two `.bpi` files share motor settings and RGB output | Medium motors A and B; color sensor on 1 |
+| [import-functions](./import-functions/)     | Imported `.bpm` Function return value                | Display                                  |
+| [import-module](./import-module/)           | A private helper from an imported module             | Display                                  |
+| [import-calibration](./import-calibration/) | An imported Function clamps values to 0–100          | Display                                  |
+| [nested-imports](./nested-imports/)         | Includes plus a module importing another module      | Display                                  |

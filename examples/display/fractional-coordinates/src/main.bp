@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Draw with fractional coordinates and see how they are rounded.
+Folder "prjs" "Kobrixa"
+
 number x
 x = 12.75
 number y

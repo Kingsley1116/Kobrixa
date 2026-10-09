@@ -1,6 +1,6 @@
 # Complete byte workbench / 完整位元組工作台
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Hex/binary/logical conversion, masks, bit tests and shifts／十六進位二進位布林轉換、遮罩、位元測試與位移
 

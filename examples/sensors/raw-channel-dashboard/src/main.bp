@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Display every raw channel of a sensor on a dashboard.
+Folder "prjs" "Kobrixa"
+
 Sensor.SetMode(1, 0)
 percent = Sensor.ReadPercent(1)
 Sensor.SetMode(1, 4)

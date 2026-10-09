@@ -1,6 +1,6 @@
 # Motor polarity and feedback / 馬達極性與回饋
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Invert twice, read speed/count and restore polarity／反轉兩次、讀取速度角度並恢復極性
 

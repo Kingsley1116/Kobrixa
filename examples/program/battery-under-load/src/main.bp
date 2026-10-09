@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Read battery voltage and current while the motors are under load.
+Folder "prjs" "Kobrixa"
+
 Motor.Start("A", 15)
 Program.Delay(100)
 LCD.StopUpdate()

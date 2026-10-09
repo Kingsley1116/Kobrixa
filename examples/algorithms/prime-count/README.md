@@ -1,6 +1,6 @@
 # Prime counting / 質數計數
 
-[English index](../../README.md) · [繁中索引](../../README.zh-TW.md) · [New lesson verification / 新課程驗證](../../NEW-EXAMPLES.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Trial division through the square root exercises nested loops and early exit.／試除至平方根，練習巢狀迴圈與提早離開。
 

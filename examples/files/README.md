@@ -1,18 +1,14 @@
-# Files / 檔案
+# Files
 
-<a href="../README.md">English index</a> · <a href="../README.zh-TW.md">繁中索引</a>
+<a href="../README.md">All examples</a> · <a href="./README.zh-TW.md">繁體中文</a>
 
-Read and write an EV3 project file.／讀取與寫入 EV3 專案檔案。
+Read and write files in the EV3 project directory.
 
-## Projects / 專案
+## Projects
 
-- [file-round-trip](./file-round-trip/) — Write one text line, reopen the file, and display it.／寫入一行文字、重新開啟檔案並顯示它。
-- [binary-record](./binary-record/) — Write and read one binary byte.／寫入並讀取一個二進位位元組。
-
-## New lessons / 新課程
-
-- [byte-sequence](./byte-sequence/) — Byte sequence round trip／位元組序列讀寫。
-
-## Clev3r topic counterparts / Clev3r 主題對照
-
-- [typed-record](./typed-record/) — Typed file record／混合型別檔案記錄
+| Example                               | What it teaches                         | Hardware                 |
+| ------------------------------------- | --------------------------------------- | ------------------------ |
+| [file-round-trip](./file-round-trip/) | Write and read an EV3 text file         | Display; writes one file |
+| [binary-record](./binary-record/)     | Write and read one binary byte          | Display; writes one file |
+| [byte-sequence](./byte-sequence/)     | Sequential byte reads, including zero   | Display; writes one file |
+| [typed-record](./typed-record/)       | Text, byte, and number array round trip | Display; writes one file |

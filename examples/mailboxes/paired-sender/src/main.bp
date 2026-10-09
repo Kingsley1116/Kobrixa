@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Connect to a peer brick and send it text and number messages.
+Folder "prjs" "Kobrixa"
+
 Mailbox.Connect("KobrixaPeer")
 Mailbox.Send("KobrixaPeer", "KobrixaText", "Hello peer")
 Mailbox.SendNumber("KobrixaPeer", "KobrixaNumber", 12.5)

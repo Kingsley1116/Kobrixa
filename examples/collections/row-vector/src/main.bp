@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Fixed Rows and number Vectors provide compact numeric collections.
+Folder "prjs" "Kobrixa"
+
 rowa = Row.Init(3, 0)
 Row.Write(rowa, 0, 10)
 Row.Write(rowa, 1, 20)

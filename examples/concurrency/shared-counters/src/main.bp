@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Two threads update shared counters under a mutex.
+Folder "prjs" "Kobrixa"
+
 count = 0
 done = 0
 mutex = Thread.CreateMutex()

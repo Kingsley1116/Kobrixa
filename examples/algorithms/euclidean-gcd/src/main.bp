@@ -1,4 +1,7 @@
-' Independently authored Kobrixa lesson.
+' Independently authored Kobrixa example
+' Compute greatest common divisors with Euclid's remainder algorithm.
+Folder "prjs" "Kobrixa"
+
 LCD.Clear()
 a = Gcd(84, 30)
 b = Gcd(25, 0)

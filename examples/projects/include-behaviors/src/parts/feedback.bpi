@@ -1,3 +1,6 @@
+' Independently authored Kobrixa example
+' Feedback behavior that reads RGB values and shows their total.
+
 Sub ShowSample()
   number r
   number g

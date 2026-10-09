@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Read and write I2C registers with the complete register API.
+Folder "prjs" "Kobrixa"
+
 Sensor.WriteI2CRegister(1, 42, 16, 175)
 one = Sensor.ReadI2CRegister(1, 42, 16)
 values = Vector.Data(3, "128 175 255")

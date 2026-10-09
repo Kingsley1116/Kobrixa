@@ -1,6 +1,6 @@
 # Battery under load / 負載下的電池資料
 
-[Curriculum and verification / 課程與驗證](../../CLEV3R-PARITY.md) · [English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
+[English index](../../README.md) · [繁中索引](../../README.zh-TW.md)
 
 Level, voltage and current with a bounded load／有界負載下的電量、電壓與電流
 

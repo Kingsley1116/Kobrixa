@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Read a HiTechnic compass over I2C and compute the heading error.
+Folder "prjs" "Kobrixa"
+
 headingBytes = Sensor.ReadI2CRegisters(1, 1, 66, 2)
 heading = headingBytes[0] * 2 + headingBytes[1]
 target = Math.Ceiling(9.2)

@@ -1,5 +1,7 @@
 ' Independently authored Kobrixa example
 ' Apply a bit mask and format the result as hexadecimal text.
+Folder "prjs" "Kobrixa"
+
 masked = Byte.AND_(13, 7)
 hex = Byte.ToHex(masked)
 

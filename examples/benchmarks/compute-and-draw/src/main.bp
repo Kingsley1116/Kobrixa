@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Time a fixed compute and drawing workload with EV3.Time.
+Folder "prjs" "Kobrixa"
+
 started = EV3.Time
 number score
 score = 0

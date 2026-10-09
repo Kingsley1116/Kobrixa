@@ -1,4 +1,7 @@
-' Independently authored Kobrixa curriculum.
+' Independently authored Kobrixa example
+' Record motor A's encoder count while a power profile runs.
+Folder "prjs" "Kobrixa"
+
 Motor.ResetCount("A")
 Motor.SchedulePower("A", 20, 20, 100, 20, true)
 values = Vector.Init(4, 0)
