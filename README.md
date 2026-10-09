@@ -57,7 +57,7 @@ Compile errors appear in the diagnostics panel (Ctrl/Cmd+J) with the exact line.
 
 ## Project status
 
-Kobrixa is a **v1 release candidate** (currently `v0.1.0-v1-candidate.14`). Builds are available for trying out, but v1 is not final: full physical-EV3 testing on all three platforms and production code signing are still in progress.
+Kobrixa is a **v1 release candidate** (currently `v0.1.0-v1-candidate.15`). Builds are available for trying out, but v1 is not final: full physical-EV3 testing on all three platforms and production code signing are still in progress.
 
 | Capability                               | Status                           |
 | ---------------------------------------- | -------------------------------- |
