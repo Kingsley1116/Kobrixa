@@ -84,3 +84,12 @@ it("persists reordered document tabs as the open file order", () => {
     ["a.bp", true],
   ]);
 });
+
+it("saves pinned files with the project view", () => {
+  const session = new ProjectSessions().add(workspace("a"));
+  session.documents.replace([
+    { file: "a.bp", content: "", saved: "" },
+    { file: "b.bp", content: "", saved: "", pinned: true },
+  ]);
+  expect(session.snapshot()).toMatchObject({ files: ["b.bp", "a.bp"], pinnedFiles: ["b.bp"] });
+});

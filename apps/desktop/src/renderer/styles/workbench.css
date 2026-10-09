@@ -538,6 +538,12 @@ button.danger:hover:not(:disabled) {
   text-align: left;
   border-radius: 5px;
 }
+.tree-context-menu hr {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
 .tree-context-menu kbd {
   color: var(--muted);
   font:
@@ -680,6 +686,15 @@ button.danger:hover:not(:disabled) {
 .tab-close:hover:not(:disabled) {
   color: var(--text);
   background: var(--hover);
+}
+.tab.pinned .tab-close {
+  display: grid;
+  place-items: center;
+  opacity: 1;
+}
+.tab.pinned .tab-close .ui-icon {
+  width: 14px;
+  height: 14px;
 }
 .editor-stage {
   min-width: 0;

@@ -16,6 +16,8 @@ import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
 import { ResizeHandle } from "./components/resize-handle.js";
 import { ClosableTab } from "./components/closable-tab.js";
+import { ContextMenu } from "./components/context-menu.js";
+import { Icon } from "./components/icon.js";
 import { moveItem, useTabReorder } from "./components/tab-reorder.js";
 import { Dialog, DialogActions } from "./components/dialog.js";
 import { useKeyboard } from "./keybindings/keyboard-state.js";
@@ -505,6 +507,7 @@ export function App(): React.JSX.Element {
   const [pendingWorkspace, setPendingWorkspace] = useState<WorkspaceSummary>();
   const [selectedEntry, setSelectedEntry] = useState("");
   const [pendingCloseFile, setPendingCloseFile] = useState<string>();
+  const [tabMenu, setTabMenu] = useState<{ file: string; x: number; y: number }>();
   const [closingTab, setClosingTab] = useState(false);
   const [selectedTreePath, setSelectedTreePath] = useState("");
   const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(() => new Set([""]));
@@ -1307,6 +1310,57 @@ export function App(): React.JSX.Element {
     else closeTab(file);
   }
 
+  function setTabPinned(file: string, pinned: boolean): void {
+    setTabs((current) => current.map((tab) => (tab.file === file ? { ...tab, pinned } : tab)));
+  }
+
+  /** Closes clean, unpinned tabs at once; unsaved ones stay open so nothing is discarded silently. */
+  function closeTabs(files: string[]): void {
+    if (controller.editingLockedFor(workspaceStateRef.current?.id)) return;
+    const closing = new Set(
+      tabs
+        .filter(
+          (tab) =>
+            files.includes(tab.file) &&
+            !tab.pinned &&
+            tab.content === tab.saved &&
+            !sessions.active?.files.conflicts.has(tab.file),
+        )
+        .map((tab) => tab.file),
+    );
+    const kept = files.filter(
+      (file) => !closing.has(file) && !tabs.find((tab) => tab.file === file)?.pinned,
+    );
+    if (closing.size) {
+      const nextActive = activeFileAfterRemoval(
+        tabs.map((tab) => tab.file),
+        activeFile,
+        closing,
+      );
+      setTabs((current) => current.filter((tab) => !closing.has(tab.file)));
+      for (const file of closing) sessions.active?.files.forget(file);
+      setActiveFile(nextActive);
+      if (focusTarget && closing.has(focusTarget.file)) setFocusTarget(undefined);
+    }
+    if (kept.length)
+      setStatus(
+        locale === "zh-TW"
+          ? `${kept.length} 個未儲存的分頁仍保持開啟。`
+          : `${kept.length} unsaved ${kept.length === 1 ? "tab stays" : "tabs stay"} open.`,
+      );
+  }
+
+  function revealInTree(file: string): void {
+    setFilesOpen(true);
+    const parts = file.split("/");
+    setExpandedTreePaths(
+      (current) =>
+        new Set([...current, ...parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"))]),
+    );
+    setSelectedTreePath(file);
+    window.requestAnimationFrame(() => treeRef.current?.focus(file));
+  }
+
   async function resolveTabClose(action: "save" | "discard"): Promise<void> {
     if (!workspace || !pendingCloseFile) return;
     const file = pendingCloseFile;
@@ -1607,7 +1661,12 @@ export function App(): React.JSX.Element {
         if (snapshot.content === null && draft === undefined) throw new Error("File is missing.");
         if (files.includes(file) || project.files.conflicts.has(file)) {
           const saved = snapshot.content ?? "";
-          opened.push({ file, content: draft ?? saved, saved });
+          opened.push({
+            file,
+            content: draft ?? saved,
+            saved,
+            pinned: view?.pinnedFiles?.includes(file) ?? false,
+          });
         }
       } catch {
         setSessionIssues((issues) => [
@@ -2307,7 +2366,7 @@ export function App(): React.JSX.Element {
       current.map((tab) => {
         const file = moved[tab.file] ?? tab.file;
         return file === "kobrixa.json" && refreshedManifest !== undefined
-          ? { file, content: refreshedManifest, saved: refreshedManifest }
+          ? { file, content: refreshedManifest, saved: refreshedManifest, pinned: tab.pinned }
           : { ...tab, file };
       }),
     );
@@ -2649,7 +2708,13 @@ export function App(): React.JSX.Element {
         void saveAllChanges().catch(report);
         break;
       case "closeTab":
-        if (activeFile) requestCloseTab(activeFile);
+        if (activeFile && tabs.find((tab) => tab.file === activeFile)?.pinned)
+          setStatus(
+            locale === "zh-TW"
+              ? "固定的分頁需先取消固定才能關閉。"
+              : "Unpin this tab before closing it.",
+          );
+        else if (activeFile) requestCloseTab(activeFile);
         break;
       case "format":
         if (!settingsActive && activeFile) void editorRef.current?.format().catch(report);
@@ -3359,16 +3424,22 @@ export function App(): React.JSX.Element {
                     <ClosableTab
                       active={selected}
                       key={tab.file}
-                      className={dragClass}
-                      dragProps={dragProps}
+                      className={`${dragClass} ${tab.pinned ? "pinned" : ""}`}
+                      tabProps={{
+                        ...dragProps,
+                        onContextMenu: (event) => {
+                          event.preventDefault();
+                          setTabMenu({ file: tab.file, x: event.clientX, y: event.clientY });
+                        },
+                      }}
                       onKeyDown={(event) => {
-                        const moved = tabReorder.keyDown(index, event);
-                        if (moved === undefined) return;
+                        if (tabReorder.keyDown(index, event) === undefined) return;
                         const tabBar = event.currentTarget.closest('[role="tablist"]');
+                        // Pinned and unpinned tabs stay in their own group, so look up the final index.
                         window.requestAnimationFrame(() =>
                           tabBar
                             ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-                            [moved]?.focus(),
+                            [tabsRef.current.findIndex((item) => item.file === tab.file)]?.focus(),
                         );
                       }}
                       ref={selected ? activeTabRef : undefined}
@@ -3378,10 +3449,23 @@ export function App(): React.JSX.Element {
                         setActiveFile(tab.file);
                         window.requestAnimationFrame(() => editorRef.current?.focus());
                       }}
-                      closeDisabled={locked}
-                      closeLabel={`${t.closeTab}: ${tab.file}`}
-                      closeTitle={titleWithShortcut(t.closeTab, "closeTab")}
-                      onClose={() => requestCloseTab(tab.file)}
+                      closeDisabled={locked && !tab.pinned}
+                      closeLabel={
+                        tab.pinned
+                          ? `${locale === "zh-TW" ? "取消固定" : "Unpin"}: ${tab.file}`
+                          : `${t.closeTab}: ${tab.file}`
+                      }
+                      closeTitle={
+                        tab.pinned
+                          ? locale === "zh-TW"
+                            ? "取消固定"
+                            : "Unpin"
+                          : titleWithShortcut(t.closeTab, "closeTab")
+                      }
+                      closeContent={tab.pinned ? <Icon name="pin" /> : undefined}
+                      onClose={() =>
+                        tab.pinned ? setTabPinned(tab.file, false) : requestCloseTab(tab.file)
+                      }
                     >
                       <span className="tab-kind">
                         {tab.file.split(".").pop()?.toLocaleUpperCase("en-US")}
@@ -3402,6 +3486,61 @@ export function App(): React.JSX.Element {
                   );
                 })}
               </div>
+              {tabMenu && tabs.some((tab) => tab.file === tabMenu.file) && (
+                <ContextMenu
+                  x={tabMenu.x}
+                  y={tabMenu.y}
+                  label={tabMenu.file}
+                  onClose={() => setTabMenu(undefined)}
+                >
+                  {(() => {
+                    const zh = locale === "zh-TW";
+                    const file = tabMenu.file;
+                    const index = tabs.findIndex((tab) => tab.file === file);
+                    const pinned = tabs[index]!.pinned;
+                    const others = tabs.filter((tab) => tab.file !== file && !tab.pinned);
+                    const right = tabs.slice(index + 1).filter((tab) => !tab.pinned);
+                    const item = (label: string, action: () => void, disabled = false) => (
+                      <button role="menuitem" type="button" disabled={disabled} onClick={action}>
+                        {label}
+                      </button>
+                    );
+                    return (
+                      <>
+                        {item(
+                          pinned ? (zh ? "取消固定" : "Unpin") : zh ? "固定分頁" : "Pin tab",
+                          () => setTabPinned(file, !pinned),
+                        )}
+                        <hr />
+                        {item(zh ? "關閉" : "Close", () => requestCloseTab(file), locked || pinned)}
+                        {item(
+                          zh ? "關閉其他分頁" : "Close others",
+                          () => closeTabs(others.map((tab) => tab.file)),
+                          locked || !others.length,
+                        )}
+                        {item(
+                          zh ? "關閉右側分頁" : "Close to the right",
+                          () => closeTabs(right.map((tab) => tab.file)),
+                          locked || !right.length,
+                        )}
+                        {item(
+                          zh ? "關閉全部（保留固定分頁）" : "Close all but pinned",
+                          () => closeTabs(tabs.map((tab) => tab.file)),
+                          locked || tabs.every((tab) => tab.pinned),
+                        )}
+                        <hr />
+                        {item(
+                          zh ? "複製路徑" : "Copy path",
+                          () => void navigator.clipboard.writeText(file).catch(report),
+                        )}
+                        {item(zh ? "在檔案樹中顯示" : "Reveal in file tree", () =>
+                          revealInTree(file),
+                        )}
+                      </>
+                    );
+                  })()}
+                </ContextMenu>
+              )}
 
               <div
                 className={`editor-simulation-layout ${simulator?.workspaceId === workspace.id ? "with-simulator" : ""}`}

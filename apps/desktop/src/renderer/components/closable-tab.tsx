@@ -12,8 +12,9 @@ export function ClosableTab({
   controls,
   className = "",
   ref,
-  dragProps,
+  tabProps,
   onKeyDown,
+  closeContent = "×",
 }: {
   children: ReactNode;
   active: boolean;
@@ -26,12 +27,14 @@ export function ClosableTab({
   controls?: string;
   className?: string;
   ref?: Ref<HTMLDivElement> | undefined;
-  /** Drag-and-drop handlers for reorderable tab strips. */
-  dragProps?: HTMLAttributes<HTMLDivElement> & { draggable?: boolean };
+  /** Extra container handlers, e.g. drag-and-drop reordering or a context menu. */
+  tabProps?: HTMLAttributes<HTMLDivElement> & { draggable?: boolean };
   onKeyDown?(event: KeyboardEvent<HTMLButtonElement>): void;
+  /** Replaces the × glyph, e.g. with a pin for pinned tabs. */
+  closeContent?: ReactNode;
 }): React.JSX.Element {
   return (
-    <div className={`tab ${className} ${active ? "active" : ""}`.trim()} ref={ref} {...dragProps}>
+    <div className={`tab ${className} ${active ? "active" : ""}`.trim()} ref={ref} {...tabProps}>
       <button
         type="button"
         className="tab-select"
@@ -52,7 +55,7 @@ export function ClosableTab({
         title={closeTitle}
         onClick={onClose}
       >
-        ×
+        {closeContent}
       </button>
     </div>
   );

@@ -11,12 +11,15 @@ export interface DocumentTab {
   content: string;
   saved: string;
   dirty?: boolean;
+  /** Pinned tabs stay ahead of the others; omitted keeps the current state. */
+  pinned?: boolean | undefined;
 }
 interface Document {
   file: string;
   text: string;
   saved: string;
   dirty: boolean;
+  pinned: boolean;
   revision: number;
   buffer?: DocumentBuffer | undefined;
   cleanVersion?: number | undefined;
@@ -32,6 +35,8 @@ export class Documents {
   revision = 0;
   readonly getSnapshot = (): DocumentTab[] => this.snapshot;
   readonly getOpenFiles = (): string[] => this.paths;
+  readonly getPinnedFiles = (): string[] =>
+    this.paths.filter((file) => this.documents.get(file)?.pinned);
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => {
@@ -95,6 +100,10 @@ export class Documents {
   replace(tabs: DocumentTab[]): void {
     const next = new Map<string, Document>();
     let changed = false;
+    const pinnedOf = (tab: DocumentTab) =>
+      tab.pinned ?? this.documents.get(tab.file)?.pinned ?? false;
+    // Stable partition: pinned tabs always lead, each group keeps the given order.
+    tabs = [...tabs.filter(pinnedOf), ...tabs.filter((tab) => !pinnedOf(tab))];
     for (const tab of tabs) {
       const previous = this.documents.get(tab.file);
       const content = tab.content;
@@ -114,6 +123,11 @@ export class Documents {
           changed = true;
         }
         if (previous.saved !== tab.saved) changed = true;
+        const pinned = pinnedOf(tab);
+        if (previous.pinned !== pinned) {
+          previous.pinned = pinned;
+          changed = true;
+        }
         if (previous.dirty !== (content !== tab.saved)) changed = true;
         previous.saved = tab.saved;
         previous.dirty = content !== tab.saved;
@@ -127,6 +141,7 @@ export class Documents {
           text: content,
           saved: tab.saved,
           dirty: content !== tab.saved,
+          pinned: tab.pinned ?? false,
           revision: 0,
         });
         changed = true;
@@ -155,6 +170,7 @@ export class Documents {
       file: document.file,
       saved: document.saved,
       dirty: document.dirty,
+      pinned: document.pinned,
       get content() {
         return document.buffer ? readDocument(document) : document.text;
       },
