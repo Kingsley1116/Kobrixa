@@ -21,6 +21,7 @@ import { checkLanguageFeatures } from "./language-features-smoke.mjs";
 import { checkHighlighting } from "./highlighting-smoke.mjs";
 import { checkEditorPerformance } from "./performance-smoke.mjs";
 import { checkSharedComponents } from "./components-smoke.mjs";
+import { checkWorkbenchFeatures } from "./workbench-features-smoke.mjs";
 const [url, temporary] = process.argv.slice(2);
 const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
@@ -608,6 +609,11 @@ app
       app.exit(0);
       return;
     }
+    if (process.env.KOBRIXA_SMOKE_WORKBENCH_ONLY) {
+      await checkWorkbenchFeatures({ js, key, until, pause, mod, win, temporary });
+      app.exit(0);
+      return;
+    }
     if (process.env.KOBRIXA_SMOKE_SEARCH_ONLY) {
       await checkWorkspaceSearch(searchContext);
       app.exit(0);
@@ -716,6 +722,7 @@ app
     await checkMotorTests(motorContext);
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
+    await checkWorkbenchFeatures({ js, key, until, pause, mod, win, temporary });
     await checkExpandedSettings(settingsContext);
     console.log("catalog", await js("smoke.editorCommandCatalog(true).length"));
     await key(",", [mod]);
