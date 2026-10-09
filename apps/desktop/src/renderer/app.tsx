@@ -84,6 +84,7 @@ import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
 import { motorTestActive } from "../shared/motor-test.js";
 import { MotorTestController } from "./device/motor-test-controller.js";
+import { BatteryStatus } from "./device/battery-status.js";
 import { MonitorController } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { SensorLabController } from "./device/sensor-lab-controller.js";
@@ -346,6 +347,29 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
   }, [remoteFiles, execution.session?.id, execution.deployed?.path]);
+  const [battery] = useState(() => new BatteryStatus(window.kobrixa.device.monitor));
+  const batteryState = useSyncExternalStore(battery.subscribe, battery.getSnapshot);
+  useEffect(() => battery.setSession(execution.session?.id), [battery, execution.session?.id]);
+  useEffect(() => {
+    const observe = () => {
+      const state = monitor.getSnapshot();
+      battery.observe(state.sessionId, state.snapshot);
+    };
+    const unsubscribe = monitor.subscribe(observe);
+    return () => {
+      unsubscribe();
+      battery.dispose();
+    };
+  }, [battery, monitor]);
+  useEffect(() => {
+    if (batteryState.low)
+      setStatus(
+        locale === "zh-TW"
+          ? `EV3 電量偏低（${batteryState.percent}%），請盡快充電或更換電池。`
+          : `EV3 battery is low (${batteryState.percent}%). Charge or replace the batteries soon.`,
+      );
+    // Announce only when the brick first crosses the threshold.
+  }, [batteryState.low]);
   useEffect(() => window.kobrixa.device.onEvent(remoteFiles.onEvent), [remoteFiles]);
   const setConnectionMode = (mode: Settings["connectionMode"]) =>
     settingsStore.set("connectionMode", mode);
@@ -4223,6 +4247,22 @@ export function App(): React.JSX.Element {
                 {active.file.toLocaleLowerCase("en-US").endsWith(".json") ? "JSON" : t.basicPlus}
               </span>
             </>
+          )}
+          {execution.session && (
+            <span
+              className={`battery-status ${batteryState.low ? "low" : ""}`}
+              title={[
+                execution.session.name,
+                execution.session.transport === "usb" ? "USB" : "Wi-Fi",
+                batteryState.voltage !== null ? `${batteryState.voltage.toFixed(2)} V` : undefined,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            >
+              EV3 {execution.session.transport === "usb" ? "USB" : "Wi-Fi"}
+              {batteryState.percent !== null &&
+                ` · ${locale === "zh-TW" ? "電量" : "Battery"} ${batteryState.percent}%`}
+            </span>
           )}
           <span>{workspace?.manifest?.target ?? "ev3-native"}</span>
         </div>
