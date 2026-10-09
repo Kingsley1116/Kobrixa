@@ -191,4 +191,14 @@ describe("keyboard bindings", () => {
     for (const field of ["editorFocused", "capturing", "chordPending"] as const)
       expect(ignoreMenuShortcut({ ...KEYBOARD_DEFAULT, [field]: true }, "Ctrl+KeyZ")).toBe(true);
   });
+  it("keeps the macOS Edit menu clipboard shortcuts working in the editor", () => {
+    const editor = { ...KEYBOARD_DEFAULT, editorFocused: true };
+    for (const stroke of ["Meta+KeyC", "Meta+KeyV", "Meta+KeyX"])
+      expect(ignoreMenuShortcut(editor, stroke, true)).toBe(false);
+    expect(ignoreMenuShortcut(editor, "Ctrl+KeyC", false)).toBe(true);
+    expect(ignoreMenuShortcut({ ...editor, chordPending: true }, "Meta+KeyC", true)).toBe(true);
+    expect(ignoreMenuShortcut({ ...editor, managedKeys: ["Meta+KeyV"] }, "Meta+KeyV", true)).toBe(
+      true,
+    );
+  });
 });
