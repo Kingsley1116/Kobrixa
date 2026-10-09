@@ -925,6 +925,10 @@ footer {
 footer .dirty {
   color: var(--warning);
 }
+footer .battery-status.low {
+  color: var(--error);
+  font-weight: 600;
+}
 .status-group {
   min-width: 0;
   display: flex;
