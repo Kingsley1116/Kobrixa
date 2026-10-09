@@ -75,7 +75,6 @@ import {
   SettingsQuickControls,
   SettingsTab,
   SettingsError,
-  settingsCopy,
 } from "./settings/settings-panel.js";
 import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
@@ -176,7 +175,6 @@ export function App(): React.JSX.Element {
   } = settings;
   const deviceOpen = rightPanel !== null;
   const t = copy[locale];
-  const st = settingsCopy[locale];
   const [settingsCategory, setSettingsCategory] = useState<{
     category: "appearance" | "shortcuts" | "updates";
     request: number;
@@ -1342,21 +1340,16 @@ export function App(): React.JSX.Element {
     });
   }
   function cycleTabs(direction: 1 | -1): void {
-    const count = tabs.length + Number(settingsOpen);
+    const count = tabs.length;
     if (!count) return;
-    const current = settingsActive
-      ? tabs.length
-      : Math.max(
-          0,
-          tabs.findIndex((tab) => tab.file === activeFile),
-        );
-    const next = (current + direction + count) % count;
-    if (next === tabs.length) openSettings();
-    else {
-      setSettingsActive(false);
-      setActiveFile(tabs[next]?.file);
-      window.requestAnimationFrame(() => editorRef.current?.focus());
-    }
+    const current = Math.max(
+      0,
+      tabs.findIndex((tab) => tab.file === activeFile),
+    );
+    const next = settingsActive ? current : (current + direction + count) % count;
+    setSettingsActive(false);
+    setActiveFile(tabs[next]?.file);
+    window.requestAnimationFrame(() => editorRef.current?.focus());
   }
 
   async function navigateDiagnostics(direction: 1 | -1): Promise<void> {
@@ -3021,8 +3014,9 @@ export function App(): React.JSX.Element {
               : undefined,
             closeDisabled: controller.editingLockedFor(project.workspace.id),
           }))}
-          activeId={workspace?.id}
+          activeId={settingsActive ? undefined : workspace?.id}
           locale={locale}
+          settingsTab={settingsTab}
           disabled={
             restoring ||
             updatePreparing ||
@@ -3151,12 +3145,7 @@ export function App(): React.JSX.Element {
           </div>
         ) : !workspace ? (
           settingsActive ? (
-            <section className="standalone-settings">
-              <div className="tabs" role="tablist" aria-label={st.title}>
-                {settingsTab}
-              </div>
-              {settingsPage}
-            </section>
+            <section className="standalone-settings">{settingsPage}</section>
           ) : (
             <Welcome
               t={t}
@@ -3392,7 +3381,6 @@ export function App(): React.JSX.Element {
                     </ClosableTab>
                   );
                 })}
-                {settingsTab}
               </div>
 
               <div
@@ -3506,7 +3494,6 @@ export function App(): React.JSX.Element {
                 )}
               </div>
 
-              {settingsPage}
               <ResizeHandle
                 className="resize-problems"
                 axis="y"
@@ -3717,6 +3704,7 @@ export function App(): React.JSX.Element {
             />
           </div>
         </aside>
+        {workspace && !restoring && settingsPage}
       </section>
       {newProjectOpen && (
         <Dialog

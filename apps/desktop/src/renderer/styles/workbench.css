@@ -1908,7 +1908,7 @@ footer {
 .standalone-settings {
   min-height: 0;
   display: grid;
-  grid-template-rows: calc(38px * var(--ui-scale)) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--editor);
 }
 .settings-page {
@@ -1921,8 +1921,11 @@ footer {
   overflow: hidden;
   animation: workbench-fade-in var(--motion-normal) var(--motion-ease);
 }
-.center > .settings-page {
-  grid-row: 3;
+/* Settings belong to the project bar, so the page covers the whole workbench. */
+.workspace > .settings-page {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
 }
 .editor-stage[hidden],
 .settings-page[hidden],
@@ -2071,6 +2074,22 @@ footer {
 }
 .settings-tab {
   flex: 0 0 auto;
+}
+.project-tabs > .settings-tab {
+  min-width: 0;
+  min-height: 0;
+  border-right: 0;
+  border-bottom: 2px solid transparent;
+  box-shadow: none;
+  background: transparent;
+}
+.project-tabs > .settings-tab.active {
+  border-bottom-color: var(--accent);
+  background: var(--editor);
+  box-shadow: none;
+}
+.project-tabs > .settings-tab .tab-select {
+  padding: 8px 4px 8px 10px;
 }
 @container (max-width: 800px) {
   .settings-body {
