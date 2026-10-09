@@ -1,6 +1,9 @@
+import { Icon } from "../../components/ui/icon.js";
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
 import { DIAGNOSTIC_HELP } from "@kobrixa/compiler/diagnostic-help";
+import metadata from "../../../../../package.json" with { type: "json" };
+import { useEffect } from "react";
 
 type Locale = "zh-TW" | "en";
 
@@ -11,10 +14,10 @@ const copy = {
     hero: {
       label: "為 EV3 而生的程式環境",
       title: "用程式，讓創意真的動起來。",
-      body: "Kobrixa 讓學生、創客與教學者，從第一行 Basic Plus 程式一路走到 EV3 機器人的實際動作。",
+      body: "從 Basic Plus 編輯、編譯與本地模擬，到 USB／Wi-Fi 實機部署；也能邀請夥伴共同編輯，讓每個想法一起前進。",
       learn: "開始學習",
       source: "查看原始碼",
-      note: "離線優先 · 開源開發中",
+      note: `v${metadata.version} · 離線優先 · 開源`,
     },
     proof: ["從 .bp 原始碼開始", "在本機建置 .rbf", "USB 或 Wi-Fi 連接"],
     features: {
@@ -31,6 +34,21 @@ const copy = {
           "/docs/diagnostics?lang=zh-TW",
         ],
         ["為實體機器人而建", "將支援的 Basic Plus 程式編譯為原生 EV3 .rbf，然後上傳、執行、停止。"],
+        [
+          "先在本機試跑",
+          "內建 WRO Double Tennis 2026 模擬場地，觀察機器人、感測器與變數，不需要連接 EV3。物理模型為近似，仍需實機驗證。",
+          "/docs/reference/offline-preview",
+        ],
+        [
+          "邀請夥伴一起寫",
+          "用邀請碼加入雲端房間，即時共同編輯、聊天與分配 EV3 控制權。支援返回最近房間，並在重新加入前處理本機變更。",
+          "/docs/reference/collaboration",
+        ],
+        [
+          "準備畫面與聲音",
+          "在瀏覽器製作 RGF 圖片與 RSF 音訊，也能從社群素材庫下載已審核作品及使用範例。",
+          "/gallery",
+        ],
       ],
     },
     flow: {
@@ -62,10 +80,10 @@ const copy = {
     hero: {
       label: "A programming environment for EV3",
       title: "Make ideas move with code.",
-      body: "Kobrixa helps students, makers, and educators take a Basic Plus program from its first line to a real EV3 robot in motion.",
+      body: "Write and compile Basic Plus, try it in the local simulator, then deploy over USB or Wi-Fi. Invite others to edit with you and move ideas forward together.",
       learn: "Start learning",
       source: "View source",
-      note: "Offline-first · Open-source in development",
+      note: `v${metadata.version} · Offline-first · Open source`,
     },
     proof: ["Start with .bp source", "Build .rbf locally", "Connect over USB or Wi-Fi"],
     features: {
@@ -84,6 +102,21 @@ const copy = {
         [
           "Made for physical robots",
           "Compile supported Basic Plus programs to native EV3 .rbf files, then upload, run, and stop them.",
+        ],
+        [
+          "Try it locally first",
+          "Explore the WRO Double Tennis 2026 field, robots, sensors and variables without an EV3. The physics model is approximate; physical testing is still needed.",
+          "/docs/reference/offline-preview",
+        ],
+        [
+          "Invite others to build with you",
+          "Join cloud rooms by invite code to co-edit, chat and share EV3 control. Return to recent rooms and resolve local changes before rejoining.",
+          "/docs/reference/collaboration",
+        ],
+        [
+          "Prepare images and sound",
+          "Make RGF images and RSF audio in your browser, or download reviewed community assets with usage examples from the gallery.",
+          "/gallery",
         ],
       ],
     },
@@ -130,14 +163,17 @@ const copy = {
   },
 } as const;
 
-function CodeWorkbench() {
+function CodeWorkbench({ locale }: { locale: Locale }) {
   return (
-    <div className="workbench" aria-label="Kobrixa code editor preview">
+    <div
+      className="workbench"
+      aria-label={locale === "zh-TW" ? "Kobrixa 編輯器示意" : "Kobrixa editor illustration"}
+    >
       <div className="workbench-bar">
         <span className="dot orange" />
         <span className="dot yellow" />
         <span className="dot blue" />
-        <span>obstacle-rover.bp</span>
+        <span>hello-ev3 / main.bp</span>
       </div>
       <div className="workbench-body">
         <div className="code-lines" aria-hidden="true">
@@ -147,26 +183,26 @@ function CodeWorkbench() {
           <span>4</span>
           <span>5</span>
           <span>6</span>
-          <span>7</span>
         </div>
         <pre>
           <code>
-            <em>sub</em> Main()
+            LCD.Clear()
             <br />
-            &nbsp;&nbsp;Motor.Start(<strong>OUT_BC</strong>, <b>45</b>)<br />
-            &nbsp;&nbsp;<em>while</em> Sensor.Read(<strong>IN_1</strong>) &gt; <b>20</b>
+            LCD.Text(<b>1</b>, <b>8</b>, <b>18</b>, <b>1</b>, <strong>"Hello from Kobrixa"</strong>)
             <br />
-            &nbsp;&nbsp;&nbsp;&nbsp;Wait(<b>20</b>)<br />
-            &nbsp;&nbsp;<em>endwhile</em>
+            LCD.Line(<b>1</b>, <b>8</b>, <b>38</b>, <b>165</b>, <b>38</b>)<br />
+            LCD.Update()
             <br />
-            &nbsp;&nbsp;Motor.Stop(<strong>OUT_BC</strong>)<br />
-            <em>ends</em>
+            Speaker.Tone(<b>35</b>, <b>440</b>, <b>180</b>)<br />
+            Program.Delay(<b>250</b>)
           </code>
         </pre>
       </div>
       <div className="workbench-status">
-        <span>✓ Build complete</span>
-        <span>EV3 connected</span>
+        <span>
+          <Icon name="check" /> {locale === "zh-TW" ? "本機建置" : "Local build"}
+        </span>
+        <span>{locale === "zh-TW" ? "編輯器示意" : "Editor illustration"}</span>
       </div>
     </div>
   );
@@ -180,6 +216,10 @@ export function HomePage({
   onLocaleChange: (locale: Locale) => void;
 }) {
   const t = copy[locale];
+  useEffect(() => {
+    document.title =
+      locale === "zh-TW" ? "Kobrixa — 用程式驅動創意" : "Kobrixa — Make ideas move with code";
+  }, [locale]);
   const learnPath = `${github}/blob/main/examples/LEARNING-PATH.md`;
 
   return (
@@ -200,26 +240,38 @@ export function HomePage({
             <p className="hero-body">{t.hero.body}</p>
             <div className="hero-actions">
               <AppLink className="button primary" href="/docs">
-                {t.hero.learn} <span aria-hidden="true">→</span>
+                {t.hero.learn}{" "}
+                <span aria-hidden="true">
+                  <Icon name="arrow" />
+                </span>
               </AppLink>
               <AppLink className="button secondary" href={github} target="_blank" rel="noreferrer">
-                {t.hero.source} <span aria-hidden="true">↗</span>
+                {t.hero.source}{" "}
+                <span aria-hidden="true">
+                  <Icon name="external" />
+                </span>
               </AppLink>
             </div>
             <p className="hero-note">{t.hero.note}</p>
           </div>
           <div className="hero-visual">
             <div className="tape">BASIC PLUS</div>
-            <CodeWorkbench />
-            <div className="brick">
+            <CodeWorkbench locale={locale} />
+            <div className="brick" aria-hidden="true">
               <div className="brick-screen">
                 <span>EV3</span>
-                <i>●</i>
+                <i />
               </div>
               <div className="brick-controls">
-                <b>◁</b>
-                <b>△</b>
-                <b>▷</b>
+                <b>
+                  <Icon name="chevron-left" />
+                </b>
+                <b>
+                  <Icon name="chevron-up" />
+                </b>
+                <b>
+                  <Icon name="chevron-right" />
+                </b>
               </div>
               <div className="brick-ports">
                 <span />
@@ -231,7 +283,10 @@ export function HomePage({
           </div>
         </section>
 
-        <section className="proof" aria-label="Kobrixa workflow summary">
+        <section
+          className="proof"
+          aria-label={locale === "zh-TW" ? "Kobrixa 工作流程" : "Kobrixa workflow summary"}
+        >
           {t.proof.map((item, index) => (
             <div key={item}>
               <span>0{index + 1}</span>
@@ -247,7 +302,7 @@ export function HomePage({
           </p>
           <h2>{t.features.title}</h2>
           <AppLink className="text-link" href="/features">
-            {locale === "zh-TW" ? "探索全部功能 →" : "Explore all features →"}
+            {locale === "zh-TW" ? "探索全部功能" : "Explore all features"} <Icon name="arrow" />
           </AppLink>
           <div className="feature-grid">
             {t.features.cards.map(([title, body, href], index) => (
@@ -257,7 +312,7 @@ export function HomePage({
                 <p>{body}</p>
                 {href && (
                   <AppLink className="feature-diagnostics-link" href={href}>
-                    {locale === "zh-TW" ? "查閱錯誤索引 →" : "Browse the diagnostic index →"}
+                    {locale === "zh-TW" ? "了解更多" : "Learn more"} <Icon name="arrow" />
                   </AppLink>
                 )}
               </article>
@@ -296,7 +351,10 @@ export function HomePage({
             <p>{t.learn.body}</p>
             <div className="learn-actions">
               <AppLink className="button primary" href={learnPath} target="_blank" rel="noreferrer">
-                {t.learn.path} <span aria-hidden="true">↗</span>
+                {t.learn.path}{" "}
+                <span aria-hidden="true">
+                  <Icon name="external" />
+                </span>
               </AppLink>
               <AppLink
                 className="text-link"
@@ -304,7 +362,10 @@ export function HomePage({
                 target="_blank"
                 rel="noreferrer"
               >
-                {t.learn.examples} <span aria-hidden="true">→</span>
+                {t.learn.examples}{" "}
+                <span aria-hidden="true">
+                  <Icon name="arrow" />
+                </span>
               </AppLink>
             </div>
           </div>
@@ -313,7 +374,9 @@ export function HomePage({
               <div className={`lesson lesson-${index + 1}`} key={card}>
                 <span>0{index + 1}</span>
                 <strong>{card}</strong>
-                <i aria-hidden="true">→</i>
+                <i aria-hidden="true">
+                  <Icon name="arrow" />
+                </i>
               </div>
             ))}
           </div>
@@ -334,7 +397,11 @@ export function HomePage({
             ].map(([platform, format]) => (
               <article className="platform-card" key={platform}>
                 <span className="platform-icon" aria-hidden="true">
-                  {platform === "Windows" ? "⊞" : platform === "macOS" ? "●" : "⌘"}
+                  <Icon
+                    name={
+                      platform === "Windows" ? "windows" : platform === "macOS" ? "mac" : "terminal"
+                    }
+                  />
                 </span>
                 <h3>{platform}</h3>
                 <span className="soon-label">{format}</span>
@@ -348,7 +415,9 @@ export function HomePage({
             </span>
             <AppLink className="text-link" href="/download">
               {locale === "zh-TW" ? "查看下載與安裝方式" : "View download & setup options"}{" "}
-              <span aria-hidden="true">↗</span>
+              <span aria-hidden="true">
+                <Icon name="external" />
+              </span>
             </AppLink>
           </div>
         </section>

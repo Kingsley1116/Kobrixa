@@ -1,3 +1,4 @@
+import { Icon } from "../../components/ui/icon.js";
 import { Select } from "../../components/ui/select.js";
 import { AppLink } from "../../components/app-link.js";
 import { useSearchParams } from "react-router";
@@ -1645,7 +1646,7 @@ function Copy({ value, locale }: { value: string; locale: DocsLocale }) {
   };
   return (
     <button className="copy-code" onClick={() => void action()}>
-      {done ? "✓" : "⧉"} {done ? c.copied : c.copy}
+      <Icon name={done ? "check" : "copy"} /> {done ? c.copied : c.copy}
     </button>
   );
 }
@@ -1667,7 +1668,9 @@ function Pager({
     <nav className="article-pager" aria-label="Reference pagination">
       {prev ? (
         <AppLink href={route(current - 1)}>
-          <span>← {c.previous}</span>
+          <span>
+            <Icon name="arrow-left" /> {c.previous}
+          </span>
           <strong>{prev.title[locale]}</strong>
         </AppLink>
       ) : (
@@ -1675,7 +1678,9 @@ function Pager({
       )}
       {next ? (
         <AppLink href={route(current + 1)}>
-          <span>{c.next} →</span>
+          <span>
+            {c.next} <Icon name="arrow" />
+          </span>
           <strong>{next.title[locale]}</strong>
         </AppLink>
       ) : (
@@ -1737,7 +1742,9 @@ function Index({ locale }: { locale: DocsLocale }) {
             >
               <h3>{entry.title[locale]}</h3>
               <p>{entry.body[locale]}</p>
-              <i>→</i>
+              <i>
+                <Icon name="arrow" />
+              </i>
             </AppLink>
           ))}
         </div>
@@ -1777,7 +1784,9 @@ function Index({ locale }: { locale: DocsLocale }) {
                 <span>{locale === "zh-TW" ? labels[op.category][0] : labels[op.category][1]}</span>
                 <strong>{op.name}</strong>
                 <code>{signature(op)}</code>
-                <i>→</i>
+                <i>
+                  <Icon name="arrow" />
+                </i>
               </AppLink>
             ))}
           </div>
@@ -1812,7 +1821,7 @@ function ApiDetail({
         <span>{operation.name}</span>
       </nav>
       <AppLink className="back-link" href="/docs/reference/basic-plus">
-        ← {c.back}
+        <Icon name="arrow-left" /> {c.back}
       </AppLink>
       <header className="reference-header" id="overview">
         <p className="eyebrow">
@@ -1883,10 +1892,10 @@ function ApiDetail({
               target="_blank"
               rel="noreferrer"
             >
-              {c.example} ↗
+              {c.example} <Icon name="external" />
             </AppLink>
             <AppLink href={clev3rHelpUrl(operation)} target="_blank" rel="noreferrer">
-              {c.clev3rHelp} ↗
+              {c.clev3rHelp} <Icon name="external" />
             </AppLink>
           </div>
         </section>
@@ -1916,7 +1925,7 @@ function SyntaxDetail({ locale, entry }: { locale: DocsLocale; entry: Syntax }) 
         <span>{entry.title[locale]}</span>
       </nav>
       <AppLink className="back-link" href="/docs/reference/basic-plus">
-        ← {c.back}
+        <Icon name="arrow-left" /> {c.back}
       </AppLink>
       <header className="reference-header" id="overview">
         <p className="eyebrow">
@@ -1967,7 +1976,7 @@ function Missing({ locale }: { locale: DocsLocale }) {
   return (
     <article className="reference-page detail-page">
       <AppLink className="back-link" href="/docs/reference/basic-plus">
-        ← {c.back}
+        <Icon name="arrow-left" /> {c.back}
       </AppLink>
       <h1>{c.missing}</h1>
     </article>

@@ -1,3 +1,4 @@
+import { Icon } from "./icon.js";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -192,7 +193,7 @@ export function Select({
                 }}
               >
                 <span>{option.label}</span>
-                <span aria-hidden="true">{option.value === value ? "✓" : ""}</span>
+                <span aria-hidden="true">{option.value === value && <Icon name="check" />}</span>
               </div>
             ))}
           </div>,

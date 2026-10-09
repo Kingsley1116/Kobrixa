@@ -16,6 +16,12 @@ import collaborationZh from "../../../../../docs/zh-TW/collaboration.md?raw";
 import languageSupportZh from "../../../../../docs/zh-TW/language-support.md?raw";
 import productZh from "../../../../../docs/zh-TW/product.md?raw";
 import roadmapZh from "../../../../../docs/zh-TW/roadmap.md?raw";
+import simulatorEn from "../../../../../docs/en/offline-preview.md?raw";
+import simulatorZh from "../../../../../docs/zh-TW/offline-preview.md?raw";
+import sensorLabEn from "../../../../../docs/en/sensor-lab.md?raw";
+import sensorLabZh from "../../../../../docs/zh-TW/sensor-lab.md?raw";
+import motorTestEn from "../../../../../docs/en/motor-test.md?raw";
+import motorTestZh from "../../../../../docs/zh-TW/motor-test.md?raw";
 import gettingReadyEn from "../../../../../docs/tutorials/en/00-getting-ready.md?raw";
 import firstProgramEn from "../../../../../docs/tutorials/en/01-first-program.md?raw";
 import valuesEn from "../../../../../docs/tutorials/en/02-values-and-logic.md?raw";
@@ -47,6 +53,9 @@ export type DocumentSlug =
   | "installation"
   | "keyboard-settings"
   | "collaboration"
+  | "offline-preview"
+  | "sensor-lab"
+  | "motor-test"
   | "code-signing"
   | "language-support"
   | "device-support"
@@ -233,12 +242,42 @@ export const documents: readonly DocumentEntry[] = [
   {
     slug: "collaboration",
     category: "product",
-    title: { "zh-TW": "雲端協作（開發中）", en: "Cloud collaboration (in development)" },
+    title: { "zh-TW": "雲端協作", en: "Cloud collaboration" },
     summary: {
-      "zh-TW": "以邀請碼多人即時共同編輯、角色、設備控制權、聊天與資料保存；功能仍在開發中。",
-      en: "Real-time co-editing by invite code, roles, device control, chat and data retention; still in development.",
+      "zh-TW": "邀請碼與選填密碼、共同編輯、聊天、房間恢復、本機變更處理與 EV3 控制權。",
+      en: "Invite codes and optional passwords, co-editing, chat, room recovery, local changes and EV3 control.",
     },
     content: { "zh-TW": collaborationZh, en: collaborationEn },
+  },
+  {
+    slug: "offline-preview",
+    category: "product",
+    title: { "zh-TW": "本地 WRO 模擬器", en: "Local WRO simulator" },
+    summary: {
+      "zh-TW": "離線試跑 Basic Plus、多機場景、感測器與變數檢視，以及物理模型的限制。",
+      en: "Run Basic Plus offline with multiple robots, inspect sensors and variables, and understand the physics limits.",
+    },
+    content: { "zh-TW": simulatorZh, en: simulatorEn },
+  },
+  {
+    slug: "sensor-lab",
+    category: "product",
+    title: { "zh-TW": "Sensor Lab 感測器實驗室", en: "Sensor Lab" },
+    summary: {
+      "zh-TW": "感測器曲線、實驗比較、CSV 匯出、兩點校正與 Basic Plus 程式範例。",
+      en: "Sensor charts, experiment comparisons, CSV export, two-point calibration and Basic Plus examples.",
+    },
+    content: { "zh-TW": sensorLabZh, en: sensorLabEn },
+  },
+  {
+    slug: "motor-test",
+    category: "product",
+    title: { "zh-TW": "馬達測試", en: "Motor testing" },
+    summary: {
+      "zh-TW": "不需程式即可點動、定時或按角度測試馬達，了解停止行為與復原流程。",
+      en: "Jog, timed and angle motor tests without writing code, with stop behavior and recovery guidance.",
+    },
+    content: { "zh-TW": motorTestZh, en: motorTestEn },
   },
   {
     slug: "language-support",

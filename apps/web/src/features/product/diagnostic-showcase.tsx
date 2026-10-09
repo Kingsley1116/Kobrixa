@@ -1,3 +1,4 @@
+import { Icon } from "../../components/ui/icon.js";
 import {
   DIAGNOSTIC_HELP,
   getDiagnosticHelp,
@@ -100,7 +101,7 @@ export function DiagnosticShowcase({ locale }: { locale: DiagnosticLocale }) {
             </pre>
           </div>
           <AppLink href={`/docs/diagnostics/${help.code}?lang=${locale}`}>
-            {t("閱讀這個錯誤的完整解說", "Read the full explanation")} →
+            {t("閱讀這個錯誤的完整解說", "Read the full explanation")} <Icon name="arrow" />
           </AppLink>
         </figure>
       </div>
@@ -123,13 +124,13 @@ export function DiagnosticShowcase({ locale }: { locale: DiagnosticLocale }) {
       </p>
       <div className="product-actions">
         <AppLink className="product-button primary" href={`/docs/diagnostics?lang=${locale}`}>
-          {t("查閱錯誤索引", "Browse the diagnostic index")} →
+          {t("查閱錯誤索引", "Browse the diagnostic index")} <Icon name="arrow" />
         </AppLink>
         <AppLink
           className="product-button secondary"
           href={`/docs/reference/keyboard-settings?lang=${locale}`}
         >
-          {t("查看操作與快捷鍵", "Explore controls and shortcuts")} →
+          {t("查看操作與快捷鍵", "Explore controls and shortcuts")} <Icon name="arrow" />
         </AppLink>
       </div>
     </section>

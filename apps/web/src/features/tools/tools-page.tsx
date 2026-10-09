@@ -1,9 +1,9 @@
+import { Icon } from "../../components/ui/icon.js";
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
 import { useEffect, useState } from "react";
 import { ImageTool } from "./components/image-tool.js";
 import { AudioTool } from "./components/audio-tool.js";
-import { Icon } from "./components/tools-ui.js";
 import "./tools.css";
 export function ToolsPage({
   locale,
@@ -72,7 +72,7 @@ export function ToolsPage({
                   document.getElementById(`tab-${next}`)?.focus();
                 }}
               >
-                <Icon name={key} />
+                <Icon name={key} size={22} />
                 <span>
                   {key === "image"
                     ? t("圖片工作室", "Image studio")
@@ -101,7 +101,9 @@ export function ToolsPage({
         </section>
         <div className="studio-footer">
           <span>KOBRIXA · {t("為 EV3 而做", "Made for EV3")}</span>
-          <AppLink href="/docs">{t("需要幫忙？閱讀文件", "Need a hand? Read the docs")} ↗</AppLink>
+          <AppLink href="/docs">
+            {t("需要幫忙？閱讀文件", "Need a hand? Read the docs")} <Icon name="external" />
+          </AppLink>
         </div>
       </main>
     </>

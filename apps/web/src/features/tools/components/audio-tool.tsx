@@ -1,3 +1,4 @@
+import { Icon } from "../../../components/ui/icon.js";
 import type { GalleryEditorProps } from "../../../shared/gallery.js";
 import { useEffect, useRef, useState } from "react";
 import { convertAudio, convertAudioSequence, demoAudio } from "../lib/media-browser.js";
@@ -351,7 +352,9 @@ export function AudioTool({
                       disabled={loading || !count}
                       onClick={() => void play("original")}
                     >
-                      <span aria-hidden="true">{playing === "original" ? "■" : "▶"}</span>
+                      <span aria-hidden="true">
+                        <Icon name={playing === "original" ? "stop" : "play"} />
+                      </span>
                       {t("原音選段", "Original selection")}
                     </button>
                     <button
@@ -359,7 +362,9 @@ export function AudioTool({
                       disabled={loading || !current || !valid}
                       onClick={() => void play("output")}
                     >
-                      <span aria-hidden="true">{playing === "output" ? "■" : "▶"}</span>
+                      <span aria-hidden="true">
+                        <Icon name={playing === "output" ? "stop" : "play"} />
+                      </span>
                       {t("EV3 輸出試聽", "EV3 output preview")}
                     </button>
                   </div>

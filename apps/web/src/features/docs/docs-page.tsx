@@ -1,3 +1,4 @@
+import { Icon } from "../../components/ui/icon.js";
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
 import { useEffect, useRef, useState } from "react";
@@ -143,8 +144,13 @@ function headingsFor(content: string): Heading[] {
 
 function normalizeDocLink(href: string | undefined): string | undefined {
   if (!href || href.startsWith("#") || /^(https?:|mailto:)/.test(href)) return href;
-  const match = /(?:\.\.\/)?(?:zh-TW|en)\/([a-z-]+)\.md(?:#(.*))?$/.exec(href);
-  if (!match) return href;
+  const repositoryPath = /^\.\.\/\.\.\/((?:examples|tests)\/[^#]*)(#.*)?$/.exec(href);
+  if (repositoryPath) {
+    const path = repositoryPath[1]!;
+    return `${github}/${path.endsWith("/") ? "tree" : "blob"}/main/${path}${repositoryPath[2] ?? ""}`;
+  }
+  const match = /^(?:(?:\.\.\/)?(?:zh-TW|en)\/)?([a-z-]+)\.md(?:#(.*))?$/.exec(href);
+  if (!match || !documents.some((document) => document.slug === match[1])) return href;
   const fragment = match[2] ? `#${match[2]}` : "";
   return `/docs/reference/${match[1]}${fragment}`;
 }
@@ -167,7 +173,7 @@ function MarkdownLink({
       {children}
       {external ? (
         <span className="external-mark" aria-hidden="true">
-          ↗
+          <Icon name="external" />
         </span>
       ) : null}
     </AppLink>
@@ -368,10 +374,16 @@ function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePa
           target="_blank"
           rel="noreferrer"
         >
-          {t.learningPath} <span aria-hidden="true">↗</span>
+          {t.learningPath}{" "}
+          <span aria-hidden="true">
+            <Icon name="external" />
+          </span>
         </AppLink>
         <AppLink href={`${github}/tree/main/examples`} target="_blank" rel="noreferrer">
-          {t.browseExamples} <span aria-hidden="true">↗</span>
+          {t.browseExamples}{" "}
+          <span aria-hidden="true">
+            <Icon name="external" />
+          </span>
         </AppLink>
       </section>
     </aside>
@@ -415,10 +427,12 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
             <h2>{t.ready}</h2>
             <p>
               {locale === "zh-TW"
-                ? "安裝 Kobrixa、連接一台 EV3，馬達測試前先架高輪子。"
-                : "Install Kobrixa, connect one EV3, and lift wheels before motor tests."}
+                ? "安裝 Kobrixa。可先使用本地模擬器，或連接 EV3；實機馬達測試前先架高輪子。"
+                : "Install Kobrixa. Start in the local simulator or connect an EV3; lift wheels before physical motor tests."}
             </p>
-            <AppLink href="/docs/tutorial/getting-ready">{first.title[locale]} →</AppLink>
+            <AppLink href="/docs/tutorial/getting-ready">
+              {first.title[locale]} <Icon name="arrow" />
+            </AppLink>
           </div>
           <div>
             <span>02</span>
@@ -428,7 +442,9 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
                 ? "使用 EV3 本體的顯示器與喇叭完成安全的第一次建置。"
                 : "Use the EV3 display and speaker for a safe first build."}
             </p>
-            <AppLink href="/docs/tutorial/first-program">{t.firstLesson} →</AppLink>
+            <AppLink href="/docs/tutorial/first-program">
+              {t.firstLesson} <Icon name="arrow" />
+            </AppLink>
           </div>
           <div>
             <span>03</span>
@@ -439,9 +455,33 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
                 : "If connection or upload fails, stop the program, reconnect, and use the recovery guide."}
             </p>
             <AppLink href="/docs/reference/installation">
-              {locale === "zh-TW" ? "安裝與復原 →" : "Installation and recovery →"}
+              {locale === "zh-TW" ? "安裝與復原" : "Installation and recovery"}{" "}
+              <Icon name="arrow" />
             </AppLink>
           </div>
+        </section>
+        <section
+          className="start-checklist product-guides"
+          aria-label={locale === "zh-TW" ? "探索目前功能" : "Explore current features"}
+        >
+          {[
+            { slug: "offline-preview", icon: "simulator" as const },
+            { slug: "collaboration", icon: "users" as const },
+            { slug: "sensor-lab", icon: "chart" as const },
+            { slug: "motor-test", icon: "device" as const },
+          ].map(({ slug, icon }) => {
+            const guide = findDocument(slug)!;
+            return (
+              <div key={slug}>
+                <Icon name={icon} size={24} />
+                <h2>{guide.title[locale]}</h2>
+                <p>{guide.summary[locale]}</p>
+                <AppLink href={`/docs/reference/${slug}`}>
+                  {locale === "zh-TW" ? "閱讀使用指南" : "Read the guide"} <Icon name="arrow" />
+                </AppLink>
+              </div>
+            );
+          })}
         </section>
         <section
           className="reference-entry diagnostic-entry"
@@ -461,13 +501,15 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
             </p>
             <div className="diagnostic-entry-links">
               <AppLink className="text-link" href={`/docs/diagnostics?lang=${locale}`}>
-                {locale === "zh-TW" ? "查閱錯誤索引 →" : "Browse the diagnostic index →"}
+                {locale === "zh-TW" ? "查閱錯誤索引" : "Browse the diagnostic index"}{" "}
+                <Icon name="arrow" />
               </AppLink>
               <AppLink
                 className="text-link"
                 href={`/docs/reference/keyboard-settings?lang=${locale}`}
               >
-                {locale === "zh-TW" ? "操作與快捷鍵 →" : "Controls and shortcuts →"}
+                {locale === "zh-TW" ? "操作與快捷鍵" : "Controls and shortcuts"}{" "}
+                <Icon name="arrow" />
               </AppLink>
             </div>
           </div>
@@ -486,7 +528,10 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
               </h2>
             </div>
             <AppLink className="button primary" href="/docs/tutorial">
-              {t.course} <span aria-hidden="true">→</span>
+              {t.course}{" "}
+              <span aria-hidden="true">
+                <Icon name="arrow" />
+              </span>
             </AppLink>
           </div>
           <ol>
@@ -498,7 +543,9 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
                     <strong>{lesson.title[locale]}</strong>
                     <p>{lesson.summary[locale]}</p>
                   </div>
-                  <i aria-hidden="true">→</i>
+                  <i aria-hidden="true">
+                    <Icon name="arrow" />
+                  </i>
                 </AppLink>
               </li>
             ))}
@@ -520,7 +567,7 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
             </p>
           </div>
           <AppLink className="text-link" href="/docs/reference/basic-plus">
-            {t.basicPlus} →
+            {t.basicPlus} <Icon name="arrow" />
           </AppLink>
         </section>
       </div>
@@ -545,7 +592,7 @@ function CopyCode({
   };
   return (
     <button className="copy-code" onClick={() => void copy()}>
-      {copied ? "✓" : "⧉"} {copied ? copiedLabel : label}
+      <Icon name={copied ? "check" : "copy"} /> {copied ? copiedLabel : label}
     </button>
   );
 }
@@ -593,7 +640,9 @@ function TutorialOverview({ locale }: { locale: DocsLocale }) {
               <small>
                 {t.hardware}: {lesson.hardware[locale]}
               </small>
-              <i aria-hidden="true">→</i>
+              <i aria-hidden="true">
+                <Icon name="arrow" />
+              </i>
             </AppLink>
           ))}
         </div>
@@ -631,7 +680,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
               target="_blank"
               rel="noreferrer"
             >
-              {t.example} ↗
+              {t.example} <Icon name="external" />
             </AppLink>
           </div>
         </header>
@@ -656,7 +705,9 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
         <nav className="article-pager" aria-label="Lesson pagination">
           {previous ? (
             <AppLink href={`/docs/tutorial/${previous.slug}`}>
-              <span>← {t.previous}</span>
+              <span>
+                <Icon name="arrow-left" /> {t.previous}
+              </span>
               <strong>{previous.title[locale]}</strong>
             </AppLink>
           ) : (
@@ -664,7 +715,9 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
           )}
           {next ? (
             <AppLink href={`/docs/tutorial/${next.slug}`}>
-              <span>{t.next} →</span>
+              <span>
+                {t.next} <Icon name="arrow" />
+              </span>
               <strong>{next.title[locale]}</strong>
             </AppLink>
           ) : (
@@ -750,7 +803,10 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
           <h1>{entry.title[locale]}</h1>
           <p>{entry.summary[locale]}</p>
           <AppLink className="source-link" href={source} target="_blank" rel="noreferrer">
-            {t.source} <span aria-hidden="true">↗</span>
+            {t.source}{" "}
+            <span aria-hidden="true">
+              <Icon name="external" />
+            </span>
           </AppLink>
         </header>
         <div className="article-content">
@@ -768,7 +824,9 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
         <nav className="article-pager" aria-label="Document pagination">
           {previous ? (
             <AppLink href={`/docs/reference/${previous.slug}`}>
-              <span>← {t.previous}</span>
+              <span>
+                <Icon name="arrow-left" /> {t.previous}
+              </span>
               <strong>{previous.title[locale]}</strong>
             </AppLink>
           ) : (
@@ -776,7 +834,9 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
           )}
           {next ? (
             <AppLink href={`/docs/reference/${next.slug}`}>
-              <span>{t.next} →</span>
+              <span>
+                {t.next} <Icon name="arrow" />
+              </span>
               <strong>{next.title[locale]}</strong>
             </AppLink>
           ) : (
@@ -814,7 +874,10 @@ function NotFound({ locale }: { locale: DocsLocale }) {
       <h1>{t.notFound}</h1>
       <p>{t.notFoundBody}</p>
       <AppLink className="button primary" href="/docs">
-        {t.backToDocs} <span aria-hidden="true">→</span>
+        {t.backToDocs}{" "}
+        <span aria-hidden="true">
+          <Icon name="arrow" />
+        </span>
       </AppLink>
     </main>
   );

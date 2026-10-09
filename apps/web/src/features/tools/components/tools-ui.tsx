@@ -1,37 +1,9 @@
+import { Icon } from "../../../components/ui/icon.js";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { validFileName } from "../lib/tools-state.js";
 import type { ExportState } from "../lib/tools-state.js";
 export type Translate = (zh: string, en: string) => string;
-export function Icon({
-  name = "image",
-}: {
-  name?: "image" | "audio" | "upload" | "check" | "arrow" | "download";
-}) {
-  const paths = {
-    image: "M4 4h16v16H4z M4 16l5-5 4 4 3-3 4 4 M14 8h.01",
-    audio: "M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4",
-    upload: "M12 16V3m-5 5 5-5 5 5 M4 15v6h16v-6",
-    check: "m5 12 4 4L19 6",
-    arrow: "M4 12h16m-6-6 6 6-6 6",
-    download: "M12 3v13m-5-5 5 5 5-5 M4 16v5h16v-5",
-  };
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d={paths[name]} />
-    </svg>
-  );
-}
 export function useBlobUrl(blob: Blob | undefined) {
   const [entry, setEntry] = useState<{ blob: Blob; url: string }>();
   useEffect(() => {
@@ -157,7 +129,7 @@ export function DropZone({
       }}
     >
       <span className="drop-icon">
-        <Icon name={name ? kind : "upload"} />
+        <Icon name={name ? kind : "upload"} size={22} />
       </span>
       <div className="drop-copy">
         <strong>{name ?? t("把素材拖到這裡", "Drop your file here")}</strong>
@@ -182,7 +154,10 @@ export function DropZone({
           {name ? t("替換檔案", "Replace file") : upload}
         </button>
         <button type="button" className="studio-text-button" onClick={onDemo}>
-          {t("試用範例", "Try a demo")} <span aria-hidden="true">↗</span>
+          {t("試用範例", "Try a demo")}{" "}
+          <span aria-hidden="true">
+            <Icon name="external" />
+          </span>
         </button>
       </div>
       <input
@@ -399,12 +374,12 @@ export function DownloadCard({
               aria-describedby={`${id}-status`}
               onClick={() => setDownloaded(true)}
             >
-              <Icon name="download" />
+              <Icon name="download" size={22} />
               {t("下載", "Download")} {extension.toUpperCase()}
             </a>
           ) : (
             <button className="studio-button primary" disabled aria-describedby={`${id}-status`}>
-              <Icon name="download" />
+              <Icon name="download" size={22} />
               {t("下載", "Download")} {extension.toUpperCase()}
             </button>
           )}
@@ -467,7 +442,7 @@ export function EmptyPreview({ kind, t }: { kind: "image" | "audio"; t: Translat
   return (
     <div className="studio-empty">
       <div className={`empty-art ${kind}`}>
-        <Icon name={kind} />
+        <Icon name={kind} size={22} />
         <span />
         <span />
         <span />
