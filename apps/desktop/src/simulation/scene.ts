@@ -5,10 +5,11 @@ import {
   SIMULATION_TICK_MS,
   type RobotConfig,
   type SimulationBall,
-  type SimulationDrive,
+  type SimulationRuleset,
   type SimulationScene,
   type SimulationWheel,
 } from "../shared/simulator.js";
+import { robotHardware } from "./robot-presets.js";
 
 /** International WRO Double Tennis 2026, millimetres; origin at mat bottom-left. */
 export const FIELD = {
@@ -85,34 +86,49 @@ export function rollMatchDuration(seed: number): number {
   return 60_000 + (1 + Math.floor(seededRandom(seed ^ 0x6d617463)() * 6)) * 10_000;
 }
 
-/** Robot-local +x forward, +y left. Gear ratio is motor turns per wheel turn. */
-export function createDriveWheels(drive: SimulationDrive): SimulationWheel[] {
-  const wheel = (
-    port: SimulationWheel["port"],
-    x: number,
-    y: number,
-    angle: number,
-  ): SimulationWheel => ({
-    port,
-    x,
-    y,
-    angle,
-    diameter: 56,
-    gearRatio: 1,
-    inverted: false,
-  });
-  if (drive === "differential") return [wheel("B", 0, 60, 0), wheel("C", 0, -60, 0)];
-  const count = drive === "omni3" ? 3 : 4;
-  return Array.from({ length: count }, (_, index) => {
-    const degrees = (index * 360) / count;
-    const angle = (degrees * Math.PI) / 180;
-    return wheel(
-      (["A", "B", "C", "D"] as const)[index]!,
-      Math.cos(angle) * 65,
-      Math.sin(angle) * 65,
-      degrees + 90,
-    );
-  });
+export { createDriveWheels } from "./robot-presets.js";
+
+/** Practice mat: same table as WRO, one black rounded-rectangle loop on white. */
+export const PRACTICE_FIELD = {
+  loop: { x: 400, y: 250, width: 1562, height: 643, radius: 200, lineWidth: 20 },
+  start: { x: 600, y: 250, heading: 0 },
+} as const;
+
+/** Unsigned distance in mm from a mat point to the practice loop's centre line. */
+export function practiceLineDistance(x: number, y: number): number {
+  const { loop } = PRACTICE_FIELD;
+  const halfX = loop.width / 2,
+    halfY = loop.height / 2;
+  const qx = Math.abs(x - (loop.x + halfX)) - (halfX - loop.radius);
+  const qy = Math.abs(y - (loop.y + halfY)) - (halfY - loop.radius);
+  const signed =
+    Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - loop.radius;
+  return Math.abs(signed);
+}
+
+export function createPracticeScene(entry = "src/main.bp"): SimulationScene {
+  return {
+    version: 1,
+    ruleset: "practice",
+    mode: "practice",
+    seed: 2026,
+    durationMs: 600_000,
+    balls: [],
+    robots: [
+      {
+        id: "A1",
+        name: "A1",
+        team: "A",
+        controller: { kind: "program", entry },
+        pose: { ...PRACTICE_FIELD.start },
+        ...robotHardware("driving-base"),
+      },
+    ],
+  };
+}
+
+export function createSceneForField(ruleset: SimulationRuleset, entry?: string): SimulationScene {
+  return ruleset === "practice" ? createPracticeScene(entry) : createDefaultScene(entry);
 }
 
 export function createDefaultScene(entry = "src/main.bp"): SimulationScene {
@@ -130,28 +146,7 @@ export function createDefaultScene(entry = "src/main.bp"): SimulationScene {
       team: start.team,
       controller: index === 0 ? { kind: "program", entry } : { kind: "disabled" },
       pose: { x: start.x, y: start.y, heading: start.heading },
-      drive: "differential",
-      width: 150,
-      length: 160,
-      mass: 1,
-      wheels: createDriveWheels("differential"),
-      sensors: [
-        { port: 1, kind: "color", x: 65, y: 0, angle: 0, range: 5, fov: 0 },
-        { port: 2, kind: "ultrasonic", x: 75, y: 0, angle: 0, range: 2550, fov: 30 },
-        { port: 3, kind: "gyro", x: 0, y: 0, angle: 0, range: 0, fov: 0 },
-        { port: 4, kind: "vision", x: 75, y: 0, angle: 0, range: 2500, fov: 120 },
-      ],
-      pusher: { width: 120, depth: 15 },
-      shooter: {
-        port: "D",
-        x: 95,
-        y: 0,
-        angle: 0,
-        elevation: 20,
-        stroke: 180,
-        speed: 1700,
-        range: 75,
-      },
+      ...robotHardware("wro"),
     })),
   };
 }
@@ -261,7 +256,7 @@ const robotSchema = z
 const sceneSchema = z
   .object({
     version: z.literal(1),
-    ruleset: z.literal("wro-double-tennis-2026"),
+    ruleset: z.enum(["practice", "wro-double-tennis-2026"]),
     mode: z.enum(["practice", "match"]),
     seed: finite.int().min(0).max(0xffff_ffff),
     durationMs: finite.int().min(10_000).max(600_000).multipleOf(10),
@@ -312,6 +307,13 @@ export function validateScene(value: unknown): SimulationScene {
     scene.balls.map((ball) => ball.id),
     "Ball IDs must be unique.",
   );
+  if (scene.ruleset === "practice") {
+    if (scene.robots.length !== 1)
+      throw new Error("The practice field supports exactly one robot.");
+    if (scene.robots[0]!.controller.kind === "builtin")
+      throw new Error("The practice field has no built-in opponents.");
+    if (scene.balls.length) throw new Error("The practice field has no balls.");
+  }
   for (const team of ["A", "B"] as const)
     if (scene.robots.filter((robot) => robot.team === team).length > 2)
       throw new Error("Each team supports at most two robots.");
