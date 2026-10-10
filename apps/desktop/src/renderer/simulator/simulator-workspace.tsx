@@ -388,7 +388,13 @@ export function SimulatorWorkspace({
               layers={layers}
               t={t}
             />
-            <LayersMenu t={t} locale={locale} layers={layers} onChange={setLayers} />
+            <LayersMenu
+              t={t}
+              locale={locale}
+              layers={layers}
+              practice={practice}
+              onChange={setLayers}
+            />
             {fieldEditable && <p className="sim-field-hint">{t.fieldHint}</p>}
           </div>
           <div className="sim-robots" role="group" aria-label={t.robots}>
