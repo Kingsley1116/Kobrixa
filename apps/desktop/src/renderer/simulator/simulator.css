@@ -67,7 +67,17 @@
   font-weight: 650;
   line-height: 1.35;
 }
-.sim-title span {
+.sim-title-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.sim-field-select {
+  flex: 0 0 auto;
+}
+.sim-title .sim-project {
+  min-width: 0;
   color: var(--muted);
   font-size: var(--font-small);
   overflow: hidden;
@@ -217,6 +227,46 @@
 .sim-save-message {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.sim-stale {
+  margin: 8px 10px 0;
+  color: var(--muted);
+  font-size: var(--font-small);
+  flex: 0 0 auto;
+}
+
+/* ── Port warning banner: advisory, never blocks a run ─────────── */
+.sim-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  margin: 8px 10px 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-left: 3px solid var(--warning);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  max-height: 130px;
+  overflow: auto;
+  flex: 0 0 auto;
+}
+.sim-warning strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--warning);
+}
+.sim-warning ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.sim-warning button {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  white-space: normal;
 }
 
 /* ── Error banner ──────────────────────────────────────────────── */
@@ -1005,14 +1055,26 @@
   .simulator-workspace[data-compact="true"] .sim-transport {
     gap: 10px 12px;
   }
-  .simulator-workspace[data-compact="true"] .sim-title,
+  /* Short panes use one row: field picker, run controls, then the end actions. */
+  .simulator-workspace[data-compact="true"] .sim-transport {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .simulator-workspace[data-compact="true"] .sim-title h2,
+  .simulator-workspace[data-compact="true"] .sim-title .sim-project,
   .simulator-workspace[data-compact="true"] .sim-transport-end .sim-label,
   .simulator-workspace[data-compact="true"] .sim-speed > span {
     display: none;
   }
-  .simulator-workspace[data-compact="true"] .sim-transport-controls {
+  .simulator-workspace[data-compact="true"] .sim-title {
     grid-column: 1;
     grid-row: 1;
+  }
+  .simulator-workspace[data-compact="true"] .sim-transport-controls {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .simulator-workspace[data-compact="true"] .sim-transport-end {
+    grid-column: 3;
   }
   .simulator-workspace[data-compact="true"] .sim-transport-end button {
     min-width: var(--sim-control-height);
@@ -1048,7 +1110,7 @@
   }
 }
 @container (max-width: 480px) {
-  .sim-title span {
+  .sim-title .sim-project {
     display: none;
   }
   .sim-transport {
@@ -1072,4 +1134,16 @@
   .sim-state[data-state="running"] i {
     animation: none;
   }
+}
+
+/* Robot setup: basic / advanced */
+.sim-port-sensors {
+  margin-top: 10px;
+}
+.sim-advanced > .sim-section {
+  padding: 12px 0 12px 12px;
+  border-bottom: 0;
+}
+.sim-advanced > .sim-section:first-of-type {
+  padding-top: 0;
 }

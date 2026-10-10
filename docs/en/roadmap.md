@@ -4,7 +4,7 @@
 
 The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Production signing credentials and the complete clean-machine/hardware acceptance matrix remain release gates.
 
-The candidate also includes the [local WRO simulator](offline-preview.md), [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Candidate.14 updates collaboration rooms, local-change handling and control requests. Automated tests for these candidate features do not replace physical EV3 acceptance.
+The candidate also includes the [local robot simulator](offline-preview.md), [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Candidate.14 updates collaboration rooms, local-change handling and control requests. Automated tests for these candidate features do not replace physical EV3 acceptance.
 
 ## Phase 0 — foundation in place
 

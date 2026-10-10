@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { SourceSpan } from "@kobrixa/ir";
-import type { PreparedSimulation, SimulationScene } from "../../shared/simulator.js";
+import type {
+  PreparedSimulation,
+  SimulationRuleset,
+  SimulationScene,
+} from "../../shared/simulator.js";
 import type { PreviewButton } from "../../preview/virtual-device.js";
-import { createDefaultScene, validateScene } from "../../simulation/scene.js";
+import { createDefaultScene, createSceneForField, validateScene } from "../../simulation/scene.js";
+import { Dialog, DialogActions } from "../components/dialog.js";
 import { Icon } from "../components/icon.js";
 import { TabList } from "../components/tab-list.js";
 import { EventsPanel } from "./events-panel.js";
@@ -25,6 +30,10 @@ export interface SimulatorWorkspaceProps {
   projectName: string;
   active?: boolean;
   blocked?: boolean;
+  /** Fingerprint of the project sources; a change marks a loaded program as stale. */
+  sourceRevision?: string;
+  /** The scene differs from its saved file, so replacing it would lose work. */
+  sceneDirty?: boolean;
   onSceneChange(scene: SimulationScene): void;
   onSave(scene: SimulationScene): void | Promise<void>;
   onPrepare(scene: SimulationScene): Promise<PreparedSimulation>;
@@ -40,6 +49,16 @@ const DEFAULT_LAYERS: FieldLayers = {
   collisions: true,
   restrictedZones: true,
 };
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const left = a as Record<string, unknown>,
+    right = b as Record<string, unknown>;
+  const keys = Object.keys(left).filter((key) => left[key] !== undefined),
+    other = Object.keys(right).filter((key) => right[key] !== undefined);
+  return keys.length === other.length && keys.every((key) => deepEqual(left[key], right[key]));
+}
 
 export function SimulatorWorkspace({
   scene,
@@ -48,6 +67,8 @@ export function SimulatorWorkspace({
   projectName,
   active = true,
   blocked = false,
+  sourceRevision,
+  sceneDirty = false,
   onSceneChange,
   onSave,
   onPrepare,
@@ -91,6 +112,7 @@ export function SimulatorWorkspace({
     return () => observer.disconnect();
   }, []);
   const [expanded, setExpanded] = useState(false);
+  const [pendingField, setPendingField] = useState<SimulationRuleset | null>(null);
   const showSource = onSource
     ? (span: SourceSpan) => {
         setExpanded(false);
@@ -100,9 +122,12 @@ export function SimulatorWorkspace({
   const snapshot = state.snapshot,
     debug = snapshot?.debug;
   const robot = scene.robots.find((robot) => robot.id === selected) ?? scene.robots[0];
-  const running = snapshot?.status === "running",
-    terminal = ["stopped", "completed", "error"].includes(snapshot?.status ?? "");
-  const editable = !blocked && !state.preparing && (!snapshot || snapshot.status === "ready");
+  const running = snapshot?.status === "running";
+  const practice = scene.ruleset === "practice";
+  // Setup stays editable; the controller resets a changed scene, so a run never sees half an edit.
+  const editable = !blocked;
+  // Dragging on the field during a live run would reset it by accident; pause first.
+  const fieldEditable = editable && !running;
   const release = () => {
     held.current.clear();
     setHeldButtons([]);
@@ -118,6 +143,12 @@ export function SimulatorWorkspace({
     if (!scene.robots.some((robot) => robot.id === selected))
       setSelected(scene.robots[0]?.id ?? "");
   }, [scene, controller, selected]);
+  useEffect(() => {
+    if (sourceRevision !== undefined) controller.setSourceRevision(sourceRevision);
+  }, [sourceRevision, controller]);
+  useEffect(() => {
+    if (practice && tab === "scene") setTab("setup");
+  }, [practice, tab]);
   useEffect(() => {
     controller.select(selected);
     return () => controller.send({ type: "buttons", robotId: selected, buttons: [] });
@@ -153,10 +184,30 @@ export function SimulatorWorkspace({
     controller.send({ type: "buttons", robotId: selected, buttons });
   };
   const change = (next: SimulationScene) => {
-    if (editable) {
-      setSaveMessage(null);
-      onSceneChange(next);
-    }
+    if (!editable) return;
+    const resets = (!!snapshot || state.preparing) && !deepEqual(next, scene);
+    if (resets) release();
+    setSaveMessage((message) =>
+      resets ? t.resetForSettings : message === t.resetForSettings ? message : null,
+    );
+    onSceneChange(next);
+  };
+  const fieldEntry = () => {
+    const program = scene.robots.find((robot) => robot.controller.kind === "program")?.controller;
+    return program?.kind === "program" ? program.entry : entries[0];
+  };
+  const applyField = (field: SimulationRuleset) => {
+    setPendingField(null);
+    setSaveMessage(null);
+    setSelectedBall(null);
+    release();
+    onSceneChange(createSceneForField(field, fieldEntry()));
+  };
+  const switchField = (field: SimulationRuleset) => {
+    if (blocked || field === scene.ruleset) return;
+    if (sceneDirty && !deepEqual(scene, createSceneForField(scene.ruleset, fieldEntry())))
+      setPendingField(field);
+    else applyField(field);
   };
   const save = async () => {
     setSaving(true);
@@ -179,12 +230,16 @@ export function SimulatorWorkspace({
       : undefined;
   const errorRobot = scene.robots.find((robot) => robot.id === runtimeError?.robotId);
   const errorSpan = runtimeError?.span;
-  const tabs = [
-    ["scene", t.scene],
-    ["setup", t.config],
-    ["inspect", t.inspector],
-    ["events", t.events],
-  ] as const;
+  const tabs = (
+    [
+      ["scene", t.scene],
+      ["setup", t.config],
+      ["inspect", t.inspector],
+      ["events", t.events],
+    ] as const
+  ).filter(([value]) => !practice || value !== "scene");
+  const warningRobots = [...new Set(state.warnings.map((warning) => warning.robotId))];
+  const robotName = (id: string) => scene.robots.find((robot) => robot.id === id)?.name || id;
   const eventCount = snapshot?.events.length ?? 0;
   // Keep the execution state separate from the program or built-in controller assignment.
   const robotStatus = (status: string | undefined, kind: string) => {
@@ -204,16 +259,17 @@ export function SimulatorWorkspace({
     >
       <TransportBar
         t={t}
+        locale={locale}
         projectName={projectName}
+        field={scene.ruleset}
+        onField={switchField}
         expanded={expanded}
         onExpand={() => setExpanded((value) => !value)}
         running={running}
         speed={speed}
         canStart={!blocked && !state.preparing && active}
-        canStep={!blocked && !running && !state.preparing && !terminal && !!snapshot}
-        canStop={!!snapshot || state.preparing}
+        canStep={!blocked && !running && !state.preparing && active}
         canReset={!blocked}
-        canRebuild={!blocked && !state.preparing}
         canSave={!blocked && !saving}
         onStart={() => {
           if (running) controller.pause();
@@ -222,19 +278,11 @@ export function SimulatorWorkspace({
             setTab("inspect");
           }
         }}
-        onStep={() => controller.send({ type: "step" })}
-        onStop={() => {
-          release();
-          controller.stop();
-        }}
+        onStep={() => controller.step()}
         onReset={() => {
           release();
           controller.reset();
           setTab("setup");
-        }}
-        onRebuild={() => {
-          release();
-          void controller.recompile();
         }}
         onSave={() => void save()}
         onSpeed={(value) => {
@@ -250,7 +298,43 @@ export function SimulatorWorkspace({
         failed={!!state.error}
         durationMs={scene.durationMs}
         saveMessage={saveMessage}
+        practice={practice}
       />
+      {state.stale && (
+        <p className="sim-stale" role="status">
+          {t.staleProgram}
+        </p>
+      )}
+      {state.warnings.length > 0 && (
+        <div className="sim-warning" role="status" data-testid="simulator-port-warnings">
+          <div>
+            <strong>{t.portWarningsTitle}</strong>
+            <ul>
+              {state.warnings.map((warning) => (
+                <li key={`${warning.robotId}-${warning.kind}-${warning.port}`}>
+                  {robotName(warning.robotId)}:{" "}
+                  {warning.kind === "motor"
+                    ? t.portMotorMissing(warning.port)
+                    : t.portSensorMissing(warning.port)}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {warningRobots.map((id) => (
+            <button
+              key={id}
+              type="button"
+              data-testid="simulator-open-setup"
+              onClick={() => {
+                selectRobot(id);
+                setTab("setup");
+              }}
+            >
+              {warningRobots.length > 1 ? `${t.openSetup} · ${robotName(id)}` : t.openSetup}
+            </button>
+          ))}
+        </div>
+      )}
       {(state.error || runtimeError) && (
         <div className="sim-error" role="alert">
           <div>
@@ -297,15 +381,21 @@ export function SimulatorWorkspace({
               onSelectRobot={selectRobot}
               onSelectBall={(id) => {
                 setSelectedBall(id);
-                if (id && editable) setTab("scene");
+                if (id && editable && !practice) setTab("scene");
               }}
               onSceneChange={change}
-              editable={editable}
+              editable={fieldEditable}
               layers={layers}
               t={t}
             />
-            <LayersMenu t={t} locale={locale} layers={layers} onChange={setLayers} />
-            {editable && <p className="sim-field-hint">{t.fieldHint}</p>}
+            <LayersMenu
+              t={t}
+              locale={locale}
+              layers={layers}
+              practice={practice}
+              onChange={setLayers}
+            />
+            {fieldEditable && <p className="sim-field-hint">{t.fieldHint}</p>}
           </div>
           <div className="sim-robots" role="group" aria-label={t.robots}>
             {scene.robots.map((robot) => {
@@ -373,7 +463,7 @@ export function SimulatorWorkspace({
             aria-labelledby={`sim-tab-${tab}`}
             className="sim-side-content"
           >
-            {tab === "scene" && (
+            {tab === "scene" && !practice && (
               <ScenePanel
                 t={t}
                 scene={scene}
@@ -389,35 +479,39 @@ export function SimulatorWorkspace({
                     <i aria-hidden="true" />
                     {robot.id}
                   </span>
-                  <button
-                    type="button"
-                    disabled={!editable || scene.robots.length >= 4}
-                    onClick={() => {
-                      const template = createDefaultScene(entries[0]).robots.find(
-                        (item) => !scene.robots.some((robot) => robot.id === item.id),
-                      );
-                      if (template) {
-                        change({ ...scene, robots: [...scene.robots, template] });
-                        setSelected(template.id);
-                      }
-                    }}
-                  >
-                    <Icon name="plus" />
-                    {t.addRobot}
-                  </button>
-                  <button
-                    type="button"
-                    className="sim-danger"
-                    disabled={!editable || scene.robots.length <= 1}
-                    onClick={() =>
-                      change({
-                        ...scene,
-                        robots: scene.robots.filter((item) => item.id !== selected),
-                      })
-                    }
-                  >
-                    {t.removeRobot}
-                  </button>
+                  {!practice && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={!editable || scene.robots.length >= 4}
+                        onClick={() => {
+                          const template = createDefaultScene(entries[0]).robots.find(
+                            (item) => !scene.robots.some((robot) => robot.id === item.id),
+                          );
+                          if (template) {
+                            change({ ...scene, robots: [...scene.robots, template] });
+                            setSelected(template.id);
+                          }
+                        }}
+                      >
+                        <Icon name="plus" />
+                        {t.addRobot}
+                      </button>
+                      <button
+                        type="button"
+                        className="sim-danger"
+                        disabled={!editable || scene.robots.length <= 1}
+                        onClick={() =>
+                          change({
+                            ...scene,
+                            robots: scene.robots.filter((item) => item.id !== selected),
+                          })
+                        }
+                      >
+                        {t.removeRobot}
+                      </button>
+                    </>
+                  )}
                 </div>
                 <RobotSettings
                   locale={locale}
@@ -453,6 +547,29 @@ export function SimulatorWorkspace({
           </div>
         </aside>
       </div>
+      {pendingField && (
+        <Dialog
+          role="alertdialog"
+          className="simulator-field-confirm"
+          title={t.switchFieldTitle}
+          intro={<p>{t.switchFieldBody}</p>}
+          onClose={() => setPendingField(null)}
+        >
+          <DialogActions>
+            <button type="button" data-modal-initial onClick={() => setPendingField(null)}>
+              {t.cancel}
+            </button>
+            <button
+              type="button"
+              className="danger"
+              data-testid="simulator-field-confirm-switch"
+              onClick={() => applyField(pendingField)}
+            >
+              {t.switchFieldConfirm}
+            </button>
+          </DialogActions>
+        </Dialog>
+      )}
     </section>
   );
 }

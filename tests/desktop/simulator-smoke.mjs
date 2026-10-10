@@ -57,7 +57,8 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   const checkComfortableControls = async () => {
     const layout = await js(`(() => {
       const font = (selector) => parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
-      const targets = [...document.querySelectorAll('.sim-transport button, .sim-tabs button, .sim-robot-settings input:not([type="checkbox"]), .sim-robot-settings .picker-trigger')];
+      // Collapsed Advanced setup keeps its controls in the DOM; only measure visible ones.
+      const targets = [...document.querySelectorAll('.sim-transport button, .sim-tabs button, .sim-robot-settings input:not([type="checkbox"]), .sim-robot-settings .picker-trigger')].filter((element) => element.getClientRects().length);
       return {
         bodyFont: font('.simulator-workspace'),
         labelFont: font('.sim-field-group'),
@@ -75,10 +76,14 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   };
   await checkComfortableControls();
   // Simulator controls share the workbench's keyboard and popup behavior.
-  await js("document.querySelector('#sim-tab-setup').focus()");
+  // A project without a scene opens on the practice mat, which has no Scene tab.
+  assert.equal(await js("Boolean(document.querySelector('#sim-tab-scene'))"), false);
+  await js("document.querySelector('#sim-tab-inspect').focus()");
   await key("Home");
-  await until("document.activeElement?.id==='sim-tab-scene'");
+  await until("document.activeElement?.id==='sim-tab-setup'");
   await key("ArrowRight");
+  await until("document.activeElement?.id==='sim-tab-inspect'");
+  await key("ArrowLeft");
   await until("document.activeElement?.id==='sim-tab-setup'");
   assert.equal(
     await js("document.querySelectorAll('.sim-tabs [role=tab][tabindex=\"0\"]').length"),
@@ -207,15 +212,21 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   );
   // Invalid source must fail preparation without resuming the previous successful program.
   await js('window.ed.setValue("If Then\\n")');
-  await click("simulator-recompile");
+  // Start notices the edited source and recompiles instead of resuming the old program.
+  await click("simulator-start");
   await until(state("error"));
   assert.match(
     await js("document.querySelector('.sim-error').textContent"),
     /main.bp|If|Expected/i,
   );
   await js(`window.ed.setValue(${JSON.stringify(source)})`);
-  await click("simulator-recompile");
-  await until(state("ready"));
+  // Step prepares the corrected program and advances one tick.
+  await click("simulator-step");
+  await until(state("paused"));
+  assert.equal(
+    await js("document.querySelector('[data-testid=simulator-status]').dataset.timeMs"),
+    "10",
+  );
   // Scene is a normal versioned project file and survives closing the panel.
   await click("simulator-save");
   await until(
@@ -245,6 +256,13 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   await pause(200);
   assert.equal(await js("document.documentElement.scrollWidth<=window.innerWidth"), true);
   await checkComfortableControls();
+  assert.equal(
+    await js(
+      "document.querySelector('[data-testid=simulator-field-select]').getClientRects().length>0",
+    ),
+    true,
+    "Short panes must keep the field picker reachable",
+  );
   assert.equal(
     await js(
       "(()=>{const body=document.querySelector('.sim-body').getBoundingClientRect();const field=document.querySelector('[data-testid=simulator-field]').getBoundingClientRect();return Math.min(body.bottom,field.bottom)-Math.max(body.top,field.top)>140})()",
@@ -279,6 +297,16 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   // Configure a Pixy2 through the shared Picker and run real I2C calls in the module Worker.
   win.setSize(1420, 900);
   await js('smoke.settingsStore.set("locale","en")');
+  // Pixy2 needs balls, so switch the saved practice scene to the WRO field.
+  await js(
+    "document.querySelector('[data-testid=simulator-field-select] .picker-trigger').click()",
+  );
+  await until("Boolean(document.querySelector('[data-picker-value=wro-double-tennis-2026]'))");
+  await js("document.querySelector('[data-picker-value=wro-double-tennis-2026]').click()");
+  await until("Boolean(document.querySelector('#sim-tab-scene'))");
+  assert.equal(await js("Boolean(document.querySelector('.simulator-field-confirm'))"), false);
+  await js("document.querySelector('#sim-tab-setup').click()");
+  await js("document.querySelector('.sim-advanced').open=true");
   await js(
     "Array.from(document.querySelectorAll('.sim-robot-settings summary')).find(summary=>summary.textContent.includes('Sensors')).click()",
   );
@@ -301,8 +329,6 @@ export async function checkSimulator({ js, until, pause, win, temporary, key, mo
   const pixySource =
     'block = Sensor.ReadI2CRegisters(4, 1, 80, 6)\nsignature = block[0]\nwidth = block[4]\nLCD.Clear()\nLCD.Text(1, 8, 8, 1, "Pixy2 " + signature)\nLCD.Update()\n';
   await js(`window.ed.setValue(${JSON.stringify(pixySource)})`);
-  await click("simulator-recompile");
-  await until(state("ready"));
   await click("simulator-start");
   await until("document.querySelector('.sim-readout dd')?.textContent==='completed'");
   assert.equal(await js("Boolean(document.querySelector('.sim-error'))"), false);
