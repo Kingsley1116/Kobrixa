@@ -1055,14 +1055,26 @@
   .simulator-workspace[data-compact="true"] .sim-transport {
     gap: 10px 12px;
   }
-  .simulator-workspace[data-compact="true"] .sim-title,
+  /* Short panes use one row: field picker, run controls, then the end actions. */
+  .simulator-workspace[data-compact="true"] .sim-transport {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .simulator-workspace[data-compact="true"] .sim-title h2,
+  .simulator-workspace[data-compact="true"] .sim-title .sim-project,
   .simulator-workspace[data-compact="true"] .sim-transport-end .sim-label,
   .simulator-workspace[data-compact="true"] .sim-speed > span {
     display: none;
   }
-  .simulator-workspace[data-compact="true"] .sim-transport-controls {
+  .simulator-workspace[data-compact="true"] .sim-title {
     grid-column: 1;
     grid-row: 1;
+  }
+  .simulator-workspace[data-compact="true"] .sim-transport-controls {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .simulator-workspace[data-compact="true"] .sim-transport-end {
+    grid-column: 3;
   }
   .simulator-workspace[data-compact="true"] .sim-transport-end button {
     min-width: var(--sim-control-height);
