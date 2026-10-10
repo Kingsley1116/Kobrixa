@@ -60,7 +60,7 @@ Desktop compilation runs in a dedicated worker, with progress and cooperative ca
 
 ### Local simulation and device experiments
 
-- [Local WRO simulator](offline-preview.md): run Basic Plus offline, configure multiple robots, and inspect sensors, LCD output, variables and source locations. Physics and sensors are approximate; this is not a native `.rbf` firmware emulator and does not replace hardware acceptance.
+- [Local robot simulator](offline-preview.md): run Basic Plus offline on a practice mat or the WRO field, configure robots, and inspect sensors, LCD output, variables and source locations. Physics and sensors are approximate; this is not a native `.rbf` firmware emulator and does not replace hardware acceptance.
 - [Sensor Lab](sensor-lab.md): record and compare sensor readings and motor counts, export CSV, apply two-point calibration and zeroing, and generate copyable Basic Plus examples.
 - [Motor testing](motor-test.md): use jog, timed and angle controls with results and stop status; physical acceptance remains separate.
 

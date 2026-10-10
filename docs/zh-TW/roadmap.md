@@ -4,7 +4,7 @@
 
 倉庫目前處於 v1 候選版階段。Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理，以及三平台安裝套件／壓縮包、Release 流程與自動更新均已實作。可下載版本以各個 GitHub Release 為準。正式簽章憑證與完整乾淨環境／實機矩陣仍是發布前須完成的項目。
 
-目前亦已提供[本地 WRO 模擬器](offline-preview.md)、[Sensor Lab](sensor-lab.md)、[馬達測試](motor-test.md)與[雲端協作](collaboration.md)。candidate.14 更新協作房間介面、本機變更處理與控制權請求流程。這些候選功能的自動化測試不取代實體 EV3 驗收。
+目前亦已提供[本地機器人模擬器](offline-preview.md)、[Sensor Lab](sensor-lab.md)、[馬達測試](motor-test.md)與[雲端協作](collaboration.md)。candidate.14 更新協作房間介面、本機變更處理與控制權請求流程。這些候選功能的自動化測試不取代實體 EV3 驗收。
 
 ## Phase 0 — 已建立的基礎
 

@@ -102,9 +102,11 @@ export interface SimulationBall {
   z: number;
   central?: boolean | undefined;
 }
+/** "practice" is a plain line-following mat with one robot and no match rules. */
+export type SimulationRuleset = "practice" | "wro-double-tennis-2026";
 export interface SimulationScene {
   version: 1;
-  ruleset: "wro-double-tennis-2026";
+  ruleset: SimulationRuleset;
   mode: "practice" | "match";
   seed: number;
   durationMs: number;
@@ -118,6 +120,13 @@ export interface PreparedSimulation {
 export type SimulationPrepareResult =
   | { success: true; prepared: PreparedSimulation; diagnostics: Diagnostic[] }
   | { success: false; diagnostics: Diagnostic[] };
+/** A literal port the program uses that the simulated robot has no hardware on. */
+export interface PortWarning {
+  robotId: string;
+  kind: "motor" | "sensor";
+  port: string;
+  span?: SourceSpan;
+}
 export interface SimulationEvent {
   id: number;
   timeMs: number;
