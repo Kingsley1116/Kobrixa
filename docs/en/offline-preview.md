@@ -4,44 +4,70 @@ Open a Basic Plus project and choose **Local simulator**, or press **Alt+F5**. T
 
 **Expand workspace** hides the editor and gives the simulator the full work area. **Show editor** restores the split view without restarting the simulation. Source links also restore the editor automatically. Controls retain their size in smaller windows; settings remain scrollable.
 
-The default scene uses the WRO Double Tennis 2026 mat, with your project controlling robot A1. The other three robots are initially disabled. Choose **Match** to activate disabled robots as built-in opponents; any robots already assigned project programs keep those assignments. You can assign a different project-relative `.bp` entry to each robot.
+The **Field** picker in the toolbar chooses **Practice mat** or **WRO Double Tennis 2026**. A project without `kobrixa.simulator.json` starts on the practice mat with one robot controlled by your project. Switching fields replaces the scene with the other field's default scene; if the current scene has unsaved changes, the simulator asks for confirmation first.
+
+On the WRO Double Tennis 2026 field, your project controls robot A1 and the other three robots are initially disabled. Choose **Match** to activate disabled robots as built-in opponents; any robots already assigned project programs keep those assignments. You can assign a different project-relative `.bp` entry to each robot.
 
 ## Run and inspect
 
-- **Start / Pause** runs or pauses the world. The first start saves and compiles the assigned project programs. A failed preparation shows diagnostics and cannot run an older compilation.
-- **Recompile** refreshes program and resource snapshots and returns to setup. Use it after editing code. The editor remains available beside the simulator.
-- **World step** advances the prepared world by 10 milliseconds, including every robot, physics, sensors and program scheduling. First recompile to prepare a scene without starting it. This is a world-time step, not a source-code step.
-- **Stop** ends the run. **Reset scene** restores the compiled scene, original ball positions, program state and resource files. Reset before changing setup.
+- **Start / Pause** runs or pauses the world. Start saves and compiles automatically when the open program or project resources changed since the last compile, or when the last run ended; otherwise it resumes the paused run. A failed preparation shows diagnostics and cannot run an older compilation.
+- **Step (10 ms)** advances the whole world by 10 milliseconds, including every robot, physics, sensors and program scheduling. From setup it prepares the scene first, compiling if needed. This is a world-time step, not a source-code step.
+- **Reset** stops the run and returns to the initial scene: original robot and ball positions, program state and resource files. The next Start compiles fresh.
 - **Speed** selects 0.25×, 0.5×, 1×, 2× or 4× wall-clock playback. The physics timestep stays fixed.
 - **Save scene** stores `kobrixa.simulator.json` in the project. It uses the normal editor save and conflict handling. Scene files contain setup, not live execution state. Closing the scene JSON editor tab also closes its live simulator view, so discarded scene edits cannot keep an older scene running.
+
+The editor remains available beside the simulator. If you edit the code after compiling, the simulator shows “Program changed — press Start to run the new version.” The running program is not replaced until the next compile.
 
 Select a robot on the field, in its metric card, or in the robot selector. **Live inspector** shows its LCD, button pad, motor speed/count, sensor readings, current source location, call stack and variables. Source links focus the editor. Array and variable previews are bounded and explicitly identified when shortened; the interpreter retains complete program data. Nonfinite numbers remain visible as `NaN`, `Infinity` and `-Infinity`.
 
 Each robot card shows its assigned `.bp` filename or built-in difficulty separately from its execution status. Hover over a program name for the full project-relative entry. These assignments come from the current simulator scene; opening a source file in the editor does not change which program a robot runs.
 
-Hold EV3 buttons with the pointer or Space/Enter while focused. Arrow keys and Backspace also work in the pad. Losing focus releases held buttons. Hiding the simulator or application pauses the world; unmounting the workspace terminates its worker. Resuming requires Start. Stopping, closing, hiding or replacing a scene during compilation cancels its pending preparation; a late result cannot start a discarded run.
+Hold EV3 buttons with the pointer or Space/Enter while focused. Arrow keys and Backspace also work in the pad. Losing focus releases held buttons. Hiding the simulator or application pauses the world; unmounting the workspace terminates its worker. Resuming requires Start. Resetting, closing, hiding or replacing a scene during compilation cancels its pending preparation; a late result cannot start a discarded run.
 
 Trails, sensor rays, headings, collision hints and restricted zones can be toggled independently. Collision hints mark robots with contact events in the last simulated second. If any robot program fails, the top alert shows its identity, error and source location; the source action selects that robot and opens its code.
 
 ## Scene setup
 
-Drag robots and balls before running, or edit numeric positions. Drag empty field space to pan; use the wheel, +/− controls or Fit field to zoom. Coordinates are millimetres from the mat’s bottom-left corner; +X points right and +Y points up. Headings are counterclockwise degrees from +X. Robot-local +X is forward and +Y is left.
+Setup is always editable. Changing setup while the scene is running or paused resets it and shows “Scene reset to apply the new setup.”
 
-**Apply seed** recreates the ball arrangement and match duration for the displayed seed. **New seed & balls** advances the seed and generates a new arrangement. Saving the scene or resetting the prepared run lets you reproduce the same setup. You can also place balls manually.
+Drag robots and balls, or edit numeric positions. Drag empty field space to pan; use the wheel, +/− controls or Fit field to zoom. Coordinates are millimetres from the mat’s bottom-left corner; +X points right and +Y points up. Headings are counterclockwise degrees from +X. Robot-local +X is forward and +Y is left.
 
-Robot settings include:
+On the WRO field, **Apply seed** recreates the ball arrangement and match duration for the displayed seed. **New seed & balls** advances the seed and generates a new arrangement. Saving the scene or resetting the run lets you reproduce the same setup. You can also place balls manually.
 
-- Team and controller: a project entry, a built-in opponent (Easy, Standard or Hard), or disabled.
-- Differential, three-wheel omni or four-wheel omni drive; wheel motor ports, locations, rolling angles, diameter, motor-turns-per-wheel-turn gear ratio and reversed direction.
-- Body dimensions, mass, start pose, pusher size and depth.
-- Sensor ports and type, mounting position, angle, range and field of view.
-- A shooter with its own motor port, mounting pose, firing elevation, motor stroke, launch speed and pickup range. Four-wheel drive uses A–D and therefore disables the shooter.
+**Robot setup** is split into two parts:
 
-Invalid or conflicting ports, impossible wheel geometry, duplicate robot names and out-of-range values are reported before starting. A team has at most two robots; the scene has at most four.
+- **Basics**: **Robot preset**, **Controller** (a project entry, a built-in opponent — Easy, Standard or Hard — or disabled), **Left motor** and **Right motor** ports, and the sensor kind on each of ports 1–4.
+- **Advanced** (collapsed by default):
+  - Name, team and start position (X, Y and heading).
+  - Body dimensions and mass.
+  - Differential, three-wheel omni or four-wheel omni drive; wheel motor ports, locations, rolling angles, diameter, motor-turns-per-wheel-turn gear ratio, reversed direction and wheel collision behavior.
+  - Sensor mounting position, angle, range and field of view.
+  - Pusher size and depth.
+  - A shooter with its own motor port, mounting pose, firing elevation, motor stroke, launch speed and pickup range. Four-wheel drive uses A–D and therefore disables the shooter.
+
+Invalid or conflicting ports, impossible wheel geometry, duplicate robot names and out-of-range values are reported before starting. On the WRO field a team has at most two robots and the scene has at most four.
+
+### Robot presets and port warnings
+
+**Robot preset** fills in the robot's hardware in one step; its name, controller and start position stay unchanged.
+
+| Preset                       | Hardware                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Driving Base (Education)** | The LEGO Education core set driving base: large motors on B (left) and C (right); touch on port 1, gyro 2, color 3 and ultrasonic 4. |
+| **WRO default robot**        | The robot used by the default WRO Double Tennis scene.                                                                               |
+| **Custom**                   | Appears automatically after any change away from a preset.                                                                           |
+
+After compiling, the simulator compares motor letters and sensor port numbers written as literals in the program with the robot's setup. A mismatch, such as driving motor A on a robot without a wheel or shooter on A, or reading sensor port 4 when no sensor is configured there, shows a warning with **Open robot setup**. The warning does not block running. Ports held in variables are not checked.
+
+## Practice mat
+
+The practice mat uses the same 2,362 × 1,143 mm table as the WRO field: a white surface with walls and a 20 mm black line forming a rounded-rectangle loop. The line's centre runs from x 400 to 1,962 mm and y 250 to 893 mm, with a 200 mm corner radius, so the color sensor can follow it for line-tracking practice.
+
+The scene has exactly one robot, controlled by your project. It starts on the lower straight of the loop at (600, 250) facing +X and uses the **Driving Base (Education)** preset. There are no balls, scores, seeds, match timer, opponents, ramps, barrier, centre-line or red-zone rules. Any part of the robot leaving the mat still pauses the simulation and logs a violation. The scene file stores the field as `ruleset: "practice"`; WRO scenes use `"wro-double-tennis-2026"`, and scene files saved before the practice mat existed load as WRO.
 
 ## Built-in opponents
 
-A built-in opponent plays by the same information a project program has: its own mounted sensors and motor encoders, plus the published mat layout and its own robot setup. It never reads other robots' or balls' true positions.
+A built-in opponent plays by the same information a project program has: its own mounted sensors and motor encoders, plus the published mat layout and its own robot setup. It never reads other robots' or balls' true positions. Built-in opponents are available on the WRO field only.
 
 - It tracks its own position from wheel encoders and the gyro, respecting the gyro's reversed-direction setting before applying the initial heading and team coordinate conversion. It corrects drift when its color sensor crosses printed lines or ramp color bands. It keeps a turning-radius margin from the centre line and its red ramp band, so it does not cross into the opponent half.
 - It looks for orange balls in its own half, remembers ones that drop out of view, and leaves purple balls in its half alone (each is worth −2 to that side). It prefers an installed `KOBRIXA-VISION` sensor; otherwise it reads Pixy2 color blocks through the same I2C API available to programs and estimates bearing and distance from the camera geometry, block size and ball diameter. It will not fire when a purple ball is in its shooter's reach.
@@ -97,7 +123,9 @@ Local Mailbox operations communicate between named robots on the same team. Send
 
 ## Match and physics scope
 
-The mat is 2,362 × 1,143 mm. The scene includes the printed lines, walls, central barrier, ramps, ten side balls and the central orange ball. Differential and omni wheel geometry converts motor motion into robot movement. Bodies and balls collide; pushers move balls; shooters create a simplified vertical trajectory alongside the 2D rigid-body simulation.
+Match rules, balls and ramps apply to the WRO Double Tennis 2026 field only; the practice mat uses the same robot physics and sensors without them.
+
+The WRO mat is 2,362 × 1,143 mm. The scene includes the printed lines, walls, central barrier, ramps, ten side balls and the central orange ball. Differential and omni wheel geometry converts motor motion into robot movement. Bodies and balls collide; pushers move balls; shooters create a simplified vertical trajectory alongside the 2D rigid-body simulation.
 
 Each ramp is a solid wedge with a 300 × 563 mm footprint, rising from 0 to 50 mm across its 300 mm width. The court shows uphill arrows, height labels and a heavy line at the high vertical end. Robots and balls can climb the low entrance; the raised side and high-end faces obstruct entry below their surface height. Airborne balls clear the wedge only when high enough, and the solid ramp can occlude distance and vision sensors. The model tracks a simplified robot base elevation; it does not pitch or tilt the chassis, simulate suspension, or calculate motor load on the slope. The court remains a top-down view, and its height shading does not change the collision footprint.
 
