@@ -1,7 +1,8 @@
-import { SIMULATION_SPEEDS } from "../../shared/simulator.js";
+import { SIMULATION_SPEEDS, type SimulationRuleset } from "../../shared/simulator.js";
 import { Icon } from "../components/icon.js";
+import { Picker } from "../components/picker.js";
 import { Segmented } from "../components/segmented.js";
-import type { SimulatorCopy } from "./simulator-copy.js";
+import type { SimulatorCopy, SimulatorLocale } from "./simulator-copy.js";
 
 function ToolButton({
   icon,
@@ -39,43 +40,41 @@ function ToolButton({
 
 export function TransportBar({
   t,
+  locale,
   projectName,
+  field,
+  onField,
   expanded,
   onExpand,
   running,
   speed,
   canStart,
   canStep,
-  canStop,
   canReset,
-  canRebuild,
   canSave,
   onStart,
   onStep,
-  onStop,
   onReset,
-  onRebuild,
   onSave,
   onSpeed,
   onClose,
 }: {
   t: SimulatorCopy;
+  locale: SimulatorLocale;
   projectName: string;
+  field: SimulationRuleset;
+  onField(field: SimulationRuleset): void;
   expanded: boolean;
   onExpand(): void;
   running: boolean;
   speed: number;
   canStart: boolean;
   canStep: boolean;
-  canStop: boolean;
   canReset: boolean;
-  canRebuild: boolean;
   canSave: boolean;
   onStart(): void;
   onStep(): void;
-  onStop(): void;
   onReset(): void;
-  onRebuild(): void;
   onSave(): void;
   onSpeed(value: number): void;
   onClose(): void;
@@ -84,7 +83,23 @@ export function TransportBar({
     <header className="sim-transport">
       <div className="sim-title">
         <h2>{t.title}</h2>
-        <span title={projectName}>{projectName} · WRO Double Tennis 2026</span>
+        <div className="sim-title-meta">
+          <span className="sim-project" title={projectName}>
+            {projectName}
+          </span>
+          <div className="sim-field-select" data-testid="simulator-field-select">
+            <Picker<SimulationRuleset>
+              locale={locale}
+              label={t.fieldLabel}
+              options={[
+                { value: "practice", label: t.fieldPractice },
+                { value: "wro-double-tennis-2026", label: t.fieldWro },
+              ]}
+              value={field}
+              onChange={onField}
+            />
+          </div>
+        </div>
       </div>
       <div className="sim-transport-controls">
         <div className="sim-transport-group" role="group" aria-label={t.status}>
@@ -102,13 +117,6 @@ export function TransportBar({
             testId="simulator-step"
             disabled={!canStep}
             onClick={onStep}
-          />
-          <ToolButton
-            icon="stop"
-            label={t.stop}
-            testId="simulator-stop"
-            disabled={!canStop}
-            onClick={onStop}
           />
           <ToolButton
             icon="reset"
@@ -129,13 +137,6 @@ export function TransportBar({
         </div>
       </div>
       <div className="sim-transport-group sim-transport-end">
-        <ToolButton
-          icon="rebuild"
-          label={t.rebuild}
-          testId="simulator-recompile"
-          disabled={!canRebuild}
-          onClick={onRebuild}
-        />
         <ToolButton
           icon="save"
           label={t.save}

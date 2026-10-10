@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import type { IRInstruction, KobrixaIR } from "@kobrixa/ir";
 import type {
   PreparedSimulation,
   SimulationCommand,
   SimulationResponse,
 } from "../../shared/simulator.js";
-import { createDefaultScene } from "../../simulation/scene.js";
+import { createDefaultScene, createPracticeScene } from "../../simulation/scene.js";
 import { SimulatorController, type SimulatorWorker } from "./simulator-controller.js";
 
 class WorkerStub implements SimulatorWorker {
@@ -28,6 +29,12 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const prepared: PreparedSimulation = { programs: {} };
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+function loaded(worker: WorkerStub, status: "ready" | "paused" | "running") {
+  worker.onmessage?.({
+    data: { type: "snapshot", snapshot: { status, timeMs: 0, robots: [], events: [] } },
+  } as unknown as MessageEvent<SimulationResponse>);
+}
 
 describe("simulator compilation and worker lifecycle", () => {
   it("discards a preparation result after scene changes and compiles the new immutable scene", async () => {
@@ -42,13 +49,13 @@ describe("simulator compilation and worker lifecycle", () => {
       };
     const scene = createDefaultScene(),
       controller = new SimulatorController(scene, prepare, create);
-    const pending = controller.recompile(true);
+    const pending = controller.recompile("run");
     const changed = { ...scene, seed: 42 };
     controller.setScene(changed);
     first.resolve(prepared);
     await pending;
     expect(workers).toHaveLength(0);
-    const next = controller.recompile(true);
+    const next = controller.recompile("run");
     second.resolve(prepared);
     await next;
     expect(workers).toHaveLength(1);
@@ -68,7 +75,7 @@ describe("simulator compilation and worker lifecycle", () => {
     const factory = vi.fn(() => worker),
       controller = new SimulatorController(createDefaultScene(), prepare, factory);
     await controller.recompile();
-    await controller.recompile(true);
+    await controller.recompile("run");
     expect(worker.terminated).toBe(true);
     expect(controller.getSnapshot()).toMatchObject({
       error: "compile failed",
@@ -80,7 +87,7 @@ describe("simulator compilation and worker lifecycle", () => {
     controller.dispose();
   });
 
-  it.each(["pause", "stop", "reset", "hidden", "dispose", "scene"] as const)(
+  it.each(["pause", "reset", "hidden", "dispose", "scene"] as const)(
     "ignores late compilation after %s",
     async (action) => {
       const pending = deferred<PreparedSimulation>(),
@@ -92,7 +99,7 @@ describe("simulator compilation and worker lifecycle", () => {
         factory,
         cancel,
       );
-      const work = controller.recompile(true);
+      const work = controller.recompile("run");
       if (action === "hidden") controller.setActive(false);
       else if (action === "scene") controller.setScene({ ...createDefaultScene(), seed: 123 });
       else controller[action]();
@@ -112,7 +119,7 @@ describe("simulator compilation and worker lifecycle", () => {
     const prepare = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const factory = vi.fn(() => new WorkerStub());
     const controller = new SimulatorController(createDefaultScene(), prepare, factory, cancel);
-    const old = controller.recompile(true);
+    const old = controller.recompile("run");
     const current = controller.recompile();
     expect(cancel).toHaveBeenCalledOnce();
     first.resolve(prepared);
@@ -121,7 +128,7 @@ describe("simulator compilation and worker lifecycle", () => {
     second.resolve(prepared);
     await current;
     controller.pause();
-    controller.stop();
+    controller.reset();
     controller.setScene({ ...createDefaultScene(), seed: 888 });
     controller.dispose();
     expect(cancel).toHaveBeenCalledOnce();
@@ -141,7 +148,7 @@ describe("simulator compilation and worker lifecycle", () => {
       );
     controller.select("A1");
     controller.setSpeed(2);
-    await controller.recompile(true);
+    await controller.recompile("run");
     controller.setActive(false);
     expect(workers[0]!.commands.slice(-2)).toEqual([
       { type: "pause" },
@@ -156,6 +163,131 @@ describe("simulator compilation and worker lifecycle", () => {
     } as MessageEvent<SimulationResponse>);
     expect(controller.getSnapshot().error).toBeNull();
     expect(workers[1]!.commands).toContainEqual({ type: "speed", value: 2 });
+    controller.dispose();
+  });
+
+  it("resumes a current program but rebuilds when the sources changed", async () => {
+    const workers: WorkerStub[] = [],
+      prepare = vi.fn(async () => prepared);
+    const controller = new SimulatorController(createDefaultScene(), prepare, () => {
+      const worker = new WorkerStub();
+      workers.push(worker);
+      return worker;
+    });
+    controller.setSourceRevision("r1");
+    await controller.recompile();
+    loaded(workers[0]!, "paused");
+    expect(controller.getSnapshot().stale).toBe(false);
+    controller.start();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(workers[0]!.commands.at(-1)).toEqual({ type: "run" });
+    controller.pause();
+    controller.setSourceRevision("r2");
+    expect(controller.getSnapshot().stale).toBe(true);
+    controller.start();
+    await flush();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(workers[0]!.terminated).toBe(true);
+    expect(workers[1]!.commands.at(-1)).toEqual({ type: "run" });
+    loaded(workers[1]!, "running");
+    expect(controller.getSnapshot().stale).toBe(false);
+    controller.dispose();
+  });
+
+  it("prepares before the first step and steps a loaded program directly", async () => {
+    const workers: WorkerStub[] = [],
+      prepare = vi.fn(async () => prepared);
+    const controller = new SimulatorController(createDefaultScene(), prepare, () => {
+      const worker = new WorkerStub();
+      workers.push(worker);
+      return worker;
+    });
+    controller.step();
+    await flush();
+    expect(workers[0]!.commands.at(-1)).toEqual({ type: "step" });
+    loaded(workers[0]!, "paused");
+    controller.step();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(workers[0]!.commands.filter((command) => command.type === "step")).toHaveLength(2);
+    controller.dispose();
+  });
+
+  it("reset discards the worker so the next Start builds afresh", async () => {
+    const workers: WorkerStub[] = [],
+      prepare = vi.fn(async () => prepared);
+    const controller = new SimulatorController(createDefaultScene(), prepare, () => {
+      const worker = new WorkerStub();
+      workers.push(worker);
+      return worker;
+    });
+    await controller.recompile("run");
+    loaded(workers[0]!, "running");
+    controller.reset();
+    expect(workers[0]!.terminated).toBe(true);
+    expect(controller.getSnapshot()).toMatchObject({
+      snapshot: null,
+      error: null,
+      stale: false,
+      warnings: [],
+    });
+    controller.start();
+    await flush();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(workers).toHaveLength(2);
+    controller.dispose();
+  });
+
+  it("reports ports the program uses that the robot lacks", async () => {
+    const scene = createPracticeScene("src/main.bp");
+    const span = {
+      file: "src/main.bp",
+      start: { line: 2, column: 1, offset: 0 },
+      end: { line: 2, column: 2, offset: 1 },
+    };
+    const ir: KobrixaIR = {
+      version: 1,
+      program: { name: "main", entryFunction: "main" },
+      globals: [],
+      functions: [
+        {
+          name: "main",
+          parameters: [],
+          returnType: { kind: "void" },
+          locals: [],
+          entryBlock: "entry",
+          blocks: [
+            {
+              id: "entry",
+              instructions: [
+                {
+                  op: "ev3-call",
+                  operation: "Motor.Start",
+                  args: [
+                    { kind: "string", value: "A" },
+                    { kind: "integer", value: 50 },
+                  ],
+                  span,
+                } as IRInstruction,
+              ],
+              terminator: { op: "stop" },
+            },
+          ],
+        },
+      ],
+      resources: [],
+      sourceFiles: ["src/main.bp"],
+    };
+    const controller = new SimulatorController(
+      scene,
+      async () => ({ programs: { "src/main.bp": { ir, files: {} } } }),
+      () => new WorkerStub(),
+    );
+    await controller.recompile();
+    expect(controller.getSnapshot().warnings).toEqual([
+      { robotId: "A1", kind: "motor", port: "A", span },
+    ]);
+    controller.reset();
+    expect(controller.getSnapshot().warnings).toEqual([]);
     controller.dispose();
   });
 });
