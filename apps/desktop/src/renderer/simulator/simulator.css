@@ -1073,3 +1073,15 @@
     animation: none;
   }
 }
+
+/* Robot setup: basic / advanced */
+.sim-port-sensors {
+  margin-top: 10px;
+}
+.sim-advanced > .sim-section {
+  padding: 12px 0 12px 12px;
+  border-bottom: 0;
+}
+.sim-advanced > .sim-section:first-of-type {
+  padding-top: 0;
+}
