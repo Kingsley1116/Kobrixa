@@ -882,6 +882,9 @@ describe("practice field", () => {
     expect(left.status).toBe("paused");
     expect(left.events.at(-1)).toMatchObject({ kind: "violation", robotId: "A1" });
     expect(left.events.at(-1)!.message).toContain("left the mat");
+    leaving.run();
+    expect(leaving.snapshot()).toMatchObject({ status: "running", practiceContinuation: false });
+    expect(leaving.snapshot().events.at(-1)!.kind).toBe("violation");
   });
 
   it("ignores the match duration", async () => {
