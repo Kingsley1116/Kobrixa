@@ -5,7 +5,7 @@ import type {
   SimulationScene,
   SimulationSnapshot,
 } from "../../shared/simulator.js";
-import { FIELD } from "../../simulation/scene.js";
+import { FIELD, PRACTICE_FIELD } from "../../simulation/scene.js";
 
 const DEG = Math.PI / 180;
 /** Screen-space breathing room around the mat, in CSS pixels. */
@@ -221,7 +221,8 @@ function roundedRect(
   ctx.closePath();
 }
 
-function drawMat(ctx: CanvasRenderingContext2D, scale: number, palette: FieldPalette) {
+/** White mat, drop shadow and placement grid shared by every field. */
+function drawMatBase(ctx: CanvasRenderingContext2D, scale: number) {
   // Wall and drop shadow, sized in screen pixels so they stay crisp at every zoom.
   ctx.save();
   ctx.shadowColor = "#0006";
@@ -246,6 +247,28 @@ function drawMat(ctx: CanvasRenderingContext2D, scale: number, palette: FieldPal
     }
     ctx.stroke();
   }
+}
+
+function drawFrame(ctx: CanvasRenderingContext2D, scale: number, palette: FieldPalette) {
+  ctx.strokeStyle = palette.frame;
+  ctx.lineWidth = Math.max(12, 3 / scale);
+  ctx.strokeRect(0, 0, FIELD.width, FIELD.height);
+}
+
+/** Beginner mat: a single black line loop, no match furniture. */
+function drawPracticeMat(ctx: CanvasRenderingContext2D, scale: number, palette: FieldPalette) {
+  drawMatBase(ctx, scale);
+  const { loop } = PRACTICE_FIELD;
+  // The loop geometry is the line's centre, so a centred stroke matches the sensor model.
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = loop.lineWidth;
+  roundedRect(ctx, loop.x, loop.y, loop.width, loop.height, loop.radius);
+  ctx.stroke();
+  drawFrame(ctx, scale, palette);
+}
+
+function drawWroMat(ctx: CanvasRenderingContext2D, scale: number, palette: FieldPalette) {
+  drawMatBase(ctx, scale);
   ctx.fillStyle = "#111";
   for (const line of FIELD.verticalLines)
     ctx.fillRect(line.x - line.width / 2, 0, line.width, FIELD.height);
@@ -316,9 +339,7 @@ function drawMat(ctx: CanvasRenderingContext2D, scale: number, palette: FieldPal
   ctx.lineTo(FIELD.midX, FIELD.height);
   ctx.stroke();
   ctx.setLineDash([]);
-  ctx.strokeStyle = palette.frame;
-  ctx.lineWidth = Math.max(12, 3 / scale);
-  ctx.strokeRect(0, 0, FIELD.width, FIELD.height);
+  drawFrame(ctx, scale, palette);
 }
 
 /** Readable height labels are drawn before robots and balls, so they never hide them. */
@@ -656,11 +677,14 @@ export function drawField(
   ctx.save();
   ctx.translate(transform.x, transform.y);
   ctx.scale(scale, -scale);
-  drawMat(ctx, scale, palette);
-  if (model.layers.restrictedZones) drawRestrictedZones(ctx, scale, model);
-  ctx.fillStyle = "#6f5f4e";
-  ctx.fillRect(FIELD.barrier.x, FIELD.barrier.y, FIELD.barrier.width, FIELD.barrier.height);
-  drawRampHeights(ctx, scale);
+  if (model.scene.ruleset === "practice") drawPracticeMat(ctx, scale, palette);
+  else {
+    drawWroMat(ctx, scale, palette);
+    if (model.layers.restrictedZones) drawRestrictedZones(ctx, scale, model);
+    ctx.fillStyle = "#6f5f4e";
+    ctx.fillRect(FIELD.barrier.x, FIELD.barrier.y, FIELD.barrier.width, FIELD.barrier.height);
+    drawRampHeights(ctx, scale);
+  }
   const snapshot = model.snapshot;
   if (model.layers.traces && snapshot)
     for (const robot of snapshot.robots) {
