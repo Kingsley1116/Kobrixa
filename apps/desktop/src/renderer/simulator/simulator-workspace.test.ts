@@ -10,7 +10,13 @@ import type {
   SimulationSnapshot,
 } from "../../shared/simulator.js";
 import { VirtualDevice } from "../../preview/virtual-device.js";
-import { createDefaultScene, FIELD, validateScene } from "../../simulation/scene.js";
+import type { IRInstruction, KobrixaIR } from "@kobrixa/ir";
+import {
+  createDefaultScene,
+  createPracticeScene,
+  FIELD,
+  validateScene,
+} from "../../simulation/scene.js";
 import { fieldPoint, fieldTransform } from "./field-canvas.js";
 import { SimulatorWorkspace } from "./simulator-workspace.js";
 
@@ -701,7 +707,7 @@ describe("local simulator workspace", () => {
       );
       expect(h.element.querySelector("section")?.hidden).toBe(false);
       expect(UiWorker.instances[0]!.commands).toContainEqual({ type: "pause" });
-      for (const name of ["start", "step", "recompile", "reset"]) {
+      for (const name of ["start", "step", "reset"]) {
         expect(h.button(name).disabled).toBe(true);
         await act(async () => h.button(name).click());
       }
@@ -765,21 +771,19 @@ describe("local simulator workspace", () => {
         .fn()
         .mockResolvedValueOnce({ programs: {} })
         .mockRejectedValue(new Error("Compile failed"));
+    const props = {
+      scene: createDefaultScene("main.bp"),
+      entries: ["main.bp"],
+      locale: "en" as const,
+      projectName: "Demo",
+      sourceRevision: "r1",
+      onSceneChange: vi.fn(),
+      onSave: vi.fn(),
+      onPrepare: prepare,
+      onClose: vi.fn(),
+    };
     try {
-      await act(async () =>
-        h.root.render(
-          createElement(SimulatorWorkspace, {
-            scene: createDefaultScene("main.bp"),
-            entries: ["main.bp"],
-            locale: "en",
-            projectName: "Demo",
-            onSceneChange: vi.fn(),
-            onSave: vi.fn(),
-            onPrepare: prepare,
-            onClose: vi.fn(),
-          }),
-        ),
-      );
+      await act(async () => h.root.render(createElement(SimulatorWorkspace, props)));
       await act(async () => h.button("start").click());
       const worker = UiWorker.instances[0]!,
         device = new VirtualDevice().snapshot();
@@ -808,7 +812,12 @@ describe("local simulator workspace", () => {
       );
       expect(h.paintCanvas).toHaveBeenCalled();
       h.clearCanvas.mockClear();
-      await act(async () => h.button("recompile").click());
+      // Pause, edit the program, and Start again: the changed sources are rebuilt.
+      await act(async () => h.button("start").click());
+      await act(async () =>
+        h.root.render(createElement(SimulatorWorkspace, { ...props, sourceRevision: "r2" })),
+      );
+      await act(async () => h.button("start").click());
       expect(h.element.querySelector('[role="alert"]')?.textContent).toContain("Compile failed");
       expect(h.clearCanvas).toHaveBeenCalledWith(0, 0, 178, 128);
     } finally {
@@ -890,5 +899,196 @@ describe("local simulator workspace", () => {
     );
     expect(point.x).toBeCloseTo(FIELD.midX);
     expect(point.y).toBeCloseTo(120);
+  });
+
+  const baseProps = (scene: SimulationScene) => ({
+    scene,
+    entries: ["main.bp"],
+    locale: "en" as const,
+    projectName: "Demo",
+    onSceneChange: vi.fn(),
+    onSave: vi.fn(),
+    onPrepare: vi.fn(async (): Promise<PreparedSimulation> => ({ programs: {} })),
+    onClose: vi.fn(),
+  });
+  const status = (h: ReturnType<typeof setup>) =>
+    h.element.querySelector('[data-testid="simulator-status"]')?.getAttribute("data-state");
+
+  it("resumes an unchanged program and rebuilds on Start after the sources change", async () => {
+    const h = setup(),
+      props = { ...baseProps(createDefaultScene("main.bp")), sourceRevision: "a" };
+    try {
+      await act(async () => h.root.render(createElement(SimulatorWorkspace, props)));
+      await act(async () => h.button("start").click());
+      await act(async () => h.button("start").click());
+      expect(status(h)).toBe("paused");
+      await act(async () => h.button("start").click());
+      expect(props.onPrepare).toHaveBeenCalledOnce();
+      expect(status(h)).toBe("running");
+      await act(async () => h.button("start").click());
+      await act(async () =>
+        h.root.render(createElement(SimulatorWorkspace, { ...props, sourceRevision: "b" })),
+      );
+      expect(h.element.querySelector(".sim-stale")?.textContent).toContain("Program changed");
+      await act(async () => h.button("start").click());
+      expect(props.onPrepare).toHaveBeenCalledTimes(2);
+      expect(UiWorker.instances[0]!.terminated).toBe(true);
+      expect(UiWorker.instances[1]!.commands.at(-1)).toEqual({ type: "run" });
+      expect(h.element.querySelector(".sim-stale")).toBeNull();
+    } finally {
+      await act(async () => h.root.unmount());
+      h.element.remove();
+    }
+  });
+
+  it("keeps setup editable while running and resets the run with a notice", async () => {
+    const h = setup(),
+      props = baseProps(createDefaultScene("main.bp"));
+    function Harness() {
+      const [scene, setScene] = useState(props.scene);
+      return createElement(SimulatorWorkspace, {
+        ...props,
+        scene,
+        onSceneChange: (next: SimulationScene) => {
+          props.onSceneChange(next);
+          setScene(next);
+        },
+      });
+    }
+    try {
+      await act(async () => h.root.render(createElement(Harness)));
+      await act(async () => h.button("start").click());
+      expect(status(h)).toBe("running");
+      await act(async () => h.element.querySelector<HTMLButtonElement>("#sim-tab-scene")!.click());
+      const match = [...h.element.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find(
+        (radio) => radio.textContent === "Match",
+      )!;
+      expect(match.disabled).toBe(false);
+      await act(async () => match.click());
+      expect(props.onSceneChange).toHaveBeenCalledOnce();
+      expect(UiWorker.instances[0]!.terminated).toBe(true);
+      expect(status(h)).toBe("ready");
+      expect(h.element.querySelector(".sim-save-message")?.textContent).toBe(
+        "Scene reset to apply the new setup.",
+      );
+    } finally {
+      await act(async () => h.root.unmount());
+      h.element.remove();
+    }
+  });
+
+  it("warns about ports the robot lacks and opens that robot's setup", async () => {
+    const h = setup(),
+      props = baseProps(createPracticeScene("main.bp"));
+    const ir: KobrixaIR = {
+      version: 1,
+      program: { name: "main", entryFunction: "main" },
+      globals: [],
+      functions: [
+        {
+          name: "main",
+          parameters: [],
+          returnType: { kind: "void" },
+          locals: [],
+          entryBlock: "entry",
+          blocks: [
+            {
+              id: "entry",
+              instructions: [
+                {
+                  op: "ev3-call",
+                  operation: "Motor.Start",
+                  args: [
+                    { kind: "string", value: "A" },
+                    { kind: "integer", value: 50 },
+                  ],
+                } as IRInstruction,
+              ],
+              terminator: { op: "stop" },
+            },
+          ],
+        },
+      ],
+      resources: [],
+      sourceFiles: ["main.bp"],
+    };
+    props.onPrepare.mockResolvedValue({ programs: { "main.bp": { ir, files: {} } } });
+    try {
+      await act(async () => h.root.render(createElement(SimulatorWorkspace, props)));
+      await act(async () => h.button("start").click());
+      // A warning never blocks the run.
+      expect(status(h)).toBe("running");
+      const banner = h.element.querySelector(".sim-warning")!;
+      expect(banner.getAttribute("role")).toBe("status");
+      expect(banner.textContent).toContain("The program uses ports this robot does not have");
+      expect(banner.querySelector("li")?.textContent).toBe(
+        "A1: Motor A is used, but no wheel or shooter is on A.",
+      );
+      expect(h.element.querySelector("#sim-tab-inspect")?.getAttribute("aria-selected")).toBe(
+        "true",
+      );
+      await act(async () => h.button("open-setup").click());
+      expect(h.element.querySelector("#sim-tab-setup")?.getAttribute("aria-selected")).toBe("true");
+      await act(async () => h.button("reset").click());
+      expect(h.element.querySelector(".sim-warning")).toBeNull();
+    } finally {
+      await act(async () => h.root.unmount());
+      h.element.remove();
+    }
+  });
+
+  it("shows only elapsed time and robot setup on the practice field", async () => {
+    const h = setup(),
+      props = baseProps(createPracticeScene("main.bp"));
+    try {
+      await act(async () => h.root.render(createElement(SimulatorWorkspace, props)));
+      expect(h.element.querySelector("#sim-tab-scene")).toBeNull();
+      expect(h.element.querySelector("#sim-tab-setup")).not.toBeNull();
+      expect(h.element.querySelector(".sim-score")).toBeNull();
+      expect(h.element.querySelector('[role="progressbar"]')).toBeNull();
+      expect(h.element.querySelector('[role="timer"]')?.getAttribute("aria-label")).toBe(
+        "Elapsed time",
+      );
+      expect(h.element.querySelector(".sim-robot-header")?.textContent).not.toContain("Add robot");
+      expect(h.element.querySelector(".sim-field-hint")).not.toBeNull();
+    } finally {
+      await act(async () => h.root.unmount());
+      h.element.remove();
+    }
+  });
+
+  it.each([true, false])("switches field (scene dirty: %s)", async (sceneDirty) => {
+    const h = setup(),
+      scene = { ...createDefaultScene("main.bp"), seed: 7 },
+      props = { ...baseProps(scene), sceneDirty };
+    try {
+      await act(async () => h.root.render(createElement(SimulatorWorkspace, props)));
+      await act(async () =>
+        h.element
+          .querySelector<HTMLButtonElement>('[data-testid="simulator-field-select"] button')!
+          .click(),
+      );
+      await act(async () =>
+        document.querySelector<HTMLElement>('[data-picker-value="practice"]')!.click(),
+      );
+      const dialog = document.querySelector(".simulator-field-confirm");
+      if (sceneDirty) {
+        expect(dialog?.getAttribute("role")).toBe("alertdialog");
+        expect(props.onSceneChange).not.toHaveBeenCalled();
+        const cancel = [...dialog!.querySelectorAll("button")].find(
+          (button) => button.textContent === "Cancel",
+        )!;
+        await act(async () => cancel.click());
+        expect(document.querySelector(".simulator-field-confirm")).toBeNull();
+        expect(props.onSceneChange).not.toHaveBeenCalled();
+      } else {
+        expect(dialog).toBeNull();
+        expect(props.onSceneChange).toHaveBeenCalledOnce();
+        expect(props.onSceneChange.mock.calls[0]![0]).toEqual(createPracticeScene("main.bp"));
+      }
+    } finally {
+      await act(async () => h.root.unmount());
+      h.element.remove();
+    }
   });
 });
