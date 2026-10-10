@@ -10,7 +10,9 @@ import type {
 import {
   createDefaultScene,
   createDriveWheels,
+  createPracticeScene,
   FIELD,
+  PRACTICE_FIELD,
   randomizeBalls,
   rollMatchDuration,
   validateScene,
@@ -804,5 +806,94 @@ describe("builtin opponent", () => {
     expect(validateScene(config).robots[0]!.controller).toEqual({ kind: "builtin" });
     (config.robots[0]!.controller as { level?: string }).level = "nightmare";
     expect(() => validateScene(config)).toThrow(/level/);
+  });
+});
+
+describe("practice field", () => {
+  function practice(): SimulationScene {
+    const result = createPracticeScene("main.bp");
+    result.durationMs = 10_000;
+    return result;
+  }
+
+  it("has no barrier or ramps: a robot drives straight across at floor level", async () => {
+    const config = practice();
+    // Starts inside ramp 0's footprint and drives through the barrier towards ramp 1.
+    config.robots[0]!.pose = { x: 1100, y: 300, heading: 90 };
+    const simulation = await world('Motor.Start("BC", 50)\n' + idle, config);
+    expect(simulation.snapshot().events[0]!.message).toBe(
+      "Practice field · simplified local physics.",
+    );
+    simulation.run();
+    let maxElevation = 0;
+    for (let i = 0; i < 30; i++) {
+      simulation.advance(10);
+      maxElevation = Math.max(maxElevation, simulation.snapshot().robots[0]!.elevation);
+    }
+    const state = simulation.snapshot();
+    expect(state.status).toBe("running");
+    expect(maxElevation).toBe(0);
+    expect(state.robots[0]!.pose.y).toBeGreaterThan(FIELD.barrier.y + FIELD.barrier.height + 150);
+    expect(state.robots[0]!.pose.x).toBeCloseTo(1100, 0);
+    expect(state.events.filter((event) => event.kind !== "info")).toEqual([]);
+  });
+
+  it("reads the loop line as black and the rest of the mat as white", async () => {
+    const { loop } = PRACTICE_FIELD;
+    expect(matColor(1000, loop.y, "practice")).toEqual([0, 0, 0]);
+    expect(matColor(1000, loop.y + loop.height, "practice")).toEqual([0, 0, 0]);
+    expect(matColor(loop.x, 570, "practice")).toEqual([0, 0, 0]);
+    expect(matColor(1000, 570, "practice")).toEqual([255, 255, 255]);
+    expect(matColor(1160, 200, "practice")).toEqual([255, 255, 255]);
+    expect(matColor(-1, 200, "practice")).toEqual([0, 0, 0]);
+    // The default sampler is still the WRO mat.
+    expect(matColor(1160, 200)).toEqual([255, 0, 0]);
+
+    const reading = async (y: number) => {
+      const config = practice();
+      config.robots[0]!.pose = { x: 600, y, heading: 0 };
+      const simulation = await world("Sensor.SetMode(3, 2)\n" + idle, config);
+      simulation.run();
+      simulation.advance(1);
+      return simulation.snapshot().debug!.device.sensors[3].si[0];
+    };
+    expect(await reading(PRACTICE_FIELD.start.y)).toBe(1);
+    expect(await reading(570)).toBe(6);
+  });
+
+  it("allows crossing the midline but still pauses when the robot leaves the mat", async () => {
+    const config = practice();
+    config.robots[0]!.pose = { x: FIELD.midX - 200, y: 570, heading: 0 };
+    const crossing = await world('Motor.Start("BC", 50)\n' + idle, config);
+    crossing.run();
+    crossing.advance(200);
+    const crossed = crossing.snapshot();
+    expect(crossed.status).toBe("running");
+    expect(crossed.robots[0]!.pose.x).toBeGreaterThan(FIELD.midX + 100);
+    expect(crossed.events.filter((event) => event.kind === "violation")).toEqual([]);
+
+    // A wall-less push past the edge is not physically possible, so start overhanging it.
+    const edge = practice();
+    edge.robots[0]!.pose = { x: 60, y: 570, heading: 0 };
+    const leaving = await world(idle, edge);
+    leaving.run();
+    leaving.advance(1);
+    const left = leaving.snapshot();
+    expect(left.status).toBe("paused");
+    expect(left.events.at(-1)).toMatchObject({ kind: "violation", robotId: "A1" });
+    expect(left.events.at(-1)!.message).toContain("left the mat");
+    leaving.run();
+    expect(leaving.snapshot()).toMatchObject({ status: "running", practiceContinuation: false });
+    expect(leaving.snapshot().events.at(-1)!.kind).toBe("violation");
+  });
+
+  it("ignores the match duration", async () => {
+    const simulation = await world(idle, practice());
+    simulation.run();
+    simulation.advance(1000);
+    simulation.advance(10);
+    const state = simulation.snapshot();
+    expect(state).toMatchObject({ status: "running", timeMs: 10_100, practiceContinuation: false });
+    expect(state.events.some((event) => event.message.includes("Match time elapsed"))).toBe(false);
   });
 });

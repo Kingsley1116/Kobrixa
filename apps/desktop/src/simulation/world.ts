@@ -9,6 +9,7 @@ import {
   type SimulationBall,
   type SimulationEvent,
   type SimulationPose,
+  type SimulationRuleset,
   type SimulationScene,
   type SimulationSensor,
   type SimulationSnapshot,
@@ -18,7 +19,14 @@ import { SimulationDevice, type SimulationSensorReading } from "./device.js";
 import { SimulationMailboxBus } from "./mailbox.js";
 import { BuiltinOpponent } from "./opponent.js";
 import { ballOccludesCamera, pixy2Blocks } from "./pixy2-camera.js";
-import { driveVelocity, FIELD, normalizeDegrees, validateScene } from "./scene.js";
+import {
+  driveVelocity,
+  FIELD,
+  normalizeDegrees,
+  PRACTICE_FIELD,
+  practiceLineDistance,
+  validateScene,
+} from "./scene.js";
 import { floorHeight, intersectRampSegment, rampHeight, type RampGeometry } from "./terrain.js";
 
 export { driveVelocity, normalizeDegrees } from "./scene.js";
@@ -76,9 +84,14 @@ export class SimulationWorld {
   private practiceContinuation = false;
   private durationReached = false;
   private violationPending = false;
+  /** The practice mat is flat: no barrier, ramps or match rules. */
+  private readonly practice: boolean;
+  private readonly ramps: readonly RampGeometry[];
 
   constructor(scene: SimulationScene, prepared: PreparedSimulation = { programs: {} }) {
     this.scene = validateScene(scene);
+    this.practice = this.scene.ruleset === "practice";
+    this.ramps = this.practice ? [] : FIELD.ramps;
     this.mailbox = new SimulationMailboxBus(this.scene.robots);
     this.createField();
     for (const config of [...this.scene.robots].sort((a, b) => compareId(a.id, b.id))) {
@@ -175,12 +188,12 @@ export class SimulationWorld {
       this.balls.set(ball.id, {
         initial: ball,
         body,
-        z: Math.max(ball.z, floorHeight(ball.x, ball.y) + FIELD.ballRadius),
+        z: Math.max(ball.z, this.floorHeight(ball.x, ball.y) + FIELD.ballRadius),
         vz: 0,
         previous: {
           x: ball.x,
           y: ball.y,
-          z: Math.max(ball.z, floorHeight(ball.x, ball.y) + FIELD.ballRadius),
+          z: Math.max(ball.z, this.floorHeight(ball.x, ball.y) + FIELD.ballRadius),
         },
         moved: !(
           ball.central &&
@@ -198,7 +211,12 @@ export class SimulationWorld {
     });
     this.selected = this.scene.robots[0]?.id;
     this.lastScore = this.score();
-    this.event("info", "WRO Double Tennis 2026 · simplified local physics. Lower score wins.");
+    this.event(
+      "info",
+      this.practice
+        ? "Practice field · simplified local physics."
+        : "WRO Double Tennis 2026 · simplified local physics. Lower score wins.",
+    );
   }
 
   get status(): SimulationSnapshot["status"] {
@@ -219,8 +237,10 @@ export class SimulationWorld {
   }
   private continueAfterViolation(): void {
     if (this.violationPending) {
-      this.practiceContinuation = true;
       this.violationPending = false;
+      // No match or scores on the practice field: just resume.
+      if (this.practice) return;
+      this.practiceContinuation = true;
       this.event("info", "Continuing as training after a rule violation. Scores are provisional.");
     }
   }
@@ -368,6 +388,7 @@ export class SimulationWorld {
       this.sensorCache.clear();
       this.updateScore();
       if (
+        !this.practice &&
         this.elapsed >= this.scene.durationMs &&
         !this.durationReached &&
         this.state !== "paused"
@@ -439,6 +460,7 @@ export class SimulationWorld {
     wall(FIELD.width + 15, FIELD.midY, 30, FIELD.height + 60);
     wall(FIELD.midX, -15, FIELD.width + 60, 30);
     wall(FIELD.midX, FIELD.height + 15, FIELD.width + 60, 30);
+    if (this.practice) return;
     const barrier = FIELD.barrier;
     boundary.createFixture(
       Box(
@@ -455,7 +477,7 @@ export class SimulationWorld {
     // The footprint supplies continuous collision detection at the vertical
     // faces. pre-solve lets bodies enter the low edge and travel on the slope;
     // it only keeps contacts whose height intersects the solid wedge.
-    for (const ramp of FIELD.ramps)
+    for (const ramp of this.ramps)
       boundary.createFixture(
         Box(
           ramp.width / 2000,
@@ -473,7 +495,10 @@ export class SimulationWorld {
     const position = robot.body.getPosition();
     // One support height under the chassis centre, deliberately without pitch,
     // suspension or wheel climbing over a vertical step.
-    return floorHeight(position.x * 1000, position.y * 1000);
+    return this.floorHeight(position.x * 1000, position.y * 1000);
+  }
+  private floorHeight(x: number, y: number): number {
+    return this.practice ? 0 : floorHeight(x, y);
   }
   private pose(robot: RobotState): SimulationPose {
     const position = robot.body.getPosition();
@@ -589,7 +614,7 @@ export class SimulationWorld {
   private advanceHeight(ball: BallState): void {
     if (ball.out || (!ball.moved && ball.initial.central)) return;
     const pos = ball.body.getPosition();
-    const ground = floorHeight(pos.x * 1000, pos.y * 1000) + FIELD.ballRadius;
+    const ground = this.floorHeight(pos.x * 1000, pos.y * 1000) + FIELD.ballRadius;
     if (ball.z > ground + 0.01 || ball.vz > 0) {
       ball.vz -= 9810 * DT;
       ball.z += ball.vz * DT;
@@ -607,7 +632,7 @@ export class SimulationWorld {
     if (ball.vz === 0 && Math.abs(ball.z - ground) < 0.01) {
       ball.body.setLinearDamping(0.6);
       // Ramp gravity applies only to rolling balls. It deliberately does not model robot pitch.
-      for (const ramp of FIELD.ramps)
+      for (const ramp of this.ramps)
         if (
           pos.x * 1000 >= ramp.x &&
           pos.x * 1000 <= ramp.x + ramp.width &&
@@ -628,7 +653,7 @@ export class SimulationWorld {
     const position = ball.body.getPosition();
     const from = { ...ball.previous, z: ball.previous.z - FIELD.ballRadius };
     const to = { x: position.x * 1000, y: position.y * 1000, z: ball.z - FIELD.ballRadius };
-    for (const ramp of FIELD.ramps) {
+    for (const ramp of this.ramps) {
       const hit = intersectRampSegment(ramp, from, to);
       if (hit === undefined) continue;
       const x = from.x + (to.x - from.x) * hit;
@@ -700,7 +725,7 @@ export class SimulationWorld {
         );
       }
       if (!ball.out) {
-        const ground = floorHeight(x, y) + FIELD.ballRadius;
+        const ground = this.floorHeight(x, y) + FIELD.ballRadius;
         // The low 2D ramp model raises rolling balls smoothly without teleporting projectiles.
         if (ball.z < ground && ball.vz <= 0) {
           ball.z = ground;
@@ -814,10 +839,11 @@ export class SimulationWorld {
     const outside = points.some(
       (p) => p.x < -6 || p.x > FIELD.width + 6 || p.y < -6 || p.y > FIELD.height + 6,
     );
-    const crossed = points.some((p) =>
-      config.team === "A" ? p.x > FIELD.midX + 1 : p.x < FIELD.midX - 1,
-    );
-    const red = FIELD.ramps.some((ramp) =>
+    // The practice field has no halves or red zones; only leaving the mat counts.
+    const crossed =
+      !this.practice &&
+      points.some((p) => (config.team === "A" ? p.x > FIELD.midX + 1 : p.x < FIELD.midX - 1));
+    const red = this.ramps.some((ramp) =>
       polygons.some((polygon) =>
         polygonsOverlap(polygon, [
           { x: ramp.direction === 1 ? ramp.x + ramp.width - 50 : ramp.x, y: ramp.y },
@@ -884,7 +910,7 @@ export class SimulationWorld {
     const heading = robot.body.getAngle() + sensor.angle * DEG;
     const probeHeight = this.robotElevation(robot) + 40;
     if (sensor.kind === "color") {
-      const rgb = matColor(origin.x * 1000, origin.y * 1000);
+      const rgb = matColor(origin.x * 1000, origin.y * 1000, this.scene.ruleset);
       const light = Math.round(((rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722) / 255) * 100);
       const color =
         rgb[0] === 0 && rgb[1] === 0
@@ -1035,7 +1061,7 @@ export class SimulationWorld {
       origin.y + (Math.sin(heading) * rangeMm) / 1000,
     );
     let fraction = 1;
-    for (const ramp of FIELD.ramps) {
+    for (const ramp of this.ramps) {
       const hit = intersectRampSegment(
         ramp,
         { x: origin.x * 1000, y: origin.y * 1000, z: originHeight },
@@ -1100,8 +1126,16 @@ function polygonsOverlap(
 }
 
 /** Same deterministic mat sampler used by all mounted color sensors. */
-export function matColor(x: number, y: number): [number, number, number] {
+export function matColor(
+  x: number,
+  y: number,
+  ruleset: SimulationRuleset = "wro-double-tennis-2026",
+): [number, number, number] {
   if (x < 0 || x > FIELD.width || y < 0 || y > FIELD.height) return [0, 0, 0];
+  if (ruleset === "practice")
+    return practiceLineDistance(x, y) <= PRACTICE_FIELD.loop.lineWidth / 2
+      ? [0, 0, 0]
+      : [255, 255, 255];
   for (const ramp of FIELD.ramps)
     if (x >= ramp.x && x <= ramp.x + ramp.width && y >= ramp.y && y <= ramp.y + ramp.height) {
       const distanceToTop = ramp.direction === 1 ? ramp.x + ramp.width - x : x - ramp.x;
