@@ -1,15 +1,20 @@
 import type {
+  PortWarning,
   PreparedSimulation,
   SimulationCommand,
   SimulationResponse,
   SimulationScene,
   SimulationSnapshot,
 } from "../../shared/simulator.js";
+import { checkRobotPorts } from "../../simulation/port-check.js";
 
 export interface SimulatorState {
   snapshot: SimulationSnapshot | null;
   preparing: boolean;
   error: string | null;
+  /** The loaded program was built from sources that have since changed. */
+  stale: boolean;
+  warnings: PortWarning[];
 }
 export interface SimulatorWorker {
   onmessage: ((event: MessageEvent<SimulationResponse>) => void) | null;
@@ -19,7 +24,13 @@ export interface SimulatorWorker {
 }
 /** Owns compilation generations and worker lifetime, so a late build can never start stale code. */
 export class SimulatorController {
-  private state: SimulatorState = { snapshot: null, preparing: false, error: null };
+  private state: SimulatorState = {
+    snapshot: null,
+    preparing: false,
+    error: null,
+    stale: false,
+    warnings: [],
+  };
   private readonly listeners = new Set<() => void>();
   private worker: SimulatorWorker | null = null;
   private generation = 0;
@@ -30,6 +41,8 @@ export class SimulatorController {
   private sceneKey: string;
   private selected: string;
   private speed = 1;
+  private revision: string | null = null;
+  private preparedRevision: string | null = null;
   constructor(
     scene: SimulationScene,
     private readonly prepare: (scene: SimulationScene) => Promise<PreparedSimulation>,
@@ -45,7 +58,7 @@ export class SimulatorController {
   attach(): void {
     if (!this.disposed) return;
     this.disposed = false;
-    this.update({ snapshot: null, preparing: false, error: null });
+    this.update({ snapshot: null, preparing: false, error: null, warnings: [] });
   }
   getSnapshot = (): SimulatorState => this.state;
   subscribe = (listener: () => void): (() => void) => {
@@ -53,7 +66,9 @@ export class SimulatorController {
     return () => this.listeners.delete(listener);
   };
   private update(patch: Partial<SimulatorState>): void {
-    this.state = { ...this.state, ...patch };
+    const next = { ...this.state, ...patch };
+    next.stale = next.snapshot !== null && this.preparedRevision !== this.revision;
+    this.state = next;
     this.listeners.forEach((listener) => listener());
   }
   private terminate(): void {
@@ -80,7 +95,12 @@ export class SimulatorController {
     this.abandonPreparation();
     this.generation++;
     this.terminate();
-    this.update({ snapshot: null, preparing: false, error: null });
+    this.update({ snapshot: null, preparing: false, error: null, warnings: [] });
+  }
+  setSourceRevision(revision: string): void {
+    if (revision === this.revision) return;
+    this.revision = revision;
+    this.update({});
   }
   select(robotId: string): void {
     this.selected = robotId;
@@ -93,28 +113,39 @@ export class SimulatorController {
   send(command: SimulationCommand): void {
     if (!this.disposed) this.worker?.postMessage(command);
   }
+  private canResume(): boolean {
+    return (
+      !!this.worker &&
+      !this.state.error &&
+      !this.state.stale &&
+      ["ready", "paused"].includes(this.state.snapshot?.status ?? "")
+    );
+  }
+  /** Resumes the loaded program, or builds the current sources first when there is none or it is stale. */
   start(): void {
     if (this.disposed || !this.active || this.state.preparing) return;
-    if (
-      this.worker &&
-      !this.state.error &&
-      ["ready", "paused"].includes(this.state.snapshot?.status ?? "")
-    )
-      this.send({ type: "run" });
-    else void this.recompile(true);
+    if (this.canResume()) this.send({ type: "run" });
+    else void this.recompile("run");
   }
-  async recompile(run = false): Promise<void> {
+  step(): void {
+    if (this.disposed || !this.active || this.state.preparing) return;
+    if (this.canResume()) this.send({ type: "step" });
+    else void this.recompile("step");
+  }
+  async recompile(after: "none" | "run" | "step" = "none"): Promise<void> {
     if (this.disposed || !this.active) return;
     this.abandonPreparation();
-    const generation = ++this.generation;
+    const generation = ++this.generation,
+      revision = this.revision;
     this.pendingPreparation = true;
     const scene = structuredClone(this.scene);
     this.terminate();
-    this.update({ snapshot: null, preparing: true, error: null });
+    this.update({ snapshot: null, preparing: true, error: null, warnings: [] });
     try {
       const prepared = await this.prepare(scene);
       if (this.disposed || generation !== this.generation || !this.active) return;
       this.pendingPreparation = false;
+      this.preparedRevision = revision;
       const instance = this.createWorker();
       this.worker = instance;
       instance.onmessage = (event) => {
@@ -137,8 +168,8 @@ export class SimulatorController {
       instance.postMessage({ type: "load", scene, prepared });
       instance.postMessage({ type: "select", robotId: this.selected });
       instance.postMessage({ type: "speed", value: this.speed });
-      if (run) instance.postMessage({ type: "run" });
-      this.update({ preparing: false });
+      if (after !== "none") instance.postMessage({ type: after });
+      this.update({ preparing: false, warnings: checkRobotPorts(scene, prepared) });
     } catch (error) {
       if (this.disposed || generation !== this.generation) return;
       this.pendingPreparation = false;
@@ -153,16 +184,12 @@ export class SimulatorController {
     this.abandonPreparation();
     this.send({ type: "pause" });
   }
-  stop(): void {
-    this.abandonPreparation();
-    this.send({ type: "stop" });
-  }
+  /** Discards the loaded program so the next Start always builds the current sources. */
   reset(): void {
     this.abandonPreparation();
-    if (this.worker) {
-      this.update({ error: null });
-      this.send({ type: "reset" });
-    } else this.update({ snapshot: null, error: null });
+    this.generation++;
+    this.terminate();
+    this.update({ snapshot: null, preparing: false, error: null, warnings: [] });
   }
   setActive(active: boolean): void {
     this.active = active;

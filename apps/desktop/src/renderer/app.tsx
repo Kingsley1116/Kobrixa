@@ -125,8 +125,9 @@ import {
   type SimulationScene,
   type PreparedSimulation,
 } from "../shared/simulator.js";
-import { createDefaultScene, validateScene } from "../simulation/scene.js";
+import { createPracticeScene, validateScene } from "../simulation/scene.js";
 import { SimulatorWorkspace } from "./simulator/simulator-workspace.js";
+import { trackSources, type SourceTracker } from "./simulator/source-revision.js";
 import "./simulator-integration.css";
 
 import { copy } from "./i18n/copy.js";
@@ -433,6 +434,23 @@ export function App(): React.JSX.Element {
   const [emptyDocuments] = useState(() => new Documents());
   const documents = activeSession?.documents ?? emptyDocuments;
   const tabs = useSyncExternalStore(documents.subscribe, documents.getSnapshot);
+  // Only the visible simulator tracks sources; a hidden one keeps its last revision.
+  const simulatorShown = !!simulator && simulator.workspaceId === workspace?.id;
+  const simulatorSources = useRef<{ workspaceId: string; tracker: SourceTracker }>(undefined);
+  // Idempotent per tabs snapshot, so replaying it (StrictMode) never counts an edit twice.
+  const simulatorRevision = useMemo(() => {
+    if (!simulatorShown) return undefined;
+    const previous = simulatorSources.current;
+    const tracker = trackSources(
+      previous?.workspaceId === simulator.workspaceId ? previous.tracker : undefined,
+      tabs.filter((tab) => tab.file !== SIMULATOR_SCENE_FILE),
+    );
+    simulatorSources.current = { workspaceId: simulator.workspaceId, tracker };
+    return String(tracker.version);
+  }, [simulatorShown, simulator?.workspaceId, tabs]);
+  const simulatorSceneDirty =
+    simulatorShown &&
+    tabs.some((tab) => tab.file === SIMULATOR_SCENE_FILE && tab.content !== tab.saved);
   const tabsRef = {
     get current() {
       return documents.getSnapshot();
@@ -2842,7 +2860,7 @@ export function App(): React.JSX.Element {
         existing?.content ??
         draft ??
         snapshot.content ??
-        JSON.stringify(createDefaultScene(entry), null, 2) + "\n";
+        JSON.stringify(createPracticeScene(entry), null, 2) + "\n";
       const scene = validateScene(JSON.parse(content));
       if (!existing) {
         project.files.recover(
@@ -3773,6 +3791,10 @@ export function App(): React.JSX.Element {
                         !updatePreparing
                       }
                       blocked={!!simulatorSceneError}
+                      {...(simulatorRevision !== undefined
+                        ? { sourceRevision: simulatorRevision }
+                        : {})}
+                      sceneDirty={simulatorSceneDirty}
                       onSceneChange={changeSimulatorScene}
                       onSave={saveSimulatorScene}
                       onPrepare={prepareSimulator}
