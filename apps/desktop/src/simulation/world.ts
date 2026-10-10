@@ -237,8 +237,10 @@ export class SimulationWorld {
   }
   private continueAfterViolation(): void {
     if (this.violationPending) {
-      this.practiceContinuation = true;
       this.violationPending = false;
+      // No match or scores on the practice field: just resume.
+      if (this.practice) return;
+      this.practiceContinuation = true;
       this.event("info", "Continuing as training after a rule violation. Scores are provisional.");
     }
   }
