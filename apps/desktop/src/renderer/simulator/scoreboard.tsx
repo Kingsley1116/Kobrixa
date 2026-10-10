@@ -9,6 +9,7 @@ export function Scoreboard({
   failed,
   durationMs,
   saveMessage,
+  practice = false,
 }: {
   t: SimulatorCopy;
   snapshot: SimulationSnapshot | null;
@@ -16,6 +17,8 @@ export function Scoreboard({
   failed: boolean;
   durationMs: number;
   saveMessage: string | null;
+  /** The practice mat has no match clock or score, only elapsed time. */
+  practice?: boolean;
 }): React.JSX.Element {
   const state = preparing ? "preparing" : failed ? "error" : (snapshot?.status ?? "ready");
   const label = preparing
@@ -43,29 +46,39 @@ export function Scoreboard({
         <i aria-hidden="true" />
         {label}
       </strong>
-      <div className="sim-clock">
-        <span>
-          <b>{(time / 1000).toFixed(2)}</b> / {(durationMs / 1000).toFixed(0)} s
-        </span>
-        <div
-          className="sim-progress"
-          role="progressbar"
-          aria-label={t.elapsed}
-          aria-valuemin={0}
-          aria-valuemax={Math.round(durationMs / 1000)}
-          aria-valuenow={Math.round(time / 1000)}
-        >
-          <div style={{ width: `${progress * 100}%` }} />
+      {practice ? (
+        <div className="sim-clock" role="timer" aria-label={t.elapsedOnly}>
+          <span>
+            <b>{(time / 1000).toFixed(2)}</b> s
+          </span>
         </div>
-      </div>
-      <div className="sim-score" aria-label={`${t.score}: A ${a}, B ${b}`}>
-        <span style={{ color: TEAM_COLORS.A }}>A</span>
-        <b>{a}</b>
-        <span className="sim-score-sep">:</span>
-        <b>{b}</b>
-        <span style={{ color: TEAM_COLORS.B }}>B</span>
-      </div>
-      {snapshot?.practiceContinuation && <span className="sim-chip">{t.continued}</span>}
+      ) : (
+        <>
+          <div className="sim-clock">
+            <span>
+              <b>{(time / 1000).toFixed(2)}</b> / {(durationMs / 1000).toFixed(0)} s
+            </span>
+            <div
+              className="sim-progress"
+              role="progressbar"
+              aria-label={t.elapsed}
+              aria-valuemin={0}
+              aria-valuemax={Math.round(durationMs / 1000)}
+              aria-valuenow={Math.round(time / 1000)}
+            >
+              <div style={{ width: `${progress * 100}%` }} />
+            </div>
+          </div>
+          <div className="sim-score" aria-label={`${t.score}: A ${a}, B ${b}`}>
+            <span style={{ color: TEAM_COLORS.A }}>A</span>
+            <b>{a}</b>
+            <span className="sim-score-sep">:</span>
+            <b>{b}</b>
+            <span style={{ color: TEAM_COLORS.B }}>B</span>
+          </div>
+          {snapshot?.practiceContinuation && <span className="sim-chip">{t.continued}</span>}
+        </>
+      )}
       {saveMessage && (
         <span className="sim-save-message" role="status">
           {saveMessage}
