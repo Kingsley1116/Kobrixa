@@ -7,20 +7,23 @@ export function LayersMenu({
   t,
   locale,
   layers,
+  practice = false,
   onChange,
 }: {
   t: SimulatorCopy;
   locale: SimulatorLocale;
   layers: FieldLayers;
+  /** The practice field has no restricted zones, so that layer is not offered. */
+  practice?: boolean;
   onChange(layers: FieldLayers): void;
 }): React.JSX.Element {
-  const options = [
+  const options: { value: keyof FieldLayers; label: string }[] = [
     { value: "traces", label: t.trace },
     { value: "rays", label: t.rays },
     { value: "headings", label: t.headings },
     { value: "collisions", label: t.collisions },
-    { value: "restrictedZones", label: t.restrictedZones },
-  ] satisfies { value: keyof FieldLayers; label: string }[];
+    ...(practice ? [] : [{ value: "restrictedZones" as const, label: t.restrictedZones }]),
+  ];
   return (
     <div className="sim-float sim-layers">
       <Picker
