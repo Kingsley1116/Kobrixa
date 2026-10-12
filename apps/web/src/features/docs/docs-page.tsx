@@ -414,11 +414,15 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
   const previous = tutorials[index - 1];
   const next = tutorials[index + 1];
   const content = tutorial.content[locale];
+  const headings = headingsFor(content);
   useEffect(() => {
     document.title = `${tutorial.title[locale]} — Kobrixa`;
   }, [locale, tutorial]);
   return (
-    <main className="docs-layout docs-article-layout tutorial-article-layout" id="content">
+    <main
+      className={`docs-layout docs-article-layout${headings.length ? "" : " tutorial-article-layout"}`}
+      id="content"
+    >
       <TutorialSidebar locale={locale} activeSlug={tutorial.slug} />
       <article className="article">
         <header className="article-header">
@@ -441,6 +445,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
             </AppLink>
           </div>
         </header>
+        <DocsTocDisclosure headings={headings} label={t.tableOfContents} />
         <div className="article-content tutorial-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -492,6 +497,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
           )}
         </nav>
       </article>
+      <DocsToc headings={headings} label={t.tableOfContents} />
     </main>
   );
 }
@@ -530,17 +536,11 @@ function BasicPlusPage({
       <KnowledgeSidebar locale={locale} activePath={`/docs/reference/basic-plus${suffix}`} />
       <BasicPlusReference locale={locale} apiName={apiName} syntaxSlug={syntaxSlug} />
       {detail ? (
-        <aside
+        <DocsToc
           className="toc reference-toc"
-          aria-label={locale === "zh-TW" ? "本頁內容" : "On this page"}
-        >
-          <p>{locale === "zh-TW" ? "本頁內容" : "On this page"}</p>
-          {links.map(([id, label]) => (
-            <AppLink href={`#${id}`} key={id}>
-              {label}
-            </AppLink>
-          ))}
-        </aside>
+          headings={links.map(([id, label]) => ({ level: 2, id: id!, text: label! }))}
+          label={locale === "zh-TW" ? "本頁內容" : "On this page"}
+        />
       ) : null}
     </main>
   );

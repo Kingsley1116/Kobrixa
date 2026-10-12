@@ -174,7 +174,15 @@ function TocList({
 }
 
 /** Sticky "On this page" rail shown beside the article on wide screens. */
-export function DocsToc({ headings, label }: { headings: TocHeading[]; label: string }) {
+export function DocsToc({
+  headings,
+  label,
+  className = "toc",
+}: {
+  headings: TocHeading[];
+  label: string;
+  className?: string;
+}) {
   const [active, setActive] = useActiveHeading(headings);
   const asideRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -189,7 +197,7 @@ export function DocsToc({ headings, label }: { headings: TocHeading[]; label: st
   }, [active]);
   if (!headings.length) return null;
   return (
-    <aside className="toc" aria-label={label} ref={asideRef}>
+    <aside className={className} aria-label={label} ref={asideRef}>
       <p>{label}</p>
       <TocList headings={headings} active={active} onSelect={setActive} />
     </aside>
