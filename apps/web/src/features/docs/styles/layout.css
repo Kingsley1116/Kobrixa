@@ -1,0 +1,202 @@
+/*
+ * Documentation layout shell: sidebar | reading column | table of contents.
+ * Reference/article pages use three columns, tutorials (no TOC) and landing
+ * pages use two. All columns line up on the same left edge so the sidebar
+ * never jumps when moving between pages.
+ */
+.docs-layout {
+  display: grid;
+  grid-template-columns:
+    var(--docs-sidebar-width, 15rem)
+    minmax(
+      0,
+      calc(var(--docs-measure, 44rem) + var(--docs-gap, 3.25rem) + var(--docs-toc-width, 12.5rem))
+    );
+  gap: var(--docs-gap, 3.25rem);
+  max-width: calc(
+    var(--docs-sidebar-width, 15rem) + var(--docs-measure, 44rem) + var(--docs-toc-width, 12.5rem) +
+      2 * var(--docs-gap, 3.25rem) + 4rem
+  );
+  margin: 0 auto;
+  padding: 3rem 2rem 6rem;
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+}
+.docs-layout.docs-article-layout,
+.docs-layout.reference-detail-layout {
+  grid-template-columns:
+    var(--docs-sidebar-width, 15rem) minmax(0, var(--docs-measure, 44rem))
+    var(--docs-toc-width, 12.5rem);
+}
+.docs-layout.tutorial-article-layout {
+  grid-template-columns: var(--docs-sidebar-width, 15rem) minmax(0, var(--docs-measure, 44rem));
+}
+
+/* Article */
+.article {
+  min-width: 0;
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+}
+.article-header {
+  margin-bottom: 2.5rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid var(--docs-line, #c6bdb1);
+}
+.article-header .eyebrow {
+  margin: 0;
+}
+.article-header h1 {
+  margin: 0.85rem 0 0.9rem;
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+  font-size: clamp(2.1rem, 3.6vw, 3rem);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+.article-header > p:not(.eyebrow) {
+  max-width: 40rem;
+  margin: 0;
+  color: var(--docs-muted, #53606b);
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+
+/* Header meta row: source link (reference) or hardware + example (tutorial) */
+.source-link,
+.lesson-meta {
+  margin-top: 1.4rem;
+}
+.lesson-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.lesson-meta > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--docs-line, #c6bdb1);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
+  color: var(--docs-muted, #53606b);
+  font: 500 0.74rem/1.4 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+}
+.source-link,
+.lesson-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-bottom: 0.1rem;
+  border-bottom: 1px solid currentColor;
+  color: var(--docs-blue, #2457d6);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.source-link:hover,
+.lesson-meta a:hover {
+  color: var(--docs-accent, #e86f3d);
+}
+
+/* Previous / next cards */
+.article-pager {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 4rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--docs-line, #c6bdb1);
+}
+.article-pager a {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1rem 1.2rem 1.1rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
+  color: var(--docs-ink, #1e2933);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.article-pager a:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 4px 4px 0 var(--docs-blue, #2457d6);
+}
+.article-pager .pager-next {
+  grid-column: 2;
+  align-items: flex-end;
+  text-align: right;
+}
+.article-pager a > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--docs-muted, #53606b);
+  font: 500 0.7rem/1.3 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.article-pager a > strong {
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+.article-pager a:hover > strong {
+  color: var(--docs-blue, #2457d6);
+}
+
+@media (max-width: 1180px) {
+  .docs-layout {
+    --docs-sidebar-width: 13.5rem;
+    --docs-toc-width: 11rem;
+    --docs-gap: 2.25rem;
+  }
+}
+@media (max-width: 980px) {
+  .docs-layout,
+  .docs-layout.docs-article-layout,
+  .docs-layout.reference-detail-layout,
+  .docs-layout.tutorial-article-layout {
+    grid-template-columns: 13.5rem minmax(0, 1fr);
+    gap: 2.25rem;
+  }
+}
+@media (max-width: 720px) {
+  .docs-layout,
+  .docs-layout.docs-article-layout,
+  .docs-layout.reference-detail-layout,
+  .docs-layout.tutorial-article-layout {
+    display: block;
+    padding: 1.5rem 1rem 3.5rem;
+  }
+  .article-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+  }
+  .article-header > p:not(.eyebrow) {
+    font-size: 1.05rem;
+  }
+  .article-pager {
+    grid-template-columns: 1fr;
+    margin-top: 3rem;
+  }
+  .article-pager .pager-next {
+    grid-column: auto;
+  }
+  .article-pager > span:empty {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .article-pager a {
+    transition: none;
+  }
+  .article-pager a:hover {
+    transform: none;
+  }
+}

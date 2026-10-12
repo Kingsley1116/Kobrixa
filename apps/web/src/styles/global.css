@@ -98,7 +98,9 @@ nav a {
   display: inline-block;
 }
 .hero h1,
-h2 {
+.section h2,
+.learn-section h2,
+.download-section h2 {
   margin: 0.8rem 0 1.35rem;
   max-width: 760px;
   font-size: clamp(2.65rem, 5vw, 5rem);
@@ -665,7 +667,6 @@ h2 {
   margin-bottom: 4.2rem;
 }
 .docs-intro h1,
-.article h1,
 .doc-not-found h1 {
   margin: 0.8rem 0 1.1rem;
   font-size: clamp(2.6rem, 5vw, 4.6rem);
@@ -677,14 +678,6 @@ h2 {
   color: #53606b;
   font-size: 1.05rem;
   line-height: 1.8;
-}
-.docs-layout {
-  max-width: 1200px;
-  margin: auto;
-  padding: 0 2rem 6rem;
-  display: grid;
-  grid-template-columns: 13.5rem minmax(0, 1fr);
-  gap: 4rem;
 }
 .doc-sidebar {
   align-self: start;
@@ -809,37 +802,6 @@ h2 {
   gap: 1rem;
   flex: 0 0 auto;
 }
-.docs-article-layout {
-  grid-template-columns: 13.5rem minmax(0, 46rem) 11rem;
-  gap: 3rem;
-  padding-top: 4.3rem;
-}
-.article {
-  min-width: 0;
-}
-.article-header {
-  padding-bottom: 2.1rem;
-  margin-bottom: 2.7rem;
-  border-bottom: 2px solid #1e2933;
-}
-.article-header h1 {
-  font-size: clamp(2.3rem, 4vw, 3.75rem);
-}
-.article-header > p:last-of-type {
-  max-width: 38rem;
-  margin: 0;
-  color: #53606b;
-  line-height: 1.75;
-}
-.source-link {
-  display: inline-block;
-  margin-top: 1.3rem;
-  color: #2457d6;
-  font-size: 0.78rem;
-  font-weight: 800;
-  border-bottom: 1px solid #2457d6;
-  padding-bottom: 0.2rem;
-}
 .article-content {
   font-size: 1rem;
   line-height: 1.82;
@@ -928,28 +890,6 @@ h2 {
 .article-content th {
   background: #e8b12c;
 }
-.article-pager {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  margin-top: 4rem;
-  padding-top: 1.5rem;
-  border-top: 2px solid #1e2933;
-}
-.article-pager a:last-child {
-  text-align: right;
-}
-.article-pager span {
-  display: block;
-  color: #7a6e61;
-  font-size: 0.72rem;
-}
-.article-pager strong {
-  display: block;
-  margin-top: 0.35rem;
-  color: #2457d6;
-  font-size: 0.86rem;
-}
 .toc {
   align-self: start;
   position: sticky;
@@ -983,10 +923,6 @@ h2 {
   line-height: 1.75;
 }
 @media (max-width: 980px) {
-  .docs-article-layout {
-    grid-template-columns: 12rem minmax(0, 1fr);
-    gap: 2.5rem;
-  }
   .toc {
     display: none;
   }
@@ -994,11 +930,6 @@ h2 {
 @media (max-width: 720px) {
   .docs-overview {
     padding: 3.4rem 1.25rem 4rem;
-  }
-  .docs-layout,
-  .docs-article-layout {
-    display: block;
-    padding: 0 1.25rem 4rem;
   }
   .doc-sidebar {
     position: static;
@@ -1036,17 +967,11 @@ h2 {
     flex-direction: column;
     padding: 1.5rem;
   }
-  .article-header {
-    margin-bottom: 2rem;
-  }
   .article-content {
     font-size: 0.96rem;
   }
   .article-content h2 {
     margin-top: 2.5rem;
-  }
-  .article-pager {
-    margin-top: 3rem;
   }
   .doc-not-found {
     padding: 6rem 1.25rem;
@@ -1272,18 +1197,6 @@ h2 {
   border-top: 1px solid #c6bdb1;
   color: #2457d6;
 }
-.lesson-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem 1.2rem;
-  margin-top: 1.3rem;
-  color: #6f685f;
-  font-size: 0.75rem;
-}
-.lesson-meta a {
-  color: #2457d6;
-  font-weight: 800;
-}
 .code-block {
   position: relative;
   margin: 1.5rem 0;
@@ -1392,11 +1305,6 @@ h2 {
   background: #e8b12c;
   color: #1e2933;
   font-weight: 800;
-}
-.unified-layout {
-  grid-template-columns: 13.5rem minmax(0, 1fr);
-  gap: 4rem;
-  padding-top: 4.2rem;
 }
 .unified-layout .getting-started,
 .unified-layout .tutorial-overview {
@@ -1607,9 +1515,6 @@ h2 {
     border: 0;
     white-space: normal;
   }
-  .unified-layout {
-    padding-top: 2.5rem;
-  }
   .syntax-reference > div,
   .api-grid {
     grid-template-columns: 1fr;
@@ -1793,28 +1698,6 @@ h2 {
 }
 
 /* Documentation reference shell: a dense, MDN-inspired reading layout. */
-.docs-layout {
-  max-width: 88rem;
-  grid-template-columns: 15rem minmax(0, 48rem);
-  gap: 3.25rem;
-  padding: 2.5rem 2rem 5rem;
-  font-family:
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-}
-.unified-layout {
-  grid-template-columns: 15rem minmax(0, 48rem);
-  gap: 3.25rem;
-  padding-top: 2.5rem;
-}
-.docs-article-layout {
-  grid-template-columns: 15rem minmax(0, 48rem) 12.5rem;
-  gap: 3.25rem;
-  padding-top: 2.5rem;
-}
 .reference-detail-layout {
   grid-template-columns: 15rem minmax(0, 48rem) 12.5rem;
 }
@@ -1904,8 +1787,7 @@ h2 {
 }
 .getting-started,
 .tutorial-overview,
-.reference-page,
-.article {
+.reference-page {
   font-family:
     system-ui,
     -apple-system,
@@ -1919,8 +1801,7 @@ h2 {
 }
 .start-heading h1,
 .tutorial-overview .docs-intro h1,
-.reference-header h1,
-.article h1 {
+.reference-header h1 {
   color: #202b36;
   font-family:
     system-ui,
@@ -1931,23 +1812,12 @@ h2 {
   font-size: clamp(2rem, 4vw, 3rem);
   letter-spacing: -0.045em;
 }
-.eyebrow {
-  color: #536273;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-  letter-spacing: 0.03em;
-}
-.eyebrow-marker {
-  background: #2457d6;
-}
-.article-header,
 .reference-header {
   max-width: 48rem;
   padding-bottom: 1.75rem;
   margin-bottom: 2.25rem;
   border-bottom: 1px solid #d7dce2;
 }
-.article-header > p:last-of-type,
 .reference-header > p:last-child,
 .api-description {
   color: #465362;
@@ -2001,10 +1871,6 @@ h2 {
 .article-content th,
 .article-content td {
   border-color: #d7dce2;
-}
-.source-link {
-  color: #163d9d;
-  border-bottom-color: #8ca6eb;
 }
 .reference-page {
   min-width: 0;
@@ -2209,15 +2075,6 @@ h2 {
 .detail-links {
   margin-top: 0;
 }
-.article-pager {
-  border-top-color: #d7dce2;
-}
-.article-pager strong {
-  color: #163d9d;
-}
-.article-pager span {
-  color: #647181;
-}
 .toc {
   top: 6rem;
   padding-left: 1rem;
@@ -2308,9 +2165,6 @@ h2 {
     monospace;
 }
 @media (max-width: 980px) {
-  .docs-layout,
-  .unified-layout,
-  .docs-article-layout,
   .reference-detail-layout {
     grid-template-columns: 14rem minmax(0, 1fr);
     gap: 2.25rem;
@@ -2320,9 +2174,6 @@ h2 {
   }
 }
 @media (max-width: 720px) {
-  .docs-layout,
-  .unified-layout,
-  .docs-article-layout,
   .reference-detail-layout {
     display: block;
     padding: 1.5rem 1rem 3.5rem;

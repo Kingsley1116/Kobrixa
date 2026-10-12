@@ -1,0 +1,28 @@
+/*
+ * Documentation design tokens.
+ * Every docs stylesheet reads these through `var(--docs-*, <fallback>)`, so a
+ * future theme (for example dark mode) only has to redefine this block.
+ */
+:root,
+.docs-layout {
+  --docs-paper: #f5f0e7;
+  --docs-panel: #f8f4ec;
+  --docs-panel-2: #f0e8dc;
+  --docs-ink: #1e2933;
+  --docs-muted: #53606b;
+  --docs-line: #c6bdb1;
+  --docs-blue: #2457d6;
+  --docs-accent: #e86f3d;
+  --docs-mustard: #e8b12c;
+  --docs-code-bg: #1e2933;
+  --docs-inline-code-bg: #e9dfd1;
+  --docs-inline-code: #b34d24;
+  --docs-font: "Manrope", "Noto Sans TC", sans-serif;
+  --docs-mono: "DM Mono", ui-monospace, monospace;
+
+  /* Layout */
+  --docs-sidebar-width: 15rem;
+  --docs-measure: 44rem;
+  --docs-toc-width: 12.5rem;
+  --docs-gap: 3.25rem;
+}

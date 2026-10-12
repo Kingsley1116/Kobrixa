@@ -17,6 +17,8 @@ import {
   type DocumentEntry,
   type TutorialEntry,
 } from "./docs-content.js";
+import "./styles/tokens.css";
+import "./styles/layout.css";
 
 type DocsPageProps = {
   locale: DocsLocale;
@@ -703,7 +705,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
         </div>
         <nav className="article-pager" aria-label="Lesson pagination">
           {previous ? (
-            <AppLink href={`/docs/tutorial/${previous.slug}`}>
+            <AppLink className="pager-previous" href={`/docs/tutorial/${previous.slug}`}>
               <span>
                 <Icon name="arrow-left" /> {t.previous}
               </span>
@@ -713,7 +715,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
             <span />
           )}
           {next ? (
-            <AppLink href={`/docs/tutorial/${next.slug}`}>
+            <AppLink className="pager-next" href={`/docs/tutorial/${next.slug}`}>
               <span>
                 {t.next} <Icon name="arrow" />
               </span>
@@ -822,7 +824,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
         </div>
         <nav className="article-pager" aria-label="Document pagination">
           {previous ? (
-            <AppLink href={`/docs/reference/${previous.slug}`}>
+            <AppLink className="pager-previous" href={`/docs/reference/${previous.slug}`}>
               <span>
                 <Icon name="arrow-left" /> {t.previous}
               </span>
@@ -832,7 +834,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
             <span />
           )}
           {next ? (
-            <AppLink href={`/docs/reference/${next.slug}`}>
+            <AppLink className="pager-next" href={`/docs/reference/${next.slug}`}>
               <span>
                 {t.next} <Icon name="arrow" />
               </span>
