@@ -6,6 +6,19 @@ export interface WhatsNewEntry {
 
 export const WHATS_NEW: readonly WhatsNewEntry[] = [
   {
+    version: "1.0.1-beta.1",
+    items: [
+      {
+        zh: "Windows 視窗更簡潔：移除系統選單列與額外標題列，最小化、最大化與關閉按鈕整合進工具列。",
+        en: "A cleaner Windows window: the system menu bar and extra title bar are removed, with minimize, maximize and close controls integrated into the toolbar.",
+      },
+      {
+        zh: "視窗按鈕配色與工具列高度會隨主題、介面縮放及工具列換行同步調整。",
+        en: "Window controls follow the app theme and toolbar height as the interface scale and toolbar wrapping change.",
+      },
+    ],
+  },
+  {
     version: "1.0.0",
     items: [
       {
