@@ -98,7 +98,7 @@ export const copy = {
     save: "Save",
     build: "Build",
     cancel: "Cancel",
-    welcome: "Code motion. Build ideas.",
+    welcome: "Code your creativity.",
     intro: "Open a Basic Plus program or create a small EV3 project to begin.",
     files: "Project",
     diagnostics: "Diagnostics",
