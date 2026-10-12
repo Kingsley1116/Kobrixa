@@ -2,9 +2,9 @@
 
 ## Current delivery stage
 
-The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Physical EV3 acceptance is confirmed by the maintainer. Signing is deferred beyond 1.0.0; clean-machine installation and release-artifact checks remain required.
+Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Physical EV3 acceptance is confirmed by the maintainer. Signing is deferred beyond 1.0.0; clean-machine installation and release-artifact checks remain required.
 
-The candidate also includes the [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Candidate.14 updates collaboration rooms, local-change handling and control requests. Automated tests for these candidate features do not replace physical EV3 acceptance.
+Kobrixa also includes the [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Automated tests for these features do not replace physical EV3 acceptance.
 
 ## Phase 0 — foundation in place
 
@@ -30,7 +30,7 @@ Exit: every criterion in the [product specification](../en/product.md) and [devi
 - Expand `.bp` compatibility cases and EV3 API coverage.
 - Improve completion, formatting, performance, accessibility, localization, and recovery UX.
 - Add a headless Node.js `kobrixa` CLI over the same compiler and device packages.
-- Cloud collaboration (included in candidate.12): invite-code rooms for real-time co-editing, shared file trees, chat and single-holder EV3 control through the Kobrixa-operated service. See [cloud collaboration](../en/collaboration.md).
+- Cloud collaboration (included): invite-code rooms for real-time co-editing, shared file trees, chat and single-holder EV3 control through the Kobrixa-operated service. See [cloud collaboration](../en/collaboration.md).
 
 Exit: compiler and device APIs are stable enough for independent CLI and desktop release cycles.
 

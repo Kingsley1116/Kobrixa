@@ -100,7 +100,7 @@ Compile errors appear in the diagnostics panel (Ctrl/Cmd+J) with the exact line.
 | C++ frontend                             | Planned after TypeScript |
 | Bluetooth, block editor                  | Long-term                |
 
-**Available** — included in current candidate builds. Physical EV3 acceptance is complete per maintainer confirmation ([device support](docs/en/device-support.md)). **Planned / Long-term** — not available yet; see the [roadmap](docs/en/roadmap.md).
+**Available** — included in current builds. Physical EV3 acceptance is complete per maintainer confirmation ([device support](docs/en/device-support.md)). **Planned / Long-term** — not available yet; see the [roadmap](docs/en/roadmap.md).
 
 ## How it works
 

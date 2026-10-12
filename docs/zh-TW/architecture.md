@@ -73,8 +73,6 @@ src/
 
 ## 雲端協作
 
-> **候選版本。** [雲端協作](../zh-TW/collaboration.md)自 `v0.1.0-v1-candidate.12` 起納入桌面版本。
-
 ```text
 主持人 renderer（協作分頁）               來賓 renderer
   │ Monaco ⇄ Y.Doc 綁定                     │ Monaco ⇄ Y.Doc 綁定

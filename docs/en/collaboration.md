@@ -1,6 +1,6 @@
 # Cloud collaboration
 
-> **Release candidate.** Cloud collaboration is included starting with `v0.1.0-v1-candidate.12`. The default service is `https://collab.kobrixa.com`. Room recovery and the independent collaboration pane are included starting with `v0.1.0-v1-candidate.13`. Local-change conflict choices, a host decline for device-control requests and the redesigned room panel are included starting with `v0.1.0-v1-candidate.14`; the original `.12` desktop does not retain room recovery credentials.
+> **Version notes.** Cloud collaboration is included starting with `v0.1.0-v1-candidate.12`. The default service is `https://collab.kobrixa.com`. Room recovery and the independent collaboration pane are included starting with `v0.1.0-v1-candidate.13`. Local-change conflict choices, a host decline for device-control requests and the redesigned room panel are included starting with `v0.1.0-v1-candidate.14`; the original `.12` desktop does not retain room recovery credentials.
 
 Several people can edit one Kobrixa project at the same time through a Kobrixa-operated collaboration service. No account is needed: the host starts a room and shares an invite code, and guests join with that code and the optional room password. Everyone sees the same files, cursors and chat; only one person at a time controls the EV3.
 
@@ -96,6 +96,6 @@ After deploying a service, run `pnpm test:collab:remote https://collab.kobrixa.c
 
 ## Acceptance status
 
-The candidate has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow, including optional room passwords, on 2026-10-08. The workbench matrix covers 980×650 and 1420×900 windows, 320/360/520 px panels, English/Traditional Chinese, dark/light themes and 100%/125% scale on macOS. Platform packaging is checked separately in CI. Physical EV3 acceptance remains separate; it is not completed by these collaboration tests.
+Cloud collaboration has automated unit, local Worker and Electron integration coverage. The default public service was deployed and passed the two-client remote workflow, including optional room passwords, on 2026-10-08. The workbench matrix covers 980×650 and 1420×900 windows, 320/360/520 px panels, English/Traditional Chinese, dark/light themes and 100%/125% scale on macOS. Platform packaging is checked separately in CI. Physical EV3 acceptance remains separate; it is not completed by these collaboration tests.
 
 Desktop requests advertise `X-Collab-Capabilities: resume-v1` to enable additive recovery response fields. Deploy the compatible Worker before distributing the updated desktop; `.12` strict response shapes remain unchanged without the header.

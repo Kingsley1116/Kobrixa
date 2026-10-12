@@ -73,8 +73,6 @@ The main process deduplicates real project roots and exposes `workspace.restoreS
 
 ## Cloud collaboration
 
-> **Release candidate.** [Cloud collaboration](../en/collaboration.md) is included starting with `v0.1.0-v1-candidate.12`.
-
 ```text
 Host renderer (Collaborate tab)          Guest renderer
   │ Monaco ⇄ Y.Doc binding                  │ Monaco ⇄ Y.Doc binding

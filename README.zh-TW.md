@@ -86,21 +86,21 @@ Program.Delay(250)
 
 ## 專案狀態
 
-| 能力                               | 狀態                    |
-| ---------------------------------- | ----------------------- |
-| Basic Plus（`.bp`）編輯器與編譯器  | 可用                    |
-| 原生 EV3 `.rbf` 輸出               | 可用                    |
-| Windows、macOS、Linux USB          | 可用                    |
-| Windows、macOS、Linux Wi-Fi        | 可用                    |
-| EV3 檔案管理、Sensor Lab、馬達測試 | 可用                    |
-| 雲端協作                           | 可用（自 candidate.12） |
-| 安裝套件與自動更新                 | 可用                    |
-| Python 前端                        | v1 之後規劃             |
-| TypeScript 前端                    | Python 之後規劃         |
-| C++ 前端                           | TypeScript 之後規劃     |
-| Bluetooth、積木編輯器              | 長期規劃                |
+| 能力                               | 狀態                |
+| ---------------------------------- | ------------------- |
+| Basic Plus（`.bp`）編輯器與編譯器  | 可用                |
+| 原生 EV3 `.rbf` 輸出               | 可用                |
+| Windows、macOS、Linux USB          | 可用                |
+| Windows、macOS、Linux Wi-Fi        | 可用                |
+| EV3 檔案管理、Sensor Lab、馬達測試 | 可用                |
+| 雲端協作                           | 可用                |
+| 安裝套件與自動更新                 | 可用                |
+| Python 前端                        | v1 之後規劃         |
+| TypeScript 前端                    | Python 之後規劃     |
+| C++ 前端                           | TypeScript 之後規劃 |
+| Bluetooth、積木編輯器              | 長期規劃            |
 
-**可用**：已包含在目前候選版中。實體 EV3 驗收已由維護者確認通過（[設備支援](docs/zh-TW/device-support.md)）。**規劃／長期規劃**：目前尚不可用，見[路線圖](docs/zh-TW/roadmap.md)。
+**可用**：已包含在目前版本中。實體 EV3 驗收已由維護者確認通過（[設備支援](docs/zh-TW/device-support.md)）。**規劃／長期規劃**：目前尚不可用，見[路線圖](docs/zh-TW/roadmap.md)。
 
 ## 運作方式
 

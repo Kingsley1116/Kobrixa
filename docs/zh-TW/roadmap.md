@@ -2,9 +2,9 @@
 
 ## 目前交付階段
 
-倉庫目前處於 v1 候選版階段。Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理，以及三平台安裝套件／壓縮包、Release 流程與自動更新均已實作。可下載版本以各個 GitHub Release 為準。實體 EV3 驗收已由維護者確認通過。1.0.0 不等待簽章，仍須確認乾淨環境安裝與發布產物。
+Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理，以及三平台安裝套件／壓縮包、Release 流程與自動更新均已實作。可下載版本以各個 GitHub Release 為準。實體 EV3 驗收已由維護者確認通過。1.0.0 不等待簽章，仍須確認乾淨環境安裝與發布產物。
 
-目前亦已提供[Sensor Lab](sensor-lab.md)、[馬達測試](motor-test.md)與[雲端協作](collaboration.md)。candidate.14 更新協作房間介面、本機變更處理與控制權請求流程。這些候選功能的自動化測試不取代實體 EV3 驗收。
+目前亦已提供[Sensor Lab](sensor-lab.md)、[馬達測試](motor-test.md)與[雲端協作](collaboration.md)。這些功能的自動化測試不取代實體 EV3 驗收。
 
 ## Phase 0 — 已建立的基礎
 
@@ -30,7 +30,7 @@
 - 擴充 `.bp` 相容案例與 EV3 API 覆蓋。
 - 改進補全、格式化、效能、無障礙、本地化與復原體驗。
 - 在相同 compiler 與 device package 上加入 headless Node.js `kobrixa` CLI。
-- 雲端協作（candidate.12 已納入）：透過 Kobrixa 營運的服務，以邀請碼開啟房間，即時共同編輯、共享檔案樹、聊天，並由單一持有者控制 EV3。詳見[雲端協作](../zh-TW/collaboration.md)。
+- 雲端協作（已納入）：透過 Kobrixa 營運的服務，以邀請碼開啟房間，即時共同編輯、共享檔案樹、聊天，並由單一持有者控制 EV3。詳見[雲端協作](../zh-TW/collaboration.md)。
 
 退出條件：編譯器和設備 API 足夠穩定，可讓 CLI 與桌面程式獨立發布。
 

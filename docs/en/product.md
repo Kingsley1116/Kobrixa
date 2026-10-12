@@ -4,7 +4,7 @@
 
 Kobrixa IDE gives students and makers a dependable, understandable path from EV3 source code to a running robot. The product favors a short feedback loop, actionable errors, offline use, and predictable physical-device behavior over a broad collection of partially supported features.
 
-The current v1 candidate implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports, remote file management, Sensor Lab, motor testing and cloud collaboration. The maintainer confirmed physical EV3 acceptance on 2026-10-12. Version 1.0.0 ships unsigned; signing is not a release gate. The simulator is excluded from official releases.
+Kobrixa IDE implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports, remote file management, Sensor Lab, motor testing and cloud collaboration.
 
 ## Primary users
 
@@ -12,7 +12,7 @@ The current v1 candidate implements Basic Plus editing and compilation, project 
 - A maker maintaining or extending an existing `.bp` robot program.
 - A mentor who needs examples and repeatable setup across Windows, macOS, and Linux.
 
-Additional language frontends and classroom fleet management remain future directions. Optional cloud collaboration is included in the candidate; individual editing and compilation remain available offline.
+Additional language frontends and classroom fleet management remain future directions. Optional cloud collaboration is included; individual editing and compilation remain available offline.
 
 ## v1 user journey
 
