@@ -2,13 +2,14 @@ import { Icon } from "../../components/ui/icon.js";
 import { Select } from "../../components/ui/select.js";
 import { AppLink } from "../../components/app-link.js";
 import { useSearchParams } from "react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   EV3_OPERATION_CATALOG,
   type EV3OperationSignature,
   type EV3ParameterType,
 } from "@kobrixa/ir";
 import type { DocsLocale } from "./docs-content.js";
+import "./styles/reference.css";
 
 type Props = { locale: DocsLocale; apiName?: string | undefined; syntaxSlug?: string | undefined };
 type Syntax = {
@@ -1650,6 +1651,28 @@ function Copy({ value, locale }: { value: string; locale: DocsLocale }) {
     </button>
   );
 }
+function SectionHeading({
+  id,
+  locale,
+  children,
+}: {
+  id: string;
+  locale: DocsLocale;
+  children: ReactNode;
+}) {
+  return (
+    <h2 className="reference-section-title">
+      {children}
+      <AppLink
+        className="reference-anchor"
+        href={`#${id}`}
+        aria-label={locale === "zh-TW" ? "連結到此段落" : "Link to this section"}
+      >
+        #
+      </AppLink>
+    </h2>
+  );
+}
 function Pager({
   locale,
   current,
@@ -1781,7 +1804,9 @@ function Index({ locale }: { locale: DocsLocale }) {
           <div className="api-index-list">
             {rows.map((op) => (
               <AppLink href={apiRoute(op)} key={op.name}>
-                <span>{locale === "zh-TW" ? labels[op.category][0] : labels[op.category][1]}</span>
+                <span className="reference-tag">
+                  {locale === "zh-TW" ? labels[op.category][0] : labels[op.category][1]}
+                </span>
                 <strong>{op.name}</strong>
                 <code>{signature(op)}</code>
                 <i>
@@ -1833,13 +1858,17 @@ function ApiDetail({
       </header>
       <section className="reference-detail">
         <section id="syntax">
-          <h2>Syntax</h2>
+          <SectionHeading id="syntax" locale={locale}>
+            Syntax
+          </SectionHeading>
           <div className="reference-signature">
             <code>{signature(operation)}</code>
           </div>
         </section>
         <section id="parameters">
-          <h2>{c.params}</h2>
+          <SectionHeading id="parameters" locale={locale}>
+            {c.params}
+          </SectionHeading>
           {operation.parameters.length ? (
             <dl>
               {operation.parameters.map((p, i) => {
@@ -1848,7 +1877,7 @@ function ApiDetail({
                   <div key={i}>
                     <dt>{info.name}</dt>
                     <dd>
-                      <code>{typeName(p)}</code>
+                      <code className="reference-type">{typeName(p)}</code>
                       <span>{info.description[locale]}</span>
                     </dd>
                   </div>
@@ -1860,9 +1889,11 @@ function ApiDetail({
           )}
         </section>
         <section id="return-value">
-          <h2>{c.returns}</h2>
+          <SectionHeading id="return-value" locale={locale}>
+            {c.returns}
+          </SectionHeading>
           <p>
-            <code>{typeName(operation.returns)}</code>
+            <code className="reference-type">{typeName(operation.returns)}</code>
             {operation.returns === "void"
               ? locale === "zh-TW"
                 ? " — 此操作不產生回傳值。"
@@ -1873,7 +1904,9 @@ function ApiDetail({
           </p>
         </section>
         <section id="examples">
-          <h2>{c.usage}</h2>
+          <SectionHeading id="examples" locale={locale}>
+            {c.usage}
+          </SectionHeading>
           <div className="reference-code">
             <Copy value={usage(operation)} locale={locale} />
             <pre>
@@ -1882,7 +1915,9 @@ function ApiDetail({
           </div>
         </section>
         <section id="related">
-          <h2>{c.related}</h2>
+          <SectionHeading id="related" locale={locale}>
+            {c.related}
+          </SectionHeading>
           <div className="detail-links">
             <AppLink href={`/docs/tutorial/${link[0]}`}>
               {c.lesson}: {link[0]}
@@ -1937,7 +1972,9 @@ function SyntaxDetail({ locale, entry }: { locale: DocsLocale; entry: Syntax }) 
       </header>
       <section className="reference-detail">
         <section id="syntax">
-          <h2>Syntax</h2>
+          <SectionHeading id="syntax" locale={locale}>
+            Syntax
+          </SectionHeading>
           <div className="reference-code">
             <Copy value={entry.code} locale={locale} />
             <pre>
@@ -1946,7 +1983,9 @@ function SyntaxDetail({ locale, entry }: { locale: DocsLocale; entry: Syntax }) 
           </div>
         </section>
         <section id="examples">
-          <h2>{c.usage}</h2>
+          <SectionHeading id="examples" locale={locale}>
+            {c.usage}
+          </SectionHeading>
           <p>
             {locale === "zh-TW"
               ? "將這段程式貼到 Kobrixa 專案中，再依你的工作調整名稱與數值。"
@@ -1954,7 +1993,9 @@ function SyntaxDetail({ locale, entry }: { locale: DocsLocale; entry: Syntax }) 
           </p>
         </section>
         <section id="related">
-          <h2>{c.related}</h2>
+          <SectionHeading id="related" locale={locale}>
+            {c.related}
+          </SectionHeading>
           <div className="detail-links">
             <AppLink href={`/docs/tutorial/${entry.lesson}`}>
               {c.lesson}: {entry.lesson}
