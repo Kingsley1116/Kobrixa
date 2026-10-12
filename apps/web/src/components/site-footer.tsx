@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { LEGAL_EMAIL } from "../features/legal/legal-content.js";
+import { BRAND_TAGLINES } from "../shared/brand.js";
 import "./site-footer.css";
 
 function ExternalArrow() {
@@ -26,9 +27,7 @@ export function SiteFooter({ locale }: { locale: "zh-TW" | "en" }) {
               <img src="/icons/kobrixa-mark.svg" alt="" width="36" height="36" />
               <span>Kobrixa</span>
             </Link>
-            <p className="site-footer-tagline">
-              {zh ? "讓想法，接上 EV3。" : "Connect your ideas to EV3."}
-            </p>
+            <p className="site-footer-tagline">{BRAND_TAGLINES[locale]}</p>
             <p className="site-footer-description">
               {zh
                 ? "獨立、開源的程式開發環境。\n從第一行程式，到機器人的下一步。"

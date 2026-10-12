@@ -32,13 +32,15 @@ Kobrixa IDE is an open-source desktop app for programming LEGO® MINDSTORMS® EV
 
 ## In pictures
 
-Full application screenshots taken in a 1600 × 1000 window, using the English interface. Click to view the original resolution. Projects, sensor readings and participants are demo data.
+Click to view the original resolution. Projects, sensor readings and participants are demo data.
 
-| Editor                                                                               | Diagnostics                                                                            |
+| Editor                                                            | Diagnostics                                                                      |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [![Editor](docs/images/editor-en.png)](docs/images/editor-en.png) | [![Diagnostics](docs/images/diagnostics-en.png)](docs/images/diagnostics-en.png) |
+| Edit Basic Plus and run it on EV3.                                | Locate errors and read repair guidance.                                          |
+
+| Sensor recordings                                                                    | Collaboration                                                                          |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| [![Editor](docs/images/editor-en.png)](docs/images/editor-en.png)                    | [![Diagnostics](docs/images/diagnostics-en.png)](docs/images/diagnostics-en.png)       |
-| Edit Basic Plus and run it on EV3.                                                   | Locate errors and read repair guidance.                                                |
-| **Sensor recordings**                                                                | **Collaboration**                                                                      |
 | [![Sensor recordings](docs/images/sensor-lab-en.png)](docs/images/sensor-lab-en.png) | [![Collaboration](docs/images/collaboration-en.png)](docs/images/collaboration-en.png) |
 | Inspect curves and compare saved recordings.                                         | Share a project and hand over device control.                                          |
 
@@ -84,21 +86,19 @@ Compile errors appear in the diagnostics panel (Ctrl/Cmd+J) with the exact line.
 
 ## Project status
 
-Kobrixa is a **v1 release candidate** (currently `v0.1.0-v1-candidate.16`). Physical EV3 acceptance was confirmed by the maintainer on 2026-10-12. Version 1.0.0 will ship unsigned without waiting for signing credentials. The simulator is excluded from official releases.
-
-| Capability                               | Status                         |
-| ---------------------------------------- | ------------------------------ |
-| Basic Plus (`.bp`) editor and compiler   | Available                      |
-| Native EV3 `.rbf` output                 | Available                      |
-| USB on Windows, macOS, and Linux         | Available                      |
-| Wi-Fi on Windows, macOS, and Linux       | Available                      |
-| EV3 file manager, Sensor Lab, motor test | Available                      |
-| Cloud collaboration                      | Available (since candidate.12) |
-| Installers and automatic updates         | Available                      |
-| Python frontend                          | Planned after v1               |
-| TypeScript frontend                      | Planned after Python           |
-| C++ frontend                             | Planned after TypeScript       |
-| Bluetooth, block editor                  | Long-term                      |
+| Capability                               | Status                   |
+| ---------------------------------------- | ------------------------ |
+| Basic Plus (`.bp`) editor and compiler   | Available                |
+| Native EV3 `.rbf` output                 | Available                |
+| USB on Windows, macOS, and Linux         | Available                |
+| Wi-Fi on Windows, macOS, and Linux       | Available                |
+| EV3 file manager, Sensor Lab, motor test | Available                |
+| Cloud collaboration                      | Available                |
+| Installers and automatic updates         | Available                |
+| Python frontend                          | Planned after v1         |
+| TypeScript frontend                      | Planned after Python     |
+| C++ frontend                             | Planned after TypeScript |
+| Bluetooth, block editor                  | Long-term                |
 
 **Available** — included in current candidate builds. Physical EV3 acceptance is complete per maintainer confirmation ([device support](docs/en/device-support.md)). **Planned / Long-term** — not available yet; see the [roadmap](docs/en/roadmap.md).
 
@@ -186,8 +186,6 @@ Electron · React · TypeScript · Monaco Editor · Node.js. The compiler, EV3 b
 Kobrixa is an independent project and is not affiliated with, endorsed by, or sponsored by the LEGO Group. LEGO, MINDSTORMS, and EV3 are trademarks of the LEGO Group.
 
 The Apache-2.0 license in this repository applies only to original Kobrixa work. It does not grant rights to code, assets, documentation, trademarks, or other material owned by Clev3r, EV3Basic, the LEGO Group, or any other third party. Kobrixa must not copy Clev3r source code, visual assets, or documentation; compatibility work must be based on public behavior specifications and independently authored tests.
-
-The name “Kobrixa” passed a basic web and package-name collision check during planning. This is not trademark clearance. Before public release, maintainers must perform appropriate trademark, repository, package-registry, social-handle, and domain checks.
 
 ## Contributing
 

@@ -32,13 +32,15 @@ Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Li
 
 ## 介面一覽
 
-以 1600 × 1000 視窗擷取完整繁體中文介面，點選圖片可查看原始解析度。專案、感測器讀值與協作成員均為示範資料。
+點選圖片可查看原始解析度。專案、感測器讀值與協作成員均為示範資料。
 
-| 程式編輯器                                                                          | 錯誤診斷                                                                                |
+| 程式編輯器                                                                  | 錯誤診斷                                                                            |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [![程式編輯器](docs/images/editor-zh-TW.png)](docs/images/editor-zh-TW.png) | [![錯誤診斷](docs/images/diagnostics-zh-TW.png)](docs/images/diagnostics-zh-TW.png) |
+| 撰寫 Basic Plus，並在 EV3 執行。                                            | 定位錯誤並查看修正說明。                                                            |
+
+| 感測器記錄                                                                          | 即時協作                                                                                |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [![程式編輯器](docs/images/editor-zh-TW.png)](docs/images/editor-zh-TW.png)         | [![錯誤診斷](docs/images/diagnostics-zh-TW.png)](docs/images/diagnostics-zh-TW.png)     |
-| 撰寫 Basic Plus，並在 EV3 執行。                                                    | 定位錯誤並查看修正說明。                                                                |
-| **感測器記錄**                                                                      | **即時協作**                                                                            |
 | [![感測器記錄](docs/images/sensor-lab-zh-TW.png)](docs/images/sensor-lab-zh-TW.png) | [![即時協作](docs/images/collaboration-zh-TW.png)](docs/images/collaboration-zh-TW.png) |
 | 檢視曲線並比較已儲存的記錄。                                                        | 共享專案並交接設備控制權。                                                              |
 
@@ -83,8 +85,6 @@ Program.Delay(250)
 編譯錯誤會顯示在診斷面板（Ctrl/Cmd+J）並標出確切行號。沒有 EV3 時，可用 **建置**（Ctrl/Cmd+Shift+B）檢查程式。接下來可依照[學習路徑](examples/LEARNING-PATH.md)繼續。
 
 ## 專案狀態
-
-Kobrixa 目前是 **v1 候選版**（`v0.1.0-v1-candidate.16`）。維護者已於 2026-10-12 確認實體 EV3 驗收通過。1.0.0 將以未簽章版本發佈，不等待簽章；模擬器不納入正式發佈。
 
 | 能力                               | 狀態                    |
 | ---------------------------------- | ----------------------- |
@@ -186,8 +186,6 @@ Electron · React · TypeScript · Monaco Editor · Node.js。編譯器、EV3 �
 Kobrixa 是獨立專案，與 LEGO Group 沒有隸屬、認可或贊助關係。LEGO、MINDSTORMS 與 EV3 是 LEGO Group 的商標。
 
 本倉庫的 Apache-2.0 授權只適用於 Kobrixa 的原創成果，不授予 Clev3r、EV3Basic、LEGO Group 或其他第三方所擁有之程式碼、素材、文件、商標或其他內容的權利。Kobrixa 不得複製 Clev3r 的原始碼、視覺素材或文件；相容工作必須依據公開行為規格與獨立撰寫的測試完成。
-
-「Kobrixa」在規劃階段已進行基本網路與套件名稱撞名檢查，但這不構成商標檢索或法律意見。公開發布前，維護者必須完成適當的商標、程式碼倉庫、套件註冊表、社群帳號與網域檢查。
 
 ## 參與貢獻
 

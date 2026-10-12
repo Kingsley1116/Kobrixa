@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <title>Kobrixa — 用程式，讓創意真的動起來。</title>
+  <title>Kobrixa — 用程式驅動創意。</title>
   <desc>淡黃色背景上的 Kobrixa 標誌、Basic Plus 程式碼與 EV3 主機插圖。</desc>
   <defs>
     <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#dad5ca"/></pattern>
@@ -18,11 +18,10 @@
     <rect x="64" y="177" width="32" height="4" rx="2" fill="#e86f3d"/>
     <text x="109" y="186" font-size="18" fill="#2457d6" font-weight="600" letter-spacing="2">為 EV3 而生的程式環境</text>
     <g fill="#1e2933" font-size="66" font-weight="700" letter-spacing="-2">
-      <text x="59" y="278">用程式，</text>
-      <text x="59" y="367">讓創意真的</text>
-      <text x="59" y="456">動起來。</text>
+      <text x="59" y="306">用程式</text>
+      <text x="59" y="410">驅動創意。</text>
     </g>
-    <path d="M65 475 Q182 462 313 474" stroke="#e86f3d" stroke-width="7" stroke-linecap="round" fill="none"/>
+    <path d="M65 439 Q182 426 313 438" stroke="#e86f3d" stroke-width="7" stroke-linecap="round" fill="none"/>
     <text x="64" y="562" font-size="20" fill="#53606b">Basic Plus · 開源 · 離線優先</text>
     <text x="1138" y="562" text-anchor="end" font-size="20" font-weight="600" fill="#2457d6">kobrixa.com ↗</text>
   </g>

@@ -1,4 +1,4 @@
-import { useEffect, type ComponentType } from "react";
+import type { ComponentType } from "react";
 import { createBrowserRouter, useLocation, useOutletContext } from "react-router";
 import { HomePage } from "../features/home/home-page.js";
 import { App } from "./app.js";
@@ -18,10 +18,6 @@ const lazyPage = (load: () => Promise<Page>) => async () => {
 };
 function HomeRoute() {
   const props = useOutletContext<PageContext>();
-  useEffect(() => {
-    document.title =
-      props.locale === "zh-TW" ? "Kobrixa — 用程式驅動創意" : "Kobrixa — Make ideas move with code";
-  }, [props.locale]);
   return <HomePage {...props} />;
 }
 

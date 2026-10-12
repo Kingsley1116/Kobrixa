@@ -4,6 +4,7 @@ import { SiteHeader } from "../../components/site-header.js";
 import { DIAGNOSTIC_HELP } from "@kobrixa/compiler/diagnostic-help";
 import metadata from "../../../../../package.json" with { type: "json" };
 import { useEffect } from "react";
+import { BRAND_TAGLINES } from "../../shared/brand.js";
 
 type Locale = "zh-TW" | "en";
 
@@ -13,7 +14,7 @@ const copy = {
   "zh-TW": {
     hero: {
       label: "為 EV3 而生的程式環境",
-      title: "用程式，讓創意真的動起來。",
+      title: BRAND_TAGLINES["zh-TW"],
       body: "從 Basic Plus 編輯與編譯，到 USB／Wi-Fi 實機部署；也能邀請夥伴共同編輯，讓每個想法一起前進。",
       learn: "開始學習",
       source: "查看原始碼",
@@ -74,7 +75,7 @@ const copy = {
   en: {
     hero: {
       label: "A programming environment for EV3",
-      title: "Make ideas move with code.",
+      title: BRAND_TAGLINES.en,
       body: "Write and compile Basic Plus, then deploy over USB or Wi-Fi. Invite others to edit with you and move ideas forward together.",
       learn: "Start learning",
       source: "View source",
@@ -207,8 +208,7 @@ export function HomePage({
 }) {
   const t = copy[locale];
   useEffect(() => {
-    document.title =
-      locale === "zh-TW" ? "Kobrixa — 用程式驅動創意" : "Kobrixa — Make ideas move with code";
+    document.title = `Kobrixa — ${BRAND_TAGLINES[locale]}`;
   }, [locale]);
   const learnPath = `${github}/blob/main/examples/LEARNING-PATH.md`;
 
