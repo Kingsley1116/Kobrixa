@@ -62,6 +62,8 @@ async function fixture(t) {
     }),
   );
   await put(resources, "kobrixa-update.json", JSON.stringify({ signedMac: false }));
+  const electronLicenses = process.platform === "darwin" ? resources : directory;
+  for (const name of ["LICENSE", "LICENSES.chromium.html"]) await put(electronLicenses, name);
   await createPackageWithOptions(app, path.join(resources, "app.asar"), { unpack: "**/*.node" });
   const executable = await put(
     directory,
@@ -171,6 +173,17 @@ test("signed archives are verified again after extraction before a checksum can 
     /Extracted signature failed/,
   );
   await assert.rejects(readFile(`${archive}.sha256`), /ENOENT/);
+});
+
+test("rejects a package without Electron and Chromium license files", async (t) => {
+  const { directory, resources } = await fixture(t);
+  const electronLicenses = process.platform === "darwin" ? resources : directory;
+  await verifyApplication(directory, process.platform, version);
+  await rm(path.join(electronLicenses, "LICENSES.chromium.html"));
+  await assert.rejects(
+    verifyApplication(directory, process.platform, version),
+    /Missing Electron license file: LICENSES\.chromium\.html/,
+  );
 });
 
 test("rejects missing .vite entrypoints and lost executable permissions", async (t) => {

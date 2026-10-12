@@ -213,7 +213,7 @@ interface DeviceSession {
 
 ## 桌面封裝與發布
 
-Electron Forge 將 renderer、main 與 preload 入口封裝至 `app.asar`，原生 `.node` 檔保留於解包目錄。封裝 hook 加入目標平台的 `node-hid` 預編譯檔、專案 `LICENSE` 與含版本資訊的 `THIRD-PARTY-NOTICES.txt`，並保留 Electron／Chromium 與 HIDAPI 授權檔。
+Electron Forge 將 renderer、main 與 preload 入口封裝至 `app.asar`，原生 `.node` 檔保留於解包目錄。封裝 hook 加入目標平台的 `node-hid` 預編譯檔、專案 `LICENSE` 與含版本資訊的 `THIRD-PARTY-NOTICES.txt`。聲明涵蓋打包 source map 引用的所有套件及複製的執行期相依套件；任一套件缺少授權檔時封裝失敗。Electron 的 `LICENSE` 與 `LICENSES.chromium.html` 位於執行檔旁（macOS 為 `Kobrixa.app/Contents/Resources`），HIDAPI 授權檔保留在 `node-hid` 內。
 
 一般 CI 與本機封裝不需要憑證。Tag 發布先驗證 commit 與套件版本，將 macOS／Windows 簽章開關快照記錄於草稿，通過共通檢查與桌面測試後才執行簽章。macOS 對 `com.kobrixa.ide` 使用 Developer ID、Hardened Runtime 與公證；Windows 將保留一天的暫存產物送往 SignPath，只接受 `kobrixa.exe` 的變更。
 

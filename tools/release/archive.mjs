@@ -120,6 +120,11 @@ export async function verifyApplication(directory, platform, version) {
   ]) {
     assert.ok(files.includes(required), `Missing packaged file: ${required}`);
   }
+  for (const name of ["LICENSE", "LICENSES.chromium.html"]) {
+    const license = path.join(platform === "darwin" ? resources : directory, name);
+    const stat = await lstat(license).catch(() => undefined);
+    assert.ok(stat?.isFile() && stat.size > 0, `Missing Electron license file: ${name}`);
+  }
   const updateConfig = JSON.parse(await readFile(path.join(resources, "app-update.yml"), "utf8"));
   assert.equal(updateConfig.provider, "generic", "Unexpected update provider");
   assert.equal(

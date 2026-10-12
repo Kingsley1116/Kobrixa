@@ -142,6 +142,10 @@ const updaterConfiguration = {
     : {}),
 };
 await writeFile(path.join(resources, "app-update.yml"), JSON.stringify(updaterConfiguration));
+const electronDist = path.join(
+  path.dirname(createRequire(import.meta.url).resolve("electron/package.json")),
+  "dist",
+);
 const signMac = platform === "darwin" && modes.macos;
 const identity = signMac
   ? macIdentity(process.env).identity.replace(/^Developer ID Application: /, "")
@@ -177,10 +181,19 @@ await packageElectron({
       "**/*",
       { from: path.join(stage, "node_modules"), to: "node_modules", filter: ["**/*"] },
     ],
-    extraResources: ["kobrixa-update.json", "app-update.yml"].map((name) => ({
-      from: path.join(resources, name),
-      to: name,
-    })),
+    extraResources: [
+      ...["kobrixa-update.json", "app-update.yml"].map((name) => ({
+        from: path.join(resources, name),
+        to: name,
+      })),
+      // Windows and Linux keep Electron's license files beside the executable; macOS bundles omit them.
+      ...(platform === "darwin"
+        ? ["LICENSE", "LICENSES.chromium.html"].map((name) => ({
+            from: path.join(electronDist, name),
+            to: name,
+          }))
+        : []),
+    ],
     mac: {
       target: "dir",
       icon: path.join(desktop, "resources/icons/kobrixa.icns"),
