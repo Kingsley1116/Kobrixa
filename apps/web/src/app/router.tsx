@@ -71,7 +71,7 @@ export const router = createBrowserRouter([
       {
         path: "download",
         lazy: lazyPage(
-          async () => (await import("../features/product/product-pages.js")).DownloadPage,
+          async () => (await import("../features/product/download-page.js")).DownloadPage,
         ),
       },
       {

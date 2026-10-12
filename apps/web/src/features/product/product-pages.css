@@ -256,227 +256,10 @@
 .product-roadmap .product-button {
   flex-shrink: 0;
 }
-.download-hero {
-  grid-template-columns: 1.4fr 0.8fr;
-  gap: 90px;
-}
-.release-card {
-  border: 1px solid #d3c6ae;
-  background: #efe5cb;
-  border-radius: 14px;
-  padding: 26px;
-  text-align: center;
-}
-.release-label {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  color: #8a6326;
-}
-.release-label i {
-  width: 6px;
-  height: 6px;
-  background: #b9893c;
-  border-radius: 50%;
-}
-.release-card > img {
-  display: block;
-  width: 62px;
-  height: 62px;
-  margin: 28px auto 16px;
-}
-.release-card h2 {
-  font-size: 26px;
-  margin-bottom: 8px;
-}
-.release-card code {
-  font:
-    11px "DM Mono",
-    monospace;
-  overflow-wrap: anywhere;
-}
-.release-card p {
-  font-size: 12px;
-  line-height: 1.9;
-  color: #736c5b;
-  text-align: left;
-  border-top: 1px solid #d7cbae;
-  padding-top: 18px;
-  margin: 22px 0 0;
-}
 .product-inline-link {
   color: #2457d6;
   font-size: 12px;
   font-weight: 650;
-}
-.download-platforms {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-}
-.download-platform {
-  padding: 28px;
-  border: 1px solid #ddd4c5;
-  border-radius: 10px;
-  background: #fcf9f2;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-.platform-glyph {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 9px;
-  color: #555d53;
-  background: #eee8db;
-  font-size: 24px;
-  font-weight: 700;
-}
-.platform-state {
-  font-size: 10px;
-  color: #8a6326;
-  background: #f3e8ce;
-  padding: 5px 8px;
-  border-radius: 4px;
-}
-.download-platform p {
-  color: #667064;
-  font-size: 13px;
-  line-height: 1.8;
-  margin: 20px 0;
-}
-.download-platform > a {
-  font-size: 12px;
-  font-weight: 650;
-  color: #2457d6;
-  margin-top: auto;
-}
-.source-build {
-  display: grid;
-  grid-template-columns: 1fr 1.1fr;
-  gap: 64px;
-  padding: 50px 0;
-  border-top: 1px solid #d9d0c1;
-  scroll-margin-top: calc(var(--app-navbar-height) + 20px);
-}
-.source-build h2 {
-  white-space: pre-line;
-}
-.source-build-copy > p:not(.product-eyebrow) {
-  font-size: 13px;
-  line-height: 1.9;
-  color: #667064;
-}
-.source-terminal {
-  align-self: start;
-  min-width: 0;
-  border-radius: 10px;
-  overflow: hidden;
-  background: #25313d;
-  color: #e2e8e4;
-  box-shadow: 4px 4px 0 #d6cdbd;
-}
-.terminal-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 20px;
-  border-bottom: 1px solid #46515c;
-  font:
-    10px "DM Mono",
-    monospace;
-  color: #a7b4bd;
-}
-.terminal-heading button {
-  border: 1px solid #5b6670;
-  background: transparent;
-  border-radius: 4px;
-  padding: 6px 10px;
-  font-size: 11px;
-  color: #e2e8e4;
-  cursor: pointer;
-}
-.source-terminal pre {
-  overflow: auto;
-  font:
-    12px/2.3 "DM Mono",
-    monospace;
-  padding: 20px;
-  margin: 0;
-}
-.terminal-foot {
-  display: flex;
-  gap: 14px;
-  padding: 0 20px 16px;
-  color: #a7b4bd;
-  font:
-    10px "DM Mono",
-    monospace;
-}
-.source-terminal > p {
-  margin: 0;
-  padding: 0 20px 12px;
-  min-height: 12px;
-  font-size: 11px;
-}
-.download-help {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  margin-bottom: 50px;
-}
-.download-help article {
-  border-top: 1px solid #d9d0c1;
-  padding-top: 22px;
-}
-.download-help article > span {
-  font:
-    10px "DM Mono",
-    monospace;
-  color: #92927f;
-}
-.download-help p {
-  font-size: 13px;
-  line-height: 1.8;
-  color: #667064;
-}
-.download-help code {
-  display: inline-block;
-  padding: 8px 12px;
-  background: #eae4d5;
-  border-radius: 4px;
-  font-size: 12px;
-}
-.download-help a {
-  font-size: 12px;
-  font-weight: 650;
-  color: #2457d6;
-}
-.web-tools-callout {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 24px;
-  padding: 30px;
-  border: 1px solid #d3c6ae;
-  border-radius: 10px;
-  background: #efe5cb;
-}
-.web-tools-callout h2 {
-  font-size: 23px;
-}
-.web-tools-callout p {
-  color: #736c5b;
-  font-size: 13px;
-  line-height: 1.8;
-  margin: 0;
-}
-.web-tools-callout > a {
-  flex-shrink: 0;
 }
 @media (max-width: 1000px) {
   .product-page {
@@ -489,16 +272,10 @@
   .capability-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .source-build {
-    gap: 32px;
-  }
   .product-roadmap {
     align-items: start;
     flex-direction: column;
     gap: 24px;
-  }
-  .download-platform {
-    padding: 20px;
   }
 }
 @media (max-width: 720px) {
@@ -528,36 +305,14 @@
   .product-section-heading > p {
     max-width: none;
   }
-  .capability-grid,
-  .download-platforms,
-  .source-build {
+  .capability-grid {
     grid-template-columns: minmax(0, 1fr);
   }
   .capability-card {
     padding: 24px;
   }
-  .product-roadmap,
-  .web-tools-callout {
+  .product-roadmap {
     padding: 24px;
-  }
-  .release-card {
-    max-width: 440px;
-    width: 100%;
-    justify-self: center;
-  }
-  .source-build {
-    gap: 24px;
-    padding: 36px 0;
-  }
-  .source-terminal pre {
-    font-size: 11px;
-  }
-  .download-help {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .web-tools-callout {
-    flex-direction: column;
-    align-items: start;
   }
   .product-actions {
     gap: 10px;
