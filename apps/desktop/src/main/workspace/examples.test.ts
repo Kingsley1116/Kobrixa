@@ -38,8 +38,9 @@ const documentedCategories = [
   "motors",
   "sensors",
   "time",
-  "simulation",
 ];
+// Simulator examples stay in the repository but are excluded from the release indexes.
+const unindexedCategories = ["simulation"];
 
 async function findExampleProjects(root: string, relative = ""): Promise<string[]> {
   const directory = path.join(root, relative);
@@ -68,7 +69,9 @@ async function findSources(directory: string): Promise<string[]> {
 
 describe("shipped examples", () => {
   it("links every example from the bilingual and category indexes", async () => {
-    const examples = (await findExampleProjects(examplesRoot)).sort();
+    const examples = (await findExampleProjects(examplesRoot))
+      .filter((projectPath) => !unindexedCategories.includes(projectPath.split("/")[0]!))
+      .sort();
     expect(examples.length).toBeGreaterThan(0);
     const indexes = await Promise.all(
       ["README.md", "README.zh-TW.md"].map((name) =>
