@@ -27,6 +27,8 @@ The renderer fixtures in `apps/desktop/tests` are development-only and excluded 
 
 Run `node tests/desktop/run-close-smoke.mjs` to exercise the production main process, preload and renderer with isolated profiles. It covers closing a loaded window, quitting directly, closing during startup, and closing/reopening a window on macOS. Unexpected native error dialogs, uncaught exceptions and unhandled rejections fail the test. This catches callbacks that access a destroyed `BrowserWindow` after renderer acknowledgement, including sensor-state publication during shutdown. Sensor save failures and retry/cancel behavior remain covered by the main-process service and close-guard tests.
 
+The close smoke also checks that the window-chrome bridge is exposed only on Windows; Windows runs require a hidden menu bar and visible native window controls over the toolbar. Windows acceptance still requires dragging, double-click maximize, resize, minimize/restore, close, Windows 11 Snap Layouts, and confirming Alt does not reveal a menu. Check English and Traditional Chinese in light, dark and system themes at 980×650 and 125% UI scale, including toolbar wrapping, opening/saving, copy/paste and undo. Layout emulation on another OS does not verify native Windows behavior.
+
 ## Project search and quick open acceptance
 
 `KOBRIXA_SMOKE_SEARCH_ONLY=1 node tests/desktop/run-smoke.mjs` runs the actual quick-open dialog, Search panel and replacement preview in isolated projects. These cases also run in the full smoke suite. The fixture uses the production literal matcher through the sandboxed preload and can hold specific replies to verify stale-query and project-switch handling.

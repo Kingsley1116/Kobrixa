@@ -7,10 +7,13 @@ import type { ExecutionState } from "../execution/execution.js";
 import { versionLabel } from "../execution/version-label.js";
 import { Icon } from "../components/icon.js";
 import { ActionMenu } from "../components/action-menu.js";
+import type { Theme } from "../settings/theme.js";
+import { useWindowChrome } from "./window-chrome.js";
 
 export function Toolbar({
   t,
   locale,
+  theme,
   appearance,
   shortcutHint,
   onSaveAll,
@@ -40,6 +43,7 @@ export function Toolbar({
 }: {
   t: Copy;
   locale: Locale;
+  theme: Theme;
   appearance: ReactNode;
   shortcutHint(command: AppCommand): string;
   onSaveAll(): void;
@@ -69,11 +73,12 @@ export function Toolbar({
   /** Persistent collaboration entry, with room status when connected. */
   collab?: ReactNode;
 }): React.JSX.Element {
+  const { ref, hasWindowControls } = useWindowChrome(theme);
   const hint = (label: string, command: AppCommand) =>
     [label, shortcutHint(command)].filter(Boolean).join(" · ");
   const controlBlocked = Boolean(deviceControlNotice);
   return (
-    <header className="topbar">
+    <header ref={ref} className={`topbar${hasWindowControls ? " has-window-controls" : ""}`}>
       <div className="brand">
         <img className="brand-mark" src={kobrixaMark} alt="" />
         <span>Kobrixa</span>

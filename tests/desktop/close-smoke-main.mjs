@@ -52,6 +52,18 @@ async function ready(window) {
     ),
   );
   await window.webContents.executeJavaScript("window.kobrixa.sensorLab.getState()");
+  assert.equal(
+    await window.webContents.executeJavaScript("Boolean(window.kobrixa.windowChrome)"),
+    process.platform === "win32",
+  );
+  if (process.platform === "win32") {
+    assert.equal(window.isMenuBarVisible(), false);
+    await until(() =>
+      window.webContents.executeJavaScript(
+        'Boolean(navigator.windowControlsOverlay?.visible && document.querySelector(".topbar.has-window-controls"))',
+      ),
+    );
+  }
 }
 
 createRequire(import.meta.url)(path.join(directory, "main.cjs"));

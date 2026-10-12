@@ -54,6 +54,7 @@ describe("USB recovery controls", () => {
                 createElement(Toolbar, {
                   t,
                   locale,
+                  theme: "dark",
                   state,
                   appearance: null,
                   shortcutHint: () => "",

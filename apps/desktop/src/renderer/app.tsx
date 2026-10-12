@@ -3088,6 +3088,7 @@ export function App(): React.JSX.Element {
         <Toolbar
           t={t}
           locale={locale}
+          theme={resolvedTheme}
           shortcutHint={keyboard.hint}
           onSaveAll={() => runCommand("saveAll")}
           onSaveCopy={

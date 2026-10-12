@@ -79,6 +79,7 @@ button {
   background: var(--surface);
 }
 .topbar {
+  --topbar-inset: 18px;
   display: flex;
   align-items: center;
   padding: 0 18px;
@@ -1089,6 +1090,9 @@ summary:focus-visible {
   background: var(--surface);
 }
 .topbar button,
+.topbar input,
+.topbar select,
+.topbar a,
 .topbar .action-menu {
   -webkit-app-region: no-drag;
 }
@@ -1632,6 +1636,7 @@ footer {
 }
 @media (max-width: 1120px) {
   .topbar {
+    --topbar-inset: 12px;
     gap: 8px;
     padding-inline: 12px;
   }
@@ -1910,6 +1915,15 @@ select,
   .brand span {
     display: none;
   }
+}
+
+/* Keep toolbar actions clear of native controls, including when the toolbar wraps. */
+.topbar.has-window-controls {
+  flex-wrap: wrap;
+  padding-left: calc(var(--topbar-inset) + env(titlebar-area-x, 0px));
+  padding-right: calc(
+    var(--topbar-inset) + 100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%)
+  );
 }
 
 /* Short, interruptible motion; editor content and drag resizing stay immediate. */

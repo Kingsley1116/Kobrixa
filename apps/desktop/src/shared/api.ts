@@ -197,6 +197,10 @@ export type DeviceEvent =
   | { type: "error"; category: DeviceErrorCategory; message: string; recoverable: boolean };
 
 export interface KobrixaApi {
+  /** Native window controls are overlaid on the workbench on Windows only. */
+  windowChrome?: {
+    setAppearance(appearance: { theme: "light" | "dark"; height: number }): Promise<void>;
+  };
   collab: CollabApi;
   simulator: {
     cancel(workspaceId: string): Promise<void>;

@@ -179,4 +179,10 @@ const api: KobrixaApi = {
   },
 };
 
+if (process.platform === "win32") {
+  api.windowChrome = {
+    setAppearance: (appearance) => ipcRenderer.invoke("window-chrome:appearance", appearance),
+  };
+}
+
 contextBridge.exposeInMainWorld("kobrixa", api);

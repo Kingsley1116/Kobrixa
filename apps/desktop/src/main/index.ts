@@ -2,6 +2,7 @@ import { loadDevicePreferences } from "./device/preferences.js";
 import { createUpdateService } from "./updates/runtime.js";
 import { UpdateOperationGate, type UpdateService } from "./updates/service.js";
 import { attachKeyboard } from "./window/keyboard.js";
+import { registerWindowChromeIpc, WINDOWS_WINDOW_CHROME } from "./window/chrome.js";
 import path from "node:path";
 import {
   app,
@@ -71,6 +72,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     minHeight: 650,
     backgroundColor: "#18212b",
     title: "Kobrixa",
+    ...(process.platform === "win32" ? WINDOWS_WINDOW_CHROME : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -81,6 +83,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
   });
 
   const window = mainWindow;
+  if (process.platform === "win32") window.removeMenu();
   const finish = () => {
     if (quitting) app.quit();
     else window.close();
@@ -302,6 +305,9 @@ void app.whenReady().then(async () => {
     },
     { monitor, lab: sensorLab, motors },
     [
+      (handle) => {
+        if (process.platform === "win32") registerWindowChromeIpc(handle, () => mainWindow);
+      },
       (handle) =>
         registerCollabIpc(
           handle,
