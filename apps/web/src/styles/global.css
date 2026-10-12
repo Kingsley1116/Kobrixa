@@ -910,24 +910,6 @@ h2 {
     0.82em "DM Mono",
     monospace;
 }
-.article-content table {
-  display: block;
-  width: 100%;
-  overflow-x: auto;
-  margin: 1.5rem 0;
-  border-collapse: collapse;
-  font-size: 0.88rem;
-}
-.article-content th,
-.article-content td {
-  padding: 0.7rem 0.8rem;
-  border: 1px solid #c6bdb1;
-  text-align: left;
-  vertical-align: top;
-}
-.article-content th {
-  background: #e8b12c;
-}
 .article-pager {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1994,13 +1976,6 @@ h2 {
   background: #edf1f5;
   color: #26313c;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.article-content th {
-  background: #eef3ff;
-}
-.article-content th,
-.article-content td {
-  border-color: #d7dce2;
 }
 .source-link {
   color: #163d9d;
