@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Select } from "./select.js";
-import { AudioPlayer } from "./audio-player.js";
+import { AudioPlayer, timestamp } from "./audio-player.js";
 import { FileDrop } from "./file-drop.js";
 
 let root: Root;
@@ -160,6 +160,12 @@ describe("custom select interaction", () => {
 });
 
 describe("audio player interaction", () => {
+  it("formats short clips with tenths and long ones in whole seconds", () => {
+    expect(timestamp(3.5, true)).toBe("0:03.5");
+    expect(timestamp(59.96, true)).toBe("0:59.9");
+    expect(timestamp(3.5)).toBe("0:03");
+    expect(timestamp(75)).toBe("1:15");
+  });
   it("loads on demand, plays, seeks, mutes and returns to Play after ending", async () => {
     await render(h(AudioPlayer, { src: "/sample.wav", title: "Chime", duration: 10, t }));
     const audio = query<HTMLAudioElement>("audio");

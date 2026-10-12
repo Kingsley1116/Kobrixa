@@ -58,7 +58,9 @@ export type GalleryEntry = {
   published_at: number | null;
   updated_at: number;
 };
-export type GalleryList = { items: GalleryEntry[]; more: boolean };
+export type GallerySort = "new" | "old" | "title";
+export type GalleryCounts = { all: number; image: number; audio: number };
+export type GalleryList = { items: GalleryEntry[]; more: boolean; counts?: GalleryCounts };
 export type MediaExport = { kind: MediaKind; name: string; parts: Uint8Array<ArrayBuffer>[] };
 export type GalleryEditorProps = {
   onExport?: (value: MediaExport | undefined) => void;

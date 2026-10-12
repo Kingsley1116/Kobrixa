@@ -4,8 +4,13 @@ import type { CSSProperties } from "react";
 type Translate = (zh: string, en: string) => string;
 type Props = { src: string; title: string; t: Translate; duration?: number };
 let activeAudio: HTMLAudioElement | null = null;
-const timestamp = (value: number) =>
-  `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
+/** Short clips (under 10 s) show tenths so 3.5 s does not read as 0:03. */
+export function timestamp(value: number, precise = false) {
+  if (!precise)
+    return `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
+  const tenths = Math.floor(value * 10);
+  return `${Math.floor(tenths / 600)}:${((tenths % 600) / 10).toFixed(1).padStart(4, "0")}`;
+}
 
 export function AudioPlayer(props: Props) {
   // A new source has an independent playback lifecycle, including pending play promises.
@@ -21,6 +26,7 @@ function Player({ src, title, t, duration: expectedDuration = 0 }: Props) {
   const [muted, setMuted] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(expectedDuration);
+  const precise = duration > 0 && duration < 10;
   useEffect(() => {
     const audio = ref.current;
     return () => {
@@ -63,7 +69,12 @@ function Player({ src, title, t, duration: expectedDuration = 0 }: Props) {
     }
   }
   return (
-    <div className="ui-audio" role="group" aria-label={`${t("試聽", "Preview")}: ${title}`}>
+    <div
+      className="ui-audio"
+      data-ready={ready}
+      role="group"
+      aria-label={`${t("試聽", "Preview")}: ${title}`}
+    >
       <audio
         ref={ref}
         src={src}
@@ -128,7 +139,7 @@ function Player({ src, title, t, duration: expectedDuration = 0 }: Props) {
           value={Math.min(time, duration || 1)}
           disabled={!ready || error}
           aria-label={t("播放進度", "Playback position")}
-          aria-valuetext={`${timestamp(time)} / ${timestamp(duration)}`}
+          aria-valuetext={`${timestamp(time, precise)} / ${timestamp(duration, precise)}`}
           style={{ "--ui-progress": `${duration ? (time / duration) * 100 : 0}%` } as CSSProperties}
           onChange={(event) => {
             if (!ref.current || !ready) return;
@@ -137,8 +148,8 @@ function Player({ src, title, t, duration: expectedDuration = 0 }: Props) {
           }}
         />
         <div className="ui-audio-time">
-          <span>{timestamp(time)}</span>
-          <span>{timestamp(duration)}</span>
+          <span>{timestamp(time, precise)}</span>
+          <span>{timestamp(duration, precise)}</span>
         </div>
       </div>
       <button

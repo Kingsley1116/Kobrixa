@@ -345,3 +345,30 @@ test("latest release metadata is public, trimmed and cached", async () => {
   }
   assert.ok(releaseFetches >= 1);
 });
+test("list sorts by allow-listed order and counts kinds independent of the kind filter", async () => {
+  const tag = `Sortable${Date.now()}`;
+  const b = await published({ title: `${tag} beta` });
+  const a = await published({ title: `${tag} Alpha` });
+  const s = await published({ bytes: sound, name: "s.rsf", title: `${tag} gamma` });
+  for (const [i, e] of [b, a, s].entries())
+    await db
+      .prepare("UPDATE entries SET published_at=? WHERE id=?")
+      .bind(1000 + i, e.id)
+      .run();
+  const ids = async (query) =>
+    (await (await request(`gallery?q=${tag}${query}`)).json()).items.map((i) => i.id);
+  assert.deepEqual(await ids(""), [s.id, a.id, b.id]);
+  assert.deepEqual(await ids("&sort=old"), [b.id, a.id, s.id]);
+  assert.deepEqual(await ids("&sort=title"), [a.id, b.id, s.id]);
+  assert.equal((await request(`gallery?sort=published_at`)).status, 400);
+  const filtered = await (await request(`gallery?q=${tag}&kind=audio`)).json();
+  assert.deepEqual(
+    filtered.items.map((i) => i.id),
+    [s.id],
+  );
+  assert.deepEqual(filtered.counts, { all: 3, image: 2, audio: 1 });
+  await create({ title: `${tag} draft` });
+  assert.deepEqual((await (await request(`gallery?q=${tag}`)).json()).counts.all, 3);
+  const mine = await (await request(`gallery?q=${tag}&scope=mine`, { user: "author" })).json();
+  assert.equal(mine.counts.all, 4);
+});
