@@ -1,0 +1,188 @@
+/*
+ * Docs code: fenced blocks (MarkdownPre), the copy button and inline code.
+ * Token colours are tuned for the dark --docs-code-bg; every pair below
+ * meets WCAG AA (>= 4.5:1) against #1e2933.
+ */
+
+.code-block {
+  --code-bg: var(--docs-code-bg, #1e2933);
+  --code-text: var(--docs-code-text, #f5f0e7);
+  --code-muted: var(--docs-code-muted, #9aa7b2);
+  --code-rule: var(--docs-code-rule, rgba(245, 240, 231, 0.12));
+  --code-shadow: var(--docs-code-shadow, rgba(232, 177, 44, 0.3));
+  position: relative;
+  margin: 1.6rem 0;
+  overflow: hidden;
+  border: 1px solid var(--code-bg);
+  border-radius: 0.4rem;
+  background: var(--code-bg);
+  color: var(--code-text);
+}
+
+.code-block-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.4rem;
+  padding: 0.3rem 0.4rem 0.3rem 1.1rem;
+  border-bottom: 1px solid var(--code-rule);
+  background: rgba(245, 240, 231, 0.035);
+}
+
+.code-block-language {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--docs-mustard, #e8b12c);
+  font: 500 0.7rem/1 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.code-block-language::before {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 1px;
+  background: var(--docs-accent, #e86f3d);
+  content: "";
+}
+
+.code-block .copy-code {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.32rem 0.6rem;
+  border: 1px solid rgba(245, 240, 231, 0.2);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--code-text);
+  cursor: pointer;
+  font: 0.7rem/1.2 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+.code-block .copy-code:hover {
+  border-color: rgba(245, 240, 231, 0.42);
+  background: rgba(245, 240, 231, 0.1);
+}
+.code-block .copy-code:focus-visible {
+  outline: 2px solid var(--docs-mustard, #e8b12c);
+  outline-offset: 2px;
+}
+.code-block .copy-code[data-copied] {
+  border-color: var(--docs-mustard, #e8b12c);
+  color: var(--docs-mustard, #e8b12c);
+}
+.code-block .copy-code .ui-icon {
+  width: 0.95em;
+  height: 0.95em;
+}
+
+/*
+ * Long lines scroll instead of wrapping (ASCII diagrams keep their shape).
+ * The two `local` layers cover the `scroll` shadows at each end, so a shadow
+ * only shows on the side that still has hidden content.
+ */
+.code-block pre {
+  margin: 0;
+  padding: 1rem 1.15rem 1.1rem;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(to right, var(--code-bg) 30%, transparent) left center / 2.5rem 100% no-repeat
+      local,
+    linear-gradient(to left, var(--code-bg) 30%, transparent) right center / 2.5rem 100% no-repeat
+      local,
+    radial-gradient(farthest-side at 0 50%, var(--code-shadow), transparent) left center / 0.9rem
+      100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--code-shadow), transparent) right center /
+      0.9rem 100% no-repeat scroll,
+    var(--code-bg);
+  color: var(--code-text);
+  font: 0.85rem/1.7 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  tab-size: 2;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  scrollbar-color: rgba(245, 240, 231, 0.28) transparent;
+}
+.code-block pre:focus-visible {
+  outline: 2px solid var(--docs-mustard, #e8b12c);
+  outline-offset: -2px;
+}
+.code-block pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.tok-keyword {
+  color: var(--docs-code-keyword, #ff9b6a);
+}
+.tok-type {
+  color: var(--docs-code-type, #f0c45c);
+}
+.tok-function {
+  color: var(--docs-code-function, #93b8ff);
+}
+.tok-string {
+  color: var(--docs-code-string, #8fd6c4);
+}
+.tok-number,
+.tok-literal {
+  color: var(--docs-code-number, #e0b6f2);
+}
+.tok-property,
+.tok-variable {
+  color: var(--docs-code-property, #ffd7a8);
+}
+.tok-parameter,
+.tok-operator {
+  color: var(--docs-code-operator, #c9c1b4);
+}
+.tok-punctuation {
+  color: var(--code-muted);
+}
+.tok-comment {
+  color: var(--code-muted);
+  font-style: italic;
+}
+
+/* Inline code: a warm pill that wraps cleanly inside prose, tables and links. */
+.article-content :not(pre) > code {
+  padding: 0.1em 0.38em;
+  border-radius: 0.3em;
+  background: var(--docs-inline-code-bg, #e9dfd1);
+  /* Darken the brand rust slightly so small text keeps 4.5:1 on the pill. */
+  color: var(--docs-inline-code, #b34d24);
+  color: color-mix(in srgb, var(--docs-inline-code, #b34d24) 88%, #000);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.86em;
+  font-weight: 500;
+  overflow-wrap: break-word;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.article-content :is(h1, h2, h3, h4) code {
+  font-size: 0.85em;
+}
+.article-content a > code {
+  color: inherit;
+}
+.article-content :is(td, th) > code {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .code-block pre {
+    padding: 0.9rem 1rem 1rem;
+    font-size: 0.8rem;
+  }
+}

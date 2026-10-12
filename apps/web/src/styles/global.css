@@ -891,25 +891,6 @@ h2 {
 .article-content blockquote p:last-child {
   margin-bottom: 0;
 }
-.article-content pre {
-  overflow: auto;
-  margin: 1.5rem 0;
-  padding: 1.15rem;
-  border: 1.5px solid #1e2933;
-  background: #1e2933;
-  color: #f8f4ec;
-  font:
-    0.78rem/1.7 "DM Mono",
-    monospace;
-}
-.article-content :not(pre) > code {
-  padding: 0.12rem 0.3rem;
-  background: #e9dfd1;
-  color: #b34d24;
-  font:
-    0.82em "DM Mono",
-    monospace;
-}
 .article-content table {
   display: block;
   width: 100%;
@@ -1283,32 +1264,6 @@ h2 {
 .lesson-meta a {
   color: #2457d6;
   font-weight: 800;
-}
-.code-block {
-  position: relative;
-  margin: 1.5rem 0;
-}
-.code-block .copy-code {
-  position: absolute;
-  z-index: 1;
-  top: 0.6rem;
-  right: 0.6rem;
-  border: 1px solid #8a98a6;
-  border-radius: 0.15rem;
-  padding: 0.35rem 0.55rem;
-  background: #26323d;
-  color: #f8f4ec;
-  cursor: pointer;
-  font:
-    0.65rem "DM Mono",
-    monospace;
-}
-.code-block .copy-code:hover {
-  background: #2457d6;
-}
-.code-block pre {
-  margin: 0;
-  padding-top: 3rem;
 }
 @media (max-width: 720px) {
   .getting-started,
@@ -1982,17 +1937,11 @@ h2 {
   background: #f4f7fb;
   color: #465362;
 }
-.article-content pre,
 .reference-code pre {
   border: 1px solid #273545;
   border-radius: 0.25rem;
   background: #202b36;
   color: #f5f7fa;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.article-content :not(pre) > code {
-  background: #edf1f5;
-  color: #26313c;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .article-content th {
@@ -2195,15 +2144,13 @@ h2 {
 .reference-code {
   margin-top: 0.8rem;
 }
-.reference-code .copy-code,
-.code-block .copy-code {
+.reference-code .copy-code {
   border-radius: 0.25rem;
   border-color: #9eabb9;
   background: #273545;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.reference-code .copy-code:hover,
-.code-block .copy-code:hover {
+.reference-code .copy-code:hover {
   background: #2457d6;
 }
 .detail-links {

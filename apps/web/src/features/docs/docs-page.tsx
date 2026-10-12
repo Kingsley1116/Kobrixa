@@ -1,13 +1,14 @@
 import { Icon } from "../../components/ui/icon.js";
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
 import { DiagnosticsPage } from "./diagnostics-page.js";
 import { DocsSearchPage } from "./docs-search-page.js";
+import { MarkdownPre } from "./markdown-code.js";
 import {
   documents,
   findDocument,
@@ -574,28 +575,6 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
   );
 }
 
-function CopyCode({
-  value,
-  label,
-  copiedLabel,
-}: {
-  value: string;
-  label: string;
-  copiedLabel: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard?.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-  return (
-    <button className="copy-code" onClick={() => void copy()}>
-      <Icon name={copied ? "check" : "copy"} /> {copied ? copiedLabel : label}
-    </button>
-  );
-}
-
 function TutorialSidebar({ locale, activeSlug }: { locale: DocsLocale; activeSlug?: string }) {
   return (
     <KnowledgeSidebar
@@ -691,10 +670,9 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
               h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
               h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
               pre: ({ children }) => (
-                <div className="code-block">
-                  <CopyCode value={toText(children)} label={t.copy} copiedLabel={t.copied} />
-                  <pre>{children}</pre>
-                </div>
+                <MarkdownPre copyLabel={t.copy} copiedLabel={t.copied}>
+                  {children}
+                </MarkdownPre>
               ),
             }}
           >
@@ -815,6 +793,11 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
               a: MarkdownLink,
               h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
               h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
+              pre: ({ children }) => (
+                <MarkdownPre copyLabel={t.copy} copiedLabel={t.copied}>
+                  {children}
+                </MarkdownPre>
+              ),
             }}
           >
             {content}
