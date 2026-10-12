@@ -1,0 +1,215 @@
+/* Docs prose: calm reading typography for rendered markdown (paragraphs, lists,
+   headings with permalinks, links, rules and images). Brutalist borders and
+   shadows stay on cards and buttons; prose only uses hairlines. */
+
+.article-content {
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  overflow-wrap: break-word;
+  text-rendering: optimizeLegibility;
+}
+
+/* CJK glyphs fill the em box, so give zh-TW lines a little more air. */
+.article-content:lang(zh) {
+  line-height: 1.8;
+  letter-spacing: 0.01em;
+}
+
+/* The page header already shows the document title. */
+.article-content h1 {
+  display: none;
+}
+
+/* Paragraphs and lists */
+.article-content p {
+  margin: 0 0 1.15em;
+}
+.article-content ul,
+.article-content ol {
+  margin: 0 0 1.25em;
+  padding-left: 1.5em;
+}
+.article-content li {
+  margin: 0.35em 0;
+  padding-left: 0.2em;
+}
+.article-content li > p {
+  margin-bottom: 0.5em;
+}
+.article-content li > ul,
+.article-content li > ol {
+  margin: 0.35em 0 0.5em;
+}
+.article-content ul > li::marker {
+  color: var(--docs-accent, #e86f3d);
+}
+.article-content ol > li::marker {
+  color: var(--docs-accent, #e86f3d);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.88em;
+  font-weight: 500;
+}
+.article-content li input[type="checkbox"] {
+  margin: 0 0.45em 0 0;
+  accent-color: var(--docs-blue, #2457d6);
+  vertical-align: -0.1em;
+}
+.article-content ul.contains-task-list {
+  padding-left: 0.4em;
+  list-style: none;
+}
+
+.article-content strong {
+  color: var(--docs-ink, #1e2933);
+  font-weight: 700;
+}
+
+/* Headings */
+.article-content h2,
+.article-content h3,
+.article-content h4 {
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+  font-weight: 800;
+  max-width: none;
+  scroll-margin-top: 6rem;
+  text-wrap: balance;
+}
+.article-content h2 {
+  margin: 3rem 0 1rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--docs-line, #c6bdb1);
+  font-size: 1.6rem;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+}
+.article-content h3 {
+  margin: 2.25rem 0 0.75rem;
+  font-size: 1.2rem;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+.article-content h4 {
+  margin: 1.75rem 0 0.5rem;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.article-content:lang(zh) h2,
+.article-content:lang(zh) h3,
+.article-content:lang(zh) h4 {
+  letter-spacing: 0;
+}
+.article-content > h2:first-child,
+.article-content > h1 + h2 {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.article-content h2 + h3 {
+  margin-top: 1.25rem;
+}
+
+/* Hover/focus-revealed permalink */
+.article-content .heading-anchor {
+  display: inline-block;
+  margin-left: 0.4em;
+  padding: 0 0.2em;
+  border: 0;
+  border-radius: 0.2em;
+  color: var(--docs-accent, #e86f3d);
+  font-weight: 700;
+  text-decoration: none;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+}
+.article-content .prose-heading:hover .heading-anchor,
+.article-content .prose-heading:target .heading-anchor,
+.article-content .heading-anchor:focus-visible {
+  opacity: 1;
+}
+.article-content .heading-anchor:hover {
+  color: var(--docs-blue, #2457d6);
+}
+@media (hover: none) {
+  .article-content .heading-anchor {
+    opacity: 0.45;
+  }
+}
+
+/* Links */
+.article-content a {
+  color: var(--docs-blue, #2457d6);
+  border-bottom: 0;
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--docs-blue, #2457d6) 40%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.22em;
+  transition:
+    color 120ms ease,
+    text-decoration-color 120ms ease;
+}
+.article-content a:hover {
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 2px;
+}
+.article-content a:has(> code) {
+  text-underline-offset: 0.3em;
+}
+.external-mark {
+  display: inline-block;
+  margin-left: 0.15rem;
+  font-size: 0.75em;
+}
+
+/* Horizontal rule */
+.article-content hr {
+  height: 0;
+  margin: 2.75rem 0;
+  border: 0;
+  border-top: 1px solid var(--docs-line, #c6bdb1);
+}
+
+/* Images */
+.article-content img,
+.article-content .prose-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.75rem 0;
+  border: 1px solid var(--docs-line, #c6bdb1);
+  border-radius: 0.5rem;
+  background: var(--docs-panel, #f8f4ec);
+}
+.article-content .prose-figure {
+  display: block;
+  margin: 1.75rem 0;
+}
+.article-content .prose-figure .prose-image {
+  margin: 0;
+}
+.article-content .prose-figcaption {
+  display: block;
+  margin-top: 0.6rem;
+  color: var(--docs-muted, #53606b);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .article-content {
+    font-size: 1rem;
+  }
+  .article-content h2 {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    font-size: 1.4rem;
+  }
+  .article-content h3 {
+    font-size: 1.12rem;
+  }
+}

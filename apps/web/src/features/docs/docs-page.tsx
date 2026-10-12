@@ -1,13 +1,20 @@
 import { Icon } from "../../components/ui/icon.js";
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
+import { BasicPlusReference } from "./basic-plus-reference.js";
 import { DiagnosticsPage } from "./diagnostics-page.js";
 import { DocsSearchPage } from "./docs-search-page.js";
+import { KnowledgeSidebar } from "./knowledge-sidebar.js";
+import { MarkdownHeading } from "./markdown-heading.js";
+import { MarkdownImage } from "./markdown-image.js";
+import { MarkdownCallout } from "./markdown-callout.js";
+import { MarkdownPre } from "./markdown-code.js";
+import { MarkdownTable } from "./markdown-table.js";
+import { DocsToc, DocsTocDisclosure, headingsFor, toSlug } from "./docs-toc.js";
 import {
   documents,
   findDocument,
@@ -17,13 +24,14 @@ import {
   type DocumentEntry,
   type TutorialEntry,
 } from "./docs-content.js";
+import "./styles/tokens.css";
+import "./styles/layout.css";
 
 type DocsPageProps = {
   locale: DocsLocale;
   onLocaleChange: (locale: DocsLocale) => void;
   path: string;
 };
-type Heading = { level: 2 | 3; text: string; id: string };
 
 const github = "https://github.com/Kingsley1116/Kobrixa";
 
@@ -122,26 +130,6 @@ function toText(value: ReactNode): string {
   return "";
 }
 
-function toSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/(^-|-$)/g, "");
-}
-
-function headingsFor(content: string): Heading[] {
-  return content.split("\n").flatMap((line) => {
-    const match = /^(#{2,3})\s+(.+)$/.exec(line);
-    if (!match) return [];
-    const markers = match[1];
-    const heading = match[2];
-    if (!markers || !heading) return [];
-    const text = heading.replace(/[`*_]/g, "");
-    return [{ level: markers.length as 2 | 3, text, id: toSlug(text) }];
-  });
-}
-
 function normalizeDocLink(href: string | undefined): string | undefined {
   if (!href || href.startsWith("#") || /^(https?:|mailto:)/.test(href)) return href;
   const repositoryPath = /^\.\.\/\.\.\/((?:examples|tests)\/[^#]*)(#.*)?$/.exec(href);
@@ -180,216 +168,6 @@ function MarkdownLink({
   );
 }
 
-function KnowledgeSidebar({ locale, activePath }: { locale: DocsLocale; activePath: string }) {
-  const t = ui[locale];
-  const sidebarRef = useRef<HTMLElement>(null);
-  const active = (path: string) =>
-    activePath === path ||
-    (path === "/docs/reference/basic-plus" && activePath.startsWith(`${path}/`))
-      ? "active"
-      : "";
-  const inSection = (path: string) => activePath === path || activePath.startsWith(`${path}/`);
-  const categories =
-    locale === "zh-TW"
-      ? {
-          motor: "馬達",
-          sensor: "感測器",
-          display: "顯示",
-          speaker: "聲音",
-          button: "按鍵",
-          file: "檔案",
-          mailbox: "信箱",
-          program: "本體與執行期",
-          math: "數學",
-          utility: "文字與工具",
-        }
-      : {
-          motor: "Motors",
-          sensor: "Sensors",
-          display: "Display",
-          speaker: "Sound",
-          button: "Buttons",
-          file: "Files",
-          mailbox: "Mailboxes",
-          program: "Brick and runtime",
-          math: "Math",
-          utility: "Text, data, and utilities",
-        };
-  useEffect(() => {
-    if (window.matchMedia("(min-width: 721px)").matches)
-      sidebarRef.current
-        ?.querySelector<HTMLAnchorElement>("a.active")
-        ?.scrollIntoView({ block: "nearest" });
-  }, [activePath]);
-  return (
-    <aside className="doc-sidebar knowledge-sidebar" aria-label={t.docs} ref={sidebarRef}>
-      <AppLink
-        className={`sidebar-parent ${active("/docs/search")}`}
-        href={`/docs/search?lang=${locale}`}
-      >
-        {locale === "zh-TW" ? "搜尋所有文件" : "Search all documentation"}
-      </AppLink>
-      <section>
-        <p>{t.start}</p>
-        <AppLink className={`sidebar-parent ${active("/docs")}`} href="/docs">
-          {t.start}
-        </AppLink>
-        <AppLink
-          className={`sidebar-parent ${inSection("/docs/diagnostics") ? "active" : ""}`}
-          href={`/docs/diagnostics?lang=${locale}`}
-          aria-current={inSection("/docs/diagnostics") ? "page" : undefined}
-        >
-          {t.diagnostics}
-        </AppLink>
-      </section>
-      <details open={inSection("/docs/tutorial")}>
-        <summary className="ui-disclosure">{t.course}</summary>
-        <AppLink className={`sidebar-parent ${active("/docs/tutorial")}`} href="/docs/tutorial">
-          {t.overview}
-        </AppLink>
-        {tutorials.map((lesson) => (
-          <AppLink
-            className={`sidebar-child ${active(`/docs/tutorial/${lesson.slug}`)}`}
-            href={`/docs/tutorial/${lesson.slug}`}
-            key={lesson.slug}
-          >
-            <span>{lesson.number}</span>
-            {lesson.title[locale]}
-          </AppLink>
-        ))}
-      </details>
-      <details open={inSection("/docs/reference/basic-plus")}>
-        <summary className="ui-disclosure">{t.basicPlus}</summary>
-        <AppLink
-          className={`sidebar-parent ${active("/docs/reference/basic-plus")}`}
-          href="/docs/reference/basic-plus"
-        >
-          {t.overview}
-        </AppLink>
-        <details
-          className="sidebar-syntax-group"
-          open={activePath.startsWith("/docs/reference/basic-plus/syntax/")}
-        >
-          <summary className="ui-disclosure">{t.syntax}</summary>
-          {syntaxEntries.map((entry) => (
-            <AppLink
-              className={`sidebar-child ${active(`/docs/reference/basic-plus/syntax/${entry.slug}`)}`}
-              href={`/docs/reference/basic-plus/syntax/${entry.slug}`}
-              key={entry.slug}
-            >
-              {entry.title[locale]}
-            </AppLink>
-          ))}
-        </details>
-        <p className="sidebar-level">{t.functions}</p>
-        {Object.entries(categories).map(([category, label]) => {
-          const operations = apiEntries.filter((operation) => operation.category === category);
-          const namespaces = [
-            ...new Set(operations.map((operation) => operation.name.split(".")[0]!)),
-          ];
-          return (
-            <details
-              className="sidebar-api-group"
-              open={operations.some((operation) => activePath === apiRoute(operation))}
-              key={category}
-            >
-              <summary className="ui-disclosure">{label}</summary>
-              {namespaces.map((namespace) => {
-                const members = operations.filter((operation) =>
-                  operation.name.startsWith(`${namespace}.`),
-                );
-                return (
-                  <details
-                    className="sidebar-api-namespace"
-                    open={members.some((operation) => activePath === apiRoute(operation))}
-                    key={namespace}
-                  >
-                    <summary className="ui-disclosure">{namespace}</summary>
-                    {members.map((operation) => (
-                      <AppLink
-                        aria-label={operation.name}
-                        className={`sidebar-child sidebar-api ${active(apiRoute(operation))}`}
-                        href={apiRoute(operation)}
-                        key={operation.name}
-                      >
-                        {operation.name.slice(namespace.length + 1)}
-                      </AppLink>
-                    ))}
-                  </details>
-                );
-              })}
-            </details>
-          );
-        })}
-      </details>
-      <details
-        open={
-          inSection("/docs/reference") &&
-          documents.some(
-            (document) =>
-              document.category === "product" && activePath === `/docs/reference/${document.slug}`,
-          )
-        }
-      >
-        <summary className="ui-disclosure">{t.productDocs}</summary>
-        {documents
-          .filter((document) => document.category === "product")
-          .map((document) => (
-            <AppLink
-              className={`sidebar-child ${active(`/docs/reference/${document.slug}`)}`}
-              href={`/docs/reference/${document.slug}`}
-              key={document.slug}
-            >
-              {document.title[locale]}
-            </AppLink>
-          ))}
-      </details>
-      <details
-        open={
-          inSection("/docs/reference") &&
-          documents.some(
-            (document) =>
-              document.category === "technical" &&
-              activePath === `/docs/reference/${document.slug}`,
-          )
-        }
-      >
-        <summary className="ui-disclosure">{t.technicalDocs}</summary>
-        {documents
-          .filter((document) => document.category === "technical")
-          .map((document) => (
-            <AppLink
-              className={`sidebar-child ${active(`/docs/reference/${document.slug}`)}`}
-              href={`/docs/reference/${document.slug}`}
-              key={document.slug}
-            >
-              {document.title[locale]}
-            </AppLink>
-          ))}
-      </details>
-      <section className="sidebar-examples">
-        <p>{t.examples}</p>
-        <AppLink
-          href={`${github}/blob/main/examples/LEARNING-PATH.md`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {t.learningPath}{" "}
-          <span aria-hidden="true">
-            <Icon name="external" />
-          </span>
-        </AppLink>
-        <AppLink href={`${github}/tree/main/examples`} target="_blank" rel="noreferrer">
-          {t.browseExamples}{" "}
-          <span aria-hidden="true">
-            <Icon name="external" />
-          </span>
-        </AppLink>
-      </section>
-    </aside>
-  );
-}
-
 function DocSidebar({ locale, activeSlug }: { locale: DocsLocale; activeSlug?: string }) {
   return (
     <KnowledgeSidebar
@@ -401,198 +179,169 @@ function DocSidebar({ locale, activeSlug }: { locale: DocsLocale; activeSlug?: s
 
 function GettingStarted({ locale }: { locale: DocsLocale }) {
   const t = ui[locale];
+  const zh = locale === "zh-TW";
   useEffect(() => {
-    document.title = locale === "zh-TW" ? "開始使用 Kobrixa" : "Get started with Kobrixa";
-  }, [locale]);
+    document.title = zh ? "開始使用 Kobrixa" : "Get started with Kobrixa";
+  }, [zh]);
   const first = tutorials[0]!;
+  const steps = [
+    {
+      title: t.ready,
+      body: zh
+        ? "安裝 Kobrixa。連接 EV3；實機馬達測試前先架高輪子。"
+        : "Install Kobrixa. Connect an EV3; lift wheels before physical motor tests.",
+      href: "/docs/tutorial/getting-ready",
+      label: first.title[locale],
+    },
+    {
+      title: zh ? "第一個程式" : "First program",
+      body: zh
+        ? "使用 EV3 本體的顯示器與喇叭完成安全的第一次建置。"
+        : "Use the EV3 display and speaker for a safe first build.",
+      href: "/docs/tutorial/first-program",
+      label: t.firstLesson,
+    },
+    {
+      title: t.recovery,
+      body: zh
+        ? "遇到連線或上傳問題時，停止程式、重新連線，並查閱復原指引。"
+        : "If connection or upload fails, stop the program, reconnect, and use the recovery guide.",
+      href: "/docs/reference/installation",
+      label: zh ? "安裝與復原" : "Installation and recovery",
+    },
+  ];
   return (
     <main className="docs-layout unified-layout" id="content">
       <KnowledgeSidebar locale={locale} activePath="/docs" />
       <div className="getting-started">
-        <section className="start-heading">
+        <header className="landing-heading">
           <p className="eyebrow">
             <span className="eyebrow-marker" />
             {t.start}
           </p>
-          <h1>{locale === "zh-TW" ? "開始使用 Kobrixa" : "Get started with Kobrixa"}</h1>
+          <h1>{zh ? "開始使用 Kobrixa" : "Get started with Kobrixa"}</h1>
           <p>
-            {locale === "zh-TW"
+            {zh
               ? "依序完成準備、第一個程式與基礎課程。每一課都可連到現有、可建置的 Kobrixa 專案。"
               : "Work through setup, your first program, and the foundations. Every lesson links to an existing Kobrixa project you can build."}
           </p>
-        </section>
-        <section className="start-checklist">
-          <div>
-            <span>01</span>
-            <h2>{t.ready}</h2>
-            <p>
-              {locale === "zh-TW"
-                ? "安裝 Kobrixa。連接 EV3；實機馬達測試前先架高輪子。"
-                : "Install Kobrixa. Connect an EV3; lift wheels before physical motor tests."}
-            </p>
-            <AppLink href="/docs/tutorial/getting-ready">
-              {first.title[locale]} <Icon name="arrow" />
-            </AppLink>
+        </header>
+        <section className="landing-section" aria-labelledby="start-steps-title">
+          <div className="landing-section-heading">
+            <h2 id="start-steps-title">{zh ? "三步開始" : "Start in three steps"}</h2>
           </div>
-          <div>
-            <span>02</span>
-            <h2>{locale === "zh-TW" ? "第一個程式" : "First program"}</h2>
-            <p>
-              {locale === "zh-TW"
-                ? "使用 EV3 本體的顯示器與喇叭完成安全的第一次建置。"
-                : "Use the EV3 display and speaker for a safe first build."}
-            </p>
-            <AppLink href="/docs/tutorial/first-program">
-              {t.firstLesson} <Icon name="arrow" />
-            </AppLink>
-          </div>
-          <div>
-            <span>03</span>
-            <h2>{t.recovery}</h2>
-            <p>
-              {locale === "zh-TW"
-                ? "遇到連線或上傳問題時，停止程式、重新連線，並查閱復原指引。"
-                : "If connection or upload fails, stop the program, reconnect, and use the recovery guide."}
-            </p>
-            <AppLink href="/docs/reference/installation">
-              {locale === "zh-TW" ? "安裝與復原" : "Installation and recovery"}{" "}
-              <Icon name="arrow" />
-            </AppLink>
-          </div>
-        </section>
-        <section
-          className="start-checklist product-guides"
-          aria-label={locale === "zh-TW" ? "探索目前功能" : "Explore current features"}
-        >
-          {[
-            { slug: "collaboration", icon: "users" as const },
-            { slug: "sensor-lab", icon: "chart" as const },
-            { slug: "motor-test", icon: "device" as const },
-          ].map(({ slug, icon }) => {
-            const guide = findDocument(slug)!;
-            return (
-              <div key={slug}>
-                <Icon name={icon} size={24} />
-                <h2>{guide.title[locale]}</h2>
-                <p>{guide.summary[locale]}</p>
-                <AppLink href={`/docs/reference/${slug}`}>
-                  {locale === "zh-TW" ? "閱讀使用指南" : "Read the guide"} <Icon name="arrow" />
-                </AppLink>
-              </div>
-            );
-          })}
-        </section>
-        <section
-          className="reference-entry diagnostic-entry"
-          aria-labelledby="diagnostic-entry-title"
-        >
-          <div>
-            <p className="eyebrow">
-              {locale === "zh-TW" ? "診斷解說與 Quick Fix" : "Diagnostic explanations & Quick Fix"}
-            </p>
-            <h2 id="diagnostic-entry-title">
-              {locale === "zh-TW" ? "遇到程式錯誤？" : "Stuck on a code error?"}
-            </h2>
-            <p>
-              {locale === "zh-TW"
-                ? "用診斷代碼查找原因與範例。IDE 內可離線閱讀完整解說；有確定的修正方式時，選取 Quick Fix 即可套用，也能一步復原。"
-                : "Look up a diagnostic code for causes and examples. Read full explanations offline in the IDE; choose a Quick Fix when an unambiguous correction is available, with one-step Undo."}
-            </p>
-            <div className="diagnostic-entry-links">
-              <AppLink className="text-link" href={`/docs/diagnostics?lang=${locale}`}>
-                {locale === "zh-TW" ? "查閱錯誤索引" : "Browse the diagnostic index"}{" "}
-                <Icon name="arrow" />
-              </AppLink>
-              <AppLink
-                className="text-link"
-                href={`/docs/reference/keyboard-settings?lang=${locale}`}
-              >
-                {locale === "zh-TW" ? "操作與快捷鍵" : "Controls and shortcuts"}{" "}
-                <Icon name="arrow" />
-              </AppLink>
-            </div>
-          </div>
-        </section>
-        <section className="course-map">
-          <div className="course-map-header">
-            <div>
-              <p className="eyebrow">
-                <span className="eyebrow-marker" />
-                {t.course}
-              </p>
-              <h2>
-                {locale === "zh-TW"
-                  ? "12 個單元，從程式到機器人。"
-                  : "Twelve lessons, from code to robot."}
-              </h2>
-            </div>
-            <AppLink className="button primary" href="/docs/tutorial">
-              {t.course}{" "}
-              <span aria-hidden="true">
-                <Icon name="arrow" />
-              </span>
-            </AppLink>
-          </div>
-          <ol>
-            {tutorials.map((lesson) => (
-              <li key={lesson.slug}>
-                <AppLink href={`/docs/tutorial/${lesson.slug}`}>
-                  <span>{lesson.number}</span>
-                  <div>
-                    <strong>{lesson.title[locale]}</strong>
-                    <p>{lesson.summary[locale]}</p>
-                  </div>
-                  <i aria-hidden="true">
-                    <Icon name="arrow" />
-                  </i>
+          <ol className="landing-cards">
+            {steps.map((step, index) => (
+              <li className="landing-card" key={step.href}>
+                <span className="lesson-number">{String(index + 1).padStart(2, "0")}</span>
+                <h3>{step.title}</h3>
+                <p>{step.body}</p>
+                <AppLink className="landing-card-link" href={step.href}>
+                  {step.label} <Icon name="arrow" />
                 </AppLink>
               </li>
             ))}
           </ol>
         </section>
-        <section className="reference-entry">
+        <section className="landing-section" aria-labelledby="product-guides-title">
+          <div className="landing-section-heading">
+            <h2 id="product-guides-title">{zh ? "探索目前功能" : "Explore current features"}</h2>
+          </div>
+          <ul className="landing-cards">
+            {[
+              { slug: "collaboration", icon: "users" as const },
+              { slug: "sensor-lab", icon: "chart" as const },
+              { slug: "motor-test", icon: "device" as const },
+            ].map(({ slug, icon }) => {
+              const guide = findDocument(slug)!;
+              return (
+                <li className="landing-card" key={slug}>
+                  <span className="landing-card-icon" aria-hidden="true">
+                    <Icon name={icon} size={20} />
+                  </span>
+                  <h3>{guide.title[locale]}</h3>
+                  <p>{guide.summary[locale]}</p>
+                  <AppLink className="landing-card-link" href={`/docs/reference/${slug}`}>
+                    {zh ? "閱讀使用指南" : "Read the guide"} <Icon name="arrow" />
+                  </AppLink>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+        <section
+          className="landing-callout diagnostic-entry"
+          aria-labelledby="diagnostic-entry-title"
+        >
           <div>
-            <p className="eyebrow">
-              <span className="eyebrow-marker" />
-              {t.reference}
+            <p className="landing-kicker">
+              {zh ? "診斷解說與 Quick Fix" : "Diagnostic explanations & Quick Fix"}
             </p>
-            <h2>
-              {locale === "zh-TW" ? "需要查語法或產品契約？" : "Need syntax or product contracts?"}
+            <h2 id="diagnostic-entry-title">{zh ? "遇到程式錯誤？" : "Stuck on a code error?"}</h2>
+            <p>
+              {zh
+                ? "用診斷代碼查找原因與範例。IDE 內可離線閱讀完整解說；有確定的修正方式時，選取 Quick Fix 即可套用，也能一步復原。"
+                : "Look up a diagnostic code for causes and examples. Read full explanations offline in the IDE; choose a Quick Fix when an unambiguous correction is available, with one-step Undo."}
+            </p>
+          </div>
+          <div className="landing-callout-links">
+            <AppLink className="landing-pill-link" href={`/docs/diagnostics?lang=${locale}`}>
+              {zh ? "查閱錯誤索引" : "Browse the diagnostic index"} <Icon name="arrow" />
+            </AppLink>
+            <AppLink
+              className="landing-pill-link"
+              href={`/docs/reference/keyboard-settings?lang=${locale}`}
+            >
+              {zh ? "操作與快捷鍵" : "Controls and shortcuts"} <Icon name="arrow" />
+            </AppLink>
+          </div>
+        </section>
+        <section className="landing-section" aria-labelledby="course-map-title">
+          <div className="landing-section-heading">
+            <h2 id="course-map-title">
+              {zh ? "12 個單元，從程式到機器人" : "Twelve lessons, from code to robot"}
+            </h2>
+            <AppLink className="landing-pill-link" href="/docs/tutorial">
+              {t.course} <Icon name="arrow" />
+            </AppLink>
+          </div>
+          <ol className="course-map-list">
+            {tutorials.map((lesson) => (
+              <li key={lesson.slug}>
+                <AppLink href={`/docs/tutorial/${lesson.slug}`}>
+                  <span className="lesson-number">{lesson.number}</span>
+                  <span className="course-map-text">
+                    <strong>{lesson.title[locale]}</strong>
+                    <span>{lesson.summary[locale]}</span>
+                  </span>
+                  <span className="course-map-arrow" aria-hidden="true">
+                    <Icon name="arrow" />
+                  </span>
+                </AppLink>
+              </li>
+            ))}
+          </ol>
+        </section>
+        <section className="landing-callout" aria-labelledby="reference-entry-title">
+          <div>
+            <p className="landing-kicker">{t.reference}</p>
+            <h2 id="reference-entry-title">
+              {zh ? "需要查語法或產品契約？" : "Need syntax or product contracts?"}
             </h2>
             <p>
-              {locale === "zh-TW"
+              {zh
                 ? "使用 Basic Plus 與 EV3 參考文件查閱語言支援、裝置、架構與路線圖。"
                 : "Use the Basic Plus and EV3 reference material for language support, devices, architecture, and the roadmap."}
             </p>
           </div>
-          <AppLink className="text-link" href="/docs/reference/basic-plus">
-            {t.basicPlus} <Icon name="arrow" />
-          </AppLink>
+          <div className="landing-callout-links">
+            <AppLink className="landing-pill-link" href="/docs/reference/basic-plus">
+              {t.basicPlus} <Icon name="arrow" />
+            </AppLink>
+          </div>
         </section>
       </div>
     </main>
-  );
-}
-
-function CopyCode({
-  value,
-  label,
-  copiedLabel,
-}: {
-  value: string;
-  label: string;
-  copiedLabel: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard?.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-  return (
-    <button className="copy-code" onClick={() => void copy()}>
-      <Icon name={copied ? "check" : "copy"} /> {copied ? copiedLabel : label}
-    </button>
   );
 }
 
@@ -607,44 +356,53 @@ function TutorialSidebar({ locale, activeSlug }: { locale: DocsLocale; activeSlu
 
 function TutorialOverview({ locale }: { locale: DocsLocale }) {
   const t = ui[locale];
+  const zh = locale === "zh-TW";
   useEffect(() => {
-    document.title = locale === "zh-TW" ? "Kobrixa 完整課程" : "Kobrixa complete course";
-  }, [locale]);
+    document.title = zh ? "Kobrixa 完整課程" : "Kobrixa complete course";
+  }, [zh]);
   return (
     <main className="docs-layout unified-layout" id="content">
       <KnowledgeSidebar locale={locale} activePath="/docs/tutorial" />
       <div className="tutorial-overview">
-        <section className="docs-intro">
+        <header className="landing-heading">
           <p className="eyebrow">
             <span className="eyebrow-marker" />
             {t.course}
           </p>
           <h1>
-            {locale === "zh-TW"
-              ? "Kobrixa 與 Basic Plus 完整課程"
-              : "The complete Kobrixa and Basic Plus course"}
+            {zh ? "Kobrixa 與 Basic Plus 完整課程" : "The complete Kobrixa and Basic Plus course"}
           </h1>
           <p>
-            {locale === "zh-TW"
+            {zh
               ? "依序學習；每個單元都有目標、程式碼、實作與可建置的範例。"
               : "Work in order. Each lesson has a goal, code, practice, and a runnable example."}
           </p>
-        </section>
-        <div className="tutorial-grid">
+          <p className="landing-meta">
+            {zh ? `共 ${tutorials.length} 個單元` : `${tutorials.length} lessons`}
+          </p>
+        </header>
+        <ol className="tutorial-list">
           {tutorials.map((lesson) => (
-            <AppLink href={`/docs/tutorial/${lesson.slug}`} key={lesson.slug}>
-              <span>{lesson.number}</span>
-              <h2>{lesson.title[locale]}</h2>
-              <p>{lesson.summary[locale]}</p>
-              <small>
-                {t.hardware}: {lesson.hardware[locale]}
-              </small>
-              <i aria-hidden="true">
+            <li className="landing-card tutorial-card" key={lesson.slug}>
+              <span className="lesson-number">{lesson.number}</span>
+              <div className="tutorial-card-body">
+                <h2>
+                  <AppLink className="landing-card-link" href={`/docs/tutorial/${lesson.slug}`}>
+                    {lesson.title[locale]}
+                  </AppLink>
+                </h2>
+                <p>{lesson.summary[locale]}</p>
+                <p className="tutorial-card-meta">
+                  <span>{t.hardware}</span>
+                  {lesson.hardware[locale]}
+                </p>
+              </div>
+              <span className="tutorial-card-arrow" aria-hidden="true">
                 <Icon name="arrow" />
-              </i>
-            </AppLink>
+              </span>
+            </li>
           ))}
-        </div>
+        </ol>
       </div>
     </main>
   );
@@ -656,11 +414,15 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
   const previous = tutorials[index - 1];
   const next = tutorials[index + 1];
   const content = tutorial.content[locale];
+  const headings = headingsFor(content);
   useEffect(() => {
     document.title = `${tutorial.title[locale]} — Kobrixa`;
   }, [locale, tutorial]);
   return (
-    <main className="docs-layout docs-article-layout tutorial-article-layout" id="content">
+    <main
+      className={`docs-layout docs-article-layout${headings.length ? "" : " tutorial-article-layout"}`}
+      id="content"
+    >
       <TutorialSidebar locale={locale} activeSlug={tutorial.slug} />
       <article className="article">
         <header className="article-header">
@@ -683,18 +445,29 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
             </AppLink>
           </div>
         </header>
+        <DocsTocDisclosure headings={headings} label={t.tableOfContents} />
         <div className="article-content tutorial-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
               a: MarkdownLink,
-              h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
-              h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
+              blockquote: MarkdownCallout,
+              table: MarkdownTable,
+              h2: ({ children }) => (
+                <MarkdownHeading level={2} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              h3: ({ children }) => (
+                <MarkdownHeading level={3} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} />,
               pre: ({ children }) => (
-                <div className="code-block">
-                  <CopyCode value={toText(children)} label={t.copy} copiedLabel={t.copied} />
-                  <pre>{children}</pre>
-                </div>
+                <MarkdownPre copyLabel={t.copy} copiedLabel={t.copied}>
+                  {children}
+                </MarkdownPre>
               ),
             }}
           >
@@ -703,7 +476,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
         </div>
         <nav className="article-pager" aria-label="Lesson pagination">
           {previous ? (
-            <AppLink href={`/docs/tutorial/${previous.slug}`}>
+            <AppLink className="pager-previous" href={`/docs/tutorial/${previous.slug}`}>
               <span>
                 <Icon name="arrow-left" /> {t.previous}
               </span>
@@ -713,7 +486,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
             <span />
           )}
           {next ? (
-            <AppLink href={`/docs/tutorial/${next.slug}`}>
+            <AppLink className="pager-next" href={`/docs/tutorial/${next.slug}`}>
               <span>
                 {t.next} <Icon name="arrow" />
               </span>
@@ -724,6 +497,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
           )}
         </nav>
       </article>
+      <DocsToc headings={headings} label={t.tableOfContents} />
     </main>
   );
 }
@@ -762,17 +536,11 @@ function BasicPlusPage({
       <KnowledgeSidebar locale={locale} activePath={`/docs/reference/basic-plus${suffix}`} />
       <BasicPlusReference locale={locale} apiName={apiName} syntaxSlug={syntaxSlug} />
       {detail ? (
-        <aside
+        <DocsToc
           className="toc reference-toc"
-          aria-label={locale === "zh-TW" ? "本頁內容" : "On this page"}
-        >
-          <p>{locale === "zh-TW" ? "本頁內容" : "On this page"}</p>
-          {links.map(([id, label]) => (
-            <AppLink href={`#${id}`} key={id}>
-              {label}
-            </AppLink>
-          ))}
-        </aside>
+          headings={links.map(([id, label]) => ({ level: 2, id: id!, text: label! }))}
+          label={locale === "zh-TW" ? "本頁內容" : "On this page"}
+        />
       ) : null}
     </main>
   );
@@ -808,13 +576,30 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
             </span>
           </AppLink>
         </header>
+        <DocsTocDisclosure headings={headings} label={t.tableOfContents} />
         <div className="article-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
               a: MarkdownLink,
-              h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
-              h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
+              blockquote: MarkdownCallout,
+              table: MarkdownTable,
+              h2: ({ children }) => (
+                <MarkdownHeading level={2} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              h3: ({ children }) => (
+                <MarkdownHeading level={3} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} />,
+              pre: ({ children }) => (
+                <MarkdownPre copyLabel={t.copy} copiedLabel={t.copied}>
+                  {children}
+                </MarkdownPre>
+              ),
             }}
           >
             {content}
@@ -822,7 +607,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
         </div>
         <nav className="article-pager" aria-label="Document pagination">
           {previous ? (
-            <AppLink href={`/docs/reference/${previous.slug}`}>
+            <AppLink className="pager-previous" href={`/docs/reference/${previous.slug}`}>
               <span>
                 <Icon name="arrow-left" /> {t.previous}
               </span>
@@ -832,7 +617,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
             <span />
           )}
           {next ? (
-            <AppLink href={`/docs/reference/${next.slug}`}>
+            <AppLink className="pager-next" href={`/docs/reference/${next.slug}`}>
               <span>
                 {t.next} <Icon name="arrow" />
               </span>
@@ -843,41 +628,33 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
           )}
         </nav>
       </article>
-      <aside className="toc" aria-label={t.tableOfContents}>
-        <p>{t.tableOfContents}</p>
-        {headings.map((heading) => (
-          <AppLink
-            className={heading.level === 3 ? "nested" : ""}
-            href={`#${heading.id}`}
-            key={heading.id}
-          >
-            {heading.text}
-          </AppLink>
-        ))}
-      </aside>
+      <DocsToc headings={headings} label={t.tableOfContents} />
     </main>
   );
 }
 
 function NotFound({ locale }: { locale: DocsLocale }) {
   const t = ui[locale];
+  const zh = locale === "zh-TW";
   useEffect(() => {
-    document.title = locale === "zh-TW" ? "找不到文件 — Kobrixa" : "Document not found — Kobrixa";
-  }, [locale]);
+    document.title = zh ? "找不到文件 — Kobrixa" : "Document not found — Kobrixa";
+  }, [zh]);
   return (
     <main className="doc-not-found" id="content">
-      <p className="eyebrow">
-        <span className="eyebrow-marker" />
-        404
-      </p>
+      <p className="landing-kicker">404</p>
       <h1>{t.notFound}</h1>
       <p>{t.notFoundBody}</p>
-      <AppLink className="button primary" href="/docs">
-        {t.backToDocs}{" "}
-        <span aria-hidden="true">
-          <Icon name="arrow" />
-        </span>
-      </AppLink>
+      <div className="doc-not-found-actions">
+        <AppLink className="button primary" href="/docs">
+          {t.backToDocs}{" "}
+          <span aria-hidden="true">
+            <Icon name="arrow" />
+          </span>
+        </AppLink>
+        <AppLink className="landing-pill-link" href={`/docs/search?lang=${locale}`}>
+          {zh ? "搜尋所有文件" : "Search all documentation"} <Icon name="arrow" />
+        </AppLink>
+      </div>
     </main>
   );
 }

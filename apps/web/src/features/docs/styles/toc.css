@@ -1,0 +1,185 @@
+/* Docs "On this page" table of contents: sticky rail on wide screens, disclosure on narrow ones. */
+.toc {
+  --toc-top: calc(var(--app-navbar-height, 72px) + 1.75rem);
+  position: sticky;
+  top: var(--toc-top);
+  align-self: start;
+  max-height: calc(100vh - var(--toc-top) - 1.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0.25rem 1rem 0;
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+  scrollbar-color: var(--docs-line, #c6bdb1) transparent;
+  scrollbar-width: thin;
+}
+.toc > p,
+.toc-disclosure > summary > span {
+  margin: 0;
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+.toc > p {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+.toc > p::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--docs-accent, #e86f3d);
+}
+.toc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.toc-item {
+  margin: 0;
+  padding: 0;
+}
+/* Links are shared with the Basic Plus reference TOC, which renders bare anchors. */
+.toc a,
+.toc-disclosure a {
+  position: relative;
+  display: block;
+  padding: 0.36rem 0.5rem 0.36rem 0.95rem;
+  border-radius: 0 0.15rem 0.15rem 0;
+  box-shadow: inset 1px 0 0 var(--docs-line, #c6bdb1);
+  color: var(--docs-muted, #53606b);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.45;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.toc .nested > a,
+.toc-disclosure .nested > a {
+  padding-left: 1.85rem;
+  font-size: 0.74rem;
+}
+/* Thin guide line marking h3 entries as children of the preceding h2. */
+.toc .nested > a::before,
+.toc-disclosure .nested > a::before {
+  content: "";
+  position: absolute;
+  top: 0.2rem;
+  bottom: 0.2rem;
+  left: 1.05rem;
+  width: 1px;
+  background: var(--docs-line, #c6bdb1);
+}
+.toc a:hover,
+.toc-disclosure a:hover {
+  box-shadow: inset 1px 0 0 var(--docs-muted, #53606b);
+  color: var(--docs-ink, #1e2933);
+}
+.toc a[aria-current="location"],
+.toc-disclosure a[aria-current="location"] {
+  background: var(--docs-panel-2, #f0e8dc);
+  box-shadow: inset 3px 0 0 var(--docs-accent, #e86f3d);
+  color: var(--docs-ink, #1e2933);
+  font-weight: 700;
+}
+.toc .nested > a[aria-current="location"]::before,
+.toc-disclosure .nested > a[aria-current="location"]::before {
+  background: var(--docs-accent, #e86f3d);
+}
+.toc a:focus-visible,
+.toc-disclosure a:focus-visible,
+.toc-disclosure > summary:focus-visible {
+  outline: 2px solid var(--docs-blue, #2457d6);
+  outline-offset: 1px;
+}
+
+/* Narrow screens: the rail is replaced by a disclosure at the top of the article. */
+.toc-disclosure {
+  display: none;
+  margin: 0 0 2rem;
+  border: 1px solid var(--docs-line, #c6bdb1);
+  border-radius: 0.15rem;
+  background: var(--docs-panel, #f8f4ec);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+}
+.toc-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  list-style: none;
+}
+.toc-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.toc-disclosure > summary::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: 0 0 auto;
+  margin-right: 0.15rem;
+  border: solid var(--docs-accent, #e86f3d);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+}
+.toc-disclosure[open] > summary::before {
+  transform: translateY(-2px) rotate(45deg);
+}
+.toc-disclosure > summary > small {
+  margin-left: auto;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--docs-panel-2, #f0e8dc);
+  color: var(--docs-muted, #53606b);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.68rem;
+}
+.toc-disclosure > nav {
+  display: block;
+  margin: 0;
+  max-height: min(60vh, 26rem);
+  overflow-y: auto;
+  padding: 0.25rem 0.9rem 0.9rem;
+  border-top: 1px solid var(--docs-line, #c6bdb1);
+}
+.toc-disclosure .toc-list {
+  padding-top: 0.6rem;
+}
+.toc-disclosure a {
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+  font-size: 0.85rem;
+}
+.toc-disclosure .nested > a {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 980px) {
+  .toc {
+    display: none;
+  }
+  .toc-disclosure {
+    display: block;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toc a,
+  .toc-disclosure a,
+  .toc-disclosure > summary::before {
+    transition: none;
+  }
+}
