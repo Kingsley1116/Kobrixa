@@ -8,6 +8,8 @@ import remarkGfm from "remark-gfm";
 import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
 import { DiagnosticsPage } from "./diagnostics-page.js";
 import { DocsSearchPage } from "./docs-search-page.js";
+import { MarkdownHeading } from "./markdown-heading.js";
+import { MarkdownImage } from "./markdown-image.js";
 import {
   documents,
   findDocument,
@@ -688,8 +690,17 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
             remarkPlugins={[remarkGfm]}
             components={{
               a: MarkdownLink,
-              h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
-              h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
+              h2: ({ children }) => (
+                <MarkdownHeading level={2} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              h3: ({ children }) => (
+                <MarkdownHeading level={3} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} />,
               pre: ({ children }) => (
                 <div className="code-block">
                   <CopyCode value={toText(children)} label={t.copy} copiedLabel={t.copied} />
@@ -813,8 +824,17 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
             remarkPlugins={[remarkGfm]}
             components={{
               a: MarkdownLink,
-              h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
-              h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
+              h2: ({ children }) => (
+                <MarkdownHeading level={2} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              h3: ({ children }) => (
+                <MarkdownHeading level={3} id={toSlug(toText(children))} locale={locale}>
+                  {children}
+                </MarkdownHeading>
+              ),
+              img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} />,
             }}
           >
             {content}

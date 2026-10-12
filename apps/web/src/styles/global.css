@@ -840,47 +840,6 @@ h2 {
   border-bottom: 1px solid #2457d6;
   padding-bottom: 0.2rem;
 }
-.article-content {
-  font-size: 1rem;
-  line-height: 1.82;
-}
-.article-content h1 {
-  display: none;
-}
-.article-content h2 {
-  margin: 3rem 0 1rem;
-  padding-top: 0.3rem;
-  font-size: 1.65rem;
-  line-height: 1.2;
-  letter-spacing: -0.045em;
-  scroll-margin-top: 2rem;
-}
-.article-content h3 {
-  margin: 2rem 0 0.75rem;
-  font-size: 1.15rem;
-  letter-spacing: -0.03em;
-  scroll-margin-top: 2rem;
-}
-.article-content p {
-  margin: 0 0 1.25rem;
-}
-.article-content ul,
-.article-content ol {
-  margin: 0 0 1.4rem;
-  padding-left: 1.35rem;
-}
-.article-content li {
-  margin: 0.4rem 0;
-}
-.article-content a {
-  color: #2457d6;
-  border-bottom: 1px solid #2457d6;
-}
-.external-mark {
-  display: inline-block;
-  margin-left: 0.2rem;
-  font-size: 0.75em;
-}
 .article-content blockquote {
   margin: 1.4rem 0;
   padding: 0.8rem 1.1rem;
@@ -1038,12 +997,6 @@ h2 {
   }
   .article-header {
     margin-bottom: 2rem;
-  }
-  .article-content {
-    font-size: 0.96rem;
-  }
-  .article-content h2 {
-    margin-top: 2.5rem;
   }
   .article-pager {
     margin-top: 3rem;
@@ -1954,12 +1907,6 @@ h2 {
   font-size: 1rem;
   line-height: 1.75;
 }
-.article-content {
-  color: #25313c;
-  font-size: 1rem;
-  line-height: 1.78;
-}
-.article-content h2,
 .reference-detail h2 {
   padding-top: 1rem;
   border-top: 1px solid #e0e4e8;
@@ -1968,11 +1915,6 @@ h2 {
   letter-spacing: -0.025em;
   scroll-margin-top: 6rem;
 }
-.article-content h3 {
-  color: #202b36;
-  font-size: 1.15rem;
-}
-.article-content a,
 .detail-links a {
   color: #163d9d;
   border-bottom-color: #8ca6eb;
