@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
 import { DiagnosticsPage } from "./diagnostics-page.js";
 import { DocsSearchPage } from "./docs-search-page.js";
+import { DocsToc, DocsTocDisclosure, headingsFor, toSlug } from "./docs-toc.js";
 import {
   documents,
   findDocument,
@@ -23,7 +24,6 @@ type DocsPageProps = {
   onLocaleChange: (locale: DocsLocale) => void;
   path: string;
 };
-type Heading = { level: 2 | 3; text: string; id: string };
 
 const github = "https://github.com/Kingsley1116/Kobrixa";
 
@@ -120,26 +120,6 @@ function toText(value: ReactNode): string {
   if (value && typeof value === "object" && "props" in value)
     return toText((value as { props: { children?: ReactNode } }).props.children);
   return "";
-}
-
-function toSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/(^-|-$)/g, "");
-}
-
-function headingsFor(content: string): Heading[] {
-  return content.split("\n").flatMap((line) => {
-    const match = /^(#{2,3})\s+(.+)$/.exec(line);
-    if (!match) return [];
-    const markers = match[1];
-    const heading = match[2];
-    if (!markers || !heading) return [];
-    const text = heading.replace(/[`*_]/g, "");
-    return [{ level: markers.length as 2 | 3, text, id: toSlug(text) }];
-  });
 }
 
 function normalizeDocLink(href: string | undefined): string | undefined {
@@ -808,6 +788,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
             </span>
           </AppLink>
         </header>
+        <DocsTocDisclosure headings={headings} label={t.tableOfContents} />
         <div className="article-content">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -843,18 +824,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
           )}
         </nav>
       </article>
-      <aside className="toc" aria-label={t.tableOfContents}>
-        <p>{t.tableOfContents}</p>
-        {headings.map((heading) => (
-          <AppLink
-            className={heading.level === 3 ? "nested" : ""}
-            href={`#${heading.id}`}
-            key={heading.id}
-          >
-            {heading.text}
-          </AppLink>
-        ))}
-      </aside>
+      <DocsToc headings={headings} label={t.tableOfContents} />
     </main>
   );
 }
