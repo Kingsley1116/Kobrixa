@@ -1,165 +1,264 @@
 .diagnostics-reference {
   min-width: 0;
-  color: #202b36;
+  padding-bottom: 2rem;
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+}
+.diagnostics-header {
+  padding-bottom: 1.75rem;
+  border-bottom: 2px solid var(--docs-ink, #1e2933);
 }
 .diagnostics-header h1 {
-  margin: 0.5rem 0 1rem;
-  font-size: clamp(1.7rem, 4vw, 2.6rem);
-  line-height: 1.25;
-  letter-spacing: -0.03em;
+  margin: 0.6rem 0 0.9rem;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
 }
-.diagnostics-header > p:last-child,
+.diagnostics-detail .diagnostics-header h1 {
+  margin-bottom: 0;
+}
+.diagnostics-header > p:last-child {
+  max-width: 40rem;
+  margin: 0;
+  color: var(--docs-muted, #53606b);
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+.diagnostics-header > p:last-of-type:not(.eyebrow) {
+  max-width: 40rem;
+  color: var(--docs-muted, #53606b);
+  line-height: 1.75;
+}
+.diagnostics-header > code,
+.diagnostics-list code {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-mustard, #e8b12c);
+  color: var(--docs-ink, #1e2933);
+  font: 500 0.82rem/1.5 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  letter-spacing: 0.02em;
+}
 .diagnostics-count {
-  color: #536273;
-  font-size: 0.9rem;
-  line-height: 1.65;
+  margin: 0 0 0.75rem;
+  color: var(--docs-muted, #53606b);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
 }
 .diagnostics-filters {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.6fr);
   gap: 1rem;
-  margin: 1.75rem 0 1rem;
+  margin: 2rem 0 1.25rem;
 }
 .diagnostics-filters label,
 .diagnostics-family {
   display: grid;
   align-content: start;
-  gap: 0.45rem;
-  font-size: 0.8rem;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 800;
 }
 .diagnostics-filters input {
   width: 100%;
   min-width: 0;
-  min-height: 2.75rem;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid #aeb7c2;
-  border-radius: 0.25rem;
-  background: #fff;
-  color: #202b36;
+  min-height: 2.9rem;
+  padding: 0.6rem 0.9rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
+  color: var(--docs-ink, #1e2933);
   font: inherit;
+  font-weight: 400;
 }
 .diagnostics-filters input:focus-visible {
-  outline: 3px solid #c7d6ff;
-  border-color: #2457d6;
+  outline: 3px solid var(--docs-mustard, #e8b12c);
+  outline-offset: 1px;
+  box-shadow: 4px 4px 0 var(--docs-ink, #1e2933);
+}
+.diagnostics-family .ui-select-trigger {
+  min-height: 2.9rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
+  color: var(--docs-ink, #1e2933);
+  font-weight: 400;
 }
 .diagnostics-list {
   margin: 0;
   padding: 0;
-  border-top: 1px solid #d7dce2;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
   list-style: none;
+  overflow: hidden;
+}
+.diagnostics-list li + li {
+  border-top: 1px solid var(--docs-line, #c6bdb1);
 }
 .diagnostics-list li > a {
   display: grid;
-  grid-template-columns: 5rem minmax(0, 1fr) 1rem;
+  grid-template-columns: 5.5rem minmax(0, 1fr) 1rem;
   align-items: start;
   gap: 1rem;
-  padding: 1rem 0.7rem;
-  border-bottom: 1px solid #d7dce2;
-  background: #fff;
-  color: #163d9d;
+  padding: 0.95rem 1rem;
+  color: var(--docs-ink, #1e2933);
 }
 .diagnostics-list li > a:hover {
-  background: #f4f7fb;
+  background: var(--docs-panel-2, #f0e8dc);
 }
-.diagnostics-list code,
-.diagnostics-header > code {
-  font:
-    0.85rem/1.65 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+.diagnostics-list li > a > code {
+  justify-self: start;
+  background: var(--docs-paper, #f5f0e7);
+}
+.diagnostics-list li > a:hover > code {
+  background: var(--docs-mustard, #e8b12c);
 }
 .diagnostics-list strong {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 800;
   line-height: 1.5;
 }
 .diagnostics-list p {
-  margin: 0.3rem 0 0;
-  color: #536273;
+  margin: 0.2rem 0 0;
+  color: var(--docs-muted, #53606b);
   font-size: 0.85rem;
   line-height: 1.55;
 }
+.diagnostics-list li > a > span {
+  color: var(--docs-blue, #2457d6);
+}
 .diagnostics-empty {
   padding: 1.25rem;
-  border: 1px solid #aeb7c2;
-  background: #f8fafc;
+  border: 1.5px dashed var(--docs-line, #c6bdb1);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
+  color: var(--docs-muted, #53606b);
   line-height: 1.65;
 }
-.diagnostics-detail .back-link {
-  display: inline-block;
+.diagnostics-empty p {
+  margin: 0 0 1rem;
+}
+.diagnostics-reference .back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 1.25rem;
+  color: var(--docs-blue, #2457d6);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+.diagnostics-reference.diagnostics-header {
+  padding-bottom: 2rem;
+  border-bottom: 0;
+}
+.diagnostics-reference.diagnostics-header .back-link {
+  margin: 1.5rem 0 0;
 }
 .diagnostics-variants {
   display: grid;
-  gap: 0.5rem;
-  margin: 1.5rem 0;
-  padding: 1rem;
-  border: 1px solid #d7dce2;
-  border-radius: 0.25rem;
-  background: #f4f7fb;
+  gap: 0.45rem;
+  margin: 1.75rem 0 0.5rem;
+  padding: 1rem 1.25rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-left: 6px solid var(--docs-blue, #2457d6);
+  border-radius: 0.2rem;
+  background: var(--docs-panel-2, #f0e8dc);
 }
 .diagnostics-variants p {
-  margin: 0 0 0.25rem;
-  font-size: 0.85rem;
-  font-weight: 650;
+  margin: 0 0 0.2rem;
+  color: var(--docs-muted, #53606b);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 .diagnostics-variants a,
 .diagnostics-related a {
-  color: #163d9d;
-  font-size: 0.9rem;
+  color: var(--docs-blue, #2457d6);
+  font-size: 0.92rem;
+  font-weight: 700;
   line-height: 1.5;
   text-decoration: underline;
+  text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
 }
 .diagnostics-explanation {
-  padding: 1.25rem 0;
-  border-bottom: 1px solid #d7dce2;
+  padding: 1.75rem 0;
+  border-bottom: 1px solid var(--docs-line, #c6bdb1);
   scroll-margin-top: 6rem;
 }
 .diagnostics-explanation:target {
-  border-left: 3px solid #2457d6;
   padding-left: 1rem;
+  border-left: 4px solid var(--docs-accent, #e86f3d);
 }
 .diagnostics-explanation h2 {
-  margin: 0 0 1.5rem;
-  font-size: 1.4rem;
-  line-height: 1.4;
+  margin: 1.75rem 0 0.75rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: -0.03em;
+}
+.diagnostics-explanation > h2:first-child {
+  margin-top: 0;
 }
 .diagnostics-explanation h3 {
-  margin: 0.5rem 0 0.6rem;
-  font-size: 1rem;
+  margin: 1.25rem 0 0.6rem;
+  font-size: 1.05rem;
+  font-weight: 800;
   line-height: 1.4;
 }
 .diagnostics-explanation p,
 .diagnostics-explanation li {
-  font-size: 0.9rem;
-  line-height: 1.75;
+  font-size: 1rem;
+  line-height: 1.78;
   overflow-wrap: anywhere;
 }
 .diagnostics-explanation p {
-  margin: 0 0 1.3rem;
+  margin: 0 0 1.1rem;
 }
 .diagnostics-explanation ol,
 .diagnostics-explanation ul {
+  margin: 0 0 1.1rem;
   padding-left: 1.5rem;
+}
+.diagnostics-explanation li::marker {
+  color: var(--docs-accent, #e86f3d);
+  font-weight: 800;
 }
 .diagnostics-examples {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  margin: 1.4rem 0;
+  margin: 1.5rem 0;
+}
+.diagnostics-examples h3 {
+  display: inline-block;
+  margin: 0 0 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.2rem;
+  background: var(--docs-accent, #e86f3d);
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.diagnostics-examples > div + div h3 {
+  background: var(--docs-mustard, #e8b12c);
 }
 .diagnostics-examples pre {
   overflow-x: auto;
   margin: 0;
-  padding: 1rem;
-  border: 1px solid #cbd3dc;
-  border-radius: 0.25rem;
-  background: #f4f7fb;
-  font:
-    0.8rem/1.65 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  padding: 1rem 1.1rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-code-bg, #1e2933);
+  color: var(--docs-panel, #f8f4ec);
+  font: 0.82rem/1.7 var(--docs-mono, "DM Mono", ui-monospace, monospace);
 }
 @media (max-width: 980px) {
   .diagnostics-filters,
@@ -170,7 +269,8 @@
 @media (max-width: 480px) {
   .diagnostics-list li > a {
     grid-template-columns: minmax(0, 1fr) 1rem;
-    gap: 0.4rem;
+    gap: 0.5rem;
+    padding: 0.9rem;
   }
   .diagnostics-list li > a > code,
   .diagnostics-list li > a > div {

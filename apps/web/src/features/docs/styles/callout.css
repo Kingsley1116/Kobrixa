@@ -1,0 +1,103 @@
+/* Unit 4 — blockquotes and labelled callouts inside docs articles (warm brand palette). */
+
+.article-content blockquote {
+  margin: 1.6rem 0;
+  padding: 0.85rem 1.15rem;
+  border-left: 4px solid var(--docs-accent, #e86f3d);
+  border-radius: 0 0.15rem 0.15rem 0;
+  background: var(--docs-panel-2, #f0e8dc);
+  color: var(--docs-muted, #53606b);
+}
+
+.article-content blockquote > :last-child,
+.docs-callout-body > :last-child {
+  margin-bottom: 0;
+}
+
+.docs-callout {
+  --callout-tone: var(--docs-blue, #2457d6);
+  --callout-glyph: var(--docs-panel, #f8f4ec);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: start;
+  margin: 1.6rem 0;
+  padding: 1rem 1.2rem 1rem 1rem;
+  border: 1.5px solid var(--docs-line, #c6bdb1);
+  border-left: 5px solid var(--callout-tone);
+  border-radius: 0.15rem;
+  background: var(--callout-tint, var(--docs-panel, #f8f4ec));
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+}
+
+.docs-callout--warning {
+  --callout-tint: color-mix(in srgb, var(--docs-mustard, #e8b12c) 14%, var(--docs-panel, #f8f4ec));
+  --callout-tone: var(--docs-mustard, #e8b12c);
+  --callout-glyph: var(--docs-ink, #1e2933);
+}
+
+.docs-callout--safety {
+  --callout-tint: color-mix(in srgb, var(--docs-accent, #e86f3d) 12%, var(--docs-panel, #f8f4ec));
+  --callout-tone: var(--docs-accent, #e86f3d);
+  --callout-glyph: var(--docs-panel, #f8f4ec);
+  box-shadow: 3px 3px 0 var(--docs-ink, #1e2933);
+}
+
+.docs-callout--tip {
+  --callout-tone: var(--docs-mustard, #e8b12c);
+  --callout-glyph: var(--docs-ink, #1e2933);
+}
+
+.docs-callout-icon {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.15rem;
+  background: var(--callout-tone);
+  color: var(--callout-glyph);
+  font-size: 1.2rem;
+}
+
+.docs-callout-body {
+  min-width: 0;
+}
+
+.docs-callout-body > p {
+  margin: 0 0 0.75rem;
+}
+
+/* The leading bold label (e.g. "Version notes.") becomes the callout title. */
+.docs-callout-body > p:first-child > strong:first-child {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--docs-ink, #1e2933);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1.9rem;
+}
+
+/* On phones the icon sits beside the title only, so the body text keeps the full width. */
+@media (max-width: 560px) {
+  .docs-callout {
+    display: block;
+    position: relative;
+    padding: 0.85rem 0.95rem 0.95rem;
+  }
+
+  .docs-callout-icon {
+    position: absolute;
+    top: 0.85rem;
+    left: 0.95rem;
+    width: 1.6rem;
+    height: 1.6rem;
+    font-size: 1rem;
+  }
+
+  .docs-callout-body > p:first-child > strong:first-child {
+    padding-left: 2.3rem;
+    line-height: 1.6rem;
+  }
+}

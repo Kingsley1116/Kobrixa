@@ -1,9 +1,27 @@
+/* The docs grid already supplies the page gutter, so the page adds no padding of its own. */
 .docs-search-page {
   min-width: 0;
-  padding: 2rem;
+  padding: 0 0 2rem;
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
 }
 .docs-search-page h1 {
-  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  margin: 0.6rem 0 0.9rem;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+}
+.docs-search-page > header {
+  padding-bottom: 1.75rem;
+  border-bottom: 2px solid var(--docs-ink, #1e2933);
+}
+.docs-search-page > header > p:last-child {
+  max-width: 40rem;
+  margin: 0;
+  color: var(--docs-muted, #53606b);
+  font-size: 1.05rem;
+  line-height: 1.75;
 }
 .docs-search-page form {
   margin-top: 2rem;
@@ -11,41 +29,100 @@
 .docs-search-page label {
   display: block;
   margin-bottom: 0.5rem;
-  font-weight: 600;
+  font-size: 0.85rem;
+  font-weight: 800;
 }
 .docs-search-controls {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
-.docs-search-controls input {
+.docs-search-controls input.ui-control {
   flex: 1;
   min-width: 0;
+  min-height: 2.9rem;
+  padding: 0.6rem 0.9rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-panel, #f8f4ec);
+  color: var(--docs-ink, #1e2933);
+  font-size: 1rem;
+}
+.docs-search-controls input.ui-control:focus-visible {
+  outline: 3px solid var(--docs-mustard, #e8b12c);
+  outline-offset: 1px;
+  box-shadow: 4px 4px 0 var(--docs-ink, #1e2933);
+}
+.docs-search-controls button.ui-button {
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.2rem;
+  background: var(--docs-paper, #f5f0e7);
+  color: var(--docs-ink, #1e2933);
+  font-weight: 800;
+}
+.docs-search-controls button.ui-button:hover:not(:disabled) {
+  background: var(--docs-mustard, #e8b12c);
+}
+.docs-search-status {
+  margin: 1.25rem 0 0.5rem;
+  color: var(--docs-muted, #53606b);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+.docs-search-empty {
+  margin: 1rem 0 0;
+  padding: 1.1rem 1.25rem;
+  border: 1.5px dashed var(--docs-line, #c6bdb1);
+  border-radius: 0.2rem;
+  color: var(--docs-muted, #53606b);
+  line-height: 1.65;
 }
 .docs-search-results {
+  margin: 0;
   padding: 0;
+  border-top: 1px solid var(--docs-line, #c6bdb1);
   list-style: none;
 }
+.docs-search-results:empty {
+  border-top: 0;
+}
 .docs-search-results li {
-  padding: 1.4rem 0;
-  border-bottom: 1px solid #d6d5cb;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--docs-line, #c6bdb1);
   overflow-wrap: anywhere;
 }
 .docs-search-results li > span {
-  color: #59645c;
-  font-size: 0.85rem;
+  display: inline-block;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid var(--docs-line, #c6bdb1);
+  border-radius: 0.2rem;
+  background: var(--docs-panel-2, #f0e8dc);
+  color: var(--docs-muted, #53606b);
+  font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .docs-search-results h2 {
-  font-size: 1.1rem;
-  margin: 0.4rem 0;
+  margin: 0.5rem 0 0.3rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+.docs-search-results h2 a {
+  color: var(--docs-blue, #2457d6);
+}
+.docs-search-results h2 a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 .docs-search-results p {
+  margin: 0;
+  color: var(--docs-muted, #53606b);
+  font-size: 0.9rem;
   line-height: 1.65;
-  margin-bottom: 0;
 }
 @media (max-width: 720px) {
-  .docs-search-page {
-    padding: 1rem;
-  }
   .docs-search-controls {
     flex-wrap: wrap;
   }

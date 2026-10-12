@@ -1,0 +1,88 @@
+/* Docs unit 6: markdown tables (wrapped by MarkdownTable). */
+.article-content .table-wrap {
+  position: relative;
+  margin: 1.75rem 0;
+  border: 1px solid var(--docs-line, #c6bdb1);
+  border-radius: 0.5rem;
+  background: var(--docs-panel, #f8f4ec);
+  overflow: hidden;
+}
+.article-content .table-wrap::before,
+.article-content .table-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 1.75rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.article-content .table-wrap::before {
+  left: 0;
+  background: linear-gradient(to right, rgb(30 41 51 / 0.22), transparent);
+}
+.article-content .table-wrap::after {
+  right: 0;
+  background: linear-gradient(to left, rgb(30 41 51 / 0.22), transparent);
+}
+.article-content .table-wrap[data-scroll-start]::before,
+.article-content .table-wrap[data-scroll-end]::after {
+  opacity: 1;
+}
+.article-content .table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.article-content .table-scroll:focus-visible {
+  outline: 2px solid var(--docs-blue, #2457d6);
+  outline-offset: -2px;
+  border-radius: 0.5rem;
+}
+.article-content table {
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--docs-ink, #1e2933);
+}
+.article-content th,
+.article-content td {
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-bottom: 1px solid var(--docs-line, #c6bdb1);
+  text-align: left;
+  vertical-align: top;
+}
+.article-content th {
+  background: var(--docs-panel-2, #f0e8dc);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.article-content th + th,
+.article-content td + td {
+  border-left: 1px solid color-mix(in srgb, var(--docs-line, #c6bdb1) 55%, transparent);
+}
+.article-content tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--docs-panel-2, #f0e8dc) 45%, transparent);
+}
+.article-content tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* Keys, file names and identifiers read badly when broken mid-token; let the
+   table scroll horizontally instead. */
+.article-content td code {
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .article-content table {
+    font-size: 0.88rem;
+  }
+  .article-content th,
+  .article-content td {
+    padding: 0.6rem 0.75rem;
+  }
+}

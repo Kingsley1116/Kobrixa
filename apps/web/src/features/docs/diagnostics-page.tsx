@@ -117,7 +117,10 @@ function DiagnosticIndex({ locale }: { locale: DiagnosticLocale }) {
   return (
     <div className="diagnostics-reference">
       <header className="diagnostics-header">
-        <p className="eyebrow">Kobrixa</p>
+        <p className="eyebrow">
+          <span className="eyebrow-marker" />
+          Kobrixa
+        </p>
         <h1>{t.title}</h1>
         <p>{t.intro}</p>
       </header>
