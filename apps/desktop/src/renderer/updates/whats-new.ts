@@ -6,6 +6,15 @@ export interface WhatsNewEntry {
 
 export const WHATS_NEW: readonly WhatsNewEntry[] = [
   {
+    version: "1.0.0",
+    items: [
+      {
+        zh: "Kobrixa 1.0 正式版：Basic Plus 編輯與編譯、USB／Wi-Fi 部署、EV3 檔案管理、Sensor Lab、馬達測試與雲端協作均已完成實體 EV3 驗收。",
+        en: "Kobrixa 1.0: Basic Plus editing and compilation, USB/Wi-Fi deployment, EV3 file management, Sensor Lab, motor testing and cloud collaboration have passed physical EV3 acceptance.",
+      },
+    ],
+  },
+  {
     version: "0.1.0-v1-candidate.16",
     items: [
       {
