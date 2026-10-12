@@ -1,3 +1,4 @@
+import { captureReadmeWindow } from "./readme-capture.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -108,6 +109,7 @@ export async function checkSensorLab({
     ),
     true,
   );
+  win.focus();
   await js('document.querySelector("#monitor-view-lab").click();ed.focus()');
   await pause(200);
   const renders = await js("smoke.metrics.appRenders");
@@ -280,6 +282,17 @@ export async function checkSensorLab({
         true,
       );
     }
+  win.setSize(980, 900);
+  await js(
+    'smoke.settingsStore.set("deviceWidth",520);smoke.settingsStore.set("theme","dark");smoke.settingsStore.set("uiScale",100)',
+  );
+  for (const locale of ["en", "zh-TW"]) {
+    await js(`smoke.settingsStore.set("locale",${JSON.stringify(locale)})`);
+    await until(`document.documentElement.lang === ${JSON.stringify(locale)}`);
+    await pause(350);
+    await js('document.querySelector("#tool-panel-monitor").scrollTop=0');
+    await captureReadmeWindow({ js, win, temporary }, `readme-sensor-lab-${locale}.png`);
+  }
   await js('smoke.settingsStore.set("locale","en")');
   await click("Delete");
   await until('Boolean(document.querySelector("[role=alertdialog]"))');

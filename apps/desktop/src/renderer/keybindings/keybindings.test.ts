@@ -19,6 +19,11 @@ import {
 } from "../../shared/keyboard.js";
 afterEach(() => vi.useRealTimers());
 describe("keyboard bindings", () => {
+  it("excludes the simulator command on every platform", () => {
+    for (const mac of [false, true]) {
+      expect(appCommands(mac).some((command) => command.id === "kobrixa.preview")).toBe(false);
+    }
+  });
   it("uses platform modifiers and exact physical strokes", () => {
     expect(appCommands(true).find((c) => c.id === "kobrixa.save")?.defaults[0]?.keys).toEqual([
       "Meta+KeyS",

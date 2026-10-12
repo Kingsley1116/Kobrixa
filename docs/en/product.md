@@ -4,7 +4,7 @@
 
 Kobrixa IDE gives students and makers a dependable, understandable path from EV3 source code to a running robot. The product favors a short feedback loop, actionable errors, offline use, and predictable physical-device behavior over a broad collection of partially supported features.
 
-The current v1 candidate implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports, remote file management, a local WRO simulator, Sensor Lab, motor testing and cloud collaboration. Full platform support still depends on the physical-brick acceptance matrix. Release signing is integrated but requires production credentials and external verification before a download can be described as signed.
+The current v1 candidate implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports, remote file management, Sensor Lab, motor testing and cloud collaboration. The maintainer confirmed physical EV3 acceptance on 2026-10-12. Version 1.0.0 ships unsigned; signing is not a release gate. The simulator is excluded from official releases.
 
 ## Primary users
 
@@ -12,7 +12,7 @@ The current v1 candidate implements Basic Plus editing and compilation, project 
 - A maker maintaining or extending an existing `.bp` robot program.
 - A mentor who needs examples and repeatable setup across Windows, macOS, and Linux.
 
-Additional language frontends and classroom fleet management remain future directions. Optional cloud collaboration is included in the candidate; individual editing, compilation and local simulation remain available offline.
+Additional language frontends and classroom fleet management remain future directions. Optional cloud collaboration is included in the candidate; individual editing and compilation remain available offline.
 
 ## v1 user journey
 
@@ -58,9 +58,8 @@ Desktop compilation runs in a dedicated worker, with progress and cooperative ca
 - Browse remote files, transfer files or folders, and preview conflicts before batch transfers.
 - Time out stalled operations and distinguish permission, discovery, connection, protocol, transfer, and device errors.
 
-### Local simulation and device experiments
+### Device experiments
 
-- [Local robot simulator](offline-preview.md): run Basic Plus offline on a practice mat or the WRO field, configure robots, and inspect sensors, LCD output, variables and source locations. Physics and sensors are approximate; this is not a native `.rbf` firmware emulator and does not replace hardware acceptance.
 - [Sensor Lab](sensor-lab.md): record and compare sensor readings and motor counts, export CSV, apply two-point calibration and zeroing, and generate copyable Basic Plus examples.
 - [Motor testing](motor-test.md): use jog, timed and angle controls with results and stop status; physical acceptance remains separate.
 

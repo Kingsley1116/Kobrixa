@@ -14,7 +14,7 @@ const copy = {
     hero: {
       label: "為 EV3 而生的程式環境",
       title: "用程式，讓創意真的動起來。",
-      body: "從 Basic Plus 編輯、編譯與本地模擬，到 USB／Wi-Fi 實機部署；也能邀請夥伴共同編輯，讓每個想法一起前進。",
+      body: "從 Basic Plus 編輯與編譯，到 USB／Wi-Fi 實機部署；也能邀請夥伴共同編輯，讓每個想法一起前進。",
       learn: "開始學習",
       source: "查看原始碼",
       note: `v${metadata.version} · 離線優先 · 開源`,
@@ -34,11 +34,6 @@ const copy = {
           "/docs/diagnostics?lang=zh-TW",
         ],
         ["為實體機器人而建", "將支援的 Basic Plus 程式編譯為原生 EV3 .rbf，然後上傳、執行、停止。"],
-        [
-          "先在本機試跑",
-          "內建 WRO Double Tennis 2026 模擬場地，觀察機器人、感測器與變數，不需要連接 EV3。物理模型為近似，仍需實機驗證。",
-          "/docs/reference/offline-preview",
-        ],
         [
           "邀請夥伴一起寫",
           "用邀請碼加入雲端房間，即時共同編輯、聊天與分配 EV3 控制權。支援返回最近房間，並在重新加入前處理本機變更。",
@@ -80,7 +75,7 @@ const copy = {
     hero: {
       label: "A programming environment for EV3",
       title: "Make ideas move with code.",
-      body: "Write and compile Basic Plus, try it in the local simulator, then deploy over USB or Wi-Fi. Invite others to edit with you and move ideas forward together.",
+      body: "Write and compile Basic Plus, then deploy over USB or Wi-Fi. Invite others to edit with you and move ideas forward together.",
       learn: "Start learning",
       source: "View source",
       note: `v${metadata.version} · Offline-first · Open source`,
@@ -102,11 +97,6 @@ const copy = {
         [
           "Made for physical robots",
           "Compile supported Basic Plus programs to native EV3 .rbf files, then upload, run, and stop them.",
-        ],
-        [
-          "Try it locally first",
-          "Explore the WRO Double Tennis 2026 field, robots, sensors and variables without an EV3. The physics model is approximate; physical testing is still needed.",
-          "/docs/reference/offline-preview",
         ],
         [
           "Invite others to build with you",

@@ -2,15 +2,15 @@
 
 ## v1 支援矩陣
 
-| 桌面目標            | USB HID                | Wi-Fi                  | Bluetooth |
-| ------------------- | ---------------------- | ---------------------- | --------- |
-| Windows x64         | 已實作，待平台實機驗收 | 已實作，待平台實機驗收 | 未實作    |
-| macOS Apple Silicon | 已實作，待平台實機驗收 | 已實作，待平台實機驗收 | 未實作    |
-| Linux x64           | 已實作，待平台實機驗收 | 已實作，待平台實機驗收 | 未實作    |
+| 桌面目標            | USB HID            | Wi-Fi              | Bluetooth |
+| ------------------- | ------------------ | ------------------ | --------- |
+| Windows x64         | 維護者確認驗收通過 | 維護者確認驗收通過 | 未實作    |
+| macOS Apple Silicon | 維護者確認驗收通過 | 維護者確認驗收通過 | 未實作    |
+| Linux x64           | 維護者確認驗收通過 | 維護者確認驗收通過 | 未實作    |
 
 只有在該平台的自動 transport 測試和實體參考 EV3 測試都通過後，才能宣告已提供支援。
 
-共用 USB 與 Wi-Fi transport 已存在於 `packages/device`。三平台 USB／Wi-Fi 驗收矩陣尚未完成。每次驗收應記錄作業系統、韌體、傳輸方式、確切應用程式版本與觀察結果。桌面簽章有效性另依[程式碼簽章政策](../zh-TW/code-signing.md)驗證。
+共用 USB 與 Wi-Fi transport 已存在於 `packages/device`。維護者已於 2026-10-12 確認實體 EV3 驗收通過；此處記錄該確認，未附逐平台測試日誌。每次驗收應記錄作業系統、韌體、傳輸方式、確切應用程式版本與觀察結果。桌面簽章有效性另依[程式碼簽章政策](../zh-TW/code-signing.md)驗證。
 
 ## USB
 
@@ -48,7 +48,7 @@
 
 面板顯示所有可用通道；無法解讀的多通道資料使用通道編號。「曲線與校正」子頁提供記錄、比較、CSV 匯出與數值校正，詳見[感測器曲線與校正](sensor-lab.md)。「讀值」中的馬達卡片可展開單顆馬達的點動、定時與角度測試，詳見[馬達測試](https://github.com/Kingsley1116/Kobrixa/blob/main/docs/zh-TW/motor-test.md)；測試期間暫停一般監測，不支援同步記錄。Daisy-chain 監測不在此版本範圍內。USB 恢復後使用新的 session，忽略舊回覆；未記錄時，關閉監測只停止後續取樣，不會中止已送出的 USB 交換或讓 EV3 斷線。
 
-桌面 smoke 使用模擬資料。Windows、macOS、Linux 的 USB 與 Wi-Fi 監測皆**尚未完成實機驗收**；請依[監測驗收步驟](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測)操作後，再記錄各平台結果。
+桌面 smoke 使用模擬資料。實體 EV3 驗收已由維護者確認通過；後續回歸請依[監測驗收步驟](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測)操作並記錄各平台結果。
 
 ## 必要驗收情境
 

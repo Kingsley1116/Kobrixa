@@ -1,2 +1,2 @@
-// Expose unfinished simulation tools during development only.
-export const SIMULATOR_ENABLED = import.meta.env.DEV;
+// The simulator is excluded from official releases and all UI entry points.
+export const SIMULATOR_ENABLED = false;

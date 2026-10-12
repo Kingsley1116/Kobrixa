@@ -1,3 +1,4 @@
+import { captureReadmeWindow } from "./readme-capture.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -314,6 +315,14 @@ export async function checkDiagnostics({
       );
     }
 
+  win.setSize(980, 900);
+  await js('smoke.settingsStore.set("problemsHeight",500);smoke.settingsStore.set("theme","dark")');
+  for (const locale of ["en", "zh-TW"]) {
+    await js(`smoke.settingsStore.set("locale",${JSON.stringify(locale)})`);
+    await until(`document.documentElement.lang === ${JSON.stringify(locale)}`);
+    await pause(350);
+    await captureReadmeWindow({ js, win, temporary }, `readme-diagnostics-${locale}.png`);
+  }
   await js("smoke.settingsStore.set('locale','en')");
   for (const name of ["Diagnostics test", "Diagnostics isolation"]) {
     await switchTo(name);

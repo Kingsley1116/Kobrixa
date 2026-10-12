@@ -1,6 +1,6 @@
 import { checkExpandedSettings } from "./settings-smoke.mjs";
 import { compilePreview } from "./preview-smoke.mjs";
-import { checkSimulator, compileSimulationFixture } from "./simulator-smoke.mjs";
+import { compileSimulationFixture } from "./simulator-smoke.mjs";
 import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
@@ -63,7 +63,17 @@ const firstId = "00000000-0000-4000-8000-000000000001";
 let nextOpenId = firstId;
 let offlinePreviewSnapshot;
 let offlinePreviewSequence = 0;
-const fixtures = new Map([[firstId, { name: "Keyboard test", files, drafts, root: languageRoot }]]);
+const fixtures = new Map([
+  [
+    firstId,
+    {
+      name: process.env.KOBRIXA_SCREENSHOTS_README ? "Hello EV3" : "Keyboard test",
+      files,
+      drafts,
+      root: languageRoot,
+    },
+  ],
+]);
 for (const number of [2, 3]) {
   const id = `00000000-0000-4000-8000-00000000000${number}`;
   const root = path.join(temporary, `project-${number}`);
@@ -495,6 +505,7 @@ app
   .whenReady()
   .then(async () => {
     win = new BrowserWindow({
+      enableLargerThanScreen: Boolean(process.env.KOBRIXA_SMOKE_KEEP_ARTIFACTS),
       width: 1420,
       height: 900,
       show: true,
@@ -523,6 +534,31 @@ app
     await until("smoke.monaco.editor.getEditors().length === 1");
     await js("window.ed=smoke.monaco.editor.getEditors()[0];ed.focus()");
     await pause(200);
+    if (process.env.KOBRIXA_SCREENSHOTS_README) {
+      const source = fs.readFileSync(
+        fileURLToPath(
+          new URL("../../examples/getting-started/hello-ev3/src/main.bp", import.meta.url),
+        ),
+        "utf8",
+      );
+      win.setSize(1600, 1000);
+      await js(
+        `window.ed.updateOptions({fontSize:20,lineHeight:30});window.ed.setValue(${JSON.stringify(source)}); smoke.settingsStore.set("rightPanel",null); smoke.settingsStore.set("problemsOpen",false); smoke.settingsStore.set("uiScale",100)`,
+      );
+      for (const locale of ["en", "zh-TW"]) {
+        await js(
+          `smoke.settingsStore.set("locale",${JSON.stringify(locale)});smoke.settingsStore.set("theme","dark")`,
+        );
+        await until(`document.documentElement.lang === ${JSON.stringify(locale)}`);
+        await pause(800);
+        fs.writeFileSync(
+          path.join(temporary, `editor-${locale}.png`),
+          (await win.webContents.capturePage()).toPNG(),
+        );
+      }
+      app.exit(0);
+      return;
+    }
     const projectsContext = {
       js,
       key,
@@ -599,8 +635,8 @@ app
     const searchContext = { ...projectsContext, search, writes };
     const diagnosticsContext = { ...projectsContext, diagnostics, fileHistory, search, writes };
     if (process.env.KOBRIXA_SMOKE_SIMULATOR_ONLY || process.env.KOBRIXA_SMOKE_PREVIEW_ONLY) {
-      await checkSimulator(projectsContext);
-      console.log("PASS local simulator");
+      await checkSimulatorDisabled(projectsContext);
+      console.log("PASS simulator entry points disabled");
       app.exit(0);
       return;
     }
@@ -1150,7 +1186,7 @@ app
     });
     await checkWorkspaceSearch(searchContext);
     await checkDiagnostics(diagnosticsContext);
-    await checkSimulator(projectsContext);
+    await checkSimulatorDisabled(projectsContext);
     await checkProjects(projectsContext);
     console.log("PASS", JSON.stringify({ writes: writes.length, draftFiles: Object.keys(drafts) }));
     app.exit(0);
@@ -1183,3 +1219,18 @@ app
     }
     app.exit(1);
   });
+
+async function checkSimulatorDisabled({ js, key, pause }) {
+  assert.equal(
+    await js(
+      "[...document.querySelectorAll('button')].some(button => /Open the local robot simulator|開啟本地機器人模擬器/.test(button.title))",
+    ),
+    false,
+  );
+  await key("F5", ["alt"]);
+  await pause(200);
+  assert.equal(
+    await js("Boolean(document.querySelector('.simulator-workspace, .offline-preview'))"),
+    false,
+  );
+}

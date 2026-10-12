@@ -2,9 +2,9 @@
 
 ## 目前交付階段
 
-倉庫目前處於 v1 候選版階段。Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理，以及三平台安裝套件／壓縮包、Release 流程與自動更新均已實作。可下載版本以各個 GitHub Release 為準。正式簽章憑證與完整乾淨環境／實機矩陣仍是發布前須完成的項目。
+倉庫目前處於 v1 候選版階段。Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理，以及三平台安裝套件／壓縮包、Release 流程與自動更新均已實作。可下載版本以各個 GitHub Release 為準。實體 EV3 驗收已由維護者確認通過。1.0.0 不等待簽章，仍須確認乾淨環境安裝與發布產物。
 
-目前亦已提供[本地機器人模擬器](offline-preview.md)、[Sensor Lab](sensor-lab.md)、[馬達測試](motor-test.md)與[雲端協作](collaboration.md)。candidate.14 更新協作房間介面、本機變更處理與控制權請求流程。這些候選功能的自動化測試不取代實體 EV3 驗收。
+目前亦已提供[Sensor Lab](sensor-lab.md)、[馬達測試](motor-test.md)與[雲端協作](collaboration.md)。candidate.14 更新協作房間介面、本機變更處理與控制權請求流程。這些候選功能的自動化測試不取代實體 EV3 驗收。
 
 ## Phase 0 — 已建立的基礎
 
@@ -19,11 +19,9 @@
 
 目前已實作 `.bp` → 已驗證 `KobrixaIR` → 原生 `.rbf`，並提供 Monaco 編輯、專案、雙語離線診斷解說、由使用者選取且可用 Undo 復原的 Quick Fix、素材部署與遠端檔案操作。官網[錯誤索引](/docs/diagnostics?lang=zh-TW)與 IDE 共用解說內容；Quick Fix 僅提供可確定的語法修正。接下來依序完成：
 
-1. 完成 Apple 會員及 Developer ID 憑證設定，驗證解壓後的 macOS 應用程式已簽章並公證。
-2. 完成原始碼／歷史／素材檢查與乾淨環境驗收，包括尚未完成的 USB／Wi-Fi 矩陣；檢閱確切 Release 草稿、安裝套件、壓縮包、更新資訊與校驗碼。
-3. 手動公開倉庫與首個可使用版本：macOS 已簽章並公證，Windows 明確標示未簽章。
-4. 使用公開原始碼與版本申請 SignPath Foundation。核准取決於外部審核；延後或拒絕時維持 Windows 未簽章。
-5. 核准後設定允許的簽署範圍及人工核准 policy，在新版本啟用 Windows 簽章，再驗證回傳執行檔與最終下載包。
+1. 檢閱確切原始碼、歷史、素材與乾淨環境安裝結果，驗證 Release 草稿、安裝套件、壓縮包、更新資訊與校驗碼。
+2. 發佈 1.0.0，明確標示 macOS、Windows 與 Linux 均未簽章。維護者已於 2026-10-12 確認實體 EV3 驗收通過；模擬器不納入正式發佈。
+3. 憑證與核准齊備後，再於後續版本加入簽章；此前 macOS 未簽章版本使用手動下載更新。
 
 退出條件：[產品規格](../zh-TW/product.md)與[設備規格](../zh-TW/device-support.md)的所有條件通過，且每項公開簽章聲明均有驗證證據。依[簽章政策](../zh-TW/code-signing.md)操作；啟用後不得靜默退回未簽章產物。
 
@@ -55,7 +53,6 @@
 ## 長期探索
 
 - Bluetooth transport
-- 在現有本地 WRO 模擬器之外，探索更廣泛的虛擬設備與韌體模擬
 - 以同一套 IR 為目標的 Blockly 類積木編輯器
 - 教室部署與設備群工具
 - 透過獨立後端支援其他 LEGO 相容 Hub

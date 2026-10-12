@@ -6,6 +6,21 @@ Kobrixa IDE is an open-source desktop app for programming LEGO® MINDSTORMS® EV
 
 [Download](https://github.com/Kingsley1116/Kobrixa/releases) · [Website](https://kobrixa.com) · [Examples](examples/README.md) · [Documentation](#documentation) · [繁體中文版](README.zh-TW.md)
 
+## Contents
+
+- [What you can do](#what-you-can-do)
+- [In pictures](#in-pictures)
+- [Quick start](#quick-start)
+- [Project status](#project-status)
+- [How it works](#how-it-works)
+- [Build from source](#build-from-source)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Technology](#technology)
+- [Legal and naming](#legal-and-naming)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## What you can do
 
 - **Write Basic Plus** in a Monaco-based editor with diagnostics, formatting, and configurable keyboard shortcuts. Commonly used legacy `.bp` programs are intended to run without source changes ([language support](docs/en/language-support.md)).
@@ -14,6 +29,18 @@ Kobrixa IDE is an open-source desktop app for programming LEGO® MINDSTORMS® EV
 - **Test motors** — run motors A–D from **EV3 tools → Monitor** without writing a program ([motor testing](docs/en/motor-test.md)).
 - **Collaborate in real time** — share an invite code to co-edit one project, chat, and hand over EV3 control; no account needed ([cloud collaboration](docs/en/collaboration.md)).
 - **Stay up to date** — the app checks GitHub Releases and installs updates after confirmation ([installation and updates](docs/en/installation.md)).
+
+## In pictures
+
+Full application screenshots taken in a 1600 × 1000 window, using the English interface. Click to view the original resolution. Projects, sensor readings and participants are demo data.
+
+| Editor                                                                               | Diagnostics                                                                            |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| [![Editor](docs/images/editor-en.png)](docs/images/editor-en.png)                    | [![Diagnostics](docs/images/diagnostics-en.png)](docs/images/diagnostics-en.png)       |
+| Edit Basic Plus and run it on EV3.                                                   | Locate errors and read repair guidance.                                                |
+| **Sensor recordings**                                                                | **Collaboration**                                                                      |
+| [![Sensor recordings](docs/images/sensor-lab-en.png)](docs/images/sensor-lab-en.png) | [![Collaboration](docs/images/collaboration-en.png)](docs/images/collaboration-en.png) |
+| Inspect curves and compare saved recordings.                                         | Share a project and hand over device control.                                          |
 
 ## Quick start
 
@@ -27,7 +54,7 @@ Download the file for your system from the latest [GitHub Release](https://githu
 | macOS Apple Silicon | `Kobrixa-<version>-darwin-arm64.dmg`    | Open the DMG and drag `Kobrixa.app` into Applications |
 | Linux x64           | `Kobrixa-<version>-linux-x64.AppImage`  | Make the file executable (`chmod +x`), then launch it |
 
-Candidate builds may be unsigned, so your operating system may show a warning. See the [code signing policy](docs/en/code-signing.md) and [installation guide](docs/en/installation.md) for checksum verification and updates. On Linux, USB access may need a [udev rule](docs/en/installation.md#usb).
+Version 1.0.0 will be unsigned, so your operating system may show a warning. See the [code signing policy](docs/en/code-signing.md) and [installation guide](docs/en/installation.md) for checksum verification and updates. On Linux, USB access may need a [udev rule](docs/en/installation.md#usb).
 
 ### 2. Write a program
 
@@ -57,24 +84,23 @@ Compile errors appear in the diagnostics panel (Ctrl/Cmd+J) with the exact line.
 
 ## Project status
 
-Kobrixa is a **v1 release candidate** (currently `v0.1.0-v1-candidate.16`). Builds are available for trying out, but v1 is not final: full physical-EV3 testing on all three platforms and production code signing are still in progress.
+Kobrixa is a **v1 release candidate** (currently `v0.1.0-v1-candidate.16`). Physical EV3 acceptance was confirmed by the maintainer on 2026-10-12. Version 1.0.0 will ship unsigned without waiting for signing credentials. The simulator is excluded from official releases.
 
-| Capability                               | Status                           |
-| ---------------------------------------- | -------------------------------- |
-| Basic Plus (`.bp`) editor and compiler   | Available                        |
-| Native EV3 `.rbf` output                 | Available                        |
-| USB on Windows, macOS, and Linux         | Available; hardware testing      |
-| Wi-Fi on Windows, macOS, and Linux       | Available; hardware testing      |
-| EV3 file manager, Sensor Lab, motor test | Available                        |
-| Cloud collaboration                      | Available (since candidate.12)   |
-| Installers and automatic updates         | Available                        |
-| Local robot simulator                    | In development; hidden in builds |
-| Python frontend                          | Planned after v1                 |
-| TypeScript frontend                      | Planned after Python             |
-| C++ frontend                             | Planned after TypeScript         |
-| Bluetooth, block editor                  | Long-term                        |
+| Capability                               | Status                         |
+| ---------------------------------------- | ------------------------------ |
+| Basic Plus (`.bp`) editor and compiler   | Available                      |
+| Native EV3 `.rbf` output                 | Available                      |
+| USB on Windows, macOS, and Linux         | Available                      |
+| Wi-Fi on Windows, macOS, and Linux       | Available                      |
+| EV3 file manager, Sensor Lab, motor test | Available                      |
+| Cloud collaboration                      | Available (since candidate.12) |
+| Installers and automatic updates         | Available                      |
+| Python frontend                          | Planned after v1               |
+| TypeScript frontend                      | Planned after Python           |
+| C++ frontend                             | Planned after TypeScript       |
+| Bluetooth, block editor                  | Long-term                      |
 
-**Available** — included in current candidate builds. **Hardware testing** — implemented and tested automatically; the physical-brick acceptance matrix is not complete ([device support](docs/en/device-support.md)). **Planned / Long-term** — not available yet; see the [roadmap](docs/en/roadmap.md).
+**Available** — included in current candidate builds. Physical EV3 acceptance is complete per maintainer confirmation ([device support](docs/en/device-support.md)). **Planned / Long-term** — not available yet; see the [roadmap](docs/en/roadmap.md).
 
 ## How it works
 

@@ -427,8 +427,8 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
             <h2>{t.ready}</h2>
             <p>
               {locale === "zh-TW"
-                ? "安裝 Kobrixa。可先使用本地模擬器，或連接 EV3；實機馬達測試前先架高輪子。"
-                : "Install Kobrixa. Start in the local simulator or connect an EV3; lift wheels before physical motor tests."}
+                ? "安裝 Kobrixa。連接 EV3；實機馬達測試前先架高輪子。"
+                : "Install Kobrixa. Connect an EV3; lift wheels before physical motor tests."}
             </p>
             <AppLink href="/docs/tutorial/getting-ready">
               {first.title[locale]} <Icon name="arrow" />
@@ -465,7 +465,6 @@ function GettingStarted({ locale }: { locale: DocsLocale }) {
           aria-label={locale === "zh-TW" ? "探索目前功能" : "Explore current features"}
         >
           {[
-            { slug: "offline-preview", icon: "simulator" as const },
             { slug: "collaboration", icon: "users" as const },
             { slug: "sensor-lab", icon: "chart" as const },
             { slug: "motor-test", icon: "device" as const },

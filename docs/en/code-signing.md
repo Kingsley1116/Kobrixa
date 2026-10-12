@@ -1,5 +1,7 @@
 # Code signing policy
 
+Version 1.0.0 ships unsigned on macOS, Windows and Linux. Signing is deferred and does not block this release. Unsigned macOS builds offer manual download updates.
+
 Kobrixa's release workflow supports Apple Developer ID signing and notarization for macOS, and SignPath signing for Windows. Both are disabled until their accounts, credentials and verification are ready. Workflow support does not mean that an existing download is signed: read that version's Release notes and verify the downloaded application.
 
 Windows signing through SignPath Foundation is planned and subject to approval. Kobrixa does not currently claim Foundation sponsorship or an issued certificate. Until approval, Windows builds remain explicitly unsigned. Linux archives remain unsigned and include a SHA-256 checksum. A checksum detects changes but does not authenticate the publisher.
@@ -25,7 +27,7 @@ Before the first public release, the maintainer must review the exact commit and
 
 1. Inspect tracked files and reachable Git history for credentials and private data. Check the final archives too; ignoring a file does not remove it from history or old artifacts.
 2. Confirm redistribution rights for source, examples and media. Check the packaged project `LICENSE`, `THIRD-PARTY-NOTICES.txt` and upstream Electron/Chromium/HIDAPI notices.
-3. Complete production macOS signing/notarization and browser-download verification. Record the outstanding platform and EV3 acceptance results using the [device support checklist](../en/device-support.md).
+3. Verify browser downloads and clean-machine installation for the unsigned 1.0.0 packages. Verify signing/notarization only when enabled in a later release. Preserve physical EV3 acceptance results using the [device support checklist](../en/device-support.md).
 4. Confirm that the draft contains all platform archives, installers, a matching SHA256SUMS.txt and the metadata required by its signing modes; check the intended commit and each platform’s signing status.
 5. Make the repository public and publish the Release as separate manual operations. Keep Windows explicitly unsigned until SignPath approval; account verification, payment, application and signing approvals remain the owner's responsibility.
 

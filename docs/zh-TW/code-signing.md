@@ -1,5 +1,7 @@
 # Code signing policy／程式碼簽章政策
 
+1.0.0 的 macOS、Windows 與 Linux 均以未簽章版本發佈。簽章延後處理，不阻擋本次發布；macOS 未簽章版本提供手動下載更新。
+
 Kobrixa 的發布流程支援 macOS Developer ID 簽章與 Apple 公證，以及 Windows SignPath 簽章。兩者在帳號、憑證及驗證準備完成前均預設關閉。流程已支援不代表現有下載檔已簽章；請查看該版本的 Release 說明並驗證下載的應用程式。
 
 Windows 的 SignPath Foundation 免費開源方案仍須申請核准，目前不宣稱已獲贊助或取得憑證。核准前的 Windows 版本會明確標示未簽章。Linux 維持未簽章並附 SHA-256 校驗碼；校驗碼可檢查內容是否改變，但不能驗證發行者身分。
@@ -25,7 +27,7 @@ GitHub repository **Variables** 中的 `MACOS_SIGNING_ENABLED`、`WINDOWS_SIGNIN
 
 1. 檢查受追蹤檔案、可達的 Git 歷史及最終壓縮包是否含憑證與私人資料。忽略檔案不會移除歷史或舊產物中的內容。
 2. 確認原始碼、範例與媒體的再散布權利，檢查封裝內的專案 `LICENSE`、`THIRD-PARTY-NOTICES.txt` 及上游 Electron／Chromium／HIDAPI 授權聲明。
-3. 完成正式 macOS 簽章／公證與瀏覽器下載驗證，依[設備支援驗收清單](../zh-TW/device-support.md)記錄尚待完成的平台與 EV3 結果。
+3. 驗證未簽章 1.0.0 套件的瀏覽器下載與乾淨環境安裝。後續版本啟用簽章時才驗證簽章／公證；依[設備支援驗收清單](../zh-TW/device-support.md)保存平台與 EV3 驗收結果。
 4. 確認草稿包含各平台壓縮包、安裝包、相符的 SHA256SUMS.txt，以及簽章模式所需的更新資訊；使用預定的 commit，並逐平台核對簽章狀態。
 5. 將倉庫改公開與 Release 發布作為兩個獨立人工操作。SignPath 核准前維持 Windows 明確標示未簽章；帳號身分驗證、付款、申請及簽章核准由擁有者完成。
 

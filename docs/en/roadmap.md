@@ -2,9 +2,9 @@
 
 ## Current delivery stage
 
-The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Production signing credentials and the complete clean-machine/hardware acceptance matrix remain release gates.
+The repository is at the v1 candidate stage. Basic Plus compilation, the desktop editor, USB/Wi-Fi transports, remote file management and three-platform installer/archive packaging and automatic updates are implemented. Published download availability is determined by each GitHub Release. Physical EV3 acceptance is confirmed by the maintainer. Signing is deferred beyond 1.0.0; clean-machine installation and release-artifact checks remain required.
 
-The candidate also includes the [local robot simulator](offline-preview.md), [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Candidate.14 updates collaboration rooms, local-change handling and control requests. Automated tests for these candidate features do not replace physical EV3 acceptance.
+The candidate also includes the [Sensor Lab](sensor-lab.md), [motor testing](motor-test.md) and [cloud collaboration](collaboration.md). Candidate.14 updates collaboration rooms, local-change handling and control requests. Automated tests for these candidate features do not replace physical EV3 acceptance.
 
 ## Phase 0 — foundation in place
 
@@ -19,11 +19,9 @@ Continue reviewing dependency licenses, brand/asset provenance and bilingual lin
 
 The implemented path is `.bp` → validated `KobrixaIR` → native `.rbf`, with Monaco editing, projects, bilingual offline diagnostic explanations, user-selected Quick Fix with Undo, asset deployment and remote file operations. The online [diagnostic index](/docs/diagnostics?lang=en) shares explanations with the IDE; Quick Fix offers only unambiguous syntax corrections. The remaining rollout order is:
 
-1. Complete Apple enrollment and Developer ID credentials, then verify a signed and notarized macOS archive after extraction.
-2. Complete source/history/asset review and clean-machine checks, including the outstanding USB/Wi-Fi matrix. Review the exact Release draft, installers, archives, update metadata and checksums.
-3. Manually make the repository public and publish the first usable release with macOS signed/notarized and Windows explicitly unsigned.
-4. Apply to SignPath Foundation using the public source and release. Approval is an external dependency; leave Windows unsigned if it is delayed or declined.
-5. After approval, configure the approved signing scope and human-approval policy, then enable Windows signing for a new version and verify the returned executable and final download.
+1. Review the exact source, history, assets and clean-machine installation results, then verify the Release draft, installers, archives, update metadata and checksums.
+2. Publish 1.0.0 with macOS, Windows and Linux explicitly unsigned. Physical EV3 acceptance was confirmed by the maintainer on 2026-10-12; the simulator is excluded from official releases.
+3. Add signing in a later release when credentials and approvals are ready. Until then, unsigned macOS builds use manual download updates.
 
 Exit: every criterion in the [product specification](../en/product.md) and [device specification](../en/device-support.md) passes, and each published signing claim has verified evidence. Follow the [signing policy](../en/code-signing.md); enabling a mode must never silently fall back to an unsigned artifact.
 
@@ -55,7 +53,6 @@ Exit: compiler and device APIs are stable enough for independent CLI and desktop
 ## Long-term exploration
 
 - Bluetooth transport
-- Broader virtual-device support and firmware emulation beyond the existing local WRO simulator
 - Blockly-style editor that targets the same IR
 - Classroom deployment and device-fleet tools
 - Additional LEGO-compatible hubs through separate backends

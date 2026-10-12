@@ -6,6 +6,21 @@ Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Li
 
 [下載](https://github.com/Kingsley1116/Kobrixa/releases) · [網站](https://kobrixa.com) · [範例](examples/README.zh-TW.md) · [文件](#文件) · [English README](README.md)
 
+## 目錄
+
+- [你可以做什麼](#你可以做什麼)
+- [介面一覽](#介面一覽)
+- [快速開始](#快速開始)
+- [專案狀態](#專案狀態)
+- [運作方式](#運作方式)
+- [從原始碼建置](#從原始碼建置)
+- [倉庫結構](#倉庫結構)
+- [文件](#文件)
+- [技術](#技術)
+- [法律與命名](#法律與命名)
+- [參與貢獻](#參與貢獻)
+- [授權](#授權)
+
 ## 你可以做什麼
 
 - **撰寫 Basic Plus**：以 Monaco 為基礎的編輯器，提供診斷、格式化與可自訂的快捷鍵。常用的舊有 `.bp` 程式以「不需修改原始碼即可執行」為目標（[語言支援](docs/zh-TW/language-support.md)）。
@@ -14,6 +29,18 @@ Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Li
 - **測試馬達**：在 **EV3 工具 → 監測** 直接轉動 A–D 馬達，不需撰寫程式（[馬達測試](docs/zh-TW/motor-test.md)）。
 - **即時協作**：分享邀請碼即可共同編輯同一專案、聊天並交接 EV3 控制權，不需要帳號（[雲端協作](docs/zh-TW/collaboration.md)）。
 - **保持最新**：應用程式會檢查 GitHub Releases，經確認後安裝更新（[安裝與更新](docs/zh-TW/installation.md)）。
+
+## 介面一覽
+
+以 1600 × 1000 視窗擷取完整繁體中文介面，點選圖片可查看原始解析度。專案、感測器讀值與協作成員均為示範資料。
+
+| 程式編輯器                                                                          | 錯誤診斷                                                                                |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [![程式編輯器](docs/images/editor-zh-TW.png)](docs/images/editor-zh-TW.png)         | [![錯誤診斷](docs/images/diagnostics-zh-TW.png)](docs/images/diagnostics-zh-TW.png)     |
+| 撰寫 Basic Plus，並在 EV3 執行。                                                    | 定位錯誤並查看修正說明。                                                                |
+| **感測器記錄**                                                                      | **即時協作**                                                                            |
+| [![感測器記錄](docs/images/sensor-lab-zh-TW.png)](docs/images/sensor-lab-zh-TW.png) | [![即時協作](docs/images/collaboration-zh-TW.png)](docs/images/collaboration-zh-TW.png) |
+| 檢視曲線並比較已儲存的記錄。                                                        | 共享專案並交接設備控制權。                                                              |
 
 ## 快速開始
 
@@ -27,7 +54,7 @@ Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Li
 | macOS Apple Silicon | `Kobrixa-<version>-darwin-arm64.dmg`    | 開啟 DMG，將 `Kobrixa.app` 拖入「應用程式」 |
 | Linux x64           | `Kobrixa-<version>-linux-x64.AppImage`  | 將檔案設為可執行（`chmod +x`）後啟動        |
 
-候選版可能尚未簽章，作業系統可能顯示警告。詳見[程式碼簽章政策](docs/zh-TW/code-signing.md)；校驗與更新請見[安裝指南](docs/zh-TW/installation.md)。Linux 上使用 USB 可能需要設定 [udev 規則](docs/zh-TW/installation.md#usb)。
+1.0.0 將以未簽章版本發佈，作業系統可能顯示警告。詳見[程式碼簽章政策](docs/zh-TW/code-signing.md)；校驗與更新請見[安裝指南](docs/zh-TW/installation.md)。Linux 上使用 USB 可能需要設定 [udev 規則](docs/zh-TW/installation.md#usb)。
 
 ### 2. 撰寫程式
 
@@ -57,24 +84,23 @@ Program.Delay(250)
 
 ## 專案狀態
 
-Kobrixa 目前是 **v1 候選版**（`v0.1.0-v1-candidate.16`）。已可下載試用，但 v1 尚未定案：三平台完整實體 EV3 測試與正式程式碼簽章仍在進行中。
+Kobrixa 目前是 **v1 候選版**（`v0.1.0-v1-candidate.16`）。維護者已於 2026-10-12 確認實體 EV3 驗收通過。1.0.0 將以未簽章版本發佈，不等待簽章；模擬器不納入正式發佈。
 
 | 能力                               | 狀態                    |
 | ---------------------------------- | ----------------------- |
 | Basic Plus（`.bp`）編輯器與編譯器  | 可用                    |
 | 原生 EV3 `.rbf` 輸出               | 可用                    |
-| Windows、macOS、Linux USB          | 可用；實機測試中        |
-| Windows、macOS、Linux Wi-Fi        | 可用；實機測試中        |
+| Windows、macOS、Linux USB          | 可用                    |
+| Windows、macOS、Linux Wi-Fi        | 可用                    |
 | EV3 檔案管理、Sensor Lab、馬達測試 | 可用                    |
 | 雲端協作                           | 可用（自 candidate.12） |
 | 安裝套件與自動更新                 | 可用                    |
-| 本地機器人模擬器                   | 開發中；目前版本未開放  |
 | Python 前端                        | v1 之後規劃             |
 | TypeScript 前端                    | Python 之後規劃         |
 | C++ 前端                           | TypeScript 之後規劃     |
 | Bluetooth、積木編輯器              | 長期規劃                |
 
-**可用**：已包含在目前候選版中。**實機測試中**：已實作並通過自動化測試，但實體 EV3 驗收矩陣尚未完成（[設備支援](docs/zh-TW/device-support.md)）。**規劃／長期規劃**：目前尚不可用，見[路線圖](docs/zh-TW/roadmap.md)。
+**可用**：已包含在目前候選版中。實體 EV3 驗收已由維護者確認通過（[設備支援](docs/zh-TW/device-support.md)）。**規劃／長期規劃**：目前尚不可用，見[路線圖](docs/zh-TW/roadmap.md)。
 
 ## 運作方式
 

@@ -1,3 +1,4 @@
+import { captureReadmeWindow } from "./readme-capture.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -316,6 +317,12 @@ export async function checkCollab(context) {
               path.join(temporary, `collab-${tag}.png`),
               (await win.webContents.capturePage()).toPNG(),
             );
+            if (width === 1420 && pane === 520 && theme === "dark" && scale === 100) {
+              await captureReadmeWindow(
+                { js, win, temporary },
+                `readme-collaboration-${locale}.png`,
+              );
+            }
             if (process.env.KOBRIXA_SMOKE_COLLAB_LINKED) {
               await js(click("#collab-view-chat"));
               await pause(220);

@@ -16,8 +16,6 @@ import collaborationZh from "../../../../../docs/zh-TW/collaboration.md?raw";
 import languageSupportZh from "../../../../../docs/zh-TW/language-support.md?raw";
 import productZh from "../../../../../docs/zh-TW/product.md?raw";
 import roadmapZh from "../../../../../docs/zh-TW/roadmap.md?raw";
-import simulatorEn from "../../../../../docs/en/offline-preview.md?raw";
-import simulatorZh from "../../../../../docs/zh-TW/offline-preview.md?raw";
 import sensorLabEn from "../../../../../docs/en/sensor-lab.md?raw";
 import sensorLabZh from "../../../../../docs/zh-TW/sensor-lab.md?raw";
 import motorTestEn from "../../../../../docs/en/motor-test.md?raw";
@@ -53,7 +51,6 @@ export type DocumentSlug =
   | "installation"
   | "keyboard-settings"
   | "collaboration"
-  | "offline-preview"
   | "sensor-lab"
   | "motor-test"
   | "code-signing"
@@ -248,16 +245,6 @@ export const documents: readonly DocumentEntry[] = [
       en: "Invite codes and optional passwords, co-editing, chat, room recovery, local changes and EV3 control.",
     },
     content: { "zh-TW": collaborationZh, en: collaborationEn },
-  },
-  {
-    slug: "offline-preview",
-    category: "product",
-    title: { "zh-TW": "本地 WRO 模擬器", en: "Local WRO simulator" },
-    summary: {
-      "zh-TW": "離線試跑 Basic Plus、多機場景、感測器與變數檢視，以及物理模型的限制。",
-      en: "Run Basic Plus offline with multiple robots, inspect sensors and variables, and understand the physics limits.",
-    },
-    content: { "zh-TW": simulatorZh, en: simulatorEn },
   },
   {
     slug: "sensor-lab",

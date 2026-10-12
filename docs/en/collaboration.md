@@ -39,7 +39,7 @@ Editing, file operations and chat sending pause during disconnection and initial
 ## Where files live
 
 - **Host:** edits are written to the host's own project folder, as in a normal session.
-- **Guests:** the project is mirrored into a folder inside the app's user data directory, `<userData>/collab/<room>/`. Guests can build and use the simulator from this mirror, and upload to their EV3 while holding device control.
+- **Guests:** the project is mirrored into a folder inside the app's user data directory, `<userData>/collab/<room>/`. Guests can build from this mirror, and upload to their EV3 while holding device control.
 
 Returning hosts reopen the original project rather than the currently selected project. If its path is missing, choose its location.
 

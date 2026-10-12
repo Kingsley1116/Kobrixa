@@ -24,4 +24,4 @@
 
 `Sensor.ReadSIValue(port, index)` 不切換模式，讀取目前模式的 SI 浮點數。埠沿用 1–16 編碼，通道索引為 0–7；SI 指韌體提供的模式單位。不合法常數會產生編譯診斷；動態參數不合法、通道不存在、裝置未就緒、讀值無效或讀取期間型別／模式改變時回傳 `NaN`。實作依據 [LEGO Firmware Developer Kit 的輸入埠指令](https://assets.education.lego.com/v3/assets/blt293eea581807678a/blt469be1e11ad37696/5f880384f71916144453a49f/lego-mindstorms-ev3-firmware-developer-kit.pdf?locale=en-us)。
 
-本版不包含高速 PID 採樣、雲端同步、韌體校正或自動調參。USB／Wi-Fi 實機驗收仍待完成，請依[實機驗收清單](../../tests/hardware/sensor-lab.md)逐項記錄；VM 與桌面 smoke 通過不能代替實機結果。
+本版不包含高速 PID 採樣、雲端同步、韌體校正或自動調參。維護者已於 2026-10-12 確認實體 EV3 驗收通過，後續回歸請依[實機驗收清單](../../tests/hardware/sensor-lab.md)逐項記錄；VM 與桌面 smoke 通過不能代替實機結果。

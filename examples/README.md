@@ -1,10 +1,10 @@
 # Kobrixa examples
 
-These 120 examples are independently authored for Kobrixa and progress from display-only first builds to local robot simulation and programs that need connected EV3 hardware.
+These examples are independently authored for Kobrixa and progress from display-only first builds to programs that need connected EV3 hardware.
 
 Open a project directory, its `kobrixa.json`, or its `src/main.bp` in Kobrixa. Build before connecting to an EV3. For motor examples, lift the robot so its wheels can turn safely during the first run. See [the learning path](LEARNING-PATH.md) for recommended lesson order.
 
-<a href="./getting-started/">Getting started</a> · <a href="./display/">Display</a> · <a href="./sound/">Sound</a> · <a href="./media/">Media</a> · <a href="./time/">Time</a> · <a href="./buttons/">Buttons</a> · <a href="./control-flow/">Control flow</a> · <a href="./language/">Language</a> · <a href="./collections/">Collections</a> · <a href="./algorithms/">Algorithms</a> · <a href="./concurrency/">Concurrency</a> · <a href="./files/">Files</a> · <a href="./mailboxes/">Mailboxes</a> · <a href="./program/">Program</a> · <a href="./projects/">Projects</a> · <a href="./motors/">Motors</a> · <a href="./sensors/">Sensors</a> · <a href="./hitechnic/">HiTechnic</a> · <a href="./daisy-chain/">Daisy chain</a> · <a href="./capstones/">Capstones</a> · <a href="./simulation/">Simulation</a> · <a href="./benchmarks/">Benchmarks</a>
+<a href="./getting-started/">Getting started</a> · <a href="./display/">Display</a> · <a href="./sound/">Sound</a> · <a href="./media/">Media</a> · <a href="./time/">Time</a> · <a href="./buttons/">Buttons</a> · <a href="./control-flow/">Control flow</a> · <a href="./language/">Language</a> · <a href="./collections/">Collections</a> · <a href="./algorithms/">Algorithms</a> · <a href="./concurrency/">Concurrency</a> · <a href="./files/">Files</a> · <a href="./mailboxes/">Mailboxes</a> · <a href="./program/">Program</a> · <a href="./projects/">Projects</a> · <a href="./motors/">Motors</a> · <a href="./sensors/">Sensors</a> · <a href="./hitechnic/">HiTechnic</a> · <a href="./daisy-chain/">Daisy chain</a> · <a href="./capstones/">Capstones</a> · <a href="./benchmarks/">Benchmarks</a>
 
 ## Getting started
 
@@ -218,17 +218,6 @@ Open a project directory, its `kobrixa.json`, or its `src/main.bp` in Kobrixa. B
 | [sensor-dashboard](capstones/sensor-dashboard/)           | A visual sensor percentage dashboard          | Color sensor on 1                 |
 | [obstacle-rover](capstones/obstacle-rover/)               | Stop a rover when the touch sensor is pressed | Touch sensor on 1; motors A and D |
 | [scheduled-action-loop](capstones/scheduled-action-loop/) | Sensor-driven motor actions with LED feedback | Touch sensor on 1; motor A        |
-
-## Simulation
-
-| Example                                                | What it teaches                                   | Hardware                 |
-| ------------------------------------------------------ | ------------------------------------------------- | ------------------------ |
-| [differential-route](simulation/differential-route/)   | Encoder travel and a 90° turn                     | Simulator; no EV3 needed |
-| [omni-lateral](simulation/omni-lateral/)               | Lateral and forward motion with four omni wheels  | Simulator; no EV3 needed |
-| [vision-search](simulation/vision-search/)             | Synthetic vision with a sensor identity guard     | Simulator; no EV3 needed |
-| [pixy2-search](simulation/pixy2-search/)               | Pixy2 LEGO I2C signature counts and blocks        | Simulator; no EV3 needed |
-| [motor-shooter](simulation/motor-shooter/)             | A motor stroke launches a nearby ball             | Simulator; no EV3 needed |
-| [mailbox-cooperation](simulation/mailbox-cooperation/) | Two entries exchange a target and acknowledgement | Simulator; no EV3 needed |
 
 ## Benchmarks
 

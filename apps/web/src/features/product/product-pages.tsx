@@ -52,22 +52,11 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
       tag: "CONNECTION",
       title: t("把程式帶到機器人上。", "Put your code on the brick."),
       body: t(
-        "透過 USB 或 Wi-Fi 上傳、執行、停止程式及管理 EV3 檔案。內建馬達點動、定時與角度測試；三平台實機矩陣仍待完成。",
-        "Upload, run and stop programs and manage EV3 files over USB or Wi-Fi. Test motors with jog, timed and angle controls; the three-platform hardware matrix remains pending.",
+        "透過 USB 或 Wi-Fi 上傳、執行、停止程式及管理 EV3 檔案。內建馬達點動、定時與角度測試；實體 EV3 驗收已由維護者確認通過。",
+        "Upload, run and stop programs and manage EV3 files over USB or Wi-Fi. Test motors with jog, timed and angle controls; physical EV3 acceptance is confirmed by the maintainer.",
       ),
       link: "/docs/reference/device-support",
       label: t("查看裝置支援", "Check device support"),
-    },
-    {
-      icon: "simulator",
-      tag: "LOCAL SIMULATOR",
-      title: t("沒有 EV3，也能先試跑。", "Try your program before connecting."),
-      body: t(
-        "按 Alt+F5 開啟本地 WRO Double Tennis 2026 模擬器。支援差速與全向驅動、多機程式、感測器及變數檢視；物理為近似，不能取代實機驗證。",
-        "Open the local WRO Double Tennis 2026 simulator with Alt+F5. Explore differential and omni drives, multiple robot programs, sensors and variables. Approximate physics does not replace physical testing.",
-      ),
-      link: "/docs/reference/offline-preview",
-      label: t("探索本地模擬器", "Explore the local simulator"),
     },
     {
       icon: "users",
@@ -249,8 +238,8 @@ export function FeaturesPage({ locale, onLocaleChange }: Props) {
             <h2>{t("把現在做好，再走向下一步。", "Build the foundation. Then go further.")}</h2>
             <p>
               {t(
-                "目前候選版已包含本地模擬器、雲端協作與設備實驗工具。接下來持續完成 Basic Plus 相容覆蓋、三平台實機驗收與發布驗證。Python、TypeScript、C++ 前端、藍牙與積木編輯器仍屬未來規劃。",
-                "The current candidate includes local simulation, cloud collaboration and device experiments. Work continues on Basic Plus compatibility, three-platform hardware acceptance and release verification. Python, TypeScript and C++ frontends, Bluetooth and a block editor remain future plans.",
+                "目前候選版已包含雲端協作與設備實驗工具。實體 EV3 驗收已通過；1.0.0 以未簽章版本發佈，模擬器不納入正式發佈。接下來持續擴充 Basic Plus 相容覆蓋與發布驗證。Python、TypeScript、C++ 前端、藍牙與積木編輯器仍屬未來規劃。",
+                "The current candidate includes cloud collaboration and device experiments. Physical EV3 acceptance is complete; 1.0.0 ships unsigned and the simulator is excluded from official releases. Work continues on Basic Plus compatibility and release verification. Python, TypeScript and C++ frontends, Bluetooth and a block editor remain future plans.",
               )}
             </p>
           </div>
@@ -316,8 +305,8 @@ export function DownloadPage({ locale, onLocaleChange }: Props) {
             <code>{metadata.version}</code>
             <p>
               {t(
-                "此為網站對應的原始碼版本。可下載套件與逐平台簽章狀態以各 Release 為準；三平台 USB／Wi-Fi 實機矩陣尚待完成。",
-                "This is the website's source version. Available packages and per-platform signing status are listed in each release; the three-platform USB / Wi-Fi hardware matrix is still pending.",
+                "此為網站對應的原始碼版本。可下載套件與逐平台簽章狀態以各 Release 為準；實體 EV3 驗收已由維護者確認通過，1.0.0 不等待簽章。",
+                "This is the website's source version. Available packages and per-platform signing status are listed in each release; physical EV3 acceptance is confirmed by the maintainer and 1.0.0 will not wait for signing.",
               )}
             </p>
           </aside>

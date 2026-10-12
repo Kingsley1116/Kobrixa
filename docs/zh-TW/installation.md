@@ -84,7 +84,7 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 
 最終產物包含 Windows NSIS 與 ZIP、Linux AppImage 與 tar.gz、macOS DMG，以及涵蓋所有應用程式下載檔的單一 `SHA256SUMS.txt`。macOS 僅已簽章版本提供更新 ZIP，不再發布普通 ZIP。未簽章版本共八個附件；啟用 macOS 簽章後共十個。個別校驗檔僅暫存於草稿：最後驗證後合併、上傳並讀回驗證，再移除個別校驗檔；中斷後可重跑。另有 Windows／Linux 更新 metadata；僅已簽章 macOS 版本提供 `latest-mac.yml`。簽章預設關閉；啟用 macOS 後須通過 Developer ID 簽章與公證，啟用 Windows 後須通過已核准的 SignPath 簽章與時間戳驗證。Linux 維持未簽章，目前不提供 Intel Mac 套件。封裝前後都檢查授權聲明、原生模組、檔案內容、符號連結與執行權限，並在啟用時驗證簽章。憑證、核准與隱私說明見[程式碼簽章政策](../zh-TW/code-signing.md)。
 
-先完成 Apple 憑證設定，第一個 Windows 版本明確標示未簽章。倉庫與可使用的版本公開後，再申請 SignPath Foundation，核准後才啟用 Windows 簽章。啟用後失敗不會改用未簽章產物；簽章請求被拒或等待人工核准超過 60 分鐘時保留未完成草稿。草稿記錄簽章模式，相同 tag 的重跑不得混用不同模式。
+1.0.0 的 macOS、Windows 與 Linux 均明確標示未簽章，不等待簽章憑證。macOS 未簽章版本使用手動下載更新。倉庫與可使用的版本公開後，再申請 SignPath Foundation，核准後才啟用 Windows 簽章。啟用後失敗不會改用未簽章產物；簽章請求被拒或等待人工核准超過 60 分鐘時保留未完成草稿。草稿記錄簽章模式，相同 tag 的重跑不得混用不同模式。
 
 執行失敗時會保留未完成草稿，並在 workflow 摘要列出各平台結果。可為相同 tag 與 commit 重跑失敗工作，只替換相符的草稿產物。tag 被移動、草稿由手動建立或無法辨識、Release 已公開時，流程會拒絕更新。校驗碼或最終確認失敗也不會將草稿標示為待發布。請勿公開未完成草稿或移動發布 tag。同一 tag 的 Release 執行會序列化，不取消正在執行的工作。
 

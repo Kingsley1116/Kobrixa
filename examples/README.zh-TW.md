@@ -1,10 +1,10 @@
 # Kobrixa 範例
 
-這 120 個專案均為 Kobrixa 原創範例，從只使用顯示器的入門程式，逐步進展到本機機器人模擬及需要連接 EV3 硬體的程式。
+這些專案均為 Kobrixa 原創範例，從只使用顯示器的入門程式，逐步進展到需要連接 EV3 硬體的程式。
 
 可在 Kobrixa 開啟專案目錄、`kobrixa.json` 或 `src/main.bp`。連接 EV3 前請先建置；第一次執行馬達範例時，請先架高機器人，確保輪子可安全轉動。建議的上課順序請見[學習路徑](LEARNING-PATH.md)。
 
-<a href="./getting-started/README.zh-TW.md">入門</a> · <a href="./display/README.zh-TW.md">顯示</a> · <a href="./sound/README.zh-TW.md">聲音</a> · <a href="./media/README.zh-TW.md">媒體</a> · <a href="./time/README.zh-TW.md">時間</a> · <a href="./buttons/README.zh-TW.md">按鍵</a> · <a href="./control-flow/README.zh-TW.md">控制流程</a> · <a href="./language/README.zh-TW.md">語言</a> · <a href="./collections/README.zh-TW.md">集合</a> · <a href="./algorithms/README.zh-TW.md">演算法</a> · <a href="./concurrency/README.zh-TW.md">並行</a> · <a href="./files/README.zh-TW.md">檔案</a> · <a href="./mailboxes/README.zh-TW.md">信箱</a> · <a href="./program/README.zh-TW.md">程式</a> · <a href="./projects/README.zh-TW.md">專案</a> · <a href="./motors/README.zh-TW.md">馬達</a> · <a href="./sensors/README.zh-TW.md">感測器</a> · <a href="./hitechnic/README.zh-TW.md">HiTechnic</a> · <a href="./daisy-chain/README.zh-TW.md">串接</a> · <a href="./capstones/README.zh-TW.md">整合專題</a> · <a href="./simulation/README.zh-TW.md">模擬</a> · <a href="./benchmarks/README.zh-TW.md">基準測試</a>
+<a href="./getting-started/README.zh-TW.md">入門</a> · <a href="./display/README.zh-TW.md">顯示</a> · <a href="./sound/README.zh-TW.md">聲音</a> · <a href="./media/README.zh-TW.md">媒體</a> · <a href="./time/README.zh-TW.md">時間</a> · <a href="./buttons/README.zh-TW.md">按鍵</a> · <a href="./control-flow/README.zh-TW.md">控制流程</a> · <a href="./language/README.zh-TW.md">語言</a> · <a href="./collections/README.zh-TW.md">集合</a> · <a href="./algorithms/README.zh-TW.md">演算法</a> · <a href="./concurrency/README.zh-TW.md">並行</a> · <a href="./files/README.zh-TW.md">檔案</a> · <a href="./mailboxes/README.zh-TW.md">信箱</a> · <a href="./program/README.zh-TW.md">程式</a> · <a href="./projects/README.zh-TW.md">專案</a> · <a href="./motors/README.zh-TW.md">馬達</a> · <a href="./sensors/README.zh-TW.md">感測器</a> · <a href="./hitechnic/README.zh-TW.md">HiTechnic</a> · <a href="./daisy-chain/README.zh-TW.md">串接</a> · <a href="./capstones/README.zh-TW.md">整合專題</a> · <a href="./benchmarks/README.zh-TW.md">基準測試</a>
 
 ## 入門
 
@@ -218,17 +218,6 @@
 | [sensor-dashboard](capstones/sensor-dashboard/)           | 視覺化的感測器百分比儀表板      | 顏色感測器接 1              |
 | [obstacle-rover](capstones/obstacle-rover/)               | 觸碰感測器按下時停車            | 觸碰感測器接 1；馬達 A 與 D |
 | [scheduled-action-loop](capstones/scheduled-action-loop/) | 感測器驅動的馬達動作與 LED 回饋 | 觸碰感測器接 1；馬達 A      |
-
-## 模擬
-
-| 範例                                                   | 學習內容                       | 硬體需求         |
-| ------------------------------------------------------ | ------------------------------ | ---------------- |
-| [differential-route](simulation/differential-route/)   | 編碼器控制直行與 90° 轉彎      | 模擬器，不需 EV3 |
-| [omni-lateral](simulation/omni-lateral/)               | 四輪全向底盤的橫移與直行       | 模擬器，不需 EV3 |
-| [vision-search](simulation/vision-search/)             | 合成視覺搜尋，並檢查感測器身分 | 模擬器，不需 EV3 |
-| [pixy2-search](simulation/pixy2-search/)               | Pixy2 LEGO I2C 色碼數量與色塊  | 模擬器，不需 EV3 |
-| [motor-shooter](simulation/motor-shooter/)             | 以馬達行程發射附近的球         | 模擬器，不需 EV3 |
-| [mailbox-cooperation](simulation/mailbox-cooperation/) | 兩個入口交換目標與回覆         | 模擬器，不需 EV3 |
 
 ## 基準測試
 

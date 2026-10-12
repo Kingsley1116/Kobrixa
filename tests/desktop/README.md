@@ -88,3 +88,9 @@ Release checks verify final hashes, metadata, packaged runtime modules and platf
 Hardware acceptance for these preferences requires Windows, macOS and Linux with an EV3: verify fixed/backoff USB recovery, a three-attempt limit (including the immediate first scan), cancellation during recovery, a new recovery adopting changed parameters, successful manually entered Wi-Fi address persistence, and both Wi-Fi connection/handshake timeout presets. Confirm that recovery never starts the program. Mocked transport tests and renderer smoke tests do not establish physical-device acceptance; record each platform's actual results separately.
 
 For the faster headless version of the 1,700 ms regression, run `KOBRIXA_MAIN_SIMPLE_PROJECT=/path/to/project node node_modules/vitest/vitest.mjs run apps/desktop/src/simulation/main-simple-project.test.ts`. The private project is optional, so this test is skipped in ordinary CI.
+
+## README screenshots
+
+Use `KOBRIXA_SCREENSHOTS_README=1 KOBRIXA_SMOKE_KEEP_ARTIFACTS=1 node tests/desktop/run-smoke.mjs` for the English and Traditional Chinese editor images. This loads the public Hello EV3 example into the isolated fixture and captures the real renderer without connecting a device.
+
+For feature images, run the diagnostics, sensor-lab and linked-collaboration smoke modes with `KOBRIXA_SMOKE_KEEP_ARTIFACTS=1`. Copy `editor-<locale>.png` and the full-window `readme-<feature>-<locale>.png` captures from the reported artifact directories into `docs/images/`, dropping the `readme-` prefix. All README screenshots use a 1600 × 1000 window and preserve the full application view; do not crop them to panels. Always match `en` images to README.md and `zh-TW` images to README.zh-TW.md. The README captions identify the fixture data; do not present these images as hardware acceptance evidence. Keep simulator entry points disabled when refreshing screenshots.

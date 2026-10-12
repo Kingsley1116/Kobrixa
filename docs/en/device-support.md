@@ -2,15 +2,15 @@
 
 ## v1 support matrix
 
-| Desktop target      | USB HID                                  | Wi-Fi                                    | Bluetooth       |
-| ------------------- | ---------------------------------------- | ---------------------------------------- | --------------- |
-| Windows x64         | Implemented; platform acceptance pending | Implemented; platform acceptance pending | Not implemented |
-| macOS Apple Silicon | Implemented; platform acceptance pending | Implemented; platform acceptance pending | Not implemented |
-| Linux x64           | Implemented; platform acceptance pending | Implemented; platform acceptance pending | Not implemented |
+| Desktop target      | USB HID                | Wi-Fi                  | Bluetooth       |
+| ------------------- | ---------------------- | ---------------------- | --------------- |
+| Windows x64         | Accepted by maintainer | Accepted by maintainer | Not implemented |
+| macOS Apple Silicon | Accepted by maintainer | Accepted by maintainer | Not implemented |
+| Linux x64           | Accepted by maintainer | Accepted by maintainer | Not implemented |
 
 Support is not considered shipped until automated transport tests and physical reference-brick tests pass on that platform.
 
-The shared USB and Wi-Fi transports already exist in `packages/device`. The three-platform USB/Wi-Fi acceptance matrix is not yet complete. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
+The shared USB and Wi-Fi transports already exist in `packages/device`. The maintainer confirmed physical EV3 acceptance on 2026-10-12. This records that confirmation; detailed platform logs are not attached here. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
 
 ## USB
 
@@ -48,7 +48,7 @@ Official EV3 UART sensors offer the firmware's Port View modes through **Change 
 
 All available channels are shown; unlabeled multi-channel data uses channel numbers. The **Curves & calibration** subpage adds recording, comparison, CSV export and numerical calibration; see [Sensor lab](sensor-lab.md). Motor cards in **Readings** expand to single-motor jog, timed and angle tests; see [Motor testing](https://github.com/Kingsley1116/Kobrixa/blob/main/docs/en/motor-test.md). Testing pauses ordinary monitoring and cannot run alongside recording. Daisy-chain monitoring is not included. USB recovery uses the replacement session and discards old replies. Closing Monitor without an active recording stops future samples without interrupting a pending USB exchange or disconnecting the brick.
 
-The desktop smoke uses simulated samples. Physical monitoring acceptance is **not yet tested** on Windows, macOS or Linux for either USB or Wi-Fi; see the [monitor acceptance procedure](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測) before recording a platform pass.
+The desktop smoke uses simulated samples. Physical EV3 acceptance is confirmed by the maintainer; retain the [monitor acceptance procedure](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測) for future regression checks.
 
 ## Required acceptance scenarios
 
