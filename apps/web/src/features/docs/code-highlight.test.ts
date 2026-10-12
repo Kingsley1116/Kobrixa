@@ -124,6 +124,12 @@ describe("tokenize", () => {
     expect(join(tokens)).toBe(source);
   });
 
+  it("colours TypeScript members after calls and index access", () => {
+    const tokens = tokenize("foo().length + arr[0].name + obj.run()", "ts");
+    expect(typed(tokens, "property")).toEqual(["length", "name"]);
+    expect(typed(tokens, "function")).toEqual(["foo", "run"]);
+  });
+
   it("separates JSON keys from values", () => {
     const source = '{\n  "schemaVersion": 1,\n  "assets": ["assets/**/*"],\n  "ok": true\n}';
     const tokens = tokenize(source, "json");

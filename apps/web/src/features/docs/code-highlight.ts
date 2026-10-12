@@ -284,7 +284,8 @@ function rulesFor(language: CodeLanguage) {
 
 function push(tokens: CodeToken[], type: CodeTokenType | null, text: string) {
   const last = tokens.at(-1);
-  if (last && last.type === type) last.text += text;
+  // Only plain runs merge; keeping symbols separate lets grammars inspect the previous one.
+  if (last && type === null && last.type === null) last.text += text;
   else tokens.push({ type, text });
 }
 
