@@ -186,12 +186,16 @@ await packageElectron({
         from: path.join(resources, name),
         to: name,
       })),
-      // Windows and Linux keep Electron's license files beside the executable; macOS bundles omit them.
+      // Windows and Linux keep Electron's licenses beside the executable (LICENSE renamed to
+      // LICENSE.electron.txt); macOS bundles drop them, so add the same names to Resources.
       ...(platform === "darwin"
-        ? ["LICENSE", "LICENSES.chromium.html"].map((name) => ({
-            from: path.join(electronDist, name),
-            to: name,
-          }))
+        ? [
+            { from: path.join(electronDist, "LICENSE"), to: "LICENSE.electron.txt" },
+            {
+              from: path.join(electronDist, "LICENSES.chromium.html"),
+              to: "LICENSES.chromium.html",
+            },
+          ]
         : []),
     ],
     mac: {

@@ -120,7 +120,7 @@ export async function verifyApplication(directory, platform, version) {
   ]) {
     assert.ok(files.includes(required), `Missing packaged file: ${required}`);
   }
-  for (const name of ["LICENSE", "LICENSES.chromium.html"]) {
+  for (const name of ["LICENSE.electron.txt", "LICENSES.chromium.html"]) {
     const license = path.join(platform === "darwin" ? resources : directory, name);
     const stat = await lstat(license).catch(() => undefined);
     assert.ok(stat?.isFile() && stat.size > 0, `Missing Electron license file: ${name}`);

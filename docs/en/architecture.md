@@ -213,7 +213,7 @@ The same session also exposes `list`, `download`, `uploadStream`, `createDirecto
 
 ## Desktop packaging and release
 
-Electron Forge bundles the renderer and main/preload entry points into `app.asar`, with native `.node` files unpacked. The packaging hook includes the target platform's `node-hid` prebuilds, the project `LICENSE` and versioned `THIRD-PARTY-NOTICES.txt`. The notices list every package referenced by the bundled source maps plus the copied runtime dependencies; packaging fails when a package has no license file. Electron's `LICENSE` and `LICENSES.chromium.html` sit beside the executable (in `Kobrixa.app/Contents/Resources` on macOS), and HIDAPI license files remain under `node-hid`.
+Electron Forge bundles the renderer and main/preload entry points into `app.asar`, with native `.node` files unpacked. The packaging hook includes the target platform's `node-hid` prebuilds, the project `LICENSE` and versioned `THIRD-PARTY-NOTICES.txt`. The notices list every package referenced by the bundled source maps plus the copied runtime dependencies; packaging fails when a package has no license file. Electron's `LICENSE.electron.txt` and `LICENSES.chromium.html` sit beside the executable (in `Kobrixa.app/Contents/Resources` on macOS), and HIDAPI license files remain under `node-hid`.
 
 Ordinary CI and local packaging do not require credentials. Tag releases validate the commit and package versions, freeze the macOS/Windows signing switches in the draft, and require common checks and desktop tests before signing. macOS uses Developer ID, Hardened Runtime and notarization for `com.kobrixa.ide`; Windows sends a one-day temporary artifact to SignPath and accepts changes only to `kobrixa.exe`.
 

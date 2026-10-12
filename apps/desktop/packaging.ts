@@ -102,6 +102,6 @@ export async function copyNativeDependencies(
   );
   await writeFile(
     path.join(buildPath, "THIRD-PARTY-NOTICES.txt"),
-    `Kobrixa runtime dependency notices\n\nElectron and Chromium notices are distributed as LICENSE and LICENSES.chromium.html next to the application executable (in Kobrixa.app/Contents/Resources on macOS). Additional HIDAPI licenses are included under node_modules/node-hid/hidapi.\n\n${licenses.join("\n\n--------------------\n\n")}\n`,
+    `Kobrixa runtime dependency notices\n\nElectron and Chromium notices are distributed as LICENSE.electron.txt and LICENSES.chromium.html next to the application executable (in Kobrixa.app/Contents/Resources on macOS). Additional HIDAPI licenses are included under node_modules/node-hid/hidapi.\n\n${licenses.join("\n\n--------------------\n\n")}\n`,
   );
 }

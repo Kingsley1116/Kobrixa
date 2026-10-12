@@ -63,7 +63,8 @@ async function fixture(t) {
   );
   await put(resources, "kobrixa-update.json", JSON.stringify({ signedMac: false }));
   const electronLicenses = process.platform === "darwin" ? resources : directory;
-  for (const name of ["LICENSE", "LICENSES.chromium.html"]) await put(electronLicenses, name);
+  for (const name of ["LICENSE.electron.txt", "LICENSES.chromium.html"])
+    await put(electronLicenses, name);
   await createPackageWithOptions(app, path.join(resources, "app.asar"), { unpack: "**/*.node" });
   const executable = await put(
     directory,
