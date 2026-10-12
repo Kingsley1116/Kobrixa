@@ -1,63 +1,25 @@
 import { useEffect, useState } from "react";
 import { AppLink } from "../../components/app-link.js";
 import { SiteHeader } from "../../components/site-header.js";
-import { Icon, type IconName } from "../../components/ui/icon.js";
-import {
-  PLATFORMS,
-  RELEASES_URL,
-  detectPlatform,
-  formatSize,
-  type LatestRelease,
-  type Platform,
-} from "../../shared/releases.js";
+import { Icon } from "../../components/ui/icon.js";
+import { PLATFORMS, RELEASES_URL, formatSize, type Platform } from "../../shared/releases.js";
+import { platformInfo, useLatestRelease, visitorPlatform } from "../../shared/latest-release.js";
 import "./download-page.css";
 
 type Locale = "zh-TW" | "en";
 type Props = { locale: Locale; onLocaleChange: (locale: Locale) => void };
-type ReleaseState = LatestRelease | "loading" | "error";
 const github = "https://github.com/Kingsley1116/Kobrixa";
 const buildCommands = `git clone ${github}.git\ncd Kobrixa\npnpm install\npnpm dev`;
-const platformInfo: Record<
-  Platform,
-  { name: string; icon: IconName; arch: string; installer: string; archive?: string }
-> = {
-  windows: { name: "Windows", icon: "windows", arch: "x64", installer: "EXE", archive: "ZIP" },
-  macos: { name: "macOS", icon: "mac", arch: "Apple Silicon", installer: "DMG" },
-  linux: { name: "Linux", icon: "terminal", arch: "x64", installer: "AppImage", archive: "tar.gz" },
-};
-
-function visitorPlatform() {
-  if (typeof navigator === "undefined") return null;
-  const hint = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
-    ?.platform;
-  return detectPlatform(navigator.userAgent, hint, navigator.maxTouchPoints);
-}
 
 export function DownloadPage({ locale, onLocaleChange }: Props) {
   const t = (zh: string, en: string) => (locale === "zh-TW" ? zh : en);
   const [platform] = useState(visitorPlatform);
-  const [release, setRelease] = useState<ReleaseState>("loading");
+  const release = useLatestRelease();
   const [copied, setCopied] = useState(false),
     [copyError, setCopyError] = useState(false);
   useEffect(() => {
     document.title = locale === "zh-TW" ? "下載 — Kobrixa" : "Download — Kobrixa";
   }, [locale]);
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/releases/latest", { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload: unknown) =>
-        setRelease(
-          payload && typeof payload === "object" && "platforms" in payload
-            ? (payload as LatestRelease)
-            : "error",
-        ),
-      )
-      .catch(() => {
-        if (!controller.signal.aborted) setRelease("error");
-      });
-    return () => controller.abort();
-  }, []);
 
   const loaded = typeof release === "object" ? release : null;
   const latestPage = loaded?.url ?? `${RELEASES_URL}/latest`;
