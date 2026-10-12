@@ -286,7 +286,7 @@
   padding: 0.18rem 0.45rem;
   border-radius: 0.15rem;
   background: var(--docs-inline-code-bg, #e9dfd1);
-  color: var(--docs-inline-code, #b34d24);
+  color: var(--docs-inline-code, #9e4420);
   font: 500 0.64rem/1.35 var(--docs-mono, "DM Mono", ui-monospace, monospace);
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -432,7 +432,7 @@
   padding: 0.1rem 0.45rem;
   border-radius: 0.15rem;
   background: var(--docs-inline-code-bg, #e9dfd1);
-  color: var(--docs-inline-code, #b34d24);
+  color: var(--docs-inline-code, #9e4420);
   font: 500 0.76rem/1.5 var(--docs-mono, "DM Mono", ui-monospace, monospace);
   overflow-wrap: anywhere;
 }

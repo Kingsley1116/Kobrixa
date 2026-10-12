@@ -160,9 +160,8 @@
   padding: 0.1em 0.38em;
   border-radius: 0.3em;
   background: var(--docs-inline-code-bg, #e9dfd1);
-  /* Darken the brand rust slightly so small text keeps 4.5:1 on the pill. */
-  color: var(--docs-inline-code, #b34d24);
-  color: color-mix(in srgb, var(--docs-inline-code, #b34d24) 88%, #000);
+  /* --docs-inline-code is tuned for at least 4.5:1 on the pill background. */
+  color: var(--docs-inline-code, #9e4420);
   font-family: var(--docs-mono, "DM Mono", ui-monospace, monospace);
   font-size: 0.86em;
   font-weight: 500;

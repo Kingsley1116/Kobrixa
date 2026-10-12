@@ -16,7 +16,7 @@
   --docs-mustard: #e8b12c;
   --docs-code-bg: #1e2933;
   --docs-inline-code-bg: #e9dfd1;
-  --docs-inline-code: #b34d24;
+  --docs-inline-code: #9e4420; /* 4.8:1 on --docs-inline-code-bg */
   --docs-font: "Manrope", "Noto Sans TC", sans-serif;
   --docs-mono: "DM Mono", ui-monospace, monospace;
 
