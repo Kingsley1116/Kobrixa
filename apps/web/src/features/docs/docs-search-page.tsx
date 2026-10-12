@@ -4,9 +4,13 @@ import { AppLink } from "../../components/app-link.js";
 import type { DocsLocale } from "./docs-content.js";
 import { searchDocumentation, searchExcerpt } from "./docs-search.js";
 import "./docs-search.css";
+// Landing/list page styles (Get started, course overview, 404) ride along with the docs
+// bundle here: docs-page.tsx always imports this module.
+import "./styles/landing.css";
 
 const ui = {
   "zh-TW": {
+    eyebrow: "搜尋",
     title: "搜尋所有文件",
     intro: "搜尋教學、API、語法、使用說明與錯誤代碼。",
     label: "搜尋關鍵字",
@@ -24,6 +28,7 @@ const ui = {
     },
   },
   en: {
+    eyebrow: "Search",
     title: "Search all documentation",
     intro: "Search tutorials, APIs, syntax, guides, and diagnostic codes.",
     label: "Search keywords",
@@ -64,8 +69,14 @@ export function DocsSearchPage({ locale }: { locale: DocsLocale }) {
   }, [t.title]);
   return (
     <section className="docs-search-page">
-      <h1>{t.title}</h1>
-      <p>{t.intro}</p>
+      <header>
+        <p className="eyebrow">
+          <span className="eyebrow-marker" />
+          {t.eyebrow}
+        </p>
+        <h1>{t.title}</h1>
+        <p>{t.intro}</p>
+      </header>
       <form role="search" aria-label={t.title} onSubmit={(event) => event.preventDefault()}>
         <label htmlFor={id}>{t.label}</label>
         <div className="docs-search-controls">
@@ -93,10 +104,10 @@ export function DocsSearchPage({ locale }: { locale: DocsLocale }) {
           )}
         </div>
       </form>
-      <p role="status" aria-live="polite">
+      <p className="docs-search-status" role="status" aria-live="polite">
         {query.trim() ? t.count(results.length) : t.start}
       </p>
-      {query.trim() && !results.length && <p>{t.empty}</p>}
+      {query.trim() && !results.length && <p className="docs-search-empty">{t.empty}</p>}
       <ul className="docs-search-results">
         {results.slice(0, 50).map((entry) => (
           <li key={entry.path}>
