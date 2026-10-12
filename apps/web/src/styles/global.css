@@ -881,16 +881,6 @@ h2 {
   margin-left: 0.2rem;
   font-size: 0.75em;
 }
-.article-content blockquote {
-  margin: 1.4rem 0;
-  padding: 0.8rem 1.1rem;
-  border-left: 4px solid #e86f3d;
-  background: #f0e8dc;
-  color: #53606b;
-}
-.article-content blockquote p:last-child {
-  margin-bottom: 0;
-}
 .article-content pre {
   overflow: auto;
   margin: 1.5rem 0;
@@ -1976,11 +1966,6 @@ h2 {
 .detail-links a {
   color: #163d9d;
   border-bottom-color: #8ca6eb;
-}
-.article-content blockquote {
-  border-left-color: #2457d6;
-  background: #f4f7fb;
-  color: #465362;
 }
 .article-content pre,
 .reference-code pre {

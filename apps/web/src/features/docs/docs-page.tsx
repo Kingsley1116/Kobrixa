@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import { apiEntries, apiRoute, BasicPlusReference, syntaxEntries } from "./basic-plus-reference.js";
 import { DiagnosticsPage } from "./diagnostics-page.js";
 import { DocsSearchPage } from "./docs-search-page.js";
+import { MarkdownCallout } from "./markdown-callout.js";
 import {
   documents,
   findDocument,
@@ -688,6 +689,7 @@ function TutorialArticle({ locale, tutorial }: { locale: DocsLocale; tutorial: T
             remarkPlugins={[remarkGfm]}
             components={{
               a: MarkdownLink,
+              blockquote: MarkdownCallout,
               h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
               h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
               pre: ({ children }) => (
@@ -813,6 +815,7 @@ function Article({ locale, document: entry }: { locale: DocsLocale; document: Do
             remarkPlugins={[remarkGfm]}
             components={{
               a: MarkdownLink,
+              blockquote: MarkdownCallout,
               h2: ({ children }) => <h2 id={toSlug(toText(children))}>{children}</h2>,
               h3: ({ children }) => <h3 id={toSlug(toText(children))}>{children}</h3>,
             }}
