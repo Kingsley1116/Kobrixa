@@ -686,24 +686,6 @@ h2 {
   grid-template-columns: 13.5rem minmax(0, 1fr);
   gap: 4rem;
 }
-.doc-sidebar {
-  align-self: start;
-  position: sticky;
-  top: 1.5rem;
-  padding-right: 1.4rem;
-  border-right: 1px solid #c6bdb1;
-}
-.sidebar-home {
-  display: inline-block;
-  margin-bottom: 1.8rem;
-  color: #2457d6;
-  font-size: 0.8rem;
-  font-weight: 800;
-}
-.doc-sidebar section {
-  margin-bottom: 1.7rem;
-}
-.doc-sidebar section > p,
 .toc > p {
   margin: 0 0 0.55rem;
   color: #8a7b6d;
@@ -712,24 +694,6 @@ h2 {
     monospace;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-}
-.doc-sidebar section > a {
-  display: block;
-  padding: 0.35rem 0.45rem;
-  margin: 0 -0.45rem;
-  border-radius: 0.15rem;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-.doc-sidebar section > a:hover,
-.doc-sidebar section > a.active {
-  background: #e8b12c;
-  color: #1e2933;
-  font-weight: 800;
-}
-.sidebar-examples {
-  padding-top: 1rem;
-  border-top: 1px solid #c6bdb1;
 }
 .docs-catalog {
   min-width: 0;
@@ -999,34 +963,6 @@ h2 {
   .docs-article-layout {
     display: block;
     padding: 0 1.25rem 4rem;
-  }
-  .doc-sidebar {
-    position: static;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    margin-bottom: 2.4rem;
-    padding: 0 0 1rem;
-    border-right: 0;
-    border-bottom: 1px solid #c6bdb1;
-  }
-  .sidebar-home {
-    width: 100%;
-    margin: 0 0 0.55rem;
-  }
-  .doc-sidebar section {
-    display: contents;
-  }
-  .doc-sidebar section > p {
-    display: none;
-  }
-  .doc-sidebar section > a {
-    padding: 0.35rem 0.5rem;
-    border: 1px solid #c6bdb1;
-    white-space: nowrap;
-  }
-  .sidebar-examples {
-    display: none !important;
   }
   .doc-card-grid {
     grid-template-columns: 1fr;
@@ -1343,56 +1279,6 @@ h2 {
 }
 
 /* Unified documentation navigation and Basic Plus reference */
-.knowledge-sidebar {
-  padding-bottom: 1rem;
-}
-.knowledge-sidebar section,
-.knowledge-sidebar details {
-  margin: 0 0 1.15rem;
-}
-.knowledge-sidebar details {
-  border-bottom: 1px solid #ded5c8;
-  padding-bottom: 0.65rem;
-}
-.knowledge-sidebar summary,
-.knowledge-sidebar section > p {
-  margin: 0 0 0.45rem;
-  color: #8a7b6d;
-  cursor: pointer;
-  font:
-    0.68rem "DM Mono",
-    monospace;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-.knowledge-sidebar summary::marker {
-  color: #e86f3d;
-}
-.knowledge-sidebar details > a,
-.knowledge-sidebar section > a {
-  display: block;
-  padding: 0.3rem 0.42rem;
-  margin: 0 -0.42rem;
-  border-radius: 0.15rem;
-  font-size: 0.76rem;
-  line-height: 1.35;
-}
-.knowledge-sidebar details > a > span {
-  display: inline-block;
-  width: 1.7rem;
-  color: #e86f3d;
-  font:
-    0.64rem "DM Mono",
-    monospace;
-}
-.knowledge-sidebar details > a:hover,
-.knowledge-sidebar details > a.active,
-.knowledge-sidebar section > a:hover,
-.knowledge-sidebar section > a.active {
-  background: #e8b12c;
-  color: #1e2933;
-  font-weight: 800;
-}
 .unified-layout {
   grid-template-columns: 13.5rem minmax(0, 1fr);
   gap: 4rem;
@@ -1587,26 +1473,6 @@ h2 {
   color: #6f685f;
 }
 @media (max-width: 720px) {
-  .knowledge-sidebar {
-    display: block;
-    padding-bottom: 0.8rem;
-  }
-  .knowledge-sidebar section,
-  .knowledge-sidebar details {
-    margin: 0 0 0.6rem;
-  }
-  .knowledge-sidebar section {
-    display: block;
-  }
-  .knowledge-sidebar section > p {
-    display: block;
-  }
-  .knowledge-sidebar details > a,
-  .knowledge-sidebar section > a {
-    display: block;
-    border: 0;
-    white-space: normal;
-  }
   .unified-layout {
     padding-top: 2.5rem;
   }
@@ -1767,24 +1633,6 @@ h2 {
     gap: 0.25rem;
   }
 }
-
-.knowledge-sidebar .sidebar-parent {
-  margin-left: 0;
-  font-weight: 800;
-}
-.knowledge-sidebar .sidebar-child {
-  padding-left: 1.25rem;
-  border-left: 1px solid #d4cabd;
-}
-.knowledge-sidebar .sidebar-level {
-  margin: 0.7rem 0 0.25rem 1.25rem;
-  color: #a19283;
-  font:
-    0.59rem "DM Mono",
-    monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
 .api-description {
   max-width: 42rem;
   margin: 0 0 1rem;
@@ -1817,90 +1665,6 @@ h2 {
 }
 .reference-detail-layout {
   grid-template-columns: 15rem minmax(0, 48rem) 12.5rem;
-}
-.doc-sidebar {
-  top: 6rem;
-  max-height: calc(100vh - 7.5rem);
-  overflow-y: auto;
-  padding: 0.25rem 1.2rem 1.5rem 0;
-  border-right: 1px solid #d7dce2;
-  scrollbar-color: #aeb7c2 transparent;
-  scrollbar-width: thin;
-}
-.knowledge-sidebar section,
-.knowledge-sidebar details {
-  margin: 0;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid #e4e7eb;
-}
-.knowledge-sidebar section:first-child {
-  padding-top: 0;
-}
-.knowledge-sidebar details {
-  border-bottom: 1px solid #e4e7eb;
-}
-.knowledge-sidebar summary,
-.knowledge-sidebar section > p {
-  margin: 0 0 0.35rem;
-  color: #26313c;
-  font:
-    700 0.78rem/1.35 system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.knowledge-sidebar summary::marker {
-  color: #687483;
-}
-.knowledge-sidebar details > a,
-.knowledge-sidebar section > a {
-  margin: 0.05rem 0;
-  padding: 0.38rem 0.5rem;
-  border-radius: 0.25rem;
-  color: #38434e;
-  font-size: 0.82rem;
-  line-height: 1.35;
-}
-.knowledge-sidebar details > a > span {
-  color: #687483;
-  font:
-    0.7rem ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-}
-.knowledge-sidebar .sidebar-parent {
-  font-weight: 650;
-}
-.knowledge-sidebar .sidebar-child {
-  margin-left: 0.6rem;
-  padding-left: 0.75rem;
-  border-left: 1px solid #d7dce2;
-}
-.knowledge-sidebar .sidebar-level {
-  margin: 0.75rem 0 0.2rem 0.6rem;
-  color: #687483;
-  font:
-    0.68rem/1.3 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.knowledge-sidebar details > a:hover,
-.knowledge-sidebar details > a.active,
-.knowledge-sidebar section > a:hover,
-.knowledge-sidebar section > a.active {
-  background: #eaf0ff;
-  color: #163d9d;
-  font-weight: 700;
-}
-.sidebar-examples {
-  border-top: 0;
 }
 .getting-started,
 .tutorial-overview,
@@ -2249,64 +2013,6 @@ h2 {
   color: #163d9d;
   text-decoration: underline;
 }
-.knowledge-sidebar .sidebar-syntax-group {
-  margin: 0.55rem 0 0 0.6rem;
-  padding: 0;
-  border: 0;
-}
-.knowledge-sidebar .sidebar-syntax-group > summary {
-  margin: 0;
-  padding: 0.25rem 0;
-  color: #536273;
-  font:
-    700 0.72rem/1.35 system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-}
-.knowledge-sidebar .sidebar-api-group {
-  margin: 0.55rem 0 0 0.6rem;
-  padding: 0;
-  border: 0;
-}
-.knowledge-sidebar .sidebar-api-group > summary {
-  margin: 0;
-  padding: 0.25rem 0;
-  color: #536273;
-  font:
-    700 0.72rem/1.35 system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-}
-.knowledge-sidebar .sidebar-api-namespace {
-  margin: 0.15rem 0 0 0.6rem;
-  padding: 0;
-  border: 0;
-}
-.knowledge-sidebar .sidebar-api-namespace > summary {
-  margin: 0;
-  padding: 0.2rem 0;
-  color: #667383;
-  font:
-    650 0.7rem/1.35 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-}
-.knowledge-sidebar .sidebar-api-namespace > a {
-  margin-left: 0.1rem;
-}
-.knowledge-sidebar .sidebar-api {
-  overflow-wrap: anywhere;
-  font:
-    0.7rem/1.35 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-}
 @media (max-width: 980px) {
   .docs-layout,
   .unified-layout,
@@ -2326,28 +2032,6 @@ h2 {
   .reference-detail-layout {
     display: block;
     padding: 1.5rem 1rem 3.5rem;
-  }
-  .doc-sidebar {
-    display: block;
-    position: static;
-    max-height: none;
-    margin-bottom: 2rem;
-    padding: 0;
-    border-right: 0;
-    border-bottom: 1px solid #d7dce2;
-  }
-  .knowledge-sidebar section,
-  .knowledge-sidebar details {
-    display: block;
-    padding: 0.6rem 0;
-  }
-  .knowledge-sidebar section > p {
-    display: block;
-  }
-  .knowledge-sidebar details > a,
-  .knowledge-sidebar section > a {
-    border: 0;
-    white-space: normal;
   }
   .reference-breadcrumb {
     margin-bottom: 1rem;

@@ -1,0 +1,258 @@
+/*
+ * Knowledge sidebar: the documentation navigation tree.
+ * Wide screens: a sticky column under the site navbar that scrolls on its own.
+ * 720px and below: a "Contents" drawer above the page content.
+ */
+.knowledge-sidebar {
+  --sidebar-indent: 0.85rem;
+  align-self: start;
+  position: sticky;
+  top: calc(var(--app-navbar-height, 72px) + 1.5rem);
+  max-height: calc(100vh - var(--app-navbar-height, 72px) - 3rem);
+  max-height: calc(100dvh - var(--app-navbar-height, 72px) - 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0.85rem 1.5rem 0;
+  border-right: 1px solid var(--docs-line, #c6bdb1);
+  color: var(--docs-ink, #1e2933);
+  font-family: var(--docs-font, "Manrope", "Noto Sans TC", sans-serif);
+  scrollbar-color: var(--docs-line, #c6bdb1) transparent;
+  scrollbar-width: thin;
+}
+
+/* The drawer toggle only exists on narrow screens. */
+.knowledge-sidebar-toggle {
+  display: none;
+}
+
+/* Search entry: the one bordered control in the tree. */
+.knowledge-sidebar .sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 1.25rem;
+  padding: 0.6rem 0.7rem;
+  border: 1.5px solid var(--docs-ink, #1e2933);
+  border-radius: 0.3rem;
+  background: var(--docs-panel, #f8f4ec);
+  box-shadow: 3px 3px 0 var(--docs-ink, #1e2933);
+  color: var(--docs-muted, #53606b);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: box-shadow 120ms ease;
+}
+.knowledge-sidebar .sidebar-search > svg {
+  flex: 0 0 auto;
+  align-self: center;
+}
+.knowledge-sidebar .sidebar-search:hover,
+.knowledge-sidebar .sidebar-search.active {
+  color: var(--docs-ink, #1e2933);
+  box-shadow: 4px 4px 0 var(--docs-ink, #1e2933);
+}
+
+/* Top-level groups. */
+.knowledge-sidebar section,
+.knowledge-sidebar details {
+  margin: 0;
+  padding: 0.5rem 0 0.75rem;
+  border-bottom: 1px solid var(--docs-line, #c6bdb1);
+}
+.knowledge-sidebar .knowledge-sidebar-nav > section:first-of-type {
+  padding-top: 0;
+}
+.knowledge-sidebar section > p,
+.knowledge-sidebar .sidebar-level {
+  margin: 0.35rem 0 0.4rem;
+  color: var(--docs-muted, #53606b);
+  font: 500 0.75rem/1.4 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.knowledge-sidebar summary.ui-disclosure {
+  min-height: 2.5rem;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0 0.25rem;
+  border-radius: 0.3rem;
+  color: var(--docs-ink, #1e2933);
+  font-size: 0.9375rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.knowledge-sidebar summary.ui-disclosure::before {
+  border-color: var(--docs-accent, #e86f3d);
+}
+.knowledge-sidebar summary.ui-disclosure:hover {
+  color: var(--docs-blue, #2457d6);
+}
+.knowledge-sidebar summary.ui-disclosure:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Links. */
+.knowledge-sidebar a {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 1px 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.3rem;
+  color: var(--docs-muted, #53606b);
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.knowledge-sidebar a:focus-visible {
+  outline-width: 2px;
+  outline-offset: -2px;
+}
+.knowledge-sidebar a:hover {
+  background: var(--docs-panel-2, #f0e8dc);
+  color: var(--docs-ink, #1e2933);
+}
+.knowledge-sidebar a.active {
+  background: color-mix(in srgb, var(--docs-mustard, #e8b12c) 30%, transparent);
+  box-shadow: inset 3px 0 0 var(--docs-accent, #e86f3d);
+  color: var(--docs-ink, #1e2933);
+  font-weight: 800;
+}
+.knowledge-sidebar .sidebar-parent {
+  color: var(--docs-ink, #1e2933);
+  font-weight: 700;
+}
+/* A section overview stays marked, but quietly, while one of its pages is current. */
+.knowledge-sidebar details:has(.sidebar-child.active) > a.sidebar-parent.active {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Nested items hang off a guide line; the active item's segment turns orange. */
+.knowledge-sidebar .sidebar-child {
+  margin-left: var(--sidebar-indent);
+  border-radius: 0 0.3rem 0.3rem 0;
+  box-shadow: inset 1px 0 0 var(--docs-line, #c6bdb1);
+}
+.knowledge-sidebar .sidebar-child.active {
+  box-shadow: inset 3px 0 0 var(--docs-accent, #e86f3d);
+}
+.knowledge-sidebar .sidebar-child > span {
+  flex: 0 0 1.5rem;
+  color: var(--docs-accent, #e86f3d);
+  font: 500 0.8rem/1 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+}
+
+/* Basic Plus: syntax, API categories, and namespaces nest one indent per level. */
+.knowledge-sidebar .sidebar-syntax-group,
+.knowledge-sidebar .sidebar-api-group,
+.knowledge-sidebar .sidebar-api-namespace {
+  margin: 0 0 0 var(--sidebar-indent);
+  padding: 0;
+  border: 0;
+}
+.knowledge-sidebar .sidebar-level {
+  margin: 0.75rem 0 0.25rem var(--sidebar-indent);
+}
+.knowledge-sidebar .sidebar-syntax-group > summary.ui-disclosure,
+.knowledge-sidebar .sidebar-api-group > summary.ui-disclosure {
+  min-height: 2.25rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.knowledge-sidebar .sidebar-api-namespace > summary.ui-disclosure {
+  min-height: 2.1rem;
+  color: var(--docs-muted, #53606b);
+  font: 500 0.875rem/1.35 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+}
+.knowledge-sidebar .sidebar-api {
+  font: 400 0.875rem/1.4 var(--docs-mono, "DM Mono", ui-monospace, monospace);
+}
+.knowledge-sidebar .sidebar-api.active {
+  font-weight: 500;
+}
+
+/* Examples (external links) close the tree without a divider. */
+.knowledge-sidebar .sidebar-examples {
+  border-bottom: 0;
+}
+.knowledge-sidebar .sidebar-examples a {
+  color: var(--docs-blue, #2457d6);
+  font-weight: 700;
+}
+.knowledge-sidebar .sidebar-examples a > span {
+  display: inline-flex;
+  font-size: 0.8em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-sidebar .sidebar-search {
+    transition: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .knowledge-sidebar {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    margin: 0 0 2rem;
+    padding: 0;
+    border: 1.5px solid var(--docs-ink, #1e2933);
+    border-radius: 0.4rem;
+    background: var(--docs-panel, #f8f4ec);
+    box-shadow: 4px 4px 0 var(--docs-ink, #1e2933);
+  }
+  .knowledge-sidebar-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    min-height: 3rem;
+    padding: 0 1rem;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: var(--docs-ink, #1e2933);
+    cursor: pointer;
+    font-size: 0.9375rem;
+    font-weight: 800;
+    text-align: left;
+  }
+  .knowledge-sidebar-toggle:focus-visible {
+    outline-offset: -3px;
+  }
+  .knowledge-sidebar-toggle > .ui-icon {
+    flex: 0 0 auto;
+    color: var(--docs-accent, #e86f3d);
+  }
+  .knowledge-sidebar-toggle-mark {
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-left: auto;
+    border: solid currentColor;
+    border-width: 0 2px 2px 0;
+    transform: translateY(-2px) rotate(45deg);
+  }
+  .knowledge-sidebar.is-open .knowledge-sidebar-toggle-mark {
+    transform: translateY(2px) rotate(-135deg);
+  }
+  .knowledge-sidebar-nav {
+    display: none;
+  }
+  .knowledge-sidebar.is-open .knowledge-sidebar-nav {
+    display: block;
+    max-height: 70vh;
+    max-height: 70dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1rem;
+    border-top: 1px solid var(--docs-line, #c6bdb1);
+  }
+  .knowledge-sidebar summary.ui-disclosure {
+    min-height: 2.75rem;
+  }
+  .knowledge-sidebar a {
+    padding-block: 0.55rem;
+  }
+}
