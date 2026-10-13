@@ -2663,12 +2663,13 @@ describe("PluginSupervisor", () => {
         }),
       { locale: "en", onNotice: () => {}, stopTimeoutMs: 200 },
     );
-    const command = supervisor.executeCommand("acme.hello.greet");
+    // Attach the rejection assertion now: the command rejects while stop() is still running.
+    const command = expect(supervisor.executeCommand("acme.hello.greet")).rejects.toBeDefined();
     await vi.waitFor(() => expect(supervisor.state).toBe("starting"));
     const started = Date.now();
     await supervisor.stop();
     expect(Date.now() - started).toBeLessThan(3000); // initializeTimeoutMs is 10 s.
-    await expect(command).rejects.toBeDefined();
+    await command;
   });
   it("force-kills immediately when the overall deadline is reached", async () => {
     const fixture = fileURLToPath(new URL("../test-fixtures/stubborn-plugin.cjs", import.meta.url));
@@ -3075,7 +3076,7 @@ git commit -m "feat(plugin-runtime): supervise plugin lifecycles without replayi
   - `type PluginManagerEvent = { type: "state"; state: PluginsSnapshot } | { type: "notice"; notice: PluginNotice }`
   - `type PluginCommandResult = { ok: true } | { ok: false; code: PluginErrorCode; message: string }`
   - `type PluginActionResult = { ok: true; state: PluginsSnapshot } | { ok: false; code: PluginErrorCode; message: string }`
-  - `class PluginManager { static create(options): Promise<PluginManager>; state(): PluginsSnapshot; frontendFor(language: string): string | undefined; executeCommand(commandId): Promise<PluginCommandResult>; setEnabled(pluginId, enabled): Promise<PluginActionResult>; onEvent(listener): () => void; readonly active: boolean; shutdown(deadlineMs?: number): Promise<void> }`、`PLUGIN_SHUTDOWN_DEADLINE_MS = 4000`、`PLUGIN_FORCE_MARGIN_MS = 1000`
+  - `class PluginManager { static create(options): Promise<PluginManager>; state(): PluginsSnapshot; frontendFor(language: string): string | undefined; executeCommand(commandId): Promise<PluginCommandResult>; setEnabled(pluginId, enabled): Promise<PluginActionResult>; onEvent(listener): () => void; readonly active: boolean; shutdown(deadlineMs?: number): Promise<void>; resume(): Promise<void> }`、`PLUGIN_SHUTDOWN_DEADLINE_MS = 4000`、`PLUGIN_FORCE_MARGIN_MS = 1000`
 
 - [ ] **Step 1: 寫會失敗的測試**
 
@@ -3248,6 +3249,16 @@ describe("PluginManager", () => {
     expect(await manager.executeCommand("acme.a.greet")).toMatchObject({
       code: "PLUGIN_E_DISABLED",
     });
+  });
+  it("resumes after a shutdown that did not end the app", async () => {
+    const manager = await create([await devPlugin("a")]);
+    await manager.executeCommand("acme.a.greet");
+    await manager.shutdown();
+    expect(await manager.setEnabled("acme.a", false)).toMatchObject({ code: "PLUGIN_E_DISABLED" });
+    await manager.resume();
+    expect(await manager.executeCommand("acme.a.greet")).toEqual({ ok: true });
+    expect(launcher).toHaveBeenCalledTimes(2); // Restarted lazily by the new command.
+    expect(await manager.setEnabled("acme.a", false)).toMatchObject({ ok: true });
   });
   it("keeps tracking a plugin that is still being disabled", async () => {
     const stubborn = vi.fn(
@@ -3507,6 +3518,17 @@ export class PluginManager {
       await Promise.race([stopped, wait(deadlineMs - forceAt)]);
     })();
     return this.#shutdown;
+  }
+
+  /**
+   * Reopens plugin services after a shutdown that did not end the app, such as a failed update
+   * installation. Stopped plugins restart lazily on their next command; nothing is replayed.
+   */
+  async resume(): Promise<void> {
+    if (!this.#shutdown) return;
+    await this.#shutdown;
+    this.#shutdown = undefined;
+    this.#emitState();
   }
 
   #register(plugin: RegisteredPlugin): void {
@@ -4689,7 +4711,7 @@ git commit -m "feat(sdk-python): add development Python SDK with shared conforma
 
 - Create: `apps/desktop/src/main/plugins/options.ts`、`state-store.ts`、`launchers.ts`、`ipc.ts`、`quit.ts`
 - Create: `apps/desktop/src/shared/plugins.ts`
-- Modify: `apps/desktop/src/shared/api.ts`（`KobrixaApi.plugins`）、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/main/ipc.ts`（`beforeUpdateInstall`）、`apps/desktop/package.json`（依賴）
+- Modify: `apps/desktop/src/shared/api.ts`（`KobrixaApi.plugins`）、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/main/ipc.ts`（`beforeUpdateInstall`）、`apps/desktop/src/main/updates/service.ts`（`onInstallationFailed`）、`apps/desktop/src/main/updates/updates.test.ts`、`apps/desktop/package.json`（依賴）
 - Test: `apps/desktop/src/main/plugins/options.test.ts`、`state-store.test.ts`、`ipc.test.ts`、`quit.test.ts`；`apps/desktop/src/main/updates/install-ipc.test.ts`
 
 **Interfaces:**
@@ -4703,6 +4725,7 @@ git commit -m "feat(sdk-python): add development Python SDK with shared conforma
   - `registerPluginIpc(handle: IpcHandle, plugins: Pick<PluginManager, "state" | "executeCommand" | "setEnabled" | "onEvent">, publish: (event: PluginEvent) => void): () => void`
   - `PLUGIN_QUIT_TIMEOUT_MS = PLUGIN_SHUTDOWN_DEADLINE_MS + 1000`；`installPluginQuitCleanup(app: QuitHost, plugins: Pick<PluginManager, "active" | "shutdown">, options?: { timeoutMs?: number }): void`，其中 `QuitHost = { on(event: "will-quit", listener: (event: { preventDefault(): void }) => void): unknown; quit(): void }`。第一次 `will-quit` 時，若有插件仍在活動，先 `preventDefault()`，等 `plugins.shutdown()` 完成，再呼叫一次 `app.quit()`；第二次 `will-quit` 直接放行。期限只有一套：`shutdown()` 自己保證在 `PLUGIN_SHUTDOWN_DEADLINE_MS` 內，對所有殘留程序（包括正在握手和正在停用的）送出強制終止並等待 exit 報告。`timeoutMs` 只是防止 `shutdown()` 本身出錯時永遠不退出的保險，一定比 shutdown 的期限長，不會搶在強制終止之前退出。沒有活動插件時，不攔截退出。既有的 `will-quit` 處理器在兩次觸發時都會執行；它們都以 `disposed` 旗標或只清除計時器實作，重複執行是安全的，task 13 會用 close smoke 確認。
   - `registerIpc(...)` 新增最後一個參數 `beforeUpdateInstall: () => Promise<void> = async () => {}`；`updates:install` 處理器改為先 `await beforeUpdateInstall()`，再呼叫 `updates.install()`（也就是 `quitAndInstall()`）。安裝更新時，退出流程不再負責插件清理。
+  - `UpdateService.onInstallationFailed(listener: () => void): () => void`（修改 `apps/desktop/src/main/updates/service.ts`）：安裝沒有讓程式結束時通知 listener。觸發時機有兩種：`install()` 丟出例外（例如 `busy`，或 `quitAndInstall()` 同步失敗），以及 autoUpdater 的非同步 `error` 經 `installationFailed()` 回報。task 13 用它呼叫 `plugins.resume()`，避免更新失敗後插件一直停在 `PLUGIN_E_DISABLED`。
   - IPC channel：`plugins:state`、`plugins:execute`、`plugins:set-enabled`；事件 channel：`plugins:event`
   - `shared/plugins.ts`：`PluginsApi { state(): Promise<PluginsSnapshot>; execute(commandId: string): Promise<PluginCommandResult>; setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult>; onEvent(listener: (event: PluginEvent) => void): () => void }`，`PluginEvent = PluginManagerEvent`，並重新匯出 runtime 的相關型別
 
@@ -5139,6 +5162,68 @@ handle("updates:install", async () => {
 });
 ```
 
+`apps/desktop/src/main/updates/service.ts`：在 `UpdateService` 加入失敗通知，讓更新前停止的插件在安裝失敗後恢復：
+
+```ts
+  readonly #installFailures = new Set<() => void>();
+  /** Notified when an installation attempt ends without quitting the app. */
+  onInstallationFailed(listener: () => void): () => void {
+    this.#installFailures.add(listener);
+    return () => this.#installFailures.delete(listener);
+  }
+  #notifyInstallFailed(): void {
+    for (const listener of this.#installFailures) listener();
+  }
+```
+
+把 `install()` 改成任何例外都會通知（包括一開始的 `busy` 檢查），`installationFailed()` 也通知：
+
+```ts
+  install(): void {
+    try {
+      if (!this.preparing || this.dependencies.busy()) throw new Error("busy");
+      this.patch({ phase: "installing" });
+      try {
+        this.dependencies.backend.install();
+      } catch (error) {
+        this.patch({ phase: "ready" });
+        throw error;
+      }
+    } catch (error) {
+      this.#notifyInstallFailed();
+      throw error;
+    }
+  }
+  installationFailed(error: string): void {
+    this.patch({ phase: "error", error });
+    this.#notifyInstallFailed();
+  }
+```
+
+在 `apps/desktop/src/main/updates/updates.test.ts` 的 `describe("update lifecycle")` 內加入（沿用檔案中的 `fixture()`）：
+
+```ts
+it("reports installations that end without quitting", async () => {
+  const { service, backend } = fixture();
+  const failed = vi.fn();
+  service.onInstallationFailed(failed);
+  await service.check();
+  expect(() => service.install()).toThrow("busy"); // Not prepared.
+  expect(failed).toHaveBeenCalledTimes(1);
+  service.prepareInstall();
+  backend.install.mockImplementationOnce(() => {
+    throw new Error("spawn failed");
+  });
+  expect(() => service.install()).toThrow("spawn failed");
+  expect(failed).toHaveBeenCalledTimes(2);
+  service.prepareInstall();
+  service.install();
+  expect(failed).toHaveBeenCalledTimes(2);
+  service.installationFailed("install-failed"); // autoUpdater's asynchronous error event.
+  expect(failed).toHaveBeenCalledTimes(3);
+});
+```
+
 `ipc.ts`：
 
 ```ts
@@ -5426,7 +5511,7 @@ const plugins = await PluginManager.create({
 ```
 
 3. 把 `new BuildService(workspaces, renderer)` 改成 `new BuildService(workspaces, renderer, undefined, (language) => plugins.frontendFor(language))`。
-4. 在 `PluginManager.create(...)` 之後立即呼叫 `installPluginQuitCleanup(app, plugins);`（從 `./plugins/quit.js` 匯入）。不要在 `will-quit` 裡寫 `void plugins.shutdown()`，因為那樣 Electron 不會等清理完成。在 `registerIpc(...)` 呼叫的最後（modules 陣列之後）傳入 `() => plugins.shutdown()` 作為 `beforeUpdateInstall`，讓 `quitAndInstall()` 開始前插件程序就已經結束；屆時 `plugins.active` 已是 false，退出流程不會再攔截。然後執行 `node tests/desktop/run-close-smoke.mjs`，確認關閉、退出、早期關閉與重開視窗四個情境仍然 PASS，也就是既有的 `will-quit` 處理器重複執行不會出錯。
+4. 在 `PluginManager.create(...)` 之後立即呼叫 `installPluginQuitCleanup(app, plugins);`（從 `./plugins/quit.js` 匯入）。不要在 `will-quit` 裡寫 `void plugins.shutdown()`，因為那樣 Electron 不會等清理完成。在 `registerIpc(...)` 呼叫的最後（modules 陣列之後）傳入 `() => plugins.shutdown()` 作為 `beforeUpdateInstall`，讓 `quitAndInstall()` 開始前插件程序就已經結束；屆時 `plugins.active` 已是 false，退出流程不會再攔截。在 `updates = await createUpdateService(...)` 之後加入 `updates.onInstallationFailed(() => void plugins.resume());`，讓安裝失敗、IDE 仍留在原畫面時，插件命令與啟用／停用都能恢復。然後執行 `node tests/desktop/run-close-smoke.mjs`，確認關閉、退出、早期關閉與重開視窗四個情境仍然 PASS，也就是既有的 `will-quit` 處理器重複執行不會出錯。
 5. `send` helper 宣告之後，才能把 IPC 模組加進 `registerIpc(...)` 最後的 modules 陣列：`(handle) => { registerPluginIpc(handle, plugins, (event) => send("plugins:event", event)); }`。
 
 - [ ] **Step 4: 執行測試與檢查**
