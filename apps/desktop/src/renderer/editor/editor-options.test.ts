@@ -4,7 +4,9 @@ import { defaultSettings } from "../settings/settings.js";
 it("maps editor preferences and preserves legacy defaults", () => {
   const values = defaultSettings("en");
   expect(editorOptions(values, 16, false, false)).toMatchObject({
+    editContext: false,
     lineHeight: 25,
+    hover: { enabled: "on" },
     cursorBlinking: "blink",
     quickSuggestions: { other: "on", strings: "off", comments: "off" },
     stickyScroll: { enabled: true, maxLineCount: 3 },
@@ -42,7 +44,7 @@ it("maps editor preferences and preserves legacy defaults", () => {
     autoClosingQuotes: "never",
     quickSuggestions: { other: "off" },
     suggestOnTriggerCharacters: false,
-    hover: { enabled: false },
+    hover: { enabled: "off" },
     parameterHints: { enabled: false },
     smoothScrolling: true,
     scrollBeyondLastLine: true,

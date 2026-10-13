@@ -1,17 +1,17 @@
-/** Monaco 0.52.2 compatibility boundary. No other module imports its private registries. */
+/** Monaco 0.57.0 compatibility boundary. No other module imports its private registries. */
 import * as monaco from "monaco-editor";
 // @ts-expect-error Monaco ships these registries as JS without declarations.
-import { EditorExtensionsRegistry } from "monaco-editor/esm/vs/editor/browser/editorExtensions.js";
+import { EditorExtensionsRegistry } from "monaco-editor/editor/browser/editorExtensions.js";
 // @ts-expect-error Monaco internal registry; covered by real-editor integration tests.
-import { KeybindingsRegistry } from "monaco-editor/esm/vs/platform/keybinding/common/keybindingsRegistry.js";
+import { KeybindingsRegistry } from "monaco-editor/platform/keybinding/common/keybindingsRegistry.js";
 // @ts-expect-error Monaco internal registry; covered by real-editor integration tests.
-import { CommandsRegistry } from "monaco-editor/esm/vs/platform/commands/common/commands.js";
+import { CommandsRegistry } from "monaco-editor/platform/commands/common/commands.js";
 // @ts-expect-error Monaco context expressions are not part of the public type bundle.
-import { ContextKeyExpr } from "monaco-editor/esm/vs/platform/contextkey/common/contextkey.js";
+import { ContextKeyExpr } from "monaco-editor/platform/contextkey/common/contextkey.js";
 // @ts-expect-error Standalone service access stays inside this adapter.
-import { StandaloneServices } from "monaco-editor/esm/vs/editor/standalone/browser/standaloneServices.js";
+import { StandaloneServices } from "monaco-editor/editor/standalone/browser/standaloneServices.js";
 // @ts-expect-error Service token is shipped without declarations.
-import { IKeybindingService } from "monaco-editor/esm/vs/platform/keybinding/common/keybinding.js";
+import { IKeybindingService } from "monaco-editor/platform/keybinding/common/keybinding.js";
 import {
   appCommands,
   effectiveBindings,

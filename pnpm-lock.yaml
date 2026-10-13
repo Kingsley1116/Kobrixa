@@ -8,6 +8,9 @@ patchedDependencies:
   braces@3.0.3:
     hash: 56f04d4a4f72a524c6239e226b874683ec9137d3a01bd7615d49d06106520c57
     path: patches/braces@3.0.3.patch
+  y-monaco@0.1.6:
+    hash: cc1758d0fe42c0e42b2c32ee9c9fd1be870494991164edd1601428e5827fb911
+    path: patches/y-monaco@0.1.6.patch
 
 importers:
 
@@ -121,7 +124,7 @@ importers:
         version: 7.8.5
       y-monaco:
         specifier: ^0.1.6
-        version: 0.1.6(monaco-editor@0.57.0)(yjs@13.6.33)
+        version: 0.1.6(patch_hash=cc1758d0fe42c0e42b2c32ee9c9fd1be870494991164edd1601428e5827fb911)(monaco-editor@0.57.0)(yjs@13.6.33)
       y-protocols:
         specifier: ^1.0.7
         version: 1.0.7(yjs@13.6.33)
@@ -7165,7 +7168,7 @@ snapshots:
 
   xmlchars@2.2.0: {}
 
-  y-monaco@0.1.6(monaco-editor@0.57.0)(yjs@13.6.33):
+  y-monaco@0.1.6(patch_hash=cc1758d0fe42c0e42b2c32ee9c9fd1be870494991164edd1601428e5827fb911)(monaco-editor@0.57.0)(yjs@13.6.33):
     dependencies:
       lib0: 0.2.119
       monaco-editor: 0.57.0

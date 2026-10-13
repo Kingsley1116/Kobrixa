@@ -11,6 +11,8 @@ export function editorOptions(
 ): editor.IEditorOptions {
   const value = { ...EDITOR_DEFAULTS, ...preferences };
   return {
+    // Keep native shortcuts and IME events on the established textarea input path.
+    editContext: false,
     fontSize,
     lineHeight: Math.round(
       fontSize *
@@ -37,7 +39,7 @@ export function editorOptions(
       strings: "off",
     },
     suggestOnTriggerCharacters: value.autoSuggestions,
-    hover: { enabled: value.hover },
+    hover: { enabled: value.hover ? "on" : "off" },
     parameterHints: { enabled: value.parameterHints },
     smoothScrolling: value.smoothScrolling && !reducedMotion,
     scrollBeyondLastLine: value.scrollBeyondLastLine,
