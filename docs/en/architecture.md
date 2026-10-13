@@ -129,6 +129,8 @@ Contract:
 - `assets`: project-relative files or glob patterns; resolved paths must stay inside the project root. Each pattern is limited to 4,096 characters, 64 opening braces or parentheses and 64 closing ones (including escaped or quoted characters). All asset patterns together may expand to at most 256 patterns; this does not limit how many files a wildcard matches. Oversized inputs produce a manifest diagnostic before file discovery, rather than selecting a partial asset set. Ordinary alternatives and numeric ranges remain supported.
 - `outputDir`: literal project-relative directory, not a glob pattern; it must not equal or contain the source root.
 
+Brace expressions must be balanced and unquoted. Ranges use integer endpoints or letters of the same case; punctuation and mixed-case ranges are rejected. Split quoted alternatives into separate patterns, and escape literal braces with a backslash (written as `\\` in JSON). Unsupported forms produce `MAN1001` instead of silently omitting assets.
+
 ## Compiler contracts
 
 The frontend contract is defined in [`packages/compiler/src/contracts.ts`](https://github.com/Kingsley1116/Kobrixa/blob/main/packages/compiler/src/contracts.ts). Only `bp` currently has an implementation:

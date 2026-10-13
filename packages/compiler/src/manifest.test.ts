@@ -150,6 +150,20 @@ describe("manifest", () => {
     expect(result.diagnostics[0]?.message).toContain("at most 256 patterns");
   });
 
+  it.each([
+    'assets/{"alpha","beta"}.txt',
+    'assets/{"alpha,beta",gamma}.txt',
+    "assets/{a},b}.txt",
+    "assets/{!..%}.txt",
+    "assets/{Z..a}.txt",
+  ])("diagnoses unsupported brace forms without silently dropping assets (%#)", async (pattern) => {
+    const root = await fixture({ assets: [pattern] });
+    const result = await loadProject(root);
+    expect(result.project).toBeUndefined();
+    expect(result.diagnostics[0]?.code).toBe("MAN1001");
+    expect(result.diagnostics[0]?.message).toContain("balanced, unquoted brace expressions");
+  });
+
   it("treats output directory metacharacters literally and keeps sibling sources", async () => {
     const root = await fixture({ outputDir: "build{one,two}" });
     for (const directory of ["build{one,two}", "buildone", "buildtwo"]) {

@@ -9,6 +9,29 @@ import { diagnostic } from "./diagnostics.js";
 const MAX_PATTERN_LENGTH = 4096;
 const MAX_EXPANDED_PATTERNS = 256;
 
+function hasSupportedBraceSyntax(pattern: string): boolean {
+  const syntax = pattern.replace(/\\./g, "");
+  // The bounded expander uses Bash-style braces. Reject forms whose
+  // interpretation differs from the previous glob engine instead of
+  // silently dropping or selecting different assets.
+  if (/[{}]/.test(pattern) && /["'`]/.test(syntax)) return false;
+  if (!/[{}]/.test(syntax)) return true;
+  let depth = 0;
+  for (const character of syntax) {
+    if (character === "{") depth++;
+    else if (character === "}" && --depth < 0) return false;
+  }
+  if (depth !== 0) return false;
+  for (const match of syntax.matchAll(/\{([^{}]*)\}/g)) {
+    const body = match[1]!;
+    if (!body.includes("..") || body.includes(",")) continue;
+    if (/^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(body)) continue;
+    if (/^(?:[a-z]\.\.[a-z]|[A-Z]\.\.[A-Z])(?:\.\.-?\d+)?$/.test(body)) continue;
+    return false;
+  }
+  return true;
+}
+
 function expandAssetPatterns(patterns: string[]): string[] {
   const expanded: string[] = [];
   for (const pattern of patterns) {
@@ -50,6 +73,10 @@ const manifestSchema = z
           })
           .refine((pattern) => (pattern.match(/[)}]/g)?.length ?? 0) <= 64, {
             message: "Asset patterns may contain at most 64 closing braces or parentheses.",
+          })
+          .refine(hasSupportedBraceSyntax, {
+            message:
+              "Use balanced, unquoted brace expressions with integer or same-case letter ranges; escape literal braces or use separate asset patterns.",
           }),
       )
       .default([]),
