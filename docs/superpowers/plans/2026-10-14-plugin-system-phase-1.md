@@ -16,6 +16,8 @@
 - 公開 API 三層：JSON-RPC 2.0、Zod 定義與產出的 JSON Schema、語言 SDK（設計 §4.1）。
 - Wire schema 不得使用無法匯出的 `transform`、隱含 coercion 或未公開的自訂 refinement；匯出遇到無法表示的型別必須失敗，不得放寬為 `{}`／`any`（設計 §4.1）。
 - CI 重新產生 JSON Schema 並與已提交版本比較；另以共用的有效／無效訊息案例驗證跨語言行為（設計 §4.1）。
+- 字串長度一律以 Unicode code point 計數：JSON Schema 的 `maxLength` 是這樣定義的，Zod 4 也是這樣實作的。Python 驗證器用 `len(str)`，不用 UTF-16 單位。
+- 對端送來的方法名稱只能以「自有屬性」查表（`Object.hasOwn` 或 `Map`），`constructor` 這類名稱不得解析到繼承來的 `Object` 成員；`RpcPeer` 處理訊息時的任何例外都不得丟回傳輸層的事件迴圈。
 - JS／TS 插件跑在 Electron `utilityProcess`，以 MessagePort 傳 JSON-RPC 訊息，不使用 stdin（設計 §4.2）。
 - stdio 協定使用 `Content-Length` 訊息邊界，stdout 只輸出協定訊息，stderr 用於日誌（設計 §4.2）。
 - 功能參數、工作區上下文與授權能力經握手與 API 傳遞，不以環境變數、程序 ID 或工作目錄作為 API 語意（設計 §4.2）。
@@ -34,7 +36,7 @@
 
 **不在第一階段範圍（不要實作）：** 語言靜態貢獻與 tokenizer 上限、`diagnosticHelp`、`Diagnostic.source`、`devices`／`workspace`／`editor` API、宣告式 view 與 webview、`.kbxp` 打包、管理 runtime、WASM。
 
-**與設計的一處差異（需使用者確認）：** 設計 §4.1 說其他語言 SDK「從公開 schema 產生型別與驗證程式」。本計畫的 Python SDK 直接用提交到 repo 的 JSON Schema 驗證訊息（task 11 的 `_schema.py`），但不產生 Python 型別，SDK 對外使用一般 `dict`。型別產生留到第四階段補其他 SDK 時再做。
+**SDK 型別（已定案，見設計 §4.1）：** Python 開發版 SDK 直接以提交的 JSON Schema 驗證訊息（task 11 的 `_schema.py`），對外使用一般 `dict`，不產生 Python 型別；由 schema 產生型別綁定屬於第四階段。
 
 ## Review Focus
 
@@ -1015,16 +1017,28 @@ it.each(cases)("$name", ({ definition, valid, value }) => {
     }
   },
   {
-    "name": "message at 2000 UTF-16 units",
+    "name": "message at 2000 code points (4000 UTF-16 units)",
     "definition": "ui/showMessage.params",
     "valid": true,
-    "value": { "severity": "info", "message": { "$repeat": "😀", "count": 1000 } }
+    "value": { "severity": "info", "message": { "$repeat": "😀", "count": 2000 } }
   },
   {
-    "name": "message over 2000 UTF-16 units",
+    "name": "message over 2000 code points",
     "definition": "ui/showMessage.params",
     "valid": false,
-    "value": { "severity": "info", "message": { "$repeat": "😀", "count": 1001 } }
+    "value": { "severity": "info", "message": { "$repeat": "😀", "count": 2001 } }
+  },
+  {
+    "name": "BMP message at 2000 code points",
+    "definition": "ui/showMessage.params",
+    "valid": true,
+    "value": { "severity": "info", "message": { "$repeat": "插", "count": 2000 } }
+  },
+  {
+    "name": "BMP message over 2000 code points",
+    "definition": "ui/showMessage.params",
+    "valid": false,
+    "value": { "severity": "info", "message": { "$repeat": "插", "count": 2001 } }
   },
   {
     "name": "spoofed plugin id",
@@ -1277,6 +1291,23 @@ describe("RpcPeer", () => {
       code: RPC_ERRORS.connectionClosed,
     });
   });
+  it("never resolves method names through the prototype chain", async () => {
+    const onProtocolError = vi.fn();
+    const [a, b] = createMemoryChannelPair();
+    new RpcPeer(a, { onProtocolError });
+    const replies: unknown[] = [];
+    b.onMessage((text) => replies.push(JSON.parse(text)));
+    // Names must pass the envelope's method pattern to reach the lookup ("__proto__" does not).
+    for (const method of ["constructor", "toString", "hasOwnProperty", "valueOf"]) {
+      expect(() => b.send(JSON.stringify({ jsonrpc: "2.0", method, params: {} }))).not.toThrow();
+      b.send(JSON.stringify({ jsonrpc: "2.0", id: method, method, params: {} }));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onProtocolError).not.toHaveBeenCalled();
+    expect(replies).toHaveLength(4);
+    for (const reply of replies)
+      expect(reply).toMatchObject({ error: { code: RPC_ERRORS.methodNotFound } });
+  });
   it("delivers notifications", async () => {
     const { host, plugin } = pair();
     const exit = vi.fn();
@@ -1370,8 +1401,10 @@ const errorText = (error: unknown) =>
     0,
     PLUGIN_LIMITS.errorMessageLength,
   );
-const definitions = requestMethods as Record<string, Definition>;
-const notifications = notificationMethods as Record<string, z.ZodType>;
+// Method names come from the peer: look them up as own properties only, so names such as
+// "constructor" or "__proto__" never resolve to inherited Object members.
+const own = <T>(table: object, key: string): T | undefined =>
+  Object.hasOwn(table, key) ? ((table as Record<string, T>)[key] as T) : undefined;
 
 export class RpcPeer {
   #nextId = 1;
@@ -1387,7 +1420,14 @@ export class RpcPeer {
     private readonly channel: MessageChannelLike,
     private readonly options: RpcPeerOptions = {},
   ) {
-    this.#unsubscribe = channel.onMessage((text) => this.#receive(text));
+    this.#unsubscribe = channel.onMessage((text) => {
+      // Nothing a peer sends may throw into the transport's event loop (the Electron main process).
+      try {
+        this.#receive(text);
+      } catch (error) {
+        this.#protocolError(`Failed to process a message: ${errorText(error)}`);
+      }
+    });
   }
 
   get closed(): boolean {
@@ -1533,7 +1573,7 @@ export class RpcPeer {
 
   async #onRequest(id: JsonRpcId, method: string, params: unknown): Promise<void> {
     const handler = this.#handlers.get(method);
-    const definition = definitions[method];
+    const definition = own<Definition>(requestMethods, method);
     if (!handler || !definition)
       return this.#trySend({
         jsonrpc: "2.0",
@@ -1575,7 +1615,7 @@ export class RpcPeer {
   }
 
   #onNotification(method: string, params: unknown): void {
-    const schema = notifications[method];
+    const schema = own<z.ZodType>(notificationMethods, method);
     if (!schema) return; // Unknown notifications are ignored, as JSON-RPC allows.
     const input = schema.safeParse(params);
     if (!input.success) return this.#protocolError(`Invalid parameters for ${method}.`);
@@ -2108,18 +2148,20 @@ git commit -m "feat(plugin-runtime): load manifests with disable-before-contribu
 - Consumes: `ContentLengthDecoder`、`encodeContentLength`、`MessageChannelLike`
 - Produces:
   - `interface ProcessExit { code: number | null; reason?: string }`
-  - `interface PluginProcess extends MessageChannelLike { onExit(listener: (exit: ProcessExit) => void): () => void; kill(): void; stderrTail(): string }`：程序已經結束後才註冊的 `onExit` listener，會在 microtask 中立即被呼叫
+  - `interface PluginProcess extends MessageChannelLike { onExit(listener: (exit: ProcessExit) => void): () => void; kill(): void; stderrTail(): string }`：程序已經結束後才註冊的 `onExit` listener，會在 microtask 中立即被呼叫。`kill()` 先要求正常終止（POSIX 上是 SIGTERM）；程序若在 `killGraceMs` 內沒有結束，就升級為強制終止（SIGKILL）。重複呼叫不會重設計時器。
+  - `DEFAULT_KILL_GRACE_MS = 2000`
+  - `escalatingKill(exits: ExitSignal, graceful: () => void, forced: () => void, graceMs?: number): () => void`：給 stdio 程序與 Electron `utilityProcess` 共用
   - `class OutputTail { push(chunk: Uint8Array | string): void; text(): string }`：保留最後 16 KiB
-  - `class ExitSignal { emit(exit: ProcessExit): void; subscribe(listener): () => void }`：只會 emit 一次
-  - `stdioProcess(child: ChildProcessWithoutNullStreams): PluginProcess`
-  - `spawnPluginProcess(command: string, args: readonly string[], options: { cwd: string; env?: NodeJS.ProcessEnv }): Promise<PluginProcess>`：等 `spawn` 事件；`error`（例如 ENOENT）時 reject
+  - `class ExitSignal { emit(exit: ProcessExit): void; subscribe(listener): () => void; readonly exited: boolean }`：只會 emit 一次
+  - `stdioProcess(child: ChildProcessWithoutNullStreams, options?: { killGraceMs?: number }): PluginProcess`
+  - `spawnPluginProcess(command: string, args: readonly string[], options: { cwd: string; env?: NodeJS.ProcessEnv; killGraceMs?: number }): Promise<PluginProcess>`：等 `spawn` 事件；`error`（例如 ENOENT）時 reject
 
 stdout 出現非協定資料時，宿主終止程序，結束原因為 `Plugin wrote non-protocol data to stdout (<FramingError message>). Write logs to stderr.`；task 8 把它對應成 `PLUGIN_E_PROTOCOL`。
 
 - [ ] **Step 1: 寫會失敗的測試**
 
 ```ts
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { spawnPluginProcess } from "./index.js";
 
 const node = (script: string) =>
@@ -2166,6 +2208,25 @@ describe("stdio plugin process", () => {
       spawnPluginProcess("kobrixa-no-such-python", [], { cwd: process.cwd() }),
     ).rejects.toThrow(/ENOENT|not found/i);
   });
+  it("escalates to a forced kill when the plugin ignores SIGTERM", async () => {
+    const child = await spawnPluginProcess(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM", () => {}); process.stderr.write("ready\\n"); setInterval(() => {}, 1000);`,
+      ],
+      { cwd: process.cwd(), killGraceMs: 200 },
+    );
+    await vi.waitFor(() => expect(child.stderrTail()).toContain("ready"));
+    const started = Date.now();
+    const exit = new Promise<{ reason?: string }>((resolve) => child.onExit(resolve));
+    child.kill();
+    child.kill(); // Repeated requests must not postpone the forced kill.
+    const result = await exit;
+    expect(Date.now() - started).toBeLessThan(2000);
+    // Windows has no SIGTERM handlers: kill() terminates immediately there.
+    if (process.platform !== "win32") expect(result.reason).toBe("terminated by SIGKILL");
+  });
 });
 ```
 
@@ -2210,6 +2271,9 @@ export class OutputTail {
 export class ExitSignal {
   #exit: ProcessExit | undefined;
   readonly #listeners = new Set<(exit: ProcessExit) => void>();
+  get exited(): boolean {
+    return this.#exit !== undefined;
+  }
   emit(exit: ProcessExit): void {
     if (this.#exit) return;
     this.#exit = exit;
@@ -2227,11 +2291,41 @@ export class ExitSignal {
   }
 }
 
-export function stdioProcess(child: ChildProcessWithoutNullStreams): PluginProcess {
+export const DEFAULT_KILL_GRACE_MS = 2_000;
+
+/** Asks for a graceful exit, then forces termination if the process ignores it. */
+export function escalatingKill(
+  exits: ExitSignal,
+  graceful: () => void,
+  forced: () => void,
+  graceMs: number = DEFAULT_KILL_GRACE_MS,
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  exits.subscribe(() => clearTimeout(timer));
+  return () => {
+    if (exits.exited || timer) return;
+    graceful();
+    timer = setTimeout(() => {
+      if (!exits.exited) forced();
+    }, graceMs);
+  };
+}
+
+export function stdioProcess(
+  child: ChildProcessWithoutNullStreams,
+  options: { killGraceMs?: number } = {},
+): PluginProcess {
   const decoder = new ContentLengthDecoder();
   const listeners = new Set<(text: string) => void>();
   const tail = new OutputTail();
   const exits = new ExitSignal();
+  // On Windows both signals map to TerminateProcess; on POSIX SIGKILL cannot be ignored.
+  const kill = escalatingKill(
+    exits,
+    () => child.kill("SIGTERM"),
+    () => child.kill("SIGKILL"),
+    options.killGraceMs,
+  );
   let framing: string | undefined;
   child.stdout.on("data", (chunk: Buffer) => {
     if (framing) return;
@@ -2239,7 +2333,7 @@ export function stdioProcess(child: ChildProcessWithoutNullStreams): PluginProce
       for (const text of decoder.push(chunk)) for (const listener of listeners) listener(text);
     } catch (error) {
       framing = `Plugin wrote non-protocol data to stdout (${error instanceof Error ? error.message : String(error)}). Write logs to stderr.`;
-      child.kill();
+      kill();
     }
   });
   child.stderr.on("data", (chunk: Buffer) => tail.push(chunk));
@@ -2263,9 +2357,7 @@ export function stdioProcess(child: ChildProcessWithoutNullStreams): PluginProce
       return () => listeners.delete(listener);
     },
     onExit: (listener) => exits.subscribe(listener),
-    kill: () => {
-      child.kill();
-    },
+    kill,
     stderrTail: () => tail.text(),
   };
 }
@@ -2273,7 +2365,7 @@ export function stdioProcess(child: ChildProcessWithoutNullStreams): PluginProce
 export function spawnPluginProcess(
   command: string,
   args: readonly string[],
-  options: { cwd: string; env?: NodeJS.ProcessEnv },
+  options: { cwd: string; env?: NodeJS.ProcessEnv; killGraceMs?: number },
 ): Promise<PluginProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -2285,7 +2377,12 @@ export function spawnPluginProcess(
     child.once("error", reject);
     child.once("spawn", () => {
       child.off("error", reject);
-      resolve(stdioProcess(child));
+      resolve(
+        stdioProcess(
+          child,
+          options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs },
+        ),
+      );
     });
   });
 }
@@ -2311,7 +2408,7 @@ git commit -m "feat(plugin-runtime): add stdio plugin processes"
 
 **Files:**
 
-- Create: `packages/plugin-runtime/src/supervisor.ts`、`src/test-process.ts`
+- Create: `packages/plugin-runtime/src/supervisor.ts`、`src/test-process.ts`、`test-fixtures/stubborn-plugin.cjs`
 - Modify: `packages/plugin-runtime/src/index.ts`（只匯出 `supervisor.js`；`test-process.ts` 只給測試用，不匯出）
 - Test: `packages/plugin-runtime/src/supervisor.test.ts`
 
@@ -2322,11 +2419,11 @@ git commit -m "feat(plugin-runtime): add stdio plugin processes"
   - `interface LaunchablePlugin { id; directory; entry; runtime: "node" | "python"; permissions: readonly Permission[]; commands: readonly string[] }`
   - `type PluginLauncher = (plugin: LaunchablePlugin) => Promise<PluginProcess>`
   - `type SupervisorState = "idle" | "starting" | "running" | "stopping" | "failed"`
-  - `interface SupervisorOptions { locale; onNotice(notice: { severity: Severity; message: string }): void; onStateChange?(): void; restartLimit?: number; restartWindowMs?: number; initializeTimeoutMs?: number; commandTimeoutMs?: number; stopTimeoutMs?: number; cancelGraceMs?: number; now?(): number }`
+  - `interface SupervisorOptions { locale; onNotice(notice: { severity: Severity; message: string }): void; onStateChange?(): void; restartLimit?: number; restartWindowMs?: number; initializeTimeoutMs?: number; commandTimeoutMs?: number; stopTimeoutMs?: number; exitTimeoutMs?: number; cancelGraceMs?: number; now?(): number }`
   - `class PluginSupervisor { state; problem; executeCommand(command, signal?): Promise<void>; stop(): Promise<void> }`（`failed` 狀態不能在原物件上清除；停用再啟用時，manager 會建立新的 supervisor）
   - `test-process.ts`：`memoryPlugin(setup: (peer: RpcPeer, control: { exit(code?: number): void }) => void): { process: PluginProcess; killed(): boolean }`
 
-預設值：`restartLimit = 3`、`restartWindowMs = 300000`、`initializeTimeoutMs = 10000`、`commandTimeoutMs = 30000`、`stopTimeoutMs = 2000`、`cancelGraceMs = 5000`。
+預設值：`restartLimit = 3`、`restartWindowMs = 300000`、`initializeTimeoutMs = 10000`、`commandTimeoutMs = 30000`、`stopTimeoutMs = 2000`、`exitTimeoutMs = 8000`、`cancelGraceMs = 5000`。`stop()` 最多等待 `stopTimeoutMs + exitTimeoutMs`：先送 `shutdown`，失敗或逾時就 `kill()`（會自動升級為強制終止）；超過上限仍未收到 exit 時，視為已停止並放棄等待，絕不無限等待。
 
 錯誤對應：命令被拒時，`connectionClosed` 對應到目前的 `problem.code`（沒有 problem 時用 `PLUGIN_E_CRASHED`）；`timeout` 對應 `PLUGIN_E_TIMEOUT`；`requestCancelled` 對應 `PLUGIN_E_CANCELLED`；其他 RPC 錯誤對應 `PLUGIN_E_COMMAND_FAILED`。
 
@@ -2511,6 +2608,54 @@ describe("PluginSupervisor", () => {
     expect(supervisor.state).toBe("idle");
     expect(launches[0]!.killed()).toBe(false);
   });
+  it("stops a real process that ignores shutdown and SIGTERM within a bounded time", async () => {
+    const fixture = fileURLToPath(new URL("../test-fixtures/stubborn-plugin.cjs", import.meta.url));
+    const supervisor = new PluginSupervisor(
+      plugin,
+      () =>
+        spawnPluginProcess(process.execPath, [fixture], { cwd: process.cwd(), killGraceMs: 200 }),
+      { locale: "en", onNotice: () => {}, stopTimeoutMs: 200 },
+    );
+    await supervisor.executeCommand("acme.hello.greet");
+    const started = Date.now();
+    await supervisor.stop();
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(supervisor.state).toBe("idle");
+  });
+});
+```
+
+在檔案頂端加入 `import { fileURLToPath } from "node:url";`，並從 `./index.js` 一併匯入 `spawnPluginProcess`。
+
+`packages/plugin-runtime/test-fixtures/stubborn-plugin.cjs`（放在 `src` 外，不會被編譯進 `dist`）：
+
+```js
+// Answers initialize and command/execute, but ignores shutdown, exit and SIGTERM on purpose.
+process.on("SIGTERM", () => {});
+let buffer = Buffer.alloc(0);
+const reply = (message) => {
+  const body = Buffer.from(JSON.stringify(message));
+  process.stdout.write(`Content-Length: ${body.length}\r\n\r\n`);
+  process.stdout.write(body);
+};
+process.stdin.on("data", (chunk) => {
+  buffer = Buffer.concat([buffer, chunk]);
+  for (;;) {
+    const end = buffer.indexOf("\r\n\r\n");
+    if (end < 0) return;
+    const length = Number(/Content-Length: ([0-9]+)/i.exec(buffer.subarray(0, end).toString())[1]);
+    if (buffer.length < end + 4 + length) return;
+    const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
+    buffer = buffer.subarray(end + 4 + length);
+    if (message.method === "initialize")
+      reply({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { apiVersion: "1.0.0", sdk: { name: "stubborn", version: "1" } },
+      });
+    else if (message.method === "command/execute")
+      reply({ jsonrpc: "2.0", id: message.id, result: null });
+  }
 });
 ```
 
@@ -2553,6 +2698,8 @@ export interface SupervisorOptions {
   initializeTimeoutMs?: number;
   commandTimeoutMs?: number;
   stopTimeoutMs?: number;
+  /** Upper bound on waiting for an exit after shutdown or kill; stop() never waits longer. */
+  exitTimeoutMs?: number;
   cancelGraceMs?: number;
   now?(): number;
 }
@@ -2562,6 +2709,7 @@ const DEFAULTS = {
   initializeTimeoutMs: 10_000,
   commandTimeoutMs: 30_000,
   stopTimeoutMs: 2_000,
+  exitTimeoutMs: 8_000,
   cancelGraceMs: 5_000,
 };
 const major = (version: string) => version.split(".")[0];
@@ -2618,16 +2766,25 @@ export class PluginSupervisor {
       const child = this.#process;
       if (!peer || !child) return;
       this.#setState("stopping");
-      const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
-      const deadline = setTimeout(() => child.kill(), this.#options.stopTimeoutMs * 2);
+      const exited = new Promise<boolean>((resolve) => child.onExit(() => resolve(true)));
+      // Escalate if the plugin acknowledges shutdown but never exits.
+      const lingering = setTimeout(() => child.kill(), this.#options.stopTimeoutMs * 2);
       try {
         await peer.request("shutdown", {}, { timeoutMs: this.#options.stopTimeoutMs });
         peer.notify("exit", {});
       } catch {
         child.kill();
       }
-      await exited;
-      clearTimeout(deadline);
+      // kill() escalates to a forced kill; this bound only guards an OS that never reports exit.
+      let bound: ReturnType<typeof setTimeout> | undefined;
+      const gaveUp = new Promise<boolean>((resolve) => {
+        bound = setTimeout(() => resolve(false), this.#options.exitTimeoutMs);
+      });
+      const exitedInTime = await Promise.race([exited, gaveUp]);
+      clearTimeout(lingering);
+      clearTimeout(bound);
+      if (!exitedInTime)
+        this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
     } finally {
       this.#stopping = false;
     }
@@ -2812,7 +2969,7 @@ git commit -m "feat(plugin-runtime): supervise plugin lifecycles without replayi
   - `type PluginManagerEvent = { type: "state"; state: PluginsSnapshot } | { type: "notice"; notice: PluginNotice }`
   - `type PluginCommandResult = { ok: true } | { ok: false; code: PluginErrorCode; message: string }`
   - `type PluginActionResult = { ok: true; state: PluginsSnapshot } | { ok: false; code: PluginErrorCode; message: string }`
-  - `class PluginManager { static create(options): Promise<PluginManager>; state(): PluginsSnapshot; frontendFor(language: string): string | undefined; executeCommand(commandId): Promise<PluginCommandResult>; setEnabled(pluginId, enabled): Promise<PluginActionResult>; onEvent(listener): () => void; dispose(): Promise<void> }`
+  - `class PluginManager { static create(options): Promise<PluginManager>; state(): PluginsSnapshot; frontendFor(language: string): string | undefined; executeCommand(commandId): Promise<PluginCommandResult>; setEnabled(pluginId, enabled): Promise<PluginActionResult>; onEvent(listener): () => void; readonly active: boolean; dispose(): Promise<void> }`
 
 - [ ] **Step 1: 寫會失敗的測試**
 
@@ -2972,8 +3129,10 @@ describe("PluginManager", () => {
     const manager = await create([await devPlugin("a"), await devPlugin("b")]);
     await manager.executeCommand("acme.a.greet");
     await manager.executeCommand("acme.b.greet");
+    expect(manager.active).toBe(true);
     await manager.dispose();
     expect(manager.state().plugins.every((plugin) => !plugin.running)).toBe(true);
+    expect(manager.active).toBe(false);
   });
 });
 ```
@@ -3130,6 +3289,13 @@ export class PluginManager {
   onEvent(listener: (event: PluginManagerEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  /** True while any plugin process is starting, running or stopping. */
+  get active(): boolean {
+    return [...this.#supervisors.values()].some((supervisor) =>
+      ["starting", "running", "stopping"].includes(supervisor.state),
+    );
   }
 
   async dispose(): Promise<void> {
@@ -3704,6 +3870,21 @@ class PluginProcessTest(unittest.TestCase):
         self.send({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 3}})
         self.assertEqual(self.receive()["error"]["code"], -32800)
 
+    def test_cancel_before_start_replies_exactly_once(self):
+        self.initialize()
+        # Both frames arrive in one chunk, so the task is cancelled before it ever runs.
+        self.child.stdin.write(
+            encode(json.dumps({"jsonrpc": "2.0", "id": 6, "method": "command/execute",
+                               "params": {"command": "acme.behaviors.hang"}}))
+            + encode(json.dumps({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 6}})))
+        self.child.stdin.flush()
+        self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 6, "error": {
+            "code": -32800, "message": "command/execute was cancelled."}})
+        # The next reply must belong to the next request: no duplicate reply for id 6.
+        self.send({"jsonrpc": "2.0", "id": 7, "method": "command/execute",
+                   "params": {"command": "acme.behaviors.missing"}})
+        self.assertEqual(self.receive()["id"], 7)
+
     def test_unknown_command_and_invalid_params(self):
         self.initialize()
         self.send({"jsonrpc": "2.0", "id": 4, "method": "command/execute",
@@ -3875,7 +4056,7 @@ class Decoder:
 """Validates messages against the committed Kobrixa JSON Schema.
 
 Implements exactly the keywords in packages/plugin-protocol/schema/keywords.json.
-String lengths count UTF-16 code units to match the TypeScript host, and an
+String lengths count Unicode code points, as JSON Schema and Zod 4 do, and an
 anchored trailing "$" means end of string, as in ECMAScript.
 """
 import json
@@ -3899,10 +4080,6 @@ def _regex(pattern: str) -> "re.Pattern[str]":
     if pattern.endswith("$") and not pattern.endswith("\\$"):
         pattern = pattern[:-1] + r"\Z"
     return re.compile(pattern)
-
-
-def _utf16_length(value: str) -> int:
-    return len(value.encode("utf-16-le")) // 2
 
 
 def _is_number(value) -> bool:
@@ -3963,7 +4140,7 @@ class Validator:
                 return [f"{path}: expected {schema['type']}"]
         errors = []
         if isinstance(value, str):
-            length = _utf16_length(value)
+            length = len(value)  # Python str length is the code point count.
             if length < schema.get("minLength", 0) or length > schema.get("maxLength", length):
                 errors.append(f"{path}: length {length} is out of range")
             if "pattern" in schema and not _regex(schema["pattern"]).search(value):
@@ -3998,6 +4175,7 @@ class Validator:
 """Python plugin runtime: JSON-RPC 2.0 over stdio with Content-Length framing."""
 import asyncio
 import json
+import os
 import sys
 import threading
 
@@ -4053,7 +4231,9 @@ class Plugin:
         output = sys.stdout.buffer
         # stdout carries protocol messages only; print() goes to stderr, which Kobrixa logs.
         sys.stdout = sys.stderr
-        asyncio.run(self._main(sys.stdin.buffer, output))
+        # Read the raw descriptor: a daemon thread blocked inside the buffered sys.stdin reader
+        # holds its lock and makes interpreter shutdown abort (SIGABRT) after "exit".
+        asyncio.run(self._main(sys.stdin.fileno(), output))
 
     async def _main(self, source, output) -> None:
         self._loop = asyncio.get_running_loop()
@@ -4064,12 +4244,12 @@ class Plugin:
             decoder = Decoder()
             try:
                 while True:
-                    chunk = source.read1(65536)
+                    chunk = os.read(source, 65536)
                     if not chunk:
                         break
                     for text in decoder.push(chunk):
                         self._loop.call_soon_threadsafe(queue.put_nowait, text)
-            except (FramingError, OSError, ValueError) as error:
+            except (FramingError, OSError) as error:
                 print(f"kobrixa: stopped reading input: {error}", file=sys.stderr)
             finally:
                 self._loop.call_soon_threadsafe(queue.put_nowait, None)
@@ -4080,12 +4260,27 @@ class Plugin:
             if text is None:
                 break  # The host closed stdin: exit so no orphan process remains.
             self._receive(text)
+        self._stopping = True  # Nothing is sent after exit or EOF, including cancellation replies.
         for task in list(self._tasks.values()):
             task.cancel()
 
     def _send(self, message: dict) -> None:
-        self._output.write(encode(json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
-        self._output.flush()
+        if self._stopping:
+            return
+        try:
+            self._output.write(encode(json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
+            self._output.flush()
+        except (OSError, ValueError):
+            self._stopping = True  # The host closed the pipe; the read loop ends on EOF.
+
+    def _finished(self, request_id, method: str, task: "asyncio.Future") -> None:
+        self._tasks.pop(request_id, None)
+        # A request cancelled before its task started never entered _handle(), so it has not
+        # replied yet. A started task catches CancelledError itself and finishes normally, so
+        # every request gets exactly one reply.
+        if task.cancelled():
+            self._send({"jsonrpc": "2.0", "id": request_id,
+                        "error": {"code": _CANCELLED, "message": f"{method} was cancelled."}})
 
     def _receive(self, text: str) -> None:
         try:
@@ -4095,9 +4290,10 @@ class Plugin:
             print(f"kobrixa: ignored invalid message from host: {error}", file=sys.stderr)
             return
         if "method" in message and "id" in message:
+            request_id, method = message["id"], message["method"]
             task = asyncio.ensure_future(self._handle(message))
-            self._tasks[message["id"]] = task
-            task.add_done_callback(lambda _task, key=message["id"]: self._tasks.pop(key, None))
+            self._tasks[request_id] = task
+            task.add_done_callback(lambda done: self._finished(request_id, method, done))
         elif "method" in message:
             if message["method"] == "$/cancelRequest":
                 task = self._tasks.get(message.get("params", {}).get("id"))
@@ -4284,7 +4480,7 @@ git commit -m "feat(sdk-python): add development Python SDK with shared conforma
 
 **Files:**
 
-- Create: `apps/desktop/src/main/plugins/options.ts`、`state-store.ts`、`launchers.ts`、`ipc.ts`
+- Create: `apps/desktop/src/main/plugins/options.ts`、`state-store.ts`、`launchers.ts`、`ipc.ts`、`quit.ts`
 - Create: `apps/desktop/src/shared/plugins.ts`
 - Modify: `apps/desktop/src/shared/api.ts`（`KobrixaApi.plugins`）、`apps/desktop/src/preload/index.ts`、`apps/desktop/package.json`（依賴）
 - Test: `apps/desktop/src/main/plugins/options.test.ts`、`state-store.test.ts`、`ipc.test.ts`
@@ -4298,6 +4494,7 @@ git commit -m "feat(sdk-python): add development Python SDK with shared conforma
   - `createDesktopLauncher({ python?: string }): PluginLauncher`
   - `pluginLocale(appLocale: string): PluginLocale`
   - `registerPluginIpc(handle: IpcHandle, plugins: Pick<PluginManager, "state" | "executeCommand" | "setEnabled" | "onEvent">, publish: (event: PluginEvent) => void): () => void`
+  - `PLUGIN_QUIT_TIMEOUT_MS = 5000`；`installPluginQuitCleanup(app: QuitHost, plugins: Pick<PluginManager, "active" | "dispose">, options?: { timeoutMs?: number; skip?(): boolean }): void`，其中 `QuitHost = { on(event: "will-quit", listener: (event: { preventDefault(): void }) => void): unknown; quit(): void }`。第一次 `will-quit` 時，若有插件仍在活動，先 `preventDefault()`，等 `dispose()` 結束（最多 `timeoutMs`），再呼叫一次 `app.quit()`；第二次 `will-quit` 直接放行。沒有活動插件，或 `skip()` 為真（安裝更新期間）時，不攔截退出。既有的 `will-quit` 處理器在兩次觸發時都會執行；它們都以 `disposed` 旗標或只清除計時器實作，重複執行是安全的，task 13 會用 close smoke 確認。
   - IPC channel：`plugins:state`、`plugins:execute`、`plugins:set-enabled`；事件 channel：`plugins:event`
   - `shared/plugins.ts`：`PluginsApi { state(): Promise<PluginsSnapshot>; execute(commandId: string): Promise<PluginCommandResult>; setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult>; onEvent(listener: (event: PluginEvent) => void): () => void }`，`PluginEvent = PluginManagerEvent`，並重新匯出 runtime 的相關型別
 
@@ -4379,6 +4576,69 @@ it("treats an unreadable or invalid file as empty", async () => {
   await mkdir(path.join(root, "plugins"));
   await writeFile(path.join(root, "plugins/state.json"), "{broken");
   expect(await filePluginStateStore(root).load()).toEqual(new Set());
+});
+```
+
+`quit.test.ts`：
+
+```ts
+import { EventEmitter } from "node:events";
+import { afterEach, expect, it, vi } from "vitest";
+import { installPluginQuitCleanup } from "./quit.js";
+
+afterEach(() => vi.useRealTimers());
+function host() {
+  const emitter = new EventEmitter();
+  const quit = vi.fn();
+  const willQuit = () => {
+    const event = {
+      prevented: false,
+      preventDefault() {
+        this.prevented = true;
+      },
+    };
+    emitter.emit("will-quit", event);
+    return event.prevented;
+  };
+  return { app: { on: emitter.on.bind(emitter), quit } as never, quit, willQuit };
+}
+
+it("holds the first quit until plugins stop, then quits again", async () => {
+  const { app, quit, willQuit } = host();
+  let finish!: () => void;
+  const dispose = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+  installPluginQuitCleanup(app, { active: true, dispose });
+  expect(willQuit()).toBe(true);
+  expect(willQuit()).toBe(true); // A second request during cleanup is still held.
+  expect(dispose).toHaveBeenCalledTimes(1);
+  expect(quit).not.toHaveBeenCalled();
+  finish();
+  await vi.waitFor(() => expect(quit).toHaveBeenCalledTimes(1));
+  expect(willQuit()).toBe(false);
+});
+
+it("quits after the deadline when cleanup hangs", async () => {
+  vi.useFakeTimers();
+  const { app, quit, willQuit } = host();
+  installPluginQuitCleanup(
+    app,
+    { active: true, dispose: () => new Promise(() => {}) },
+    { timeoutMs: 100 },
+  );
+  expect(willQuit()).toBe(true);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(quit).toHaveBeenCalledTimes(1);
+});
+
+it("does not delay quitting without active plugins or while installing an update", () => {
+  const idle = host();
+  installPluginQuitCleanup(idle.app, { active: false, dispose: vi.fn() });
+  expect(idle.willQuit()).toBe(false);
+  const updating = host();
+  const dispose = vi.fn(async () => {});
+  installPluginQuitCleanup(updating.app, { active: true, dispose }, { skip: () => true });
+  expect(updating.willQuit()).toBe(false);
+  expect(dispose).toHaveBeenCalled(); // Still asked to stop, without blocking the installer.
 });
 ```
 
@@ -4499,6 +4759,7 @@ export function filePluginStateStore(userData: string): PluginStateStore {
 ```ts
 import { MessageChannelMain, utilityProcess } from "electron";
 import {
+  escalatingKill,
   ExitSignal,
   OutputTail,
   PluginError,
@@ -4540,9 +4801,18 @@ async function launchNode(plugin: LaunchablePlugin): Promise<PluginProcess> {
       return () => port1.off("message", handler);
     },
     onExit: (listener) => exits.subscribe(listener),
-    kill: () => {
-      child.kill();
-    },
+    // utilityProcess.kill() sends SIGTERM on POSIX; escalate to SIGKILL when it is ignored.
+    kill: escalatingKill(
+      exits,
+      () => child.kill(),
+      () => {
+        try {
+          if (child.pid !== undefined) process.kill(child.pid, "SIGKILL");
+        } catch {
+          /* The process already exited. */
+        }
+      },
+    ),
     stderrTail: () => tail.text(),
   };
 }
@@ -4560,6 +4830,50 @@ export function createDesktopLauncher(options: { python?: string }): PluginLaunc
       env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
     });
   };
+}
+```
+
+`quit.ts`：
+
+```ts
+import type { PluginManager } from "@kobrixa/plugin-runtime";
+
+export const PLUGIN_QUIT_TIMEOUT_MS = 5_000;
+export interface QuitHost {
+  on(event: "will-quit", listener: (event: { preventDefault(): void }) => void): unknown;
+  quit(): void;
+}
+
+/**
+ * `void dispose()` in will-quit would not keep Electron alive, so shutdown handshakes and kill
+ * escalation could be cut short. Hold the first quit, wait (bounded), then quit again.
+ */
+export function installPluginQuitCleanup(
+  app: QuitHost,
+  plugins: Pick<PluginManager, "active" | "dispose">,
+  options: { timeoutMs?: number; skip?(): boolean } = {},
+): void {
+  let state: "idle" | "cleaning" | "done" = "idle";
+  app.on("will-quit", (event) => {
+    if (state === "done") return;
+    if (state === "cleaning") return event.preventDefault();
+    if (!plugins.active) return;
+    if (options.skip?.()) {
+      void plugins.dispose().catch(() => undefined);
+      return;
+    }
+    event.preventDefault();
+    state = "cleaning";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, options.timeoutMs ?? PLUGIN_QUIT_TIMEOUT_MS);
+    });
+    void Promise.race([plugins.dispose().catch(() => undefined), deadline]).then(() => {
+      clearTimeout(timer);
+      state = "done";
+      app.quit();
+    });
+  });
 }
 ```
 
@@ -4827,6 +5141,7 @@ import { createDesktopLauncher } from "./plugins/launchers.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
 import { filePluginStateStore } from "./plugins/state-store.js";
 import { registerPluginIpc } from "./plugins/ipc.js";
+import { installPluginQuitCleanup } from "./plugins/quit.js";
 ```
 
 2. 在 `const workspaces = new WorkspaceService();` 之後加入：
@@ -4849,7 +5164,7 @@ const plugins = await PluginManager.create({
 ```
 
 3. 把 `new BuildService(workspaces, renderer)` 改成 `new BuildService(workspaces, renderer, undefined, (language) => plugins.frontendFor(language))`。
-4. 在既有的 `app.on("will-quit", () => { ... })` 區塊內加入 `void plugins.dispose();`。
+4. 在 `PluginManager.create(...)` 之後立即呼叫 `installPluginQuitCleanup(app, plugins, { skip: () => updates?.installing === true });`（從 `./plugins/quit.js` 匯入）。不要在 `will-quit` 裡寫 `void plugins.dispose()`，因為那樣 Electron 不會等清理完成。然後執行 `node tests/desktop/run-close-smoke.mjs`，確認關閉、退出、早期關閉與重開視窗四個情境仍然 PASS，也就是既有的 `will-quit` 處理器重複執行不會出錯。
 5. `send` helper 宣告之後，才能把 IPC 模組加進 `registerIpc(...)` 最後的 modules 陣列：`(handle) => { registerPluginIpc(handle, plugins, (event) => send("plugins:event", event)); }`。
 
 - [ ] **Step 4: 執行測試與檢查**
@@ -5326,14 +5641,14 @@ git commit -m "feat(desktop): add a bilingual plugins panel to settings"
 
 **Files:**
 
-- Create: `tests/desktop/run-plugins-smoke.mjs`、`tests/desktop/plugins-smoke-main.ts`、`tests/desktop/fixtures/crash-plugin.ts`
+- Create: `tests/desktop/run-plugins-smoke.mjs`、`tests/desktop/plugins-smoke-main.ts`、`tests/desktop/fixtures/crash-plugin.ts`、`pid-plugin.ts`、`pid_plugin.py`
 - Modify: 根目錄 `package.json`（`test:plugins:smoke`）、`.github/workflows/ci.yml`（`KOBRIXA_TEST_PYTHON` 與 smoke 步驟）
 
 **Interfaces:**
 
 - Consumes: `PluginManager`、`createDesktopLauncher`、`filePluginStateStore`、兩個範例插件、`@kobrixa/plugin-sdk`
 
-這個 smoke 驗證只有真實 Electron 才能測的部分：`utilityProcess`、MessagePort 傳遞、TS 插件當機不影響其他插件、Python 插件透過真實啟動器執行，以及 `dispose` 之後沒有殘留的子程序。
+這個 smoke 驗證只有真實 Electron 才能測的部分：`utilityProcess`、MessagePort 傳遞、TS 插件當機不影響其他插件、Python 插件透過真實啟動器執行，以及經由真實的 `app.quit()` 生命週期退出時，會先完成插件的 shutdown 握手，且不會殘留子程序。
 
 - [ ] **Step 1: 寫 smoke**
 
@@ -5359,6 +5674,7 @@ import { app } from "electron";
 import { PluginManager, type PluginNotice } from "@kobrixa/plugin-runtime";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
 import { filePluginStateStore } from "../../apps/desktop/src/main/plugins/state-store.js";
+import { installPluginQuitCleanup } from "../../apps/desktop/src/main/plugins/quit.js";
 
 const [directory, python] = process.argv.slice(-2) as [string, string];
 const fail = (error: unknown) => {
@@ -5371,22 +5687,26 @@ setTimeout(() => fail(new Error("Plugin smoke timed out")), 60_000).unref();
 
 void app.whenReady().then(async () => {
   const manager = await PluginManager.create({
-    sources: ["hello-ts", "插件 測試/hello-python", "crash"].map((name) => ({
-      kind: "development" as const,
-      directory: `${directory}/${name}`,
-    })),
+    sources: ["hello-ts", "插件 測試/hello-python", "crash", "pid-ts", "pid-python"].map(
+      (name) => ({
+        kind: "development" as const,
+        directory: `${directory}/${name}`,
+      }),
+    ),
     store: filePluginStateStore(`${directory}/user-data`),
     safeMode: false,
     launcher: createDesktopLauncher({ python }),
     locale: "zh-TW",
   });
+  // The same quit path as apps/desktop/src/main/index.ts.
+  installPluginQuitCleanup(app, manager);
   const notices: PluginNotice[] = [];
   manager.onEvent((event) => {
     if (event.type === "notice") notices.push(event.notice);
   });
   assert.deepEqual(
     manager.state().plugins.map((plugin) => plugin.status),
-    ["enabled", "enabled", "enabled"],
+    ["enabled", "enabled", "enabled", "enabled", "enabled"],
   );
   assert.deepEqual(await manager.executeCommand("kobrixa-samples.hello-ts.greet"), { ok: true });
   assert.deepEqual(await manager.executeCommand("kobrixa-samples.hello-python.greet"), {
@@ -5408,17 +5728,58 @@ void app.whenReady().then(async () => {
       ["kobrixa-samples.hello-ts", "來自 TypeScript 插件的問候"],
     ],
   );
-  await manager.dispose();
-  assert.ok(manager.state().plugins.every((plugin) => !plugin.running));
-  console.log("PASS plugins: utilityProcess TS, Python stdio, crash isolation, shutdown");
-  app.exit(0);
+  assert.deepEqual(await manager.executeCommand("kobrixa-smoke.pid-ts.record"), { ok: true });
+  assert.deepEqual(await manager.executeCommand("kobrixa-smoke.pid-python.record"), { ok: true });
+  // Quit through Electron's real lifecycle instead of awaiting dispose(); the runner then checks
+  // that the TS plugin's deactivate ran and that no plugin process outlived the app.
+  app.quit();
 });
+```
+
+`tests/desktop/fixtures/pid-plugin.ts`：
+
+```ts
+import { writeFileSync } from "node:fs";
+import { definePlugin, runPlugin } from "@kobrixa/plugin-sdk";
+
+// The launcher starts plugins with the plugin folder as the working directory.
+void runPlugin(
+  definePlugin({
+    activate(context) {
+      context.commands.register("kobrixa-smoke.pid-ts.record", () =>
+        writeFileSync("pid.txt", String(process.pid)),
+      );
+    },
+    deactivate() {
+      writeFileSync("shutdown.txt", "ok");
+    },
+  }),
+);
+```
+
+`tests/desktop/fixtures/pid_plugin.py`：
+
+```python
+import os
+from kobrixa import Plugin
+
+plugin = Plugin()
+
+
+@plugin.command("kobrixa-smoke.pid-python.record")
+async def record(ctx):
+    with open("pid.txt", "w", encoding="utf-8") as file:
+        file.write(str(os.getpid()))
+
+
+if __name__ == "__main__":
+    plugin.run()
 ```
 
 `tests/desktop/run-plugins-smoke.mjs`：
 
 ```js
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -5487,6 +5848,35 @@ try {
       contributes: { commands: [{ id: "kobrixa-smoke.crash.exit", title: "Crash" }] },
     }),
   );
+  const fixture = async (name, runtime, command) => {
+    const directory = path.join(temporary, name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, "kobrixa-plugin.json"),
+      JSON.stringify({
+        id: `kobrixa-smoke.${name}`,
+        version: "0.0.0",
+        apiVersion: "^1.0.0",
+        runtime,
+        contributes: { commands: [{ id: command, title: "Record PID" }] },
+      }),
+    );
+    return directory;
+  };
+  await fixture("pid-ts", { kind: "node", entry: "dist/index.cjs" }, "kobrixa-smoke.pid-ts.record");
+  await bundle(
+    path.join(root, "tests/desktop/fixtures/pid-plugin.ts"),
+    path.join(temporary, "pid-ts/dist/index.cjs"),
+  );
+  const pidPython = await fixture(
+    "pid-python",
+    { kind: "python", entry: "main.py" },
+    "kobrixa-smoke.pid-python.record",
+  );
+  await cp(
+    path.join(root, "tests/desktop/fixtures/pid_plugin.py"),
+    path.join(pidPython, "main.py"),
+  );
   const child = spawn(
     process.execPath,
     [
@@ -5506,6 +5896,24 @@ try {
     child.once("exit", resolve);
   });
   if (code !== 0) throw new Error(`Plugin smoke failed (${code})`);
+  // The graceful shutdown handshake ran before Electron exited.
+  await access(path.join(temporary, "pid-ts/shutdown.txt"));
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error.code === "EPERM";
+    }
+  };
+  for (const name of ["pid-ts", "pid-python"]) {
+    const pid = Number(await readFile(path.join(temporary, name, "pid.txt"), "utf8"));
+    const deadline = Date.now() + 3000;
+    while (alive(pid) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    if (alive(pid)) throw new Error(`Plugin process ${name} (${pid}) outlived Kobrixa.`);
+  }
+  console.log("PASS plugins: utilityProcess TS, Python stdio, crash isolation, quit cleanup");
   passed = true;
 } finally {
   if (passed) await rm(temporary, { recursive: true, force: true });
@@ -5518,7 +5926,7 @@ try {
 - [ ] **Step 2: 執行 smoke**
 
 Run: `pnpm test:plugins:smoke`
-Expected: 輸出 `PASS plugins: utilityProcess TS, Python stdio, crash isolation, shutdown`，exit code 0。如果 `utilityProcess` 在 `spawn` 之前就 `postMessage` 而遺失 port，檢查 task 12 的 `launchNode` 是否真的等待了 `spawn`。
+Expected: 輸出 `PASS plugins: utilityProcess TS, Python stdio, crash isolation, quit cleanup`，exit code 0。如果 `utilityProcess` 在 `spawn` 之前就 `postMessage` 而遺失 port，檢查 task 12 的 `launchNode` 是否真的等待了 `spawn`。
 
 - [ ] **Step 3: 加入 CI**
 
