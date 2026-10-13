@@ -1,0 +1,10 @@
+# Request the repository owner for changes to contribution and automation controls.
+# 維護者審核貢獻規則、自動化、發布流程與相依套件變更。
+/.github/ @Kingsley1116
+/tools/ci/ @Kingsley1116
+/tools/release/ @Kingsley1116
+/package.json @Kingsley1116
+/pnpm-lock.yaml @Kingsley1116
+/pnpm-workspace.yaml @Kingsley1116
+/SECURITY.md @Kingsley1116
+/CONTRIBUTING.md @Kingsley1116
