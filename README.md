@@ -1,6 +1,6 @@
 # Kobrixa IDE
 
-**Code motion. Build ideas.**
+**Code your creativity.**
 
 Kobrixa IDE is an open-source desktop app for programming LEGO® MINDSTORMS® EV3 robots on Windows, macOS, and Linux. You write programs in Basic Plus (`.bp`), Kobrixa compiles them to native EV3 bytecode, and sends them to the brick over USB or Wi-Fi — no firmware replacement required.
 

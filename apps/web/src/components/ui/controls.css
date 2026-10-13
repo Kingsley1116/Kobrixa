@@ -265,6 +265,17 @@ input.ui-range:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+/* Before metadata loads the timeline is inert, not broken: keep the track, hide the thumb. */
+.ui-audio[data-ready="false"] input.ui-range:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.ui-audio[data-ready="false"] input.ui-range::-webkit-slider-thumb {
+  visibility: hidden;
+}
+.ui-audio[data-ready="false"] input.ui-range::-moz-range-thumb {
+  visibility: hidden;
+}
 summary.ui-disclosure {
   position: relative;
   display: flex;

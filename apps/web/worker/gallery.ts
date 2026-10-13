@@ -6,12 +6,25 @@ import {
   audioWav,
   galleryArchive,
 } from "../src/shared/gallery.js";
-import type { GalleryEntry, GalleryUser, GalleryFile } from "../src/shared/gallery.js";
+import type {
+  GalleryCounts,
+  GalleryEntry,
+  GalleryFile,
+  GalleryList,
+  GallerySort,
+  GalleryUser,
+  MediaKind,
+} from "../src/shared/gallery.js";
 import { requireUser } from "./auth.js";
 import type { GalleryEnv } from "./auth.js";
 type Row = Omit<GalleryEntry, "files"> & { files: string; upload_id: string };
 const select =
   "SELECT entries.*, users.login AS author FROM entries JOIN users ON users.id=entries.owner_id";
+const SORTS: Record<GallerySort, string> = {
+  new: "$date DESC",
+  old: "$date ASC",
+  title: "title COLLATE NOCASE ASC",
+};
 const now = () => Math.floor(Date.now() / 1000);
 function decode(row: Row): GalleryEntry {
   return {
@@ -237,14 +250,16 @@ export async function galleryRoute(
   if (path === "/api/gallery" && req.method === "GET") {
     const scope = url.searchParams.get("scope") ?? "public",
       kind = url.searchParams.get("kind") ?? "",
-      q = (url.searchParams.get("q") ?? "").trim();
+      q = (url.searchParams.get("q") ?? "").trim(),
+      sort = url.searchParams.get("sort") ?? "new";
     const page = Number(url.searchParams.get("page") ?? 1);
     if (
       !Number.isSafeInteger(page) ||
       page < 1 ||
       page > 10000 ||
       q.length > 120 ||
-      !["", "image", "audio"].includes(kind)
+      !["", "image", "audio"].includes(kind) ||
+      !Object.hasOwn(SORTS, sort)
     )
       throw new GalleryError("invalid");
     const clauses: string[] = [],
@@ -257,25 +272,42 @@ export async function galleryRoute(
       clauses.push("status IN ('pending','published','withdrawn','rejected')");
     } else if (scope === "public") clauses.push("status='published'");
     else throw new GalleryError("invalid");
-    if (kind) {
-      clauses.push("kind=?");
-      bindings.push(kind);
-    }
     if (q) {
       clauses.push(
         "(instr(lower(title),lower(?))>0 OR instr(lower(description),lower(?))>0 OR instr(lower(users.login),lower(?))>0)",
       );
       bindings.push(q, q, q);
     }
+    // Counts ignore the kind filter so the type switcher can show every option's total.
+    const where = clauses.join(" AND ");
+    const tally = await env.DB.prepare(
+      `SELECT kind, COUNT(*) AS n FROM entries JOIN users ON users.id=entries.owner_id WHERE ${where} GROUP BY kind`,
+    )
+      .bind(...bindings)
+      .all<{ kind: MediaKind; n: number }>();
+    const counts: GalleryCounts = { all: 0, image: 0, audio: 0 };
+    for (const { kind, n } of tally.results) {
+      counts[kind] = n;
+      counts.all += n;
+    }
+    if (kind) {
+      clauses.push("kind=?");
+      bindings.push(kind);
+    }
+    const order = SORTS[sort as GallerySort].replace(
+      "$date",
+      scope === "public" ? "published_at" : "updated_at",
+    );
     const rows = await env.DB.prepare(
-      `${select} WHERE ${clauses.join(" AND ")} ORDER BY ${scope === "public" ? "published_at" : "updated_at"} DESC, entries.id DESC LIMIT ? OFFSET ?`,
+      `${select} WHERE ${clauses.join(" AND ")} ORDER BY ${order}, entries.id DESC LIMIT ? OFFSET ?`,
     )
       .bind(...bindings, GALLERY_LIMITS.pageSize + 1, (page - 1) * GALLERY_LIMITS.pageSize)
       .all<Row>();
     return Response.json({
       items: rows.results.slice(0, GALLERY_LIMITS.pageSize).map(decode),
       more: rows.results.length > GALLERY_LIMITS.pageSize,
-    });
+      counts,
+    } satisfies GalleryList);
   }
   if (path === "/api/gallery" && req.method === "POST") return save(req, env, requireUser(user));
   const match =

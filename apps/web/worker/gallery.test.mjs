@@ -10,6 +10,7 @@ const digest = (s) => createHash("sha256").update(s).digest("hex");
 const image = new Uint8Array([2, 2, 1, 2]);
 const sound = new Uint8Array([1, 0, 0, 3, 31, 64, 0, 0, 0, 128, 255]);
 let failGitHub = false;
+let releaseFetches = 0;
 before(async () => {
   const bundle = await build({
     entryPoints: [new URL("index.ts", import.meta.url).pathname],
@@ -36,6 +37,20 @@ before(async () => {
         if (failGitHub) return Response.json({ error: "failed" }, { status: 500 });
         const url = new URL(req.url);
         if (url.hostname === "github.com") return Response.json({ access_token: "test-access" });
+        if (url.hostname === "api.github.com" && url.pathname.endsWith("/releases/latest")) {
+          releaseFetches++;
+          const download = "https://github.com/Kingsley1116/Kobrixa/releases/download/v1.0.0/";
+          return Response.json({
+            tag_name: "v1.0.0",
+            published_at: "2026-10-12T12:20:53Z",
+            html_url: "https://github.com/Kingsley1116/Kobrixa/releases/tag/v1.0.0",
+            assets: ["Kobrixa-1.0.0-win32-x64-setup.exe", "SHA256SUMS.txt"].map((name) => ({
+              name,
+              size: 10,
+              browser_download_url: download + name,
+            })),
+          });
+        }
         if (url.hostname === "api.github.com")
           return Response.json({ id: 99, login: "oauth-user" });
         return new Response(null, { status: 404 });
@@ -310,4 +325,50 @@ test("expired sessions and logout revoke access", async () => {
   assert.equal((await (await request("auth/me", { user: "expired" })).json()).user, null);
   assert.equal((await request("auth/logout", { user: "other", method: "POST" })).status, 200);
   assert.equal((await (await request("auth/me", { user: "other" })).json()).user, null);
+});
+test("latest release metadata is public, trimmed and cached", async () => {
+  const res = await request("releases/latest");
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("Cache-Control"), /^public/);
+  const release = await res.json();
+  assert.equal(release.version, "1.0.0");
+  assert.equal(release.platforms.windows.installer.name, "Kobrixa-1.0.0-win32-x64-setup.exe");
+  assert.equal(release.platforms.macos.installer, null);
+  assert.equal((await request("releases/latest", { method: "POST" })).status, 405);
+  failGitHub = true;
+  try {
+    // Either the edge cache answers or the failure surfaces as a 502, never a GitHub error body.
+    const again = await request("releases/latest");
+    assert.ok([200, 502].includes(again.status));
+  } finally {
+    failGitHub = false;
+  }
+  assert.ok(releaseFetches >= 1);
+});
+test("list sorts by allow-listed order and counts kinds independent of the kind filter", async () => {
+  const tag = `Sortable${Date.now()}`;
+  const b = await published({ title: `${tag} beta` });
+  const a = await published({ title: `${tag} Alpha` });
+  const s = await published({ bytes: sound, name: "s.rsf", title: `${tag} gamma` });
+  for (const [i, e] of [b, a, s].entries())
+    await db
+      .prepare("UPDATE entries SET published_at=? WHERE id=?")
+      .bind(1000 + i, e.id)
+      .run();
+  const ids = async (query) =>
+    (await (await request(`gallery?q=${tag}${query}`)).json()).items.map((i) => i.id);
+  assert.deepEqual(await ids(""), [s.id, a.id, b.id]);
+  assert.deepEqual(await ids("&sort=old"), [b.id, a.id, s.id]);
+  assert.deepEqual(await ids("&sort=title"), [a.id, b.id, s.id]);
+  assert.equal((await request(`gallery?sort=published_at`)).status, 400);
+  const filtered = await (await request(`gallery?q=${tag}&kind=audio`)).json();
+  assert.deepEqual(
+    filtered.items.map((i) => i.id),
+    [s.id],
+  );
+  assert.deepEqual(filtered.counts, { all: 3, image: 2, audio: 1 });
+  await create({ title: `${tag} draft` });
+  assert.deepEqual((await (await request(`gallery?q=${tag}`)).json()).counts.all, 3);
+  const mine = await (await request(`gallery?q=${tag}&scope=mine`, { user: "author" })).json();
+  assert.equal(mine.counts.all, 4);
 });

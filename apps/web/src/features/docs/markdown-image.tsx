@@ -1,11 +1,10 @@
+import { docsImageUrl } from "../../shared/docs-images.js";
 import "./styles/prose.css";
-
-const docsImageBase = "https://raw.githubusercontent.com/Kingsley1116/Kobrixa/main/docs/images/";
 
 /** Repository-relative `../images/x.png` paths do not exist on the site, so serve them from GitHub. */
 function resolveImageSource(src: string | undefined): string | undefined {
   const match = src ? /^(?:\.\.\/)*images\/(.+)$/.exec(src) : null;
-  return match ? `${docsImageBase}${match[1]}` : src;
+  return match ? docsImageUrl(match[1]!) : src;
 }
 
 type MarkdownImageProps = {

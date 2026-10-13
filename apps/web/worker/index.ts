@@ -2,9 +2,15 @@ import { GalleryError } from "../src/shared/gallery.js";
 import { authRoute, checkOrigin, userFor } from "./auth.js";
 import type { GalleryEnv } from "./auth.js";
 import { cleanup, galleryRoute } from "./gallery.js";
+import { releasesRoute } from "./releases.js";
 export default {
-  async fetch(req: Request, env: GalleryEnv): Promise<Response> {
+  async fetch(req: Request, env: GalleryEnv, ctx: ExecutionContext): Promise<Response> {
     if (!new URL(req.url).pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
+    // Release metadata is public and shared by every visitor, so it keeps its own cache policy.
+    if (new URL(req.url).pathname === "/api/releases/latest")
+      return releasesRoute(req, ctx).catch(() =>
+        Response.json({ error: "unavailable" }, { status: 502 }),
+      );
     let response: Response;
     try {
       if (!["GET", "HEAD"].includes(req.method)) checkOrigin(req, env);

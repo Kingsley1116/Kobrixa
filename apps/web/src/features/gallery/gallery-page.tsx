@@ -1,265 +1,100 @@
 import { Icon } from "../../components/ui/icon.js";
 import { PolicyNotice } from "../../components/legal-links.js";
 import { Select } from "../../components/ui/select.js";
-import { AudioPlayer } from "../../components/ui/audio-player.js";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, NavLink, useLocation, useSearchParams } from "react-router";
 import { SiteHeader } from "../../components/site-header.js";
-import { attribution, LICENSE_URL } from "../../shared/gallery.js";
-import type {
-  GalleryEntry,
-  GalleryList,
-  GalleryStatus,
-  GalleryUser,
-} from "../../shared/gallery.js";
+import type { GalleryEntry, GalleryList, GalleryUser, MediaKind } from "../../shared/gallery.js";
 import type { PageContext } from "../../app/app.js";
 import type { Translate } from "../tools/components/tools-ui.js";
 import { GalleryEditor } from "./gallery-editor.js";
+import { EntryDetail } from "./entry-detail.js";
 import { api, errorText } from "./api.js";
+import {
+  Avatar,
+  details,
+  Eyebrow,
+  formatDate,
+  KindBadge,
+  Preview,
+  StatusBadge,
+} from "./gallery-parts.js";
 import "./gallery.css";
 
-function statusText(status: GalleryStatus, t: Translate) {
-  const labels: Record<GalleryStatus, [string, string]> = {
-    draft: ["草稿", "Draft"],
-    pending: ["待審核", "Pending review"],
-    published: ["已公開", "Published"],
-    rejected: ["已拒絕", "Rejected"],
-    withdrawn: ["已撤下", "Withdrawn"],
-  };
-  return t(...labels[status]);
-}
-function details(entry: GalleryEntry) {
-  return entry.kind === "image"
-    ? `${entry.files[0]?.width} × ${entry.files[0]?.height} px`
-    : `${entry.files.reduce((sum, f) => sum + (f.duration ?? 0), 0).toFixed(2)} s · ${entry.files.length} RSF`;
-}
-function Preview({ entry, t }: { entry: GalleryEntry; t: Translate }) {
-  const url = `/api/gallery/${entry.id}/preview?v=${entry.version}`;
+type Section = "" | "mine" | "admin";
+function GalleryCard({ item, section, t }: { item: GalleryEntry; section: Section; t: Translate }) {
+  const date = section ? item.updated_at : item.published_at;
   return (
-    <div className={`gallery-preview ${entry.kind}`}>
-      {entry.kind === "image" ? (
-        <img src={url} alt={entry.title} />
-      ) : (
-        <>
-          <svg className="gallery-sound-mark" viewBox="0 0 160 48" aria-hidden="true">
-            {[16, 32, 46, 24, 38, 16, 30].map((height, index) => (
-              <rect
-                key={index}
-                x={index * 23}
-                y={(48 - height) / 2}
-                width={12}
-                height={height}
-                rx={3}
-              />
-            ))}
-          </svg>
-          <AudioPlayer
-            src={url}
-            title={entry.title}
-            t={t}
-            duration={entry.files.reduce((sum, file) => sum + (file.duration ?? 0), 0)}
-          />
-        </>
-      )}
+    <article className="gallery-card">
+      <div className="gallery-card-media">
+        <Preview entry={item} t={t} />
+        <div className="gallery-card-badges">
+          <KindBadge entry={item} />
+          {section && <StatusBadge status={item.status} t={t} />}
+        </div>
+      </div>
+      <div className="gallery-card-body">
+        <h2>
+          <Link to={`/gallery/${item.id}`}>{item.title}</Link>
+        </h2>
+        <p className="gallery-card-meta">
+          <span className="gallery-author">
+            <Avatar id={item.owner_id} login={item.author} size={22} />@{item.author}
+          </span>
+          <span>{details(item)}</span>
+        </p>
+        {date && (
+          <p className="gallery-card-date">
+            {section ? t("更新於 ", "Updated ") : ""}
+            {formatDate(date, t)}
+          </p>
+        )}
+      </div>
+    </article>
+  );
+}
+function SkeletonGrid({ t }: { t: Translate }) {
+  return (
+    <div className="gallery-grid" aria-busy="true">
+      <p role="status" className="sr-only">
+        {t("正在載入素材…", "Loading media…")}
+      </p>
+      {Array.from({ length: 6 }, (_, i) => (
+        <div className="gallery-card gallery-skeleton" key={i} aria-hidden="true">
+          <div className="gallery-card-media" />
+          <div className="gallery-card-body">
+            <i />
+            <i />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
-function EntryDetail({
-  entry,
-  user,
-  t,
-  refresh,
+function EmptyState({
+  title,
+  body,
+  children,
 }: {
-  entry: GalleryEntry;
-  user: GalleryUser | null;
-  t: Translate;
-  refresh: () => void;
+  title: string;
+  body: string;
+  children?: ReactNode;
 }) {
-  const [editing, setEditing] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [reason, setReason] = useState(""),
-    [copied, setCopied] = useState(false);
-  async function act(action: string) {
-    setBusy(true);
-    setError("");
-    try {
-      await api(`gallery/${entry.id}/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: entry.version, reason }),
-      });
-      refresh();
-    } catch (e) {
-      setError(errorText(e, t));
-    } finally {
-      setBusy(false);
-    }
-  }
-  const owner = user?.id === entry.owner_id;
-  const editable = ["draft", "rejected", "withdrawn"].includes(entry.status);
   return (
-    <article className="gallery-detail">
-      <Link className="gallery-back" to="/gallery">
-        <Icon name="arrow-left" /> {t("返回素材庫", "Back to gallery")}
-      </Link>
-      <div className="gallery-detail-head">
-        <div>
-          <span className={`gallery-status ${entry.status}`}>{statusText(entry.status, t)}</span>
-          <h1>{entry.title}</h1>
-          <p>
-            <a
-              href={`https://github.com/${encodeURIComponent(entry.author)}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              @{entry.author}
-            </a>{" "}
-            · {details(entry)} ·{" "}
-            <a href={LICENSE_URL} target="_blank" rel="noreferrer">
-              CC BY 4.0
-            </a>
-          </p>
-        </div>
+    <div className="gallery-empty">
+      <div className="gallery-empty-art" aria-hidden="true">
+        <span>
+          <Icon name="image" />
+        </span>
+        <span>
+          <Icon name="audio" />
+        </span>
       </div>
-      {entry.reason && (
-        <p className="gallery-note">
-          {t("審核說明：", "Review note: ")}
-          {entry.reason}
-        </p>
-      )}
-      <Preview entry={entry} t={t} />
-      <p className="gallery-description">{entry.description}</p>
-      <div className="gallery-actions">
-        <a
-          className="gallery-primary"
-          href={`/api/gallery/${entry.id}/${entry.files.length > 1 ? "archive" : "files/0"}`}
-        >
-          {entry.files.length > 1
-            ? t("下載音訊組合 ZIP", "Download audio ZIP")
-            : t("下載 EV3 檔案", "Download EV3 file")}
-        </a>
-        <a href={`/api/gallery/${entry.id}/archive`}>
-          {t("含署名與說明的 ZIP", "ZIP with attribution & instructions")}
-        </a>
-        <button
-          className="gallery-button"
-          onClick={() => {
-            void navigator.clipboard
-              .writeText(attribution(entry, window.location.origin))
-              .then(() => setCopied(true))
-              .catch(() =>
-                setError(
-                  t(
-                    "無法複製，請選取下方署名文字。",
-                    "Could not copy. Select the attribution text below.",
-                  ),
-                ),
-              );
-          }}
-        >
-          {copied ? t("已複製", "Copied") : t("複製署名", "Copy attribution")}
-        </button>
-      </div>
-      <pre className="gallery-attribution">{attribution(entry, window.location.origin)}</pre>
-      {entry.files.length > 1 && (
-        <>
-          <details>
-            <summary className="ui-disclosure">
-              {t("個別 RSF 檔案", "Individual RSF files")}
-            </summary>
-            <ol>
-              {entry.files.map((f, i) => (
-                <li key={f.name}>
-                  <a href={`/api/gallery/${entry.id}/files/${i}`}>{f.name}</a> ·{" "}
-                  {f.duration?.toFixed(2)} s
-                </li>
-              ))}
-            </ol>
-          </details>
-          <p className="gallery-muted">
-            {t(
-              "EV3 換檔時可能短暫停頓；瀏覽器試聽不模擬載入延遲。",
-              "EV3 may pause between files. Browser preview does not simulate loading delays.",
-            )}
-          </p>
-        </>
-      )}
-      {owner && (
-        <div className="gallery-management">
-          <h2>{t("管理作品", "Manage work")}</h2>
-          {editable ? (
-            <button className="gallery-button" onClick={() => setEditing(!editing)}>
-              {editing ? t("收起編輯器", "Close editor") : t("修改及重新送審", "Edit & submit")}
-            </button>
-          ) : (
-            <>
-              <p>
-                {t(
-                  "修改前需先撤下作品；修改後重新送審。",
-                  "Withdraw before editing, then submit again for review.",
-                )}
-              </p>
-              <button
-                className="gallery-button"
-                disabled={busy}
-                onClick={() => void act("withdraw")}
-              >
-                {t("撤下作品", "Withdraw")}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-      {editing && editable && <GalleryEditor entry={entry} t={t} onSaved={refresh} />}
-      {user?.admin && ["pending", "published"].includes(entry.status) && (
-        <div className="gallery-management">
-          <h2>{t("審核管理", "Moderation")}</h2>
-          <label className="gallery-field">
-            {t("拒絕／下架原因", "Reason for rejection / removal")}
-            <textarea
-              className="ui-control gallery-input"
-              value={reason}
-              maxLength={2000}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </label>
-          <div className="gallery-actions">
-            {entry.status === "pending" ? (
-              <>
-                <button
-                  className="gallery-button gallery-primary"
-                  disabled={busy}
-                  onClick={() => void act("approve")}
-                >
-                  {t("核准並公開", "Approve & publish")}
-                </button>
-                <button
-                  className="gallery-button"
-                  disabled={busy || !reason.trim()}
-                  onClick={() => void act("reject")}
-                >
-                  {t("拒絕", "Reject")}
-                </button>
-              </>
-            ) : (
-              <button
-                className="gallery-button"
-                disabled={busy || !reason.trim()}
-                onClick={() => void act("takedown")}
-              >
-                {t("下架", "Remove from public gallery")}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      {error && (
-        <p role="alert" className="gallery-error">
-          {error}
-        </p>
-      )}
-    </article>
+      <h2>{title}</h2>
+      <p>{body}</p>
+      {children}
+    </div>
   );
 }
 export function GalleryPage({ locale, onLocaleChange }: PageContext) {
@@ -276,6 +111,7 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
     [loading, setLoading] = useState(true),
     [revision, setRevision] = useState(0);
   const [search, setSearch] = useState(params.get("q") ?? "");
+  const results = useRef<HTMLDivElement>(null);
   const query = params.toString();
   useEffect(() => {
     document.title = t("EV3 素材庫 — Kobrixa", "EV3 Gallery — Kobrixa");
@@ -326,8 +162,27 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
   }, [pathname, query, revision]);
   const refresh = () => setRevision((n) => n + 1);
   const page = Number(params.get("page") ?? 1);
-  const updateQuery = (patch: Record<string, string>) =>
-    setParams({ ...Object.fromEntries(params), ...patch });
+  const kind = params.get("kind") ?? "",
+    q = params.get("q") ?? "",
+    sort = params.get("sort") ?? "";
+  const filtered = Boolean(kind || q);
+  const counts = data?.counts;
+  const updateQuery = (patch: Record<string, string>) => {
+    const next = { ...Object.fromEntries(params), ...patch };
+    for (const key of Object.keys(next)) if (!next[key]) delete next[key];
+    if (next.page === "1") delete next.page;
+    setParams(next);
+  };
+  const goToPage = (next: number) => {
+    updateQuery({ page: String(next) });
+    results.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const kinds: { value: "" | MediaKind; label: string; count: number | undefined }[] = [
+    { value: "", label: t("全部", "All"), count: counts?.all },
+    { value: "image", label: t("圖片", "Images"), count: counts?.image },
+    { value: "audio", label: t("音訊", "Audio"), count: counts?.audio },
+  ];
+  const resultCount = counts ? (kind ? counts[kind as MediaKind] : counts.all) : undefined;
   return (
     <>
       <a className="skip-link" href="#content">
@@ -346,12 +201,13 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
               <NavLink to="/gallery/admin">{t("審核管理", "Moderation")}</NavLink>
             )}
           </nav>
-          <div>
+          <div className="gallery-account">
             {auth?.user ? (
               <>
+                <Avatar id={auth.user.id} login={auth.user.login} size={30} />
                 <span>@{auth.user.login}</span>
                 <button
-                  className="gallery-button"
+                  className="gallery-link-button"
                   onClick={() => {
                     void api("auth/logout", { method: "POST" })
                       .then(() => {
@@ -365,7 +221,7 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
                 </button>
               </>
             ) : auth?.loginAvailable ? (
-              <a href="/api/auth/github">
+              <a className="gallery-button" href="/api/auth/github">
                 {t("GitHub 登入", "Sign in with GitHub")} <Icon name="external" />
               </a>
             ) : auth ? (
@@ -374,28 +230,79 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
           </div>
         </div>
         {!auth?.user && <PolicyNotice t={t} action="signin" />}
-        {(list || submit) && (
+        {section === "" && (
           <header className="gallery-hero">
-            <p className="gallery-eyebrow">KOBRIXA / COMMUNITY GALLERY</p>
+            <div>
+              <Eyebrow>{t("社群素材庫", "COMMUNITY GALLERY")}</Eyebrow>
+              <h1>{t("EV3 素材庫", "EV3 Gallery")}</h1>
+              <p className="gallery-lead">
+                {t(
+                  "探索社群分享的圖片與音效。免費下載，署名使用。",
+                  "Discover community images and sounds. Download freely, use with attribution.",
+                )}
+              </p>
+              <div className="gallery-hero-cta">
+                <Link className="gallery-primary" to="/gallery/submit">
+                  <Icon name="upload" />
+                  {t("分享你的素材", "Share your media")}
+                </Link>
+                <Link className="gallery-text-link" to="/tools">
+                  {t("先用 EV3 工具轉換", "Convert with EV3 tools")} <Icon name="arrow" />
+                </Link>
+              </div>
+            </div>
+            <div className="gallery-hero-card" aria-hidden="true">
+              <div className="gallery-screen-bar">
+                <i />
+                <i />
+                <i />
+              </div>
+              <div className="gallery-hero-lcd">
+                <Icon name="image" size="56" />
+                <Icon name="audio" size="56" />
+              </div>
+              <dl>
+                <div>
+                  <dt>{t("圖片", "Images")}</dt>
+                  <dd>{counts && !q ? counts.image : "—"}</dd>
+                </div>
+                <div>
+                  <dt>{t("音訊", "Sounds")}</dt>
+                  <dd>{counts && !q ? counts.audio : "—"}</dd>
+                </div>
+                <div>
+                  <dt>{t("授權", "License")}</dt>
+                  <dd>CC BY 4.0</dd>
+                </div>
+              </dl>
+            </div>
+          </header>
+        )}
+        {(submit || section === "mine" || section === "admin") && (
+          <header className="gallery-hero compact">
+            <Eyebrow>{t("社群素材庫", "COMMUNITY GALLERY")}</Eyebrow>
             <h1>
               {submit
-                ? t("把你的創意，分享給下一個作品。", "Share a spark for the next creation.")
+                ? t("分享素材", "Share media")
                 : section === "mine"
                   ? t("我的作品", "My works")
-                  : section === "admin"
-                    ? t("審核管理", "Moderation")
-                    : t("讓 EV3，有聲有色。", "Give your EV3 a little character.")}
+                  : t("審核管理", "Moderation")}
             </h1>
-            <p>
+            <p className="gallery-lead">
               {submit
                 ? t(
                     "轉換、預覽、送審。讓每個人都能用你的素材創作。",
                     "Convert, preview, submit. Help everyone create with your media.",
                   )
-                : t(
-                    "探索社群分享的圖片與音效。免費下載，署名使用。",
-                    "Discover community images and sounds. Download freely, use with attribution.",
-                  )}
+                : section === "mine"
+                  ? t(
+                      "草稿、待審與已公開的作品都在這裡。",
+                      "Your drafts, pending and published works, all in one place.",
+                    )
+                  : t(
+                      "核准、拒絕或下架社群投稿。",
+                      "Approve, reject or remove community submissions.",
+                    )}
             </p>
           </header>
         )}
@@ -411,123 +318,181 @@ export function GalleryPage({ locale, onLocaleChange }: PageContext) {
           (auth?.user ? (
             <GalleryEditor t={t} />
           ) : (
-            <div className="gallery-empty">
-              <h2>{t("登入後開始分享", "Sign in to start sharing")}</h2>
-              <p>
-                {t(
-                  "所有投稿都會經過審核，公開下載不需登入。",
-                  "All submissions are reviewed. Public downloads need no account.",
-                )}
-              </p>
+            <EmptyState
+              title={t("登入後開始分享", "Sign in to start sharing")}
+              body={t(
+                "所有投稿都會經過審核，公開下載不需登入。",
+                "All submissions are reviewed. Public downloads need no account.",
+              )}
+            >
               {auth?.loginAvailable ? (
                 <a className="gallery-primary" href="/api/auth/github">
                   {t("使用 GitHub 登入", "Continue with GitHub")}
                 </a>
               ) : (
-                <p>
+                <p className="gallery-muted">
                   {auth
                     ? t("登入服務尚未設定完成。", "Sign-in is not configured yet.")
                     : t("正在載入…", "Loading…")}
                 </p>
               )}
-            </div>
+            </EmptyState>
           ))}
         {list && (
-          <form
-            className="gallery-filters"
-            onSubmit={(e) => {
-              e.preventDefault();
-              updateQuery({ q: search, page: "1" });
-            }}
-          >
-            <label className="gallery-field gallery-search">
-              <span className="sr-only">{t("搜尋素材", "Search media")}</span>
-              <input
-                className="ui-control gallery-input"
-                type="search"
-                placeholder={t("搜尋標題、說明或作者…", "Search title, description or creator…")}
-                value={search}
-                maxLength={120}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </label>
-            <button className="gallery-button" type="submit">
-              {t("搜尋", "Search")}
-            </button>
+          <div className="gallery-filters" ref={results}>
+            <form
+              className="gallery-search"
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                updateQuery({ q: search.trim(), page: "1" });
+              }}
+            >
+              <label>
+                <span className="sr-only">{t("搜尋素材", "Search media")}</span>
+                <input
+                  className="ui-control gallery-input"
+                  type="search"
+                  placeholder={t("搜尋標題、說明或作者…", "Search title, description or creator…")}
+                  value={search}
+                  maxLength={120}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </label>
+              <button className="gallery-search-submit" type="submit">
+                {t("搜尋", "Search")}
+              </button>
+            </form>
+            <div className="gallery-segments" role="group" aria-label={t("素材類型", "Media type")}>
+              {kinds.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={kind === option.value}
+                  onClick={() => updateQuery({ kind: option.value, page: "1" })}
+                >
+                  {option.value && <Icon name={option.value} />}
+                  {option.label}
+                  {option.count !== undefined && <small>{option.count}</small>}
+                </button>
+              ))}
+            </div>
             <Select
-              label={t("素材類型", "Media type")}
-              value={params.get("kind") ?? ""}
+              label={t("排序", "Sort")}
+              value={sort}
               options={[
-                { value: "", label: t("全部素材", "All media") },
-                { value: "image", label: t("圖片", "Images") },
-                { value: "audio", label: t("音訊", "Audio") },
+                { value: "", label: t("最新", "Newest") },
+                { value: "old", label: t("最舊", "Oldest") },
+                { value: "title", label: t("標題 A–Z", "Title A–Z") },
               ]}
-              onValueChange={(kind) => updateQuery({ kind, page: "1" })}
+              onValueChange={(value) => updateQuery({ sort: value, page: "1" })}
             />
-          </form>
+          </div>
+        )}
+        {list && data && (filtered || resultCount !== undefined) && (
+          <p className="gallery-summary">
+            {resultCount !== undefined && (
+              <span>
+                {t(
+                  `共 ${resultCount} 件`,
+                  `${resultCount} ${resultCount === 1 ? "work" : "works"}`,
+                )}
+              </span>
+            )}
+            {q && <span>{t(`搜尋「${q}」`, `matching “${q}”`)}</span>}
+            {filtered && (
+              <button
+                className="gallery-link-button"
+                type="button"
+                onClick={() => updateQuery({ q: "", kind: "", page: "1" })}
+              >
+                {t("清除篩選", "Clear filters")}
+              </button>
+            )}
+          </p>
         )}
         {error !== undefined && (
           <div role="alert" className="gallery-error">
             {errorText(error, t)}{" "}
-            <button className="gallery-button" onClick={refresh}>
+            <button className="gallery-link-button" onClick={refresh}>
               {t("重新載入", "Reload")}
             </button>
           </div>
         )}
-        {loading && <p role="status">{t("正在載入素材…", "Loading media…")}</p>}
+        {loading && list && <SkeletonGrid t={t} />}
+        {loading && !list && !submit && (
+          <p role="status" className="gallery-muted">
+            {t("正在載入素材…", "Loading media…")}
+          </p>
+        )}
         {data && (
           <>
             {data.items.length ? (
               <div className="gallery-grid">
                 {data.items.map((item) => (
-                  <article className="gallery-card" key={item.id}>
-                    <Preview entry={item} t={t} />
-                    <div className="gallery-card-body">
-                      <div className="gallery-card-meta">
-                        <span>{item.kind === "image" ? "RGF" : "RSF"}</span>
-                        <span>{statusText(item.status, t)}</span>
-                      </div>
-                      <h2>
-                        <Link to={`/gallery/${item.id}`}>{item.title}</Link>
-                      </h2>
-                      <p className="gallery-muted">
-                        @{item.author} · {details(item)}
-                      </p>
-                    </div>
-                  </article>
+                  <GalleryCard key={item.id} item={item} section={section as Section} t={t} />
                 ))}
               </div>
+            ) : filtered ? (
+              <EmptyState
+                title={t("找不到符合的素材", "No matching media")}
+                body={t("換個關鍵字或類型試試。", "Try another keyword or media type.")}
+              >
+                <button
+                  className="gallery-button"
+                  type="button"
+                  onClick={() => updateQuery({ q: "", kind: "", page: "1" })}
+                >
+                  {t("清除篩選", "Clear filters")}
+                </button>
+              </EmptyState>
             ) : (
-              <div className="gallery-empty">
-                <h2>{t("這裡還沒有素材", "No media here yet")}</h2>
-                <p>
-                  {t(
-                    "試試其他搜尋條件，或分享第一件作品。",
-                    "Try another search, or share the first creation.",
-                  )}
-                </p>
-                <Link className="gallery-primary" to="/gallery/submit">
-                  {t("分享素材", "Share media")}
-                </Link>
-              </div>
+              <EmptyState
+                title={
+                  section === "admin"
+                    ? t("目前沒有待處理的投稿", "Nothing to review")
+                    : section === "mine"
+                      ? t("你還沒有作品", "You have no works yet")
+                      : t("這裡還沒有素材", "No media here yet")
+                }
+                body={
+                  section === "admin"
+                    ? t("新的投稿會出現在這裡。", "New submissions will appear here.")
+                    : t(
+                        "上傳圖片或音訊，審核通過後會公開在這裡。",
+                        "Upload an image or sound. Approved works appear here.",
+                      )
+                }
+              >
+                {section !== "admin" && (
+                  <Link className="gallery-primary" to="/gallery/submit">
+                    <Icon name="upload" />
+                    {t("分享素材", "Share media")}
+                  </Link>
+                )}
+              </EmptyState>
             )}
-            <nav className="gallery-pagination" aria-label={t("分頁", "Pagination")}>
-              <button
-                className="gallery-button"
-                disabled={page <= 1}
-                onClick={() => updateQuery({ page: String(page - 1) })}
-              >
-                {t("上一頁", "Previous")}
-              </button>
-              <span>{page}</span>
-              <button
-                className="gallery-button"
-                disabled={!data.more}
-                onClick={() => updateQuery({ page: String(page + 1) })}
-              >
-                {t("下一頁", "Next")}
-              </button>
-            </nav>
+            {(page > 1 || data.more) && (
+              <nav className="gallery-pagination" aria-label={t("分頁", "Pagination")}>
+                <button
+                  className="gallery-button"
+                  disabled={page <= 1}
+                  onClick={() => goToPage(page - 1)}
+                >
+                  <Icon name="chevron-left" />
+                  {t("上一頁", "Previous")}
+                </button>
+                <span aria-current="page">{t(`第 ${page} 頁`, `Page ${page}`)}</span>
+                <button
+                  className="gallery-button"
+                  disabled={!data.more}
+                  onClick={() => goToPage(page + 1)}
+                >
+                  {t("下一頁", "Next")}
+                  <Icon name="chevron-right" />
+                </button>
+              </nav>
+            )}
           </>
         )}
         {entry && (

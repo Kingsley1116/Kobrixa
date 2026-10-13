@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { Icon } from "../../components/ui/icon.js";
 import { PolicyNotice } from "../../components/legal-links.js";
 import { FileDrop } from "../../components/ui/file-drop.js";
 import { AudioPlayer } from "../../components/ui/audio-player.js";
@@ -117,169 +118,225 @@ export function GalleryEditor({
     }
   }
   const ready = title.trim().length > 0 && (!replace || Boolean(media));
+  const checks: [boolean, string][] = [
+    [Boolean(media) || !replace, t("已產生 EV3 檔案", "EV3 file ready")],
+    [title.trim().length > 0, t("已填寫標題", "Title added")],
+    [agreement, t("已同意授權條款", "License accepted")],
+  ];
+  const sources = [
+    { key: "image", icon: "image", label: t("轉換圖片", "Convert image") },
+    { key: "audio", icon: "audio", label: t("轉換音訊", "Convert audio") },
+    { key: "native", icon: "upload", label: t("匯入 EV3 檔案", "Import EV3 files") },
+  ] as const;
   return (
     <section className="gallery-editor">
-      <div className="gallery-note">
-        {t(
-          "原始檔只在瀏覽器處理；儲存草稿或送審時，只上傳 EV3 成品。",
-          "Originals stay in your browser. Saving a draft or submitting uploads only the EV3 output.",
-        )}
-      </div>
-      <fieldset className="gallery-editor-fields" disabled={busy}>
-        <label className="gallery-field">
-          {t("作品標題", "Title")}
-          <input
-            className="ui-control gallery-input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            maxLength={120}
-            required
-          />
-        </label>
-        <label className="gallery-field">
-          {t("說明（選填）", "Description (optional)")}
-          <textarea
-            className="ui-control gallery-input"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            maxLength={2000}
-            rows={3}
-          />
-        </label>
-        {entry && (
-          <label className="gallery-field gallery-check ui-choice-label">
-            <input
-              className="ui-choice gallery-input"
-              type="checkbox"
-              checked={replace}
-              onChange={(e) => setReplace(e.target.checked)}
-            />
-            {t("替換媒體檔案", "Replace media files")}
-          </label>
-        )}
-        {replace && (
-          <>
-            <div className="gallery-tabs" role="group" aria-label={t("素材來源", "Media source")}>
-              {(["image", "audio", "native"] as const).map((key) => (
-                <button
-                  className="gallery-button"
-                  type="button"
-                  key={key}
-                  aria-pressed={mode === key}
-                  onClick={() => {
-                    nativeVersion.current++;
-                    setMode(key);
-                    setMedia(undefined);
-                    setError("");
-                  }}
-                >
-                  {key === "image"
-                    ? t("轉換圖片", "Convert image")
-                    : key === "audio"
-                      ? t("轉換音訊", "Convert audio")
-                      : t("匯入 EV3 檔案", "Import EV3 files")}
-                </button>
-              ))}
-            </div>
-            <p className="gallery-muted">
+      <div className="gallery-editor-layout">
+        <fieldset className="gallery-editor-fields" disabled={busy}>
+          <div className="gallery-step">
+            <header>
+              <span className="gallery-step-index">01</span>
+              <h2>{t("選擇素材", "Choose media")}</h2>
+            </header>
+            <p className="gallery-note">
               {t(
-                "圖片最多 20 MiB；音訊最多 50 MiB，選取範圍最長 60 秒。長音訊請選擇分段匯出。",
-                "Images: 20 MiB. Audio: 50 MiB, up to 60 seconds selected. Choose sequence export for longer audio.",
+                "原始檔只在瀏覽器處理；儲存草稿或送審時，只上傳 EV3 成品。",
+                "Originals stay in your browser. Saving a draft or submitting uploads only the EV3 output.",
               )}
             </p>
-            <div className="studio gallery-studio">
-              {mode === "image" && (
-                <ImageTool
-                  t={t}
-                  active
-                  onExport={setMedia}
-                  sourceLimit={GALLERY_LIMITS.imageSource}
+            {entry && (
+              <label className="gallery-field gallery-check ui-choice-label">
+                <input
+                  className="ui-choice gallery-input"
+                  type="checkbox"
+                  checked={replace}
+                  onChange={(e) => setReplace(e.target.checked)}
                 />
-              )}
-              {mode === "audio" && (
-                <AudioTool
-                  t={t}
-                  active
-                  onExport={setMedia}
-                  sourceLimit={GALLERY_LIMITS.audioSource}
-                  durationLimit={GALLERY_LIMITS.duration}
-                />
-              )}
-              {mode === "native" && (
-                <div className="gallery-native">
-                  <FileDrop
-                    accept=".rgf,.rsf"
-                    multiple
-                    disabled={busy}
-                    t={t}
-                    label={t(
-                      "選擇一張 RGF 或一至八個 RSF",
-                      "Choose one RGF or up to eight RSF files",
-                    )}
-                    onFiles={(files) => void native(files)}
-                  />
-                  <p>
-                    {t(
-                      "RSF 依檔名排序，僅接受 8 kHz 未壓縮格式。",
-                      "RSF files are ordered by file name; only uncompressed 8 kHz files are supported.",
-                    )}
-                  </p>
-                  {media && <NativePreview media={media} t={t} />}
+                {t("替換媒體檔案", "Replace media files")}
+              </label>
+            )}
+            {replace && (
+              <>
+                <div
+                  className="gallery-segments"
+                  role="group"
+                  aria-label={t("素材來源", "Media source")}
+                >
+                  {sources.map((source) => (
+                    <button
+                      type="button"
+                      key={source.key}
+                      aria-pressed={mode === source.key}
+                      onClick={() => {
+                        nativeVersion.current++;
+                        setMode(source.key);
+                        setMedia(undefined);
+                        setError("");
+                      }}
+                    >
+                      <Icon name={source.icon} />
+                      {source.label}
+                    </button>
+                  ))}
                 </div>
-              )}
+                <p className="gallery-muted">
+                  {t(
+                    "圖片最多 20 MiB；音訊最多 50 MiB，選取範圍最長 60 秒。長音訊請選擇分段匯出。",
+                    "Images: 20 MiB. Audio: 50 MiB, up to 60 seconds selected. Choose sequence export for longer audio.",
+                  )}
+                </p>
+                <div className="studio gallery-studio">
+                  {mode === "image" && (
+                    <ImageTool
+                      t={t}
+                      active
+                      onExport={setMedia}
+                      sourceLimit={GALLERY_LIMITS.imageSource}
+                    />
+                  )}
+                  {mode === "audio" && (
+                    <AudioTool
+                      t={t}
+                      active
+                      onExport={setMedia}
+                      sourceLimit={GALLERY_LIMITS.audioSource}
+                      durationLimit={GALLERY_LIMITS.duration}
+                    />
+                  )}
+                  {mode === "native" && (
+                    <div className="gallery-native">
+                      <FileDrop
+                        accept=".rgf,.rsf"
+                        multiple
+                        disabled={busy}
+                        t={t}
+                        label={t(
+                          "選擇一張 RGF 或一至八個 RSF",
+                          "Choose one RGF or up to eight RSF files",
+                        )}
+                        onFiles={(files) => void native(files)}
+                      />
+                      <p className="gallery-muted">
+                        {t(
+                          "RSF 依檔名排序，僅接受 8 kHz 未壓縮格式。",
+                          "RSF files are ordered by file name; only uncompressed 8 kHz files are supported.",
+                        )}
+                      </p>
+                      {media && <NativePreview media={media} t={t} />}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="gallery-step">
+            <header>
+              <span className="gallery-step-index">02</span>
+              <h2>{t("作品資訊", "Details")}</h2>
+            </header>
+            <label className="gallery-field">
+              <span className="gallery-field-label">
+                {t("作品標題", "Title")}
+                <small>{title.length}/120</small>
+              </span>
+              <input
+                className="ui-control gallery-input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={120}
+                required
+              />
+            </label>
+            <label className="gallery-field">
+              <span className="gallery-field-label">
+                {t("說明（選填）", "Description (optional)")}
+                <small>{description.length}/2000</small>
+              </span>
+              <textarea
+                className="ui-control gallery-input"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={2000}
+                rows={4}
+              />
+            </label>
+          </div>
+          <div className="gallery-step">
+            <header>
+              <span className="gallery-step-index">03</span>
+              <h2>{t("授權與送出", "License & submit")}</h2>
+            </header>
+            <PolicyNotice t={t} action="save" />
+            <label className="gallery-field gallery-check ui-choice-label">
+              <input
+                className="ui-choice gallery-input"
+                type="checkbox"
+                checked={agreement}
+                onChange={(e) => setAgreement(e.target.checked)}
+              />
+              <span>
+                {t("我同意", "I agree to the ")}{" "}
+                <Link to="/terms" target="_blank" rel="noreferrer">
+                  {t("服務條款", "Terms of Service")}
+                </Link>
+                {t(
+                  "，確認有權分享此素材，並同意以 ",
+                  ", confirm my right to share this material, and license it under ",
+                )}
+                <a href={LICENSE_URL} target="_blank" rel="noreferrer">
+                  CC BY 4.0
+                </a>
+                {t(
+                  " 公開，允許署名後分享及改作。",
+                  ", allowing sharing and adaptation with attribution.",
+                )}
+              </span>
+            </label>
+            <div className="gallery-actions">
+              <button
+                type="button"
+                className="gallery-button gallery-primary"
+                disabled={!ready || !agreement}
+                onClick={() => void save(true)}
+              >
+                {busy ? t("處理中…", "Working…") : t("送交審核", "Submit for review")}
+              </button>
+              <button
+                className="gallery-button"
+                type="button"
+                disabled={!ready}
+                onClick={() => void save(false)}
+              >
+                {t("儲存草稿", "Save draft")}
+              </button>
             </div>
-          </>
-        )}
-        <PolicyNotice t={t} action="save" />
-        <label className="gallery-field gallery-check ui-choice-label">
-          <input
-            className="ui-choice gallery-input"
-            type="checkbox"
-            checked={agreement}
-            onChange={(e) => setAgreement(e.target.checked)}
-          />
-          <span>
-            {t("我同意", "I agree to the ")}{" "}
-            <Link to="/terms" target="_blank" rel="noreferrer">
-              {t("服務條款", "Terms of Service")}
-            </Link>
-            {t(
-              "，確認有權分享此素材，並同意以 ",
-              ", confirm my right to share this material, and license it under ",
+            {error && (
+              <p role="alert" className="gallery-error">
+                {error}
+              </p>
             )}
-            <a href={LICENSE_URL} target="_blank" rel="noreferrer">
-              CC BY 4.0
-            </a>
+          </div>
+        </fieldset>
+        <aside className="gallery-checklist" aria-label={t("送審檢查", "Submission checklist")}>
+          <h2>{t("送審前確認", "Before you submit")}</h2>
+          <ul>
+            {checks.map(([done, label]) => (
+              <li key={label} className={done ? "done" : undefined}>
+                <span aria-hidden="true">{done && <Icon name="check" />}</span>
+                {label}
+                <span className="sr-only">
+                  {done ? t("（已完成）", " (done)") : t("（未完成）", " (to do)")}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="gallery-muted">
             {t(
-              " 公開，允許署名後分享及改作。",
-              ", allowing sharing and adaptation with attribution.",
+              "送審後由管理員審核，核准後即公開。",
+              "An admin reviews each submission; approved works go public.",
             )}
-          </span>
-        </label>
-        <div className="gallery-actions">
-          <button
-            className="gallery-button"
-            type="button"
-            disabled={!ready}
-            onClick={() => void save(false)}
-          >
-            {t("儲存草稿", "Save draft")}
-          </button>
-          <button
-            type="button"
-            className="gallery-button gallery-primary"
-            disabled={!ready || !agreement}
-            onClick={() => void save(true)}
-          >
-            {busy ? t("處理中…", "Working…") : t("送交審核", "Submit for review")}
-          </button>
-        </div>
-      </fieldset>
-      {error && (
-        <p role="alert" className="gallery-error">
-          {error}
-        </p>
-      )}
+          </p>
+        </aside>
+      </div>
     </section>
   );
 }
