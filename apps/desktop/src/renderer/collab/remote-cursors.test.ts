@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The model APIs need only a few browser globals; `editor.api.js` avoids loading
+// The model APIs need only a few browser globals; `monaco-editor/editor` avoids loading
 // the workbench contributions that `monaco-editor` (editor.main) pulls in.
 const created = vi.hoisted(() => {
   const elements: Array<object & { textContent?: string }> = [];
@@ -22,6 +22,8 @@ const created = vi.hoisted(() => {
     elements.push(item);
     return item;
   };
+  scope.HTMLElement = class {};
+  scope.customElements = { get() {}, define() {} };
   scope.window = globalThis;
   scope.location = { href: "file:///", origin: "file://", protocol: "file:" };
   scope.document = {
@@ -38,7 +40,7 @@ const created = vi.hoisted(() => {
   scope.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   return elements;
 });
-vi.mock("monaco-editor", () => import("monaco-editor/esm/vs/editor/editor.api.js"));
+vi.mock("monaco-editor", () => import("monaco-editor/editor"));
 
 import * as monaco from "monaco-editor";
 import * as Y from "yjs";

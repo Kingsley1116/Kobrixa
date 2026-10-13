@@ -23,8 +23,8 @@ export async function formatSource(
   const uri = monaco.Uri.from({ scheme: "kobrixa-format", path: `/${++request}/${file}` });
   const model = monaco.editor.createModel(source, "json", uri);
   try {
-    const factory = await monaco.languages.json.getWorker();
-    // Monaco 0.52.2's JSON worker exposes format, but omits it from IJSONWorker.
+    const factory = await monaco.json.getWorker();
+    // Monaco's JSON worker exposes format, but omits it from IJSONWorker.
     const worker = (await factory(uri)) as unknown as JsonFormatter;
     const edits = await worker.format(uri.toString(), undefined, {
       tabSize: indentSize,

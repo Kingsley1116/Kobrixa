@@ -135,6 +135,18 @@ describe("LanguageService background checks", () => {
     expect(createWorker).toHaveBeenCalledTimes(1);
   });
 
+  it.each([new Error("worker failure"), "worker failure"])(
+    "recovers from worker error %s",
+    async (error) => {
+      const pending = service.diagnostics("workspace", {});
+      const rejected = expect(pending).rejects.toThrow("worker failure");
+      workers[0]!.emit("error", error);
+      await rejected;
+      expect(await service.diagnostics("workspace", {})).toEqual([]);
+      expect(createWorker).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("recovers after the worker exits unexpectedly", async () => {
     const pending = service.diagnostics("workspace", {});
     const rejected = expect(pending).rejects.toThrow("Diagnostics worker exited");

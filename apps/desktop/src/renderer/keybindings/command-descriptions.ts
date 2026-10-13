@@ -1450,4 +1450,80 @@ export const COMMAND_DESCRIPTIONS: Record<string, readonly [en: string, zh: stri
     "在補全清單與建議的詳細說明之間切換焦點。",
   ],
   undo: ["Undo the latest text edit in the active editor.", "復原目前編輯器中最近一次文字修改。"],
+  "editor.action.inlineSuggest.commitAlternativeAction": [
+    "Apply the alternative action offered by the current inline suggestion.",
+    "套用目前行內建議提供的替代動作。",
+  ],
+  clearFilterCodeActionWidget: [
+    "Clear the text filter in the code action menu.",
+    "清除程式碼動作選單中的文字篩選。",
+  ],
+  collapseSectionCodeAction: [
+    "Collapse the selected section of the code action menu.",
+    "收合程式碼動作選單中選取的區段。",
+  ],
+  "editor.action.debugEditorGpuRenderer": [
+    "Show diagnostic information for the editor GPU renderer.",
+    "顯示編輯器 GPU 繪製器的診斷資訊。",
+  ],
+  "editor.action.inlineSuggest.dev.extractRepro": [
+    "Extract the current inline suggestion state to help reproduce an issue.",
+    "擷取目前的行內建議狀態，以協助重現問題。",
+  ],
+  expandSectionCodeAction: [
+    "Expand the selected section of the code action menu.",
+    "展開程式碼動作選單中選取的區段。",
+  ],
+  "editor.action.gotoOffset": [
+    "Move the cursor to a specified character offset in the document.",
+    "將游標移至文件中指定的字元偏移位置。",
+  ],
+  "editor.action.hideHover": [
+    "Close the editor hover information popup.",
+    "關閉編輯器的懸停資訊視窗。",
+  ],
+  "editor.action.insertFinalNewLine": [
+    "Add a newline at the end of the document.",
+    "在文件結尾加入換行。",
+  ],
+  "editor.action.inlineSuggest.jump": [
+    "Move the cursor to the next proposed inline edit.",
+    "將游標移至下一個建議的行內編輯位置。",
+  ],
+  "quickInput.accept": [
+    "Accept the current item or value in the quick input widget.",
+    "確認快速輸入視窗中目前的項目或輸入值。",
+  ],
+  "quickInput.hide": [
+    "Dismiss the quick input widget without accepting a value.",
+    "關閉快速輸入視窗，不確認輸入值。",
+  ],
+  "quickInput.toggleCheckbox": [
+    "Toggle the checkbox for the focused item in quick input.",
+    "切換快速輸入視窗中目前焦點項目的核取狀態。",
+  ],
+  "quickInput.toggleHover": [
+    "Show or hide hover details for the focused quick input item.",
+    "顯示或隱藏快速輸入視窗中目前焦點項目的懸停詳細資訊。",
+  ],
+  "editor.action.reverseLines": [
+    "Reverse the order of the selected lines.",
+    "反轉所選文字行的排列順序。",
+  ],
+  suggestWidgetCopy: [
+    "Copy the currently selected completion suggestion.",
+    "複製目前選取的補全建議。",
+  ],
+  "editor.toggleImportFold": [
+    "Fold or unfold the document import sections.",
+    "摺疊或展開文件中的匯入區段。",
+  ],
+  "editor.action.inlineSuggest.toggleShowCollapsed": [
+    "Toggle whether inline suggestions are shown in a collapsed form.",
+    "切換行內建議是否以收合形式顯示。",
+  ],
+  toggleSectionCodeAction: [
+    "Expand or collapse the selected section of the code action menu.",
+    "展開或收合程式碼動作選單中選取的區段。",
+  ],
 };

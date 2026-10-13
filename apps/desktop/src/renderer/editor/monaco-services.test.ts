@@ -10,13 +10,13 @@ const mocks = vi.hoisted(() => {
   };
 });
 vi.mock("monaco-editor", () => ({}));
-vi.mock("monaco-editor/esm/vs/editor/standalone/browser/standaloneServices.js", () => ({
+vi.mock("monaco-editor/editor/standalone/browser/standaloneServices.js", () => ({
   StandaloneServices: { initialize: mocks.initialize },
 }));
-vi.mock("monaco-editor/esm/vs/base/browser/ui/hover/hoverDelegateFactory.js", () => ({
+vi.mock("monaco-editor/base/browser/ui/hover/hoverDelegateFactory.js", () => ({
   setHoverDelegateFactory: mocks.setHoverDelegateFactory,
 }));
-vi.mock("monaco-editor/esm/vs/platform/hover/browser/hover.js", () => ({
+vi.mock("monaco-editor/platform/hover/browser/hover.js", () => ({
   WorkbenchHoverDelegate: mocks.WorkbenchHoverDelegate,
 }));
 

@@ -84,6 +84,19 @@ async function result(id: string) {
   return (complete[0] as Extract<BuildEvent, { type: "complete" }>).result;
 }
 
+it.each([new Error("worker failure"), "worker failure"])(
+  "reports worker error %s",
+  async (error) => {
+    const id = await service.start("project", {});
+    workers[0]!.emit("error", error);
+    expect(await result(id)).toMatchObject({
+      success: false,
+      diagnostics: [expect.objectContaining({ code: "BUILD9000", message: "worker failure" })],
+    });
+    expect(service.busy).toBe(false);
+  },
+);
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((yes) => {
