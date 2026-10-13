@@ -1,0 +1,28 @@
+name: Usage question
+description: Ask about setup, programming or device support.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [documentation](https://github.com/Kingsley1116/Kobrixa#documentation) and existing issues first.
+        Do not include secrets or private project content.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Describe your goal. English and Chinese are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include relevant documentation and any error messages.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Kobrixa version, OS, browser or EV3 details as relevant.

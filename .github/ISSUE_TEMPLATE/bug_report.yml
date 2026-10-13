@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a reproducible problem in Kobrixa.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English and Chinese are welcome.
+        For security vulnerabilities, use [private reporting](https://github.com/Kingsley1116/Kobrixa/security/advisories/new).
+        Do not include secrets, collaboration invite codes or private project content.
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Before reporting
+      options:
+        - label: I searched existing issues for duplicates.
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Desktop app
+        - Basic Plus compiler
+        - EV3 USB or Wi-Fi
+        - Collaboration
+        - Website or browser tools
+        - Documentation or examples
+        - Other or unsure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: For the website, include its URL and when the problem occurred.
+      placeholder: 1.0.1-beta.1, commit SHA, or website URL and date
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and architecture; browser version for web issues; EV3 firmware, USB/Wi-Fi, sensors and ports for device issues.
+      placeholder: macOS 26, Apple Silicon; EV3 stock firmware; USB; touch sensor on port 1
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal independently written .bp example when relevant.
+      placeholder: |
+        1. Open …
+        2. Run …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact diagnostic or error message.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots and workaround
+      description: Remove tokens, invite codes, personal data and private project content before uploading.

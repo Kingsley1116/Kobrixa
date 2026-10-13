@@ -1,0 +1,35 @@
+name: Feature request
+description: Describe a use case and an observable outcome.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English and Chinese are welcome.
+        Please check the [roadmap](https://github.com/Kingsley1116/Kobrixa/blob/main/docs/en/roadmap.md) and existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and use case
+      description: Who needs this, and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe what a user should be able to do.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Give observable results or an example that demonstrates success.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context
+      description: Include workarounds, affected platforms and public specification links. Do not copy third-party implementation details.
