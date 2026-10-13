@@ -6,11 +6,11 @@ Kobrixa is currently specification-first. Contributions should preserve the docu
 
 ### Development baseline
 
-- Current Node.js LTS and pnpm
+- Node.js 24 or later and pnpm 10.15.0, as pinned in `package.json`
 - Electron build and packaging prerequisites for the contributor's operating system
 - One supported EV3 brick for hardware changes; transport-independent work may use mocks
 
-Exact minimum versions must be pinned in the implementation repository before the first buildable commit.
+Install dependencies with `pnpm install --frozen-lockfile`.
 
 ### Workflow
 
@@ -20,6 +20,12 @@ Exact minimum versions must be pinned in the implementation repository before th
 4. Add or update tests with every behavior change.
 5. Update both English and Traditional Chinese documentation when a public contract changes.
 6. Submit a pull request describing user impact, test evidence, platforms exercised, and known limitations.
+
+Use the [issue forms](https://github.com/Kingsley1116/Kobrixa/issues/new/choose) for bugs, feature requests, documentation and usage questions; English and Traditional Chinese are welcome. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+`main` accepts changes through pull requests only. Before merging, update the branch with the latest `main`, pass the required `CI result` check, resolve review threads, and obtain one approval (including code owner review for protected paths). New reviewable commits dismiss old approvals. The owner may bypass the human review requirement through a PR, but cannot bypass CI, unresolved threads, or the prohibition on direct/force pushes and branch deletion. See the [protection settings](.github/rulesets/README.md).
+
+Maintainers must approve Actions runs for external fork contributions after reviewing the proposed code. A pending approval is not a CI failure.
 
 ### Required checks
 
@@ -48,11 +54,11 @@ Kobrixa 目前採用規格優先方式。貢獻內容必須維持已定義的邊
 
 ### 開發基線
 
-- 當前 Node.js LTS 與 pnpm
+- Node.js 24 以上與 pnpm 10.15.0，以 `package.json` 為準
 - 貢獻者作業系統所需的 Electron 建置與封裝前置環境
 - 修改硬體功能時需要一台支援的 EV3；與 transport 無關的工作可以使用 mock
 
-第一個可建置提交之前，實作倉庫必須鎖定確切最低版本。
+使用 `pnpm install --frozen-lockfile` 安裝相依套件。
 
 ### 工作流程
 
@@ -62,6 +68,12 @@ Kobrixa 目前採用規格優先方式。貢獻內容必須維持已定義的邊
 4. 每次行為變更都要新增或更新測試。
 5. 公共契約改變時，同步更新英文與繁中文件。
 6. Pull request 必須說明使用者影響、測試證據、實測平台與已知限制。
+
+錯誤、功能提案、文件與使用問題請使用 [issue 表單](https://github.com/Kingsley1116/Kobrixa/issues/new/choose)，歡迎使用英文或繁體中文。安全漏洞請依 [SECURITY.md](SECURITY.md) 私人回報。
+
+`main` 只接受透過 PR 合併的變更。合併前必須更新至最新 `main`、通過必要的 `CI result` 檢查、解決審核討論串，並取得一位核准（受保護路徑還需要 code owner 審核）。新的可審核提交會使舊核准失效。擁有者可在 PR 中略過人工審核，但不能略過 CI、未解決討論串，或直接／強制推送與刪除分支的禁令。詳見[保護設定](.github/rulesets/README.md)。
+
+外部 fork 貢獻的 Actions 執行需要維護者先檢查程式碼再核准；等待核准不代表 CI 失敗。
 
 ### 必要檢查
 

@@ -1,0 +1,29 @@
+name: Usage question / 使用問題
+description: Ask about setup, programming or device support. / 詢問安裝、程式設計或裝置支援。
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [documentation](https://github.com/Kingsley1116/Kobrixa#documentation) and existing issues first.
+        請先查閱[文件](https://github.com/Kingsley1116/Kobrixa/blob/main/README.zh-TW.md)與現有 issue。
+        Do not include secrets or private project content. / 請勿附上密鑰或私人專案內容。
+  - type: textarea
+    id: question
+    attributes:
+      label: Question / 問題
+      description: Describe your goal. English and Traditional Chinese are welcome. / 說明想完成的目標，歡迎使用英文或繁體中文。
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried? / 已嘗試的方法
+      description: Include relevant documentation and any error messages. / 附上參考文件與錯誤訊息。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment / 版本與使用環境
+      description: Kobrixa version, OS, browser or EV3 details as relevant. / 視問題提供 Kobrixa 版本、作業系統、瀏覽器或 EV3 資訊。
