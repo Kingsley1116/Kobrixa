@@ -31,11 +31,6 @@ export class CollabRoom extends Room {
   restored;
   async fetch(request) {
     const path = new URL(request.url).pathname;
-    // Consume control-request bodies before replying so persistent HTTP
-    // connections do not carry unread bytes into the next request.
-    if (["/reconstruct", "/inspect", "/expire-password-attempts", "/expire"].includes(path)) {
-      await request.arrayBuffer();
-    }
     if (path === "/reconstruct") {
       this.restored = new Room(this.ctx, this.env);
       return Response.json({});
@@ -69,11 +64,18 @@ export class CollabRoom extends Room {
   }
 }
 export default {
-  fetch(request, env) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     const room = url.searchParams.get("room") ?? "room";
     const stub = env.ROOMS.get(env.ROOMS.idFromName(room));
-    return stub.fetch(new Request("https://room" + url.pathname, request));
+    // Drain the fixture HTTP body before crossing the service binding. A room
+    // or control route may reply early without consuming its forwarded body.
+    const body = request.body ? await request.arrayBuffer() : undefined;
+    return stub.fetch(new Request("https://room" + url.pathname, {
+      method: request.method,
+      headers: request.headers,
+      body,
+    }));
   },
 };
 `;
