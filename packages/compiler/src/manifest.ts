@@ -1,9 +1,31 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import micromatch from "micromatch";
 import fg from "fast-glob";
 import { z } from "zod";
 import type { Diagnostic, ProjectManifest, SourceFile, SourceProject } from "./contracts.js";
 import { diagnostic } from "./diagnostics.js";
+
+const MAX_PATTERN_LENGTH = 4096;
+const MAX_EXPANDED_PATTERNS = 256;
+
+function validateAssetPatterns(patterns: string[]): void {
+  let expandedCount = 0;
+  for (const pattern of patterns) {
+    let entries: string[];
+    try {
+      // pnpm patches the original parser to throw before excessive nesting or
+      // expansion. Match fast-glob's brace options to preserve glob semantics.
+      entries = micromatch.braces(pattern, { expand: true, nodupes: true, keepEscaping: true });
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      throw new Error(`Assets may expand to at most ${MAX_EXPANDED_PATTERNS} patterns.`);
+    }
+    expandedCount += entries.filter((entry) => entry !== "").length;
+    if (expandedCount > MAX_EXPANDED_PATTERNS)
+      throw new Error(`Assets may expand to at most ${MAX_EXPANDED_PATTERNS} patterns.`);
+  }
+}
 
 const manifestSchema = z
   .object({
@@ -12,7 +34,23 @@ const manifestSchema = z
     language: z.literal("bp"),
     entry: z.string().trim().min(1),
     target: z.literal("ev3-native"),
-    assets: z.array(z.string().trim().min(1)).default([]),
+    assets: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(MAX_PATTERN_LENGTH)
+          // Count raw opening delimiters, including escaped/quoted ones, so
+          // validation never depends on the glob parser's interpretation.
+          .refine((pattern) => (pattern.match(/[({]/g)?.length ?? 0) <= 64, {
+            message: "Asset patterns may contain at most 64 opening braces or parentheses.",
+          })
+          .refine((pattern) => (pattern.match(/[)}]/g)?.length ?? 0) <= 64, {
+            message: "Asset patterns may contain at most 64 closing braces or parentheses.",
+          }),
+      )
+      .default([]),
     outputDir: z.string().trim().min(1).default("build"),
   })
   .loose();
@@ -93,6 +131,13 @@ export function parseManifest(value: unknown): {
       diagnostics: parsed.error.issues.map((issue) => diagnostic("MAN1001", rangeFromZod(issue))),
     };
   }
+  try {
+    validateAssetPatterns(parsed.data.assets);
+  } catch (error) {
+    return {
+      diagnostics: [diagnostic("MAN1001", `assets: ${(error as Error).message}`)],
+    };
+  }
   return { manifest: parsed.data as ProjectManifest, diagnostics: [] };
 }
 
@@ -111,7 +156,8 @@ async function loadSources(
       onlyFiles: true,
       dot: false,
       followSymbolicLinks: false,
-      ignore: [`${manifest.outputDir.replaceAll(path.sep, "/")}/**`],
+      braceExpansion: false,
+      ignore: [`${fg.convertPathToPattern(manifest.outputDir)}/**`],
     })),
   ]);
   for (const overlayPath of overlays.keys()) {
@@ -176,6 +222,7 @@ export async function loadProject(
             onlyFiles: true,
             dot: false,
             followSymbolicLinks: false,
+            braceExpansion: false,
           })
         ).sort();
         const entry = selectedEntry ?? (candidates.length === 1 ? candidates[0] : undefined);

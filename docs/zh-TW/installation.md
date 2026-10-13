@@ -12,6 +12,8 @@
 
 `<version>` 代表下載的版本號。專案應放在應用程式目錄之外。Windows 未簽章安裝程式可能顯示系統警告；請閱讀該版逐平台的簽章狀態，詳見[程式碼簽章政策](../zh-TW/code-signing.md)。USB／Wi-Fi 實機驗收狀態另見[設備支援](../zh-TW/device-support.md)。
 
+使用 Electron 42 的桌面版本要求 Apple Silicon Mac 執行 macOS 12（Monterey）或更新版本，不再支援 macOS 11。
+
 ### SHA-256 校驗（選用）
 
 SHA-256 校驗是選用步驟，不影響安裝與使用。若想確認下載檔案是否完整，可另行下載同一 Release 的 `SHA256SUMS.txt`，與安裝檔放在同一目錄（舊版本仍使用個別 `.sha256` 檔），並將以下範例中的 `<version>` 換成下載版本。

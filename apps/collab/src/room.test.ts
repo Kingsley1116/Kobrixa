@@ -64,11 +64,18 @@ export class CollabRoom extends Room {
   }
 }
 export default {
-  fetch(request, env) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     const room = url.searchParams.get("room") ?? "room";
     const stub = env.ROOMS.get(env.ROOMS.idFromName(room));
-    return stub.fetch(new Request("https://room" + url.pathname, request));
+    // Drain the fixture HTTP body before crossing the service binding. A room
+    // or control route may reply early without consuming its forwarded body.
+    const body = request.body ? await request.arrayBuffer() : undefined;
+    return stub.fetch(new Request("https://room" + url.pathname, {
+      method: request.method,
+      headers: request.headers,
+      body,
+    }));
   },
 };
 `;

@@ -7,3 +7,6 @@ onlyBuiltDependencies:
   - electron
   - esbuild
   - node-hid
+
+patchedDependencies:
+  braces@3.0.3: patches/braces@3.0.3.patch
