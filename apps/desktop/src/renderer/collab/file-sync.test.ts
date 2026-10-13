@@ -45,7 +45,7 @@ async function settle(...syncs: CollabFileSync[]): Promise<void> {
   for (let round = 0; round < 6; round++) for (const sync of syncs) await sync.flush();
 }
 
-describe.sequential("collaborative file sync", () => {
+describe("collaborative file sync", { concurrent: false }, () => {
   let base: string;
   let project: string;
   let userData: string;
