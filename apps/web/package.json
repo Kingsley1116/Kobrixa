@@ -30,7 +30,7 @@
     "esbuild": "0.28.1",
     "jsdom": "^30.1.1",
     "miniflare": "5.20261006.1-alpha",
-    "typescript": "^5.9.2",
+    "typescript": "^6.0.3",
     "vite": "^8.3.4",
     "wrangler": "^4.149.0"
   }
