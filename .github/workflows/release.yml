@@ -22,11 +22,11 @@ jobs:
     outputs:
       signing: ${{ steps.validate.outputs.signing }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - id: validate
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
@@ -55,10 +55,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: node tools/release/github.mjs prepare
@@ -97,7 +97,7 @@ jobs:
       MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
       SIGNPATH_CERTIFICATE_SUBJECT: ${{ vars.SIGNPATH_CERTIFICATE_SUBJECT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
@@ -130,7 +130,7 @@ jobs:
       - name: Upload temporary unsigned Windows application
         id: unsigned-windows
         if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signpath-win32-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/desktop/out/Kobrixa-win32-x64/
@@ -175,7 +175,7 @@ jobs:
       - name: Upload temporary unsigned Windows installer
         id: unsigned-installer
         if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signpath-installer-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/desktop/out/unsigned-installer/
@@ -235,10 +235,10 @@ jobs:
       contents: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: node tools/release/github.mjs finalize
