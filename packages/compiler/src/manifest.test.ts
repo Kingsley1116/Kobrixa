@@ -110,6 +110,46 @@ describe("manifest", () => {
     ]);
   });
 
+  it.each([
+    "assets/" + "{a,b}".repeat(64),
+    "!assets/" + "{a,b}".repeat(16),
+    "assets/{1..1000}{1..1000}.txt",
+    "assets/{0..256}.txt",
+  ])(
+    "rejects excessive expansion without discovering a partial asset set (%#)",
+    async (pattern) => {
+      const root = await fixture({ assets: [pattern] });
+      const result = await loadProject(root);
+      expect(result.project).toBeUndefined();
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "MAN1001",
+          message: "assets: Assets may expand to at most 256 patterns.",
+        }),
+      ]);
+    },
+  );
+
+  it("accepts the expansion boundary without truncating the last pattern", async () => {
+    const root = await fixture({ assets: ["assets/item{0..255}.txt"] });
+    await mkdir(path.join(root, "assets"));
+    await writeFile(path.join(root, "assets/item0.txt"), "first");
+    await writeFile(path.join(root, "assets/item255.txt"), "last");
+    const result = await loadProject(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.project?.assets.map((asset) => asset.path)).toEqual([
+      "assets/item0.txt",
+      "assets/item255.txt",
+    ]);
+  });
+
+  it("applies the expansion budget across all asset patterns", async () => {
+    const root = await fixture({ assets: ["assets/a{1..200}.txt", "assets/b{1..200}.txt"] });
+    const result = await loadProject(root);
+    expect(result.project).toBeUndefined();
+    expect(result.diagnostics[0]?.message).toContain("at most 256 patterns");
+  });
+
   it("treats output directory metacharacters literally and keeps sibling sources", async () => {
     const root = await fixture({ outputDir: "build{one,two}" });
     for (const directory of ["build{one,two}", "buildone", "buildtwo"]) {

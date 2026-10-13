@@ -238,6 +238,9 @@ importers:
       "@kobrixa/ir":
         specifier: workspace:*
         version: link:../ir
+      brace-expansion:
+        specifier: ^5.0.12
+        version: 5.0.12
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3

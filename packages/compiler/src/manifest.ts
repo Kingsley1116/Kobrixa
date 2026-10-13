@@ -1,9 +1,33 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
+import { expand } from "brace-expansion";
 import fg from "fast-glob";
 import { z } from "zod";
 import type { Diagnostic, ProjectManifest, SourceFile, SourceProject } from "./contracts.js";
 import { diagnostic } from "./diagnostics.js";
+
+const MAX_PATTERN_LENGTH = 4096;
+const MAX_EXPANDED_PATTERNS = 256;
+
+function expandAssetPatterns(patterns: string[]): string[] {
+  const expanded: string[] = [];
+  for (const pattern of patterns) {
+    const max = MAX_EXPANDED_PATTERNS - expanded.length + 1;
+    const entries = expand(pattern, {
+      max,
+      // Escaped characters become temporary sentinels inside the expander.
+      // This exceeds their maximum length, so the count limit is reached
+      // before any silent length truncation. Input length is bounded above.
+      maxLength: max * MAX_PATTERN_LENGTH * 64,
+      maxDepth: 128,
+      maxRewrites: 128,
+    });
+    if (entries.length >= max)
+      throw new Error(`Assets may expand to at most ${MAX_EXPANDED_PATTERNS} patterns.`);
+    expanded.push(...entries);
+  }
+  return expanded;
+}
 
 const manifestSchema = z
   .object({
@@ -18,11 +42,14 @@ const manifestSchema = z
           .string()
           .trim()
           .min(1)
-          .max(4096)
+          .max(MAX_PATTERN_LENGTH)
           // Count raw opening delimiters, including escaped/quoted ones, so
           // validation never depends on the glob parser's interpretation.
           .refine((pattern) => (pattern.match(/[({]/g)?.length ?? 0) <= 64, {
             message: "Asset patterns may contain at most 64 opening braces or parentheses.",
+          })
+          .refine((pattern) => (pattern.match(/[)}]/g)?.length ?? 0) <= 64, {
+            message: "Asset patterns may contain at most 64 closing braces or parentheses.",
           }),
       )
       .default([]),
@@ -106,6 +133,13 @@ export function parseManifest(value: unknown): {
       diagnostics: parsed.error.issues.map((issue) => diagnostic("MAN1001", rangeFromZod(issue))),
     };
   }
+  try {
+    expandAssetPatterns(parsed.data.assets);
+  } catch (error) {
+    return {
+      diagnostics: [diagnostic("MAN1001", `assets: ${(error as Error).message}`)],
+    };
+  }
   return { manifest: parsed.data as ProjectManifest, diagnostics: [] };
 }
 
@@ -124,6 +158,7 @@ async function loadSources(
       onlyFiles: true,
       dot: false,
       followSymbolicLinks: false,
+      braceExpansion: false,
       ignore: [`${fg.convertPathToPattern(manifest.outputDir)}/**`],
     })),
   ]);
@@ -189,6 +224,7 @@ export async function loadProject(
             onlyFiles: true,
             dot: false,
             followSymbolicLinks: false,
+            braceExpansion: false,
           })
         ).sort();
         const entry = selectedEntry ?? (candidates.length === 1 ? candidates[0] : undefined);
@@ -213,12 +249,15 @@ export async function loadProject(
     }
 
     const assets = (
-      await fg(manifest.assets, {
+      await fg(expandAssetPatterns(manifest.assets), {
         cwd: root,
         onlyFiles: true,
         dot: false,
         followSymbolicLinks: false,
         unique: true,
+        // Expansion is already bounded above; never invoke the legacy
+        // glob engine's eager, unbounded brace expander on user patterns.
+        braceExpansion: false,
       })
     ).sort();
     const assetFiles = await Promise.all(
