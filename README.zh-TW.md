@@ -1,6 +1,6 @@
 # Kobrixa IDE
 
-**支援即時協作與感測器曲線的開源 EV3 IDE，不需更換韌體。**
+**用程式驅動創意。**
 
 Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Linux 上為 LEGO® MINDSTORMS® EV3 機器人編寫程式。你以 Basic Plus（`.bp`）撰寫程式，Kobrixa 將它編譯為原生 EV3 bytecode，並透過 USB 或 Wi-Fi 傳送到主機執行——不需要更換韌體。
 
