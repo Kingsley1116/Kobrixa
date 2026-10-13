@@ -295,7 +295,7 @@ it("waits for a fresh snapshot and discards requests when content changes or can
   let cancel = () => {};
   const cancellation = {
     isCancellationRequested: false,
-    onCancellationRequested: (listener: (event: unknown) => unknown) => {
+    onCancellationRequested: (listener: (event: void) => unknown) => {
       cancel = () => {
         listener(undefined);
       };
@@ -404,7 +404,7 @@ it.each(["monaco", "panel", "invalidation", "dispose"] as const)(
     const dispose = vi.fn();
     const queryToken = {
       isCancellationRequested: false,
-      onCancellationRequested: (listener: (event: unknown) => unknown) => {
+      onCancellationRequested: (listener: (event: void) => unknown) => {
         cancelToken = () => {
           listener(undefined);
         };

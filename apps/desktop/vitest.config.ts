@@ -5,9 +5,7 @@ export default defineConfig({
     alias: [
       {
         find: /^monaco-editor$/,
-        replacement: fileURLToPath(
-          import.meta.resolve("monaco-editor/esm/vs/editor/editor.main.js"),
-        ),
+        replacement: fileURLToPath(import.meta.resolve("monaco-editor")),
       },
     ],
   },

@@ -3,15 +3,14 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "baseUrl": ".",
     "paths": {
-      "@kobrixa/ir": ["packages/ir/src/index.ts"],
-      "@kobrixa/compiler": ["packages/compiler/src/index.ts"],
-      "@kobrixa/compiler/diagnostic-help": ["packages/compiler/src/diagnostic-help.ts"],
-      "@kobrixa/backend-ev3": ["packages/backend-ev3/src/index.ts"],
-      "@kobrixa/device": ["packages/device/src/index.ts"],
-      "@kobrixa/basic-plus": ["frontends/basic-plus/src/index.ts"],
-      "@kobrixa/collab-protocol": ["packages/collab-protocol/src/index.ts"]
+      "@kobrixa/ir": ["./packages/ir/src/index.ts"],
+      "@kobrixa/compiler": ["./packages/compiler/src/index.ts"],
+      "@kobrixa/compiler/diagnostic-help": ["./packages/compiler/src/diagnostic-help.ts"],
+      "@kobrixa/backend-ev3": ["./packages/backend-ev3/src/index.ts"],
+      "@kobrixa/device": ["./packages/device/src/index.ts"],
+      "@kobrixa/basic-plus": ["./frontends/basic-plus/src/index.ts"],
+      "@kobrixa/collab-protocol": ["./packages/collab-protocol/src/index.ts"]
     },
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
@@ -24,6 +23,7 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node"]
   }
 }

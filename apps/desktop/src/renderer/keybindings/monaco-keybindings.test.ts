@@ -18,8 +18,14 @@ let adapter: typeof Adapter;
 beforeAll(async () => {
   adapter = await import("./monaco-keybindings.js");
 }, 60_000);
-describe("Monaco 0.52.2 compatibility", () => {
+describe("Monaco 0.57.0 compatibility", () => {
   it("has reviewed Traditional Chinese and readable English for every registered command", () => {
+    expect(
+      adapter
+        .editorCommandCatalog(false)
+        .filter((command) => !COMMAND_LABELS[command.id])
+        .map((command) => ({ id: command.id, label: command.label })),
+    ).toEqual([]);
     for (const mac of [true, false]) {
       for (const command of adapter.editorCommandCatalog(mac)) {
         expect(COMMAND_LABELS[command.id], command.id).toBeDefined();

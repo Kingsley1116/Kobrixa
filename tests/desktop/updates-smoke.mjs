@@ -43,11 +43,11 @@ export async function checkUpdates({
     /正在下載 1.1.0：42%/,
   );
   update({ phase: "ready", progress: 100 });
-  await until('Boolean(document.querySelector(".update-notice"))');
+  await until('Boolean(document.querySelector(".update-notice:not(.whats-new)"))');
   await js(
-    'Array.from(document.querySelectorAll(".update-notice button")).find(b=>b.textContent==="稍後").click()',
+    'Array.from(document.querySelectorAll(".update-notice:not(.whats-new) button")).find(b=>b.textContent==="稍後").click()',
   );
-  await until('!document.querySelector(".update-notice")');
+  await until('!document.querySelector(".update-notice:not(.whats-new)")');
   assert.equal(installed(), 0);
   // Edit a real Monaco buffer, then exercise cancel, failed save and busy rejection.
   await js(

@@ -72,8 +72,8 @@ vi.mock("monaco-editor", () => ({
     setModelMarkers: mocks.setModelMarkers,
   },
 }));
-vi.mock("monaco-editor/esm/vs/editor/editor.worker?worker", () => ({ default: class {} }));
-vi.mock("monaco-editor/esm/vs/language/json/json.worker?worker", () => ({ default: class {} }));
+vi.mock("monaco-editor/editor/editor.worker?worker", () => ({ default: class {} }));
+vi.mock("monaco-editor/languages/features/json/json.worker?worker", () => ({ default: class {} }));
 
 import { Editor } from "./editor.js";
 import { Documents } from "./documents.js";
