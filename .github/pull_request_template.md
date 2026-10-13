@@ -1,3 +1,5 @@
+<!-- English and Chinese are welcome. -->
+
 ## Summary
 
 <!-- Describe the problem, user impact and resulting behavior. -->

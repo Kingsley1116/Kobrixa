@@ -11,7 +11,7 @@ body:
     id: question
     attributes:
       label: Question
-      description: Describe your goal. English and Traditional Chinese are welcome.
+      description: Describe your goal. English and Chinese are welcome.
     validations:
       required: true
   - type: textarea

@@ -13,7 +13,7 @@ body:
     id: problem
     attributes:
       label: What needs improvement?
-      description: English and Traditional Chinese are welcome.
+      description: English and Chinese are welcome.
     validations:
       required: true
   - type: textarea
