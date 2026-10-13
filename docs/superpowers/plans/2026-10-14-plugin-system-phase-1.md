@@ -44,7 +44,7 @@
 2. **插件資料夾路徑含空格或中文**（例如 Windows 使用者名稱是中文）：使用者預期可以正常載入與執行（task 6、task 11）。
 3. **命令處理器卡住、不理會取消**：使用者預期逾時後插件被終止，下一次執行命令時重新啟動（task 8）。
 4. **插件還在啟動時連續點同一個命令**：使用者預期只啟動一個程序，兩次執行都會完成（task 8）。
-5. **關閉 Kobrixa 時插件仍在執行**：使用者預期不留下孤兒程序（task 9 的 `dispose`、task 11 讀到 stdin EOF 就結束）。
+5. **關閉 Kobrixa 時插件仍在執行**：使用者預期不留下孤兒程序（task 9 的 `shutdown` 有整體期限並會強制終止殘留程序，task 12 在退出與安裝更新前等待它完成，task 11 讀到 stdin EOF 就結束）。
 
 ---
 
@@ -2148,9 +2148,9 @@ git commit -m "feat(plugin-runtime): load manifests with disable-before-contribu
 - Consumes: `ContentLengthDecoder`、`encodeContentLength`、`MessageChannelLike`
 - Produces:
   - `interface ProcessExit { code: number | null; reason?: string }`
-  - `interface PluginProcess extends MessageChannelLike { onExit(listener: (exit: ProcessExit) => void): () => void; kill(): void; stderrTail(): string }`：程序已經結束後才註冊的 `onExit` listener，會在 microtask 中立即被呼叫。`kill()` 先要求正常終止（POSIX 上是 SIGTERM）；程序若在 `killGraceMs` 內沒有結束，就升級為強制終止（SIGKILL）。重複呼叫不會重設計時器。
+  - `interface PluginProcess extends MessageChannelLike { onExit(listener: (exit: ProcessExit) => void): () => void; kill(): void; forceKill(): void; stderrTail(): string }`：程序已經結束後才註冊的 `onExit` listener，會在 microtask 中立即被呼叫。`kill()` 先要求正常終止（POSIX 上是 SIGTERM）；程序若在 `killGraceMs` 內沒有結束，就升級為強制終止（SIGKILL）。重複呼叫不會重設計時器。`forceKill()` 立即強制終止，給整體期限已到的關閉流程使用（task 9）。
   - `DEFAULT_KILL_GRACE_MS = 2000`
-  - `escalatingKill(exits: ExitSignal, graceful: () => void, forced: () => void, graceMs?: number): () => void`：給 stdio 程序與 Electron `utilityProcess` 共用
+  - `escalatingKill(exits: ExitSignal, graceful: () => void, forced: () => void, graceMs?: number): { kill(): void; forceKill(): void }`：給 stdio 程序與 Electron `utilityProcess` 共用
   - `class OutputTail { push(chunk: Uint8Array | string): void; text(): string }`：保留最後 16 KiB
   - `class ExitSignal { emit(exit: ProcessExit): void; subscribe(listener): () => void; readonly exited: boolean }`：只會 emit 一次
   - `stdioProcess(child: ChildProcessWithoutNullStreams, options?: { killGraceMs?: number }): PluginProcess`
@@ -2227,6 +2227,23 @@ describe("stdio plugin process", () => {
     // Windows has no SIGTERM handlers: kill() terminates immediately there.
     if (process.platform !== "win32") expect(result.reason).toBe("terminated by SIGKILL");
   });
+  it("force-kills immediately without waiting for the grace period", async () => {
+    const child = await spawnPluginProcess(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM", () => {}); process.stderr.write("ready\\n"); setInterval(() => {}, 1000);`,
+      ],
+      { cwd: process.cwd(), killGraceMs: 60_000 },
+    );
+    await vi.waitFor(() => expect(child.stderrTail()).toContain("ready"));
+    const started = Date.now();
+    const exit = new Promise((resolve) => child.onExit(resolve));
+    child.kill();
+    child.forceKill();
+    await exit;
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
 ```
 
@@ -2252,6 +2269,8 @@ export interface ProcessExit {
 export interface PluginProcess extends MessageChannelLike {
   onExit(listener: (exit: ProcessExit) => void): () => void;
   kill(): void;
+  /** Terminates immediately; used when an overall shutdown deadline is reached. */
+  forceKill(): void;
   stderrTail(): string;
 }
 
@@ -2299,15 +2318,23 @@ export function escalatingKill(
   graceful: () => void,
   forced: () => void,
   graceMs: number = DEFAULT_KILL_GRACE_MS,
-): () => void {
+): { kill(): void; forceKill(): void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let forcedOnce = false;
   exits.subscribe(() => clearTimeout(timer));
-  return () => {
-    if (exits.exited || timer) return;
-    graceful();
-    timer = setTimeout(() => {
-      if (!exits.exited) forced();
-    }, graceMs);
+  const forceKill = () => {
+    if (exits.exited || forcedOnce) return;
+    forcedOnce = true;
+    clearTimeout(timer);
+    forced();
+  };
+  return {
+    kill: () => {
+      if (exits.exited || timer || forcedOnce) return;
+      graceful();
+      timer = setTimeout(forceKill, graceMs);
+    },
+    forceKill,
   };
 }
 
@@ -2320,7 +2347,7 @@ export function stdioProcess(
   const tail = new OutputTail();
   const exits = new ExitSignal();
   // On Windows both signals map to TerminateProcess; on POSIX SIGKILL cannot be ignored.
-  const kill = escalatingKill(
+  const { kill, forceKill } = escalatingKill(
     exits,
     () => child.kill("SIGTERM"),
     () => child.kill("SIGKILL"),
@@ -2358,6 +2385,7 @@ export function stdioProcess(
     },
     onExit: (listener) => exits.subscribe(listener),
     kill,
+    forceKill,
     stderrTail: () => tail.text(),
   };
 }
@@ -2420,10 +2448,10 @@ git commit -m "feat(plugin-runtime): add stdio plugin processes"
   - `type PluginLauncher = (plugin: LaunchablePlugin) => Promise<PluginProcess>`
   - `type SupervisorState = "idle" | "starting" | "running" | "stopping" | "failed"`
   - `interface SupervisorOptions { locale; onNotice(notice: { severity: Severity; message: string }): void; onStateChange?(): void; restartLimit?: number; restartWindowMs?: number; initializeTimeoutMs?: number; commandTimeoutMs?: number; stopTimeoutMs?: number; exitTimeoutMs?: number; cancelGraceMs?: number; now?(): number }`
-  - `class PluginSupervisor { state; problem; executeCommand(command, signal?): Promise<void>; stop(): Promise<void> }`（`failed` 狀態不能在原物件上清除；停用再啟用時，manager 會建立新的 supervisor）
+  - `class PluginSupervisor { state; problem; executeCommand(command, signal?): Promise<void>; stop(): Promise<void>; forceKill(): void }`（`failed` 狀態不能在原物件上清除；停用再啟用時，manager 會建立新的 supervisor）
   - `test-process.ts`：`memoryPlugin(setup: (peer: RpcPeer, control: { exit(code?: number): void }) => void): { process: PluginProcess; killed(): boolean }`
 
-預設值：`restartLimit = 3`、`restartWindowMs = 300000`、`initializeTimeoutMs = 10000`、`commandTimeoutMs = 30000`、`stopTimeoutMs = 2000`、`exitTimeoutMs = 8000`、`cancelGraceMs = 5000`。`stop()` 最多等待 `stopTimeoutMs + exitTimeoutMs`：先送 `shutdown`，失敗或逾時就 `kill()`（會自動升級為強制終止）；超過上限仍未收到 exit 時，視為已停止並放棄等待，絕不無限等待。
+預設值：`restartLimit = 3`、`restartWindowMs = 300000`、`initializeTimeoutMs = 10000`、`commandTimeoutMs = 30000`、`stopTimeoutMs = 2000`、`exitTimeoutMs = 4000`、`cancelGraceMs = 5000`。`stop()` 的時間線從呼叫時起算：立即送 `shutdown`（成功後送 `exit`；失敗就 `kill()`）；不論插件是否回覆，到 `stopTimeoutMs` 時都會 `kill()`，而 `kill()` 會在 `killGraceMs`（預設 2000）後自動升級為 SIGKILL；到 `stopTimeoutMs + exitTimeoutMs` 仍未收到 exit 報告就放棄等待，視為已停止。所以預設下最晚約第 4 秒送出 SIGKILL，`stop()` 最多 6 秒。`stop()` 只等待「啟動程序」本身，不等待進行中的握手；還在握手的插件尚未啟用，不送 `shutdown`，直接 `kill()`。`forceKill()` 立即強制終止，manager 的整體期限到時使用（task 9）。
 
 錯誤對應：命令被拒時，`connectionClosed` 對應到目前的 `problem.code`（沒有 problem 時用 `PLUGIN_E_CRASHED`）；`timeout` 對應 `PLUGIN_E_TIMEOUT`；`requestCancelled` 對應 `PLUGIN_E_CANCELLED`；其他 RPC 錯誤對應 `PLUGIN_E_COMMAND_FAILED`。
 
@@ -2445,15 +2473,17 @@ export function memoryPlugin(
     peer.close();
     queueMicrotask(() => exits.emit({ code }));
   };
+  const terminate = (reason: string) => {
+    killed = true;
+    peer.close();
+    queueMicrotask(() => exits.emit({ code: null, reason }));
+  };
   setup(peer, { exit });
   const process: PluginProcess = {
     ...host,
     onExit: (listener) => exits.subscribe(listener),
-    kill: () => {
-      killed = true;
-      peer.close();
-      queueMicrotask(() => exits.emit({ code: null, reason: "killed" }));
-    },
+    kill: () => terminate("killed"),
+    forceKill: () => terminate("force-killed"),
     stderrTail: () => "",
   };
   return { process, killed: () => killed };
@@ -2622,6 +2652,42 @@ describe("PluginSupervisor", () => {
     expect(Date.now() - started).toBeLessThan(3000);
     expect(supervisor.state).toBe("idle");
   });
+  it("does not wait for a pending handshake when stopping", async () => {
+    const fixture = fileURLToPath(new URL("../test-fixtures/stubborn-plugin.cjs", import.meta.url));
+    const supervisor = new PluginSupervisor(
+      plugin,
+      () =>
+        spawnPluginProcess(process.execPath, [fixture, "silent"], {
+          cwd: process.cwd(),
+          killGraceMs: 200,
+        }),
+      { locale: "en", onNotice: () => {}, stopTimeoutMs: 200 },
+    );
+    const command = supervisor.executeCommand("acme.hello.greet");
+    await vi.waitFor(() => expect(supervisor.state).toBe("starting"));
+    const started = Date.now();
+    await supervisor.stop();
+    expect(Date.now() - started).toBeLessThan(3000); // initializeTimeoutMs is 10 s.
+    await expect(command).rejects.toBeDefined();
+  });
+  it("force-kills immediately when the overall deadline is reached", async () => {
+    const fixture = fileURLToPath(new URL("../test-fixtures/stubborn-plugin.cjs", import.meta.url));
+    const supervisor = new PluginSupervisor(
+      plugin,
+      () =>
+        spawnPluginProcess(process.execPath, [fixture], {
+          cwd: process.cwd(),
+          killGraceMs: 60_000,
+        }),
+      { locale: "en", onNotice: () => {}, stopTimeoutMs: 60_000 },
+    );
+    await supervisor.executeCommand("acme.hello.greet");
+    const started = Date.now();
+    const stopping = supervisor.stop();
+    supervisor.forceKill();
+    await stopping;
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
 ```
 
@@ -2631,6 +2697,8 @@ describe("PluginSupervisor", () => {
 
 ```js
 // Answers initialize and command/execute, but ignores shutdown, exit and SIGTERM on purpose.
+// With the "silent" argument it never answers initialize either (a handshake that hangs).
+const silent = process.argv.includes("silent");
 process.on("SIGTERM", () => {});
 let buffer = Buffer.alloc(0);
 const reply = (message) => {
@@ -2647,7 +2715,7 @@ process.stdin.on("data", (chunk) => {
     if (buffer.length < end + 4 + length) return;
     const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
     buffer = buffer.subarray(end + 4 + length);
-    if (message.method === "initialize")
+    if (message.method === "initialize" && !silent)
       reply({
         jsonrpc: "2.0",
         id: message.id,
@@ -2709,7 +2777,7 @@ const DEFAULTS = {
   initializeTimeoutMs: 10_000,
   commandTimeoutMs: 30_000,
   stopTimeoutMs: 2_000,
-  exitTimeoutMs: 8_000,
+  exitTimeoutMs: 4_000,
   cancelGraceMs: 5_000,
 };
 const major = (version: string) => version.split(".")[0];
@@ -2721,7 +2789,10 @@ export class PluginSupervisor {
   #process: PluginProcess | undefined;
   #peer: RpcPeer | undefined;
   #starting: Promise<RpcPeer> | undefined;
+  #launching: Promise<void> | undefined;
+  #stoppingRun: Promise<void> | undefined;
   #stopping = false;
+  #forced = false;
   #crashes: number[] = [];
   readonly #options: SupervisorOptions & typeof DEFAULTS;
 
@@ -2758,28 +2829,45 @@ export class PluginSupervisor {
     }
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Graceful stop with a fixed timeline measured from the call: shutdown/exit, then kill() at
+   * stopTimeoutMs (kill escalates to SIGKILL by itself), and give up waiting for the exit report
+   * at stopTimeoutMs + exitTimeoutMs. A pending handshake is not awaited: only the launch is.
+   */
+  stop(): Promise<void> {
+    // Concurrent callers (disable, then app shutdown) share one stop: one shutdown request only.
+    this.#stoppingRun ??= this.#stop().finally(() => {
+      this.#stoppingRun = undefined;
+    });
+    return this.#stoppingRun;
+  }
+
+  async #stop(): Promise<void> {
     this.#stopping = true;
     try {
-      await this.#starting?.catch(() => undefined);
+      if (!this.#process) await this.#launching;
       const peer = this.#peer;
       const child = this.#process;
       if (!peer || !child) return;
+      // A plugin still in its handshake has not activated: nothing to shut down, just terminate.
+      const handshaking = this.#state === "starting";
       this.#setState("stopping");
       const exited = new Promise<boolean>((resolve) => child.onExit(() => resolve(true)));
-      // Escalate if the plugin acknowledges shutdown but never exits.
-      const lingering = setTimeout(() => child.kill(), this.#options.stopTimeoutMs * 2);
-      try {
-        await peer.request("shutdown", {}, { timeoutMs: this.#options.stopTimeoutMs });
-        peer.notify("exit", {});
-      } catch {
-        child.kill();
-      }
-      // kill() escalates to a forced kill; this bound only guards an OS that never reports exit.
+      if (handshaking) child.kill();
+      // Covers a plugin that acknowledges shutdown but ignores "exit".
+      const lingering = setTimeout(() => child.kill(), this.#options.stopTimeoutMs);
       let bound: ReturnType<typeof setTimeout> | undefined;
       const gaveUp = new Promise<boolean>((resolve) => {
-        bound = setTimeout(() => resolve(false), this.#options.exitTimeoutMs);
+        bound = setTimeout(
+          () => resolve(false),
+          this.#options.stopTimeoutMs + this.#options.exitTimeoutMs,
+        );
       });
+      if (!handshaking)
+        void peer
+          .request("shutdown", {}, { timeoutMs: this.#options.stopTimeoutMs })
+          .then(() => peer.notify("exit", {}))
+          .catch(() => child.kill());
       const exitedInTime = await Promise.race([exited, gaveUp]);
       clearTimeout(lingering);
       clearTimeout(bound);
@@ -2788,6 +2876,12 @@ export class PluginSupervisor {
     } finally {
       this.#stopping = false;
     }
+  }
+
+  /** Terminates immediately, e.g. when the manager's overall shutdown deadline is reached. */
+  forceKill(): void {
+    this.#forced = true;
+    this.#process?.forceKill();
   }
 
   #ensureStarted(): Promise<RpcPeer> {
@@ -2811,12 +2905,19 @@ export class PluginSupervisor {
     this.#problem = undefined;
     this.#setState("starting");
     let child: PluginProcess;
+    const launching = this.launcher(this.plugin);
+    this.#launching = launching.then(
+      () => undefined,
+      () => undefined,
+    );
     try {
-      child = await this.launcher(this.plugin);
+      child = await launching;
     } catch (error) {
       this.#problem = { code: "PLUGIN_E_LAUNCH", message: messageOf(error) };
       this.#setState("idle");
       throw new PluginError("PLUGIN_E_LAUNCH", this.#problem.message);
+    } finally {
+      this.#launching = undefined;
     }
     const peer = new RpcPeer(child, {
       timeoutMs: this.#options.commandTimeoutMs,
@@ -2842,6 +2943,11 @@ export class PluginSupervisor {
     this.#process = child;
     this.#peer = peer;
     child.onExit((exit) => this.#exited(child, peer, exit));
+    // stop() started during the launch: it terminates this process; skip the handshake.
+    if (this.#stopping) {
+      if (this.#forced) child.forceKill();
+      throw new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} is stopping.`);
+    }
     try {
       const result = await peer.request(
         "initialize",
@@ -2969,7 +3075,7 @@ git commit -m "feat(plugin-runtime): supervise plugin lifecycles without replayi
   - `type PluginManagerEvent = { type: "state"; state: PluginsSnapshot } | { type: "notice"; notice: PluginNotice }`
   - `type PluginCommandResult = { ok: true } | { ok: false; code: PluginErrorCode; message: string }`
   - `type PluginActionResult = { ok: true; state: PluginsSnapshot } | { ok: false; code: PluginErrorCode; message: string }`
-  - `class PluginManager { static create(options): Promise<PluginManager>; state(): PluginsSnapshot; frontendFor(language: string): string | undefined; executeCommand(commandId): Promise<PluginCommandResult>; setEnabled(pluginId, enabled): Promise<PluginActionResult>; onEvent(listener): () => void; readonly active: boolean; dispose(): Promise<void> }`
+  - `class PluginManager { static create(options): Promise<PluginManager>; state(): PluginsSnapshot; frontendFor(language: string): string | undefined; executeCommand(commandId): Promise<PluginCommandResult>; setEnabled(pluginId, enabled): Promise<PluginActionResult>; onEvent(listener): () => void; readonly active: boolean; shutdown(deadlineMs?: number): Promise<void> }`、`PLUGIN_SHUTDOWN_DEADLINE_MS = 4000`、`PLUGIN_FORCE_MARGIN_MS = 1000`
 
 - [ ] **Step 1: 寫會失敗的測試**
 
@@ -2978,7 +3084,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PluginManager, type PluginManagerEvent, type PluginStateStore } from "./index.js";
+import { fileURLToPath } from "node:url";
+import {
+  PluginManager,
+  spawnPluginProcess,
+  type PluginManagerEvent,
+  type PluginStateStore,
+} from "./index.js";
 import { memoryPlugin } from "./test-process.js";
 
 let root: string;
@@ -3125,14 +3237,72 @@ describe("PluginManager", () => {
     });
     expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
   });
-  it("stops every running plugin on dispose", async () => {
+  it("stops every running plugin on shutdown and refuses new commands", async () => {
     const manager = await create([await devPlugin("a"), await devPlugin("b")]);
     await manager.executeCommand("acme.a.greet");
     await manager.executeCommand("acme.b.greet");
     expect(manager.active).toBe(true);
-    await manager.dispose();
+    await manager.shutdown();
     expect(manager.state().plugins.every((plugin) => !plugin.running)).toBe(true);
     expect(manager.active).toBe(false);
+    expect(await manager.executeCommand("acme.a.greet")).toMatchObject({
+      code: "PLUGIN_E_DISABLED",
+    });
+  });
+  it("keeps tracking a plugin that is still being disabled", async () => {
+    const stubborn = vi.fn(
+      async () =>
+        memoryPlugin((peer) => {
+          peer.handle("initialize", () => ({
+            apiVersion: "1.0.0",
+            sdk: { name: "t", version: "1" },
+          }));
+          peer.handle("command/execute", () => null);
+          // Never answers shutdown: stop() has to wait for its kill timeline (stopTimeoutMs).
+          peer.handle("shutdown", () => new Promise(() => {}));
+        }).process,
+    );
+    const manager = await PluginManager.create({
+      sources: [await devPlugin("slow")],
+      store: memoryStore(),
+      safeMode: false,
+      launcher: stubborn,
+      locale: "en",
+      supervisor: { stopTimeoutMs: 200 },
+    });
+    await manager.executeCommand("acme.slow.greet");
+    const disabling = manager.setEnabled("acme.slow", false);
+    // The supervisor has left the enabled map but its process is still stopping.
+    await vi.waitFor(() => expect(manager.state().plugins[0]!.status).toBe("disabled"));
+    expect(manager.active).toBe(true);
+    await manager.shutdown();
+    expect(manager.active).toBe(false);
+    await expect(disabling).resolves.toMatchObject({ ok: true });
+  });
+  it("force-kills real processes that outlive the shutdown deadline", async () => {
+    const fixture = fileURLToPath(new URL("../test-fixtures/stubborn-plugin.cjs", import.meta.url));
+    let exited = false;
+    const manager = await PluginManager.create({
+      sources: [await devPlugin("stubborn")],
+      store: memoryStore(),
+      safeMode: false,
+      locale: "en",
+      // Neither a graceful stop nor kill escalation can finish before the deadline.
+      supervisor: { stopTimeoutMs: 60_000 },
+      launcher: async () => {
+        const child = await spawnPluginProcess(process.execPath, [fixture], {
+          cwd: process.cwd(),
+          killGraceMs: 60_000,
+        });
+        child.onExit(() => (exited = true));
+        return child;
+      },
+    });
+    await manager.executeCommand("acme.stubborn.greet");
+    const started = Date.now();
+    await manager.shutdown(500);
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(exited).toBe(true);
   });
 });
 ```
@@ -3193,11 +3363,18 @@ type Failure = { ok: false; code: PluginErrorCode; message: string };
 export type PluginCommandResult = { ok: true } | Failure;
 export type PluginActionResult = { ok: true; state: PluginsSnapshot } | Failure;
 const failure = (code: PluginErrorCode, message: string): Failure => ({ ok: false, code, message });
+/** Default overall bound for shutdown(); the quit cleanup waits slightly longer (task 12). */
+export const PLUGIN_SHUTDOWN_DEADLINE_MS = 4_000;
+/** Time between force-killing leftovers and the deadline, for exit reports to arrive. */
+export const PLUGIN_FORCE_MARGIN_MS = 1_000;
 
 export class PluginManager {
   readonly #supervisors = new Map<string, PluginSupervisor>();
+  /** Supervisors of plugins being disabled stay tracked until their processes are gone. */
+  readonly #retiring = new Set<PluginSupervisor>();
   readonly #commands = new Map<string, string>();
   readonly #listeners = new Set<(event: PluginManagerEvent) => void>();
+  #shutdown: Promise<void> | undefined;
 
   static async create(options: PluginManagerOptions): Promise<PluginManager> {
     const disabled = await options.store.load();
@@ -3230,6 +3407,7 @@ export class PluginManager {
   }
 
   async executeCommand(commandId: string): Promise<PluginCommandResult> {
+    if (this.#shutdown) return failure("PLUGIN_E_DISABLED", "Kobrixa is shutting down plugins.");
     const owner = this.#commands.get(commandId);
     const supervisor = owner ? this.#supervisors.get(owner) : undefined;
     if (!supervisor)
@@ -3245,6 +3423,7 @@ export class PluginManager {
   }
 
   async setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult> {
+    if (this.#shutdown) return failure("PLUGIN_E_DISABLED", "Kobrixa is shutting down plugins.");
     const plugin = this.plugins.find((item) => item.id === pluginId && item.status !== "invalid");
     if (!plugin)
       return failure("PLUGIN_E_UNKNOWN_PLUGIN", `No valid plugin has the id ${pluginId}.`);
@@ -3280,7 +3459,14 @@ export class PluginManager {
         if (owner === pluginId) this.#commands.delete(command);
       plugin.status = "disabled";
       plugin.disabledBy = "user";
-      await supervisor?.stop();
+      if (supervisor) {
+        this.#retiring.add(supervisor);
+        try {
+          await supervisor.stop();
+        } finally {
+          this.#retiring.delete(supervisor);
+        }
+      }
     }
     this.#emitState();
     return { ok: true, state: this.state() };
@@ -3291,15 +3477,36 @@ export class PluginManager {
     return () => this.#listeners.delete(listener);
   }
 
-  /** True while any plugin process is starting, running or stopping. */
+  /** True while any plugin process is starting, running or stopping, including disabled ones. */
   get active(): boolean {
-    return [...this.#supervisors.values()].some((supervisor) =>
-      ["starting", "running", "stopping"].includes(supervisor.state),
+    return (
+      this.#retiring.size > 0 ||
+      [...this.#supervisors.values()].some((supervisor) =>
+        ["starting", "running", "stopping"].includes(supervisor.state),
+      )
     );
   }
 
-  async dispose(): Promise<void> {
-    await Promise.all([...this.#supervisors.values()].map((supervisor) => supervisor.stop()));
+  /**
+   * Stops every plugin process, including plugins still being disabled, within deadlineMs.
+   * Graceful stops run first; whatever is still alive at deadlineMs - PLUGIN_FORCE_MARGIN_MS is
+   * force-killed, so callers can quit as soon as this resolves. Idempotent; afterwards commands
+   * and enable/disable requests are refused.
+   */
+  shutdown(deadlineMs: number = PLUGIN_SHUTDOWN_DEADLINE_MS): Promise<void> {
+    this.#shutdown ??= (async () => {
+      const supervisors = [...this.#supervisors.values(), ...this.#retiring];
+      const stopped = Promise.all(supervisors.map((supervisor) => supervisor.stop())).then(
+        () => true,
+      );
+      const wait = (ms: number) =>
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), ms));
+      const forceAt = Math.max(0, deadlineMs - PLUGIN_FORCE_MARGIN_MS);
+      if (await Promise.race([stopped, wait(forceAt)])) return;
+      for (const supervisor of supervisors) supervisor.forceKill();
+      await Promise.race([stopped, wait(deadlineMs - forceAt)]);
+    })();
+    return this.#shutdown;
   }
 
   #register(plugin: RegisteredPlugin): void {
@@ -4458,7 +4665,7 @@ describe.skipIf(!python)("Python plugin interop", () => {
     expect(notices.map((notice) => [notice.pluginId, notice.message])).toEqual([
       ["kobrixa-samples.hello-python", "來自 Python 插件的問候"],
     ]);
-    await manager.dispose();
+    await manager.shutdown();
     expect(manager.state().plugins[0]!.running).toBe(false);
   });
 });
@@ -4482,8 +4689,8 @@ git commit -m "feat(sdk-python): add development Python SDK with shared conforma
 
 - Create: `apps/desktop/src/main/plugins/options.ts`、`state-store.ts`、`launchers.ts`、`ipc.ts`、`quit.ts`
 - Create: `apps/desktop/src/shared/plugins.ts`
-- Modify: `apps/desktop/src/shared/api.ts`（`KobrixaApi.plugins`）、`apps/desktop/src/preload/index.ts`、`apps/desktop/package.json`（依賴）
-- Test: `apps/desktop/src/main/plugins/options.test.ts`、`state-store.test.ts`、`ipc.test.ts`
+- Modify: `apps/desktop/src/shared/api.ts`（`KobrixaApi.plugins`）、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/main/ipc.ts`（`beforeUpdateInstall`）、`apps/desktop/package.json`（依賴）
+- Test: `apps/desktop/src/main/plugins/options.test.ts`、`state-store.test.ts`、`ipc.test.ts`、`quit.test.ts`；`apps/desktop/src/main/updates/install-ipc.test.ts`
 
 **Interfaces:**
 
@@ -4494,7 +4701,8 @@ git commit -m "feat(sdk-python): add development Python SDK with shared conforma
   - `createDesktopLauncher({ python?: string }): PluginLauncher`
   - `pluginLocale(appLocale: string): PluginLocale`
   - `registerPluginIpc(handle: IpcHandle, plugins: Pick<PluginManager, "state" | "executeCommand" | "setEnabled" | "onEvent">, publish: (event: PluginEvent) => void): () => void`
-  - `PLUGIN_QUIT_TIMEOUT_MS = 5000`；`installPluginQuitCleanup(app: QuitHost, plugins: Pick<PluginManager, "active" | "dispose">, options?: { timeoutMs?: number; skip?(): boolean }): void`，其中 `QuitHost = { on(event: "will-quit", listener: (event: { preventDefault(): void }) => void): unknown; quit(): void }`。第一次 `will-quit` 時，若有插件仍在活動，先 `preventDefault()`，等 `dispose()` 結束（最多 `timeoutMs`），再呼叫一次 `app.quit()`；第二次 `will-quit` 直接放行。沒有活動插件，或 `skip()` 為真（安裝更新期間）時，不攔截退出。既有的 `will-quit` 處理器在兩次觸發時都會執行；它們都以 `disposed` 旗標或只清除計時器實作，重複執行是安全的，task 13 會用 close smoke 確認。
+  - `PLUGIN_QUIT_TIMEOUT_MS = PLUGIN_SHUTDOWN_DEADLINE_MS + 1000`；`installPluginQuitCleanup(app: QuitHost, plugins: Pick<PluginManager, "active" | "shutdown">, options?: { timeoutMs?: number }): void`，其中 `QuitHost = { on(event: "will-quit", listener: (event: { preventDefault(): void }) => void): unknown; quit(): void }`。第一次 `will-quit` 時，若有插件仍在活動，先 `preventDefault()`，等 `plugins.shutdown()` 完成，再呼叫一次 `app.quit()`；第二次 `will-quit` 直接放行。期限只有一套：`shutdown()` 自己保證在 `PLUGIN_SHUTDOWN_DEADLINE_MS` 內，對所有殘留程序（包括正在握手和正在停用的）送出強制終止並等待 exit 報告。`timeoutMs` 只是防止 `shutdown()` 本身出錯時永遠不退出的保險，一定比 shutdown 的期限長，不會搶在強制終止之前退出。沒有活動插件時，不攔截退出。既有的 `will-quit` 處理器在兩次觸發時都會執行；它們都以 `disposed` 旗標或只清除計時器實作，重複執行是安全的，task 13 會用 close smoke 確認。
+  - `registerIpc(...)` 新增最後一個參數 `beforeUpdateInstall: () => Promise<void> = async () => {}`；`updates:install` 處理器改為先 `await beforeUpdateInstall()`，再呼叫 `updates.install()`（也就是 `quitAndInstall()`）。安裝更新時，退出流程不再負責插件清理。
   - IPC channel：`plugins:state`、`plugins:execute`、`plugins:set-enabled`；事件 channel：`plugins:event`
   - `shared/plugins.ts`：`PluginsApi { state(): Promise<PluginsSnapshot>; execute(commandId: string): Promise<PluginCommandResult>; setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult>; onEvent(listener: (event: PluginEvent) => void): () => void }`，`PluginEvent = PluginManagerEvent`，並重新匯出 runtime 的相關型別
 
@@ -4603,42 +4811,81 @@ function host() {
   return { app: { on: emitter.on.bind(emitter), quit } as never, quit, willQuit };
 }
 
-it("holds the first quit until plugins stop, then quits again", async () => {
+it("holds the first quit until plugin shutdown finishes, then quits again", async () => {
   const { app, quit, willQuit } = host();
   let finish!: () => void;
-  const dispose = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
-  installPluginQuitCleanup(app, { active: true, dispose });
+  const shutdown = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+  installPluginQuitCleanup(app, { active: true, shutdown });
   expect(willQuit()).toBe(true);
   expect(willQuit()).toBe(true); // A second request during cleanup is still held.
-  expect(dispose).toHaveBeenCalledTimes(1);
+  expect(shutdown).toHaveBeenCalledTimes(1);
   expect(quit).not.toHaveBeenCalled();
   finish();
   await vi.waitFor(() => expect(quit).toHaveBeenCalledTimes(1));
   expect(willQuit()).toBe(false);
 });
 
-it("quits after the deadline when cleanup hangs", async () => {
+it("never quits before shutdown's own deadline, but still quits if shutdown hangs", async () => {
   vi.useFakeTimers();
   const { app, quit, willQuit } = host();
-  installPluginQuitCleanup(
-    app,
-    { active: true, dispose: () => new Promise(() => {}) },
-    { timeoutMs: 100 },
-  );
+  installPluginQuitCleanup(app, { active: true, shutdown: () => new Promise(() => {}) });
   expect(willQuit()).toBe(true);
-  await vi.advanceTimersByTimeAsync(100);
+  await vi.advanceTimersByTimeAsync(4_000); // PLUGIN_SHUTDOWN_DEADLINE_MS: force kill is due here.
+  expect(quit).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1_000);
   expect(quit).toHaveBeenCalledTimes(1);
 });
 
-it("does not delay quitting without active plugins or while installing an update", () => {
+it("does not delay quitting without active plugins", () => {
   const idle = host();
-  installPluginQuitCleanup(idle.app, { active: false, dispose: vi.fn() });
+  const shutdown = vi.fn(async () => {});
+  installPluginQuitCleanup(idle.app, { active: false, shutdown });
   expect(idle.willQuit()).toBe(false);
-  const updating = host();
-  const dispose = vi.fn(async () => {});
-  installPluginQuitCleanup(updating.app, { active: true, dispose }, { skip: () => true });
-  expect(updating.willQuit()).toBe(false);
-  expect(dispose).toHaveBeenCalled(); // Still asked to stop, without blocking the installer.
+  expect(shutdown).not.toHaveBeenCalled();
+});
+```
+
+`apps/desktop/src/main/updates/install-ipc.test.ts`（測試結構照抄 `src/main/window/chrome.test.ts` 的 `vi.mock("electron")` 與 `registerIpc` 呼叫方式）：
+
+```ts
+import { expect, it, vi } from "vitest";
+const handlers = new Map<string, (...args: unknown[]) => unknown>();
+vi.mock("electron", () => ({
+  ipcMain: {
+    handle: (name: string, fn: (...args: unknown[]) => unknown) => handlers.set(name, fn),
+  },
+}));
+import { registerIpc } from "../ipc.js";
+import { UpdateOperationGate } from "./service.js";
+
+it("stops plugins before quitAndInstall starts", async () => {
+  const renderer = { id: 1, mainFrame: {} };
+  const order: string[] = [];
+  let finish!: () => void;
+  const updates = { install: vi.fn(() => order.push("install")) };
+  registerIpc(
+    () => renderer as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    updates as never,
+    new UpdateOperationGate(() => undefined),
+    undefined,
+    undefined,
+    undefined,
+    [],
+    () => new Promise<void>((resolve) => (finish = () => (order.push("plugins"), resolve()))),
+  );
+  const installing = handlers.get("updates:install")!({
+    sender: renderer,
+    senderFrame: renderer.mainFrame,
+  });
+  await Promise.resolve();
+  expect(updates.install).not.toHaveBeenCalled();
+  finish();
+  await installing;
+  expect(order).toEqual(["plugins", "install"]);
 });
 ```
 
@@ -4792,6 +5039,19 @@ async function launchNode(plugin: LaunchablePlugin): Promise<PluginProcess> {
     port1.close();
     exits.emit({ code });
   });
+  // utilityProcess.kill() sends SIGTERM on POSIX; escalate to SIGKILL when it is ignored.
+  const kill = escalatingKill(
+    exits,
+    () => child.kill(),
+    () => {
+      try {
+        if (child.pid !== undefined) process.kill(child.pid, "SIGKILL");
+        else child.kill();
+      } catch {
+        /* The process already exited. */
+      }
+    },
+  );
   return {
     send: (text) => port1.postMessage(text),
     onMessage: (listener) => {
@@ -4801,18 +5061,7 @@ async function launchNode(plugin: LaunchablePlugin): Promise<PluginProcess> {
       return () => port1.off("message", handler);
     },
     onExit: (listener) => exits.subscribe(listener),
-    // utilityProcess.kill() sends SIGTERM on POSIX; escalate to SIGKILL when it is ignored.
-    kill: escalatingKill(
-      exits,
-      () => child.kill(),
-      () => {
-        try {
-          if (child.pid !== undefined) process.kill(child.pid, "SIGKILL");
-        } catch {
-          /* The process already exited. */
-        }
-      },
-    ),
+    ...kill,
     stderrTail: () => tail.text(),
   };
 }
@@ -4836,45 +5085,58 @@ export function createDesktopLauncher(options: { python?: string }): PluginLaunc
 `quit.ts`：
 
 ```ts
-import type { PluginManager } from "@kobrixa/plugin-runtime";
+import { PLUGIN_SHUTDOWN_DEADLINE_MS, type PluginManager } from "@kobrixa/plugin-runtime";
 
-export const PLUGIN_QUIT_TIMEOUT_MS = 5_000;
+/** Safety net only: longer than shutdown()'s own deadline, which already force-kills leftovers. */
+export const PLUGIN_QUIT_TIMEOUT_MS = PLUGIN_SHUTDOWN_DEADLINE_MS + 1_000;
 export interface QuitHost {
   on(event: "will-quit", listener: (event: { preventDefault(): void }) => void): unknown;
   quit(): void;
 }
 
 /**
- * `void dispose()` in will-quit would not keep Electron alive, so shutdown handshakes and kill
- * escalation could be cut short. Hold the first quit, wait (bounded), then quit again.
+ * `void shutdown()` in will-quit would not keep Electron alive, so shutdown handshakes and forced
+ * kills could be cut short. Hold the first quit, wait for shutdown(), then quit again.
  */
 export function installPluginQuitCleanup(
   app: QuitHost,
-  plugins: Pick<PluginManager, "active" | "dispose">,
-  options: { timeoutMs?: number; skip?(): boolean } = {},
+  plugins: Pick<PluginManager, "active" | "shutdown">,
+  options: { timeoutMs?: number } = {},
 ): void {
   let state: "idle" | "cleaning" | "done" = "idle";
   app.on("will-quit", (event) => {
     if (state === "done") return;
     if (state === "cleaning") return event.preventDefault();
     if (!plugins.active) return;
-    if (options.skip?.()) {
-      void plugins.dispose().catch(() => undefined);
-      return;
-    }
     event.preventDefault();
     state = "cleaning";
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, options.timeoutMs ?? PLUGIN_QUIT_TIMEOUT_MS);
+    const safetyNet = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, Math.max(options.timeoutMs ?? 0, PLUGIN_QUIT_TIMEOUT_MS));
     });
-    void Promise.race([plugins.dispose().catch(() => undefined), deadline]).then(() => {
+    void Promise.race([plugins.shutdown().catch(() => undefined), safetyNet]).then(() => {
       clearTimeout(timer);
       state = "done";
       app.quit();
     });
   });
 }
+```
+
+`ipc.ts`（`apps/desktop/src/main/ipc.ts`）：在 `registerIpc` 參數列最後加入
+
+```ts
+  /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
+  beforeUpdateInstall: () => Promise<void> = async () => {},
+```
+
+並把 `handle("updates:install", () => updates.install());` 改成：
+
+```ts
+handle("updates:install", async () => {
+  await beforeUpdateInstall();
+  updates.install();
+});
 ```
 
 `ipc.ts`：
@@ -4953,7 +5215,7 @@ export interface PluginsApi {
 
 - [ ] **Step 6: 執行測試與型別檢查**
 
-Run: `pnpm vitest run --project desktop src/main/plugins && pnpm --filter "@kobrixa/desktop..." -r check`
+Run: `pnpm vitest run --project desktop src/main/plugins src/main/updates && pnpm --filter "@kobrixa/desktop..." -r check`
 Expected: PASS。
 
 - [ ] **Step 7: Commit**
@@ -5164,7 +5426,7 @@ const plugins = await PluginManager.create({
 ```
 
 3. 把 `new BuildService(workspaces, renderer)` 改成 `new BuildService(workspaces, renderer, undefined, (language) => plugins.frontendFor(language))`。
-4. 在 `PluginManager.create(...)` 之後立即呼叫 `installPluginQuitCleanup(app, plugins, { skip: () => updates?.installing === true });`（從 `./plugins/quit.js` 匯入）。不要在 `will-quit` 裡寫 `void plugins.dispose()`，因為那樣 Electron 不會等清理完成。然後執行 `node tests/desktop/run-close-smoke.mjs`，確認關閉、退出、早期關閉與重開視窗四個情境仍然 PASS，也就是既有的 `will-quit` 處理器重複執行不會出錯。
+4. 在 `PluginManager.create(...)` 之後立即呼叫 `installPluginQuitCleanup(app, plugins);`（從 `./plugins/quit.js` 匯入）。不要在 `will-quit` 裡寫 `void plugins.shutdown()`，因為那樣 Electron 不會等清理完成。在 `registerIpc(...)` 呼叫的最後（modules 陣列之後）傳入 `() => plugins.shutdown()` 作為 `beforeUpdateInstall`，讓 `quitAndInstall()` 開始前插件程序就已經結束；屆時 `plugins.active` 已是 false，退出流程不會再攔截。然後執行 `node tests/desktop/run-close-smoke.mjs`，確認關閉、退出、早期關閉與重開視窗四個情境仍然 PASS，也就是既有的 `will-quit` 處理器重複執行不會出錯。
 5. `send` helper 宣告之後，才能把 IPC 模組加進 `registerIpc(...)` 最後的 modules 陣列：`(handle) => { registerPluginIpc(handle, plugins, (event) => send("plugins:event", event)); }`。
 
 - [ ] **Step 4: 執行測試與檢查**
@@ -5641,7 +5903,7 @@ git commit -m "feat(desktop): add a bilingual plugins panel to settings"
 
 **Files:**
 
-- Create: `tests/desktop/run-plugins-smoke.mjs`、`tests/desktop/plugins-smoke-main.ts`、`tests/desktop/fixtures/crash-plugin.ts`、`pid-plugin.ts`、`pid_plugin.py`
+- Create: `tests/desktop/run-plugins-smoke.mjs`、`tests/desktop/plugins-smoke-main.ts`、`tests/desktop/fixtures/crash-plugin.ts`、`pid-plugin.ts`、`pid_plugin.py`、`stubborn-plugin.ts`
 - Modify: 根目錄 `package.json`（`test:plugins:smoke`）、`.github/workflows/ci.yml`（`KOBRIXA_TEST_PYTHON` 與 smoke 步驟）
 
 **Interfaces:**
@@ -5687,12 +5949,17 @@ setTimeout(() => fail(new Error("Plugin smoke timed out")), 60_000).unref();
 
 void app.whenReady().then(async () => {
   const manager = await PluginManager.create({
-    sources: ["hello-ts", "插件 測試/hello-python", "crash", "pid-ts", "pid-python"].map(
-      (name) => ({
-        kind: "development" as const,
-        directory: `${directory}/${name}`,
-      }),
-    ),
+    sources: [
+      "hello-ts",
+      "插件 測試/hello-python",
+      "crash",
+      "pid-ts",
+      "pid-python",
+      "stubborn-ts",
+    ].map((name) => ({
+      kind: "development" as const,
+      directory: `${directory}/${name}`,
+    })),
     store: filePluginStateStore(`${directory}/user-data`),
     safeMode: false,
     launcher: createDesktopLauncher({ python }),
@@ -5706,7 +5973,7 @@ void app.whenReady().then(async () => {
   });
   assert.deepEqual(
     manager.state().plugins.map((plugin) => plugin.status),
-    ["enabled", "enabled", "enabled", "enabled", "enabled"],
+    ["enabled", "enabled", "enabled", "enabled", "enabled", "enabled"],
   );
   assert.deepEqual(await manager.executeCommand("kobrixa-samples.hello-ts.greet"), { ok: true });
   assert.deepEqual(await manager.executeCommand("kobrixa-samples.hello-python.greet"), {
@@ -5730,7 +5997,8 @@ void app.whenReady().then(async () => {
   );
   assert.deepEqual(await manager.executeCommand("kobrixa-smoke.pid-ts.record"), { ok: true });
   assert.deepEqual(await manager.executeCommand("kobrixa-smoke.pid-python.record"), { ok: true });
-  // Quit through Electron's real lifecycle instead of awaiting dispose(); the runner then checks
+  assert.deepEqual(await manager.executeCommand("kobrixa-smoke.stubborn-ts.record"), { ok: true });
+  // Quit through Electron's real lifecycle instead of awaiting shutdown(); the runner then checks
   // that the TS plugin's deactivate ran and that no plugin process outlived the app.
   app.quit();
 });
@@ -5754,6 +6022,25 @@ void runPlugin(
       writeFileSync("shutdown.txt", "ok");
     },
   }),
+);
+```
+
+`tests/desktop/fixtures/stubborn-plugin.ts`（回覆 shutdown，但忽略 `exit` 通知和 SIGTERM，只有強制終止能結束它）：
+
+```ts
+import { writeFileSync } from "node:fs";
+import { definePlugin, runPlugin } from "@kobrixa/plugin-sdk";
+
+process.on("SIGTERM", () => {});
+void runPlugin(
+  definePlugin({
+    activate(context) {
+      context.commands.register("kobrixa-smoke.stubborn-ts.record", () =>
+        writeFileSync("pid.txt", String(process.pid)),
+      );
+    },
+  }),
+  { exit: () => {} },
 );
 ```
 
@@ -5877,6 +6164,15 @@ try {
     path.join(root, "tests/desktop/fixtures/pid_plugin.py"),
     path.join(pidPython, "main.py"),
   );
+  await fixture(
+    "stubborn-ts",
+    { kind: "node", entry: "dist/index.cjs" },
+    "kobrixa-smoke.stubborn-ts.record",
+  );
+  await bundle(
+    path.join(root, "tests/desktop/fixtures/stubborn-plugin.ts"),
+    path.join(temporary, "stubborn-ts/dist/index.cjs"),
+  );
   const child = spawn(
     process.execPath,
     [
@@ -5906,7 +6202,8 @@ try {
       return error.code === "EPERM";
     }
   };
-  for (const name of ["pid-ts", "pid-python"]) {
+  // stubborn-ts can only be stopped by the forced kill inside the shutdown deadline.
+  for (const name of ["pid-ts", "pid-python", "stubborn-ts"]) {
     const pid = Number(await readFile(path.join(temporary, name, "pid.txt"), "utf8"));
     const deadline = Date.now() + 3000;
     while (alive(pid) && Date.now() < deadline)
