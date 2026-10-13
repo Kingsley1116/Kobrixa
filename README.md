@@ -6,6 +6,14 @@ Kobrixa IDE is an open-source desktop app for programming LEGO® MINDSTORMS® EV
 
 [Download](https://github.com/Kingsley1116/Kobrixa/releases) · [Website](https://kobrixa.com) · [Examples](examples/README.md) · [Documentation](#documentation) · [繁體中文版](README.zh-TW.md)
 
+Keep your EV3 building, learning, and experimenting. Test motors without writing a program, record sensor curves, or invite a teammate to code together.
+
+[![Kobrixa editor](docs/images/editor-en.png)](docs/images/editor-en.png)
+
+*The project shown is demo data.*
+
+Want to support modern, open-source tools for EV3? Give Kobrixa a star on [GitHub](https://github.com/Kingsley1116/Kobrixa) ⭐.
+
 ## Contents
 
 - [What you can do](#what-you-can-do)
@@ -56,7 +64,7 @@ Download the file for your system from the latest [GitHub Release](https://githu
 | macOS Apple Silicon | `Kobrixa-<version>-darwin-arm64.dmg`    | Open the DMG and drag `Kobrixa.app` into Applications |
 | Linux x64           | `Kobrixa-<version>-linux-x64.AppImage`  | Make the file executable (`chmod +x`), then launch it |
 
-Version 1.0.0 will be unsigned, so your operating system may show a warning. See the [code signing policy](docs/en/code-signing.md) and [installation guide](docs/en/installation.md) for checksum verification and updates. On Linux, USB access may need a [udev rule](docs/en/installation.md#usb).
+Version 1.0.0 is unsigned, so your operating system may show a warning. See the [code signing policy](docs/en/code-signing.md) and [installation guide](docs/en/installation.md) for checksum verification and updates. On Linux, USB access may need a [udev rule](docs/en/installation.md#usb).
 
 ### 2. Write a program
 
