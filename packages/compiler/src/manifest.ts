@@ -1,6 +1,6 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { expand } from "brace-expansion";
+import micromatch from "micromatch";
 import fg from "fast-glob";
 import { z } from "zod";
 import type { Diagnostic, ProjectManifest, SourceFile, SourceProject } from "./contracts.js";
@@ -9,47 +9,22 @@ import { diagnostic } from "./diagnostics.js";
 const MAX_PATTERN_LENGTH = 4096;
 const MAX_EXPANDED_PATTERNS = 256;
 
-function hasSupportedBraceSyntax(pattern: string): boolean {
-  const syntax = pattern.replace(/\\./g, "");
-  // The bounded expander uses Bash-style braces. Reject forms whose
-  // interpretation differs from the previous glob engine instead of
-  // silently dropping or selecting different assets.
-  if (/[{}]/.test(pattern) && /["'`]/.test(syntax)) return false;
-  if (!/[{}]/.test(syntax)) return true;
-  let depth = 0;
-  for (const character of syntax) {
-    if (character === "{") depth++;
-    else if (character === "}" && --depth < 0) return false;
-  }
-  if (depth !== 0) return false;
-  for (const match of syntax.matchAll(/\{([^{}]*)\}/g)) {
-    const body = match[1]!;
-    if (!body.includes("..") || body.includes(",")) continue;
-    if (/^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(body)) continue;
-    if (/^(?:[a-z]\.\.[a-z]|[A-Z]\.\.[A-Z])(?:\.\.-?\d+)?$/.test(body)) continue;
-    return false;
-  }
-  return true;
-}
-
-function expandAssetPatterns(patterns: string[]): string[] {
-  const expanded: string[] = [];
+function validateAssetPatterns(patterns: string[]): void {
+  let expandedCount = 0;
   for (const pattern of patterns) {
-    const max = MAX_EXPANDED_PATTERNS - expanded.length + 1;
-    const entries = expand(pattern, {
-      max,
-      // Escaped characters become temporary sentinels inside the expander.
-      // This exceeds their maximum length, so the count limit is reached
-      // before any silent length truncation. Input length is bounded above.
-      maxLength: max * MAX_PATTERN_LENGTH * 64,
-      maxDepth: 128,
-      maxRewrites: 128,
-    });
-    if (entries.length >= max)
+    let entries: string[];
+    try {
+      // pnpm patches the original parser to throw before excessive nesting or
+      // expansion. Match fast-glob's brace options to preserve glob semantics.
+      entries = micromatch.braces(pattern, { expand: true, nodupes: true, keepEscaping: true });
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
       throw new Error(`Assets may expand to at most ${MAX_EXPANDED_PATTERNS} patterns.`);
-    expanded.push(...entries);
+    }
+    expandedCount += entries.filter((entry) => entry !== "").length;
+    if (expandedCount > MAX_EXPANDED_PATTERNS)
+      throw new Error(`Assets may expand to at most ${MAX_EXPANDED_PATTERNS} patterns.`);
   }
-  return expanded;
 }
 
 const manifestSchema = z
@@ -73,10 +48,6 @@ const manifestSchema = z
           })
           .refine((pattern) => (pattern.match(/[)}]/g)?.length ?? 0) <= 64, {
             message: "Asset patterns may contain at most 64 closing braces or parentheses.",
-          })
-          .refine(hasSupportedBraceSyntax, {
-            message:
-              "Use balanced, unquoted brace expressions with integer or same-case letter ranges; escape literal braces or use separate asset patterns.",
           }),
       )
       .default([]),
@@ -161,7 +132,7 @@ export function parseManifest(value: unknown): {
     };
   }
   try {
-    expandAssetPatterns(parsed.data.assets);
+    validateAssetPatterns(parsed.data.assets);
   } catch (error) {
     return {
       diagnostics: [diagnostic("MAN1001", `assets: ${(error as Error).message}`)],
@@ -276,15 +247,12 @@ export async function loadProject(
     }
 
     const assets = (
-      await fg(expandAssetPatterns(manifest.assets), {
+      await fg(manifest.assets, {
         cwd: root,
         onlyFiles: true,
         dot: false,
         followSymbolicLinks: false,
         unique: true,
-        // Expansion is already bounded above; never invoke the legacy
-        // glob engine's eager, unbounded brace expander on user patterns.
-        braceExpansion: false,
       })
     ).sort();
     const assetFiles = await Promise.all(

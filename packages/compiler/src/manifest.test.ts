@@ -1,6 +1,9 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import micromatch from "micromatch";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadProject, parseManifest } from "./manifest.js";
 
@@ -28,6 +31,19 @@ async function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("manifest", () => {
+  it("installs parser nesting and expansion guards without truncating valid results", () => {
+    const options = { expand: true, nodupes: true, keepEscaping: true };
+    expect(() => micromatch.braces("{".repeat(65) + "a,b" + "}".repeat(65), options)).toThrow(
+      "Brace pattern nesting exceeds 64 levels.",
+    );
+    expect(() => micromatch.braces("{a,b}".repeat(16), options)).toThrow(
+      "Brace expansion exceeds 256 patterns.",
+    );
+    const expanded = micromatch.braces("item{0..255}", options);
+    expect(expanded).toHaveLength(256);
+    expect(expanded.at(-1)).toBe("item255");
+  });
+
   it("retains unknown fields", () => {
     const result = parseManifest({
       schemaVersion: 1,
@@ -115,6 +131,10 @@ describe("manifest", () => {
     "!assets/" + "{a,b}".repeat(16),
     "assets/{1..1000}{1..1000}.txt",
     "assets/{0..256}.txt",
+    "assets/{10000..1}.txt",
+    "assets/{1..10000..1}.txt",
+    "assets/{10000..1..-1}.txt",
+    "assets/{0..10000..0}.txt",
   ])(
     "rejects excessive expansion without discovering a partial asset set (%#)",
     async (pattern) => {
@@ -143,6 +163,42 @@ describe("manifest", () => {
     ]);
   });
 
+  it("preserves descending, negative and zero-step numeric range semantics", () => {
+    const options = { expand: true, nodupes: true, keepEscaping: true };
+    expect(micromatch.braces("{5..1..-2}", options)).toEqual(["5", "3", "1"]);
+    expect(micromatch.braces("{-1..-3}", options)).toEqual(["-1", "-2", "-3"]);
+    expect(micromatch.braces("{1..3..0}", options)).toEqual(["1", "2", "3"]);
+    expect(micromatch.braces("{255..0..1}", options)).toHaveLength(256);
+  });
+
+  it("rejects a numeric range that cannot advance at JavaScript integer precision", () => {
+    const modulePath = createRequire(import.meta.url).resolve("micromatch");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--max-old-space-size=32",
+        "-e",
+        `try {
+          require(${JSON.stringify(modulePath)}).braces("{9007199254740992..9007199254740992}", { expand: true });
+          process.exitCode = 1;
+        } catch (error) {
+          if (error.message !== "Brace range cannot advance safely.") throw error;
+        }`,
+      ],
+      { timeout: 3000, encoding: "utf8", maxBuffer: 4096 },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("ignores empty alternatives while retaining nonempty matches", async () => {
+    const root = await fixture({ assets: ["{,asset.txt}"] });
+    await writeFile(path.join(root, "asset.txt"), "asset");
+    const result = await loadProject(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.project?.assets.map((asset) => asset.path)).toEqual(["asset.txt"]);
+  });
+
   it("applies the expansion budget across all asset patterns", async () => {
     const root = await fixture({ assets: ["assets/a{1..200}.txt", "assets/b{1..200}.txt"] });
     const result = await loadProject(root);
@@ -151,18 +207,61 @@ describe("manifest", () => {
   });
 
   it.each([
-    'assets/{"alpha","beta"}.txt',
-    'assets/{"alpha,beta",gamma}.txt',
-    "assets/{a},b}.txt",
-    "assets/{!..%}.txt",
-    "assets/{Z..a}.txt",
-  ])("diagnoses unsupported brace forms without silently dropping assets (%#)", async (pattern) => {
-    const root = await fixture({ assets: [pattern] });
+    ['assets/{"alpha","beta"}.txt', ["alpha", "beta"], ["alpha", "beta"]],
+    ['assets/{"alpha,beta",gamma}.txt', ["alpha,beta", "gamma"], ["alpha,beta", "gamma"]],
+    ['assets/"{a,b}".txt', ["a", "b", "{a,b}"], ["a", "b"]],
+    ['assets/{"{a,b}",a}.txt', ["a", "b", "{a,b}"], ["a", "b"]],
+    [
+      "assets/file[{1..3}].txt",
+      ["file.", "file1", "file2", "file3", "file{", "file}"],
+      ["file.", "file1", "file3", "file{", "file}"],
+    ],
+    [
+      "assets/file[{a,b}].txt",
+      ["file,", "filea", "fileb", "file{", "file}"],
+      ["file,", "filea", "fileb", "file{", "file}"],
+    ],
+    ["assets/{a},b}.txt", ["{a},b}", "a}", "b"], ["{a},b}"]],
+  ] as const)(
+    "preserves quoted alternatives and literal brace syntax (%#)",
+    async (pattern, names, expected) => {
+      const root = await fixture({ assets: [pattern] });
+      await mkdir(path.join(root, "assets"));
+      await Promise.all(
+        names.map((name) => writeFile(path.join(root, `assets/${name}.txt`), name)),
+      );
+      const result = await loadProject(root);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.project?.assets.map((asset) => asset.path)).toEqual(
+        expected.map((name) => `assets/${name}.txt`),
+      );
+    },
+  );
+
+  it("expands ranges after a literal brace directory", async () => {
+    const root = await fixture({ assets: ["assets/{prefix}/file{1..2}.txt"] });
+    await mkdir(path.join(root, "assets/{prefix}"), { recursive: true });
+    await writeFile(path.join(root, "assets/{prefix}/file1.txt"), "first");
+    await writeFile(path.join(root, "assets/{prefix}/file2.txt"), "last");
     const result = await loadProject(root);
-    expect(result.project).toBeUndefined();
-    expect(result.diagnostics[0]?.code).toBe("MAN1001");
-    expect(result.diagnostics[0]?.message).toContain("balanced, unquoted brace expressions");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.project?.assets.map((asset) => asset.path)).toEqual([
+      "assets/{prefix}/file1.txt",
+      "assets/{prefix}/file2.txt",
+    ]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves escaped literal POSIX backslashes",
+    async () => {
+      const root = await fixture({ assets: ["assets/back\\\\slash.txt"] });
+      await mkdir(path.join(root, "assets"));
+      await writeFile(path.join(root, "assets/back\\slash.txt"), "literal backslash");
+      const result = await loadProject(root);
+      expect(result.diagnostics).toEqual([]);
+      expect(result.project?.assets.map((asset) => asset.path)).toEqual(["assets/back\\slash.txt"]);
+    },
+  );
 
   it("treats output directory metacharacters literally and keeps sibling sources", async () => {
     const root = await fixture({ outputDir: "build{one,two}" });

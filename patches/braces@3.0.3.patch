@@ -1,0 +1,123 @@
+diff --git a/lib/expand.js b/lib/expand.js
+index 35b2c41d6afdb8f0197959e26079f266e48370d3..8e40881ced5e3d60bf6cca48007906abb23e3f5a 100644
+--- a/lib/expand.js
++++ b/lib/expand.js
+@@ -4,30 +4,73 @@ const fill = require('fill-range');
+ const stringify = require('./stringify');
+ const utils = require('./utils');
+ 
++// Fail before allocating an unbounded Cartesian product. Keep the parser's
++// existing semantics and never return a silently truncated result set.
++const pushLimited = (result, value) => {
++  if (Array.isArray(value)) {
++    for (const entry of value) pushLimited(result, entry);
++  } else if (value !== undefined) {
++    if (result.length >= 256) throw new RangeError('Brace expansion exceeds 256 patterns.');
++    result.push(value);
++  }
++};
++
++const flattenLimited = value => {
++  const result = [];
++  pushLimited(result, value);
++  return result;
++};
++
++// Match fill-range's numeric/character and step handling, but count before it
++// allocates. Bounded iteration also detects integer precision stalls.
++const assertRangeSize = (args, options, rangeLimit) => {
++  const [start, end] = args;
++  const rawStep = args[2] || options.step || 1;
++  if (!Number.isInteger(Number(rawStep))) return;
++  const numeric = Number.isInteger(Number(start)) && Number.isInteger(Number(end));
++  if (!numeric && [start, end].some(value =>
++    !Number.isInteger(Number(value)) && String(value).length > 1)) return;
++  let current = numeric ? Number(start) : String(start).charCodeAt(0);
++  const last = numeric ? Number(end) : String(end).charCodeAt(0);
++  const step = Math.max(Math.abs(Number(rawStep)), 1);
++  const descending = current > last;
++  let count = 0;
++  while (descending ? current >= last : current <= last) {
++    if (count >= 256 || (rangeLimit !== false && count >= rangeLimit)) {
++      throw new RangeError('Brace expansion exceeds 256 patterns.');
++    }
++    count++;
++    const next = descending ? current - step : current + step;
++    if (next === current) throw new RangeError('Brace range cannot advance safely.');
++    current = next;
++  }
++};
++
+ const append = (queue = '', stash = '', enclose = false) => {
+   const result = [];
+ 
+   queue = [].concat(queue);
+   stash = [].concat(stash);
+ 
+-  if (!stash.length) return queue;
++  if (!stash.length) return flattenLimited(queue);
+   if (!queue.length) {
+-    return enclose ? utils.flatten(stash).map(ele => `{${ele}}`) : stash;
++    const values = flattenLimited(stash);
++    return enclose ? values.map(ele => `{${ele}}`) : values;
+   }
+ 
+   for (const item of queue) {
+     if (Array.isArray(item)) {
+       for (const value of item) {
+-        result.push(append(value, stash, enclose));
++        pushLimited(result, append(value, stash, enclose));
+       }
+     } else {
+       for (let ele of stash) {
+         if (enclose === true && typeof ele === 'string') ele = `{${ele}}`;
+-        result.push(Array.isArray(ele) ? append(item, ele, enclose) : item + ele);
++        pushLimited(result, Array.isArray(ele) ? append(item, ele, enclose) : item + ele);
+       }
+     }
+   }
+-  return utils.flatten(result);
++  return result;
+ };
+ 
+ const expand = (ast, options = {}) => {
+@@ -57,9 +100,7 @@ const expand = (ast, options = {}) => {
+     if (node.nodes && node.ranges > 0) {
+       const args = utils.reduce(node.nodes);
+ 
+-      if (utils.exceedsLimit(...args, options.step, rangeLimit)) {
+-        throw new RangeError('expanded array length exceeds range limit. Use options.rangeLimit to increase or disable the limit.');
+-      }
++      assertRangeSize(args, options, rangeLimit);
+ 
+       let range = fill(...args, options);
+       if (range.length === 0) {
+@@ -107,7 +148,7 @@ const expand = (ast, options = {}) => {
+     return queue;
+   };
+ 
+-  return utils.flatten(walk(ast));
++  return flattenLimited(walk(ast));
+ };
+ 
+ module.exports = expand;
+diff --git a/lib/parse.js b/lib/parse.js
+index 3a6988e629f52aee6609dc5ec290a5e9ff47cecb..30c9c5292e9a23ff3d6a9c8465d7e7c699e6a86f 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -143,6 +143,7 @@ const parse = (input, options = {}) => {
+      */
+ 
+     if (value === CHAR_LEFT_PARENTHESES) {
++      if (stack.length >= 65) throw new RangeError('Brace pattern nesting exceeds 64 levels.');
+       block = push({ type: 'paren', nodes: [] });
+       stack.push(block);
+       push({ type: 'text', value });
+@@ -195,6 +196,7 @@ const parse = (input, options = {}) => {
+      */
+ 
+     if (value === CHAR_LEFT_CURLY_BRACE) {
++      if (stack.length >= 65) throw new RangeError('Brace pattern nesting exceeds 64 levels.');
+       depth++;
+ 
+       const dollar = prev.value && prev.value.slice(-1) === '$' || block.dollar === true;
