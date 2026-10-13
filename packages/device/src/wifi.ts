@@ -32,7 +32,8 @@ class TcpConnection extends FramedConnection {
 
   constructor(private readonly socket: net.Socket) {
     super();
-    socket.on("data", (data) => {
+    // No text encoding is set: EV3 frames arrive as raw binary buffers.
+    socket.on("data", (data: Buffer) => {
       this.#buffer = Buffer.concat([this.#buffer, data]);
       this.#waiters.splice(0).forEach((wake) => wake());
     });

@@ -249,7 +249,9 @@ export class LanguageService {
       if (reply.ok) pending.resolve(reply.patch);
       else pending.reject(new Error(reply.error));
     });
-    worker.once("error", (error) => this.fail(worker, error));
+    worker.once("error", (error) =>
+      this.fail(worker, error instanceof Error ? error : new Error(String(error))),
+    );
     worker.once("exit", (code) =>
       this.fail(worker, new Error(`Diagnostics worker exited (${code}).`)),
     );

@@ -112,7 +112,7 @@ export class BuildService {
           progress: { ...reply.progress, buildId },
         });
     });
-    worker.once("error", (error) => fail(error.message));
+    worker.once("error", (error) => fail(error instanceof Error ? error.message : String(error)));
     worker.once("exit", (code) => fail(`Build worker exited before completing (code ${code}).`));
     return buildId;
   }
