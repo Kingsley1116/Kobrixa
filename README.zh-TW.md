@@ -1,10 +1,18 @@
 # Kobrixa IDE
 
-**用程式驅動創意。**
+**支援即時協作與感測器曲線的開源 EV3 IDE，不需更換韌體。**
 
 Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Linux 上為 LEGO® MINDSTORMS® EV3 機器人編寫程式。你以 Basic Plus（`.bp`）撰寫程式，Kobrixa 將它編譯為原生 EV3 bytecode，並透過 USB 或 Wi-Fi 傳送到主機執行——不需要更換韌體。
 
 [下載](https://github.com/Kingsley1116/Kobrixa/releases) · [網站](https://kobrixa.com) · [範例](examples/README.zh-TW.md) · [文件](#文件) · [English README](README.md)
+
+讓手上的 EV3 繼續用於學習、實驗與創作。可以直接測試馬達、記錄感測器曲線，或邀請夥伴一起編寫程式。
+
+[![Kobrixa 程式編輯器](docs/images/editor-zh-TW.png)](docs/images/editor-zh-TW.png)
+
+*畫面中的專案為示範資料。*
+
+喜歡讓 EV3 持續有開源工具可用的方向嗎？歡迎在 [GitHub](https://github.com/Kingsley1116/Kobrixa) 給 Kobrixa 一顆 ⭐。
 
 ## 目錄
 
@@ -56,7 +64,7 @@ Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Li
 | macOS Apple Silicon | `Kobrixa-<version>-darwin-arm64.dmg`    | 開啟 DMG，將 `Kobrixa.app` 拖入「應用程式」 |
 | Linux x64           | `Kobrixa-<version>-linux-x64.AppImage`  | 將檔案設為可執行（`chmod +x`）後啟動        |
 
-1.0.0 將以未簽章版本發佈，作業系統可能顯示警告。詳見[程式碼簽章政策](docs/zh-TW/code-signing.md)；校驗與更新請見[安裝指南](docs/zh-TW/installation.md)。Linux 上使用 USB 可能需要設定 [udev 規則](docs/zh-TW/installation.md#usb)。
+1.0.0 為未簽章版本，作業系統可能顯示警告。詳見[程式碼簽章政策](docs/zh-TW/code-signing.md)；校驗與更新請見[安裝指南](docs/zh-TW/installation.md)。Linux 上使用 USB 可能需要設定 [udev 規則](docs/zh-TW/installation.md#usb)。
 
 ### 2. 撰寫程式
 
