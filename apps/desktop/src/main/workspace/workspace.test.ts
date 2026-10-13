@@ -41,7 +41,7 @@ vi.mock("electron", () => ({
 import { WorkspaceService } from "./workspace.js";
 import type { WorkspaceView } from "../../shared/api.js";
 
-describe.sequential("workspace file management", () => {
+describe("workspace file management", { concurrent: false }, () => {
   let root: string;
   let userData: string;
 
