@@ -31,6 +31,11 @@ export class CollabRoom extends Room {
   restored;
   async fetch(request) {
     const path = new URL(request.url).pathname;
+    // Consume control-request bodies before replying so persistent HTTP
+    // connections do not carry unread bytes into the next request.
+    if (["/reconstruct", "/inspect", "/expire-password-attempts", "/expire"].includes(path)) {
+      await request.arrayBuffer();
+    }
     if (path === "/reconstruct") {
       this.restored = new Room(this.ctx, this.env);
       return Response.json({});
