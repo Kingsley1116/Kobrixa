@@ -1,23 +1,23 @@
-name: Documentation or example / 文件或範例
-description: Report unclear, incorrect or missing documentation. / 回報不清楚、錯誤或缺少的文件。
+name: Documentation or example
+description: Report unclear, incorrect or missing documentation.
 labels: [documentation]
 body:
   - type: input
     id: location
     attributes:
-      label: Page or file / 頁面或檔案
-      description: Include the URL or repository path and language. / 提供網址或儲存庫路徑與語言。
+      label: Page or file
+      description: Include the URL or repository path and language.
     validations:
       required: true
   - type: textarea
     id: problem
     attributes:
-      label: What needs improvement? / 需要改善什麼？
-      description: English and Traditional Chinese are welcome. / 歡迎使用英文或繁體中文。
+      label: What needs improvement?
+      description: English and Chinese are welcome.
     validations:
       required: true
   - type: textarea
     id: suggestion
     attributes:
-      label: Suggested correction / 建議修正
-      description: Include expected behavior and public references when available. / 如有資料，請附上預期行為與公開參考來源。
+      label: Suggested correction
+      description: Include expected behavior and public references when available.
