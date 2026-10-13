@@ -6,8 +6,8 @@
   "main": ".vite/build/main.cjs",
   "scripts": {
     "dev": "electron-forge start",
-    "build": "node ../../tools/release/build-desktop.mjs",
-    "package": "node ../../tools/release/build-desktop.mjs",
+    "build": "install-electron && node ../../tools/release/build-desktop.mjs",
+    "package": "install-electron && node ../../tools/release/build-desktop.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "make": "node ../../tools/release/distribute.mjs"
@@ -40,7 +40,7 @@
     "@types/react-dom": "^19.1.9",
     "@types/semver": "7.7.0",
     "@vitejs/plugin-react": "^5.0.2",
-    "electron": "^37.4.0",
+    "electron": "^42.11.12",
     "electron-builder": "26.15.3",
     "vite": "^7.1.3"
   }

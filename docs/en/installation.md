@@ -12,6 +12,8 @@ Choose a published version from [GitHub Releases](https://github.com/Kingsley111
 
 `<version>` is the downloaded version number. Keep projects outside the application directory. Unsigned Windows installers may display system warnings; read the release's per-platform signing status and the [code signing policy](../en/code-signing.md). Physical USB/Wi-Fi acceptance is documented in [device support](../en/device-support.md).
 
+Desktop builds based on Electron 42 require macOS 12 (Monterey) or later on Apple Silicon. macOS 11 is no longer supported.
+
 ### SHA-256 verification (optional)
 
 SHA-256 verification is optional and is not required to install or use Kobrixa. To check that a download is intact, also download `SHA256SUMS.txt` from the same release into the same directory. Older releases use individual `.sha256` files instead. Replace `<version>` in these examples with the downloaded version.
