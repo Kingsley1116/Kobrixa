@@ -39,7 +39,7 @@
     "test:desktop:packaged": "node tests/desktop/packaged-smoke.mjs"
   },
   "devDependencies": {
-    "@electron/asar": "3.4.1",
+    "@electron/asar": "4.3.1",
     "@eslint/js": "^9.34.0",
     "@types/node": "^24.3.0",
     "eslint": "^9.34.0",
