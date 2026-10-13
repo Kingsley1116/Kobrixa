@@ -1,36 +1,35 @@
-name: Feature request / 功能提案
-description: Describe a use case and an observable outcome. / 說明使用情境與可驗收的結果。
+name: Feature request
+description: Describe a use case and an observable outcome.
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        English and Traditional Chinese are welcome. / 歡迎使用英文或繁體中文。
+        English and Traditional Chinese are welcome.
         Please check the [roadmap](https://github.com/Kingsley1116/Kobrixa/blob/main/docs/en/roadmap.md) and existing issues first.
-        請先參考[路線圖](https://github.com/Kingsley1116/Kobrixa/blob/main/docs/zh-TW/roadmap.md)與現有 issue。
   - type: textarea
     id: problem
     attributes:
-      label: Problem and use case / 問題與使用情境
-      description: Who needs this, and what is difficult today? / 誰需要這個功能？目前遇到什麼困難？
+      label: Problem and use case
+      description: Who needs this, and what is difficult today?
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed behavior / 建議行為
-      description: Describe what a user should be able to do. / 描述使用者應能完成的操作。
+      label: Proposed behavior
+      description: Describe what a user should be able to do.
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
-      label: Acceptance criteria / 驗收條件
-      description: Give observable results or an example that demonstrates success. / 提供可觀察的結果或成功範例。
+      label: Acceptance criteria
+      description: Give observable results or an example that demonstrates success.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives and context / 替代方案與補充資訊
-      description: Include workarounds, affected platforms and public specification links. Do not copy third-party implementation details. / 可附上暫時解法、受影響平台與公開規格連結；勿複製第三方實作細節。
+      label: Alternatives and context
+      description: Include workarounds, affected platforms and public specification links. Do not copy third-party implementation details.

@@ -1,55 +1,55 @@
-name: Bug report / 錯誤回報
-description: Report a reproducible problem in Kobrixa. / 回報可重現的問題。
+name: Bug report
+description: Report a reproducible problem in Kobrixa.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        English and Traditional Chinese are welcome. / 歡迎使用英文或繁體中文。
+        English and Traditional Chinese are welcome.
         For security vulnerabilities, use [private reporting](https://github.com/Kingsley1116/Kobrixa/security/advisories/new).
-        安全漏洞請使用私人回報；請勿公開密鑰、協作邀請碼或私人專案。
+        Do not include secrets, collaboration invite codes or private project content.
   - type: checkboxes
     id: prerequisites
     attributes:
-      label: Before reporting / 回報前確認
+      label: Before reporting
       options:
-        - label: I searched existing issues for duplicates. / 我已搜尋現有 issue，確認沒有重複回報。
+        - label: I searched existing issues for duplicates.
           required: true
   - type: dropdown
     id: area
     attributes:
-      label: Affected area / 受影響功能
+      label: Affected area
       options:
-        - Desktop app / 桌面應用程式
-        - Basic Plus compiler / 編譯器
-        - EV3 USB or Wi-Fi / 裝置連線
-        - Collaboration / 雲端協作
-        - Website or browser tools / 網站或瀏覽器工具
-        - Documentation or examples / 文件或範例
-        - Other or unsure / 其他或不確定
+        - Desktop app
+        - Basic Plus compiler
+        - EV3 USB or Wi-Fi
+        - Collaboration
+        - Website or browser tools
+        - Documentation or examples
+        - Other or unsure
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: Version or commit / 版本或 commit
-      description: For the website, include its URL and when the problem occurred. / 網站問題請提供網址與發生時間。
+      label: Version or commit
+      description: For the website, include its URL and when the problem occurred.
       placeholder: 1.0.1-beta.1, commit SHA, or website URL and date
     validations:
       required: true
   - type: textarea
     id: environment
     attributes:
-      label: Environment / 使用環境
-      description: OS and architecture; browser version for web issues; EV3 firmware, USB/Wi-Fi, sensors and ports for device issues. / 作業系統與架構；網站問題提供瀏覽器版本；硬體問題提供 EV3 韌體、連線方式、感測器與連接埠。
+      label: Environment
+      description: OS and architecture; browser version for web issues; EV3 firmware, USB/Wi-Fi, sensors and ports for device issues.
       placeholder: macOS 26, Apple Silicon; EV3 stock firmware; USB; touch sensor on port 1
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: Steps to reproduce / 重現步驟
-      description: Include a minimal independently written .bp example when relevant. / 如有需要，附上自行撰寫的最小 .bp 範例。
+      label: Steps to reproduce
+      description: Include a minimal independently written .bp example when relevant.
       placeholder: |
         1. Open …
         2. Run …
@@ -59,18 +59,18 @@ body:
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior / 預期行為
+      label: Expected behavior
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior / 實際行為
-      description: Include the exact diagnostic or error message. / 請附上完整診斷或錯誤訊息。
+      label: Actual behavior
+      description: Include the exact diagnostic or error message.
     validations:
       required: true
   - type: textarea
     id: evidence
     attributes:
-      label: Logs, screenshots and workaround / 紀錄、截圖與暫時解法
-      description: Remove tokens, invite codes, personal data and private project content before uploading. / 上傳前移除權杖、邀請碼、個資與私人專案內容。
+      label: Logs, screenshots and workaround
+      description: Remove tokens, invite codes, personal data and private project content before uploading.
