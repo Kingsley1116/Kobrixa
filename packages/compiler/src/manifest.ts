@@ -12,7 +12,20 @@ const manifestSchema = z
     language: z.literal("bp"),
     entry: z.string().trim().min(1),
     target: z.literal("ev3-native"),
-    assets: z.array(z.string().trim().min(1)).default([]),
+    assets: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(4096)
+          // Count raw opening delimiters, including escaped/quoted ones, so
+          // validation never depends on the glob parser's interpretation.
+          .refine((pattern) => (pattern.match(/[({]/g)?.length ?? 0) <= 64, {
+            message: "Asset patterns may contain at most 64 opening braces or parentheses.",
+          }),
+      )
+      .default([]),
     outputDir: z.string().trim().min(1).default("build"),
   })
   .loose();
@@ -111,7 +124,7 @@ async function loadSources(
       onlyFiles: true,
       dot: false,
       followSymbolicLinks: false,
-      ignore: [`${manifest.outputDir.replaceAll(path.sep, "/")}/**`],
+      ignore: [`${fg.convertPathToPattern(manifest.outputDir)}/**`],
     })),
   ]);
   for (const overlayPath of overlays.keys()) {

@@ -126,8 +126,8 @@ Contract:
 - `language`: v1 accepts `bp`; planned values are `python`, `typescript`, and `cpp`.
 - `entry`: project-relative source path that must remain inside the project root.
 - `target`: v1 accepts only `ev3-native`.
-- `assets`: project-relative files or glob patterns; resolved paths must stay inside the project root.
-- `outputDir`: project-relative directory; it must not equal or contain the source root.
+- `assets`: project-relative files or glob patterns; resolved paths must stay inside the project root. Each pattern is limited to 4,096 characters and 64 opening braces or parentheses (including escaped or quoted ones). Oversized patterns produce a manifest diagnostic before file discovery. Ordinary alternatives and numeric ranges remain supported.
+- `outputDir`: literal project-relative directory, not a glob pattern; it must not equal or contain the source root.
 
 ## Compiler contracts
 
