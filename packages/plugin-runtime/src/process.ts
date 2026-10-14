@@ -99,24 +99,47 @@ export function stdioProcess(
   let framing: string | undefined;
   child.stdout.on("data", (chunk: Buffer) => {
     if (framing) return;
+    let messages: string[];
     try {
-      for (const text of decoder.push(chunk)) for (const listener of listeners) listener(text);
+      messages = decoder.push(chunk);
     } catch (error) {
       framing = `Plugin wrote non-protocol data to stdout (${error instanceof Error ? error.message : String(error)}). Write logs to stderr.`;
       kill();
+      return;
     }
+    for (const text of messages) for (const listener of listeners) listener(text);
   });
   child.stderr.on("data", (chunk: Buffer) => tail.push(chunk));
   child.stdin.on("error", () => {
     /* EPIPE after the plugin exits is reported through the exit event. */
   });
-  child.once("error", (error) => exits.emit({ code: null, reason: error.message }));
-  child.once("exit", (code, signal) =>
-    exits.emit({
-      code,
-      ...(framing ? { reason: framing } : signal ? { reason: `terminated by ${signal}` } : {}),
-    }),
-  );
+  // A PID also identifies a child wrapped after its spawn event already fired.
+  let spawned = child.pid !== undefined;
+  child.once("spawn", () => {
+    spawned = true;
+  });
+  child.on("error", (error) => {
+    if (!spawned) exits.emit({ code: null, reason: error.message });
+  });
+  child.once("exit", (code, signal) => {
+    // Exit can precede the final stdout/stderr data; bound the wait for their EOFs.
+    const emitExit = () => {
+      clearTimeout(timer);
+      child.stdout.off("end", onEnd);
+      child.stderr.off("end", onEnd);
+      exits.emit({
+        code,
+        ...(framing ? { reason: framing } : signal ? { reason: `terminated by ${signal}` } : {}),
+      });
+    };
+    const onEnd = () => {
+      if (child.stdout.readableEnded && child.stderr.readableEnded) emitExit();
+    };
+    const timer = setTimeout(emitExit, 100);
+    child.stdout.once("end", onEnd);
+    child.stderr.once("end", onEnd);
+    onEnd();
+  });
   return {
     send: (text) => {
       if (!child.stdin.writable) throw new Error("The plugin process is not accepting input.");
