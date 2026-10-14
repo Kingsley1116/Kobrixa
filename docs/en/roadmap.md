@@ -27,6 +27,7 @@ Exit: every criterion in the [product specification](../en/product.md) and [devi
 
 ## v1.x — hardening
 
+- Plugin system phase 1 (development preview): protocol, JS/TS and Python SDKs, command and notification API, settings panel, and the Basic Plus frontend registered as a built-in plugin. Third-party plugins load only in development mode. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
 - Expand `.bp` compatibility cases and EV3 API coverage.
 - Improve completion, formatting, performance, accessibility, localization, and recovery UX.
 - Add a headless Node.js `kobrixa` CLI over the same compiler and device packages.

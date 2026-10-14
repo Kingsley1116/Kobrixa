@@ -23,6 +23,20 @@ Coverage includes the complete Chinese command catalog, bilingual search, langua
 
 The renderer fixtures in `apps/desktop/tests` are development-only and excluded by desktop packaging. This test does not replace platform packaging or the EV3 hardware matrix.
 
+## Plugin smoke
+
+Run `pnpm test:plugins:smoke` from the repository root after installing workspace dependencies. This separate smoke runner bundles its fixtures into a temporary directory and starts real Electron with an isolated user-data directory. It exercises the production plugin manager, desktop launchers, state store and quit cleanup, without opening the workbench or connecting to an EV3.
+
+Coverage includes the TypeScript sample in a `utilityProcess` with MessagePort transfer, the Python sample over `Content-Length` stdio from a path containing spaces and Chinese characters, command execution and Traditional Chinese messages with host-assigned plugin IDs, and another plugin continuing to work after a deliberate crash. Quitting checks the JS/TS deactivation hook, confirms that both JS/TS and Python child processes exit, and force-kills a stubborn JS/TS process within the shutdown deadline. Settings-panel rendering, persisted disable/safe-mode behavior and the three-failure restart limit are covered by separate unit tests, not this smoke runner.
+
+Python 3.10 or newer is required. The runner tries `KOBRIXA_TEST_PYTHON` first, then `python3` and `python`, selecting the first interpreter that meets the version requirement. Set the variable to an executable path, without extra arguments, when selecting a particular environment. For example, in a macOS/Linux shell:
+
+```sh
+KOBRIXA_TEST_PYTHON="$(command -v python3)" pnpm test:plugins:smoke
+```
+
+The runner sets `PYTHONPATH` to `sdks/python`, so an editable SDK install is unnecessary for this test. Missing Python is a failure, not a skip. Successful runs delete their temporary directory; failures print the retained artifact path. The runner has no screenshot-retention switch. For the SDK's schema-conformance, framing and protocol tests, use `pnpm test:python-sdk`; it uses the same interpreter search order, skips locally when no suitable Python exists, and fails in CI instead.
+
 ## Window close and quit acceptance
 
 Run `node tests/desktop/run-close-smoke.mjs` to exercise the production main process, preload and renderer with isolated profiles. It covers closing a loaded window, quitting directly, closing during startup, and closing/reopening a window on macOS. Unexpected native error dialogs, uncaught exceptions and unhandled rejections fail the test. This catches callbacks that access a destroyed `BrowserWindow` after renderer acknowledgement, including sensor-state publication during shutdown. Sensor save failures and retry/cancel behavior remain covered by the main-process service and close-guard tests.

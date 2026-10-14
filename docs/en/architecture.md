@@ -103,6 +103,46 @@ Host main process                        Guest main process
 - Device operations stay local to each participant's main process. While a room is active, device writes are rejected unless that window holds device control; stopping a program is always allowed.
 - Room state crosses the Cloudflare network. Logs must not contain source contents, chat text, passwords or tokens.
 
+## Plugins (development preview)
+
+Phase 1 supports trusted local JS/TS and Python plugins loaded from explicitly selected development directories. Third-party plugins load only in development mode. The Settings → Plugins panel lists built-in and development plugins, shows load errors and messages, runs contributed commands, and enables or disables development plugins. See the [runnable samples](../../plugins/samples/README.md) and [Python SDK](../../sdks/python/README.md).
+
+The public API has three layers: JSON-RPC 2.0, Zod definitions and committed JSON Schema, and language SDKs:
+
+- `packages/plugin-protocol` (`@kobrixa/plugin-protocol`) uses Zod as the authoring source. The committed `schema/plugin-protocol.schema.json` is the cross-language public contract. Tests regenerate the schema in memory and compare it with both committed copies, including the Python SDK's copy; shared valid/invalid cases in `conformance/cases.json` check that the TypeScript and Python validators agree.
+- `packages/plugin-runtime` (`@kobrixa/plugin-runtime`) owns manifest validation, the registry, command routing and process supervision without depending on Electron. The desktop supplies launchers and persistent state storage.
+- `packages/plugin-sdk-js` (`@kobrixa/plugin-sdk`) provides `definePlugin`, `runPlugin`, command handlers with an `AbortSignal`, and `context.ui.showMessage` for JS/TS plugins.
+- `sdks/python` (`kobrixa-plugin-sdk`, imported as `kobrixa`) supports Python 3.10 or newer with only standard-library runtime dependencies. It validates protocol data against the bundled committed JSON Schema and uses ordinary dictionaries for wire data, without generated Python type bindings.
+
+JS/TS plugins run in Electron `utilityProcess` children and exchange JSON-RPC messages through a transferred MessagePort. Python plugins run in a separate, explicitly selected local interpreter and use stdin/stdout with `Content-Length` framing. Python stdout is reserved for protocol messages; logs go to stderr. Kobrixa does not download or manage a Python runtime.
+
+Startup switches are parsed by the desktop main process:
+
+| Switch                          | Effect                                                                                                                                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--plugin-dev-dir=<folders>`    | Loads each named folder's `kobrixa-plugin.json`. Use `:` between folders on macOS/Linux and `;` on Windows. Relative paths resolve from the launch working directory; absolute paths are recommended. |
+| `--plugin-python=<interpreter>` | Selects the local Python executable for Python development plugins. Install the SDK in this interpreter's environment.                                                                                |
+| `--safe-mode`                   | Disables all development plugins for this session before contributions are registered or processes are launched. Built-in plugins remain enabled.                                                     |
+
+User-disabled plugin IDs are saved in `<userData>/plugins/state.json` and checked before registration. Safe mode alone does not persist a disable choice: use **Keep disabled after restart** in the Plugins panel for a problem plugin, then restart without `--safe-mode`. Development plugins cannot be enabled during safe mode.
+
+The phase 1 methods are:
+
+| Method            | Contract                                                                                                                                                       |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `initialize`      | Host request carrying API version, host-assigned plugin ID, locale and granted permissions; the plugin returns its API version and SDK identity.               |
+| `command/execute` | Host request naming a contributed command; successful execution returns `null`. Plugins start on demand when a command is executed.                            |
+| `shutdown`        | Host request for graceful shutdown; success returns `null`.                                                                                                    |
+| `exit`            | Host notification requesting process exit after shutdown.                                                                                                      |
+| `ui/showMessage`  | Plugin request with severity (`info`, `warning` or `error`) and message; requires `ui.notifications` and returns `null`. Messages appear in the Plugins panel. |
+| `$/cancelRequest` | Notification identifying the request to cancel. JS/TS handlers receive an aborted signal; Python handlers receive asyncio task cancellation.                   |
+
+The host derives caller identity from the bound channel, never from a plugin ID supplied by a message. Requests have timeouts; a plugin that does not finish within the cancellation grace period is terminated. A crash rejects pending commands without replaying them. A later explicit command can start the plugin again, but three process failures within five minutes stop further starts until the plugin is disabled and enabled again. Disabling a plugin unregisters its commands and stops its process.
+
+These are **trusted local plugins**. Separate processes provide crash isolation; manifest permissions only restrict calls through Kobrixa and are **not an operating-system sandbox**. Plugin code can still access files and the network directly.
+
+The built-in `kobrixa.basic-plus` plugin registers the `bp` frontend through a minimal adapter to `frontends/basic-plus`. It remains enabled, including in safe mode, and cannot be disabled in phase 1. Compilation keeps the existing EV3 backend and build behavior. The generic artifact contract, `Diagnostic.source` and static language contributions are **planned (phase 2)**; the `devices` API is **planned (phase 3)**. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md) for those later phases.
+
 ## Project manifest
 
 Each project uses `kobrixa.json`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.

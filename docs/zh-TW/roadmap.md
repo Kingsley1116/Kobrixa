@@ -27,6 +27,7 @@ Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理
 
 ## v1.x — 強化
 
+- 插件系統第一階段（開發預覽）：協定、JS／TS 與 Python SDK、命令與通知 API、設定面板，以及註冊為內建插件的 Basic Plus 前端。第三方插件僅限開發模式載入。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
 - 擴充 `.bp` 相容案例與 EV3 API 覆蓋。
 - 改進補全、格式化、效能、無障礙、本地化與復原體驗。
 - 在相同 compiler 與 device package 上加入 headless Node.js `kobrixa` CLI。

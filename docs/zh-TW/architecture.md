@@ -103,6 +103,46 @@ src/
 - 設備操作維持在各參與者本機的 main process。房間啟用期間，未持有設備控制權的視窗所發出的設備寫入操作會被拒絕；停止程式則一律允許。
 - 房間狀態會經過 Cloudflare 網路。記錄檔不得包含原始碼內容、聊天文字、密碼或權杖。
 
+## 插件（開發預覽）
+
+第一階段支援從明確指定的開發目錄載入可信任的本機 JS／TS 與 Python 插件。第三方插件僅限開發模式載入。「設定 → 插件」面板會列出內建與開發插件、顯示載入錯誤及訊息，並提供執行貢獻命令、啟用及停用開發插件的操作。詳見[可執行範例](../../plugins/samples/README.md)與 [Python SDK](../../sdks/python/README.md)。
+
+公開 API 分成三層：JSON-RPC 2.0、Zod 定義與已提交的 JSON Schema，以及語言 SDK：
+
+- `packages/plugin-protocol`（`@kobrixa/plugin-protocol`）以 Zod 為撰寫來源。已提交的 `schema/plugin-protocol.schema.json` 是跨語言公開契約。測試會在記憶體中重新產生 schema，與包含 Python SDK 副本在內的兩份已提交檔案比較；`conformance/cases.json` 中共用的有效／無效案例用來確認 TypeScript 與 Python 驗證器的行為一致。
+- `packages/plugin-runtime`（`@kobrixa/plugin-runtime`）負責 manifest 驗證、註冊表、命令路由與程序監督，不依賴 Electron。桌面程式提供程序啟動器與持久狀態儲存。
+- `packages/plugin-sdk-js`（`@kobrixa/plugin-sdk`）為 JS／TS 插件提供 `definePlugin`、`runPlugin`、帶有 `AbortSignal` 的命令處理函式，以及 `context.ui.showMessage`。
+- `sdks/python`（套件名稱為 `kobrixa-plugin-sdk`，匯入名稱為 `kobrixa`）支援 Python 3.10 以上，執行時只依賴標準函式庫。SDK 以隨附的已提交 JSON Schema 驗證協定資料，通訊資料使用一般字典，不產生 Python 型別綁定。
+
+JS／TS 插件在 Electron `utilityProcess` 子程序中執行，透過傳入的 MessagePort 交換 JSON-RPC 訊息。Python 插件使用明確指定的本機直譯器，在獨立程序中執行，透過 stdin／stdout 與 `Content-Length` 訊息邊界通訊。Python stdout 只用於協定訊息，日誌寫入 stderr。Kobrixa 不下載或管理 Python 執行環境。
+
+啟動開關由桌面主程序解析：
+
+| 開關                            | 效果                                                                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--plugin-dev-dir=<folders>`    | 載入每個指定資料夾的 `kobrixa-plugin.json`。macOS／Linux 以 `:` 分隔資料夾，Windows 使用 `;`。相對路徑以啟動時的工作目錄為基準；建議使用絕對路徑。 |
+| `--plugin-python=<interpreter>` | 指定執行 Python 開發插件的本機 Python 執行檔。請將 SDK 安裝到此直譯器的環境中。                                                                    |
+| `--safe-mode`                   | 在註冊貢獻或啟動程序之前，停用本次執行的所有開發插件。內建插件保持啟用。                                                                           |
+
+使用者停用的插件 ID 會儲存在 `<userData>/plugins/state.json`，並在註冊前檢查。安全模式本身不會保存停用選擇：請在插件面板對有問題的插件選取「重新啟動後也保持停用」，再移除 `--safe-mode` 重新啟動。安全模式中無法啟用開發插件。
+
+第一階段的方法如下：
+
+| 方法              | 契約                                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `initialize`      | 宿主請求，傳入 API 版本、宿主指定的插件 ID、語系與已授予權限；插件回傳其 API 版本及 SDK 識別資訊。                            |
+| `command/execute` | 宿主請求，指定已貢獻的命令；執行成功回傳 `null`。插件在執行命令時按需啟動。                                                   |
+| `shutdown`        | 宿主請求，要求正常關閉；成功回傳 `null`。                                                                                     |
+| `exit`            | 宿主通知，要求在關閉後結束程序。                                                                                              |
+| `ui/showMessage`  | 插件請求，傳入嚴重程度（`info`、`warning` 或 `error`）及訊息；需要 `ui.notifications` 權限，回傳 `null`。訊息顯示於插件面板。 |
+| `$/cancelRequest` | 通知，指定要取消的請求。JS／TS 處理函式收到已取消的 signal；Python 處理函式收到 asyncio 工作取消。                            |
+
+宿主以綁定的通道判定呼叫者身分，不採信訊息自行提供的插件 ID。請求有逾時限制；插件若未在取消寬限期內結束請求，程序會被終止。當機會拒絕尚未完成的命令，不會重播。後續明確執行命令時可以重新啟動插件，但五分鐘內發生三次程序失敗，就會停止後續啟動，直到將插件停用後再啟用。停用插件會解除命令註冊並停止其程序。
+
+這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
+
+內建插件 `kobrixa.basic-plus` 透過 `frontends/basic-plus` 的最小轉接註冊 `bp` 前端。它在安全模式中仍保持啟用，第一階段無法停用。編譯沿用既有 EV3 後端與建置行為。通用成品契約、`Diagnostic.source` 與語言靜態貢獻均為**規劃中（第二階段）**；`devices` API 為**規劃中（第三階段）**。後續階段詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+
 ## 專案 manifest
 
 每個專案使用 `kobrixa.json`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。
