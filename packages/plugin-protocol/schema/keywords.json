@@ -1,0 +1,22 @@
+[
+  "$schema",
+  "$id",
+  "title",
+  "$defs",
+  "type",
+  "properties",
+  "required",
+  "additionalProperties",
+  "enum",
+  "const",
+  "pattern",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "items",
+  "minItems",
+  "maxItems",
+  "anyOf",
+  "oneOf"
+]
