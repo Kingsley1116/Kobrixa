@@ -83,17 +83,30 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      KOBRIXA_TEST_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - run: pnpm check:desktop
       - run: pnpm build:core
       - name: Check collaboration service and real two-client sync
         if: runner.os == 'Linux'
         run: pnpm check:collab && pnpm test:collab:live
       - run: pnpm test:desktop
+      - name: Plugin smoke (utilityProcess, Python, crash isolation)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:plugins:smoke
+          else
+            pnpm test:plugins:smoke
+          fi
       - run: pnpm build:desktop
       - name: Smoke test the packaged application
         shell: bash
