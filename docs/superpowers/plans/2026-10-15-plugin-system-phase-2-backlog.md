@@ -2,6 +2,8 @@
 
 第一階段（分支 `feat/plugin-system-phase-1`）每個 task 都經過審查，最後也做了整體審查。審查中找到但判定不擋合併的小問題，都整理在這裡，作為第二階段的待辦清單。合併前已經修好的項目不列入。
 
+> 2026-10-15：插件載入 1a（[計畫](2026-10-15-plugin-loading-1a-runtime-hardening.md)）已處理部分項目，並從下表移除。
+
 - 設計：[插件系統設計](../specs/2026-10-14-plugin-system-design.md)
 - 第一階段計畫：[第一階段實作計畫](2026-10-14-plugin-system-phase-1.md)
 
@@ -13,14 +15,12 @@
 
 ## 高優先
 
-| 位置                                         | 問題                                                                                                                                                                                                    | 建議做法                                                                                                                      |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `packages/plugin-runtime/src/supervisor.ts`  | 握手失敗後的 `await exited` 沒有上限。真實啟動器會升級到 SIGKILL 所以不會卡，但如果啟動器始終沒回報 exit，`#starting` 會一直卡著，面板的忙碌狀態也跟著卡住。                                            | 讓它跟 `killGraceMs + exitTimeoutMs` 賽跑，逾時就像 stop 放棄時那樣清掉 `#process` 和 `#peer`。                               |
-| `apps/desktop/src/main/plugins/launchers.ts` | `launchNode` 等 `spawn` 事件沒有上限。如果 `spawn` 和 `exit` 都沒觸發，啟動的 promise 會一直掛著，也拿不到可以終止它的 handle。                                                                         | 加上逾時，逾時就強制終止並回報啟動失敗。                                                                                      |
-| `sdks/python/kobrixa/_plugin.py`             | `_send` 沒有檢查 `write()` 的回傳值。在 `-u` 模式下 stdout 是原始的 `FileIO`，寫入不完整時協定格式會壞掉；寫入也會擋住 event loop。                                                                     | 迴圈寫到全部完成，或改用 `asyncio` 的 writer。                                                                                |
-| `sdks/python/kobrixa/_plugin.py`             | 同一個 request id 重複出現時會覆蓋 `_tasks`，第一個 task 的 done callback 會刪掉第二個的紀錄，第二個請求就無法取消。                                                                                    | 收到重複 id 時回錯誤，或 done callback 只刪除屬於自己的紀錄。                                                                 |
-| `packages/plugin-runtime/src/manager.ts`     | 強制關閉後再 `resume()`，supervisor 可能還在自己的停止流程裡，這段時間的命令都會回 `PLUGIN_E_DISABLED`。supervisor 的 `#forced` 也不會重設。                                                            | `resume()` 等所有 supervisor 的 `stop()` 結束；`resume` 時重設 `#forced`。                                                    |
-| `tests/desktop/run-plugins-smoke.mjs`        | smoke 沒有證明強制終止這條路徑（Electron 結束時本來就會關掉 utilityProcess，Python 收到 EOF 也會結束）。runner 本身也沒有逾時，如果 Electron 在 `main.cjs` 執行前就卡住，要等到 CI job 的 30 分鐘上限。 | 在主程序記錄 quit 開始和 `will-quit` 完成的時間，斷言少於 `PLUGIN_SHUTDOWN_DEADLINE_MS`；runner 約 90 秒後自己終止 Electron。 |
+| 位置                                     | 問題                                                                                                                                                                                                    | 建議做法                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `sdks/python/kobrixa/_plugin.py`         | `_send` 沒有檢查 `write()` 的回傳值。在 `-u` 模式下 stdout 是原始的 `FileIO`，寫入不完整時協定格式會壞掉；寫入也會擋住 event loop。                                                                     | 迴圈寫到全部完成，或改用 `asyncio` 的 writer。                                                                                |
+| `sdks/python/kobrixa/_plugin.py`         | 同一個 request id 重複出現時會覆蓋 `_tasks`，第一個 task 的 done callback 會刪掉第二個的紀錄，第二個請求就無法取消。                                                                                    | 收到重複 id 時回錯誤，或 done callback 只刪除屬於自己的紀錄。                                                                 |
+| `packages/plugin-runtime/src/manager.ts` | 強制關閉後再 `resume()`，supervisor 可能還在自己的停止流程裡，這段時間的命令都會回 `PLUGIN_E_DISABLED`。supervisor 的 `#forced` 也不會重設。                                                            | `resume()` 等所有 supervisor 的 `stop()` 結束；`resume` 時重設 `#forced`。                                                    |
+| `tests/desktop/run-plugins-smoke.mjs`    | smoke 沒有證明強制終止這條路徑（Electron 結束時本來就會關掉 utilityProcess，Python 收到 EOF 也會結束）。runner 本身也沒有逾時，如果 Electron 在 `main.cjs` 執行前就卡住，要等到 CI job 的 30 分鐘上限。 | 在主程序記錄 quit 開始和 `will-quit` 完成的時間，斷言少於 `PLUGIN_SHUTDOWN_DEADLINE_MS`；runner 約 90 秒後自己終止 Electron。 |
 
 ## 中優先
 
@@ -36,14 +36,12 @@
 ### 插件宿主（`packages/plugin-runtime`）
 
 - **`ExitSignal` 沒有攔 listener 的錯誤**，升級終止用的計時器也沒有 `unref`。
-- **`stop()` 在啟動中沒有上限**（`spawnPluginProcess` 不受影響）。
 - **registry**：
   - 因命令衝突而判定無效的插件，不會保留它的 id；
   - 無效紀錄存的是未解析的目錄路徑；
   - 大小限制的訊息寫死成「64 KiB」；
   - 先 stat 再讀檔之間有競態；
   - entry 可能解析到一個目錄。
-- **無效的開發插件用資料夾名稱當 id**，可能跟真正的 id 重複。目前 manager 和面板都不會因此衝突，但最好改成不會重複的 id。
 
 ### JS SDK（`packages/plugin-sdk-js`）
 
@@ -67,7 +65,6 @@
 ### 桌面端（`apps/desktop`）
 
 - **`--plugin-python` 的相對路徑不會依 cwd 解析**：直接改成解析會讓 PATH 上的 `python3` 失效，只對含路徑分隔符號的值解析，或在文件說明。
-- **狀態檔寫入失敗時會留下 `.tmp`**；同時有多次儲存時，最後 rename 的那次會贏。
 - **`PluginManager.create` 在開視窗之前 await**：
   - 讀開發目錄會拖慢啟動；
   - 一旦 reject，就沒有視窗，也看不到錯誤。
@@ -84,7 +81,6 @@
 - **通知只在面板開著時收集**：面板關閉時送來的通知（例如 activation 事件）會遺失。
 - **通知沒有顯示嚴重程度**，警告和錯誤看起來跟一般訊息一樣。
 - **通知的 key 用 `${at}-${index}`**：每次有新通知插到最前面，所有項目都會重新掛載。改成收到時就分配遞增的 id。
-- **操作結果帶回的 state 可能蓋掉較新的 state 事件**。
 - **錯誤處理**：
   - 純物件型的 rejection 會顯示成 `[object Object]`；
   - 第一次載入失敗後，即使之後的 state 事件已經填好面板，「要求失敗」的提示仍會留著。

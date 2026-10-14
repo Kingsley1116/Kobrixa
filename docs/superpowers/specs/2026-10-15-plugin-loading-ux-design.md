@@ -71,7 +71,7 @@ Supervisor
 
 - 每個來源有穩定的 `sourceKey`：
   - 內建插件：`builtin:<id>`；
-  - 開發插件：`dev:<realpath 的 SHA-256 前 16 個十六進位字元>`。
+  - 開發插件：`dev:<path.resolve(directory) 的 SHA-256 前 16 個十六進位字元>`。計算時不碰檔案系統，安全模式和讀取卡住時也能得到同一個 key；以 `realpath` 去除別名的工作由 1b 在連結資料夾時完成，存進狀態檔的路徑本來就是 `realpath`。
 - `sourceKey` 與 manifest ID 無關。開發時改了 ID，停用設定、日誌和操作對象都不受影響。
 - 每個來源有一個 `generation`，每次重新載入就加 1。帶著舊 generation 的程序事件一律丟棄。
 - `#summary` 和所有內部查詢改用 `sourceKey` 找對應的程序。ID 重複的 invalid 項目不會再顯示成另一列的執行狀態。
@@ -115,7 +115,7 @@ reloadSource(sourceKey: string): Promise<PluginActionResult>;
 }
 ```
 
-- **v1 遷移：** v1 的 `disabled` 只有 manifest ID。內建插件的 ID 直接轉成 `builtin:<id>`，其餘放進 `legacyDisabledIds`。之後任何開發來源載入時，如果 manifest ID 在 `legacyDisabledIds` 裡，就把該來源的 `sourceKey` 加入 `disabled`，並從 `legacyDisabledIds` 移除這個 ID。`developerMode` 預設為 `false`，`sources` 為空。
+- **v1 遷移：** v1 的 `disabled` 只有 manifest ID；當時內建插件不能停用，所以全部放進 `legacyDisabledIds`。之後任何開發來源載入時，如果 manifest ID 在 `legacyDisabledIds` 裡，就把該來源的 `sourceKey` 加入 `disabled`，並從 `legacyDisabledIds` 移除這個 ID。`developerMode` 預設為 `false`，`sources` 為空。
 - **區分不存在和損毀：** 檔案不存在就當作首次啟動。檔案存在卻無法解析或 schema 不合法時，停用所有第三方插件，在面板顯示「插件設定檔已損毀」，並把原檔備份成 `state.json.corrupt-<時間>`。
 - **寫入：** 依序執行，最後一次寫入一定是最新狀態；寫入失敗時清掉 `.tmp`。
 - **存檔失敗：** 停用操作仍然在當次停止程序並撤銷貢獻，結果標示 `persisted: false`，面板顯示「未保存，重啟後可能恢復」。
