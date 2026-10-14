@@ -1,0 +1,26 @@
+{
+  "id": "kobrixa-samples.hello-python",
+  "version": "0.1.0",
+  "apiVersion": "^1.0.0",
+  "displayName": {
+    "en": "Hello (Python sample)",
+    "zh-TW": "問候（Python 範例）"
+  },
+  "runtime": {
+    "kind": "python",
+    "entry": "main.py"
+  },
+  "activationEvents": ["onCommand:kobrixa-samples.hello-python.greet"],
+  "permissions": ["ui.notifications"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "kobrixa-samples.hello-python.greet",
+        "title": {
+          "en": "Say hello",
+          "zh-TW": "打招呼"
+        }
+      }
+    ]
+  }
+}

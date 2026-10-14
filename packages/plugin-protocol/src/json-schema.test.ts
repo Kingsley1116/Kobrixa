@@ -23,6 +23,11 @@ describe("published JSON Schema", () => {
   it("matches the committed schema (run pnpm --filter @kobrixa/plugin-protocol schema)", async () => {
     expect(await read("../schema/plugin-protocol.schema.json")).toBe(serializeJsonSchema());
   });
+  it("ships the same schema inside the Python SDK", async () => {
+    expect(await read("../../../sdks/python/kobrixa/plugin-protocol.schema.json")).toBe(
+      serializeJsonSchema(),
+    );
+  });
   it("uses only keywords that both validators implement and no $ref", async () => {
     const allowed = new Set(JSON.parse(await read("../schema/keywords.json")) as string[]);
     const used = keywords(JSON.parse(serializeJsonSchema()));

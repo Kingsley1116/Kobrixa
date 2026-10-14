@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kobrixa-plugin-sdk"
+version = "0.1.0"
+description = "Kobrixa plugin SDK for Python (development preview)"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+packages = ["kobrixa"]
+
+[tool.setuptools.package-data]
+kobrixa = ["plugin-protocol.schema.json"]
