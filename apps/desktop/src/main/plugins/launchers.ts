@@ -10,24 +10,44 @@ import {
   type PluginProcess,
 } from "@kobrixa/plugin-runtime";
 
+/** A utilityProcess that reports neither spawn nor exit must not hang the launch. */
+export const PLUGIN_SPAWN_TIMEOUT_MS = 10_000;
+
 async function launchNode(
   plugin: LaunchablePlugin,
   onOutput: (line: string) => void,
+  spawnTimeoutMs: number,
 ): Promise<PluginProcess> {
   const child = utilityProcess.fork(plugin.entry, [], {
     cwd: plugin.directory,
     serviceName: `Kobrixa plugin ${plugin.id}`,
     stdio: "pipe",
   });
+  const sigkill = () => {
+    try {
+      if (child.pid !== undefined) process.kill(child.pid, "SIGKILL");
+      else child.kill();
+    } catch {
+      /* The process already exited. */
+    }
+  };
   const tail = new OutputTail(onOutput);
   child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk, "stdout"));
   child.stderr?.on("data", (chunk: Buffer) => tail.push(chunk, "stderr"));
   child.once("exit", () => tail.end());
   await new Promise<void>((resolve, reject) => {
-    child.once("spawn", resolve);
-    child.once("exit", (code) =>
-      reject(new Error(`The plugin process exited during launch (code ${code}).`)),
-    );
+    const timer = setTimeout(() => {
+      sigkill();
+      reject(new Error(`The plugin process did not start within ${spawnTimeoutMs} ms.`));
+    }, spawnTimeoutMs);
+    child.once("spawn", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`The plugin process exited during launch (code ${code}).`));
+    });
   });
   const { port1, port2 } = new MessageChannelMain();
   child.postMessage({ type: "kobrixa-plugin-port" }, [port2]);
@@ -38,18 +58,7 @@ async function launchNode(
     exits.emit({ code });
   });
   // utilityProcess.kill() sends SIGTERM on POSIX; escalate to SIGKILL when it is ignored.
-  const kill = escalatingKill(
-    exits,
-    () => child.kill(),
-    () => {
-      try {
-        if (child.pid !== undefined) process.kill(child.pid, "SIGKILL");
-        else child.kill();
-      } catch {
-        /* The process already exited. */
-      }
-    },
-  );
+  const kill = escalatingKill(exits, () => child.kill(), sigkill);
   return {
     send: (text) => port1.postMessage(text),
     onMessage: (listener) => {
@@ -64,10 +73,14 @@ async function launchNode(
   };
 }
 
-export function createDesktopLauncher(options: { python?: string }): PluginLauncher {
+export function createDesktopLauncher(options: {
+  python?: string;
+  spawnTimeoutMs?: number;
+}): PluginLauncher {
   return async (plugin) => {
     const onOutput = (line: string) => console.error(`[plugin ${plugin.id}] ${line}`);
-    if (plugin.runtime === "node") return launchNode(plugin, onOutput);
+    if (plugin.runtime === "node")
+      return launchNode(plugin, onOutput, options.spawnTimeoutMs ?? PLUGIN_SPAWN_TIMEOUT_MS);
     if (!options.python)
       throw new PluginError(
         "PLUGIN_E_LAUNCH",

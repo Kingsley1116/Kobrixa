@@ -84,3 +84,25 @@ it("wires Python stderr lines to the same prefixed main console", async () => {
   options.onOutput?.("世界");
   expect(log).toHaveBeenCalledExactlyOnceWith("[plugin acme.logs] 世界");
 });
+
+it("kills a utilityProcess that never reports spawn and fails the launch", async () => {
+  vi.useFakeTimers();
+  try {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      postMessage: vi.fn(),
+      kill: vi.fn(),
+      pid: undefined,
+    });
+    vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+    const launched = createDesktopLauncher({ spawnTimeoutMs: 50 })(plugin);
+    const failed = expect(launched).rejects.toThrow("did not start within 50 ms");
+    await vi.advanceTimersByTimeAsync(50);
+    await failed;
+    expect(child.kill).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
