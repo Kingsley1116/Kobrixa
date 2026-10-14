@@ -21,7 +21,10 @@ describe.skipIf(!python)("Python plugin interop", () => {
     const notices: PluginNotice[] = [];
     const manager = await PluginManager.create({
       sources: [{ kind: "development", directory }],
-      store: { load: async () => new Set(), save: async () => {} },
+      store: {
+        load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+        save: async () => {},
+      },
       safeMode: false,
       locale: "zh-TW",
       launcher: (plugin) =>

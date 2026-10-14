@@ -1,13 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import {
+  developmentSourceKey,
   PluginManager,
   PluginSupervisor,
   spawnPluginProcess,
   type PluginManagerEvent,
+  type PluginPersistedState,
   type PluginStateStore,
 } from "./index.js";
 import { memoryPlugin } from "./test-process.js";
@@ -48,18 +50,33 @@ const builtin = {
     contributes: { frontends: [{ language: "bp" }] },
   },
 };
-function memoryStore(initial: string[] = []): PluginStateStore & { saved: string[][] } {
-  const saved: string[][] = [];
-  let value = new Set(initial);
+function memoryStore(
+  initial: string[] = [],
+  legacy: string[] = [],
+): PluginStateStore & { saved: PluginPersistedState[] } {
+  const saved: PluginPersistedState[] = [];
+  let value: PluginPersistedState = {
+    disabled: new Set(initial),
+    legacyDisabledIds: new Set(legacy),
+  };
   return {
     saved,
-    load: async () => new Set(value),
+    load: async () => ({
+      disabled: new Set(value.disabled),
+      legacyDisabledIds: new Set(value.legacyDisabledIds),
+    }),
     save: async (next) => {
-      value = new Set(next);
-      saved.push([...next]);
+      value = {
+        disabled: new Set(next.disabled),
+        legacyDisabledIds: new Set(next.legacyDisabledIds),
+      };
+      saved.push(value);
     },
   };
 }
+const keyOf = (source: { directory: string }) => developmentSourceKey(source.directory);
+const savedDisabled = (store: { saved: PluginPersistedState[] }) =>
+  store.saved.map((state) => [...state.disabled].sort());
 const launcher = vi.fn(
   async () =>
     memoryPlugin((peer, { exit }) => {
@@ -81,7 +98,8 @@ const create = async (
 
 describe("PluginManager", () => {
   it("routes commands, tags notices with the channel's plugin id and resolves frontends", async () => {
-    const manager = await create([builtin, await devPlugin("hello")]);
+    const hello = await devPlugin("hello");
+    const manager = await create([builtin, hello]);
     const events: PluginManagerEvent[] = [];
     manager.onEvent((event) => events.push(event));
     expect(manager.frontendFor("bp")).toBe("kobrixa.basic-plus");
@@ -89,7 +107,13 @@ describe("PluginManager", () => {
     await expect(manager.executeCommand("acme.hello.greet")).resolves.toEqual({ ok: true });
     expect(events).toContainEqual({
       type: "notice",
-      notice: { pluginId: "acme.hello", severity: "info", message: "hi", at: 1000 },
+      notice: {
+        pluginId: "acme.hello",
+        sourceKey: keyOf(hello),
+        severity: "info",
+        message: "hi",
+        at: 1000,
+      },
     });
     expect(manager.state().plugins.find((p) => p.id === "acme.hello")).toMatchObject({
       running: true,
@@ -97,7 +121,8 @@ describe("PluginManager", () => {
     });
   });
   it("does not register contributions or launch disabled plugins", async () => {
-    const manager = await create([await devPlugin("hello")], memoryStore(["acme.hello"]));
+    const hello = await devPlugin("hello");
+    const manager = await create([hello], memoryStore([keyOf(hello)]));
     expect(await manager.executeCommand("acme.hello.greet")).toMatchObject({
       ok: false,
       code: "PLUGIN_E_UNKNOWN_COMMAND",
@@ -111,19 +136,22 @@ describe("PluginManager", () => {
   });
   it("persists disabling, stops the process and re-enables", async () => {
     const store = memoryStore();
-    const manager = await create([await devPlugin("hello")], store);
+    const hello = await devPlugin("hello");
+    const manager = await create([hello], store);
     await manager.executeCommand("acme.hello.greet");
-    const disabled = await manager.setEnabled("acme.hello", false);
+    const disabled = await manager.setEnabled(keyOf(hello), false);
     expect(disabled).toMatchObject({ ok: true });
-    expect(store.saved).toEqual([["acme.hello"]]);
+    expect(savedDisabled(store)).toEqual([[keyOf(hello)]]);
     expect(await manager.executeCommand("acme.hello.greet")).toMatchObject({
       code: "PLUGIN_E_UNKNOWN_COMMAND",
     });
-    await manager.setEnabled("acme.hello", true);
+    await manager.setEnabled(keyOf(hello), true);
     expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
   });
   it("isolates throwing listeners during disable and shutdown", async () => {
-    const manager = await create([await devPlugin("a"), await devPlugin("b")]);
+    const a = await devPlugin("a");
+    const b = await devPlugin("b");
+    const manager = await create([a, b]);
     await manager.executeCommand("acme.a.greet");
     await manager.executeCommand("acme.b.greet");
     const events: PluginManagerEvent[] = [];
@@ -132,13 +160,19 @@ describe("PluginManager", () => {
     });
     manager.onEvent((event) => events.push(event));
 
-    await expect(manager.setEnabled("acme.a", false)).resolves.toMatchObject({ ok: true });
+    await expect(manager.setEnabled(keyOf(a), false)).resolves.toMatchObject({ ok: true });
     expect(events).toContainEqual({ type: "state", state: manager.state() });
     events.length = 0;
     await expect(manager.executeCommand("acme.b.greet")).resolves.toEqual({ ok: true });
     expect(events).toContainEqual({
       type: "notice",
-      notice: { pluginId: "acme.b", severity: "info", message: "hi", at: 1000 },
+      notice: {
+        pluginId: "acme.b",
+        sourceKey: keyOf(b),
+        severity: "info",
+        message: "hi",
+        at: 1000,
+      },
     });
     await expect(manager.shutdown()).resolves.toBeUndefined();
     expect(manager.active).toBe(false);
@@ -146,45 +180,60 @@ describe("PluginManager", () => {
   });
   it("lets safe mode persist a disable but refuses to enable", async () => {
     const store = memoryStore();
-    const manager = await create([await devPlugin("hello")], store, true);
+    const hello = await devPlugin("hello");
+    const manager = await create([hello], store, true);
     expect(manager.state().plugins[0]).toMatchObject({
+      id: "hello",
+      sourceKey: keyOf(hello),
       status: "disabled",
       disabledBy: "safe-mode",
+      commands: [],
     });
-    expect(await manager.setEnabled("acme.hello", true)).toMatchObject({
+    expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({
       ok: false,
       code: "PLUGIN_E_SAFE_MODE",
     });
-    expect(await manager.setEnabled("acme.hello", false)).toMatchObject({ ok: true });
-    expect(store.saved).toEqual([["acme.hello"]]);
+    expect(await manager.setEnabled(keyOf(hello), false)).toMatchObject({ ok: true });
+    expect(savedDisabled(store)).toEqual([[keyOf(hello)]]);
   });
   it("refuses to disable built-in plugins and unknown ids", async () => {
     const manager = await create([builtin]);
-    expect(await manager.setEnabled("kobrixa.basic-plus", false)).toMatchObject({
+    expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
       code: "PLUGIN_E_BUILTIN_REQUIRED",
     });
-    expect(await manager.setEnabled("acme.nope", false)).toMatchObject({
+    expect(await manager.setEnabled("dev:ffffffffffffffff", false)).toMatchObject({
       code: "PLUGIN_E_UNKNOWN_PLUGIN",
     });
   });
   it("persists concurrent changes without losing one", async () => {
     const store = memoryStore();
-    const manager = await create([await devPlugin("a"), await devPlugin("b")], store);
-    await Promise.all([manager.setEnabled("acme.a", false), manager.setEnabled("acme.b", false)]);
-    expect(store.saved.at(-1)).toEqual(["acme.a", "acme.b"]);
-    expect(await store.load()).toEqual(new Set(["acme.a", "acme.b"]));
+    const a = await devPlugin("a");
+    const b = await devPlugin("b");
+    const manager = await create([a, b], store);
+    await Promise.all([manager.setEnabled(keyOf(a), false), manager.setEnabled(keyOf(b), false)]);
+    expect(savedDisabled(store).at(-1)).toEqual([keyOf(a), keyOf(b)].sort());
+    expect([...(await store.load()).disabled].sort()).toEqual([keyOf(a), keyOf(b)].sort());
   });
-  it("keeps state unchanged when saving fails", async () => {
+  it("still stops a plugin whose disable cannot be saved, but refuses an unsaved enable", async () => {
     const store = memoryStore();
+    const hello = await devPlugin("hello");
+    const manager = await create([hello], store);
     store.save = async () => {
       throw new Error("disk full");
     };
-    const manager = await create([await devPlugin("hello")], store);
-    expect(await manager.setEnabled("acme.hello", false)).toMatchObject({
+    await manager.executeCommand("acme.hello.greet");
+    expect(await manager.setEnabled(keyOf(hello), false)).toMatchObject({
+      ok: true,
+      persisted: false,
+    });
+    expect(await manager.executeCommand("acme.hello.greet")).toMatchObject({
+      code: "PLUGIN_E_UNKNOWN_COMMAND",
+    });
+    expect(manager.active).toBe(false);
+    expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({
       ok: false,
       code: "PLUGIN_E_STATE_SAVE",
     });
-    expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
   });
   it("stops every running plugin on shutdown and refuses new commands", async () => {
     const manager = await create([await devPlugin("a"), await devPlugin("b")]);
@@ -234,17 +283,21 @@ describe("PluginManager", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
   it("resumes after a shutdown that did not end the app", async () => {
-    const manager = await create([await devPlugin("a")]);
+    const a = await devPlugin("a");
+    const manager = await create([a]);
     await manager.executeCommand("acme.a.greet");
     await manager.shutdown();
-    expect(await manager.setEnabled("acme.a", false)).toMatchObject({ code: "PLUGIN_E_DISABLED" });
+    expect(await manager.setEnabled(keyOf(a), false)).toMatchObject({
+      code: "PLUGIN_E_SHUTTING_DOWN",
+    });
     await manager.resume();
     expect(await manager.executeCommand("acme.a.greet")).toEqual({ ok: true });
     expect(launcher).toHaveBeenCalledTimes(2); // Restarted lazily by the new command.
-    expect(await manager.setEnabled("acme.a", false)).toMatchObject({ ok: true });
+    expect(await manager.setEnabled(keyOf(a), false)).toMatchObject({ ok: true });
   });
   it("resumes after a rejected shutdown and allows commands and state changes again", async () => {
-    const manager = await create([await devPlugin("a")]);
+    const a = await devPlugin("a");
+    const manager = await create([a]);
     const stop = vi
       .spyOn(PluginSupervisor.prototype, "stop")
       .mockRejectedValueOnce(new Error("stop failed"));
@@ -259,7 +312,7 @@ describe("PluginManager", () => {
     await expect(manager.resume()).resolves.toBeUndefined();
     expect(launcher).not.toHaveBeenCalled();
     expect(await manager.executeCommand("acme.a.greet")).toEqual({ ok: true });
-    expect(await manager.setEnabled("acme.a", false)).toMatchObject({ ok: true });
+    expect(await manager.setEnabled(keyOf(a), false)).toMatchObject({ ok: true });
     await expect(manager.shutdown()).resolves.toBeUndefined();
   });
   it("keeps tracking a plugin that is still being disabled", async () => {
@@ -275,8 +328,9 @@ describe("PluginManager", () => {
           peer.handle("shutdown", () => new Promise(() => {}));
         }).process,
     );
+    const slow = await devPlugin("slow");
     const manager = await PluginManager.create({
-      sources: [await devPlugin("slow")],
+      sources: [slow],
       store: memoryStore(),
       safeMode: false,
       launcher: stubborn,
@@ -284,7 +338,7 @@ describe("PluginManager", () => {
       supervisor: { stopTimeoutMs: 200 },
     });
     await manager.executeCommand("acme.slow.greet");
-    const disabling = manager.setEnabled("acme.slow", false);
+    const disabling = manager.setEnabled(keyOf(slow), false);
     // The supervisor has left the enabled map but its process is still stopping.
     await vi.waitFor(() => expect(manager.state().plugins[0]!.status).toBe("disabled"));
     expect(manager.active).toBe(true);
@@ -316,5 +370,76 @@ describe("PluginManager", () => {
     await manager.shutdown(500);
     expect(Date.now() - started).toBeLessThan(1500);
     expect(exited).toBe(true);
+  });
+  it("increases the snapshot revision with every state event", async () => {
+    const hello = await devPlugin("hello");
+    const manager = await create([hello]);
+    const revisions: number[] = [];
+    manager.onEvent((event) => {
+      if (event.type === "state") revisions.push(event.state.revision);
+    });
+    const before = manager.state().revision;
+    await manager.executeCommand("acme.hello.greet");
+    const result = await manager.setEnabled(keyOf(hello), false);
+    expect(revisions.length).toBeGreaterThan(1);
+    expect(revisions).toEqual([...revisions].sort((x, y) => x - y));
+    expect(new Set(revisions).size).toBe(revisions.length);
+    expect(revisions[0]).toBeGreaterThan(before);
+    expect(result).toMatchObject({ ok: true, state: { revision: revisions.at(-1) } });
+  });
+  it("keeps a duplicate-id row from borrowing another row's running state", async () => {
+    const first = await devPlugin("hello");
+    const copy = path.join(root, "copy");
+    await mkdir(copy);
+    await writeFile(path.join(copy, "main.py"), "");
+    await writeFile(
+      path.join(copy, "kobrixa-plugin.json"),
+      await readFile(path.join(first.directory, "kobrixa-plugin.json"), "utf8"),
+    );
+    const manager = await create([first, { kind: "development", directory: copy }]);
+    await manager.executeCommand("acme.hello.greet");
+    const [original, duplicate] = manager.state().plugins;
+    expect(original).toMatchObject({ status: "enabled", running: true });
+    expect(duplicate).toMatchObject({ status: "invalid", running: false });
+    expect(duplicate!.sourceKey).not.toBe(original!.sourceKey);
+  });
+  it("converts schema v1 disables once the manifest id is known", async () => {
+    const hello = await devPlugin("hello");
+    const store = memoryStore([], ["acme.hello"]);
+    const manager = await create([hello], store);
+    expect(manager.state().plugins[0]).toMatchObject({ status: "disabled", disabledBy: "user" });
+    expect(store.saved.at(-1)).toEqual({
+      disabled: new Set([keyOf(hello)]),
+      legacyDisabledIds: new Set(),
+    });
+    expect(launcher).not.toHaveBeenCalled();
+  });
+  it("fails closed on a corrupt state store and recovers after a successful save", async () => {
+    const hello = await devPlugin("hello");
+    const store = memoryStore();
+    store.load = async () => ({
+      disabled: new Set(),
+      legacyDisabledIds: new Set(),
+      problem: "moved to state.json.corrupt-1",
+    });
+    const manager = await create([builtin, hello], store);
+    expect(manager.state().stateProblem).toEqual({
+      code: "PLUGIN_E_STATE_CORRUPT",
+      message: "moved to state.json.corrupt-1",
+    });
+    expect(manager.state().plugins.map((plugin) => plugin.status)).toEqual(["enabled", "disabled"]);
+    expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({ ok: true });
+    expect(manager.state().stateProblem).toBeUndefined();
+    expect(savedDisabled(store)).toEqual([[]]);
+  });
+  it("treats a store that cannot be read like a corrupt one", async () => {
+    const hello = await devPlugin("hello");
+    const store = memoryStore();
+    store.load = async () => {
+      throw new Error("EACCES");
+    };
+    const manager = await create([hello], store);
+    expect(manager.state().stateProblem).toMatchObject({ code: "PLUGIN_E_STATE_CORRUPT" });
+    expect(manager.state().plugins[0]!.status).toBe("disabled");
   });
 });
