@@ -117,6 +117,25 @@ describe("release selection", () => {
   });
 });
 describe("update lifecycle", () => {
+  it("reports installations that end without quitting", async () => {
+    const { service, backend } = fixture();
+    const failed = vi.fn();
+    service.onInstallationFailed(failed);
+    await service.check();
+    expect(() => service.install()).toThrow("busy"); // Not prepared.
+    expect(failed).toHaveBeenCalledTimes(1);
+    service.prepareInstall();
+    backend.install.mockImplementationOnce(() => {
+      throw new Error("spawn failed");
+    });
+    expect(() => service.install()).toThrow("spawn failed");
+    expect(failed).toHaveBeenCalledTimes(2);
+    service.prepareInstall();
+    service.install();
+    expect(failed).toHaveBeenCalledTimes(2);
+    service.installationFailed("install-failed"); // autoUpdater's asynchronous error event.
+    expect(failed).toHaveBeenCalledTimes(3);
+  });
   it("downloads once, and only installs after an explicit preparation", async () => {
     const { service, dependencies, backend } = fixture();
     const first = service.check();

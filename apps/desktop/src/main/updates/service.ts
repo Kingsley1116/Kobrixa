@@ -25,6 +25,15 @@ export interface UpdateDependencies {
   busy(): boolean;
 }
 export class UpdateService {
+  readonly #installFailures = new Set<() => void>();
+  /** Notified when an installation attempt ends without quitting the app. */
+  onInstallationFailed(listener: () => void): () => void {
+    this.#installFailures.add(listener);
+    return () => this.#installFailures.delete(listener);
+  }
+  #notifyInstallFailed(): void {
+    for (const listener of this.#installFailures) listener();
+  }
   private state: UpdateState;
   private generation = 0;
   private flight: Promise<void> | undefined;
@@ -189,17 +198,23 @@ export class UpdateService {
     if (this.preparing) this.patch({ phase: "ready" });
   }
   install(): void {
-    if (!this.preparing || this.dependencies.busy()) throw new Error("busy");
-    this.patch({ phase: "installing" });
     try {
-      this.dependencies.backend.install();
+      if (!this.preparing || this.dependencies.busy()) throw new Error("busy");
+      this.patch({ phase: "installing" });
+      try {
+        this.dependencies.backend.install();
+      } catch (error) {
+        this.patch({ phase: "ready" });
+        throw error;
+      }
     } catch (error) {
-      this.patch({ phase: "ready" });
+      this.#notifyInstallFailed();
       throw error;
     }
   }
   installationFailed(error: string): void {
     this.patch({ phase: "error", error });
+    this.#notifyInstallFailed();
   }
   openRelease(): Promise<void> {
     return this.dependencies.open(this.selected?.url ?? RELEASES_URL);

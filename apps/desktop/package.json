@@ -19,6 +19,8 @@
     "@kobrixa/compiler": "workspace:*",
     "@kobrixa/device": "workspace:*",
     "@kobrixa/ir": "workspace:*",
+    "@kobrixa/plugin-protocol": "workspace:*",
+    "@kobrixa/plugin-runtime": "workspace:*",
     "electron-updater": "6.8.9",
     "lib0": "^0.2.119",
     "monaco-editor": "0.57.0",

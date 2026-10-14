@@ -89,6 +89,8 @@ export function registerIpc(
   rendererReady: () => void = () => {},
   sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
   modules: readonly ((handle: IpcHandle) => void)[] = [],
+  /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
+  beforeUpdateInstall: () => Promise<void> = async () => {},
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -215,7 +217,10 @@ export function registerIpc(
     updates.prepareInstall();
   });
   handle("updates:cancel", () => updates.cancelInstall());
-  handle("updates:install", () => updates.install());
+  handle("updates:install", async () => {
+    await beforeUpdateInstall();
+    updates.install();
+  });
   handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z

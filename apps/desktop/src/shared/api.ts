@@ -27,6 +27,7 @@ import type { MonitorUpdate, SensorLabApi } from "./sensor-lab.js";
 import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
 import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
+import type { PluginsApi } from "./plugins.js";
 import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
 import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
 import type { LanguageSyncRequest, LanguageSyncReply } from "./language-sync.js";
@@ -211,6 +212,7 @@ export interface KobrixaApi {
     ): Promise<SimulationPrepareResult>;
   };
   sensorLab: SensorLabApi;
+  plugins: PluginsApi;
   documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;
   keyboard: { updateContext(context: KeyboardContext): Promise<void> };

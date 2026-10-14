@@ -46,6 +46,7 @@ function setup() {
       })),
     },
     updates: {} as KobrixaApi["updates"],
+    plugins: {} as KobrixaApi["plugins"],
     sensorLab: {} as KobrixaApi["sensorLab"],
     keyboard: { updateContext: vi.fn(async () => undefined) },
     build: {
