@@ -28,6 +28,13 @@ import { resolveCollabServerUrl } from "./collab/server-url.js";
 import { createCollabService } from "./collab/runtime.js";
 import { CollabProjects } from "./collab/projects.js";
 import { registerCollabIpc } from "./collab/ipc.js";
+import { PluginManager } from "@kobrixa/plugin-runtime";
+import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
+import { createDesktopLauncher } from "./plugins/launchers.js";
+import { pluginLocale, pluginOptions } from "./plugins/options.js";
+import { filePluginStateStore } from "./plugins/state-store.js";
+import { registerPluginIpc } from "./plugins/ipc.js";
+import { installPluginQuitCleanup } from "./plugins/quit.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -159,6 +166,21 @@ void app.whenReady().then(async () => {
     });
   });
   const workspaces = new WorkspaceService();
+  const pluginSettings = pluginOptions(app.commandLine);
+  const plugins = await PluginManager.create({
+    sources: [
+      ...BUILTIN_PLUGIN_SOURCES,
+      ...pluginSettings.developmentDirectories.map((directory) => ({
+        kind: "development" as const,
+        directory,
+      })),
+    ],
+    store: filePluginStateStore(app.getPath("userData")),
+    safeMode: pluginSettings.safeMode,
+    launcher: createDesktopLauncher(pluginSettings),
+    locale: pluginLocale(app.getLocale()),
+  });
+  installPluginQuitCleanup(app, plugins);
   const renderer = () => {
     // Reading webContents itself throws once its BrowserWindow is destroyed.
     // Services may finish saving or disconnecting after the last window closes.
@@ -166,7 +188,9 @@ void app.whenReady().then(async () => {
     const contents = mainWindow.webContents;
     return contents.isDestroyed() ? undefined : contents;
   };
-  const builds = new BuildService(workspaces, renderer);
+  const builds = new BuildService(workspaces, renderer, undefined, (language) =>
+    plugins.frontendFor(language),
+  );
   const language = new LanguageService(workspaces);
   app.on("will-quit", () => {
     updates?.dispose();
@@ -289,6 +313,7 @@ void app.whenReady().then(async () => {
     () =>
       operationGate.busy || builds.busy || devices.busy || monitor.busy || motors.busy || labBusy,
   );
+  updates.onInstallationFailed(() => void plugins.resume());
   registerIpc(
     renderer,
     workspaces,
@@ -314,7 +339,18 @@ void app.whenReady().then(async () => {
           collab,
           new CollabProjects(collab, workspaces, app.getPath("userData")),
         ),
+      (handle) => {
+        registerPluginIpc(handle, plugins, (event) => send("plugins:event", event));
+      },
     ],
+    async () => {
+      try {
+        await plugins.shutdown();
+      } catch (error) {
+        void plugins.resume();
+        throw error;
+      }
+    },
   );
   const flushDeviceWork = async () => {
     await motors.flush();

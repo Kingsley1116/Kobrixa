@@ -84,6 +84,57 @@ async function result(id: string) {
   return (complete[0] as Extract<BuildEvent, { type: "complete" }>).result;
 }
 
+it("asks the plugin registry for the project's frontend", async () => {
+  const requests: BuildRequest[] = [];
+  service.dispose();
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    (request) => {
+      requests.push(request);
+      return new Worker(path.join(workerRoot, "worker.cjs"), { workerData: request });
+    },
+    (language) => (language === "bp" ? "kobrixa.basic-plus" : undefined),
+  );
+  await service.start("project", {});
+  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true));
+  expect(requests[0]!.frontend).toBe("kobrixa.basic-plus");
+  expect(events.find((event) => event.type === "complete")).toMatchObject({
+    result: { success: true },
+  });
+});
+
+it("fails the build clearly when no enabled plugin provides the language", async () => {
+  service.dispose();
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    (request) => new Worker(path.join(workerRoot, "worker.cjs"), { workerData: request }),
+    () => undefined,
+  );
+  await service.start("project", {});
+  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true));
+  expect(events.find((event) => event.type === "complete")).toMatchObject({
+    result: {
+      success: false,
+      diagnostics: [
+        {
+          code: "BUILD9000",
+          message: expect.stringContaining('No enabled plugin provides language "bp"'),
+        },
+      ],
+    },
+  });
+});
+
 it.each([new Error("worker failure"), "worker failure"])(
   "reports worker error %s",
   async (error) => {

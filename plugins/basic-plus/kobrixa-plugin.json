@@ -1,0 +1,8 @@
+{
+  "id": "kobrixa.basic-plus",
+  "version": "1.0.0",
+  "apiVersion": "^1.0.0",
+  "displayName": { "en": "Basic Plus", "zh-TW": "Basic Plus" },
+  "runtime": { "kind": "builtin" },
+  "contributes": { "frontends": [{ "language": "bp" }] }
+}

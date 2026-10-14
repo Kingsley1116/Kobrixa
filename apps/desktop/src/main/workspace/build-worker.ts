@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { BuildSession } from "@kobrixa/compiler";
-import { BasicPlusFrontend } from "@kobrixa/basic-plus";
+import { BUILTIN_FRONTENDS } from "./builtin-frontends.js";
 import { EV3Backend } from "@kobrixa/backend-ev3";
 import type { BuildReply, BuildRequest } from "./build-protocol.js";
 import type { KobrixaIR } from "@kobrixa/ir";
@@ -37,7 +37,10 @@ if (request.simulation) {
     port.close();
   });
 } else {
-  const frontend = new BasicPlusFrontend();
+  const create = BUILTIN_FRONTENDS[request.frontend];
+  if (!create)
+    throw new Error(`No enabled plugin provides language "${request.project.manifest.language}".`);
+  const frontend = create();
   let previewIR: KobrixaIR | undefined;
   const session = new BuildSession(
     {
