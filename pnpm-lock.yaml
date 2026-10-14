@@ -275,6 +275,22 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
 
+  packages/plugin-runtime:
+    dependencies:
+      '@kobrixa/plugin-protocol':
+        specifier: workspace:*
+        version: link:../plugin-protocol
+      semver:
+        specifier: 7.8.5
+        version: 7.8.5
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/semver':
+        specifier: 7.8.0
+        version: 7.8.0
+
 packages:
 
   '@alcalzone/ansi-tokenize@0.3.1':

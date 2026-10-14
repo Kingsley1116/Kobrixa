@@ -1,0 +1,24 @@
+{
+  "name": "@kobrixa/plugin-runtime",
+  "version": "1.0.1-beta.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@kobrixa/plugin-protocol": "workspace:*",
+    "semver": "7.8.5",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/semver": "7.8.0"
+  }
+}
