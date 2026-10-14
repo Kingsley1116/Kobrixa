@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
@@ -11,25 +12,44 @@ import {
 import { messageOf, type PluginErrorCode, type PluginProblem } from "./errors.js";
 
 export const MANIFEST_FILE = "kobrixa-plugin.json";
+/** Bound on reading one development folder, so a hung disk cannot block startup or recovery. */
+export const SOURCE_READ_TIMEOUT_MS = 5_000;
 export type PluginSource =
   { kind: "builtin"; manifest: unknown } | { kind: "development"; directory: string };
-export interface RegisteredPlugin {
+export type DevelopmentSource = Extract<PluginSource, { kind: "development" }>;
+/** `builtin:<manifest id>` or `dev:` plus 16 hex digits; safe to accept from the renderer. */
+export const sourceKeySchema = z
+  .string()
+  .max(160)
+  .regex(/^(?:builtin:[a-z0-9.-]+|dev:[0-9a-f]{16})$/);
+
+/** Identity of a development source that survives manifest id changes. Pure: no file access. */
+export const developmentSourceKey = (directory: string): string =>
+  `dev:${createHash("sha256").update(path.resolve(directory)).digest("hex").slice(0, 16)}`;
+
+/** One source as read on its own; resolvePlugins() decides its status within the whole set. */
+export interface ReadPlugin {
+  sourceKey: string;
   id: string;
   source: "builtin" | "development";
   directory?: string;
   manifest?: PluginManifest;
   entry?: string;
+  /** Problems of this source alone; empty means it is valid by itself. */
+  problems: readonly PluginProblem[];
+  /** Safe mode: the folder was deliberately not read. */
+  unread?: true;
+}
+export interface RegisteredPlugin extends Omit<ReadPlugin, "problems"> {
   status: "enabled" | "disabled" | "invalid";
   disabledBy?: "user" | "safe-mode";
   problems: PluginProblem[];
 }
+type SourceRead = Omit<ReadPlugin, "sourceKey">;
 
 const problem = (code: PluginErrorCode, message: string): PluginProblem => ({ code, message });
 
-function semanticProblems(
-  manifest: PluginManifest,
-  source: RegisteredPlugin["source"],
-): PluginProblem[] {
+function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]): PluginProblem[] {
   const problems: PluginProblem[] = [];
   if (!semver.satisfies(PLUGIN_API_VERSION, manifest.apiVersion))
     problems.push(
@@ -78,37 +98,30 @@ function semanticProblems(
 
 function checkManifest(
   value: unknown,
-  source: RegisteredPlugin["source"],
+  source: ReadPlugin["source"],
   fallbackId: string,
-): RegisteredPlugin {
+): SourceRead {
   const parsed = pluginManifestSchema.safeParse(value);
   if (!parsed.success)
     return {
       id: fallbackId,
       source,
-      status: "invalid",
       problems: [problem("PLUGIN_E_MANIFEST", z.prettifyError(parsed.error))],
     };
-  const problems = semanticProblems(parsed.data, source);
   return {
     id: parsed.data.id,
     source,
     manifest: parsed.data,
-    status: problems.length ? "invalid" : "enabled",
-    problems,
+    problems: semanticProblems(parsed.data, source),
   };
 }
 
-async function readDevelopmentPlugin(directory: string): Promise<RegisteredPlugin> {
+async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
   const fallback = path.basename(directory);
-  const invalid = (
-    message: string,
-    code: PluginErrorCode = "PLUGIN_E_MANIFEST",
-  ): RegisteredPlugin => ({
+  const invalid = (message: string, code: PluginErrorCode = "PLUGIN_E_MANIFEST"): SourceRead => ({
     id: fallback,
     source: "development",
     directory,
-    status: "invalid",
     problems: [problem(code, message)],
   });
   let root: string;
@@ -124,14 +137,13 @@ async function readDevelopmentPlugin(directory: string): Promise<RegisteredPlugi
   }
   const plugin = { ...checkManifest(value, "development", fallback), directory: root };
   const runtime = plugin.manifest?.runtime;
-  if (plugin.status === "invalid" || !runtime || runtime.kind === "builtin") return plugin;
+  if (plugin.problems.length || !runtime || runtime.kind === "builtin") return plugin;
   try {
     const entry = await realpath(path.resolve(root, runtime.entry));
     const relative = path.relative(root, entry);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       return {
         ...plugin,
-        status: "invalid",
         problems: [
           problem("PLUGIN_E_ENTRY", `${runtime.entry} resolves outside the plugin folder.`),
         ],
@@ -140,34 +152,86 @@ async function readDevelopmentPlugin(directory: string): Promise<RegisteredPlugi
   } catch {
     return {
       ...plugin,
-      status: "invalid",
       problems: [problem("PLUGIN_E_ENTRY", `Entry file ${runtime.entry} was not found.`)],
     };
   }
 }
 
-export async function loadPlugins(
-  sources: readonly PluginSource[],
-  options: { disabled: ReadonlySet<string>; safeMode: boolean },
-): Promise<RegisteredPlugin[]> {
-  const loaded: RegisteredPlugin[] = [];
-  for (const source of sources) {
-    if (source.kind === "development") {
-      loaded.push(await readDevelopmentPlugin(source.directory));
-      continue;
-    }
+/** Reads one source. Built-in manifests are bundled, so an invalid one is a build error. */
+export async function readSource(
+  source: PluginSource,
+  options: { safeMode: boolean; timeoutMs?: number },
+): Promise<ReadPlugin> {
+  if (source.kind === "builtin") {
     const plugin = checkManifest(source.manifest, "builtin", "builtin");
-    if (plugin.status === "invalid")
+    if (plugin.problems.length)
       throw new Error(
         `Invalid built-in plugin manifest: ${plugin.problems.map((item) => item.message).join("; ")}`,
       );
-    loaded.push(plugin);
+    return { ...plugin, sourceKey: `builtin:${plugin.id}` };
   }
+  const directory = path.resolve(source.directory);
+  const sourceKey = developmentSourceKey(directory);
+  const placeholder = {
+    sourceKey,
+    id: path.basename(directory),
+    source: "development" as const,
+    directory,
+  };
+  // Recovery: safe mode never touches third-party folders, so a hung disk cannot block it.
+  if (options.safeMode) return { ...placeholder, problems: [], unread: true };
+  const timeoutMs = options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<SourceRead>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          ...placeholder,
+          problems: [
+            problem(
+              "PLUGIN_E_SOURCE_TIMEOUT",
+              `Reading ${MANIFEST_FILE} did not finish within ${timeoutMs} ms.`,
+            ),
+          ],
+        }),
+      timeoutMs,
+    );
+  });
+  try {
+    return { ...(await Promise.race([readDevelopmentPlugin(directory), timedOut])), sourceKey };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Decides every status within the whole set, in source order: built-ins come first, so their ids
+ * are protected, and an earlier source keeps an id or command over a later one. `disabled` holds
+ * source keys; built-ins cannot be disabled.
+ */
+export function resolvePlugins(
+  read: readonly ReadPlugin[],
+  options: { disabled: ReadonlySet<string>; safeMode: boolean },
+): RegisteredPlugin[] {
+  const resolved = read.map((plugin): RegisteredPlugin => ({
+    ...plugin,
+    problems: [...plugin.problems],
+    status: plugin.problems.length ? "invalid" : "enabled",
+  }));
   const seen = new Set<string>();
   // Namespaces nest ("acme.hello." also covers "acme.hello.extra."), so command ids can collide
   // across plugins. Disabled plugins are checked too, so re-enabling one can never collide.
   const commandOwners = new Map<string, string>();
-  for (const plugin of loaded) {
+  for (const plugin of resolved) {
+    if (plugin.unread) {
+      Object.assign(
+        plugin,
+        options.disabled.has(plugin.sourceKey)
+          ? { status: "disabled", disabledBy: "user" }
+          : { status: "disabled", disabledBy: "safe-mode" },
+      );
+      continue;
+    }
     if (plugin.status === "invalid") continue;
     if (seen.has(plugin.id)) {
       plugin.status = "invalid";
@@ -193,10 +257,19 @@ export async function loadPlugins(
     for (const id of commands) commandOwners.set(id, plugin.id);
     if (plugin.source !== "development") continue;
     // Recovery: this decision happens before any contribution is registered or process launched.
-    if (options.disabled.has(plugin.id))
+    if (options.disabled.has(plugin.sourceKey))
       Object.assign(plugin, { status: "disabled", disabledBy: "user" });
     else if (options.safeMode)
       Object.assign(plugin, { status: "disabled", disabledBy: "safe-mode" });
   }
-  return loaded;
+  return resolved;
+}
+
+/** Reads every source in parallel, so one slow folder costs at most one timeout, then resolves. */
+export async function loadPlugins(
+  sources: readonly PluginSource[],
+  options: { disabled: ReadonlySet<string>; safeMode: boolean; timeoutMs?: number },
+): Promise<RegisteredPlugin[]> {
+  const read = await Promise.all(sources.map((source) => readSource(source, options)));
+  return resolvePlugins(read, options);
 }

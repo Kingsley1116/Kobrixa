@@ -23,6 +23,10 @@ export const PLUGIN_ERROR_CODES = [
   "PLUGIN_E_BUILTIN_REQUIRED",
   "PLUGIN_E_SAFE_MODE",
   "PLUGIN_E_STATE_SAVE",
+  "PLUGIN_E_STATE_CORRUPT",
+  "PLUGIN_E_SHUTTING_DOWN",
+  "PLUGIN_E_SOURCE_TIMEOUT",
+  "PLUGIN_E_SOURCE_EXISTS",
 ] as const;
 export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 export interface PluginProblem {

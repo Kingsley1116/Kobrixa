@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadPlugins } from "./index.js";
+import { developmentSourceKey, loadPlugins, readSource, sourceKeySchema } from "./index.js";
 
 let root: string;
 beforeEach(async () => {
@@ -49,19 +49,60 @@ describe("loadPlugins", () => {
     const [loaded] = await loadPlugins([await plugin("bom", manifest(), "main.py", "﻿")], none);
     expect(loaded!.status).toBe("enabled");
   });
-  it("marks disabled and safe-mode plugins before contributions load", async () => {
+  it("marks disabled plugins by source key and skips reading folders in safe mode", async () => {
     const source = await plugin("a", manifest());
+    const key = developmentSourceKey(source.directory);
     expect(
-      (await loadPlugins([source], { disabled: new Set(["acme.hello"]), safeMode: false }))[0],
-    ).toMatchObject({ status: "disabled", disabledBy: "user" });
-    expect((await loadPlugins([source], { disabled: new Set(), safeMode: true }))[0]).toMatchObject(
-      { status: "disabled", disabledBy: "safe-mode" },
-    );
+      (await loadPlugins([source], { disabled: new Set([key]), safeMode: false }))[0],
+    ).toMatchObject({ sourceKey: key, status: "disabled", disabledBy: "user" });
+    // A manifest id no longer disables anything: identity is the source, not the id.
+    expect(
+      (await loadPlugins([source], { disabled: new Set(["acme.hello"]), safeMode: false }))[0]!
+        .status,
+    ).toBe("enabled");
+    const [safe] = await loadPlugins([source], { disabled: new Set(), safeMode: true });
+    expect(safe).toMatchObject({
+      sourceKey: key,
+      id: "a",
+      status: "disabled",
+      disabledBy: "safe-mode",
+      unread: true,
+      problems: [],
+    });
+    expect(safe!.manifest).toBeUndefined();
+    const [userDisabled] = await loadPlugins([source], {
+      disabled: new Set([key]),
+      safeMode: true,
+    });
+    expect(userDisabled).toMatchObject({ status: "disabled", disabledBy: "user" });
     expect(
       (
-        await loadPlugins([builtin], { disabled: new Set(["kobrixa.basic-plus"]), safeMode: true })
-      )[0]!.status,
-    ).toBe("enabled");
+        await loadPlugins([builtin], {
+          disabled: new Set(["builtin:kobrixa.basic-plus"]),
+          safeMode: true,
+        })
+      )[0],
+    ).toMatchObject({ sourceKey: "builtin:kobrixa.basic-plus", status: "enabled" });
+  });
+  it("never reads a missing folder in safe mode", async () => {
+    const [safe] = await loadPlugins(
+      [{ kind: "development", directory: path.join(root, "absent") }],
+      { disabled: new Set(), safeMode: true },
+    );
+    expect(safe).toMatchObject({ status: "disabled", disabledBy: "safe-mode", problems: [] });
+  });
+  it("derives stable, valid source keys without touching the file system", () => {
+    const key = developmentSourceKey(path.join(root, "x"));
+    expect(key).toMatch(/^dev:[0-9a-f]{16}$/);
+    expect(developmentSourceKey(path.join(root, "y", "..", "x"))).toBe(key);
+    expect(sourceKeySchema.safeParse(key).success).toBe(true);
+    expect(sourceKeySchema.safeParse("builtin:kobrixa.basic-plus").success).toBe(true);
+    expect(sourceKeySchema.safeParse("dev:../../etc").success).toBe(false);
+  });
+  it("reads one source on its own without deciding conflicts", async () => {
+    const read = await readSource(await plugin("solo", manifest()), { safeMode: false });
+    expect(read).toMatchObject({ id: "acme.hello", source: "development", problems: [] });
+    expect(read).not.toHaveProperty("status");
   });
   it.each([
     ["PLUGIN_E_API_VERSION", { apiVersion: "^2.0.0" }],
@@ -140,7 +181,7 @@ describe("loadPlugins", () => {
       }),
     );
     const results = await loadPlugins([first, second], {
-      disabled: new Set(["acme.hello"]),
+      disabled: new Set([developmentSourceKey(first.directory)]),
       safeMode: false,
     });
     // The first plugin is disabled but still owns the id, so enabling it later cannot collide.
