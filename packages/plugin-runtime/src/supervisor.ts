@@ -205,7 +205,6 @@ export class PluginSupervisor {
     // undefined after this assignment even though callbacks change it across awaits.
     this.#problem = undefined;
     this.#setState("starting");
-    let child: PluginProcess;
     const launching = this.launcher(this.plugin);
     const abandoned = new Promise<"abandoned">((resolve) => {
       this.#abandonLaunch = () => resolve("abandoned");
@@ -233,7 +232,7 @@ export class PluginSupervisor {
       this.#setState("idle");
       throw this.#stopError(`${this.plugin.id} was stopped before it finished launching.`);
     }
-    child = launched;
+    const child = launched;
     const peer = new RpcPeer(child, {
       timeoutMs: this.#options.commandTimeoutMs,
       cancelGraceMs: this.#options.cancelGraceMs,

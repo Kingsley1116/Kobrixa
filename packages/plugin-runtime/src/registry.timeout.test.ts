@@ -1,9 +1,10 @@
+import type * as FsPromises from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { readSource } from "./index.js";
 
 // A folder on a hung network disk: realpath never settles.
 vi.mock("node:fs/promises", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:fs/promises")>()),
+  ...(await importOriginal<typeof FsPromises>()),
   realpath: vi.fn(() => new Promise(() => {})),
 }));
 
