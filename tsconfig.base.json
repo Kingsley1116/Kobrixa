@@ -10,7 +10,10 @@
       "@kobrixa/backend-ev3": ["./packages/backend-ev3/src/index.ts"],
       "@kobrixa/device": ["./packages/device/src/index.ts"],
       "@kobrixa/basic-plus": ["./frontends/basic-plus/src/index.ts"],
-      "@kobrixa/collab-protocol": ["./packages/collab-protocol/src/index.ts"]
+      "@kobrixa/collab-protocol": ["./packages/collab-protocol/src/index.ts"],
+      "@kobrixa/plugin-protocol": ["./packages/plugin-protocol/src/index.ts"],
+      "@kobrixa/plugin-runtime": ["./packages/plugin-runtime/src/index.ts"],
+      "@kobrixa/plugin-sdk": ["./packages/plugin-sdk-js/src/index.ts"]
     },
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,

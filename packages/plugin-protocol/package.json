@@ -1,0 +1,21 @@
+{
+  "name": "@kobrixa/plugin-protocol",
+  "version": "1.0.1-beta.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": "./dist/index.js",
+  "files": [
+    "dist",
+    "schema"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "schema": "tsc -p tsconfig.json && node scripts/export-schema.mjs"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}
