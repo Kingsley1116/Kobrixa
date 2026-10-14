@@ -20,6 +20,8 @@ export interface LaunchablePlugin {
 }
 export type PluginLauncher = (plugin: LaunchablePlugin) => Promise<PluginProcess>;
 export type SupervisorState = "idle" | "starting" | "running" | "stopping" | "failed";
+/** Why a stop interrupts running commands: a disable, or a reload/removal that cancels them. */
+export type StopReason = "disabled" | "cancelled";
 export interface SupervisorOptions {
   locale: PluginLocale;
   onNotice(notice: { severity: Severity; message: string }): void;
@@ -56,6 +58,9 @@ export class PluginSupervisor {
   #stoppingRun: Promise<void> | undefined;
   #stopping = false;
   #forced = false;
+  #stopReason: StopReason = "disabled";
+  /** Set while a launch is in flight; stop() calls it when the launch outlives the stop bound. */
+  #abandonLaunch: (() => void) | undefined;
   #crashes: number[] = [];
   // Error continuations may run after stop() has already cleared #stopping.
   readonly #stoppedPeers = new WeakSet<RpcPeer>();
@@ -99,8 +104,9 @@ export class PluginSupervisor {
    * stopTimeoutMs (kill escalates to SIGKILL by itself), and give up waiting for the exit report
    * at stopTimeoutMs + exitTimeoutMs. A pending handshake is not awaited: only the launch is.
    */
-  stop(): Promise<void> {
+  stop(reason: StopReason = "disabled"): Promise<void> {
     // Concurrent callers (disable, then app shutdown) share one stop: one shutdown request only.
+    if (!this.#stoppingRun) this.#stopReason = reason;
     this.#stoppingRun ??= this.#stop().finally(() => {
       this.#stoppingRun = undefined;
     });
@@ -108,9 +114,17 @@ export class PluginSupervisor {
   }
 
   async #stop(): Promise<void> {
+    const deadline = (this.#options.now ?? Date.now)() + this.#stopBoundMs;
     this.#stopping = true;
     try {
-      if (!this.#process) await this.#launching;
+      if (!this.#process && this.#launching) {
+        if (!(await this.#within(this.#launching, deadline - (this.#options.now ?? Date.now)()))) {
+          // The launcher never settled: stop waiting, and kill its process if it appears later.
+          this.#abandonLaunch?.();
+          await this.#starting?.catch(() => undefined);
+          return;
+        }
+      }
       const peer = this.#peer;
       const child = this.#process;
       if (!peer || !child) return;
@@ -121,26 +135,47 @@ export class PluginSupervisor {
       if (handshaking) child.kill();
       // Covers a plugin that acknowledges shutdown but ignores "exit".
       const lingering = setTimeout(() => child.kill(), this.#options.stopTimeoutMs);
-      let bound: ReturnType<typeof setTimeout> | undefined;
-      const gaveUp = new Promise<boolean>((resolve) => {
-        bound = setTimeout(
-          () => resolve(false),
-          this.#options.stopTimeoutMs + this.#options.exitTimeoutMs,
-        );
-      });
       if (!handshaking)
         void peer
           .request("shutdown", {}, { timeoutMs: this.#options.stopTimeoutMs })
           .then(() => peer.notify("exit", {}))
           .catch(() => child.kill());
-      const exitedInTime = await Promise.race([exited, gaveUp]);
+      const exitedInTime = await this.#within(
+        exited,
+        Math.max(0, deadline - (this.#options.now ?? Date.now)()),
+      );
       clearTimeout(lingering);
-      clearTimeout(bound);
       if (!exitedInTime)
         this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
     } finally {
       this.#stopping = false;
     }
+  }
+
+  get #stopBoundMs(): number {
+    return this.#options.stopTimeoutMs + this.#options.exitTimeoutMs;
+  }
+
+  /** True when `work` settles within `ms`; never leaves its timer behind. */
+  async #within(work: Promise<unknown>, ms: number): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work.then(() => true),
+        new Promise<false>((resolve) => {
+          timer = setTimeout(() => resolve(false), ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  #stopError(message: string): PluginError {
+    return new PluginError(
+      this.#stopReason === "cancelled" ? "PLUGIN_E_CANCELLED" : "PLUGIN_E_DISABLED",
+      message,
+    );
   }
 
   /** Terminates immediately, e.g. when the manager's overall shutdown deadline is reached. */
@@ -150,8 +185,7 @@ export class PluginSupervisor {
   }
 
   #ensureStarted(): Promise<RpcPeer> {
-    if (this.#stopping)
-      return Promise.reject(new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} is stopping.`));
+    if (this.#stopping) return Promise.reject(this.#stopError(`${this.plugin.id} is stopping.`));
     if (this.#state === "failed")
       return Promise.reject(
         new PluginError(
@@ -173,19 +207,33 @@ export class PluginSupervisor {
     this.#setState("starting");
     let child: PluginProcess;
     const launching = this.launcher(this.plugin);
+    const abandoned = new Promise<"abandoned">((resolve) => {
+      this.#abandonLaunch = () => resolve("abandoned");
+    });
     this.#launching = launching.then(
       () => undefined,
       () => undefined,
     );
+    let launched: PluginProcess | "abandoned";
     try {
-      child = await launching;
+      launched = await Promise.race([launching, abandoned]);
     } catch (error) {
       this.#problem = { code: "PLUGIN_E_LAUNCH", message: messageOf(error) };
       this.#setState("idle");
       throw new PluginError("PLUGIN_E_LAUNCH", this.#problem.message);
     } finally {
       this.#launching = undefined;
+      this.#abandonLaunch = undefined;
     }
+    if (launched === "abandoned") {
+      void launching.then(
+        (late) => late.forceKill(),
+        () => undefined,
+      );
+      this.#setState("idle");
+      throw this.#stopError(`${this.plugin.id} was stopped before it finished launching.`);
+    }
+    child = launched;
     const peer = new RpcPeer(child, {
       timeoutMs: this.#options.commandTimeoutMs,
       cancelGraceMs: this.#options.cancelGraceMs,
@@ -213,7 +261,7 @@ export class PluginSupervisor {
     // stop() started during the launch: it terminates this process; skip the handshake.
     if (this.#stopping) {
       if (this.#forced) child.forceKill();
-      throw new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} is stopping.`);
+      throw this.#stopError(`${this.plugin.id} is stopping.`);
     }
     try {
       const result = await peer.request(
@@ -237,17 +285,18 @@ export class PluginSupervisor {
         // Otherwise a retry could replace #process while the failed child is still alive.
         const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
         this.#terminate(child, { code: "PLUGIN_E_HANDSHAKE", message: messageOf(error) });
-        await exited;
+        if (!(await this.#within(exited, this.#stopBoundMs)))
+          this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
       }
       if (this.#stopping || this.#stoppedPeers.has(peer))
-        throw new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} was stopped.`);
+        throw this.#stopError(`${this.plugin.id} was stopped.`);
       throw new PluginError(
         this.problem?.code ?? "PLUGIN_E_HANDSHAKE",
         this.problem?.message ?? messageOf(error),
       );
     }
     if (this.#stopping || this.#stoppedPeers.has(peer))
-      throw new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} is stopping.`);
+      throw this.#stopError(`${this.plugin.id} is stopping.`);
     if (this.#peer !== peer)
       throw new PluginError(
         this.problem?.code ?? "PLUGIN_E_CRASHED",
@@ -301,7 +350,7 @@ export class PluginSupervisor {
     const code: PluginErrorCode =
       error.code === RPC_ERRORS.connectionClosed
         ? this.#stopping || this.#stoppedPeers.has(peer)
-          ? "PLUGIN_E_DISABLED"
+          ? this.#stopError(error.message).code
           : (this.#problem?.code ?? "PLUGIN_E_CRASHED")
         : error.code === RPC_ERRORS.timeout
           ? "PLUGIN_E_TIMEOUT"

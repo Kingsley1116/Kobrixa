@@ -225,6 +225,64 @@ describe("PluginSupervisor", () => {
     await Promise.all([supervisor.stop(), command]);
     expect(supervisor.state).toBe("idle");
   });
+  it("rejects a command interrupted by a cancelling stop as cancelled", async () => {
+    const { supervisor } = setup();
+    await supervisor.executeCommand("acme.hello.greet");
+    const command = expect(supervisor.executeCommand("acme.hello.hang")).rejects.toMatchObject({
+      code: "PLUGIN_E_CANCELLED",
+    });
+    await Promise.resolve();
+    await Promise.all([supervisor.stop("cancelled"), command]);
+    expect(supervisor.state).toBe("idle");
+  });
+  it("bounds the wait for a process that never reports exit after a failed handshake", async () => {
+    vi.useFakeTimers();
+    const silent = memoryPlugin((peer) =>
+      peer.handle("initialize", () => ({ apiVersion: "2.0.0", sdk: { name: "t", version: "1" } })),
+    );
+    const launcher = vi
+      .fn(async () => memoryPlugin((peer, { exit }) => ready(peer, exit)).process)
+      .mockResolvedValueOnce({ ...silent.process, onExit: () => () => {}, kill: vi.fn() });
+    const supervisor = new PluginSupervisor(plugin, launcher, {
+      locale: "en",
+      onNotice: () => {},
+      stopTimeoutMs: 10,
+      exitTimeoutMs: 20,
+    });
+    const first = supervisor.executeCommand("acme.hello.greet").catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(30);
+    expect(await first).toMatchObject({ code: "PLUGIN_E_HANDSHAKE" });
+    expect(supervisor.state).toBe("idle");
+    await expect(supervisor.executeCommand("acme.hello.greet")).resolves.toBeUndefined();
+    expect(launcher).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("gives up on a launch that never settles and kills the process if it appears later", async () => {
+    vi.useFakeTimers();
+    let finishLaunch!: (process: PluginProcess) => void;
+    const late = memoryPlugin((peer, { exit }) => ready(peer, exit));
+    const launcher = vi.fn(
+      () =>
+        new Promise<PluginProcess>((resolve) => {
+          finishLaunch = resolve;
+        }),
+    );
+    const supervisor = new PluginSupervisor(plugin, launcher, {
+      locale: "en",
+      onNotice: () => {},
+      stopTimeoutMs: 10,
+      exitTimeoutMs: 20,
+    });
+    const command = supervisor.executeCommand("acme.hello.greet").catch((error: unknown) => error);
+    const stopping = supervisor.stop("cancelled");
+    await vi.advanceTimersByTimeAsync(30);
+    await stopping;
+    expect(await command).toMatchObject({ code: "PLUGIN_E_CANCELLED" });
+    expect(supervisor.state).toBe("idle");
+    finishLaunch(late.process);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(late.killed()).toBe(true);
+  });
   it("retains the stop cause when the exit-report deadline clears the stopping flag", async () => {
     vi.useFakeTimers();
     const launched = memoryPlugin((peer, { exit }) => ready(peer, exit));
@@ -243,6 +301,32 @@ describe("PluginSupervisor", () => {
       code: "PLUGIN_E_DISABLED",
       message: "acme.hello was stopped.",
     });
+    expect(supervisor.state).toBe("idle");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("caps the total stop wait when a late launch never reports exit", async () => {
+    vi.useFakeTimers();
+    const launched = memoryPlugin((peer, { exit }) => ready(peer, exit));
+    const supervisor = new PluginSupervisor(
+      plugin,
+      () =>
+        new Promise<PluginProcess>((resolve) => {
+          setTimeout(
+            () => resolve({ ...launched.process, onExit: () => () => {}, kill: vi.fn() }),
+            25,
+          );
+        }),
+      { locale: "en", onNotice: () => {}, stopTimeoutMs: 10, exitTimeoutMs: 20 },
+    );
+    const command = supervisor.executeCommand("acme.hello.greet").catch((error: unknown) => error);
+    let settled = false;
+    const stopping = supervisor.stop().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(30);
+    expect(settled).toBe(true);
+    await stopping;
+    expect(await command).toMatchObject({ code: "PLUGIN_E_DISABLED" });
     expect(supervisor.state).toBe("idle");
     expect(vi.getTimerCount()).toBe(0);
   });
