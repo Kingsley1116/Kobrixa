@@ -291,6 +291,12 @@ importers:
         specifier: 7.8.0
         version: 7.8.0
 
+  packages/plugin-sdk-js:
+    dependencies:
+      '@kobrixa/plugin-protocol':
+        specifier: workspace:*
+        version: link:../plugin-protocol
+
 packages:
 
   '@alcalzone/ansi-tokenize@0.3.1':

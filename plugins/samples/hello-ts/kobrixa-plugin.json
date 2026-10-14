@@ -1,0 +1,17 @@
+{
+  "id": "kobrixa-samples.hello-ts",
+  "version": "0.1.0",
+  "apiVersion": "^1.0.0",
+  "displayName": { "en": "Hello (TypeScript sample)", "zh-TW": "問候（TypeScript 範例）" },
+  "runtime": { "kind": "node", "entry": "dist/index.cjs" },
+  "activationEvents": ["onCommand:kobrixa-samples.hello-ts.greet"],
+  "permissions": ["ui.notifications"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "kobrixa-samples.hello-ts.greet",
+        "title": { "en": "Say hello", "zh-TW": "打招呼" }
+      }
+    ]
+  }
+}
