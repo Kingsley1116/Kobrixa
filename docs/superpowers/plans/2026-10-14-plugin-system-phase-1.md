@@ -1191,19 +1191,19 @@ git commit -m "feat(plugin-protocol): publish JSON Schema with drift and conform
 
 ```ts
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMemoryChannelPair, RPC_ERRORS, RpcError, RpcPeer } from "./index.js";
+import { createMemoryChannelPair, RPC_ERRORS, RpcError, RpcPeer, type ParamsOf } from "./index.js";
 
 afterEach(() => vi.useRealTimers());
 const pair = (hostOptions = {}, pluginOptions = {}) => {
   const [a, b] = createMemoryChannelPair();
   return { host: new RpcPeer(a, hostOptions), plugin: new RpcPeer(b, pluginOptions), raw: b };
 };
-const init = {
+const init: ParamsOf<"initialize"> = {
   apiVersion: "1.0.0",
   pluginId: "acme.x",
   locale: "en",
   grantedPermissions: [],
-} as const;
+};
 const initResult = { apiVersion: "1.0.0", sdk: { name: "t", version: "1" } };
 
 describe("RpcPeer", () => {
@@ -1853,6 +1853,30 @@ describe("loadPlugins", () => {
       "PLUGIN_E_MANIFEST",
     ]);
   });
+  it("rejects a command id that another plugin already contributes", async () => {
+    const first = await plugin(
+      "hello",
+      manifest({
+        activationEvents: [],
+        contributes: { commands: [{ id: "acme.hello.extra.run", title: "x" }] },
+      }),
+    );
+    const second = await plugin(
+      "extra",
+      manifest({
+        id: "acme.hello.extra",
+        activationEvents: [],
+        contributes: { commands: [{ id: "acme.hello.extra.run", title: "y" }] },
+      }),
+    );
+    const results = await loadPlugins([first, second], {
+      disabled: new Set(["acme.hello"]),
+      safeMode: false,
+    });
+    // The first plugin is disabled but still owns the id, so enabling it later cannot collide.
+    expect(results.map((item) => item.status)).toEqual(["disabled", "invalid"]);
+    expect(results[1]!.problems[0]!.code).toBe("PLUGIN_E_DUPLICATE_COMMAND");
+  });
   it("keeps the first plugin when ids collide and protects built-in ids", async () => {
     const results = await loadPlugins(
       [
@@ -2098,6 +2122,9 @@ export async function loadPlugins(
     loaded.push(plugin);
   }
   const seen = new Set<string>();
+  // Namespaces nest ("acme.hello." also covers "acme.hello.extra."), so command ids can collide
+  // across plugins. Disabled plugins are checked too, so re-enabling one can never collide.
+  const commandOwners = new Map<string, string>();
   for (const plugin of loaded) {
     if (plugin.status === "invalid") continue;
     if (seen.has(plugin.id)) {
@@ -2107,7 +2134,21 @@ export async function loadPlugins(
       );
       continue;
     }
+    const commands = (plugin.manifest?.contributes?.commands ?? []).map((command) => command.id);
+    const taken = commands.filter((id) => commandOwners.has(id));
+    if (taken.length) {
+      plugin.status = "invalid";
+      for (const id of taken)
+        plugin.problems.push(
+          problem(
+            "PLUGIN_E_DUPLICATE_COMMAND",
+            `${id} is already contributed by ${commandOwners.get(id)}.`,
+          ),
+        );
+      continue;
+    }
     seen.add(plugin.id);
+    for (const id of commands) commandOwners.set(id, plugin.id);
     if (plugin.source !== "development") continue;
     // Recovery: this decision happens before any contribution is registered or process launched.
     if (options.disabled.has(plugin.id))
@@ -2903,6 +2944,8 @@ export class PluginSupervisor {
   }
 
   async #start(): Promise<RpcPeer> {
+    // Later reads use the `problem` getter: TypeScript keeps `this.#problem` narrowed to
+    // undefined after this assignment even though callbacks change it across awaits.
     this.#problem = undefined;
     this.#setState("starting");
     let child: PluginProcess;
@@ -2968,14 +3011,14 @@ export class PluginSupervisor {
     } catch (error) {
       this.#terminate(child, { code: "PLUGIN_E_HANDSHAKE", message: messageOf(error) });
       throw new PluginError(
-        this.#problem?.code ?? "PLUGIN_E_HANDSHAKE",
-        this.#problem?.message ?? messageOf(error),
+        this.problem?.code ?? "PLUGIN_E_HANDSHAKE",
+        this.problem?.message ?? messageOf(error),
       );
     }
     if (this.#peer !== peer)
       throw new PluginError(
-        this.#problem?.code ?? "PLUGIN_E_CRASHED",
-        this.#problem?.message ?? `${this.plugin.id} exited during startup.`,
+        this.problem?.code ?? "PLUGIN_E_CRASHED",
+        this.problem?.message ?? `${this.plugin.id} exited during startup.`,
       );
     this.#setState("running");
     return peer;
@@ -3226,6 +3269,13 @@ describe("PluginManager", () => {
       code: "PLUGIN_E_UNKNOWN_PLUGIN",
     });
   });
+  it("persists concurrent changes without losing one", async () => {
+    const store = memoryStore();
+    const manager = await create([await devPlugin("a"), await devPlugin("b")], store);
+    await Promise.all([manager.setEnabled("acme.a", false), manager.setEnabled("acme.b", false)]);
+    expect(store.saved.at(-1)).toEqual(["acme.a", "acme.b"]);
+    expect(await store.load()).toEqual(new Set(["acme.a", "acme.b"]));
+  });
   it("keeps state unchanged when saving fails", async () => {
     const store = memoryStore();
     store.save = async () => {
@@ -3386,6 +3436,7 @@ export class PluginManager {
   readonly #commands = new Map<string, string>();
   readonly #listeners = new Set<(event: PluginManagerEvent) => void>();
   #shutdown: Promise<void> | undefined;
+  #changes: Promise<unknown> = Promise.resolve();
 
   static async create(options: PluginManagerOptions): Promise<PluginManager> {
     const disabled = await options.store.load();
@@ -3433,7 +3484,14 @@ export class PluginManager {
     }
   }
 
-  async setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult> {
+  /** Changes are serialized so each one computes and saves the next state from the latest one. */
+  setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult> {
+    const change = this.#changes.then(() => this.#setEnabled(pluginId, enabled));
+    this.#changes = change.catch(() => undefined);
+    return change;
+  }
+
+  async #setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult> {
     if (this.#shutdown) return failure("PLUGIN_E_DISABLED", "Kobrixa is shutting down plugins.");
     const plugin = this.plugins.find((item) => item.id === pluginId && item.status !== "invalid");
     if (!plugin)
@@ -3629,15 +3687,15 @@ git commit -m "feat(plugin-runtime): add plugin manager with persisted disable s
 ```ts
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createMemoryChannelPair, RpcPeer } from "@kobrixa/plugin-protocol";
+import { createMemoryChannelPair, RpcPeer, type ParamsOf } from "@kobrixa/plugin-protocol";
 import { definePlugin, electronParentPortChannel, runPlugin } from "./index.js";
 
-const init = {
+const init: ParamsOf<"initialize"> = {
   apiVersion: "1.0.0",
   pluginId: "acme.hello",
   locale: "zh-TW",
   grantedPermissions: ["ui.notifications"],
-} as const;
+};
 function connect(definition: Parameters<typeof runPlugin>[0]) {
   const [hostEnd, pluginEnd] = createMemoryChannelPair();
   const host = new RpcPeer(hostEnd);
@@ -5475,7 +5533,7 @@ worker 頂層 throw 會觸發既有的 `worker.once("error")` → `fail(message)
     private readonly frontendFor: (language: string) => string | undefined = () => "kobrixa.basic-plus",
 ```
 
-在 `start()` 建立 worker 時傳入 `frontend: this.frontendFor(project.manifest.language) ?? ""`。
+在 `start()` 與 `prepareSimulation()`（目前約第 148 行，也會建立 `BuildRequest`）建立 worker 時都傳入 `frontend: this.frontendFor(project.manifest.language) ?? ""`。模擬路徑在第一階段仍沿用既有的 `prepareSimulation`，不讀這個欄位；保留必填欄位，可讓兩種請求的型別一致。
 
 `apps/desktop/src/main/index.ts`：
 
@@ -5960,12 +6018,11 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
 1. `settings-catalog.ts`：在 `CATEGORY_LABELS` 的 `updates` 之前加入 `plugins: ["插件", "Plugins"],`。
 2. `settings-panel.tsx`：匯入 `import { PluginsPanel } from "./plugins-panel.js";`；在導覽陣列的 `"updates"` 之前加入 `"plugins"`；在 `{group === "updates" && category === "updates" && !searching && (...)}` 之前加入：
 
+<!-- prettier-ignore -->
 ```tsx
-{
-  group === "plugins" && category === "plugins" && !searching && (
-    <PluginsPanel locale={settings.locale} />
-  );
-}
+                    {group === "plugins" && category === "plugins" && !searching && (
+                      <PluginsPanel locale={settings.locale} />
+                    )}
 ```
 
 3. `settings-panel.test.ts` 已經 mock 了部分面板。如果測試環境沒有 `window.kobrixa.plugins`，就在檔案頂端加入 `vi.mock("./plugins-panel.js", () => ({ PluginsPanel: () => null }));`。
