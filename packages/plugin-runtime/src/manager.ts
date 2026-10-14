@@ -217,7 +217,7 @@ export class PluginManager {
    */
   async resume(): Promise<void> {
     if (!this.#shutdown) return;
-    await this.#shutdown;
+    await this.#shutdown.catch(() => undefined);
     this.#shutdown = undefined;
     this.#emitState();
   }

@@ -34,3 +34,5 @@ apps/web/worker-configuration.d.ts
 *.keychain-db
 apps/collab/worker-configuration.d.ts
 __pycache__/
+*.egg-info/
+/sdks/python/build/

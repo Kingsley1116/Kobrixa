@@ -117,6 +117,27 @@ describe("release selection", () => {
   });
 });
 describe("update lifecycle", () => {
+  it("does not report a concurrent install refusal as failure of the active installation", async () => {
+    const { service, backend, dependencies } = fixture();
+    const failed = vi.fn();
+    service.onInstallationFailed(failed);
+    await service.check();
+    service.prepareInstall();
+    dependencies.busy.mockReturnValue(true);
+    expect(() => service.install()).toThrow("busy");
+    expect(failed).toHaveBeenCalledOnce();
+    dependencies.busy.mockReturnValue(false);
+    failed.mockClear();
+
+    service.install();
+    expect(() => service.install()).toThrow("busy");
+    expect(service.installing).toBe(true);
+    expect(backend.install).toHaveBeenCalledOnce();
+    expect(failed).not.toHaveBeenCalled();
+
+    service.installationFailed("install-failed");
+    expect(failed).toHaveBeenCalledOnce();
+  });
   it("reports installations that end without quitting", async () => {
     const { service, backend } = fixture();
     const failed = vi.fn();

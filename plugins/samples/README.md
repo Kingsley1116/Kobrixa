@@ -26,6 +26,8 @@ Open Settings → Plugins. Both samples should be enabled; their processes start
 
 Both manifests request `ui.notifications` and declare the matching `onCommand:<command-id>` activation event. The greeting uses the host locale received at startup (`en` or `zh-TW`) and appears under **Messages from plugins** with the plugin ID.
 
+Plugin logs appear in the main process's terminal/console, such as the terminal running `pnpm dev`, with a `[plugin <id>] ` prefix on each line. This includes JS/TS stdout/stderr and Python stderr. Constructing `Plugin()` redirects Python `print()` to stderr, including top-level prints before `run()`; use stderr explicitly for any logs before construction.
+
 Use **Disable** to stop a sample and remove its commands; **Enable** makes them available again. The choice persists in `<userData>/plugins/state.json`. For recovery, add `--safe-mode` to the launch command: development plugins stay off for that session, while built-in Basic Plus stays enabled. Use **Keep disabled after restart** for a problem plugin, then restart without `--safe-mode`. A crash never replays a command; three process failures within five minutes require disabling and enabling the plugin before another start.
 
 ## Launch a packaged app on macOS
@@ -67,6 +69,8 @@ pnpm dev -- --plugin-dev-dir="$PWD/plugins/samples/hello-ts:$PWD/plugins/samples
 - `kobrixa-samples.hello-python.greet`：入口為 `hello-python/main.py`，使用 `from kobrixa import Plugin`。
 
 兩份 manifest 都要求 `ui.notifications` 權限，並宣告對應的 `onCommand:<command-id>` 啟用事件。問候訊息使用啟動時從宿主收到的語系（`en` 或 `zh-TW`），並附上插件 ID，顯示於「插件訊息」。
+
+插件日誌會顯示在主程序的終端機／主控台，例如執行 `pnpm dev` 的終端機，每行都加上 `[plugin <id>] ` 前綴。這包含 JS／TS 的 stdout／stderr 與 Python 的 stderr。建立 `Plugin()` 時，Python 的 `print()` 便會導向 stderr，包含呼叫 `run()` 之前的頂層輸出；建立實例之前的日誌則須明確寫入 stderr。
 
 按下「停用」會停止範例並移除其命令；按下「啟用」即可再次使用。選擇會保存在 `<userData>/plugins/state.json`。需要復原時，在啟動命令加上 `--safe-mode`：本次執行的開發插件會保持停用，內建 Basic Plus 則保持啟用。對有問題的插件選取「重新啟動後也保持停用」，再移除 `--safe-mode` 重新啟動。當機不會重播命令；五分鐘內發生三次程序失敗後，必須停用再啟用插件，才能再次啟動。
 

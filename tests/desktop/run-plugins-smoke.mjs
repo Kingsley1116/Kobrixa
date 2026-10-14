@@ -134,7 +134,8 @@ try {
       return error.code === "EPERM";
     }
   };
-  // stubborn-ts can only be stopped by the forced kill inside the shutdown deadline.
+  // No child may outlive Electron, which also kills utilityProcess children on exit.
+  // Runtime unit tests independently prove the forced-kill shutdown deadline.
   for (const name of ["pid-ts", "pid-python", "stubborn-ts"]) {
     const pid = Number(await readFile(path.join(temporary, name, "pid.txt"), "utf8"));
     const deadline = Date.now() + 3000;

@@ -50,7 +50,9 @@ Command handlers must be `async def` functions. Their context exposes `plugin_id
 
 ## Protocol and cancellation
 
-`plugin.run()` serves JSON-RPC 2.0 over stdin/stdout using `Content-Length` frames. Stdout is reserved for the protocol; write logs to stderr, including before calling `run()`. During `run()`, the SDK redirects Python `print()` output to stderr, but direct writes to the stdout file descriptor can still corrupt the protocol.
+`plugin.run()` serves JSON-RPC 2.0 over stdin/stdout using `Content-Length` frames. Stdout is reserved for the protocol. Constructing `Plugin()` saves the real stdout buffer for protocol frames and redirects Python `print()` to stderr, including top-level prints before `run()`. Write any logs before construction explicitly to stderr; direct writes to the stdout file descriptor can still corrupt the protocol.
+
+Plugin stderr appears in the main process's terminal/console (for example, the terminal running `pnpm dev`), with each line prefixed `[plugin <id>] `. UTF-8 characters split across chunks stay intact, and a final partial line is flushed on exit.
 
 The SDK handles `initialize`, `command/execute`, `shutdown`, `exit` and `$/cancelRequest`, and sends `ui/showMessage` requests to the host. Wire objects use ordinary dictionaries and are validated against the bundled `kobrixa/plugin-protocol.schema.json`; there are no generated Python type bindings. The host binds identity to the channel, and the SDK validates the same shared valid/invalid cases as the TypeScript protocol tests.
 
@@ -105,7 +107,9 @@ manifest 與程式註冊的命令 ID 必須一致。每個命令 ID 都必須以
 
 ### 協定與取消
 
-`plugin.run()` 透過 stdin／stdout 與 `Content-Length` 訊息邊界處理 JSON-RPC 2.0。stdout 專用於協定；包含呼叫 `run()` 之前的日誌，都應寫入 stderr。執行 `run()` 期間，SDK 會將 Python `print()` 的輸出導向 stderr，但直接寫入 stdout 檔案描述元仍可能破壞協定。
+`plugin.run()` 透過 stdin／stdout 與 `Content-Length` 訊息邊界處理 JSON-RPC 2.0。stdout 專用於協定。建立 `Plugin()` 時，SDK 會保留原始 stdout buffer 以傳送協定訊息，並將 Python `print()` 導向 stderr，涵蓋呼叫 `run()` 之前的頂層輸出。建立實例之前的日誌須明確寫入 stderr；直接寫入 stdout 檔案描述元仍可能破壞協定。
+
+插件的 stderr 會顯示在主程序的終端機／主控台（例如執行 `pnpm dev` 的終端機），每行都加上 `[plugin <id>] ` 前綴。跨資料區塊的 UTF-8 字元會保持完整，結束時也會輸出最後未換行的內容。
 
 SDK 處理 `initialize`、`command/execute`、`shutdown`、`exit` 與 `$/cancelRequest`，並向宿主傳送 `ui/showMessage` 請求。通訊物件使用一般字典，依隨附的 `kobrixa/plugin-protocol.schema.json` 驗證；不產生 Python 型別綁定。宿主將身分綁定至通道，SDK 也會驗證與 TypeScript 協定測試共用的有效／無效案例。
 

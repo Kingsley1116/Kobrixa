@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   ContentLengthDecoder,
   encodeContentLength,
@@ -16,14 +17,47 @@ export interface PluginProcess extends MessageChannelLike {
   forceKill(): void;
   stderrTail(): string;
 }
+export interface PluginProcessOptions {
+  killGraceMs?: number;
+  /** Receives decoded log lines without line endings, including the final partial line on exit. */
+  onOutput?(line: string): void;
+}
 
 const TAIL_CHARACTERS = 16 * 1024;
 export class OutputTail {
   #text = "";
-  push(chunk: Uint8Array | string): void {
-    this.#text = (
-      this.#text + (typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"))
-    ).slice(-TAIL_CHARACTERS);
+  #ended = false;
+  readonly #streams = new Map<"stdout" | "stderr", { decoder: StringDecoder; line: string }>();
+
+  constructor(private readonly onOutput?: (line: string) => void) {}
+
+  push(chunk: Uint8Array | string, stream: "stdout" | "stderr" = "stderr"): void {
+    if (this.#ended) return;
+    let state = this.#streams.get(stream);
+    if (!state) {
+      state = { decoder: new StringDecoder("utf8"), line: "" };
+      this.#streams.set(stream, state);
+    }
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    this.#append(state.decoder.write(bytes), state);
+  }
+
+  end(): void {
+    if (this.#ended) return;
+    this.#ended = true;
+    for (const state of this.#streams.values()) {
+      this.#append(state.decoder.end(), state);
+      if (state.line) this.onOutput?.(state.line);
+      state.line = "";
+    }
+  }
+
+  #append(text: string, state: { line: string }): void {
+    this.#text = (this.#text + text).slice(-TAIL_CHARACTERS);
+    if (!this.onOutput) return;
+    const lines = (state.line + text).split("\n");
+    state.line = lines.pop()!;
+    for (const line of lines) this.onOutput(line.endsWith("\r") ? line.slice(0, -1) : line);
   }
   text(): string {
     return this.#text;
@@ -83,11 +117,11 @@ export function escalatingKill(
 
 export function stdioProcess(
   child: ChildProcessWithoutNullStreams,
-  options: { killGraceMs?: number } = {},
+  options: PluginProcessOptions = {},
 ): PluginProcess {
   const decoder = new ContentLengthDecoder();
   const listeners = new Set<(text: string) => void>();
-  const tail = new OutputTail();
+  const tail = new OutputTail(options.onOutput);
   const exits = new ExitSignal();
   // On Windows both signals map to TerminateProcess; on POSIX SIGKILL cannot be ignored.
   const { kill, forceKill } = escalatingKill(
@@ -119,7 +153,10 @@ export function stdioProcess(
     spawned = true;
   });
   child.on("error", (error) => {
-    if (!spawned) exits.emit({ code: null, reason: error.message });
+    if (!spawned) {
+      tail.end();
+      exits.emit({ code: null, reason: error.message });
+    }
   });
   child.once("exit", (code, signal) => {
     // Exit can precede the final stdout/stderr data; bound the wait for their EOFs.
@@ -127,6 +164,7 @@ export function stdioProcess(
       clearTimeout(timer);
       child.stdout.off("end", onEnd);
       child.stderr.off("end", onEnd);
+      tail.end();
       exits.emit({
         code,
         ...(framing ? { reason: framing } : signal ? { reason: `terminated by ${signal}` } : {}),
@@ -159,7 +197,7 @@ export function stdioProcess(
 export function spawnPluginProcess(
   command: string,
   args: readonly string[],
-  options: { cwd: string; env?: NodeJS.ProcessEnv; killGraceMs?: number },
+  options: { cwd: string; env?: NodeJS.ProcessEnv } & PluginProcessOptions,
 ): Promise<PluginProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -171,12 +209,7 @@ export function spawnPluginProcess(
     child.once("error", reject);
     child.once("spawn", () => {
       child.off("error", reject);
-      resolve(
-        stdioProcess(
-          child,
-          options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs },
-        ),
-      );
+      resolve(stdioProcess(child, options));
     });
   });
 }

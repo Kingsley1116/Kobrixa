@@ -208,7 +208,7 @@ export class UpdateService {
         throw error;
       }
     } catch (error) {
-      this.#notifyInstallFailed();
+      if (!this.installing) this.#notifyInstallFailed();
       throw error;
     }
   }

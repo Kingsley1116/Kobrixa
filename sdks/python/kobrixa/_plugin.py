@@ -1,5 +1,6 @@
 """Python plugin runtime: JSON-RPC 2.0 over stdio with Content-Length framing."""
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -48,22 +49,22 @@ class Plugin:
         self._next_id = 1
         self._validator = Validator.bundled()
         self._stopping = False
+        self._output = sys.stdout.buffer
+        # Reserve real stdout for protocol frames before any top-level print() after Plugin().
+        sys.stdout = sys.stderr
 
     def command(self, command_id: str):
         def register(handler):
-            if not asyncio.iscoroutinefunction(handler):
+            if not inspect.iscoroutinefunction(handler):
                 raise TypeError("Kobrixa command handlers must be async functions.")
             self._commands[command_id] = handler
             return handler
         return register
 
     def run(self) -> None:
-        output = sys.stdout.buffer
-        # stdout carries protocol messages only; print() goes to stderr, which Kobrixa logs.
-        sys.stdout = sys.stderr
         # Read the raw descriptor: a daemon thread blocked inside the buffered sys.stdin reader
         # holds its lock and makes interpreter shutdown abort (SIGABRT) after "exit".
-        asyncio.run(self._main(sys.stdin.fileno(), output))
+        asyncio.run(self._main(sys.stdin.fileno(), self._output))
 
     async def _main(self, source, output) -> None:
         self._loop = asyncio.get_running_loop()
@@ -98,9 +99,9 @@ class Plugin:
         if self._stopping:
             return
         try:
-            self._output.write(encode(json.dumps(message, ensure_ascii=False, separators=(",", ":"))))
+            self._output.write(encode(json.dumps(message, ensure_ascii=True, separators=(",", ":"))))
             self._output.flush()
-        except (OSError, ValueError):
+        except OSError:
             self._stopping = True  # The host closed the pipe; the read loop ends on EOF.
 
     def _finished(self, request_id, method: str, task: "asyncio.Future") -> None:

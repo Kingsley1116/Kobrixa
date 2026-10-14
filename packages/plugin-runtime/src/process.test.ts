@@ -3,7 +3,7 @@ import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
 import { encodeContentLength } from "@kobrixa/plugin-protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { spawnPluginProcess, stdioProcess, type ProcessExit } from "./index.js";
+import { OutputTail, spawnPluginProcess, stdioProcess, type ProcessExit } from "./index.js";
 
 const node = (script: string) =>
   spawnPluginProcess(process.execPath, ["-e", script], { cwd: process.cwd() });
@@ -23,11 +23,16 @@ process.stdin.on("data", (chunk) => {
 
 describe("stdio plugin process", () => {
   it("exchanges framed messages and keeps stderr as logs", async () => {
-    const child = await node(echo);
+    const onOutput = vi.fn();
+    const child = await spawnPluginProcess(process.execPath, ["-e", echo], {
+      cwd: process.cwd(),
+      onOutput,
+    });
     const received = new Promise<string>((resolve) => child.onMessage(resolve));
     child.send('{"hello":"世界"}');
     expect(await received).toBe('{"hello":"世界"}');
-    expect(child.stderrTail()).toContain("log line");
+    await vi.waitFor(() => expect(child.stderrTail()).toContain("log line"));
+    expect(onOutput).toHaveBeenCalledExactlyOnceWith("log line");
     const exited = new Promise((resolve) => child.onExit(resolve));
     child.kill();
     await exited;
@@ -100,7 +105,7 @@ describe("stdio plugin process", () => {
   });
 });
 
-const controlledChild = (pid?: number) => {
+const controlledChild = (pid?: number, options: Parameters<typeof stdioProcess>[1] = {}) => {
   const child = Object.assign(new EventEmitter(), {
     pid,
     stdin: new PassThrough(),
@@ -108,7 +113,7 @@ const controlledChild = (pid?: number) => {
     stderr: new PassThrough(),
     kill: vi.fn(() => true),
   });
-  const plugin = stdioProcess(child as unknown as ChildProcessWithoutNullStreams);
+  const plugin = stdioProcess(child as unknown as ChildProcessWithoutNullStreams, options);
   return { child, plugin };
 };
 
@@ -120,6 +125,41 @@ const endOutput = async (stream: PassThrough) => {
 
 describe("stdio process event ordering", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("decodes split UTF-8 output into complete lines and flushes the last line on exit", async () => {
+    const onOutput = vi.fn();
+    const { child, plugin } = controlledChild(123, { onOutput });
+    const text = Buffer.from("世界\nsecond\r\n\nlast 世界");
+    child.stderr.write(text.subarray(0, 1));
+    expect(onOutput).not.toHaveBeenCalled();
+    expect(plugin.stderrTail()).toBe("");
+    child.stderr.write(text.subarray(1, 5));
+    expect(onOutput).not.toHaveBeenCalled();
+    child.stderr.write(text.subarray(5));
+    child.stdout.write(encodeContentLength("{}"));
+    expect(onOutput.mock.calls).toEqual([["世界"], ["second"], [""]]);
+    expect(plugin.stderrTail()).toBe(text.toString());
+
+    const onExit = vi.fn(() => expect(onOutput).toHaveBeenLastCalledWith("last 世界"));
+    plugin.onExit(onExit);
+    child.emit("exit", 0, null);
+    await endOutput(child.stdout);
+    await endOutput(child.stderr);
+    expect(onOutput.mock.calls).toEqual([["世界"], ["second"], [""], ["last 世界"]]);
+    expect(onExit).toHaveBeenCalledOnce();
+  });
+
+  it("decodes split UTF-8 in the bounded tail even without an output hook", () => {
+    const tail = new OutputTail();
+    tail.push("x".repeat(20_000));
+    const text = Buffer.from("世界");
+    tail.push(text.subarray(0, 2));
+    tail.push(text.subarray(2, 5));
+    tail.push(text.subarray(5));
+    expect(tail.text()).toHaveLength(16 * 1024);
+    expect(tail.text().slice(-2)).toBe("世界");
+    expect(tail.text()).not.toContain("�");
+  });
 
   it.each(["stdout", "stderr"] as const)(
     "waits for both output streams when %s ends first",
@@ -181,24 +221,29 @@ describe("stdio process event ordering", () => {
 
   it("caps the output drain wait at 100 ms without waiting for close", async () => {
     vi.useFakeTimers();
-    const { child, plugin } = controlledChild(123);
+    const onOutput = vi.fn();
+    const { child, plugin } = controlledChild(123, { onOutput });
     const listener = vi.fn();
     plugin.onExit(listener);
+    child.stderr.write("partial");
 
     child.emit("exit", null, "SIGTERM");
     vi.advanceTimersByTime(99);
     expect(listener).not.toHaveBeenCalled();
+    expect(onOutput).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(listener).toHaveBeenCalledExactlyOnceWith({
       code: null,
       reason: "terminated by SIGTERM",
     });
+    expect(onOutput).toHaveBeenCalledExactlyOnceWith("partial");
     expect(child.stdout.listenerCount("end")).toBe(0);
     expect(child.stderr.listenerCount("end")).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
     await endOutput(child.stdout);
     await endOutput(child.stderr);
     expect(listener).toHaveBeenCalledTimes(1);
+    expect(onOutput).toHaveBeenCalledTimes(1);
   });
 
   it("does not classify a throwing message listener as a framing error", async () => {

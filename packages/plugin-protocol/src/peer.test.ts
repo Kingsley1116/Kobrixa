@@ -38,6 +38,24 @@ const init: ParamsOf<"initialize"> = {
 const initResult = { apiVersion: "1.0.0", sdk: { name: "t", version: "1" } };
 
 describe("RpcPeer", () => {
+  it("returns an internal error when a handler throws a prototype-less object", async () => {
+    const { host, plugin } = pair({ timeoutMs: 100 });
+    plugin.handle("shutdown", () => {
+      throw Object.create(null);
+    });
+    try {
+      await expect(host.request("shutdown", {})).rejects.toMatchObject({
+        code: RPC_ERRORS.internalError,
+        message: "Unknown error",
+      });
+      plugin.handle("shutdown", () => null);
+      await expect(host.request("shutdown", {})).resolves.toBeNull();
+    } finally {
+      host.close();
+      plugin.close();
+    }
+  });
+
   it("routes requests and validates results", async () => {
     const { host, plugin } = pair();
     plugin.handle("initialize", (params) => ({

@@ -30,7 +30,7 @@
     "test:bytecode": "tsc -b packages/backend-ev3/tsconfig.json frontends/basic-plus/tsconfig.json && node --test tests/bytecode/*.test.mjs",
     "check:web": "pnpm --filter \"@kobrixa/web...\" -r check && eslint apps/web packages/ir",
     "check:collab": "pnpm --filter @kobrixa/collab check && eslint apps/collab tests/collab",
-    "check:desktop": "pnpm --filter \"@kobrixa/desktop...\" -r check && eslint apps/desktop packages frontends tools tests assets",
+    "check:desktop": "pnpm --filter \"@kobrixa/desktop...\" --filter @kobrixa/plugin-sdk -r check && eslint apps/desktop packages frontends tools tests assets",
     "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing",
     "test:web": "vitest run --project web --project @kobrixa/ir && pnpm --filter @kobrixa/web test:worker",
     "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk",

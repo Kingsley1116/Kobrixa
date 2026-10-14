@@ -3,6 +3,7 @@ import asyncio
 import os
 
 plugin = Plugin()
+print("top-level output before run")
 
 
 @plugin.command("acme.behaviors.greet")

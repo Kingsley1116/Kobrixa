@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import {
   PluginManager,
+  PluginSupervisor,
   spawnPluginProcess,
   type PluginManagerEvent,
   type PluginStateStore,
@@ -241,6 +242,25 @@ describe("PluginManager", () => {
     expect(await manager.executeCommand("acme.a.greet")).toEqual({ ok: true });
     expect(launcher).toHaveBeenCalledTimes(2); // Restarted lazily by the new command.
     expect(await manager.setEnabled("acme.a", false)).toMatchObject({ ok: true });
+  });
+  it("resumes after a rejected shutdown and allows commands and state changes again", async () => {
+    const manager = await create([await devPlugin("a")]);
+    const stop = vi
+      .spyOn(PluginSupervisor.prototype, "stop")
+      .mockRejectedValueOnce(new Error("stop failed"));
+    try {
+      await expect(manager.shutdown()).rejects.toThrow("stop failed");
+    } finally {
+      stop.mockRestore();
+    }
+    expect(await manager.executeCommand("acme.a.greet")).toMatchObject({
+      code: "PLUGIN_E_DISABLED",
+    });
+    await expect(manager.resume()).resolves.toBeUndefined();
+    expect(launcher).not.toHaveBeenCalled();
+    expect(await manager.executeCommand("acme.a.greet")).toEqual({ ok: true });
+    expect(await manager.setEnabled("acme.a", false)).toMatchObject({ ok: true });
+    await expect(manager.shutdown()).resolves.toBeUndefined();
   });
   it("keeps tracking a plugin that is still being disabled", async () => {
     const stubborn = vi.fn(

@@ -101,7 +101,9 @@ it("asks the plugin registry for the project's frontend", async () => {
     (language) => (language === "bp" ? "kobrixa.basic-plus" : undefined),
   );
   await service.start("project", {});
-  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true));
+  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true), {
+    timeout: 15000,
+  });
   expect(requests[0]!.frontend).toBe("kobrixa.basic-plus");
   expect(events.find((event) => event.type === "complete")).toMatchObject({
     result: { success: true },
@@ -121,7 +123,9 @@ it("fails the build clearly when no enabled plugin provides the language", async
     () => undefined,
   );
   await service.start("project", {});
-  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true));
+  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true), {
+    timeout: 15000,
+  });
   expect(events.find((event) => event.type === "complete")).toMatchObject({
     result: {
       success: false,

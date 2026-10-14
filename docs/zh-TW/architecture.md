@@ -116,6 +116,8 @@ src/
 
 JS／TS 插件在 Electron `utilityProcess` 子程序中執行，透過傳入的 MessagePort 交換 JSON-RPC 訊息。Python 插件使用明確指定的本機直譯器，在獨立程序中執行，透過 stdin／stdout 與 `Content-Length` 訊息邊界通訊。Python stdout 只用於協定訊息，日誌寫入 stderr。Kobrixa 不下載或管理 Python 執行環境。
 
+Python 的 stderr 與 JS／TS 的 stdout／stderr 會顯示在主程序的終端機／主控台（例如執行 `pnpm dev` 的終端機），每行都加上 `[plugin <id>] ` 前綴。UTF-8 輸出會跨資料區塊解碼，結束時也會輸出最後未換行的內容。Python SDK 在建立 `Plugin()` 時便將 `print()` 導向 stderr，涵蓋呼叫 `run()` 之前的輸出；建立實例之前的日誌則須明確寫入 stderr。
+
 啟動開關由桌面主程序解析：
 
 | 開關                            | 效果                                                                                                                                               |

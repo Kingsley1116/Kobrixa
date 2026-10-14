@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 from collections import deque
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock
 from kobrixa import Plugin
@@ -108,6 +108,13 @@ class PluginProcessTest(unittest.TestCase):
         self.send({"jsonrpc": "2.0", "id": request["id"], "result": None})
         self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 2, "result": None})
 
+    def test_top_level_print_before_run_preserves_protocol_stdout(self):
+        self.initialize()
+        self.send({"jsonrpc": "2.0", "method": "exit", "params": {}})
+        self.assertEqual(self.child.wait(5), 0)
+        self.readers[1].join(5)
+        self.assertIn("top-level output before run", self.stderr_text())
+
     def test_cancellation_reports_request_cancelled(self):
         self.initialize()
         self.send({"jsonrpc": "2.0", "id": 3, "method": "command/execute",
@@ -188,6 +195,34 @@ class PluginProcessTest(unittest.TestCase):
 
 
 class PluginReceiveTest(unittest.TestCase):
+    def setUp(self):
+        self.output = io.BytesIO()
+        redirect = redirect_stdout(io.TextIOWrapper(self.output, encoding="utf-8"))
+        redirect.__enter__()
+        self.addCleanup(redirect.__exit__, None, None, None)
+
+    def test_send_preserves_lone_surrogate_and_keeps_answering(self):
+        plugin = Plugin()
+        message = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "bad \ud800"}}
+        plugin._output = self.output
+        plugin._send(message)
+        self.assertFalse(plugin._stopping)
+        followup = {"jsonrpc": "2.0", "id": 2, "result": None}
+        plugin._send(followup)
+        self.assertEqual([json.loads(text) for text in Decoder().push(self.output.getvalue())],
+                         [message, followup])
+
+    def test_only_os_errors_stop_sending(self):
+        plugin = Plugin()
+        plugin._output = Mock()
+        plugin._output.write.side_effect = ValueError("invalid output")
+        with self.assertRaises(ValueError):
+            plugin._send({"jsonrpc": "2.0", "id": 1, "result": None})
+        self.assertFalse(plugin._stopping)
+        plugin._output.write.side_effect = BrokenPipeError("closed pipe")
+        plugin._send({"jsonrpc": "2.0", "id": 2, "result": None})
+        self.assertTrue(plugin._stopping)
+
     def test_invalid_cancel_params_are_logged_without_cancelling_tasks(self):
         plugin = Plugin()
         task = Mock()

@@ -47,11 +47,16 @@ const encoder = new TextEncoder();
 const tooLarge = (text: string) =>
   text.length > PLUGIN_LIMITS.messageBytes ||
   encoder.encode(text).length > PLUGIN_LIMITS.messageBytes;
-const errorText = (error: unknown) =>
-  (error instanceof Error ? error.message : String(error)).slice(
-    0,
-    PLUGIN_LIMITS.errorMessageLength,
-  );
+const errorText = (error: unknown) => {
+  try {
+    return (error instanceof Error ? error.message : String(error)).slice(
+      0,
+      PLUGIN_LIMITS.errorMessageLength,
+    );
+  } catch {
+    return "Unknown error";
+  }
+};
 // Method names come from the peer: look them up as own properties only, so names such as
 // "constructor" or "__proto__" never resolve to inherited Object members.
 const own = <T>(table: object, key: string): T | undefined =>

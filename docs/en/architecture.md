@@ -116,6 +116,8 @@ The public API has three layers: JSON-RPC 2.0, Zod definitions and committed JSO
 
 JS/TS plugins run in Electron `utilityProcess` children and exchange JSON-RPC messages through a transferred MessagePort. Python plugins run in a separate, explicitly selected local interpreter and use stdin/stdout with `Content-Length` framing. Python stdout is reserved for protocol messages; logs go to stderr. Kobrixa does not download or manage a Python runtime.
 
+Python stderr and JS/TS stdout/stderr appear in the main process's terminal/console (for example, the terminal running `pnpm dev`), with each line prefixed `[plugin <id>] `. UTF-8 output is decoded across chunks, and a final partial line is flushed on exit. The Python SDK redirects `print()` to stderr as soon as `Plugin()` is constructed, including before `run()`; logs written before construction must explicitly use stderr.
+
 Startup switches are parsed by the desktop main process:
 
 | Switch                          | Effect                                                                                                                                                                                                |
