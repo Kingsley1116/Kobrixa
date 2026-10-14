@@ -1,6 +1,8 @@
 // Answers initialize and command/execute, but ignores shutdown, exit and SIGTERM on purpose.
 // With the "silent" argument it never answers initialize either (a handshake that hangs).
+// With "slow-initialize" it replies after 200 ms, allowing stop to race with initialization.
 const silent = process.argv.includes("silent");
+const slowInitialize = process.argv.includes("slow-initialize");
 process.on("SIGTERM", () => {});
 let buffer = Buffer.alloc(0);
 const reply = (message) => {
@@ -17,13 +19,19 @@ process.stdin.on("data", (chunk) => {
     if (buffer.length < end + 4 + length) return;
     const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
     buffer = buffer.subarray(end + 4 + length);
-    if (message.method === "initialize" && !silent)
-      reply({
-        jsonrpc: "2.0",
-        id: message.id,
-        result: { apiVersion: "1.0.0", sdk: { name: "stubborn", version: "1" } },
-      });
-    else if (message.method === "command/execute")
+    if (message.method === "initialize") {
+      process.stderr.write("initialize pending\n");
+      if (silent) continue;
+      const initialize = () =>
+        reply({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { apiVersion: "1.0.0", sdk: { name: "stubborn", version: "1" } },
+        });
+      if (slowInitialize) {
+        setTimeout(initialize, 200);
+      } else initialize();
+    } else if (message.method === "command/execute")
       reply({ jsonrpc: "2.0", id: message.id, result: null });
   }
 });

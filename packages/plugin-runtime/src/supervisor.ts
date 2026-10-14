@@ -57,6 +57,8 @@ export class PluginSupervisor {
   #stopping = false;
   #forced = false;
   #crashes: number[] = [];
+  // Error continuations may run after stop() has already cleared #stopping.
+  readonly #stoppedPeers = new WeakSet<RpcPeer>();
   readonly #options: SupervisorOptions & typeof DEFAULTS;
 
   constructor(
@@ -88,7 +90,7 @@ export class PluginSupervisor {
         { timeoutMs: this.#options.commandTimeoutMs, ...(signal ? { signal } : {}) },
       );
     } catch (error) {
-      throw this.#translate(error);
+      throw this.#translate(error, peer);
     }
   }
 
@@ -230,12 +232,22 @@ export class PluginSupervisor {
           `The plugin SDK implements API ${result.apiVersion}; Kobrixa requires ${PLUGIN_API_VERSION}.`,
         );
     } catch (error) {
-      this.#terminate(child, { code: "PLUGIN_E_HANDSHAKE", message: messageOf(error) });
+      if (!this.#stopping && !this.#stoppedPeers.has(peer)) {
+        // Keep #starting shared until the child's exit is reported; kill() escalates if needed.
+        // Otherwise a retry could replace #process while the failed child is still alive.
+        const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
+        this.#terminate(child, { code: "PLUGIN_E_HANDSHAKE", message: messageOf(error) });
+        await exited;
+      }
+      if (this.#stopping || this.#stoppedPeers.has(peer))
+        throw new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} was stopped.`);
       throw new PluginError(
         this.problem?.code ?? "PLUGIN_E_HANDSHAKE",
         this.problem?.message ?? messageOf(error),
       );
     }
+    if (this.#stopping || this.#stoppedPeers.has(peer))
+      throw new PluginError("PLUGIN_E_DISABLED", `${this.plugin.id} is stopping.`);
     if (this.#peer !== peer)
       throw new PluginError(
         this.problem?.code ?? "PLUGIN_E_CRASHED",
@@ -256,7 +268,8 @@ export class PluginSupervisor {
     this.#process = undefined;
     this.#peer = undefined;
     if (this.#stopping) {
-      peer.close();
+      this.#stoppedPeers.add(peer);
+      peer.close(new RpcError(RPC_ERRORS.connectionClosed, `${this.plugin.id} was stopped.`));
       this.#setState("idle");
       return;
     }
@@ -281,13 +294,15 @@ export class PluginSupervisor {
     this.#setState(failed ? "failed" : "idle");
   }
 
-  #translate(error: unknown): PluginError {
+  #translate(error: unknown, peer: RpcPeer): PluginError {
     if (error instanceof PluginError) return error;
     if (!(error instanceof RpcError))
       return new PluginError("PLUGIN_E_COMMAND_FAILED", messageOf(error));
     const code: PluginErrorCode =
       error.code === RPC_ERRORS.connectionClosed
-        ? (this.#problem?.code ?? "PLUGIN_E_CRASHED")
+        ? this.#stopping || this.#stoppedPeers.has(peer)
+          ? "PLUGIN_E_DISABLED"
+          : (this.#problem?.code ?? "PLUGIN_E_CRASHED")
         : error.code === RPC_ERRORS.timeout
           ? "PLUGIN_E_TIMEOUT"
           : error.code === RPC_ERRORS.requestCancelled
