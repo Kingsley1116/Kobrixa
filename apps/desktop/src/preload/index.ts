@@ -55,7 +55,8 @@ const api: KobrixaApi = {
   plugins: {
     state: () => ipcRenderer.invoke("plugins:state"),
     execute: (commandId) => ipcRenderer.invoke("plugins:execute", commandId),
-    setEnabled: (pluginId, enabled) => ipcRenderer.invoke("plugins:set-enabled", pluginId, enabled),
+    setEnabled: (sourceKey, enabled) =>
+      ipcRenderer.invoke("plugins:set-enabled", sourceKey, enabled),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: PluginEvent) => listener(value);
       ipcRenderer.on("plugins:event", handler);

@@ -10,6 +10,8 @@ export const pluginCopy = {
       "Safe mode: development plugins are off for this session. Disable a problem plugin here, then restart normally.",
     loading: "Loading plugins…",
     requestFailed: "Plugin request failed",
+    notPersisted:
+      "Disabled for this session, but the choice could not be saved. The plugin may be enabled again after a restart.",
     builtin: "Built-in",
     development: "Development",
     status: {
@@ -34,6 +36,7 @@ export const pluginCopy = {
     safeMode: "安全模式：本次啟動已關閉所有開發插件。可以在這裡停用有問題的插件，再正常重新啟動。",
     loading: "正在載入插件…",
     requestFailed: "插件要求失敗",
+    notPersisted: "本次已停用，但設定未能保存，重新啟動後可能會恢復啟用。",
     builtin: "內建",
     development: "開發",
     status: {
@@ -110,6 +113,13 @@ const problems: Record<string, readonly [zh: string, en: string]> = {
     "Development plugins cannot be enabled in safe mode",
   ],
   PLUGIN_E_STATE_SAVE: ["無法儲存插件設定", "Plugin settings could not be saved"],
+  PLUGIN_E_STATE_CORRUPT: [
+    "插件設定檔已損毀，已暫停開發插件",
+    "The plugin settings file was damaged; development plugins are paused",
+  ],
+  PLUGIN_E_SHUTTING_DOWN: ["Kobrixa 正在關閉插件", "Kobrixa is shutting down plugins"],
+  PLUGIN_E_SOURCE_TIMEOUT: ["讀取插件資料夾逾時", "Reading the plugin folder timed out"],
+  PLUGIN_E_SOURCE_EXISTS: ["這個資料夾已經載入", "This folder is already loaded"],
 };
 
 export function problemText(problem: { code: string; message: string }, locale: Locale): string {

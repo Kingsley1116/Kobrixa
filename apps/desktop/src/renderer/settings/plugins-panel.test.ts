@@ -21,11 +21,13 @@ let emit: (event: PluginEvent) => void;
 const originalScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTo");
 const unhandledRejection = vi.fn();
 const snapshot: PluginsSnapshot = {
+  revision: 1,
   safeMode: false,
   developmentMode: true,
   plugins: [
     {
       id: "kobrixa.basic-plus",
+      sourceKey: "builtin:kobrixa.basic-plus",
       source: "builtin",
       runtime: "builtin",
       version: "1.0.0",
@@ -37,6 +39,7 @@ const snapshot: PluginsSnapshot = {
     },
     {
       id: "acme.hello",
+      sourceKey: "dev:0123456789abcdef",
       source: "development",
       runtime: "python",
       version: "1.0.0",
@@ -218,7 +221,7 @@ it("disables development plugins but never offers it for built-ins", async () =>
   );
   expect(toggles).toHaveLength(1);
   await act(async () => toggles[0]!.click());
-  expect(api.setEnabled).toHaveBeenCalledWith("acme.hello", false);
+  expect(api.setEnabled).toHaveBeenCalledWith("dev:0123456789abcdef", false);
   expect(container.textContent).toContain("已停用");
 });
 
@@ -227,7 +230,13 @@ it("shows notices with their plugin id", async () => {
   await act(async () =>
     emit({
       type: "notice",
-      notice: { pluginId: "acme.hello", severity: "info", message: "哈囉", at: 0 },
+      notice: {
+        pluginId: "acme.hello",
+        sourceKey: "dev:0123456789abcdef",
+        severity: "info",
+        message: "哈囉",
+        at: 0,
+      },
     }),
   );
   expect(container.querySelector("[aria-live=polite]")?.textContent).toContain("acme.hello");
@@ -236,6 +245,7 @@ it("shows notices with their plugin id", async () => {
 
 it("explains how to load development plugins and safe mode", async () => {
   api.state.mockResolvedValueOnce({
+    revision: 1,
     safeMode: true,
     developmentMode: false,
     plugins: [snapshot.plugins[0]!],
@@ -311,7 +321,7 @@ it("enables a user-disabled development plugin and uses the acknowledged state",
   api.setEnabled.mockResolvedValueOnce({ ok: true, state: snapshot });
   await render();
   await act(async () => button("啟用").click());
-  expect(api.setEnabled).toHaveBeenCalledWith("acme.hello", true);
+  expect(api.setEnabled).toHaveBeenCalledWith("dev:0123456789abcdef", true);
   expect(button("打招呼").disabled).toBe(false);
 });
 
@@ -334,7 +344,7 @@ it("lets a safe-mode plugin stay disabled after restart but blocks re-enabling",
   await render();
   expect(container.querySelector("[role=status]")?.textContent).toBe(pluginCopy["zh-TW"].safeMode);
   await act(async () => button("重新啟動後也保持停用").click());
-  expect(api.setEnabled).toHaveBeenCalledWith("acme.hello", false);
+  expect(api.setEnabled).toHaveBeenCalledWith("dev:0123456789abcdef", false);
   expect(button("啟用").disabled).toBe(true);
   await act(async () => button("啟用").click());
   expect(api.setEnabled).toHaveBeenCalledOnce();
@@ -397,6 +407,7 @@ it("keeps only the latest 20 notices, newest first, and renders plugin text lite
         type: "notice",
         notice: {
           pluginId: "acme.hello",
+          sourceKey: "dev:0123456789abcdef",
           severity: "info",
           message: `<img src=x> notice-${at}`,
           at,
@@ -469,3 +480,62 @@ it.each(["en", "zh-TW"] as const)(
     expect(unsubscribe).toHaveBeenCalledOnce();
   },
 );
+
+it("ignores an older snapshot that arrives after a newer state event", async () => {
+  let finish!: (result: Awaited<ReturnType<PluginsApi["setEnabled"]>>) => void;
+  api.setEnabled.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await render();
+  await act(async () => button("停用").click());
+  act(() =>
+    emit({
+      type: "state",
+      state: {
+        ...snapshot,
+        revision: 5,
+        plugins: [snapshot.plugins[0]!, { ...snapshot.plugins[1]!, running: true }],
+      },
+    }),
+  );
+  await act(async () =>
+    finish({
+      ok: true,
+      state: {
+        ...snapshot,
+        revision: 3,
+        plugins: [snapshot.plugins[0]!, { ...snapshot.plugins[1]!, status: "invalid" }],
+      },
+    }),
+  );
+  expect(container.textContent).toContain("執行中");
+  expect(container.textContent).not.toContain("無法載入");
+});
+
+it("shows a corrupt settings file and an unsaved disable", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    stateProblem: { code: "PLUGIN_E_STATE_CORRUPT", message: "moved aside" },
+  });
+  api.setEnabled.mockResolvedValueOnce({
+    ok: true,
+    persisted: false,
+    state: {
+      ...snapshot,
+      revision: 2,
+      plugins: [
+        snapshot.plugins[0]!,
+        { ...snapshot.plugins[1]!, status: "disabled", disabledBy: "user", commands: [] },
+      ],
+    },
+  });
+  await render();
+  expect(container.textContent).toContain("插件設定檔已損毀，已暫停開發插件：moved aside");
+  await act(async () => button("停用").click());
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    pluginCopy["zh-TW"].notPersisted,
+  );
+});

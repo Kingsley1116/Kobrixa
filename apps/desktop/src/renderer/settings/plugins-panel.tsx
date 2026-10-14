@@ -12,7 +12,9 @@ export const localizedText = (text: LocalizedText, locale: Locale): string =>
   typeof text === "string" ? text : locale === "zh-TW" ? (text["zh-TW"] ?? text.en) : text.en;
 
 type PanelError =
-  { kind: "problem"; code: string; message: string } | { kind: "request"; message: string };
+  | { kind: "problem"; code: string; message: string }
+  | { kind: "request"; message: string }
+  | { kind: "notice"; message: string };
 
 const requestError = (reason: unknown): PanelError => ({
   kind: "request",
@@ -25,18 +27,21 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
   const [notices, setNotices] = useState<PluginNotice[]>([]);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<PanelError>();
+  // Action results can arrive after newer state events; keep the highest revision.
+  const accept = (next: PluginsSnapshot) =>
+    setState((current) => (current && current.revision > next.revision ? current : next));
   useEffect(() => {
     let live = true;
     void window.kobrixa.plugins.state().then(
       (value) => {
-        if (live) setState(value);
+        if (live) accept(value);
       },
       (reason: unknown) => {
         if (live) setError(requestError(reason));
       },
     );
     const off = window.kobrixa.plugins.onEvent((event) => {
-      if (event.type === "state") setState(event.state);
+      if (event.type === "state") accept(event.state);
       else setNotices((list) => [event.notice, ...list].slice(0, 20));
     });
     return () => {
@@ -47,7 +52,8 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
   const perform = async (
     key: string,
     work: () => Promise<
-      { ok: true; state?: PluginsSnapshot } | { ok: false; code: string; message: string }
+      | { ok: true; state?: PluginsSnapshot; persisted?: false }
+      | { ok: false; code: string; message: string }
     >,
   ) => {
     setBusy(key);
@@ -55,7 +61,10 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
     try {
       const result = await work();
       if (!result.ok) setError({ kind: "problem", code: result.code, message: result.message });
-      else if (result.state) setState(result.state);
+      else {
+        if (result.state) accept(result.state);
+        if (result.persisted === false) setError({ kind: "notice", message: t.notPersisted });
+      }
     } catch (reason) {
       setError(requestError(reason));
     } finally {
@@ -66,7 +75,9 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
     <p className="settings-hint" role="alert">
       {error.kind === "problem"
         ? problemText(error, locale)
-        : `${t.requestFailed}${locale === "zh-TW" ? "：" : ": "}${error.message}`}
+        : error.kind === "notice"
+          ? error.message
+          : `${t.requestFailed}${locale === "zh-TW" ? "：" : ": "}${error.message}`}
     </p>
   );
   if (!state) return errorAlert ?? <p className="settings-hint">{t.loading}</p>;
@@ -82,7 +93,9 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
       <button
         disabled={busy !== undefined || (enabling && state.safeMode)}
         onClick={() =>
-          void perform(plugin.id, () => window.kobrixa.plugins.setEnabled(plugin.id, enabling))
+          void perform(plugin.sourceKey, () =>
+            window.kobrixa.plugins.setEnabled(plugin.sourceKey, enabling),
+          )
         }
       >
         {label}
@@ -98,10 +111,15 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
           {t.safeMode}
         </p>
       )}
+      {state.stateProblem && (
+        <p className="settings-hint" role="status">
+          {problemText(state.stateProblem, locale)}
+        </p>
+      )}
       {errorAlert}
       <ul className="plugins-list">
         {state.plugins.map((plugin) => (
-          <li key={`${plugin.source}:${plugin.directory ?? plugin.id}`}>
+          <li key={plugin.sourceKey}>
             <h3 className="settings-subheading">
               {plugin.displayName ? localizedText(plugin.displayName, locale) : plugin.id}
             </h3>

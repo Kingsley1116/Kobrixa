@@ -20,6 +20,6 @@ export type PluginEvent = PluginManagerEvent;
 export interface PluginsApi {
   state(): Promise<PluginsSnapshot>;
   execute(commandId: string): Promise<PluginCommandResult>;
-  setEnabled(pluginId: string, enabled: boolean): Promise<PluginActionResult>;
+  setEnabled(sourceKey: string, enabled: boolean): Promise<PluginActionResult>;
   onEvent(listener: (event: PluginEvent) => void): () => void;
 }
