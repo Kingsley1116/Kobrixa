@@ -190,12 +190,23 @@ export class PluginManager {
       const stopped = Promise.all(supervisors.map((supervisor) => supervisor.stop())).then(
         () => true,
       );
-      const wait = (ms: number) =>
-        new Promise<false>((resolve) => setTimeout(() => resolve(false), ms));
+      const waitForStop = async (ms: number) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            stopped,
+            new Promise<false>((resolve) => {
+              timer = setTimeout(() => resolve(false), ms);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
       const forceAt = Math.max(0, deadlineMs - PLUGIN_FORCE_MARGIN_MS);
-      if (await Promise.race([stopped, wait(forceAt)])) return;
+      if (await waitForStop(forceAt)) return;
       for (const supervisor of supervisors) supervisor.forceKill();
-      await Promise.race([stopped, wait(deadlineMs - forceAt)]);
+      await waitForStop(deadlineMs - forceAt);
     })();
     return this.#shutdown;
   }
@@ -266,6 +277,12 @@ export class PluginManager {
   }
 
   #emit(event: PluginManagerEvent): void {
-    for (const listener of this.#listeners) listener(event);
+    for (const listener of this.#listeners) {
+      try {
+        listener(event);
+      } catch {
+        // A listener must not interrupt plugin lifecycle operations or other listeners.
+      }
+    }
   }
 }

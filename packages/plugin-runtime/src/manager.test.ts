@@ -16,6 +16,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "kobrixa-manager-"));
 });
 afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(() => vi.useRealTimers());
 
 async function devPlugin(name: string) {
   const directory = path.join(root, name);
@@ -120,6 +121,28 @@ describe("PluginManager", () => {
     await manager.setEnabled("acme.hello", true);
     expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
   });
+  it("isolates throwing listeners during disable and shutdown", async () => {
+    const manager = await create([await devPlugin("a"), await devPlugin("b")]);
+    await manager.executeCommand("acme.a.greet");
+    await manager.executeCommand("acme.b.greet");
+    const events: PluginManagerEvent[] = [];
+    manager.onEvent(() => {
+      throw new Error("listener failed");
+    });
+    manager.onEvent((event) => events.push(event));
+
+    await expect(manager.setEnabled("acme.a", false)).resolves.toMatchObject({ ok: true });
+    expect(events).toContainEqual({ type: "state", state: manager.state() });
+    events.length = 0;
+    await expect(manager.executeCommand("acme.b.greet")).resolves.toEqual({ ok: true });
+    expect(events).toContainEqual({
+      type: "notice",
+      notice: { pluginId: "acme.b", severity: "info", message: "hi", at: 1000 },
+    });
+    await expect(manager.shutdown()).resolves.toBeUndefined();
+    expect(manager.active).toBe(false);
+    expect(events).toContainEqual({ type: "state", state: manager.state() });
+  });
   it("lets safe mode persist a disable but refuses to enable", async () => {
     const store = memoryStore();
     const manager = await create([await devPlugin("hello")], store, true);
@@ -173,6 +196,41 @@ describe("PluginManager", () => {
     expect(await manager.executeCommand("acme.a.greet")).toMatchObject({
       code: "PLUGIN_E_DISABLED",
     });
+  });
+  it("clears the shutdown race timer after a graceful stop", async () => {
+    vi.useFakeTimers();
+    const manager = await create([await devPlugin("hello")]);
+    await manager.executeCommand("acme.hello.greet");
+
+    await manager.shutdown();
+
+    expect(manager.active).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("clears the shutdown race timer after a forced stop", async () => {
+    vi.useFakeTimers();
+    const plugin = memoryPlugin((peer) => {
+      peer.handle("initialize", () => ({ apiVersion: "1.0.0", sdk: { name: "t", version: "1" } }));
+      peer.handle("command/execute", () => null);
+      peer.handle("shutdown", () => new Promise(() => {}));
+    });
+    const manager = await PluginManager.create({
+      sources: [await devPlugin("stubborn")],
+      store: memoryStore(),
+      safeMode: false,
+      launcher: async () => plugin.process,
+      locale: "en",
+      supervisor: { stopTimeoutMs: 60_000 },
+    });
+    await manager.executeCommand("acme.stubborn.greet");
+
+    const shutdown = manager.shutdown();
+    await vi.advanceTimersByTimeAsync(3000);
+    await shutdown;
+
+    expect(plugin.killed()).toBe(true);
+    expect(manager.active).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
   it("resumes after a shutdown that did not end the app", async () => {
     const manager = await create([await devPlugin("a")]);
