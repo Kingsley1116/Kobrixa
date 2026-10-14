@@ -18,6 +18,8 @@ vi.mock("../updates/updates.js", () => ({ UpdatesPanel: () => null }));
 let root: Root;
 let container: HTMLDivElement;
 let emit: (event: PluginEvent) => void;
+const originalScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTo");
+const unhandledRejection = vi.fn();
 const snapshot: PluginsSnapshot = {
   safeMode: false,
   developmentMode: true,
@@ -75,6 +77,7 @@ const api = {
 } satisfies PluginsApi;
 beforeEach(() => {
   vi.clearAllMocks();
+  process.on("unhandledRejection", unhandledRejection);
   api.state.mockResolvedValue(snapshot);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("kobrixa", { plugins: api });
@@ -85,6 +88,9 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  process.off("unhandledRejection", unhandledRejection);
+  if (originalScrollTo) Object.defineProperty(Element.prototype, "scrollTo", originalScrollTo);
+  else delete (Element.prototype as Partial<Element>).scrollTo;
   vi.unstubAllGlobals();
 });
 const render = async (locale: Locale = "zh-TW") => {
@@ -106,6 +112,103 @@ it("runs a command and shows the translated failure", async () => {
   await act(async () => button("打招呼").click());
   expect(api.execute).toHaveBeenCalledWith("acme.hello.greet");
   expect(container.querySelector("[role=alert]")?.textContent).toContain("python not found");
+});
+
+it.each(["execute", "setEnabled"] as const)(
+  "handles a rejected %s request, restores controls, and follows the current locale",
+  async (method) => {
+    let reject!: (reason: Error) => void;
+    api[method].mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, rejectPromise) => {
+          reject = rejectPromise;
+        }),
+    );
+    await render();
+    await act(async () => button(method === "execute" ? "打招呼" : "停用").click());
+    expect(api[method]).toHaveBeenCalledOnce();
+    expect(button("打招呼").disabled).toBe(true);
+    expect(button("停用").disabled).toBe(true);
+
+    await act(async () => {
+      reject(new Error("IPC connection lost"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(unhandledRejection).not.toHaveBeenCalled();
+    expect(container.querySelector("[role=alert]")?.textContent).toBe(
+      "插件要求失敗：IPC connection lost",
+    );
+    expect(button("打招呼").disabled).toBe(false);
+    expect(button("停用").disabled).toBe(false);
+
+    await render("en");
+    expect(container.querySelector("[role=alert]")?.textContent).toBe(
+      "Plugin request failed: IPC connection lost",
+    );
+    expect(api.state).toHaveBeenCalledOnce();
+    expect(api[method]).toHaveBeenCalledOnce();
+  },
+);
+
+it("replaces loading with a localized alert when the initial state request rejects", async () => {
+  let reject!: (reason: Error) => void;
+  api.state.mockImplementationOnce(
+    () =>
+      new Promise<never>((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  await render();
+  expect(container.textContent).toContain("正在載入插件…");
+  await act(async () => {
+    reject(new Error("state unavailable"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(unhandledRejection).not.toHaveBeenCalled();
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    "插件要求失敗：state unavailable",
+  );
+  expect(container.textContent).not.toContain("正在載入插件…");
+
+  await render("en");
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    "Plugin request failed: state unavailable",
+  );
+  expect(container.textContent).not.toContain("Loading plugins…");
+  expect(api.state).toHaveBeenCalledOnce();
+});
+
+it("handles an initial state rejection after the panel unmounts", async () => {
+  let reject!: (reason: Error) => void;
+  api.state.mockImplementationOnce(
+    () =>
+      new Promise<never>((_resolve, rejectPromise) => {
+        reject = rejectPromise;
+      }),
+  );
+  await render();
+  await act(async () => root.render(null));
+  await act(async () => {
+    reject(new Error("state unavailable"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(unhandledRejection).not.toHaveBeenCalled();
+  expect(container.textContent).toBe("");
+  expect(unsubscribe).toHaveBeenCalledOnce();
+});
+
+it("retranslates a structured failure when the locale changes", async () => {
+  await render();
+  await act(async () => button("打招呼").click());
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    "無法啟動插件（例如找不到 Python）：python not found",
+  );
+  await render("en");
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    "The plugin could not start (for example, Python was not found): python not found",
+  );
+  expect(api.execute).toHaveBeenCalledOnce();
+  expect(api.state).toHaveBeenCalledOnce();
 });
 
 it("disables development plugins but never offers it for built-ins", async () => {

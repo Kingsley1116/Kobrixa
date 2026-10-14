@@ -11,17 +11,30 @@ import { pluginCopy, problemText } from "./plugin-copy.js";
 export const localizedText = (text: LocalizedText, locale: Locale): string =>
   typeof text === "string" ? text : locale === "zh-TW" ? (text["zh-TW"] ?? text.en) : text.en;
 
+type PanelError =
+  { kind: "problem"; code: string; message: string } | { kind: "request"; message: string };
+
+const requestError = (reason: unknown): PanelError => ({
+  kind: "request",
+  message: reason instanceof Error ? reason.message : String(reason),
+});
+
 export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element {
   const t = pluginCopy[locale];
   const [state, setState] = useState<PluginsSnapshot>();
   const [notices, setNotices] = useState<PluginNotice[]>([]);
   const [busy, setBusy] = useState<string>();
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<PanelError>();
   useEffect(() => {
     let live = true;
-    void window.kobrixa.plugins.state().then((value) => {
-      if (live) setState(value);
-    });
+    void window.kobrixa.plugins.state().then(
+      (value) => {
+        if (live) setState(value);
+      },
+      (reason: unknown) => {
+        if (live) setError(requestError(reason));
+      },
+    );
     const off = window.kobrixa.plugins.onEvent((event) => {
       if (event.type === "state") setState(event.state);
       else setNotices((list) => [event.notice, ...list].slice(0, 20));
@@ -41,13 +54,22 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
     setError(undefined);
     try {
       const result = await work();
-      if (!result.ok) setError(problemText(result, locale));
+      if (!result.ok) setError({ kind: "problem", code: result.code, message: result.message });
       else if (result.state) setState(result.state);
+    } catch (reason) {
+      setError(requestError(reason));
     } finally {
       setBusy(undefined);
     }
   };
-  if (!state) return <p className="settings-hint">{t.loading}</p>;
+  const errorAlert = error && (
+    <p className="settings-hint" role="alert">
+      {error.kind === "problem"
+        ? problemText(error, locale)
+        : `${t.requestFailed}${locale === "zh-TW" ? "：" : ": "}${error.message}`}
+    </p>
+  );
+  if (!state) return errorAlert ?? <p className="settings-hint">{t.loading}</p>;
   const toggle = (plugin: PluginSummary) => {
     if (plugin.source !== "development" || plugin.status === "invalid") return null;
     const enabling = plugin.status === "disabled" && plugin.disabledBy === "user";
@@ -76,11 +98,7 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
           {t.safeMode}
         </p>
       )}
-      {error && (
-        <p className="settings-hint" role="alert">
-          {error}
-        </p>
-      )}
+      {errorAlert}
       <ul className="plugins-list">
         {state.plugins.map((plugin) => (
           <li key={`${plugin.source}:${plugin.directory ?? plugin.id}`}>

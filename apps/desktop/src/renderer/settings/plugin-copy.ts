@@ -9,6 +9,7 @@ export const pluginCopy = {
     safeMode:
       "Safe mode: development plugins are off for this session. Disable a problem plugin here, then restart normally.",
     loading: "Loading plugins…",
+    requestFailed: "Plugin request failed",
     builtin: "Built-in",
     development: "Development",
     status: {
@@ -32,6 +33,7 @@ export const pluginCopy = {
       "要載入開發插件，請以 --plugin-dev-dir=<資料夾> 啟動 Kobrixa；Python 插件另需 --plugin-python=<直譯器>。",
     safeMode: "安全模式：本次啟動已關閉所有開發插件。可以在這裡停用有問題的插件，再正常重新啟動。",
     loading: "正在載入插件…",
+    requestFailed: "插件要求失敗",
     builtin: "內建",
     development: "開發",
     status: {
