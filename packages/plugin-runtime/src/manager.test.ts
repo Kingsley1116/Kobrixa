@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -441,5 +441,197 @@ describe("PluginManager", () => {
     const manager = await create([hello], store);
     expect(manager.state().stateProblem).toMatchObject({ code: "PLUGIN_E_STATE_CORRUPT" });
     expect(manager.state().plugins[0]!.status).toBe("disabled");
+  });
+
+  describe("dynamic sources", () => {
+    const hangingLauncher = vi.fn(
+      async () =>
+        memoryPlugin((peer, { exit }) => {
+          peer.handle("initialize", () => ({
+            apiVersion: "1.0.0",
+            sdk: { name: "t", version: "1" },
+          }));
+          peer.handle("command/execute", () => new Promise(() => {}));
+          peer.handle("shutdown", () => null);
+          peer.onNotification("exit", () => exit(0));
+        }).process,
+    );
+    afterEach(() => hangingLauncher.mockClear());
+    const createWith = (
+      sources: Parameters<typeof PluginManager.create>[0]["sources"],
+      plugins = launcher,
+    ) =>
+      PluginManager.create({
+        sources,
+        store: memoryStore(),
+        safeMode: false,
+        launcher: plugins,
+        locale: "en",
+        now: () => 1000,
+      });
+
+    it("adds a folder, refuses the same folder twice and routes its commands", async () => {
+      const manager = await createWith([builtin]);
+      const hello = await devPlugin("hello");
+      const added = await manager.addSource(hello);
+      expect(added).toMatchObject({ ok: true });
+      expect(manager.state().plugins.map((plugin) => plugin.sourceKey)).toEqual([
+        "builtin:kobrixa.basic-plus",
+        keyOf(hello),
+      ]);
+      expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
+      expect(
+        await manager.addSource({ kind: "development", directory: `${hello.directory}/.` }),
+      ).toMatchObject({ ok: false, code: "PLUGIN_E_SOURCE_EXISTS" });
+    });
+    it("removes a source, cancels its running command and keeps its files", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await createWith([hello], hangingLauncher);
+      const running = manager.executeCommand("acme.hello.greet");
+      await vi.waitFor(() => expect(manager.state().plugins[0]!.running).toBe(true));
+      expect(await manager.removeSource(keyOf(hello))).toMatchObject({ ok: true });
+      expect(await running).toMatchObject({ ok: false, code: "PLUGIN_E_CANCELLED" });
+      expect(manager.state().plugins).toEqual([]);
+      expect(manager.active).toBe(false);
+      await expect(
+        readFile(path.join(hello.directory, "kobrixa-plugin.json"), "utf8"),
+      ).resolves.toContain("acme.hello");
+    });
+    it("refuses to remove or reload built-ins and unknown sources", async () => {
+      const manager = await createWith([builtin]);
+      expect(await manager.removeSource("builtin:kobrixa.basic-plus")).toMatchObject({
+        code: "PLUGIN_E_BUILTIN_REQUIRED",
+      });
+      expect(await manager.reloadSource("builtin:kobrixa.basic-plus")).toMatchObject({
+        code: "PLUGIN_E_BUILTIN_REQUIRED",
+      });
+      expect(await manager.removeSource("dev:ffffffffffffffff")).toMatchObject({
+        code: "PLUGIN_E_UNKNOWN_PLUGIN",
+      });
+    });
+    it("reloads a changed manifest, cancels the old command and never replays it", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await createWith([hello], hangingLauncher);
+      const running = manager.executeCommand("acme.hello.greet");
+      await vi.waitFor(() => expect(manager.state().plugins[0]!.running).toBe(true));
+      const file = path.join(hello.directory, "kobrixa-plugin.json");
+      const changed = JSON.parse(await readFile(file, "utf8"));
+      changed.contributes.commands.push({ id: "acme.hello.wave", title: "Wave" });
+      await writeFile(file, JSON.stringify(changed));
+      expect(await manager.reloadSource(keyOf(hello))).toMatchObject({ ok: true });
+      expect(await running).toMatchObject({ ok: false, code: "PLUGIN_E_CANCELLED" });
+      expect(hangingLauncher).toHaveBeenCalledTimes(1);
+      expect(manager.state().plugins[0]).toMatchObject({
+        sourceKey: keyOf(hello),
+        status: "enabled",
+        running: false,
+      });
+      expect(manager.state().plugins[0]!.commands.map((command) => command.id)).toEqual([
+        "acme.hello.greet",
+        "acme.hello.wave",
+      ]);
+    });
+    it("keeps the disabled choice across a reload", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await createWith([hello]);
+      await manager.setEnabled(keyOf(hello), false);
+      expect(await manager.reloadSource(keyOf(hello))).toMatchObject({ ok: true });
+      expect(manager.state().plugins[0]).toMatchObject({ status: "disabled", disabledBy: "user" });
+    });
+    it("keeps a reload of a deleted folder as an invalid row without its old commands", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await createWith([hello]);
+      await unlink(path.join(hello.directory, "kobrixa-plugin.json"));
+      expect(await manager.reloadSource(keyOf(hello))).toMatchObject({ ok: true });
+      expect(manager.state().plugins[0]).toMatchObject({
+        sourceKey: keyOf(hello),
+        status: "invalid",
+        commands: [],
+      });
+      expect(manager.state().plugins[0]!.problems[0]!.code).toBe("PLUGIN_E_MANIFEST");
+      expect(await manager.executeCommand("acme.hello.greet")).toMatchObject({
+        code: "PLUGIN_E_UNKNOWN_COMMAND",
+      });
+    });
+    it("lets the earlier source keep an id when a reload takes another plugin's id", async () => {
+      const a = await devPlugin("a");
+      const b = await devPlugin("b");
+      const manager = await createWith([a, b]);
+      await manager.executeCommand("acme.b.greet");
+      const file = path.join(a.directory, "kobrixa-plugin.json");
+      const changed = JSON.parse(await readFile(file, "utf8"));
+      changed.id = "acme.b";
+      changed.contributes.commands = [{ id: "acme.b.other", title: "Other" }];
+      await writeFile(file, JSON.stringify(changed));
+      await manager.reloadSource(keyOf(a));
+      const [first, second] = manager.state().plugins;
+      expect(first).toMatchObject({ id: "acme.b", status: "enabled" });
+      expect(second).toMatchObject({ id: "acme.b", status: "invalid", running: false });
+      expect(second!.problems.map((problem) => problem.code)).toContain("PLUGIN_E_DUPLICATE_ID");
+      expect(manager.active).toBe(false);
+    });
+    it("registers nothing when shutdown starts while a reload is queued", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await createWith([hello]);
+      const reloading = manager.reloadSource(keyOf(hello));
+      const shutdown = manager.shutdown();
+      expect(await reloading).toMatchObject({ ok: false, code: "PLUGIN_E_SHUTTING_DOWN" });
+      await shutdown;
+      expect(manager.active).toBe(false);
+      expect(await manager.addSource(await devPlugin("late"))).toMatchObject({
+        code: "PLUGIN_E_SHUTTING_DOWN",
+      });
+    });
+    it("refuses reloads in safe mode", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await create([hello], memoryStore(), true);
+      expect(await manager.reloadSource(keyOf(hello))).toMatchObject({
+        code: "PLUGIN_E_SAFE_MODE",
+      });
+    });
+    it("drops notices from a removed source but delivers them while disabling", async () => {
+      const farewell = vi.fn(
+        async () =>
+          memoryPlugin((peer, { exit }) => {
+            peer.handle("initialize", () => ({
+              apiVersion: "1.0.0",
+              sdk: { name: "t", version: "1" },
+            }));
+            peer.handle("command/execute", () => null);
+            peer.handle("shutdown", async () => {
+              await peer.request("ui/showMessage", { severity: "info", message: "bye" });
+              return null;
+            });
+            peer.onNotification("exit", () => exit(0));
+          }).process,
+      );
+      const a = await devPlugin("a");
+      const b = await devPlugin("b");
+      const manager = await createWith([a, b], farewell);
+      const messages: string[] = [];
+      manager.onEvent((event) => {
+        if (event.type === "notice")
+          messages.push(`${event.notice.pluginId}:${event.notice.message}`);
+      });
+      await manager.executeCommand("acme.a.greet");
+      await manager.executeCommand("acme.b.greet");
+      await manager.setEnabled(keyOf(a), false);
+      await manager.removeSource(keyOf(b));
+      expect(messages).toEqual(["acme.a:bye"]);
+    });
+    it("converts a schema v1 disable when its folder is added later", async () => {
+      const hello = await devPlugin("hello");
+      const store = memoryStore([], ["acme.hello"]);
+      const manager = await PluginManager.create({
+        sources: [],
+        store,
+        safeMode: false,
+        launcher,
+        locale: "en",
+      });
+      await manager.addSource(hello);
+      expect(manager.state().plugins[0]).toMatchObject({ status: "disabled", disabledBy: "user" });
+      expect(store.saved.at(-1)!.legacyDisabledIds).toEqual(new Set());
+    });
   });
 });

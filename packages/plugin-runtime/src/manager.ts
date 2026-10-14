@@ -1,8 +1,11 @@
+import path from "node:path";
 import type { LocalizedText, PluginLocale, Severity } from "@kobrixa/plugin-protocol";
 import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from "./errors.js";
 import {
+  developmentSourceKey,
   readSource,
   resolvePlugins,
+  type DevelopmentSource,
   type PluginSource,
   type ReadPlugin,
   type RegisteredPlugin,
@@ -241,6 +244,94 @@ export class PluginManager {
     this.#disabled = next;
     await this.#apply("disabled");
     return { ok: true, state: this.state(), ...(persisted ? {} : { persisted: false as const }) };
+  }
+
+  /** Adds a development folder after startup. The folder is read before anything registers. */
+  addSource(source: DevelopmentSource): Promise<PluginActionResult> {
+    return this.#enqueue(() => this.#addSource(source));
+  }
+
+  /** Stops and unregisters a development source. Its files are never touched. */
+  removeSource(sourceKey: string): Promise<PluginActionResult> {
+    return this.#enqueue(() => this.#removeSource(sourceKey));
+  }
+
+  /**
+   * Cancels the source's running commands, stops its process within the stop bound, then reads
+   * its folder again and re-validates the whole set. Nothing is replayed; the next command starts
+   * the new version lazily.
+   */
+  reloadSource(sourceKey: string): Promise<PluginActionResult> {
+    return this.#enqueue(() => this.#reloadSource(sourceKey));
+  }
+
+  async #addSource(source: DevelopmentSource): Promise<PluginActionResult> {
+    const closed = this.#closed();
+    if (closed) return closed;
+    const sourceKey = developmentSourceKey(source.directory);
+    if (this.#entryOf(sourceKey))
+      return failure(
+        "PLUGIN_E_SOURCE_EXISTS",
+        `${path.resolve(source.directory)} is already loaded.`,
+      );
+    const read = await readSource(source, readOptions(this.options));
+    const closedAfterRead = this.#closed();
+    if (closedAfterRead) return closedAfterRead;
+    this.#entries.push({ source, read, plugin: unresolved(read), generation: 0 });
+    if (convertLegacy([read], this.#disabled, this.#legacy)) await this.#saveBestEffort();
+    await this.#apply("cancelled");
+    return { ok: true, state: this.state() };
+  }
+
+  async #removeSource(sourceKey: string): Promise<PluginActionResult> {
+    const refused = this.#refuseChange(sourceKey, "removed");
+    if (refused) return refused;
+    this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);
+    if (this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
+    await this.#apply("cancelled");
+    return { ok: true, state: this.state() };
+  }
+
+  async #reloadSource(sourceKey: string): Promise<PluginActionResult> {
+    const refused = this.#refuseChange(sourceKey, "reloaded");
+    if (refused) return refused;
+    if (this.options.safeMode)
+      return failure(
+        "PLUGIN_E_SAFE_MODE",
+        "Restart Kobrixa without safe mode to reload development plugins.",
+      );
+    const entry = this.#entryOf(sourceKey)!;
+    // Block new commands and cancel running ones before the folder is read again.
+    const supervisor = this.#supervisors.get(sourceKey);
+    if (supervisor) {
+      this.#supervisors.delete(sourceKey);
+      for (const [command, owner] of this.#commands)
+        if (owner === sourceKey) this.#commands.delete(command);
+      this.#emitState();
+      await this.#retire([supervisor], "cancelled");
+    }
+    entry.generation += 1;
+    const read = await readSource(entry.source, readOptions(this.options));
+    const closed = this.#closed();
+    if (closed) return closed;
+    entry.read = read;
+    if (convertLegacy([read], this.#disabled, this.#legacy)) await this.#saveBestEffort();
+    await this.#apply("cancelled");
+    return { ok: true, state: this.state() };
+  }
+
+  #refuseChange(sourceKey: string, verb: "removed" | "reloaded"): Failure | undefined {
+    const closed = this.#closed();
+    if (closed) return closed;
+    const entry = this.#entryOf(sourceKey);
+    if (!entry)
+      return failure("PLUGIN_E_UNKNOWN_PLUGIN", `No plugin source has the key ${sourceKey}.`);
+    if (entry.read.source === "builtin")
+      return failure(
+        "PLUGIN_E_BUILTIN_REQUIRED",
+        `${entry.plugin.id} is part of Kobrixa and cannot be ${verb}.`,
+      );
+    return undefined;
   }
 
   onEvent(listener: (event: PluginManagerEvent) => void): () => void {
