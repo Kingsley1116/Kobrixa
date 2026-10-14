@@ -4,3 +4,4 @@ export * from "./manifest.js";
 export * from "./errors.js";
 export * from "./rpc.js";
 export * from "./methods.js";
+export * from "./framing.js";
