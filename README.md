@@ -10,7 +10,7 @@ Keep your EV3 building, learning, and experimenting. Test motors without writing
 
 [![Kobrixa editor](docs/images/editor-en.png)](docs/images/editor-en.png)
 
-*The project shown is demo data.*
+_The project shown is demo data._
 
 Want to support modern, open-source tools for EV3? Give Kobrixa a star on [GitHub](https://github.com/Kingsley1116/Kobrixa) ⭐.
 

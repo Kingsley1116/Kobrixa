@@ -10,7 +10,7 @@ Kobrixa IDE 是一個開源桌面應用程式，用來在 Windows、macOS 與 Li
 
 [![Kobrixa 程式編輯器](docs/images/editor-zh-TW.png)](docs/images/editor-zh-TW.png)
 
-*畫面中的專案為示範資料。*
+_畫面中的專案為示範資料。_
 
 喜歡讓 EV3 持續有開源工具可用的方向嗎？歡迎在 [GitHub](https://github.com/Kingsley1116/Kobrixa) 給 Kobrixa 一顆 ⭐。
 
