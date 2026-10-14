@@ -47,7 +47,7 @@ export class OutputTail {
     this.#ended = true;
     for (const state of this.#streams.values()) {
       this.#append(state.decoder.end(), state);
-      if (state.line) this.onOutput?.(state.line);
+      if (state.line) this.#emitOutput(state.line);
       state.line = "";
     }
   }
@@ -55,9 +55,35 @@ export class OutputTail {
   #append(text: string, state: { line: string }): void {
     this.#text = (this.#text + text).slice(-TAIL_CHARACTERS);
     if (!this.onOutput) return;
-    const lines = (state.line + text).split("\n");
-    state.line = lines.pop()!;
-    for (const line of lines) this.onOutput(line.endsWith("\r") ? line.slice(0, -1) : line);
+    let offset = 0;
+    let newline = text.indexOf("\n");
+    while (offset < text.length) {
+      const lineEnd = newline < 0 ? text.length : newline;
+      let end = Math.min(lineEnd, offset + TAIL_CHARACTERS - state.line.length);
+      // Decoded UTF-8 contains complete pairs; keep a pair together at the cap.
+      const last = text.charCodeAt(end - 1);
+      if (end > offset && last >= 0xd800 && last <= 0xdbff) end--;
+      state.line += text.slice(offset, end);
+      offset = end;
+      if (offset === newline) {
+        this.#emitOutput(state.line.endsWith("\r") ? state.line.slice(0, -1) : state.line);
+        state.line = "";
+        offset++;
+        // Search once per newline, not once per capped fragment of a long line.
+        newline = text.indexOf("\n", offset);
+      } else if (offset < lineEnd) {
+        this.#emitOutput(state.line);
+        state.line = "";
+      }
+    }
+  }
+
+  #emitOutput(line: string): void {
+    try {
+      this.onOutput?.(line);
+    } catch {
+      // Log hooks must not interrupt output draining or exit reporting.
+    }
   }
   text(): string {
     return this.#text;

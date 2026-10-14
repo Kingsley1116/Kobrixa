@@ -123,8 +123,117 @@ const endOutput = async (stream: PassThrough) => {
   await ended;
 };
 
+describe("output tail", () => {
+  const tailCharacters = 16 * 1024;
+
+  it("emits a 100 KB chunk without newlines in bounded lines without losing text", () => {
+    const lines: string[] = [];
+    const tail = new OutputTail((line) => lines.push(line));
+    const text = "x".repeat(100 * 1024);
+
+    tail.push(text);
+    expect(lines.length).toBeGreaterThan(0);
+    tail.end();
+
+    expect(lines.every((line) => line.length <= tailCharacters)).toBe(true);
+    expect(lines.join("")).toBe(text);
+    expect(tail.text()).toBe(text.slice(-tailCharacters));
+  });
+
+  it.each(["stdout", "stderr"] as const)(
+    "keeps pending %s output bounded across many small chunks without newlines",
+    (stream) => {
+      const lines: string[] = [];
+      let emitted = 0;
+      const tail = new OutputTail((line) => {
+        lines.push(line);
+        emitted += line.length;
+      });
+      const chunk = "progress\r世界😀".repeat(7);
+      let written = 0;
+
+      for (let index = 0; index < 1000; index++) {
+        tail.push(chunk, stream);
+        written += chunk.length;
+        // Everything not yet delivered to the hook is still pending.
+        expect(written - emitted).toBeLessThanOrEqual(tailCharacters);
+      }
+      tail.end();
+
+      expect(lines.every((line) => line.length <= tailCharacters)).toBe(true);
+      expect(lines.join("")).toBe(chunk.repeat(1000));
+    },
+  );
+
+  it.each([false, true])("does not split surrogate pairs at the cap (split UTF-8: %s)", (split) => {
+    const lines: string[] = [];
+    const tail = new OutputTail((line) => lines.push(line));
+    const prefix = "x".repeat(tailCharacters - 1);
+    const text = prefix + "😀" + "y".repeat(tailCharacters) + "🚀";
+    const bytes = Buffer.from(text);
+
+    if (split) {
+      tail.push(bytes.subarray(0, prefix.length + 2));
+      tail.push(bytes.subarray(prefix.length + 2));
+    } else {
+      tail.push(bytes);
+    }
+    tail.end();
+
+    expect(lines).toEqual([prefix, "😀" + "y".repeat(tailCharacters - 2), "yy🚀"]);
+    expect(lines.join("")).toBe(text);
+  });
+
+  it("preserves normal lines, split CRLF, bare carriage returns, and final partial lines", () => {
+    const lines: string[] = [];
+    const tail = new OutputTail((line) => lines.push(line));
+
+    tail.push("\nfirst\r");
+    tail.push("\nsecond\nprogress\rupdate\npartial\r");
+    expect(lines).toEqual(["", "first", "second", "progress\rupdate"]);
+    tail.end();
+    expect(lines).toEqual(["", "first", "second", "progress\rupdate", "partial\r"]);
+  });
+});
+
 describe("stdio process event ordering", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("continues delivering lines and reports exit when the output hook throws", async () => {
+    const onOutput = vi.fn(() => {
+      throw new Error("output hook failed");
+    });
+    const { child, plugin } = controlledChild(123, { onOutput });
+    const onExit = vi.fn();
+    plugin.onExit(onExit);
+
+    expect(() => child.stderr.emit("data", Buffer.from("first\nsecond\n"))).not.toThrow();
+    expect(() => child.stderr.emit("data", Buffer.from("third\nlast"))).not.toThrow();
+    expect(onOutput.mock.calls).toEqual([["first"], ["second"], ["third"]]);
+    await endOutput(child.stdout);
+    await endOutput(child.stderr);
+
+    expect(() => child.emit("exit", 3, null)).not.toThrow();
+    expect(onOutput.mock.calls).toEqual([["first"], ["second"], ["third"], ["last"]]);
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ code: 3 });
+    expect(plugin.stderrTail()).toBe("first\nsecond\nthird\nlast");
+  });
+
+  it("reports exit when the output hook throws for the final partial line", async () => {
+    const onOutput = vi.fn(() => {
+      throw new Error("output hook failed");
+    });
+    const { child, plugin } = controlledChild(123, { onOutput });
+    const onExit = vi.fn();
+    plugin.onExit(onExit);
+    child.stderr.write("last");
+    await endOutput(child.stdout);
+    await endOutput(child.stderr);
+
+    expect(() => child.emit("exit", 3, null)).not.toThrow();
+    expect(onOutput).toHaveBeenCalledExactlyOnceWith("last");
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ code: 3 });
+  });
 
   it("decodes split UTF-8 output into complete lines and flushes the last line on exit", async () => {
     const onOutput = vi.fn();
