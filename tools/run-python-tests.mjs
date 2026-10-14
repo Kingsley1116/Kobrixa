@@ -5,11 +5,15 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const candidates = [process.env.KOBRIXA_TEST_PYTHON, "python3", "python"].filter(Boolean);
-const python = candidates.find(
-  (command) =>
-    spawnSync(command, ["-c", "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"])
-      .status === 0,
-);
+const python = candidates.find((command) => {
+  const result = spawnSync(
+    command,
+    ["-c", "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"],
+    { timeout: 10_000 },
+  );
+  if (result.error) console.error(result.error);
+  return result.status === 0;
+});
 if (!python) {
   if (process.env.CI) {
     console.error("Python 3.10+ is required in CI. Set KOBRIXA_TEST_PYTHON.");
@@ -25,6 +29,8 @@ const result = spawnSync(
   {
     stdio: "inherit",
     env: { ...process.env, PYTHONPATH: sdk },
+    timeout: 120_000,
   },
 );
+if (result.error) console.error(result.error);
 process.exit(result.status ?? 1);

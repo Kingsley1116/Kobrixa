@@ -16,6 +16,11 @@ async def hang(ctx):
     await asyncio.sleep(3600)
 
 
+@plugin.command("acme.behaviors.noisy")
+async def noisy(ctx):
+    print("x" * (256 * 1024))
+
+
 @plugin.command("acme.behaviors.crash")
 async def crash(ctx):
     os._exit(3)

@@ -33,7 +33,7 @@ def _is_number(value) -> bool:
 
 def _is_type(value, name: str) -> bool:
     if name == "integer":
-        return _is_number(value) and float(value).is_integer()
+        return _is_number(value) and (isinstance(value, int) or value.is_integer())
     return {
         "number": _is_number(value),
         "string": isinstance(value, str),

@@ -13,6 +13,10 @@ SDK_VERSION = "0.1.0"
 _CANCELLED, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = -32800, -32602, -32601, -32603
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
 class RpcError(Exception):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(message)
@@ -110,27 +114,32 @@ class Plugin:
 
     def _receive(self, text: str) -> None:
         try:
-            message = json.loads(text)
+            message = json.loads(text, parse_constant=_reject_json_constant)
             self._validator.validate("message", message)
+            if "method" in message and "id" in message:
+                request_id, method = message["id"], message["method"]
+                task = asyncio.ensure_future(self._handle(message))
+                self._tasks[request_id] = task
+                task.add_done_callback(lambda done: self._finished(request_id, method, done))
+            elif "method" in message:
+                method, params = message["method"], message.get("params")
+                if not self._validator.has(f"{method}.params"):
+                    raise SchemaError(f"Unknown notification {method}.")
+                self._validator.validate(f"{method}.params", params)
+                if method == "$/cancelRequest":
+                    task = self._tasks.get(params["id"])
+                    if task:
+                        task.cancel()
+                elif method == "exit":
+                    self._stopping = True
+            else:
+                future = self._pending.pop(message["id"], None)
+                if future and not future.done():
+                    future.set_result(message)
         except (ValueError, SchemaError) as error:
             print(f"kobrixa: ignored invalid message from host: {error}", file=sys.stderr)
-            return
-        if "method" in message and "id" in message:
-            request_id, method = message["id"], message["method"]
-            task = asyncio.ensure_future(self._handle(message))
-            self._tasks[request_id] = task
-            task.add_done_callback(lambda done: self._finished(request_id, method, done))
-        elif "method" in message:
-            if message["method"] == "$/cancelRequest":
-                task = self._tasks.get(message.get("params", {}).get("id"))
-                if task:
-                    task.cancel()
-            elif message["method"] == "exit":
-                self._stopping = True
-        else:
-            future = self._pending.pop(message["id"], None)
-            if future and not future.done():
-                future.set_result(message)
+        except Exception as error:  # noqa: BLE001 - one bad message must not stop the transport
+            print(f"kobrixa: failed to process message from host: {error}", file=sys.stderr)
 
     async def _handle(self, message: dict) -> None:
         request_id, method = message["id"], message["method"]

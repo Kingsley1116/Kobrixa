@@ -17,6 +17,22 @@ def expand(value):
 
 
 class ConformanceTest(unittest.TestCase):
+    def test_integer_validation_does_not_convert_python_ints_to_float(self):
+        validator = Validator({"$defs": {"integer": {"type": "integer"}}})
+        for value in (0, 10 ** 399, -(10 ** 399), 1.0, -1.0):
+            with self.subTest(value=value):
+                validator.validate("integer", value)
+        for value in (True, False, 0.5, float("nan"), float("inf"), -float("inf"), "1"):
+            with self.subTest(value=value), self.assertRaises(SchemaError):
+                validator.validate("integer", value)
+
+    def test_oversized_request_ids_raise_schema_errors(self):
+        validator = Validator.bundled()
+        for value in (10 ** 399, -(10 ** 399)):
+            with self.subTest(value=value), self.assertRaises(SchemaError):
+                validator.validate("message", {"jsonrpc": "2.0", "id": value,
+                                               "method": "shutdown", "params": {}})
+
     def test_keywords_match_the_shared_allowlist(self):
         allowed = json.loads((PROTOCOL / "schema" / "keywords.json").read_text("utf-8"))
         self.assertEqual(SUPPORTED_KEYWORDS, frozenset(allowed))

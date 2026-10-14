@@ -34,16 +34,19 @@ describe.skipIf(!python)("Python plugin interop", () => {
           },
         }),
     });
-    manager.onEvent((event) => {
-      if (event.type === "notice") notices.push(event.notice);
-    });
-    expect(await manager.executeCommand("kobrixa-samples.hello-python.greet")).toEqual({
-      ok: true,
-    });
-    expect(notices.map((notice) => [notice.pluginId, notice.message])).toEqual([
-      ["kobrixa-samples.hello-python", "來自 Python 插件的問候"],
-    ]);
-    await manager.shutdown();
+    try {
+      manager.onEvent((event) => {
+        if (event.type === "notice") notices.push(event.notice);
+      });
+      expect(await manager.executeCommand("kobrixa-samples.hello-python.greet")).toEqual({
+        ok: true,
+      });
+      expect(notices.map((notice) => [notice.pluginId, notice.message])).toEqual([
+        ["kobrixa-samples.hello-python", "來自 Python 插件的問候"],
+      ]);
+    } finally {
+      await manager.shutdown();
+    }
     expect(manager.state().plugins[0]!.running).toBe(false);
-  });
+  }, 30_000);
 });
