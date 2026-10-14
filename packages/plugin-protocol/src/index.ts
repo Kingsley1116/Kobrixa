@@ -6,3 +6,5 @@ export * from "./rpc.js";
 export * from "./methods.js";
 export * from "./framing.js";
 export * from "./json-schema.js";
+export * from "./peer.js";
+export * from "./memory-channel.js";
