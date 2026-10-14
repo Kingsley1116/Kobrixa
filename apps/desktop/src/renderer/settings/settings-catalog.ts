@@ -24,6 +24,7 @@ export const CATEGORY_LABELS = {
   fileHistory: ["檔案與歷史", "Files & history"],
   layout: ["工作區布局", "Workspace layout"],
   device: ["EV3 與執行", "EV3 & execution"],
+  plugins: ["插件", "Plugins"],
   updates: ["關於與更新", "About & updates"],
 } as const satisfies Record<string, Text>;
 export type SettingsCategory = keyof typeof CATEGORY_LABELS;

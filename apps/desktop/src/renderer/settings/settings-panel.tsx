@@ -1,4 +1,5 @@
 import { UpdatesPanel } from "../updates/updates.js";
+import { PluginsPanel } from "./plugins-panel.js";
 import type { UpdateState } from "../../shared/updates.js";
 import { SettingSelect, SettingToggle } from "./setting-field.js";
 import { ClosableTab } from "../components/closable-tab.js";
@@ -484,6 +485,7 @@ export function SettingsPanel({
               "layout",
               "device",
               "shortcuts",
+              "plugins",
               "updates",
             ] as const
           ).map((value) => (
@@ -505,7 +507,7 @@ export function SettingsPanel({
             active && <ShortcutsPanel keyboard={keyboard} locale={settings.locale} />
           ) : (
             <>
-              {entries.length === 0 && (
+              {entries.length === 0 && (category !== "plugins" || searching) && (
                 <p className="settings-empty">
                   {local(
                     "沒有符合的設定。試試其他關鍵字，或清除條件。",
@@ -536,6 +538,9 @@ export function SettingsPanel({
                           "Changes take effect after saving successfully and apply to every project on this computer. Lower retention limits are enforced at the next history operation.",
                         )}
                       </p>
+                    )}
+                    {group === "plugins" && category === "plugins" && !searching && (
+                      <PluginsPanel locale={settings.locale} />
                     )}
                     {group === "updates" && category === "updates" && !searching && (
                       <>
