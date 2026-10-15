@@ -1,27 +1,85 @@
 import { expect, it, vi } from "vitest";
 import type { IpcHandle } from "../ipc.js";
-import { registerPluginIpc } from "./ipc.js";
+import { registerPluginIpc, type PluginIpcTarget } from "./ipc.js";
 
-it("validates renderer input before reaching the plugin manager", async () => {
+const key = "dev:0123456789abcdef";
+function setup() {
   const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
   const handle = ((channel, action) => handlers.set(channel, action as never)) as IpcHandle;
-  const manager = {
-    state: vi.fn(() => ({ revision: 0, safeMode: false, developmentMode: false, plugins: [] })),
-    executeCommand: vi.fn(async () => ({ ok: true as const })),
-    setEnabled: vi.fn(async () => ({
-      ok: true as const,
-      state: { revision: 0, safeMode: false, developmentMode: false, plugins: [] },
-    })),
+  const ok = async () => ({ ok: true }) as never;
+  const plugins = {
+    state: vi.fn(),
+    notices: vi.fn(() => []),
+    execute: vi.fn(async () => ({ ok: true as const })),
+    cancel: vi.fn(),
+    setEnabled: vi.fn(ok),
+    setDeveloperMode: vi.fn(ok),
+    linkFolder: vi.fn(ok),
+    relinkFolder: vi.fn(ok),
+    unlink: vi.fn(ok),
+    reload: vi.fn(ok),
+    pythonCandidates: vi.fn(async () => []),
+    setPython: vi.fn(ok),
+    readLog: vi.fn(() => ({ lines: [], next: 0, truncated: false })),
+    clearSafeModeLock: vi.fn(ok),
     onEvent: vi.fn(() => () => {}),
-  };
+  } satisfies PluginIpcTarget;
   const publish = vi.fn();
-  registerPluginIpc(handle, manager, publish);
-  expect(await handlers.get("plugins:execute")!({}, "acme.hello.greet")).toEqual({ ok: true });
-  expect(() => handlers.get("plugins:execute")!({}, "../../etc")).toThrow();
-  expect(() => handlers.get("plugins:set-enabled")!({}, "dev:0123456789abcdef", "yes")).toThrow();
-  expect(() => handlers.get("plugins:set-enabled")!({}, "acme.hello", false)).toThrow();
-  expect(() => handlers.get("plugins:set-enabled")!({}, "dev:../../etc", false)).toThrow();
-  await handlers.get("plugins:set-enabled")!({}, "dev:0123456789abcdef", false);
-  expect(manager.setEnabled).toHaveBeenCalledWith("dev:0123456789abcdef", false);
-  expect(manager.onEvent).toHaveBeenCalledWith(publish);
+  registerPluginIpc(handle, plugins, publish);
+  const call = (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args);
+  return { handlers, plugins, publish, call };
+}
+
+it("registers every plugin channel and forwards events", () => {
+  const { handlers, plugins, publish } = setup();
+  expect([...handlers.keys()].sort()).toEqual(
+    [
+      "plugins:state",
+      "plugins:notices",
+      "plugins:execute",
+      "plugins:cancel",
+      "plugins:set-enabled",
+      "plugins:setDeveloperMode",
+      "plugins:linkFolder",
+      "plugins:relinkFolder",
+      "plugins:unlink",
+      "plugins:reload",
+      "plugins:pythonCandidates",
+      "plugins:setPython",
+      "plugins:readLog",
+      "plugins:clearSafeModeLock",
+    ].sort(),
+  );
+  expect(plugins.onEvent).toHaveBeenCalledWith(publish);
+});
+
+it("validates every renderer argument before it reaches the controller", async () => {
+  const { plugins, call } = setup();
+  expect(await call("plugins:execute", "acme.hello.greet")).toEqual({ ok: true });
+  expect(() => call("plugins:execute", "../../etc")).toThrow();
+  for (const channel of [
+    "plugins:cancel",
+    "plugins:relinkFolder",
+    "plugins:unlink",
+    "plugins:reload",
+  ]) {
+    expect(() => call(channel, "/Users/me/plugin")).toThrow();
+    expect(() => call(channel, "dev:../../etc")).toThrow();
+    await call(channel, key);
+  }
+  expect(plugins.reload).toHaveBeenCalledWith(key);
+  expect(() => call("plugins:set-enabled", key, "yes")).toThrow();
+  expect(() => call("plugins:setDeveloperMode", "true")).toThrow();
+  await call("plugins:setDeveloperMode", true);
+  expect(plugins.setDeveloperMode).toHaveBeenCalledWith(true);
+  expect(() => call("plugins:setPython", "/usr/bin/python3")).toThrow();
+  await call("plugins:setPython", "other");
+  expect(plugins.setPython).toHaveBeenCalledWith("other");
+  expect(() => call("plugins:readLog", key, -1)).toThrow();
+  expect(() => call("plugins:readLog", key, 1.5)).toThrow();
+  await call("plugins:readLog", key, 3);
+  expect(plugins.readLog).toHaveBeenCalledWith(key, 3);
+  // Channels without arguments ignore anything the renderer adds.
+  await call("plugins:linkFolder", "/etc");
+  expect(plugins.linkFolder).toHaveBeenCalledWith();
 });

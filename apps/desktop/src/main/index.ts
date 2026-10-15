@@ -28,13 +28,13 @@ import { resolveCollabServerUrl } from "./collab/server-url.js";
 import { createCollabService } from "./collab/runtime.js";
 import { CollabProjects } from "./collab/projects.js";
 import { registerCollabIpc } from "./collab/ipc.js";
-import { PluginManager } from "@kobrixa/plugin-runtime";
 import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
-import { createDesktopLauncher } from "./plugins/launchers.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
-import { filePluginStateStore } from "./plugins/state-store.js";
 import { registerPluginIpc } from "./plugins/ipc.js";
 import { installPluginQuitCleanup } from "./plugins/quit.js";
+import { startPlugins } from "./plugins/controller.js";
+import { electronPluginDialogs } from "./plugins/dialogs.js";
+import { quitOnSignals, watchRendererHealth } from "./plugins/session.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -167,25 +167,18 @@ void app.whenReady().then(async () => {
   });
   const workspaces = new WorkspaceService();
   const pluginSettings = pluginOptions(app.commandLine);
-  const plugins = await PluginManager.create({
-    sources: [
-      ...BUILTIN_PLUGIN_SOURCES,
-      ...pluginSettings.developmentDirectories.map((directory) => ({
-        kind: "development" as const,
-        directory,
-      })),
-    ],
-    store: filePluginStateStore(app.getPath("userData")),
-    safeMode: pluginSettings.safeMode,
-    launcher: createDesktopLauncher({
-      python: () =>
-        pluginSettings.python === undefined
-          ? undefined
-          : { executable: pluginSettings.python, args: [] },
-    }),
-    locale: pluginLocale(app.getLocale()),
+  const pluginLanguage = pluginLocale(app.getLocale());
+  const plugins = await startPlugins({
+    userData: app.getPath("userData"),
+    builtins: BUILTIN_PLUGIN_SOURCES,
+    commandLine: pluginSettings,
+    dialogs: electronPluginDialogs(() => mainWindow, pluginLanguage),
+    locale: pluginLanguage,
   });
   installPluginQuitCleanup(app, plugins);
+  // Electron emits quit after will-quit, so plugin processes have already been stopped.
+  app.on("quit", () => plugins.finishSession());
+  quitOnSignals(process, () => app.quit());
   const renderer = () => {
     // Reading webContents itself throws once its BrowserWindow is destroyed.
     // Services may finish saving or disconnecting after the last window closes.
@@ -363,6 +356,7 @@ void app.whenReady().then(async () => {
   };
   const openWindow = () => {
     createWindow(flushDeviceWork);
+    if (mainWindow) watchRendererHealth(mainWindow, () => plugins.markRendererUnresponsive());
     mainWindow?.on("blur", () => {
       void motors.stopAll();
     });

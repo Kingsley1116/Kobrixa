@@ -2,7 +2,6 @@ import type {
   PluginActionResult,
   PluginCommandResult,
   PluginErrorCode,
-  PluginManagerEvent,
   PluginNotice,
   PluginsSnapshot,
   PluginSummary,
@@ -85,10 +84,21 @@ export type PluginsResult =
   | { ok: false; code: PluginErrorCode; message: string };
 export type PluginsViewEvent =
   { type: "state"; state: PluginsView } | { type: "notice"; notice: StoredNotice };
-export type PluginEvent = PluginManagerEvent;
+export type PluginEvent = PluginsViewEvent;
 export interface PluginsApi {
-  state(): Promise<PluginsSnapshot>;
+  state(): Promise<PluginsView>;
+  notices(): Promise<StoredNotice[]>;
   execute(commandId: string): Promise<PluginCommandResult>;
-  setEnabled(sourceKey: string, enabled: boolean): Promise<PluginActionResult>;
+  cancel(sourceKey: string): Promise<void>;
+  setEnabled(sourceKey: string, enabled: boolean): Promise<PluginsResult>;
+  setDeveloperMode(enabled: boolean): Promise<PluginsResult>;
+  linkFolder(): Promise<PluginsResult>;
+  relinkFolder(sourceKey: string): Promise<PluginsResult>;
+  unlink(sourceKey: string): Promise<PluginsResult>;
+  reload(sourceKey: string): Promise<PluginsResult>;
+  pythonCandidates(): Promise<PythonChoice[]>;
+  setPython(id: PythonChoiceId): Promise<PluginsResult>;
+  readLog(sourceKey: string, after: number): Promise<LogRead>;
+  clearSafeModeLock(): Promise<PluginsResult>;
   onEvent(listener: (event: PluginEvent) => void): () => void;
 }

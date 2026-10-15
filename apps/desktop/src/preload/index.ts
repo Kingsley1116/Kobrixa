@@ -54,9 +54,20 @@ const api: KobrixaApi = {
   },
   plugins: {
     state: () => ipcRenderer.invoke("plugins:state"),
+    notices: () => ipcRenderer.invoke("plugins:notices"),
     execute: (commandId) => ipcRenderer.invoke("plugins:execute", commandId),
+    cancel: (sourceKey) => ipcRenderer.invoke("plugins:cancel", sourceKey),
     setEnabled: (sourceKey, enabled) =>
       ipcRenderer.invoke("plugins:set-enabled", sourceKey, enabled),
+    setDeveloperMode: (enabled) => ipcRenderer.invoke("plugins:setDeveloperMode", enabled),
+    linkFolder: () => ipcRenderer.invoke("plugins:linkFolder"),
+    relinkFolder: (sourceKey) => ipcRenderer.invoke("plugins:relinkFolder", sourceKey),
+    unlink: (sourceKey) => ipcRenderer.invoke("plugins:unlink", sourceKey),
+    reload: (sourceKey) => ipcRenderer.invoke("plugins:reload", sourceKey),
+    pythonCandidates: () => ipcRenderer.invoke("plugins:pythonCandidates"),
+    setPython: (id) => ipcRenderer.invoke("plugins:setPython", id),
+    readLog: (sourceKey, after) => ipcRenderer.invoke("plugins:readLog", sourceKey, after),
+    clearSafeModeLock: () => ipcRenderer.invoke("plugins:clearSafeModeLock"),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, value: PluginEvent) => listener(value);
       ipcRenderer.on("plugins:event", handler);

@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { PluginEvent, PluginsApi, PluginsSnapshot } from "../../shared/plugins.js";
+import type { PluginEvent, PluginsApi, PluginsView } from "../../shared/plugins.js";
 import { DEFAULT_DEVICE_PREFERENCES } from "../../shared/device-preferences.js";
 import { DEFAULT_FILE_PREFERENCES } from "../../shared/file-preferences.js";
 import type { Locale } from "../i18n/copy.js";
@@ -20,10 +20,14 @@ let container: HTMLDivElement;
 let emit: (event: PluginEvent) => void;
 const originalScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTo");
 const unhandledRejection = vi.fn();
-const snapshot: PluginsSnapshot = {
+const snapshot: PluginsView = {
   revision: 1,
   safeMode: false,
   developmentMode: true,
+  developer: { enabled: true, commandLine: false, linkedCount: 1 },
+  origins: { "builtin:kobrixa.basic-plus": "builtin", "dev:0123456789abcdef": "linked" },
+  python: { pendingReload: [] },
+  inflight: [],
   plugins: [
     {
       id: "kobrixa.basic-plus",
@@ -73,6 +77,17 @@ const api = {
       ],
     },
   })),
+  notices: vi.fn<PluginsApi["notices"]>(async () => []),
+  cancel: vi.fn<PluginsApi["cancel"]>(async () => {}),
+  setDeveloperMode: vi.fn<PluginsApi["setDeveloperMode"]>(),
+  linkFolder: vi.fn<PluginsApi["linkFolder"]>(),
+  relinkFolder: vi.fn<PluginsApi["relinkFolder"]>(),
+  unlink: vi.fn<PluginsApi["unlink"]>(),
+  reload: vi.fn<PluginsApi["reload"]>(),
+  pythonCandidates: vi.fn<PluginsApi["pythonCandidates"]>(async () => []),
+  setPython: vi.fn<PluginsApi["setPython"]>(),
+  readLog: vi.fn<PluginsApi["readLog"]>(async () => ({ lines: [], next: 0, truncated: false })),
+  clearSafeModeLock: vi.fn<PluginsApi["clearSafeModeLock"]>(),
   onEvent: vi.fn((listener: (event: PluginEvent) => void) => {
     emit = listener;
     return unsubscribe;
@@ -231,6 +246,7 @@ it("shows notices with their plugin id", async () => {
     emit({
       type: "notice",
       notice: {
+        id: 1,
         pluginId: "acme.hello",
         sourceKey: "dev:0123456789abcdef",
         severity: "info",
@@ -245,7 +261,7 @@ it("shows notices with their plugin id", async () => {
 
 it("explains how to load development plugins and safe mode", async () => {
   api.state.mockResolvedValueOnce({
-    revision: 1,
+    ...snapshot,
     safeMode: true,
     developmentMode: false,
     plugins: [snapshot.plugins[0]!],
@@ -406,6 +422,7 @@ it("keeps only the latest 20 notices, newest first, and renders plugin text lite
       emit({
         type: "notice",
         notice: {
+          id: at + 1,
           pluginId: "acme.hello",
           sourceKey: "dev:0123456789abcdef",
           severity: "info",
