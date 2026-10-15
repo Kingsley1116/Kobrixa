@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,11 +6,12 @@ import { Worker } from "node:worker_threads";
 import { EventEmitter } from "node:events";
 import { build } from "esbuild";
 import type { WebContents } from "electron";
-import { loadProject } from "@kobrixa/compiler";
+import { BuildError, loadProject } from "@kobrixa/compiler";
 import { inspectRbf } from "@kobrixa/backend-ev3";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { BuildEvent } from "../../shared/api.js";
 import { BuildService } from "./build.js";
+import { resolveBuiltinCompiler } from "./builtin-compilers.js";
 import { PreviewRuntime } from "../../preview/runtime.js";
 import type { BuildRequest } from "./build-protocol.js";
 import type { SimulationPrepareResult } from "../../shared/simulator.js";
@@ -23,7 +24,7 @@ let events: BuildEvent[];
 let destroyed: boolean;
 let onEvent: ((event: BuildEvent) => void) | undefined;
 beforeAll(async () => {
-  workerRoot = await mkdtemp(path.join(tmpdir(), "kobrixa-build-worker-"));
+  workerRoot = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-build-worker-")));
   await build({
     entryPoints: [fileURLToPath(new URL("./build-worker.ts", import.meta.url))],
     outfile: path.join(workerRoot, "worker.cjs"),
@@ -34,7 +35,7 @@ beforeAll(async () => {
 });
 afterAll(() => rm(workerRoot, { recursive: true, force: true }));
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "kobrixa-build-"));
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-build-")));
   await writeFile(path.join(root, "main.bp"), "LCD.Clear()\n");
   workers = [];
   events = [];
@@ -84,6 +85,30 @@ async function result(id: string) {
   return (complete[0] as Extract<BuildEvent, { type: "complete" }>).result;
 }
 
+it.each(["./src/main.bp", "src//main.bp"])(
+  "builds a Basic Plus project with entry %s without BP1000",
+  async (entry) => {
+    await mkdir(path.join(root, "src"));
+    await writeFile(path.join(root, "src/main.bp"), "LCD.Clear()\n");
+    await writeFile(
+      path.join(root, "kobrixa.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "normalized",
+        language: "bp",
+        target: "ev3-native",
+        entry,
+        assets: [],
+        outputDir: "build",
+      }),
+    );
+    const built = await result(await service.start("project", {}));
+    expect(built.diagnostics.some((item) => item.code === "BP1000")).toBe(false);
+    expect(built.success).toBe(true);
+    expect(built.artifacts.some((item) => item.role === "deploy-main")).toBe(true);
+  },
+);
+
 it("asks the plugin registry for the project's frontend", async () => {
   const requests: BuildRequest[] = [];
   service.dispose();
@@ -98,51 +123,69 @@ it("asks the plugin registry for the project's frontend", async () => {
       requests.push(request);
       return new Worker(path.join(workerRoot, "worker.cjs"), { workerData: request });
     },
-    (language) => (language === "bp" ? "kobrixa.basic-plus" : undefined),
+    resolveBuiltinCompiler,
   );
   await service.start("project", {});
   await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true), {
     timeout: 15000,
   });
-  expect(requests[0]!.frontend).toBe("kobrixa.basic-plus");
+  expect(requests[0]!.compiler).toMatchObject({
+    frontend: { pluginId: "kobrixa.basic-plus" },
+    backend: { pluginId: "kobrixa.ev3" },
+    ir: 1,
+  });
   expect(events.find((event) => event.type === "complete")).toMatchObject({
     result: { success: true },
   });
 });
 
-it("fails the build clearly when no enabled plugin provides the language", async () => {
-  service.dispose();
-  service = new BuildService(
-    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
-    () =>
-      ({
-        isDestroyed: () => false,
-        send: (_channel: string, event: BuildEvent) => events.push(event),
-      }) as unknown as WebContents,
-    (request) => new Worker(path.join(workerRoot, "worker.cjs"), { workerData: request }),
-    () => undefined,
-  );
-  await service.start("project", {});
-  await vi.waitFor(() => expect(events.some((event) => event.type === "complete")).toBe(true), {
-    timeout: 15000,
-  });
-  expect(events.find((event) => event.type === "complete")).toMatchObject({
-    result: {
+it("does not open a worker when a provider is missing or incompatible", async () => {
+  for (const code of ["BUILD1001", "BUILD1002"] as const) {
+    service.dispose();
+    const create = vi.fn(() => {
+      throw new Error("must not start worker");
+    });
+    service = new BuildService(
+      { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+      () =>
+        ({
+          isDestroyed: () => false,
+          send: (_channel: string, event: BuildEvent) => events.push(event),
+        }) as unknown as WebContents,
+      create,
+      () => ({ ok: false, code, message: "provider unavailable" }),
+    );
+    const id = await service.start("project", {});
+    expect(await result(id)).toMatchObject({
       success: false,
-      diagnostics: [
-        {
-          code: "BUILD9000",
-          message: expect.stringContaining('No enabled plugin provides language "bp"'),
-        },
-      ],
-    },
-  });
+      artifacts: [],
+      diagnostics: [expect.objectContaining({ code })],
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(service.busy).toBe(false);
+  }
 });
 
 it.each([new Error("worker failure"), "worker failure"])(
   "reports worker error %s",
   async (error) => {
+    service.dispose();
+    service = new BuildService(
+      { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+      () =>
+        ({
+          isDestroyed: () => false,
+          send: (_channel: string, event: BuildEvent) => events.push(event),
+        }) as unknown as WebContents,
+      () => {
+        // Keep the worker alive until the test injects its error, even on fast machines.
+        const worker = new Worker("setInterval(() => {}, 1000)", { eval: true });
+        workers.push(worker);
+        return worker;
+      },
+    );
     const id = await service.start("project", {});
+    await vi.waitFor(() => expect(workers).toHaveLength(1));
     workers[0]!.emit("error", error);
     expect(await result(id)).toMatchObject({
       success: false,
@@ -378,7 +421,7 @@ it("keeps the main event loop responsive while compiling a large program", async
 it("cancels synchronous compiler work without replacing the previous successful artifact", async () => {
   const first = await service.start("project", {});
   const original = await result(first);
-  const artifact = original.artifacts.find((item) => item.kind === "rbf")!;
+  const artifact = original.artifacts.find((item) => item.role === "deploy-main")!;
   const bytes = await readFile(artifact.path);
   onEvent = (event) => {
     if (event.type === "progress" && event.progress.stage === "frontend")
@@ -401,6 +444,7 @@ it("cancels synchronous compiler work without replacing the previous successful 
 
 it("reports worker exit once, releases the busy gate, and allows the next build", async () => {
   const id = await service.start("project", { "main.bp": "LCD.Clear()\n".repeat(30000) });
+  await vi.waitFor(() => expect(workers).toHaveLength(1));
   await workers[0]!.terminate();
   expect(await result(id)).toMatchObject({ success: false, diagnostics: [{ code: "BUILD9000" }] });
   expect(service.busy).toBe(false);
@@ -461,7 +505,7 @@ it("copies bounded project assets into the preview without exposing host paths",
 it("returns compiler diagnostics without deployable output", async () => {
   const id = await service.start("project", { "main.bp": "Unknown.Do()\n" });
   expect(await result(id)).toMatchObject({ success: false, diagnostics: [{ code: "BP3001" }] });
-  await expect(service.artifactBytes(id)).rejects.toThrow("no deployable");
+  await expect(service.artifactBytes(id)).rejects.toThrow("BUILD1005");
 });
 
 it("does not send into destroyed windows and rejects new builds after disposal", async () => {
@@ -471,4 +515,147 @@ it("does not send into destroyed windows and rejects new builds after disposal",
   expect(events).toEqual([]);
   service.dispose();
   await expect(service.start("project", {})).rejects.toThrow("disposed");
+});
+
+it("reports project load failures through complete events without rejecting start", async () => {
+  service.dispose();
+  const create = vi.fn(() => {
+    throw new Error("must not start worker");
+  });
+  service = new BuildService(
+    {
+      project: async () => {
+        throw new BuildError("BUILD1003", "Invalid project.");
+      },
+    },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    create,
+  );
+  const id = await service.start("project", {});
+  expect(await result(id)).toMatchObject({
+    buildId: id,
+    success: false,
+    artifacts: [],
+    diagnostics: [expect.objectContaining({ code: "BUILD1003" })],
+  });
+  expect(create).not.toHaveBeenCalled();
+  expect(service.busy).toBe(false);
+});
+
+it("preserves BUILD1001 from a missing built-in factory in the bundled worker", async () => {
+  service.dispose();
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    (request) => {
+      const worker = new Worker(path.join(workerRoot, "worker.cjs"), { workerData: request });
+      workers.push(worker);
+      return worker;
+    },
+    (language, target) => {
+      const snapshot = resolveBuiltinCompiler(language, target);
+      if (!snapshot.ok) throw new Error(snapshot.message);
+      return { ...snapshot, backend: { ...snapshot.backend, pluginId: "test.missing" } };
+    },
+  );
+  expect(await result(await service.start("project", {}))).toMatchObject({
+    success: false,
+    artifacts: [],
+    diagnostics: [expect.objectContaining({ code: "BUILD1001" })],
+  });
+});
+
+it("keeps queued builds busy, captures compiler snapshots once, and skips cancelled workers", async () => {
+  service.dispose();
+  const snapshot = resolveBuiltinCompiler("bp", "ev3-native");
+  if (!snapshot.ok) throw new Error(snapshot.message);
+  const resolve = vi.fn(() => snapshot);
+  const created: Array<{ request: BuildRequest; worker: EventEmitter }> = [];
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    (request) => {
+      const worker = Object.assign(new EventEmitter(), { terminate: vi.fn(async () => 0) });
+      created.push({ request, worker });
+      return worker as unknown as Worker;
+    },
+    resolve,
+  );
+  const first = await service.start("project", {});
+  await vi.waitFor(() => expect(created).toHaveLength(1));
+  const cancelled = await service.start("project", {});
+  const third = await service.start("project", {});
+  expect(service.busy).toBe(true);
+  expect(created).toHaveLength(1);
+  expect(resolve).toHaveBeenCalledTimes(3);
+  snapshot.backend.pluginId = "test.changed-after-capture";
+  service.cancel(cancelled);
+  created[0]!.worker.emit("message", {
+    type: "complete",
+    result: { buildId: first, target: "ev3-native", success: true, artifacts: [], diagnostics: [] },
+  });
+  expect(await result(cancelled)).toMatchObject({
+    success: false,
+    artifacts: [],
+    diagnostics: [expect.objectContaining({ code: "BUILD0001" })],
+  });
+  await vi.waitFor(() => expect(created).toHaveLength(2));
+  expect(created[1]!.request.buildId).toBe(third);
+  expect(created[1]!.request.compiler.backend.pluginId).toBe("kobrixa.ev3");
+  expect(resolve).toHaveBeenCalledTimes(3);
+  expect(service.busy).toBe(true);
+  created[1]!.worker.emit("message", {
+    type: "complete",
+    result: { buildId: third, target: "ev3-native", success: true, artifacts: [], diagnostics: [] },
+  });
+  expect((await result(third)).success).toBe(true);
+  expect(service.busy).toBe(false);
+});
+
+it("cancels a queued build without starting its worker and releases the queue after failure", async () => {
+  service.dispose();
+  const created: EventEmitter[] = [];
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    () => {
+      const emitter = new EventEmitter();
+      created.push(emitter);
+      return Object.assign(emitter, { terminate: async () => 0 }) as unknown as Worker;
+    },
+  );
+  const first = await service.start("project", {});
+  await vi.waitFor(() => expect(created).toHaveLength(1));
+  const second = await service.start("project", {});
+  service.cancel(second);
+  expect(service.busy).toBe(true);
+  created[0]!.emit("error", new Error("first failed"));
+  expect(await result(first)).toMatchObject({ success: false, artifacts: [] });
+  expect(await result(second)).toMatchObject({
+    success: false,
+    artifacts: [],
+    diagnostics: [expect.objectContaining({ code: "BUILD0001" })],
+  });
+  expect(created).toHaveLength(1);
+  const third = await service.start("project", {});
+  await vi.waitFor(() => expect(created).toHaveLength(2));
+  created[1]!.emit("error", new Error("third failed"));
+  expect((await result(third)).success).toBe(false);
+  expect(service.busy).toBe(false);
 });

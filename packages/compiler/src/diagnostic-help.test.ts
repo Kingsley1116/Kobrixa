@@ -47,7 +47,7 @@ describe("diagnostic documentation", () => {
       ),
     ].sort();
     expect(DIAGNOSTIC_HELP.map((help) => help.code).sort()).toEqual(codes);
-    expect(new Set(DIAGNOSTIC_HELP.map((help) => help.code)).size).toBe(88);
+    expect(new Set(DIAGNOSTIC_HELP.map((help) => help.code)).size).toBe(94);
     expect(
       Object.fromEntries(
         ["BP", "MAN", "IR", "EV3", "BUILD"].map((prefix) => [
@@ -55,7 +55,7 @@ describe("diagnostic documentation", () => {
           codes.filter((code) => code.startsWith(prefix)).length,
         ]),
       ),
-    ).toEqual({ BP: 50, MAN: 4, IR: 12, EV3: 20, BUILD: 2 });
+    ).toEqual({ BP: 50, MAN: 4, IR: 12, EV3: 20, BUILD: 8 });
   });
 
   it("provides complete bilingual explanations and existing documentation links", async () => {
@@ -127,4 +127,19 @@ describe("diagnostic documentation", () => {
     expect(manifest.exports["."]).toBe("./dist/index.js");
     expect(manifest.exports["./diagnostic-help"]).toBe("./dist/diagnostic-help.js");
   });
+
+  it.each(["BUILD1001", "BUILD1002", "BUILD1003", "BUILD1004", "BUILD1005", "BUILD1006"])(
+    "documents %s in both locales",
+    (code) => {
+      const help = getDiagnosticHelp(code)!;
+      expect(help.title.en).toBeTruthy();
+      expect(help.title["zh-TW"]).toBeTruthy();
+      expect(diagnosticDocumentationUrl(code, undefined, "en")).toBe(
+        `https://kobrixa.com/docs/diagnostics/${code}?lang=en`,
+      );
+      expect(diagnosticDocumentationUrl(code, undefined, "zh-TW")).toBe(
+        `https://kobrixa.com/docs/diagnostics/${code}?lang=zh-TW`,
+      );
+    },
+  );
 });

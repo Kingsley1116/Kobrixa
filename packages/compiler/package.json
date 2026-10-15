@@ -14,10 +14,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -b tsconfig.json",
+    "pretest": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "@kobrixa/ir": "workspace:*",
+    "@kobrixa/plugin-protocol": "workspace:*",
     "fast-glob": "^3.3.3",
     "micromatch": "^4.0.8",
     "zod": "^4.6.5"

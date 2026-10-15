@@ -3,61 +3,113 @@
     "name": "initialize request",
     "definition": "message",
     "valid": true,
-    "value": { "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {}
+    }
   },
   {
     "name": "wrong JSON-RPC version",
     "definition": "message",
     "valid": false,
-    "value": { "jsonrpc": "1.0", "id": 1, "method": "initialize" }
+    "value": {
+      "jsonrpc": "1.0",
+      "id": 1,
+      "method": "initialize"
+    }
   },
   {
     "name": "extra envelope field",
     "definition": "message",
     "valid": false,
-    "value": { "jsonrpc": "2.0", "id": 1, "method": "x", "pluginId": "acme.x" }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "x",
+      "pluginId": "acme.x"
+    }
   },
   {
     "name": "cancel notification",
     "definition": "message",
     "valid": true,
-    "value": { "jsonrpc": "2.0", "method": "$/cancelRequest", "params": { "id": 3 } }
+    "value": {
+      "jsonrpc": "2.0",
+      "method": "$/cancelRequest",
+      "params": {
+        "id": 3
+      }
+    }
   },
   {
     "name": "null result",
     "definition": "message",
     "valid": true,
-    "value": { "jsonrpc": "2.0", "id": 1, "result": null }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": null
+    }
   },
   {
     "name": "result and error together",
     "definition": "message",
     "valid": false,
-    "value": { "jsonrpc": "2.0", "id": 1, "result": null, "error": { "code": 1, "message": "x" } }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": null,
+      "error": {
+        "code": 1,
+        "message": "x"
+      }
+    }
   },
   {
     "name": "failure",
     "definition": "message",
     "valid": true,
-    "value": { "jsonrpc": "2.0", "id": 2, "error": { "code": -32601, "message": "Unknown" } }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "error": {
+        "code": -32601,
+        "message": "Unknown"
+      }
+    }
   },
   {
     "name": "array params",
     "definition": "message",
     "valid": false,
-    "value": { "jsonrpc": "2.0", "id": 1, "method": "x", "params": [] }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "x",
+      "params": []
+    }
   },
   {
     "name": "fractional id",
     "definition": "message",
     "valid": false,
-    "value": { "jsonrpc": "2.0", "id": 1.5, "result": null }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": 1.5,
+      "result": null
+    }
   },
   {
     "name": "boolean id",
     "definition": "message",
     "valid": false,
-    "value": { "jsonrpc": "2.0", "id": true, "result": null }
+    "value": {
+      "jsonrpc": "2.0",
+      "id": true,
+      "result": null
+    }
   },
   {
     "name": "minimal manifest",
@@ -67,7 +119,10 @@
       "id": "acme.hello",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "python", "entry": "main.py" }
+      "runtime": {
+        "kind": "python",
+        "entry": "main.py"
+      }
     }
   },
   {
@@ -78,7 +133,10 @@
       "id": "acme.hello",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "node", "entry": "dist/index.cjs" },
+      "runtime": {
+        "kind": "node",
+        "entry": "dist/index.cjs"
+      },
       "x-future": 1
     }
   },
@@ -90,7 +148,10 @@
       "id": "acme.hello",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "python", "entry": "../main.py" }
+      "runtime": {
+        "kind": "python",
+        "entry": "../main.py"
+      }
     }
   },
   {
@@ -101,7 +162,10 @@
       "id": "acme.hello",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "python", "entry": "/main.py" }
+      "runtime": {
+        "kind": "python",
+        "entry": "/main.py"
+      }
     }
   },
   {
@@ -112,7 +176,9 @@
       "id": "Acme.hello",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "builtin" }
+      "runtime": {
+        "kind": "builtin"
+      }
     }
   },
   {
@@ -123,7 +189,9 @@
       "id": "acme.hello\n",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "builtin" }
+      "runtime": {
+        "kind": "builtin"
+      }
     }
   },
   {
@@ -134,44 +202,78 @@
       "id": "acme.hello",
       "version": "1.0.0",
       "apiVersion": "^1.0.0",
-      "runtime": { "kind": "ruby", "entry": "main.rb" }
+      "runtime": {
+        "kind": "ruby",
+        "entry": "main.rb"
+      }
     }
   },
   {
     "name": "message at 2000 code points (4000 UTF-16 units)",
     "definition": "ui/showMessage.params",
     "valid": true,
-    "value": { "severity": "info", "message": { "$repeat": "😀", "count": 2000 } }
+    "value": {
+      "severity": "info",
+      "message": {
+        "$repeat": "😀",
+        "count": 2000
+      }
+    }
   },
   {
     "name": "message over 2000 code points",
     "definition": "ui/showMessage.params",
     "valid": false,
-    "value": { "severity": "info", "message": { "$repeat": "😀", "count": 2001 } }
+    "value": {
+      "severity": "info",
+      "message": {
+        "$repeat": "😀",
+        "count": 2001
+      }
+    }
   },
   {
     "name": "BMP message at 2000 code points",
     "definition": "ui/showMessage.params",
     "valid": true,
-    "value": { "severity": "info", "message": { "$repeat": "插", "count": 2000 } }
+    "value": {
+      "severity": "info",
+      "message": {
+        "$repeat": "插",
+        "count": 2000
+      }
+    }
   },
   {
     "name": "BMP message over 2000 code points",
     "definition": "ui/showMessage.params",
     "valid": false,
-    "value": { "severity": "info", "message": { "$repeat": "插", "count": 2001 } }
+    "value": {
+      "severity": "info",
+      "message": {
+        "$repeat": "插",
+        "count": 2001
+      }
+    }
   },
   {
     "name": "spoofed plugin id",
     "definition": "ui/showMessage.params",
     "valid": false,
-    "value": { "severity": "info", "message": "hi", "pluginId": "kobrixa.basic-plus" }
+    "value": {
+      "severity": "info",
+      "message": "hi",
+      "pluginId": "kobrixa.basic-plus"
+    }
   },
   {
     "name": "NUL in message",
     "definition": "ui/showMessage.params",
     "valid": false,
-    "value": { "severity": "info", "message": "a\u0000b" }
+    "value": {
+      "severity": "info",
+      "message": "a\u0000b"
+    }
   },
   {
     "name": "unsupported locale",
@@ -188,12 +290,2456 @@
     "name": "execute command",
     "definition": "command/execute.params",
     "valid": true,
-    "value": { "command": "acme.hello.greet" }
+    "value": {
+      "command": "acme.hello.greet"
+    }
   },
   {
     "name": "shutdown with params",
     "definition": "shutdown.params",
     "valid": false,
-    "value": { "force": true }
+    "value": {
+      "force": true
+    }
+  },
+  {
+    "name": "compiler 1.1 complete",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ],
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 required frontend fields",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp"
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 language \"a\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "a",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 target \"a\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "a",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 slot \"a\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "a",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 kind \"a\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "a",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 language \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 target \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 slot \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 kind \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 language \"Bad\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "Bad",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 target \"Bad\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "Bad",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 slot \"Bad\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "Bad",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 kind \"Bad\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "Bad",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 language \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 target \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 slot \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 kind \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 language \"x\\n\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "x\n",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 target \"x\\n\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "x\n",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 slot \"x\\n\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "x\n",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 kind \"x\\n\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "x\n",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 language \"../x\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "../x",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 target \"../x\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "../x",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 slot \"../x\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "../x",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 kind \"../x\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "../x",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 extension \"a\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "a",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 source extension \"a\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["a"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 extension \"aaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "aaaaaaaaaaaaaaaa",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 source extension \"aaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["aaaaaaaaaaaaaaaa"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 extension \".rbf\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": ".rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 source extension \".rbf\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": [".rbf"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 extension \"A\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "A",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 source extension \"A\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["A"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 extension \"aaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "aaaaaaaaaaaaaaaaa",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 source extension \"aaaaaaaaaaaaaaaaa\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["aaaaaaaaaaaaaaaaa"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 extension \"x\\n\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "x\n",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 source extension \"x\\n\"",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["x\n"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 IR 0",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 0,
+              "max": 2
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 IR -1",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": -1,
+              "max": 2
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 IR 1.5",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1.5,
+              "max": 2
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 IR 1",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 2
+            }
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 8 frontends",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 8 backends",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 9 frontends",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          {
+            "language": "bp",
+            "entryExtensions": ["bp"],
+            "sourceExtensions": ["bp", "bpi"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 9 backends",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          },
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 16 artifacts",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 17 artifacts",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              },
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 media 127 true",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "a/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "compiler 1.1 media 128 false",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "a/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 media 4 false",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "text",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 host owns assets",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "ev3"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-asset",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "compiler 1.1 unknown deploy capability",
+    "definition": "manifest",
+    "value": {
+      "id": "test.compiler",
+      "version": "1.0.0",
+      "apiVersion": "^1.1.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "backends": [
+          {
+            "target": "ev3-native",
+            "ir": {
+              "min": 1,
+              "max": 1
+            },
+            "capabilities": {
+              "deploy": "other"
+            },
+            "artifacts": [
+              {
+                "slot": "program",
+                "kind": "rbf",
+                "extension": "rbf",
+                "mediaType": "application/octet-stream",
+                "role": "deploy-main",
+                "required": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "valid": false
   }
 ]

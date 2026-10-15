@@ -10,9 +10,9 @@ Electron preload bridge
           │ validated Electron IPC
           ▼
 Electron main process (Node.js)
-          ├─ Workspace service → Language frontend (.bp in v1)
+          ├─ Workspace service → Resolved built-in frontend
           │                       → Typed KobrixaIR + validation
-          │                       → EV3 backend → .rbf artifact
+          │                       → Resolved backend → validated artifact set
           └─ Device service ────────────────────→ USB HID / Wi-Fi
 ```
 
@@ -149,11 +149,17 @@ The host derives caller identity from the bound channel, never from a plugin ID 
 
 These are **trusted local plugins**. Separate processes provide crash isolation; manifest permissions only restrict calls through Kobrixa and are **not an operating-system sandbox**. Plugin code can still access files and the network directly.
 
-The built-in `kobrixa.basic-plus` plugin registers the `bp` frontend through a minimal adapter to `frontends/basic-plus`. It remains enabled, including in safe mode, and cannot be disabled in phase 1. Compilation keeps the existing EV3 backend and build behavior. The generic artifact contract, `Diagnostic.source` and static language contributions are **planned (phase 2)**; the `devices` API is **planned (phase 3)**. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md) for those later phases.
+Plugin API **1.1.0** declares compiler frontends and backends. `kobrixa.basic-plus` provides language `bp`; the separate built-in `kobrixa.ev3` provides target `ev3-native`. Both declare IR version `{ min: 1, max: 1 }` and remain available in safe mode. Built-in plugins retain the phase 1 disable restrictions. Valid API 1.0 command plugins remain compatible, but external plugins declaring `frontends` or `backends` are invalid (`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN` / `PLUGIN_E_BACKEND_REQUIRES_BUILTIN`). This release has no external compiler RPC.
+
+The host resolves one enabled, valid provider for each language and target. Every conflicting provider is rejected with `PLUGIN_E_PROVIDER_CONFLICT`; no provider wins by load order. Recomputing a provider set excludes disabled providers and clears obsolete conflicts. The selected IR version is the maximum of the overlapping ranges. Missing/conflicting providers report `BUILD1001` before a worker starts; incompatible IR ranges report `BUILD1002`.
+
+Frontend declarations supply entry and source extensions. Backend declarations supply artifact slots, kinds, media types, extensions, roles and required flags; the backend returns only slot/bytes. The host owns `ir` and `asset` slots and produces resource artifacts. A deployable backend must declare exactly one required, non-empty `deploy-main`. Compiler contributions are limited to 8 frontends and 8 backends per plugin and 16 artifact declarations per backend. IDs use `/^[a-z][a-z0-9-]{0,31}$/`; extensions use `/^[a-z0-9]{1,16}$/`. The committed JSON Schema describes structural validation; the host additionally validates extension subsets, IR ranges, unique slots and the main-artifact relationship.
+
+`Diagnostic.source`, language analysis providers and static language contributions remain planned for 2B/2C; the `devices` API remains planned for phase 3. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
 
 ## Project manifest
 
-Each project uses `kobrixa.json`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.
+Projects can use `kobrixa.json`; projects without a manifest default to `bp` / `ev3-native`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.
 
 ```json
 {
@@ -171,9 +177,9 @@ Contract:
 
 - `schemaVersion`: positive integer; v1 accepts only `1`.
 - `name`: non-empty project and default EV3 program name.
-- `language`: v1 accepts `bp`; planned values are `python`, `typescript`, and `cpp`.
+- `language`: validated ID resolved by an enabled frontend provider.
 - `entry`: project-relative source path that must remain inside the project root.
-- `target`: v1 accepts only `ev3-native`.
+- `target`: validated ID resolved by an enabled backend provider.
 - `assets`: project-relative files or glob patterns; resolved paths must stay inside the project root. Each pattern is limited to 4,096 characters, 64 opening braces or parentheses and 64 closing ones (including escaped or quoted characters). All asset patterns together may expand to at most 256 patterns; this does not limit how many files a wildcard matches. Oversized inputs produce a manifest diagnostic before file discovery, rather than selecting a partial asset set. Ordinary alternatives and numeric ranges remain supported.
 - `outputDir`: literal project-relative directory, not a glob pattern; it must not equal or contain the source root.
 
@@ -183,7 +189,7 @@ The frontend contract is defined in [`packages/compiler/src/contracts.ts`](https
 
 ```ts
 interface LanguageFrontend {
-  id: "bp" | "python" | "typescript" | "cpp";
+  id: string;
   compile(input: SourceProject, signal: AbortSignal): Promise<FrontendResult>;
 }
 
@@ -203,6 +209,9 @@ The public build result is:
 
 ```ts
 interface CompileResult {
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
   runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
@@ -219,20 +228,34 @@ interface Diagnostic {
 }
 
 interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing" | "asset";
+  slot: string;
+  kind: string;
+  role: "deploy-main" | "deploy-asset" | "aux";
+  mediaType: string;
   path: string;
   sha256: string;
+  byteLength: number;
   remotePath?: string;
 }
 ```
 
-Line and column numbers are one-based in public results. `success` is true only when no error diagnostic exists and a valid `rbf` artifact was committed atomically. Temporary output is removed after failure or cancellation.
+Line and column numbers are one-based. A successful build has no error diagnostics, contains every required artifact and, when deployable, exactly one non-empty main. A successful non-deployable build remains successful; Run and Upload explain why it cannot deploy. Failed or cancelled results contain no artifacts. `BUILD1003` reports undeclared, duplicate, missing, unsafe, colliding or oversized artifacts.
+
+`compileToMemory` is shared by BuildSession and simulation. It runs the frontend, checks the actual IR version and IR validity, runs the backend and validates artifacts without writing outputs. Simulation still requires backend success and supports at most 4 entries and 64 resource files totaling 1 MiB; it uses captured sources/resources and the simulator's actual IR support, not a backend simulation capability.
+
+Build limits are 64 backend artifacts, 1024 artifacts including resources, 64 MiB per artifact, 256 MiB total, 128 UTF-8 bytes per filename and 512 UTF-8 bytes per relative path. Names are checked after Unicode NFC normalization and lowercasing; `.kobrixa*` names are reserved. Resource traversal and symbolic links are rejected. Sizes are accumulated while reading/writing and hashes come from the actual staging contents.
+
+Outputs remain at `outputDir/<name>.<extension>` and `outputDir/assets/<relative-path>`, including the existing `<name>.rbf`, `<name>.ir.json` and `<name>.lst` paths. The host validates all staging files under `.kobrixa-<buildId>.tmp` before replacing final files in aux → deploy-asset → deploy-main order. Cancellation before the first rename reports `BUILD0001`; once renaming starts the sequence finishes. An I/O failure reports `BUILD9000` with an empty artifact list; the disk may contain mixed generations. This is not a multi-file atomic transaction.
+
+Within one process, builds use FIFO queues keyed by `realpath(outputDir)`. During commit, `.kobrixa-build.lock` is opened with `wx` and contains `{ pid, startedAt }`. A nonexistent PID, or malformed contents older than 60 seconds, can be reclaimed. A live lock is polled every 100 ms for at most 5 seconds, then `BUILD1004` is returned. Release compares ownership and removes only the caller's lock. PID checks do not guarantee correctness between different computers sharing a network disk. Stale-lock reclamation compares contents and then unlinks the file, which is not atomic: if two processes reclaim the same stale lock concurrently, rare scheduling can let one delete the other's newly created lock; 2A accepts this limitation.
+
+Deployment requires a supported `deploy` capability (`ev3` today), otherwise `BUILD1005`. Every selected file is read into memory and checked against its SHA-256 before any upload; missing or changed files report `BUILD1006`. Resources are sorted by remotePath and uploaded before the main, using those same verified bytes. Folder/runtimeDirectory, the device lock and skipping unchanged resources are preserved. Device transfers themselves are not atomic.
 
 The browser-safe `@kobrixa/compiler/diagnostic-help` subpath contains the shared English and Traditional Chinese diagnostic catalog; the original compiler entrypoint is unchanged. Producers set optional `helpKey` values when one code has distinct causes. Consumers fall back to the code's general entry for missing or unknown keys and retain the raw message for unknown codes. Tests compare production codes with the catalog and validate the examples and documentation links.
 
 Quick Fix requests carry the workspace, accepted analysis session/revision/version, file, diagnostic and a cancellation ID. The language worker derives insertion candidates from parser tokens and block metadata, reparses an in-memory copy, and caches validated candidates per analysis version. Queries are bounded to 1,000,000 UTF-16 code units and at most two parses of that file; they never run full project analysis in the renderer. Cancellation marks a shared flag without cancelling another query or invalidating accepted analysis. Edits recheck the target model version, source snapshot and disk conflicts before one undo group is applied through the normal document/draft/save path. Rename continues to validate all project source files. A dedicated documentation IPC accepts catalog selectors only; the main process constructs official URLs.
 
-`runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program. Each output file is committed through a same-filesystem rename; this is not a transaction across the complete set of output files.
+`runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program.
 
 ## Device contract
 

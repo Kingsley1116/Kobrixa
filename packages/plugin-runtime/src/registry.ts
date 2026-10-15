@@ -4,11 +4,13 @@ import path from "node:path";
 import semver from "semver";
 import { z } from "zod";
 import {
+  compilerDeclarationProblems,
   PLUGIN_API_VERSION,
   PLUGIN_LIMITS,
   pluginManifestSchema,
   type PluginManifest,
 } from "@kobrixa/plugin-protocol";
+import { markProviderConflicts } from "./compiler-resolution.js";
 import { messageOf, type PluginErrorCode, type PluginProblem } from "./errors.js";
 
 export const MANIFEST_FILE = "kobrixa-plugin.json";
@@ -51,6 +53,11 @@ const problem = (code: PluginErrorCode, message: string): PluginProblem => ({ co
 
 function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]): PluginProblem[] {
   const problems: PluginProblem[] = [];
+  problems.push(
+    ...compilerDeclarationProblems(manifest).map((message) =>
+      problem("PLUGIN_E_MANIFEST", message),
+    ),
+  );
   if (!semver.satisfies(PLUGIN_API_VERSION, manifest.apiVersion))
     problems.push(
       problem(
@@ -68,11 +75,18 @@ function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]
           : "Built-in plugins must use the builtin runtime in this version.",
       ),
     );
-  if (manifest.contributes?.frontends?.length && !builtinRuntime)
+  if (manifest.contributes?.frontends !== undefined && source !== "builtin")
     problems.push(
       problem(
         "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
         "Compiler frontends can only be contributed by built-in plugins in this version.",
+      ),
+    );
+  if (manifest.contributes?.backends !== undefined && source !== "builtin")
+    problems.push(
+      problem(
+        "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+        "Compiler backends can only be contributed by built-in plugins in this version.",
       ),
     );
   const commands = (manifest.contributes?.commands ?? []).map((command) => command.id);
@@ -262,6 +276,7 @@ export function resolvePlugins(
     else if (options.safeMode)
       Object.assign(plugin, { status: "disabled", disabledBy: "safe-mode" });
   }
+  markProviderConflicts(resolved);
   return resolved;
 }
 

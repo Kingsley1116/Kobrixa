@@ -53,8 +53,10 @@ export interface OperationLog {
 export interface BuildVersion {
   workspaceId: string;
   buildId: string;
-  path: string;
   time: number;
+  path?: string;
+  deploy?: "ev3";
+  undeployableReason?: "BUILD1005";
 }
 export interface ExecutionState {
   operationWorkspaceId?: string | undefined;
@@ -66,13 +68,13 @@ export interface ExecutionState {
         sessionId: string;
         name: string;
         state: "waiting" | "connecting";
-        deployed?: BuildVersion | undefined;
+        deployed?: (BuildVersion & { path: string }) | undefined;
       }
     | undefined;
   connectionNotice?: "manual-required" | "upload-required" | "retry-exhausted" | undefined;
   session?: { id: string; name: string; transport: string } | undefined;
   successfulBuild?: BuildVersion | undefined;
-  deployed?: (BuildVersion & { sessionId: string }) | undefined;
+  deployed?: (BuildVersion & { sessionId: string; path: string }) | undefined;
   diagnostics: Diagnostic[];
   logs: OperationLog[];
   error?: { phase: Phase; detail: string } | undefined;
@@ -452,17 +454,17 @@ export class ExecutionController {
       waiting.events = [];
       const result = await completed;
       this.assertCurrent(generation);
-      const path = deploymentPath(result);
-      if (!path)
+      if (!result.success)
         throw new Error(
           result.diagnostics.map((item) => `${item.code}: ${item.message}`).join("\n") ||
-            "No deployable program was produced.",
+            "Build failed.",
         );
-      const version = {
+      const path = deploymentPath(result);
+      const version: BuildVersion = {
         workspaceId: request.workspaceId,
         buildId: waiting.id,
-        path,
         time: Date.now(),
+        ...(path ? { path, deploy: "ev3" as const } : { undeployableReason: "BUILD1005" as const }),
       };
       this.update({ successfulBuild: version });
       this.log("built");
@@ -547,10 +549,12 @@ export class ExecutionController {
         this.assertCurrent(generation);
         const version = await this.compile(request);
         this.assertCurrent(generation);
-        if (run) {
+        if (run && version.path && version.deploy === "ev3") {
           await this.deploy(version, generation);
           this.assertCurrent(generation);
           await this.runVersion(generation);
+        } else if (run) {
+          this.log("built", "BUILD1005: This target cannot deploy to EV3.");
         }
       },
       request.workspaceId,
@@ -608,6 +612,9 @@ export class ExecutionController {
     });
   }
   private async deploy(version: BuildVersion, generation: number): Promise<void> {
+    if (!version.path || version.deploy !== "ev3")
+      throw new Error("BUILD1005: This target cannot deploy to EV3.");
+
     const session = this.state.session;
     if (!session) throw new Error("EV3 disconnected.");
     if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
@@ -619,7 +626,7 @@ export class ExecutionController {
       version.path.slice(0, version.path.lastIndexOf("/")),
     );
     this.assertCurrent(generation);
-    this.update({ deployed: { ...version, sessionId: session.id } });
+    this.update({ deployed: { ...version, path: version.path, sessionId: session.id } });
     this.log("uploaded");
   }
   private async runVersion(generation: number): Promise<void> {
@@ -643,6 +650,8 @@ export class ExecutionController {
       this.locked ||
       this.controlBlocked ||
       !version ||
+      !version.path ||
+      version.deploy !== "ev3" ||
       version.workspaceId !== this.workspaceId ||
       !this.state.session
     )

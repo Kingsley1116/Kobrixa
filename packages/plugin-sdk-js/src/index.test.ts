@@ -1,10 +1,10 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryChannelPair, RpcPeer, type ParamsOf } from "@kobrixa/plugin-protocol";
-import { definePlugin, electronParentPortChannel, runPlugin } from "./index.js";
+import { API_VERSION, definePlugin, electronParentPortChannel, runPlugin } from "./index.js";
 
 const init: ParamsOf<"initialize"> = {
-  apiVersion: "1.0.0",
+  apiVersion: "1.1.0",
   pluginId: "acme.hello",
   locale: "zh-TW",
   grantedPermissions: ["ui.notifications"],
@@ -18,6 +18,9 @@ function connect(definition: Parameters<typeof runPlugin>[0]) {
 }
 
 describe("JS plugin SDK", () => {
+  it("exposes the same API version as its initialize response", () => {
+    expect(API_VERSION).toBe("1.1.0");
+  });
   it("activates during initialize and runs registered commands", async () => {
     const messages: unknown[] = [];
     const { host } = connect(
@@ -34,7 +37,7 @@ describe("JS plugin SDK", () => {
       return null;
     });
     await expect(host.request("initialize", init)).resolves.toMatchObject({
-      apiVersion: "1.0.0",
+      apiVersion: "1.1.0",
       sdk: { name: "@kobrixa/plugin-sdk" },
     });
     await host.request("command/execute", { command: "acme.hello.greet" });

@@ -253,6 +253,9 @@ importers:
       '@kobrixa/ir':
         specifier: workspace:*
         version: link:../ir
+      '@kobrixa/plugin-protocol':
+        specifier: workspace:*
+        version: link:../plugin-protocol
       fast-glob:
         specifier: ^3.3.3
         version: 3.3.3

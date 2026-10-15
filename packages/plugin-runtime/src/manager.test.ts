@@ -50,7 +50,28 @@ const builtin = {
     version: "1.0.0",
     apiVersion: "^1.0.0",
     runtime: { kind: "builtin" },
-    contributes: { frontends: [{ language: "bp" }] },
+    contributes: {
+      frontends: [
+        {
+          language: "bp",
+          entryExtensions: ["bp"],
+          sourceExtensions: ["bp", "bpi", "bpm"],
+          ir: { min: 1, max: 1 },
+        },
+      ],
+    },
+  },
+};
+const builtinBackend = {
+  kind: "builtin" as const,
+  manifest: {
+    id: "test.back",
+    version: "1.0.0",
+    apiVersion: "^1.1.0",
+    runtime: { kind: "builtin" },
+    contributes: {
+      backends: [{ target: "test-vm", ir: { min: 1, max: 1 }, capabilities: {}, artifacts: [] }],
+    },
   },
 };
 function memoryStore(
@@ -102,11 +123,14 @@ const create = async (
 describe("PluginManager", () => {
   it("routes commands, tags notices with the channel's plugin id and resolves frontends", async () => {
     const hello = await devPlugin("hello");
-    const manager = await create([builtin, hello]);
+    const manager = await create([builtin, builtinBackend, hello]);
     const events: PluginManagerEvent[] = [];
     manager.onEvent((event) => events.push(event));
-    expect(manager.frontendFor("bp")).toBe("kobrixa.basic-plus");
-    expect(manager.frontendFor("python")).toBeUndefined();
+    expect(manager.resolveCompiler("bp", "missing")).toMatchObject({
+      ok: false,
+      code: "BUILD1001",
+    });
+    expect(manager.resolveCompiler("bp", "test-vm").ok).toBe(true);
     await expect(manager.executeCommand("acme.hello.greet")).resolves.toEqual({ ok: true });
     expect(events).toContainEqual({
       type: "notice",

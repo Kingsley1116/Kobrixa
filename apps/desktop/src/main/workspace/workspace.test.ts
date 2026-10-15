@@ -38,6 +38,7 @@ vi.mock("electron", () => ({
   shell: { trashItem: vi.fn() },
 }));
 
+import { BuildError } from "@kobrixa/compiler";
 import { WorkspaceService } from "./workspace.js";
 import type { WorkspaceView } from "../../shared/api.js";
 
@@ -85,6 +86,31 @@ describe("workspace file management", { concurrent: false }, () => {
     if (!workspace) throw new Error("Expected workspace");
     return { service, workspace };
   }
+
+  it.each(["BUILD1001", "BUILD1002"] as const)(
+    "rethrows the original %s from frontend resolution",
+    async (code) => {
+      const { service, workspace } = await openService();
+      const error = new BuildError(code, "Provider resolution failed.");
+      await expect(
+        service.project(workspace.id, new Map(), () => {
+          throw error;
+        }),
+      ).rejects.toBe(error);
+    },
+  );
+
+  it("does not rethrow non-resolution BuildErrors from project loading", async () => {
+    const { service, workspace } = await openService();
+    const error = new BuildError("BUILD1003", "Load failure.");
+    const caught = await service
+      .project(workspace.id, new Map(), () => {
+        throw error;
+      })
+      .catch((failure: unknown) => failure);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(BuildError);
+  });
 
   it("lists editable files, their ancestors, and empty folders", async () => {
     const { workspace } = await openService();

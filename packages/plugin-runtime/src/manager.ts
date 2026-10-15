@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { LocalizedText, PluginLocale, Severity } from "@kobrixa/plugin-protocol";
+import { resolveCompilerProviders, type CompilerResolution } from "./compiler-resolution.js";
 import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from "./errors.js";
 import {
   developmentSourceKey,
@@ -188,12 +189,12 @@ export class PluginManager {
     };
   }
 
-  frontendFor(language: string): string | undefined {
-    return this.#entries.find(
-      ({ plugin }) =>
-        plugin.status === "enabled" &&
-        plugin.manifest?.contributes?.frontends?.some((item) => item.language === language),
-    )?.plugin.id;
+  resolveCompiler(language: string, target: string): CompilerResolution {
+    return resolveCompilerProviders(
+      this.#entries.map((entry) => entry.plugin),
+      language,
+      target,
+    );
   }
 
   async executeCommand(commandId: string, signal?: AbortSignal): Promise<PluginCommandResult> {

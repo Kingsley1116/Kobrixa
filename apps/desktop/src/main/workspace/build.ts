@@ -1,8 +1,18 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
-import type { BuildArtifact, CompileResult } from "@kobrixa/compiler";
+import {
+  BuildError,
+  failedBuild,
+  readDeploymentSnapshot,
+  type DeploymentFile,
+  resolveInside,
+  type BuildArtifact,
+  type CompileResult,
+  type ProjectManifest,
+  type SourceProject,
+} from "@kobrixa/compiler";
+import type { CompilerResolution, CompilerSnapshot } from "@kobrixa/plugin-runtime";
 import type { WebContents } from "electron";
 import type { BuildEvent } from "../../shared/api.js";
 import type { WorkspaceService } from "./workspace.js";
@@ -10,11 +20,14 @@ import type { BuildReply, BuildRequest } from "./build-protocol.js";
 import type { OfflinePreviewProgram } from "../../shared/offline-preview.js";
 import type { SimulationPrepareResult } from "../../shared/simulator.js";
 import { snapshotSimulationAssets } from "./prepare-simulation.js";
-
+import { resolveBuiltinCompiler } from "./builtin-compilers.js";
+import { OutputQueue } from "./output-queue.js";
+import { ProjectLoadError } from "./project-load-error.js";
 interface BuildRecord {
   cancellation: Int32Array;
   worker?: Worker;
-  artifacts: BuildArtifact[];
+  finished: boolean;
+  result: CompileResult;
 }
 interface SimulationPreparation {
   controller: AbortController;
@@ -23,7 +36,6 @@ interface SimulationPreparation {
   worker?: Worker;
   termination?: Promise<void>;
 }
-
 /** Stop awaiting a cancelled read without allowing its eventual result to start compilation. */
 function untilCancelled<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -33,7 +45,6 @@ function untilCancelled<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
-
 export class BuildService {
   private disposed = false;
   private activeBuilds = 0;
@@ -42,35 +53,56 @@ export class BuildService {
   }
   readonly #builds = new Map<string, BuildRecord>();
   readonly #simulations = new Map<string, SimulationPreparation>();
+  readonly #queue = new OutputQueue();
+  #admissions: Promise<void> = Promise.resolve();
   private previewSnapshot:
     { buildId: string; program?: OfflinePreviewProgram; error?: string } | undefined;
-
   constructor(
     private readonly workspaces: Pick<WorkspaceService, "project">,
     private readonly renderer: () => WebContents | undefined,
     private readonly createWorker = (request: BuildRequest): Worker =>
       new Worker(path.join(__dirname, "build-worker.cjs"), { workerData: request }),
-    private readonly frontendFor: (language: string) => string | undefined = () =>
-      "kobrixa.basic-plus",
+    private readonly resolveCompiler: (
+      language: string,
+      target: string,
+    ) => CompilerResolution = resolveBuiltinCompiler,
   ) {}
-
+  private async capture(
+    workspaceId: string,
+    overlays: Record<string, string>,
+    onManifest?: (manifest: ProjectManifest) => void,
+  ): Promise<{ project: SourceProject; compiler: CompilerSnapshot }> {
+    let snapshot: CompilerSnapshot | undefined;
+    const select = (manifest: ProjectManifest) => {
+      onManifest?.(manifest);
+      const resolution = this.resolveCompiler(manifest.language, manifest.target);
+      if (!resolution.ok) throw new BuildError(resolution.code, resolution.message);
+      snapshot = resolution;
+      return resolution.frontend.contribution;
+    };
+    const project = await this.workspaces.project(
+      workspaceId,
+      new Map(Object.entries(overlays)),
+      select,
+    );
+    // 測試 workspace stub 可直接回傳 SourceProject；正式 WorkspaceService 一定呼叫 select。
+    if (!snapshot) select(project.manifest);
+    return { project, compiler: structuredClone(snapshot!) };
+  }
+  /** Project load failures arrive as complete events; start still resolves the build id. */
   async start(
     workspaceId: string,
     overlays: Record<string, string>,
     preview = false,
   ): Promise<string> {
     if (this.disposed) throw new Error("Build service is disposed.");
-    const project = await this.workspaces.project(workspaceId, new Map(Object.entries(overlays)));
-    if (this.disposed) throw new Error("Build service is disposed.");
     const buildId = randomUUID();
     const cancellation = new Int32Array(new SharedArrayBuffer(4));
-    const worker = this.createWorker({
-      project,
-      frontend: this.frontendFor(project.manifest.language) ?? "",
-      cancellation: cancellation.buffer as SharedArrayBuffer,
-      preview,
-    });
-    const record: BuildRecord = { cancellation, worker, artifacts: [] };
+    const record: BuildRecord = {
+      cancellation,
+      finished: false,
+      result: { buildId, target: "unknown", success: false, diagnostics: [], artifacts: [] },
+    };
     this.#builds.set(buildId, record);
     this.activeBuilds++;
     const complete = (
@@ -78,48 +110,88 @@ export class BuildService {
       program?: OfflinePreviewProgram,
       previewError?: string,
     ) => {
-      if (!record.worker) return;
+      // A reply, error and exit can all arrive for one worker; finish the record only once.
+      if (record.finished) return;
+      record.finished = true;
       delete record.worker;
       this.activeBuilds--;
-      record.artifacts = result.success ? result.artifacts : [];
+      record.result = { ...result, buildId, artifacts: result.success ? result.artifacts : [] };
       if (result.success && preview && !Atomics.load(cancellation, 0))
         this.previewSnapshot = {
           buildId,
           ...(program ? { program } : {}),
           ...(previewError ? { error: previewError } : {}),
         };
-      if (!this.disposed) this.send({ type: "complete", workspaceId, buildId, result });
+      if (!this.disposed)
+        this.send({ type: "complete", workspaceId, buildId, result: record.result });
     };
-    const fail = (message: string) =>
-      complete({
-        success: false,
-        artifacts: [],
-        diagnostics: [
-          {
-            code: Atomics.load(cancellation, 0) ? "BUILD0001" : "BUILD9000",
-            severity: "error",
-            file: project.manifest.entry,
-            range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
-            message: Atomics.load(cancellation, 0) ? "Build cancelled." : message,
-          },
-        ],
-      });
-    worker.on("message", (reply: BuildReply) => {
-      if (!record.worker || this.disposed) return;
-      if (reply.type === "complete") complete(reply.result, reply.preview, reply.previewError);
-      else if (reply.type === "progress")
-        this.send({
-          type: "progress",
-          workspaceId,
-          buildId,
-          progress: { ...reply.progress, buildId },
+    let entry = "<project>";
+    // Capture and enqueue in call order so a faster source read cannot jump the FIFO.
+    // Admission does not await compilation, allowing different output directories to run together.
+    const admission = this.#admissions.then(async () => {
+      try {
+        const { project, compiler } = await this.capture(workspaceId, overlays, (manifest) => {
+          entry = manifest.entry;
+          record.result.target = manifest.target;
         });
+        entry = project.manifest.entry;
+        record.result.target = project.manifest.target;
+        const output = await resolveInside(project.root, project.manifest.outputDir);
+        void this.#queue
+          .run(output, async () => {
+            if (this.disposed || Atomics.load(cancellation, 0))
+              throw new DOMException("Build cancelled.", "AbortError");
+            await new Promise<void>((resolve) => {
+              const worker = this.createWorker({
+                buildId,
+                project,
+                compiler,
+                cancellation: cancellation.buffer as SharedArrayBuffer,
+                preview,
+              });
+              record.worker = worker;
+              const fail = (error: unknown) => {
+                complete(failedBuild(buildId, project.manifest.target, error, entry));
+                resolve();
+              };
+              worker.on("message", (reply: BuildReply) => {
+                if (record.finished) return;
+                if (reply.type === "complete") {
+                  complete(reply.result, reply.preview, reply.previewError);
+                  resolve();
+                } else if (reply.type === "progress" && !this.disposed)
+                  this.send({
+                    type: "progress",
+                    workspaceId,
+                    buildId,
+                    progress: { ...reply.progress, buildId },
+                  });
+              });
+              worker.once("error", fail);
+              worker.once("exit", (code) =>
+                fail(
+                  Atomics.load(cancellation, 0)
+                    ? new DOMException("Build cancelled.", "AbortError")
+                    : new Error(`Build worker exited before completing (code ${code}).`),
+                ),
+              );
+            });
+          })
+          .catch((error: unknown) =>
+            complete(failedBuild(buildId, record.result.target, error, entry)),
+          );
+      } catch (error) {
+        complete(
+          error instanceof ProjectLoadError
+            ? { ...record.result, success: false, artifacts: [], diagnostics: error.diagnostics }
+            : failedBuild(buildId, record.result.target, error, entry),
+        );
+      }
     });
-    worker.once("error", (error) => fail(error instanceof Error ? error.message : String(error)));
-    worker.once("exit", (code) => fail(`Build worker exited before completing (code ${code}).`));
+    this.#admissions = admission.catch(() => undefined);
+    await admission;
     return buildId;
   }
-
   async prepareSimulation(
     workspaceId: string,
     overlays: Record<string, string>,
@@ -141,16 +213,27 @@ export class BuildService {
       // A replacement must not overlap the superseded compiler's CPU work.
       await untilCancelled(preparation.predecessor, signal);
       signal.throwIfAborted();
-      const project = await untilCancelled(
-        this.workspaces.project(workspaceId, new Map(Object.entries(overlays))),
-        signal,
-      );
+      let captured: { project: SourceProject; compiler: CompilerSnapshot };
+      try {
+        captured = await untilCancelled(this.capture(workspaceId, overlays), signal);
+      } catch (error) {
+        if (error instanceof ProjectLoadError)
+          return { success: false, diagnostics: error.diagnostics };
+        if (error instanceof BuildError)
+          return {
+            success: false,
+            diagnostics: failedBuild("simulation", "unknown", error, "<project>").diagnostics,
+          };
+        throw error;
+      }
+      const { project, compiler } = captured;
       signal.throwIfAborted();
       const files = await untilCancelled(snapshotSimulationAssets(project), signal);
       signal.throwIfAborted();
       const worker = this.createWorker({
+        buildId: randomUUID(),
         project,
-        frontend: this.frontendFor(project.manifest.language) ?? "",
+        compiler,
         cancellation: preparation.cancellation.buffer as SharedArrayBuffer,
         simulation: { entries, files },
       });
@@ -173,7 +256,6 @@ export class BuildService {
       this.activeBuilds--;
     }
   }
-
   /** Also used when the renderer stops/closes a preparation; unknown workspaces are harmless. */
   cancelSimulation(workspaceId: string): void {
     const preparation = this.#simulations.get(workspaceId);
@@ -184,37 +266,30 @@ export class BuildService {
     );
     void this.terminateSimulation(preparation);
   }
-
   private terminateSimulation(preparation: SimulationPreparation): Promise<void> {
-    if (!preparation.termination)
-      preparation.termination = Promise.all([
-        preparation.predecessor,
-        preparation.worker?.terminate().catch(() => undefined),
-      ]).then(() => undefined);
+    preparation.termination ??= Promise.all([
+      preparation.predecessor,
+      preparation.worker?.terminate().catch(() => undefined),
+    ]).then(() => undefined);
     return preparation.termination;
   }
-
   cancel(buildId: string): void {
     Atomics.store(this.require(buildId).cancellation, 0, 1);
   }
-
   cancelAll(): void {
-    for (const workspaceId of this.#simulations.keys()) this.cancelSimulation(workspaceId);
+    for (const id of this.#simulations.keys()) this.cancelSimulation(id);
     for (const record of this.#builds.values())
-      if (record.worker) Atomics.store(record.cancellation, 0, 1);
+      if (!record.finished) Atomics.store(record.cancellation, 0, 1);
   }
-
   dispose(): void {
     this.disposed = true;
     this.previewSnapshot = undefined;
     this.cancelAll();
     for (const record of this.#builds.values()) void record.worker?.terminate();
   }
-
   artifacts(buildId: string): BuildArtifact[] {
-    return [...this.require(buildId).artifacts];
+    return structuredClone(this.require(buildId).result.artifacts);
   }
-
   preview(buildId: string): OfflinePreviewProgram {
     this.require(buildId);
     if (this.disposed || this.previewSnapshot?.buildId !== buildId)
@@ -223,33 +298,18 @@ export class BuildService {
       throw new Error(this.previewSnapshot.error ?? "No offline preview snapshot.");
     return structuredClone(this.previewSnapshot.program);
   }
-
-  async artifactBytes(buildId: string): Promise<Uint8Array> {
-    const artifact = this.require(buildId).artifacts.find((item) => item.kind === "rbf");
-    if (!artifact) throw new Error("This build has no deployable .rbf artifact.");
-    return readFile(artifact.path);
+  async artifactBytes(buildId: string, signal?: AbortSignal): Promise<Uint8Array> {
+    const files = await this.deployableArtifacts(buildId, signal);
+    return files.find((item) => item.role === "deploy-main")!.bytes;
   }
-
-  async deployableArtifacts(
-    buildId: string,
-  ): Promise<Array<{ kind: "asset" | "rbf"; path: string; remotePath: string }>> {
-    const artifacts = this.require(buildId).artifacts;
-    const rbf = artifacts.find((item) => item.kind === "rbf");
-    if (!rbf) throw new Error("This build has no deployable .rbf artifact.");
-    return [
-      ...artifacts
-        .filter((item) => item.kind === "asset" && item.remotePath)
-        .map((item) => ({ kind: "asset" as const, path: item.path, remotePath: item.remotePath! })),
-      { kind: "rbf", path: rbf.path, remotePath: path.basename(rbf.path) },
-    ];
+  async deployableArtifacts(buildId: string, signal?: AbortSignal): Promise<DeploymentFile[]> {
+    return readDeploymentSnapshot(this.require(buildId).result, "ev3", signal);
   }
-
   private require(id: string): BuildRecord {
     const record = this.#builds.get(id);
     if (!record) throw new Error("Unknown build.");
     return record;
   }
-
   private send(event: BuildEvent): void {
     const target = this.renderer();
     if (target && !target.isDestroyed()) target.send("build:event", event);

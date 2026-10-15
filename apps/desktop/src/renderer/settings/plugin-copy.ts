@@ -145,6 +145,14 @@ const problems: Record<string, readonly [zh: string, en: string]> = {
     "目前只有內建插件能提供編譯前端",
     "Only built-in plugins can provide compiler frontends for now",
   ],
+  PLUGIN_E_BACKEND_REQUIRES_BUILTIN: [
+    "目前只有內建插件能提供編譯後端",
+    "Only built-in plugins can provide compiler backends for now",
+  ],
+  PLUGIN_E_PROVIDER_CONFLICT: [
+    "有多個已啟用的插件提供相同語言或目標",
+    "Multiple enabled plugins provide the same language or target",
+  ],
   PLUGIN_E_ENTRY: [
     "找不到入口檔，或入口檔在插件資料夾外",
     "The entry file is missing or outside the plugin folder",

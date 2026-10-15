@@ -1,10 +1,11 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import micromatch from "micromatch";
 import { afterEach, describe, expect, it } from "vitest";
+import { BuildError } from "./build-error.js";
 import { loadProject, parseManifest } from "./manifest.js";
 
 const manifest = {
@@ -285,3 +286,117 @@ describe("manifest", () => {
     expect(result.project?.sources.map((source) => source.path)).toEqual(["src/main.bp"]);
   });
 });
+
+it("discovers declared extensions and overlays while excluding output and symlinks", async () => {
+  const root = await fixture({ language: "toy", target: "toy-vm", entry: "src/main.toy" });
+  await writeFile(path.join(root, "src/main.toy"), "disk");
+  await writeFile(path.join(root, "src/module.inc"), "module");
+  await mkdir(path.join(root, "build"));
+  await writeFile(path.join(root, "build/old.toy"), "old");
+  await symlink(path.join(root, "src/module.inc"), path.join(root, "src/link.inc"));
+  const declaration = {
+    language: "toy",
+    entryExtensions: ["toy"],
+    sourceExtensions: ["toy", "inc"],
+    ir: { min: 1, max: 1 },
+  };
+  const overlays = new Map([
+    ["src/main.toy", "overlay"],
+    ["src/new.inc", "new"],
+    ["build/old.toy", "ignored"],
+    ["src/main.bp", "ignored"],
+  ]);
+  const loaded = await loadProject(root, overlays, undefined, undefined, () => declaration);
+  expect(loaded.diagnostics).toEqual([]);
+  expect(loaded.project!.sources).toEqual([
+    { path: "src/main.toy", content: "overlay" },
+    { path: "src/module.inc", content: "module" },
+    { path: "src/new.inc", content: "new" },
+  ]);
+  const bad = await loadProject(
+    root,
+    new Map([["src/link.inc", "unsafe"]]),
+    undefined,
+    undefined,
+    () => declaration,
+  );
+  expect(bad.project).toBeUndefined();
+  const entryRejected = await loadProject(root, new Map(), undefined, undefined, () => ({
+    ...declaration,
+    entryExtensions: ["other"],
+  }));
+  expect(entryRejected.project).toBeUndefined();
+});
+it("accepts validated language and target ids without changing schema version", () => {
+  expect(parseManifest({ ...manifest, language: "toy", target: "toy-vm" }).manifest).toMatchObject({
+    schemaVersion: 1,
+    language: "toy",
+    target: "toy-vm",
+  });
+  for (const id of ["UPPER", "x".repeat(33), "../x"])
+    expect(parseManifest({ ...manifest, language: id }).manifest).toBeUndefined();
+});
+
+it.each(["./src/main.bp", "src//main.bp"])(
+  "loads the existing entry spelling %s",
+  async (entry) => {
+    const root = await fixture({ entry });
+    const result = await loadProject(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.project!.manifest.entry).toBe("src/main.bp");
+    expect(result.project!.sources).toEqual([{ path: "src/main.bp", content: "LCD.Clear()\n" }]);
+    expect(JSON.parse(await readFile(path.join(root, "kobrixa.json"), "utf8")).entry).toBe(entry);
+  },
+);
+
+it("normalizes ./main.bp in the returned manifest and source list", async () => {
+  const root = await fixture({ entry: "./main.bp" });
+  await writeFile(path.join(root, "main.bp"), "LCD.Clear()\n");
+  const result = await loadProject(root);
+  expect(result.diagnostics).toEqual([]);
+  expect(result.project!.manifest.entry).toBe("main.bp");
+  expect(result.project!.sources).toContainEqual({ path: "main.bp", content: "LCD.Clear()\n" });
+});
+
+it.skipIf(process.platform === "win32")("loads source filenames containing a colon", async () => {
+  const root = await fixture();
+  await writeFile(path.join(root, "src/a:b.bp"), "colon");
+  const result = await loadProject(root);
+  expect(result.diagnostics).toEqual([]);
+  expect(result.project!.sources).toContainEqual({ path: "src/a:b.bp", content: "colon" });
+});
+
+it.each(["entry", "overlay", "parent"])("reports a symlinked %s as MAN1002", async (kind) => {
+  const root = await fixture({ entry: kind === "entry" ? "src/link.bp" : "src/main.bp" });
+  await symlink(path.join(root, "src/main.bp"), path.join(root, "src/link.bp"));
+  await symlink(
+    path.join(root, "src"),
+    path.join(root, "alias"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const overlays = new Map<string, string>();
+  if (kind === "overlay") overlays.set("src/link.bp", "unsafe");
+  if (kind === "parent") overlays.set("alias/new.bp", "unsafe");
+  const result = await loadProject(root, overlays);
+  expect(result.project).toBeUndefined();
+  expect(result.diagnostics[0]!.code).toBe("MAN1002");
+  expect(result.error).toBeUndefined();
+});
+
+it.each(["BUILD1001", "BUILD1002", "BUILD1003", "BUILD9000"] as const)(
+  "only preserves provider resolution failures when loading: %s",
+  async (code) => {
+    const root = await fixture();
+    const error = new BuildError(code, "Provider resolution failed.");
+    const result = await loadProject(root, undefined, undefined, undefined, () => {
+      throw error;
+    });
+    const providerFailure = code === "BUILD1001" || code === "BUILD1002";
+    expect(result.diagnostics[0]!.code).toBe(providerFailure ? code : "MAN1002");
+    if (providerFailure) {
+      expect(result.diagnostics[0]!.message).toBe(error.detail);
+      expect(`${code}: ${result.diagnostics[0]!.message}`).toBe(error.message);
+    }
+    expect(result.error).toBe(providerFailure ? error : undefined);
+  },
+);

@@ -45,7 +45,7 @@ A crash never replays a command; three process failures within five minutes requ
 
 ## Recovery
 
-If Kobrixa did not shut down normally while a third-party plugin was running, or its window stopped responding, the next start pauses all third-party plugins and shows a banner. Built-in Basic Plus stays enabled. Use **Open plugin settings** to disable or unlink the problem plugin, then **Restore plugins**.
+If Kobrixa did not shut down normally while a third-party plugin was running, or its window stopped responding, the next start pauses all third-party plugins and shows a banner. Built-in Basic Plus and EV3 remain enabled. Use **Open plugin settings** to disable or unlink the problem plugin, then **Restore plugins**.
 
 ## Advanced: launch options
 
@@ -73,6 +73,8 @@ open -a Kobrixa --args \
 ```
 
 Python must be installed locally with the SDK; Kobrixa does not download or manage the interpreter. Python stdout carries only protocol messages; write logs to stderr. See the [Python SDK](../../sdks/python/README.md) and [plugin architecture](../../docs/en/architecture.md#plugins-development-preview).
+
+These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.1.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
 
 ## 繁體中文
 
@@ -121,7 +123,7 @@ pnpm dev
 
 ### 復原
 
-如果 Kobrixa 在第三方插件執行時沒有正常結束，或視窗停止回應，下次啟動會暫停所有第三方插件並顯示提示橫幅。內建 Basic Plus 保持啟用。按「前往插件設定」停用或解除連結有問題的插件，再按「恢復插件」。
+如果 Kobrixa 在第三方插件執行時沒有正常結束，或視窗停止回應，下次啟動會暫停所有第三方插件並顯示提示橫幅。內建 Basic Plus 與 EV3 保持啟用。按「前往插件設定」停用或解除連結有問題的插件，再按「恢復插件」。
 
 ### 進階：啟動參數
 
@@ -149,3 +151,5 @@ open -a Kobrixa --args \
 ```
 
 必須在本機安裝 Python 與 SDK；Kobrixa 不下載或管理直譯器。Python stdout 只傳送協定訊息，日誌請寫入 stderr。詳見 [Python SDK](../../sdks/python/README.md) 與[插件架構](../../docs/zh-TW/architecture.md#插件開發預覽)。
+
+這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.1.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
