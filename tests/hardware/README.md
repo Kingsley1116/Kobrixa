@@ -31,6 +31,37 @@ Open [fixtures/pixy2-signature.bp](fixtures/pixy2-signature.bp) directly in Kobr
 
 ## USB unplug/replug recovery / USB 拔插自動恢復
 
+### Repeated program replacement / 反覆上傳與啟動新版
+
+The startup acknowledgement and USB framing changes need new physical acceptance;
+earlier release acceptance does not validate this change. Record OS, app revision,
+EV3 firmware, transport and each observed version. The following check is pending.
+
+1. Connect through USB and use a display-only Basic Plus program that draws
+   `VERSION 01` and stays running in a loop with a short wait.
+2. Change the visible version from 01 through 20, pressing **Run on EV3** once per
+   version while the previous version is still running. Each cycle must show
+   stopping, upload completion and confirmed startup, and the brick must display
+   the new version. Repeat part of the sequence with Monitor open.
+3. Run a display-only program that immediately exits. Startup must still be
+   confirmed, even if Monitor subsequently reports stopped. Repeat with the brick
+   already stopped, and with **Run uploaded version**.
+4. Introduce a compile error while the loop is running: F5 must leave the old
+   program running. Restore the source and test upload-only: it must not stop or
+   restart the running program.
+5. Rapidly press F5 twice; there must be only one replacement operation. Unplug
+   during stop, upload and startup confirmation in separate attempts. No later
+   stage or automatic startup retry may occur; reconnection requires another
+   explicit run action.
+6. Check the success and failure stages in English and Traditional Chinese.
+
+本次啟動確認與 USB 解碼修正仍待實機驗收。使用僅更新螢幕、帶短暫等待的迴圈程式，
+在舊版仍執行時逐次改成 01–20 版並按 F5，核對每次螢幕版本與停止／上傳／啟動紀錄。
+另驗證短程式立即結束、EV3 已停止、執行已上傳版本、編譯失敗、僅上傳、監測開啟、
+連按 F5，以及停止／上傳／啟動期間拔線；重新連線不得自行啟動程式。
+
+### Connection recovery / 連線恢復
+
 Use the desktop app with a display-only program, including a deployed image or sound
 asset when testing verification. The automated tests use simulated HID and EV3
 sessions; they do not establish physical USB behavior on any platform.

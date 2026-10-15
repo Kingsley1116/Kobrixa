@@ -34,6 +34,8 @@ Discovery is read-only. Upload, run, stop, and delete require an explicit user a
 
 Upload streams directly to the selected remote path and verifies the transferred length and firmware replies. It does not provide an atomic replacement of an existing remote file. Cancellation or a disconnect can leave a partial remote file; reconnect, inspect the destination and upload again. The transfer handle is closed when possible.
 
+**Run on EV3** saves and builds first, then confirms that the previous user program has stopped before uploading. Starting a program (including **Run uploaded version**) stops the user slot, checks image loading and waits for a firmware startup acknowledgement. The activity log distinguishes upload completion from confirmed startup. A short program may already have finished by the time its acknowledgement arrives; this is not a startup failure. A failed or interrupted start is never retried automatically. Upload-only and USB reconnection do not start a program.
+
 The remote file browser also supports directory listing, downloads, folder creation, rename and deletion. Batch transfers preview conflicts before execution. Local downloads use a temporary file and commit only after a complete transfer; remote rename uses copy/verification/delete behavior because the EV3 firmware does not provide an atomic rename.
 
 Remote paths are normalized as EV3 paths. Parent traversal, embedded nulls, invalid lengths, and unsupported names are rejected before transport I/O.
