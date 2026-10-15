@@ -66,6 +66,7 @@ type ArtifactDecl = {
 
 - 目前 IR 版本為 1（[ir/types.ts](../../../packages/ir/src/types.ts)），Basic Plus 與 EV3 都宣告 `{ min: 1, max: 1 }`。
 - 有 `capabilities.deploy` 的後端，必須恰好宣告一個 `required: true` 的 `deploy-main`。
+- `ir`、`asset` 是宿主保留的 slot，後端宣告時 manifest 判為無效，成品驗證也會拒絕。
 - 外部插件宣告 `frontends` 時沿用 `PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`；宣告 `backends` 時新增 `PLUGIN_E_BACKEND_REQUIRES_BUILTIN`，訊息「Compiler backends can only be contributed by built-in plugins in this version.」。整個插件判為 invalid（[registry.ts](../../../packages/plugin-runtime/src/registry.ts)）。
 - **API 版本升為 1.1.0。** 既有 `frontends` 項目新增必填欄位，但有效的 1.0 外部插件本來就不能宣告前端，所以對外部插件仍相容；內建的 [`plugins/basic-plus/kobrixa-plugin.json`](../../../plugins/basic-plus/kobrixa-plugin.json) 直接補上宣告，不做相容層。EV3 後端另立內建插件 `kobrixa.ev3`（`plugins/ev3/kobrixa-plugin.json`），讓前端與目標可以分開衝突檢查，日後也能分開停用。
 - 同步更新提交到 repo 的 JSON Schema、JS SDK 與 Python SDK 的 API 版本常數與共用 conformance 案例。
@@ -86,7 +87,7 @@ type ArtifactDecl = {
   };
   ```
 
-- 只看已啟用且有效的插件。同一個 `language` 或 `target` 有兩個以上啟用中的提供者時，**全部**判為衝突：相關插件標記 `PLUGIN_E_PROVIDER_CONFLICT`，解析回 BUILD1001，不取第一筆。停用其中一個後重新檢查即恢復。
+- 只看已啟用且有效的插件。同一個 `language` 或 `target` 有兩個以上啟用中的提供者時，**全部**判為衝突：相關插件標記 `PLUGIN_E_PROVIDER_CONFLICT`，解析回 BUILD1001，不取第一筆。停用其中一個後重新檢查即恢復（2A 的內建編譯器仍不能由使用者停用，這條規則以測試註冊的提供者驗證；開放停用內建插件需另行設計設定、持久化與安全模式）。
 - 前端與後端 IR 範圍取交集，取最大值；交集為空回 BUILD1002「前端產出的 IR 版本與目標不相容」。
 - 找不到提供者時回 BUILD1001「找不到已啟用的語言／目標提供者：<language>／<target>」，不啟動 build worker。
 - 安全模式與停用沿用 1a／1b 的規則；內建插件在安全模式下仍保留。
@@ -131,7 +132,7 @@ interface CompileResult {
 - 後端只回 `{ slot, data }`；`kind`、`role`、`mediaType`、副檔名都由宣告決定，宿主計算 `path`、`sha256`、`byteLength`。
 - 宿主產生的成品：IR（`slot: "ir"`、`kind: "ir"`、`role: "aux"`、`<名稱>.ir.json`）與專案資源（`slot: "asset"`、`role: "deploy-asset"`）。listing 由後端宣告為 `aux`。
 - 成功的條件：沒有 error 診斷、所有 `required` 的宣告都有對應成品、可部署的後端有唯一且非空的 `deploy-main`。
-- **驗證規則**（違反時 BUILD1003，整個建置失敗、不碰 outputDir）：
+- **驗證規則**（違反時 BUILD1003，整個建置失敗、不改動最終成品；outputDir 本身、staging 與鎖檔可能已建立）：
   - 拒絕未宣告的 slot、重複 slot、缺少必要 slot、空的 `deploy-main`。
   - 檔名為 `<安全化專案名稱>.<extension>`；同一建置內的檔名與資源路徑在 Unicode NFC 正規化並轉小寫後不得碰撞，也不得與保留名稱（`.kobrixa*`）衝突。
   - 資源路徑不得越界或經過符號連結。
@@ -165,6 +166,7 @@ interface CompileResult {
   - 仍被佔用時每 100 ms 重試，最多 5 秒；逾時回 BUILD1004「另一個 Kobrixa 視窗正在寫入這個專案的建置輸出」。
   - 釋放時只刪除自己寫入的鎖（比對內容）。
   - 鎖只保護提交，不保護整段編譯；同一部電腦以外（網路磁碟）的 pid 判斷不保證正確，文件註明。
+  - 回收殘留鎖是「比對內容後刪除」，不是原子操作：兩個程序同時回收同一個殘留鎖時，極少數排程下可能刪到對方剛建立的鎖。這需要殘留鎖加上兩個程序同時提交才會發生，2A 接受此限制並在文件註明。
 
 ## 7. 消費端
 
