@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import {
   developmentSourceKey,
+  PLUGIN_FORCE_MARGIN_MS,
+  PLUGIN_SHUTDOWN_DEADLINE_MS,
   PluginManager,
   PluginSupervisor,
   spawnPluginProcess,
@@ -394,6 +396,7 @@ describe("PluginManager", () => {
 
       const command = manager.executeCommand("acme.hello.greet");
       if (state === "running") {
+        // This case checks graceful shutdown after resume; only launching reads #forced.
         finishLaunch(restarted.process);
         expect(await command).toEqual({ ok: true });
       }
@@ -411,6 +414,54 @@ describe("PluginManager", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+  it("does not force a resumed launch of a plugin that stopped before another was forced", async () => {
+    vi.useFakeTimers();
+    const a = await devPlugin("a");
+    const b = await devPlugin("b");
+    const stubborn = memoryPlugin((peer) => {
+      peer.handle("initialize", () => ({ apiVersion: "1.0.0", sdk: { name: "t", version: "1" } }));
+      peer.handle("command/execute", () => null);
+      peer.handle("shutdown", () => new Promise(() => {}));
+    });
+    const forceB = vi.spyOn(stubborn.process, "forceKill");
+    let finishLaunch!: (child: PluginProcess) => void;
+    const launchA = vi
+      .fn(() => new Promise<PluginProcess>((resolve) => (finishLaunch = resolve)))
+      .mockResolvedValueOnce(await launcher());
+    const manager = await PluginManager.create({
+      sources: [a, b],
+      store: memoryStore(),
+      safeMode: false,
+      launcher: (plugin) =>
+        plugin.id === "acme.a" ? launchA() : Promise.resolve(stubborn.process),
+      locale: "en",
+      supervisor: { stopTimeoutMs: 60_000 },
+    });
+    await manager.executeCommand("acme.a.greet");
+    await manager.executeCommand("acme.b.greet");
+    const first = manager.shutdown();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.state().plugins.map((plugin) => plugin.running)).toEqual([false, false]);
+    expect(manager.active).toBe(true); // B is still stopping; A has already finished.
+    expect(forceB).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(PLUGIN_SHUTDOWN_DEADLINE_MS - PLUGIN_FORCE_MARGIN_MS);
+    await first;
+    expect(forceB).toHaveBeenCalledOnce();
+    await manager.resume();
+
+    const restarted = await launcher();
+    const killA = vi.spyOn(restarted, "kill");
+    const forceA = vi.spyOn(restarted, "forceKill");
+    const command = manager.executeCommand("acme.a.greet");
+    expect(launchA).toHaveBeenCalledTimes(2);
+    const second = manager.shutdown();
+    finishLaunch(restarted);
+    expect(await command).toMatchObject({ code: "PLUGIN_E_DISABLED" });
+    await second;
+    expect(killA).toHaveBeenCalledOnce();
+    expect(forceA).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("keeps tracking a plugin that is still being disabled", async () => {
     const stubborn = vi.fn(
       async () =>

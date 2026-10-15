@@ -183,7 +183,7 @@ export class PluginSupervisor {
 
   /** Terminates immediately, e.g. when the manager's overall shutdown deadline is reached. */
   forceKill(): void {
-    this.#forced = true;
+    if (this.#stopping) this.#forced = true;
     this.#process?.forceKill();
   }
 

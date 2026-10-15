@@ -12,7 +12,9 @@ from ._schema import SchemaError, Validator
 
 API_VERSION = "1.0.0"
 SDK_VERSION = "0.1.0"
-_CANCELLED, _INVALID_REQUEST, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = -32800, -32600, -32602, -32601, -32603
+_CANCELLED, _INVALID_REQUEST, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = (
+    -32800, -32600, -32602, -32601, -32603
+)
 
 
 def _reject_json_constant(value: str) -> None:
@@ -100,11 +102,16 @@ class Plugin:
         if self._stopping:
             return
         try:
-            remaining = memoryview(encode(json.dumps(message, ensure_ascii=True, separators=(",", ":"))))
+            remaining = memoryview(encode(json.dumps(
+                message, ensure_ascii=True, separators=(",", ":")
+            )))
+            # Only blocking stdout is supported. A raw nonblocking stream can retry forever
+            # if the host stops reading, blocking the event loop until the host force-kills us.
+            # A nonblocking BufferedWriter's BlockingIOError is treated as a closed pipe below.
             while remaining:
                 written = self._output.write(remaining)
                 if written is None or written == 0:
-                    # Raw nonblocking streams may make no progress; wait briefly to avoid busy-waiting.
+                    # Avoid busy-waiting when a raw stream temporarily makes no progress.
                     time.sleep(0.001)
                     continue
                 remaining = remaining[written:]
@@ -130,7 +137,8 @@ class Plugin:
                 request_id, method = message["id"], message["method"]
                 if request_id in self._tasks:
                     self._send({"jsonrpc": "2.0", "id": request_id,
-                                "error": {"code": _INVALID_REQUEST, "message": "Duplicate request id."}})
+                                "error": {"code": _INVALID_REQUEST,
+                                          "message": "Duplicate request id."}})
                     return
                 task = asyncio.ensure_future(self._handle(message))
                 self._tasks[request_id] = task
