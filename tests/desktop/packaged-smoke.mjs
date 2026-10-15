@@ -174,7 +174,8 @@ try {
       window.kobrixa.build.start(${JSON.stringify(workspaceId)}, {"main.bp": "LCD.Clear()\\nLCD.Update()\\n"}).catch(error => { unsubscribe(); reject(error); });
     })`);
     assert.equal(compiled.success, true, JSON.stringify(compiled.diagnostics));
-    assert.ok(compiled.artifacts.some((artifact) => artifact.kind === "rbf"));
+    assert.equal(compiled.deploy, "ev3");
+    assert.ok(compiled.artifacts.some((artifact) => artifact.role === "deploy-main"));
     const state = await js("window.kobrixa.updates.getState()");
     assert.equal(state.currentVersion, version);
     assert.notEqual(state.reason, "development");

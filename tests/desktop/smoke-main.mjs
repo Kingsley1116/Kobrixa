@@ -258,9 +258,24 @@ ipcMain.handle("smoke", async (_e, name, args) => {
         workspaceId: args[0],
         buildId,
         result: {
+          buildId,
+          target: "ev3-native",
+          deploy: "ev3",
           success: Boolean(ir),
           diagnostics,
-          artifacts: ir ? [{ kind: "rbf", path: "/tmp/preview.rbf", sha256: "smoke" }] : [],
+          artifacts: ir
+            ? [
+                {
+                  slot: "program",
+                  kind: "rbf",
+                  role: "deploy-main",
+                  mediaType: "application/octet-stream",
+                  path: "/tmp/preview.rbf",
+                  sha256: "smoke",
+                  byteLength: 1,
+                },
+              ]
+            : [],
         },
       });
       return buildId;
@@ -276,7 +291,13 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     win.webContents.send("build:event", {
       type: "complete",
       ...backgroundBuild,
-      result: { success: false, diagnostics: [], artifacts: [] },
+      result: {
+        buildId: backgroundBuild.buildId,
+        target: "ev3-native",
+        success: false,
+        diagnostics: [],
+        artifacts: [],
+      },
     });
     return;
   }
@@ -589,9 +610,22 @@ app
           type: "complete",
           ...backgroundBuild,
           result: {
+            buildId: backgroundBuild.buildId,
+            target: "ev3-native",
+            deploy: "ev3",
             success: true,
             diagnostics: [],
-            artifacts: [{ kind: "rbf", path: "/tmp/build/program.rbf", sha256: "smoke" }],
+            artifacts: [
+              {
+                slot: "program",
+                kind: "rbf",
+                role: "deploy-main",
+                mediaType: "application/octet-stream",
+                path: "/tmp/build/program.rbf",
+                sha256: "smoke",
+                byteLength: 1,
+              },
+            ],
           },
         }),
     };

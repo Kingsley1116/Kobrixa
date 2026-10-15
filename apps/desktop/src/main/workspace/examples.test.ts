@@ -129,26 +129,24 @@ describe("shipped examples", () => {
       expect(frontend.ir, projectPath).toBeDefined();
       expect(validateIR(frontend.ir!), projectPath).toEqual([]);
 
-      const snapshot = resolveBuiltinCompiler(
+      const selection = resolveBuiltinCompiler(
         loaded.project!.manifest.language,
         loaded.project!.manifest.target,
       );
-      if (!snapshot.ok) throw new Error(snapshot.message);
-      const compilers = createBuiltinCompilers(snapshot);
-      const result = await new BuildSession(compilers.frontend, compilers.backend).compile(
-        loaded.project!,
-      );
+      if (!selection.ok) throw new Error(selection.message);
+      const { frontend: buildFrontend, backend } = createBuiltinCompilers(selection);
+      const result = await new BuildSession(buildFrontend, backend).compile(loaded.project!);
       expect(result.diagnostics, projectPath).toEqual([]);
       expect(result.success, projectPath).toBe(true);
       expect(result.runtimeDirectory, projectPath).toBe(
         runtimeDirectories[projectPath] ?? defaultRuntimeDirectory,
       );
-      const image = result.artifacts.find((artifact) => artifact.kind === "rbf")!;
+      const image = result.artifacts.find((artifact) => artifact.role === "deploy-main")!;
       expect(inspectRbf(await readFile(image.path)).objectCount, projectPath).toBeGreaterThan(0);
       if (projectPath in runtimeDirectories) {
         expect(
           result.artifacts
-            .filter((artifact) => artifact.kind === "asset")
+            .filter((artifact) => artifact.role === "deploy-asset")
             .map((artifact) => artifact.remotePath)
             .sort(),
         ).toEqual(["assets/card.rgf", "assets/ping.rsf"]);

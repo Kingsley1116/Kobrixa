@@ -599,3 +599,39 @@ it("keeps queued builds busy, captures compiler snapshots once, and skips cancel
   expect((await result(third)).success).toBe(true);
   expect(service.busy).toBe(false);
 });
+
+it("cancels a queued build without starting its worker and releases the queue after failure", async () => {
+  service.dispose();
+  const created: EventEmitter[] = [];
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    () => {
+      const emitter = new EventEmitter();
+      created.push(emitter);
+      return Object.assign(emitter, { terminate: async () => 0 }) as unknown as Worker;
+    },
+  );
+  const first = await service.start("project", {});
+  await vi.waitFor(() => expect(created).toHaveLength(1));
+  const second = await service.start("project", {});
+  service.cancel(second);
+  expect(service.busy).toBe(true);
+  created[0]!.emit("error", new Error("first failed"));
+  expect(await result(first)).toMatchObject({ success: false, artifacts: [] });
+  expect(await result(second)).toMatchObject({
+    success: false,
+    artifacts: [],
+    diagnostics: [expect.objectContaining({ code: "BUILD0001" })],
+  });
+  expect(created).toHaveLength(1);
+  const third = await service.start("project", {});
+  await vi.waitFor(() => expect(created).toHaveLength(2));
+  created[1]!.emit("error", new Error("third failed"));
+  expect((await result(third)).success).toBe(false);
+  expect(service.busy).toBe(false);
+});

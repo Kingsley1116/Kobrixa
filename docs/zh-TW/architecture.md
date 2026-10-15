@@ -10,9 +10,9 @@ Electron preload bridge
           │ 經驗證的 Electron IPC
           ▼
 Electron main process（Node.js）
-          ├─ 工作區服務 → 語言前端（v1 為 .bp）
+          ├─ 工作區服務 → 已解析的內建語言前端
           │              → 具型別 KobrixaIR + 驗證
-          │              → EV3 後端 → .rbf 成品
+          │              → 已解析的後端 → 經驗證的成品組
           └─ 設備服務 ───────────────────→ USB HID / Wi-Fi
 ```
 
@@ -149,11 +149,17 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
 
-內建插件 `kobrixa.basic-plus` 透過 `frontends/basic-plus` 的最小轉接註冊 `bp` 前端。它在安全模式中仍保持啟用，第一階段無法停用。編譯沿用既有 EV3 後端與建置行為。通用成品契約、`Diagnostic.source` 與語言靜態貢獻均為**規劃中（第二階段）**；`devices` API 為**規劃中（第三階段）**。後續階段詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+插件 API **1.1.0** 可宣告編譯前端與後端。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0 命令插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
+
+宿主為每個語言／目標解析唯一、有效且已啟用的提供者。衝突的提供者全部以 `PLUGIN_E_PROVIDER_CONFLICT` 失效，不依載入順序取首筆；重新檢查提供者集合時排除停用者，清除已消失的衝突。IR 版本選前後端範圍交集的最大值。找不到提供者或發生衝突時，在開 worker 前回 `BUILD1001`；IR 不相容回 `BUILD1002`。
+
+前端宣告入口與來源副檔名；後端宣告成品 slot、kind、mediaType、副檔名、role 與 required，實際只回傳 slot／bytes。宿主保留 `ir`、`asset` slot，並負責產生資源成品。可部署後端必須宣告唯一、必填且非空的 `deploy-main`。每個插件最多 8 個前端、8 個後端，每個後端最多 16 個成品宣告；ID 格式為 `/^[a-z][a-z0-9-]{0,31}$/`，副檔名為 `/^[a-z0-9]{1,16}$/`。提交的 JSON Schema 驗證結構，宿主另外檢查副檔名子集、IR 閉區間、slot 唯一性與主檔關聯。
+
+`Diagnostic.source`、語言分析提供者與靜態語言貢獻仍屬 2B／2C；`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
 
 ## 專案 manifest
 
-每個專案使用 `kobrixa.json`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。
+專案可使用 `kobrixa.json`；沒有 manifest 的專案預設為 `bp`／`ev3-native`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。
 
 ```json
 {
@@ -171,9 +177,9 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 - `schemaVersion`：正整數；v1 只接受 `1`。
 - `name`：非空的專案名稱與預設 EV3 程式名稱。
-- `language`：v1 接受 `bp`；規劃值為 `python`、`typescript`、`cpp`。
+- `language`：經驗證的 ID，由已啟用的前端提供者解析。
 - `entry`：專案相對來源路徑，解析後必須位於專案根目錄內。
-- `target`：v1 只接受 `ev3-native`。
+- `target`：經驗證的 ID，由已啟用的後端提供者解析。
 - `assets`：專案相對檔案或 glob；解析後路徑必須位於專案根目錄內。每個模式最多 4,096 個字元，左大括號或左括號合計最多 64 個，右側括號亦最多 64 個（包括已跳脫或引號內的字元）。所有資產模式合計最多可展開成 256 個模式；此限制不影響萬用字元可比對的檔案數量。超出限制時會在檔案探索前回報 manifest 診斷，不會只選取部分資產；一般選項與數字範圍仍受支援。
 - `outputDir`：依字面解讀的專案相對目錄，並非 glob 模式；不得等於或包含來源根目錄。
 
@@ -183,7 +189,7 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 ```ts
 interface LanguageFrontend {
-  id: "bp" | "python" | "typescript" | "cpp";
+  id: string;
   compile(input: SourceProject, signal: AbortSignal): Promise<FrontendResult>;
 }
 
@@ -203,6 +209,9 @@ EV3 後端預設優化原生輸出：省略跳到下一個區塊的跳躍、簡�
 
 ```ts
 interface CompileResult {
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
   runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
@@ -219,14 +228,28 @@ interface Diagnostic {
 }
 
 interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing" | "asset";
+  slot: string;
+  kind: string;
+  role: "deploy-main" | "deploy-asset" | "aux";
+  mediaType: string;
   path: string;
   sha256: string;
+  byteLength: number;
   remotePath?: string;
 }
 ```
 
-公共結果的行、列從 1 起算。只有在沒有 error 診斷，且有效 `rbf` 已原子提交時，`success` 才為 true。失敗或取消後必須移除暫存輸出。
+公共結果的行、列從 1 起算。成功建置必須沒有 error 診斷、包含全部 required 成品；若可部署，還須有唯一且非空的主檔。成功但不可部署仍是建置成功，執行／上傳按鈕會說明原因。失敗或取消的成品清單一律為空。未宣告、重複、缺少必要成品、路徑不安全、名稱碰撞或超過上限，皆回 `BUILD1003`。
+
+BuildSession 與模擬共用 `compileToMemory`：執行前端、檢查實際 IR 版本與 IR 有效性、執行後端、驗證成品，過程不寫輸出。模擬仍要求後端成功，保留最多 4 個入口、64 個資源／1 MiB 的限制，使用來源及資源快照；是否能模擬依實際 IR 與模擬器支援判斷，不增加後端模擬能力宣告。
+
+建置上限為後端成品 64 個、含資源成品 1024 個、單一成品 64 MiB、總量 256 MiB、檔名 128 UTF-8 bytes、相對路徑 512 UTF-8 bytes。名稱先做 Unicode NFC 正規化再轉小寫檢查碰撞，`.kobrixa*` 為保留名稱；資源不得越界或經過符號連結。讀寫時累計大小，hash 取自 staging 的實際內容。
+
+輸出仍位於 `outputDir/<名稱>.<extension>` 與 `outputDir/assets/<相對路徑>`，既有 `<名稱>.rbf`、`<名稱>.ir.json`、`<名稱>.lst` 位置不變。宿主在 `.kobrixa-<buildId>.tmp` 完成全部 staging 驗證後，才依 aux → deploy-asset → deploy-main 替換最終檔案。第一次 rename 前取消回 `BUILD0001`；開始 rename 後完成整段提交。I/O 失敗回 `BUILD9000`、成品清單為空，磁碟可能留下新舊混合的檔案；這不是多檔案原子交易。
+
+同一程序依 `realpath(outputDir)` FIFO 排隊。提交期間以 `wx` 建立 `.kobrixa-build.lock`，內容為 `{ pid, startedAt }`。pid 不存在，或內容無法解析且檔案超過 60 秒，才回收殘留鎖；活鎖每 100 ms 輪詢，最多 5 秒後回 `BUILD1004`。釋放時比對所有權，只刪自己的鎖。不同電腦共用網路磁碟時，pid 判斷不保證正確。
+
+部署要求設備支援的 `deploy`（目前為 `ev3`），否則回 `BUILD1005`。先把全部待部署檔案讀進記憶體並驗 SHA-256，再開始任何上傳；檔案遺失或變更回 `BUILD1006`。資源依 remotePath 排序、主檔最後，傳送的就是驗過的同一批 bytes。Folder／runtimeDirectory、設備鎖與略過未變資源的行為保留；設備傳輸本身仍非原子操作。
 
 可在瀏覽器使用的 `@kobrixa/compiler/diagnostic-help` 子路徑提供繁體中文及英文共用診斷目錄，原有 compiler 入口保持不變。同一代碼有不同原因時，由產生處設定可選的 `helpKey`；缺少或未知的分類使用該代碼的通用解說，未知代碼保留原始訊息。測試會核對 production 代碼與目錄，並驗證範例及文件連結。
 
