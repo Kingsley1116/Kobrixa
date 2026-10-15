@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -284,4 +284,54 @@ describe("manifest", () => {
     expect(result.diagnostics).toEqual([]);
     expect(result.project?.sources.map((source) => source.path)).toEqual(["src/main.bp"]);
   });
+});
+
+it("discovers declared extensions and overlays while excluding output and symlinks", async () => {
+  const root = await fixture({ language: "toy", target: "toy-vm", entry: "src/main.toy" });
+  await writeFile(path.join(root, "src/main.toy"), "disk");
+  await writeFile(path.join(root, "src/module.inc"), "module");
+  await mkdir(path.join(root, "build"));
+  await writeFile(path.join(root, "build/old.toy"), "old");
+  await symlink(path.join(root, "src/module.inc"), path.join(root, "src/link.inc"));
+  const declaration = {
+    language: "toy",
+    entryExtensions: ["toy"],
+    sourceExtensions: ["toy", "inc"],
+    ir: { min: 1, max: 1 },
+  };
+  const overlays = new Map([
+    ["src/main.toy", "overlay"],
+    ["src/new.inc", "new"],
+    ["build/old.toy", "ignored"],
+    ["src/main.bp", "ignored"],
+  ]);
+  const loaded = await loadProject(root, overlays, undefined, undefined, () => declaration);
+  expect(loaded.diagnostics).toEqual([]);
+  expect(loaded.project!.sources).toEqual([
+    { path: "src/main.toy", content: "overlay" },
+    { path: "src/module.inc", content: "module" },
+    { path: "src/new.inc", content: "new" },
+  ]);
+  const bad = await loadProject(
+    root,
+    new Map([["src/link.inc", "unsafe"]]),
+    undefined,
+    undefined,
+    () => declaration,
+  );
+  expect(bad.project).toBeUndefined();
+  const entryRejected = await loadProject(root, new Map(), undefined, undefined, () => ({
+    ...declaration,
+    entryExtensions: ["other"],
+  }));
+  expect(entryRejected.project).toBeUndefined();
+});
+it("accepts validated language and target ids without changing schema version", () => {
+  expect(parseManifest({ ...manifest, language: "toy", target: "toy-vm" }).manifest).toMatchObject({
+    schemaVersion: 1,
+    language: "toy",
+    target: "toy-vm",
+  });
+  for (const id of ["UPPER", "x".repeat(33), "../x"])
+    expect(parseManifest({ ...manifest, language: id }).manifest).toBeUndefined();
 });

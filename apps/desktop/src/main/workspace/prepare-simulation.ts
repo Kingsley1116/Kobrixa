@@ -1,17 +1,13 @@
-import { readFile, stat } from "node:fs/promises";
-import { BasicPlusFrontend } from "@kobrixa/basic-plus";
-import { EV3Backend } from "@kobrixa/backend-ev3";
 import {
+  compileToMemory,
   diagnostic,
-  diagnosticFromSpan,
-  resolveInside,
+  readBoundedFile,
   type SourceProject,
 } from "@kobrixa/compiler";
-import { validateIR } from "@kobrixa/ir";
+import type { CompilerSnapshot } from "@kobrixa/plugin-runtime";
 import { PREVIEW_MAX_FILES, PREVIEW_MAX_FILE_BYTES } from "../../shared/offline-preview.js";
 import type { PreparedSimulation, SimulationPrepareResult } from "../../shared/simulator.js";
-
-/** Read original assets once; preparation never commits build artifacts. */
+import { createBuiltinCompilers } from "./builtin-compilers.js";
 export async function snapshotSimulationAssets(
   project: SourceProject,
 ): Promise<Record<string, number[]>> {
@@ -21,64 +17,66 @@ export async function snapshotSimulationAssets(
   let total = 0;
   for (const asset of project.assets) {
     const relative = asset.path.replaceAll("\\", "/");
-    const target = await resolveInside(project.root, relative);
-    const before = await stat(target);
-    if (!before.isFile() || before.size > PREVIEW_MAX_FILE_BYTES - total)
-      throw new Error("Simulation resource files exceed the 1 MiB limit.");
-    const bytes = await readFile(target);
-    const after = await stat(target);
-    if (
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs ||
-      bytes.length !== after.size
-    )
-      throw new Error("A resource changed while preparing the simulation. Try again.");
-    total += bytes.length;
-    if (total > PREVIEW_MAX_FILE_BYTES)
-      throw new Error("Simulation resource files exceed the 1 MiB limit.");
-    files[relative] = Array.from(bytes);
+    try {
+      const bytes = await readBoundedFile(
+        project.root,
+        relative,
+        PREVIEW_MAX_FILE_BYTES - total,
+        new AbortController().signal,
+      );
+      total += bytes.length;
+      files[relative] = Array.from(bytes);
+    } catch (error) {
+      throw new Error(
+        `Simulation resource snapshot exceeds the 1 MiB limit or changed while reading: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   return files;
 }
-
 export async function prepareSimulation(
   project: SourceProject,
   entries: string[],
   files: Record<string, number[]>,
   signal: AbortSignal,
+  compiler: CompilerSnapshot,
+  create: typeof createBuiltinCompilers = createBuiltinCompilers,
 ): Promise<SimulationPrepareResult> {
   const diagnostics: SimulationPrepareResult["diagnostics"] = [];
   const programs: PreparedSimulation["programs"] = Object.create(null);
   try {
     if (entries.length > 4) throw new Error("Simulation supports at most four program entries.");
-    const frontend = new BasicPlusFrontend();
-    const backend = new EV3Backend();
+    if (
+      Object.keys(files).length > PREVIEW_MAX_FILES ||
+      Object.values(files).reduce((sum, bytes) => sum + bytes.length, 0) > PREVIEW_MAX_FILE_BYTES
+    )
+      throw new Error("Simulation supports at most 64 resources totaling 1 MiB.");
+    const assetSnapshots = Object.fromEntries(
+      Object.entries(files).map(([name, bytes]) => [name, Uint8Array.from(bytes)]),
+    );
     for (const entry of [...new Set(entries)]) {
       signal.throwIfAborted();
       if (
-        !/\.bp$/i.test(entry) ||
+        !compiler.frontend.contribution.entryExtensions.includes(
+          entry.split(".").at(-1)!.toLowerCase(),
+        ) ||
         entry.includes("\\") ||
         entry.startsWith("/") ||
         entry.split("/").some((part) => part === ".." || part === ".") ||
         !project.sources.some((source) => source.path === entry)
       )
         throw new Error(`Unknown project program entry: ${entry}`);
-      const result = await frontend.compile(
-        { ...project, manifest: { ...project.manifest, entry } },
+      const { frontend, backend } = create(compiler);
+      const result = await compileToMemory(
+        { ...project, assetSnapshots, manifest: { ...project.manifest, entry } },
+        frontend,
+        backend,
         signal,
       );
       diagnostics.push(...result.diagnostics);
-      if (!result.ir || result.diagnostics.some((item) => item.severity === "error")) continue;
-      const issues = validateIR(result.ir);
-      diagnostics.push(
-        ...issues.map((issue) => diagnosticFromSpan(issue.code, issue.message, issue.span)),
-      );
-      if (issues.length) continue;
-      const native = await backend.compile(result.ir, signal);
-      diagnostics.push(...native.diagnostics);
-      if (!native.rbf || native.diagnostics.some((item) => item.severity === "error")) continue;
-      programs[entry] = { ir: result.ir, files };
+      if (!result.success) continue;
+      if (result.ir.version !== 1) throw new Error("Unsupported simulation IR version.");
+      programs[entry] = { ir: result.ir, files: structuredClone(files) };
     }
     signal.throwIfAborted();
     if (

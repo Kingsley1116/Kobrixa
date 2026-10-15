@@ -1,3 +1,4 @@
+import type { FrontendDecl } from "@kobrixa/plugin-protocol";
 import { roomIdSchema } from "@kobrixa/collab-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -14,6 +15,7 @@ import {
 import path from "node:path";
 import { app, dialog, shell } from "electron";
 import {
+  BuildError,
   loadProject,
   parseManifest,
   resolveInside,
@@ -722,14 +724,26 @@ export class WorkspaceService {
     return { inputPath, ...(selectedEntry ? { selectedEntry } : {}) };
   }
 
-  async project(id: string, overlays: ReadonlyMap<string, string>): Promise<SourceProject> {
+  async project(
+    id: string,
+    overlays: ReadonlyMap<string, string>,
+    resolveFrontend?: (manifest: ProjectManifest) => FrontendDecl,
+  ): Promise<SourceProject> {
     const record = this.require(id);
-    const result = await loadProject(record.inputPath, overlays, record.selectedEntry);
-    if (!result.project)
-      throw new Error(
+    const result = await loadProject(
+      record.inputPath,
+      overlays,
+      record.selectedEntry,
+      undefined,
+      resolveFrontend,
+    );
+    if (!result.project) {
+      const message =
         result.diagnostics.map((item) => item.message).join("\n") ||
-          "Choose an entry file before building.",
-      );
+        "Choose an entry file before building.";
+      if (result.error instanceof BuildError) throw result.error;
+      throw new Error(message);
+    }
     return result.project;
   }
 

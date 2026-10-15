@@ -1,3 +1,6 @@
+import { compilerIdSchema, type FrontendDecl } from "@kobrixa/plugin-protocol";
+import { BuildError } from "./build-error.js";
+import { assertNoSymlinks } from "./safe-files.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import micromatch from "micromatch";
@@ -31,9 +34,9 @@ const manifestSchema = z
   .object({
     schemaVersion: z.literal(1),
     name: z.string().trim().min(1),
-    language: z.literal("bp"),
+    language: compilerIdSchema,
     entry: z.string().trim().min(1),
-    target: z.literal("ev3-native"),
+    target: compilerIdSchema,
     assets: z
       .array(
         z
@@ -56,6 +59,8 @@ const manifestSchema = z
   .loose();
 
 export interface ProjectLoadResult {
+  /** Original compiler failure for in-process callers that need to rethrow it. */
+  error?: BuildError;
   project?: SourceProject;
   diagnostics: Diagnostic[];
   implicit: boolean;
@@ -145,35 +150,47 @@ async function loadSources(
   root: string,
   manifest: ProjectManifest,
   overlays: ReadonlyMap<string, string>,
+  declaration: FrontendDecl,
   cache?: ProjectSourceCache,
 ): Promise<SourceFile[]> {
-  const entry = await resolveInside(root, manifest.entry);
-  await lstat(entry);
-  const sourcePaths = new Set<string>([
-    manifest.entry.replaceAll(path.sep, "/"),
-    ...(await fg(["**/*.bp", "**/*.bpi", "**/*.bpm"], {
+  const extension = (file: string): string => path.posix.extname(file).slice(1).toLowerCase();
+  const entryPath = manifest.entry.replaceAll(path.sep, "/");
+  if (!declaration.entryExtensions.includes(extension(entryPath)))
+    throw new Error("The entry extension is not supported by the selected frontend.");
+  const entry = await assertNoSymlinks(root, entryPath);
+  if (!(await lstat(entry)).isFile()) throw new Error("The project entry must be a regular file.");
+  const output = await resolveInside(root, manifest.outputDir);
+  const excluded = async (relative: string) =>
+    isInside(output, await resolveInside(root, relative));
+  const sourcePaths = new Set<string>([entryPath]);
+  const discovered = await fg(
+    declaration.sourceExtensions.map((value) => `**/*.${value}`),
+    {
       cwd: root,
       onlyFiles: true,
       dot: false,
       followSymbolicLinks: false,
       braceExpansion: false,
+      caseSensitiveMatch: false,
       ignore: [`${fg.convertPathToPattern(manifest.outputDir)}/**`],
-    })),
-  ]);
-  for (const overlayPath of overlays.keys()) {
-    if (/\.(bp|bpi|bpm)$/i.test(overlayPath))
-      sourcePaths.add(overlayPath.replaceAll(path.sep, "/"));
+    },
+  );
+  for (const relative of discovered) if (!(await excluded(relative))) sourcePaths.add(relative);
+  for (const relative of overlays.keys()) {
+    if (!declaration.sourceExtensions.includes(extension(relative))) continue;
+    await assertNoSymlinks(root, relative, true);
+    if (!(await excluded(relative))) sourcePaths.add(relative);
   }
   const paths = new Set<string>();
   cache?.begin();
   const sources = await Promise.all(
-    [...sourcePaths].sort().map(async (sourcePath) => {
-      const absolute = await resolveInside(root, sourcePath);
+    [...sourcePaths].sort().map(async (relative) => {
+      const absolute = await assertNoSymlinks(root, relative, overlays.has(relative));
       paths.add(absolute);
       return {
-        path: sourcePath,
+        path: relative,
         content:
-          overlays.get(sourcePath) ??
+          overlays.get(relative) ??
           (cache ? await cache.read(absolute) : await readFile(absolute, "utf8")),
       };
     }),
@@ -187,6 +204,7 @@ export async function loadProject(
   overlays: ReadonlyMap<string, string> = new Map(),
   selectedEntry?: string,
   sourceCache?: ProjectSourceCache,
+  resolveFrontend?: (manifest: ProjectManifest) => FrontendDecl,
 ): Promise<ProjectLoadResult> {
   const diagnostics: Diagnostic[] = [];
   try {
@@ -261,7 +279,20 @@ export async function loadProject(
         absolutePath: await resolveInside(root, assetPath),
       })),
     );
-    const sources = await loadSources(root, manifest, overlays, sourceCache);
+    const declaration =
+      resolveFrontend?.(manifest) ??
+      (manifest.language === "bp"
+        ? {
+            language: "bp",
+            entryExtensions: ["bp"],
+            sourceExtensions: ["bp", "bpi", "bpm"],
+            ir: { min: 1, max: 1 },
+          }
+        : undefined);
+    if (!declaration)
+      throw new BuildError("BUILD1001", `No enabled language provider: ${manifest.language}.`);
+    const sources = await loadSources(root, manifest, overlays, declaration, sourceCache);
+
     if (diagnostics.length) return { diagnostics, implicit };
     return {
       project: { root: await realpath(root), manifest, sources, assets: assetFiles },
@@ -270,8 +301,12 @@ export async function loadProject(
     };
   } catch (error) {
     return {
+      ...(error instanceof BuildError ? { error } : {}),
       diagnostics: [
-        diagnostic("MAN1002", error instanceof Error ? error.message : "Unable to load project."),
+        diagnostic(
+          error instanceof BuildError ? error.code : "MAN1002",
+          error instanceof Error ? error.message : "Unable to load project.",
+        ),
       ],
       implicit: false,
     };

@@ -65,6 +65,7 @@ export interface SourceProject {
   manifest: ProjectManifest;
   sources: SourceFile[];
   assets: AssetFile[];
+  assetSnapshots?: Readonly<Record<string, Uint8Array>>;
 }
 
 export interface FrontendResult {

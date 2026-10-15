@@ -5,3 +5,4 @@ export * from "./diagnostics.js";
 export * from "./manifest.js";
 export * from "./artifacts.js";
 export * from "./safe-files.js";
+export * from "./compile-memory.js";

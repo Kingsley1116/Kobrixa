@@ -147,12 +147,16 @@ export async function validateArtifacts(
     ]);
     let total = artifacts.reduce((sum, item) => sum + item.data.byteLength, 0);
     for (const asset of assets) {
-      const data = await readBoundedFile(
-        project.root,
-        asset.remotePath,
-        Math.min(BUILD_LIMITS.artifactBytes, BUILD_LIMITS.totalBytes - total),
-        signal,
-      );
+      let data: Uint8Array;
+      const remaining = Math.min(BUILD_LIMITS.artifactBytes, BUILD_LIMITS.totalBytes - total);
+      if (project.assetSnapshots !== undefined) {
+        const captured = project.assetSnapshots[asset.remotePath];
+        if (!captured || captured.byteLength > remaining)
+          invalid("Missing or oversized captured resource.");
+        data = Uint8Array.from(captured!);
+      } else {
+        data = await readBoundedFile(project.root, asset.remotePath, remaining, signal);
+      }
       total += data.byteLength;
       artifacts.push({ ...asset, data });
     }
