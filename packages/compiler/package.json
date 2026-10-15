@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@kobrixa/ir": "workspace:*",
+    "@kobrixa/plugin-protocol": "workspace:*",
     "fast-glob": "^3.3.3",
     "micromatch": "^4.0.8",
     "zod": "^4.6.5"
