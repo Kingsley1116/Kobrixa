@@ -29,7 +29,7 @@ void app.whenReady().then(async () => {
     })),
     store: filePluginStateStore(`${directory}/user-data`),
     safeMode: false,
-    launcher: createDesktopLauncher({ python }),
+    launcher: createDesktopLauncher({ python: () => ({ executable: python, args: [] }) }),
     locale: "zh-TW",
   });
   // The same quit path as apps/desktop/src/main/index.ts.

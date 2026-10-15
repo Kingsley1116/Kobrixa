@@ -9,6 +9,7 @@ import {
   type PluginLauncher,
   type PluginProcess,
 } from "@kobrixa/plugin-runtime";
+import type { PythonCommand } from "./python.js";
 
 /** A utilityProcess that reports neither spawn nor exit must not hang the launch. */
 export const PLUGIN_SPAWN_TIMEOUT_MS = 10_000;
@@ -73,20 +74,27 @@ async function launchNode(
   };
 }
 
+const logToConsole = (plugin: LaunchablePlugin, line: string) =>
+  console.error(`[plugin ${plugin.id}] ${line}`);
+
 export function createDesktopLauncher(options: {
-  python?: string;
+  /** Read on every launch, so a newly chosen interpreter applies to the next plugin process. */
+  python?: () => PythonCommand | undefined;
   spawnTimeoutMs?: number;
+  onOutput?: (plugin: LaunchablePlugin, line: string) => void;
 }): PluginLauncher {
   return async (plugin) => {
-    const onOutput = (line: string) => console.error(`[plugin ${plugin.id}] ${line}`);
+    const output = options.onOutput ?? logToConsole;
+    const onOutput = (line: string) => output(plugin, line);
     if (plugin.runtime === "node")
       return launchNode(plugin, onOutput, options.spawnTimeoutMs ?? PLUGIN_SPAWN_TIMEOUT_MS);
-    if (!options.python)
+    const python = options.python?.();
+    if (!python)
       throw new PluginError(
         "PLUGIN_E_LAUNCH",
-        "Start Kobrixa with --plugin-python=<interpreter> to run Python development plugins.",
+        "Choose a Python interpreter under Settings → Plugins → Developer mode, or start Kobrixa with --plugin-python=<interpreter>.",
       );
-    return spawnPluginProcess(options.python, ["-u", plugin.entry], {
+    return spawnPluginProcess(python.executable, [...python.args, "-u", plugin.entry], {
       onOutput,
       cwd: plugin.directory,
       env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },

@@ -75,7 +75,10 @@ it("forwards separate utilityProcess output streams to the main console and flus
 
 it("wires Python stderr lines to the same prefixed main console", async () => {
   const log = vi.spyOn(console, "error").mockImplementation(() => {});
-  await createDesktopLauncher({ python: "/python" })({ ...plugin, runtime: "python" });
+  await createDesktopLauncher({ python: () => ({ executable: "/python", args: [] }) })({
+    ...plugin,
+    runtime: "python",
+  });
   const [command, args, options] = vi.mocked(spawnPluginProcess).mock.calls.at(-1)!;
   expect(command).toBe("/python");
   expect(args).toEqual(["-u", plugin.entry]);
@@ -105,4 +108,37 @@ it("kills a utilityProcess that never reports spawn and fails the launch", async
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("reads the Python command on every launch and puts its arguments first", async () => {
+  let python = { executable: "py", args: ["-3"] };
+  const launch = createDesktopLauncher({ python: () => python });
+  await launch({ ...plugin, runtime: "python" });
+  expect(vi.mocked(spawnPluginProcess).mock.calls.at(-1)!.slice(0, 2)).toEqual([
+    "py",
+    ["-3", "-u", plugin.entry],
+  ]);
+  python = { executable: "/new/python", args: [] };
+  await launch({ ...plugin, runtime: "python" });
+  expect(vi.mocked(spawnPluginProcess).mock.calls.at(-1)![0]).toBe("/new/python");
+});
+
+it("refuses a Python plugin when no interpreter is chosen", async () => {
+  await expect(
+    createDesktopLauncher({ python: () => undefined })({ ...plugin, runtime: "python" }),
+  ).rejects.toMatchObject({ code: "PLUGIN_E_LAUNCH" });
+});
+
+it("sends output lines to the output hook together with the plugin", async () => {
+  const onOutput = vi.fn();
+  await createDesktopLauncher({ python: () => ({ executable: "/python", args: [] }), onOutput })({
+    ...plugin,
+    sourceKey: "dev:0123456789abcdef",
+    runtime: "python",
+  });
+  vi.mocked(spawnPluginProcess).mock.calls.at(-1)![2].onOutput?.("hi");
+  expect(onOutput).toHaveBeenCalledWith(
+    expect.objectContaining({ sourceKey: "dev:0123456789abcdef" }),
+    "hi",
+  );
 });

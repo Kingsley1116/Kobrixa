@@ -177,7 +177,12 @@ void app.whenReady().then(async () => {
     ],
     store: filePluginStateStore(app.getPath("userData")),
     safeMode: pluginSettings.safeMode,
-    launcher: createDesktopLauncher(pluginSettings),
+    launcher: createDesktopLauncher({
+      python: () =>
+        pluginSettings.python === undefined
+          ? undefined
+          : { executable: pluginSettings.python, args: [] },
+    }),
     locale: pluginLocale(app.getLocale()),
   });
   installPluginQuitCleanup(app, plugins);
