@@ -116,6 +116,23 @@ describe("loadPlugins", () => {
   it.each([
     ["PLUGIN_E_API_VERSION", { apiVersion: "^2.0.0" }],
     ["PLUGIN_E_RUNTIME_NOT_ALLOWED", { runtime: { kind: "builtin" } }],
+    ["PLUGIN_E_FRONTEND_REQUIRES_BUILTIN", { contributes: { frontends: [] } }],
+    ["PLUGIN_E_BACKEND_REQUIRES_BUILTIN", { contributes: { backends: [] } }],
+    [
+      "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+      {
+        contributes: {
+          backends: [
+            {
+              target: "test-vm",
+              ir: { min: 1, max: 1 },
+              capabilities: {},
+              artifacts: [],
+            },
+          ],
+        },
+      },
+    ],
     [
       "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
       {
@@ -153,6 +170,93 @@ describe("loadPlugins", () => {
     const [loaded] = await loadPlugins([await plugin("p", manifest(overrides))], none);
     expect(loaded!.status).toBe("invalid");
     expect(loaded!.problems.map((problem) => problem.code)).toContain(code);
+  });
+  it.each([
+    [
+      "Frontend IR range is empty.",
+      {
+        frontends: [
+          {
+            language: "test",
+            entryExtensions: ["test"],
+            sourceExtensions: ["test"],
+            ir: { min: 2, max: 1 },
+          },
+        ],
+      },
+    ],
+    [
+      "Entry extensions must be a subset of source extensions.",
+      {
+        frontends: [
+          {
+            language: "test",
+            entryExtensions: ["test"],
+            sourceExtensions: ["inc"],
+            ir: { min: 1, max: 1 },
+          },
+        ],
+      },
+    ],
+    [
+      "Backend IR range is empty.",
+      {
+        backends: [{ target: "test-vm", ir: { min: 2, max: 1 }, capabilities: {}, artifacts: [] }],
+      },
+    ],
+    [
+      "A deployable backend requires exactly one required deploy-main.",
+      {
+        backends: [
+          {
+            target: "test-vm",
+            ir: { min: 1, max: 1 },
+            capabilities: { deploy: "ev3" },
+            artifacts: [],
+          },
+        ],
+      },
+    ],
+  ])("rejects compiler declaration semantics: %s", async (message, contributes) => {
+    const [loaded] = await loadPlugins(
+      [await plugin("semantics", manifest({ activationEvents: [], contributes }))],
+      none,
+    );
+    expect(loaded!.status).toBe("invalid");
+    expect(loaded!.problems).toContainEqual({ code: "PLUGIN_E_MANIFEST", message });
+    await expect(
+      readSource(
+        {
+          kind: "builtin",
+          manifest: manifest({ runtime: { kind: "builtin" }, activationEvents: [], contributes }),
+        },
+        { safeMode: false },
+      ),
+    ).rejects.toThrow(message);
+  });
+  it("invalidates the whole external backend plugin even with valid commands", async () => {
+    const value = manifest();
+    const [loaded] = await loadPlugins(
+      [
+        await plugin("backend", {
+          ...value,
+          contributes: {
+            ...value.contributes,
+            backends: [
+              { target: "test-vm", ir: { min: 1, max: 1 }, capabilities: {}, artifacts: [] },
+            ],
+          },
+        }),
+      ],
+      none,
+    );
+    expect(loaded!.status).toBe("invalid");
+    expect(loaded!.problems).toEqual([
+      {
+        code: "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+        message: "Compiler backends can only be contributed by built-in plugins in this version.",
+      },
+    ]);
   });
   // Windows users may not have permission to create symlinks.
   it.skipIf(process.platform === "win32")(

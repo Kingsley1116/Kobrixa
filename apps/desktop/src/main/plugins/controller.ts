@@ -71,6 +71,7 @@ export type PluginManagerPort = Pick<
   | "shutdown"
   | "resume"
   | "frontendFor"
+  | "resolveCompiler"
 >;
 export interface PluginControllerDependencies {
   manager: PluginManagerPort;
@@ -149,6 +150,11 @@ export class PluginController {
     return this.deps.manager.active;
   }
 
+  resolveCompiler(language: string, target: string): ReturnType<PluginManager["resolveCompiler"]> {
+    return this.deps.manager.resolveCompiler(language, target);
+  }
+
+  /** @deprecated Temporary until Task 6 rewires index.ts. */
   frontendFor(language: string): string | undefined {
     return this.deps.manager.frontendFor(language);
   }
