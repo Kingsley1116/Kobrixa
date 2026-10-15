@@ -457,6 +457,27 @@ describe("PluginManager", () => {
         }).process,
     );
     afterEach(() => hangingLauncher.mockClear());
+    const cancellableLauncher = vi.fn(
+      async () =>
+        memoryPlugin((peer, { exit }) => {
+          peer.handle("initialize", () => ({
+            apiVersion: "1.0.0",
+            sdk: { name: "t", version: "1" },
+          }));
+          peer.handle(
+            "command/execute",
+            (_params, { signal }) =>
+              new Promise((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(new Error("stopped")), {
+                  once: true,
+                });
+              }),
+          );
+          peer.handle("shutdown", () => null);
+          peer.onNotification("exit", () => exit(0));
+        }).process,
+    );
+    afterEach(() => cancellableLauncher.mockClear());
     const createWith = (
       sources: Parameters<typeof PluginManager.create>[0]["sources"],
       plugins = launcher,
@@ -632,6 +653,95 @@ describe("PluginManager", () => {
       await manager.addSource(hello);
       expect(manager.state().plugins[0]).toMatchObject({ status: "disabled", disabledBy: "user" });
       expect(store.saved.at(-1)!.legacyDisabledIds).toEqual(new Set());
+    });
+    it("cancels one command through its signal and keeps the plugin running", async () => {
+      const hello = await devPlugin("hello");
+      const manager = await createWith([hello], cancellableLauncher);
+      const abort = new AbortController();
+      const running = manager.executeCommand("acme.hello.greet", abort.signal);
+      await vi.waitFor(() => expect(manager.state().plugins[0]!.running).toBe(true));
+      abort.abort();
+      expect(await running).toMatchObject({ ok: false, code: "PLUGIN_E_CANCELLED" });
+      expect(manager.state().plugins[0]).toMatchObject({ status: "enabled", running: true });
+      expect(cancellableLauncher).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceKey: keyOf(hello) }),
+      );
+      await manager.shutdown();
+    });
+    it("keeps the disabled choice when a source is removed without forgetting it", async () => {
+      const hello = await devPlugin("hello");
+      const store = memoryStore([keyOf(hello)]);
+      const manager = await create([hello], store);
+      expect(await manager.removeSource(keyOf(hello), { forget: false })).toMatchObject({
+        ok: true,
+      });
+      expect(store.saved).toEqual([]);
+      await manager.addSource(hello);
+      expect(manager.state().plugins[0]).toMatchObject({ status: "disabled", disabledBy: "user" });
+      await manager.removeSource(keyOf(hello));
+      expect(savedDisabled(store)).toEqual([[]]);
+    });
+    it("leaves safe mode by reading development folders; plugins still start lazily", async () => {
+      const hello = await devPlugin("hello");
+      const off = await devPlugin("off");
+      const manager = await create([builtin, hello, off], memoryStore([keyOf(off)]), true);
+      expect(manager.state().plugins[1]).toMatchObject({ id: "hello", disabledBy: "safe-mode" });
+      expect(await manager.leaveSafeMode()).toMatchObject({ ok: true, state: { safeMode: false } });
+      expect(manager.state().plugins.map((plugin) => [plugin.id, plugin.status])).toEqual([
+        ["kobrixa.basic-plus", "enabled"],
+        ["acme.hello", "enabled"],
+        ["acme.off", "disabled"],
+      ]);
+      expect(launcher).not.toHaveBeenCalled();
+      expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
+      expect(await manager.leaveSafeMode()).toMatchObject({ ok: true });
+      expect(await manager.reloadSource(keyOf(hello))).toMatchObject({ ok: true });
+      await manager.shutdown();
+    });
+    it("refuses to leave safe mode while shutting down", async () => {
+      const manager = await create([await devPlugin("hello")], memoryStore(), true);
+      void manager.shutdown();
+      expect(await manager.leaveSafeMode()).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_SHUTTING_DOWN",
+      });
+      expect(manager.state().safeMode).toBe(true);
+    });
+    it("re-registers a plugin whose reload was interrupted by shutdown once resumed", async () => {
+      const hello = await devPlugin("hello");
+      let stopRequested!: () => void;
+      const requested = new Promise<void>((resolve) => (stopRequested = resolve));
+      let release!: () => void;
+      const released = new Promise<null>((resolve) => (release = () => resolve(null)));
+      let launches = 0;
+      const slowStopLauncher = vi.fn(async () => {
+        const first = launches++ === 0;
+        return memoryPlugin((peer, { exit }) => {
+          peer.handle("initialize", () => ({
+            apiVersion: "1.0.0",
+            sdk: { name: "t", version: "1" },
+          }));
+          peer.handle("command/execute", () => null);
+          peer.handle("shutdown", () => {
+            if (!first) return null;
+            stopRequested();
+            return released;
+          });
+          peer.onNotification("exit", () => exit(0));
+        }).process;
+      });
+      const manager = await createWith([hello], slowStopLauncher);
+      expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
+      const reloading = manager.reloadSource(keyOf(hello));
+      // The reload has retired the old supervisor and is waiting for it to stop.
+      await requested;
+      const shutdown = manager.shutdown();
+      release();
+      expect(await reloading).toMatchObject({ ok: false, code: "PLUGIN_E_SHUTTING_DOWN" });
+      await shutdown;
+      await manager.resume();
+      expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
+      await manager.shutdown();
     });
   });
 });

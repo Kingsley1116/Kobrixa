@@ -12,6 +12,8 @@ import type { PluginProcess, ProcessExit } from "./process.js";
 
 export interface LaunchablePlugin {
   readonly id: string;
+  /** The manager's source key, so launchers can file output under the right source. */
+  readonly sourceKey?: string;
   readonly directory: string;
   readonly entry: string;
   readonly runtime: "node" | "python";

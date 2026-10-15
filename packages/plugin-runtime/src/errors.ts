@@ -27,6 +27,9 @@ export const PLUGIN_ERROR_CODES = [
   "PLUGIN_E_SHUTTING_DOWN",
   "PLUGIN_E_SOURCE_TIMEOUT",
   "PLUGIN_E_SOURCE_EXISTS",
+  "PLUGIN_E_DEVELOPER_MODE",
+  "PLUGIN_E_SESSION_SOURCE",
+  "PLUGIN_E_PYTHON_UNUSABLE",
 ] as const;
 export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 export interface PluginProblem {

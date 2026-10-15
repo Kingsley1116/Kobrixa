@@ -95,8 +95,8 @@ const unresolved = (read: ReadPlugin): RegisteredPlugin => ({
   problems: [...read.problems],
   status: "invalid",
 });
-const readOptions = (options: PluginManagerOptions) => ({
-  safeMode: options.safeMode,
+const readOptions = (options: PluginManagerOptions, safeMode: boolean) => ({
+  safeMode,
   ...(options.sourceReadTimeoutMs === undefined ? {} : { timeoutMs: options.sourceReadTimeoutMs }),
 });
 /** Converts schema v1 disables (manifest ids) once a development source with that id was read. */
@@ -130,6 +130,7 @@ export class PluginManager {
   #disabled: Set<string>;
   readonly #legacy: Set<string>;
   #stateProblem: PluginProblem | undefined;
+  #safeMode: boolean;
 
   static async create(options: PluginManagerOptions): Promise<PluginManager> {
     let stored: PluginPersistedState & { problem?: string };
@@ -139,7 +140,7 @@ export class PluginManager {
       stored = { disabled: new Set(), legacyDisabledIds: new Set(), problem: messageOf(error) };
     }
     const reads = await Promise.all(
-      options.sources.map((source) => readSource(source, readOptions(options))),
+      options.sources.map((source) => readSource(source, readOptions(options, options.safeMode))),
     );
     const disabled = new Set(stored.disabled);
     const legacy = new Set(stored.legacyDisabledIds);
@@ -158,6 +159,7 @@ export class PluginManager {
     stored: { disabled: Set<string>; legacy: Set<string>; problem: string | undefined },
     sources: { source: PluginSource; read: ReadPlugin }[],
   ) {
+    this.#safeMode = options.safeMode;
     this.#disabled = stored.disabled;
     this.#legacy = stored.legacy;
     this.#entries = sources.map(({ source, read }) => ({
@@ -178,7 +180,7 @@ export class PluginManager {
   state(): PluginsSnapshot {
     return {
       revision: this.#revision,
-      safeMode: this.options.safeMode,
+      safeMode: this.#safeMode,
       developmentMode: this.#entries.some((entry) => entry.read.source === "development"),
       ...(this.#stateProblem ? { stateProblem: this.#stateProblem } : {}),
       plugins: this.#entries.map((entry) => this.#summary(entry)),
@@ -193,14 +195,14 @@ export class PluginManager {
     )?.plugin.id;
   }
 
-  async executeCommand(commandId: string): Promise<PluginCommandResult> {
+  async executeCommand(commandId: string, signal?: AbortSignal): Promise<PluginCommandResult> {
     if (this.#shutdown) return failure("PLUGIN_E_DISABLED", "Kobrixa is shutting down plugins.");
     const owner = this.#commands.get(commandId);
     const supervisor = owner ? this.#supervisors.get(owner) : undefined;
     if (!supervisor)
       return failure("PLUGIN_E_UNKNOWN_COMMAND", `No enabled plugin contributes ${commandId}.`);
     try {
-      await supervisor.executeCommand(commandId);
+      await supervisor.executeCommand(commandId, signal);
       return { ok: true };
     } catch (error) {
       return error instanceof PluginError
@@ -224,7 +226,7 @@ export class PluginManager {
         "PLUGIN_E_BUILTIN_REQUIRED",
         `${entry.plugin.id} is part of Kobrixa and cannot be disabled in this version.`,
       );
-    if (enabled && this.options.safeMode)
+    if (enabled && this.#safeMode)
       return failure(
         "PLUGIN_E_SAFE_MODE",
         "Restart Kobrixa without --safe-mode to enable development plugins.",
@@ -251,9 +253,12 @@ export class PluginManager {
     return this.#enqueue(() => this.#addSource(source));
   }
 
-  /** Stops and unregisters a development source. Its files are never touched. */
-  removeSource(sourceKey: string): Promise<PluginActionResult> {
-    return this.#enqueue(() => this.#removeSource(sourceKey));
+  /**
+   * Stops and unregisters a development source. Its files are never touched. `forget: false`
+   * keeps its disabled choice for when the same folder is added again.
+   */
+  removeSource(sourceKey: string, options: { forget?: boolean } = {}): Promise<PluginActionResult> {
+    return this.#enqueue(() => this.#removeSource(sourceKey, options.forget !== false));
   }
 
   /**
@@ -265,6 +270,14 @@ export class PluginManager {
     return this.#enqueue(() => this.#reloadSource(sourceKey));
   }
 
+  /**
+   * Leaves safe mode for the rest of the session: every development folder is read now and
+   * enabled plugins start lazily on their next command.
+   */
+  leaveSafeMode(): Promise<PluginActionResult> {
+    return this.#enqueue(() => this.#leaveSafeMode());
+  }
+
   async #addSource(source: DevelopmentSource): Promise<PluginActionResult> {
     const closed = this.#closed();
     if (closed) return closed;
@@ -274,7 +287,7 @@ export class PluginManager {
         "PLUGIN_E_SOURCE_EXISTS",
         `${path.resolve(source.directory)} is already loaded.`,
       );
-    const read = await readSource(source, readOptions(this.options));
+    const read = await readSource(source, readOptions(this.options, this.#safeMode));
     const closedAfterRead = this.#closed();
     if (closedAfterRead) return closedAfterRead;
     this.#entries.push({ source, read, plugin: unresolved(read), generation: 0 });
@@ -283,11 +296,11 @@ export class PluginManager {
     return { ok: true, state: this.state() };
   }
 
-  async #removeSource(sourceKey: string): Promise<PluginActionResult> {
+  async #removeSource(sourceKey: string, forget: boolean): Promise<PluginActionResult> {
     const refused = this.#refuseChange(sourceKey, "removed");
     if (refused) return refused;
     this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);
-    if (this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
+    if (forget && this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
     await this.#apply("cancelled");
     return { ok: true, state: this.state() };
   }
@@ -295,7 +308,7 @@ export class PluginManager {
   async #reloadSource(sourceKey: string): Promise<PluginActionResult> {
     const refused = this.#refuseChange(sourceKey, "reloaded");
     if (refused) return refused;
-    if (this.options.safeMode)
+    if (this.#safeMode)
       return failure(
         "PLUGIN_E_SAFE_MODE",
         "Restart Kobrixa without safe mode to reload development plugins.",
@@ -311,12 +324,31 @@ export class PluginManager {
       await this.#retire([supervisor], "cancelled");
     }
     entry.generation += 1;
-    const read = await readSource(entry.source, readOptions(this.options));
+    const read = await readSource(entry.source, readOptions(this.options, this.#safeMode));
     const closed = this.#closed();
     if (closed) return closed;
     entry.read = read;
     if (convertLegacy([read], this.#disabled, this.#legacy)) await this.#saveBestEffort();
     await this.#apply("cancelled");
+    return { ok: true, state: this.state() };
+  }
+
+  async #leaveSafeMode(): Promise<PluginActionResult> {
+    const closed = this.#closed();
+    if (closed) return closed;
+    if (!this.#safeMode) return { ok: true, state: this.state() };
+    const development = this.#entries.filter((entry) => entry.read.source === "development");
+    const reads = await Promise.all(
+      development.map((entry) => readSource(entry.source, readOptions(this.options, false))),
+    );
+    const closedAfterRead = this.#closed();
+    if (closedAfterRead) return closedAfterRead;
+    development.forEach((entry, index) => {
+      entry.read = reads[index]!;
+    });
+    this.#safeMode = false;
+    if (convertLegacy(reads, this.#disabled, this.#legacy)) await this.#saveBestEffort();
+    await this.#apply("disabled");
     return { ok: true, state: this.state() };
   }
 
@@ -390,7 +422,8 @@ export class PluginManager {
     if (!this.#shutdown) return;
     await this.#shutdown.catch(() => undefined);
     this.#shutdown = undefined;
-    this.#emitState();
+    // A change interrupted by the shutdown may have left an enabled plugin without a supervisor.
+    await this.#enqueue(() => this.#apply("cancelled"));
   }
 
   /** Changes are serialized so each one computes and saves the next state from the latest one. */
@@ -426,7 +459,7 @@ export class PluginManager {
   #reconcile(): PluginSupervisor[] {
     const resolved = resolvePlugins(
       this.#entries.map((entry) => entry.read),
-      { disabled: this.#disabled, safeMode: this.options.safeMode },
+      { disabled: this.#disabled, safeMode: this.#safeMode },
     );
     const live = new Set<string>();
     this.#commands.clear();
@@ -486,6 +519,7 @@ export class PluginManager {
     const supervisor = new PluginSupervisor(
       {
         id: plugin.id,
+        sourceKey,
         directory: plugin.directory,
         entry: plugin.entry,
         runtime: manifest.runtime.kind,
