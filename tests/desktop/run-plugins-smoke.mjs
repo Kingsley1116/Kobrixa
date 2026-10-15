@@ -1,4 +1,4 @@
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -144,6 +144,47 @@ try {
     if (alive(pid)) throw new Error(`Plugin process ${name} (${pid}) outlived Kobrixa.`);
   }
   console.log("PASS plugins: utilityProcess TS, Python stdio, crash isolation, quit cleanup");
+  // The GUI flow: the same controller the settings panel drives, with scripted native dialogs.
+  await bundle(
+    path.join(root, "tests/desktop/plugins-gui-smoke-main.ts"),
+    path.join(temporary, "gui-main.cjs"),
+    ["electron"],
+  );
+  const guiUserData = path.join(temporary, "gui-user-data");
+  const runGui = async (phase) => {
+    const gui = spawn(
+      process.execPath,
+      [
+        require.resolve("electron/cli.js"),
+        path.join(temporary, "gui-main.cjs"),
+        `--user-data-dir=${guiUserData}`,
+        temporary,
+        phase,
+      ],
+      { stdio: "inherit" },
+    );
+    return new Promise((resolve, reject) => {
+      gui.once("error", reject);
+      gui.once("exit", resolve);
+    });
+  };
+  const first = await runGui("first");
+  if (first !== 0) throw new Error(`Plugin GUI smoke (first) failed (${first})`);
+  // electron/cli.js exits with 1 when Electron is killed by a signal.
+  const second = await runGui("second");
+  await access(path.join(temporary, "gui-crash-ready.txt")).catch(() => {
+    throw new Error(`Plugin GUI smoke (second) failed before the simulated crash (${second})`);
+  });
+  if (second === 0) throw new Error("Plugin GUI smoke (second) should have been killed");
+  const third = await runGui("third");
+  if (third !== 0) throw new Error(`Plugin GUI smoke (third) failed (${third})`);
+  await access(path.join(temporary, "hello-ts/kobrixa-plugin.json"));
+  const marker = await stat(path.join(guiUserData, "plugins/session.json")).catch(() => undefined);
+  if (marker) throw new Error("A clean quit must remove the session marker");
+  const saved = JSON.parse(await readFile(path.join(guiUserData, "plugins/state.json"), "utf8"));
+  if (saved.developerMode !== true || saved.sources.length !== 1 || "safeModeLock" in saved)
+    throw new Error(`Unexpected plugin settings after the GUI smoke: ${JSON.stringify(saved)}`);
+  console.log("PASS plugin GUI: developer mode, link, reload, unlink, recovery after a hang");
   passed = true;
 } finally {
   if (passed) await rm(temporary, { recursive: true, force: true });
