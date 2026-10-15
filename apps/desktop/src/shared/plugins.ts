@@ -83,6 +83,8 @@ export type PluginsResult =
       sourceKey?: string;
     }
   | { ok: false; code: PluginErrorCode; message: string };
+export type PluginsViewEvent =
+  { type: "state"; state: PluginsView } | { type: "notice"; notice: StoredNotice };
 export type PluginEvent = PluginManagerEvent;
 export interface PluginsApi {
   state(): Promise<PluginsSnapshot>;
