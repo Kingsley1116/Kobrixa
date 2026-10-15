@@ -165,6 +165,31 @@ describe("startPlugins", () => {
     expect(dialogs.confirmLink).toHaveBeenCalledOnce();
   });
 
+  it("stores only one source when links of the same folder overlap", async () => {
+    const folder = await pluginFolder("hello");
+    const dialogs = fakeDialogs();
+    const controller = await enabled(dialogs);
+    dialogs.chooseFolder.mockResolvedValue(folder);
+    let confirm!: (value: boolean) => void;
+    const confirmed = new Promise<boolean>((resolve) => {
+      confirm = resolve;
+    });
+    let confirmations = 0;
+    dialogs.confirmLink.mockImplementation(() => {
+      confirmations += 1;
+      if (confirmations === 2) confirm(true);
+      return confirmed;
+    });
+    const results = await Promise.all([controller.linkFolder(), controller.linkFolder()]);
+    expect(dialogs.confirmLink).toHaveBeenCalledTimes(2);
+    for (const result of results)
+      expect(result).toMatchObject({ ok: true, sourceKey: developmentSourceKey(folder) });
+    expect((await saved()).sources).toEqual([{ directory: folder }]);
+    expect(controller.state().plugins).toHaveLength(1);
+    expect(controller.state().developer.linkedCount).toBe(1);
+    expect((await start()).state().plugins).toHaveLength(1);
+  });
+
   it.skipIf(process.platform === "win32")(
     "treats a symlink to a linked folder as a duplicate",
     async () => {
@@ -365,6 +390,72 @@ describe("startPlugins", () => {
     expect((await saved()).safeModeLock).toBeUndefined();
   });
 
+  it.each([false, true])(
+    "ignores renderer hangs without development sources (developer mode: %s)",
+    async (developerMode) => {
+      const controller = await enabled();
+      await controller.setDeveloperMode(developerMode);
+      controller.markRendererUnresponsive();
+      const marker = JSON.parse(
+        await readFile(path.join(userData, "plugins/session.json"), "utf8"),
+      );
+      expect.soft(marker.rendererUnresponsive).toBe(false);
+      controller.finishSession();
+      const restarted = await start();
+      expect.soft(restarted.state().safeMode).toBe(false);
+      expect.soft(restarted.state().safeModeLock).toBeUndefined();
+      expect((await saved()).safeModeLock).toBeUndefined();
+    },
+  );
+
+  it.each([
+    { developerMode: false, linked: false },
+    { developerMode: true, linked: false },
+    { developerMode: false, linked: true },
+  ])(
+    "ignores an unclean marker without session development sources: %j",
+    async ({ developerMode, linked }) => {
+      const dialogs = fakeDialogs();
+      const controller = await enabled(dialogs);
+      if (linked) {
+        dialogs.chooseFolder.mockResolvedValueOnce(await pluginFolder("hello"));
+        await controller.linkFolder();
+      }
+      await controller.setDeveloperMode(developerMode);
+      await writeFile(
+        path.join(userData, "plugins/session.json"),
+        JSON.stringify({
+          startedAt: "2026-10-15T00:00:00.000Z",
+          thirdPartyRunning: true,
+          rendererUnresponsive: false,
+        }),
+      );
+      const restarted = await start();
+      expect.soft(restarted.state().safeMode).toBe(false);
+      expect.soft(restarted.state().safeModeLock).toBeUndefined();
+      expect((await saved()).safeModeLock).toBeUndefined();
+      expect(
+        JSON.parse(await readFile(path.join(userData, "plugins/session.json"), "utf8")),
+      ).toMatchObject({
+        thirdPartyRunning: false,
+        rendererUnresponsive: false,
+      });
+    },
+  );
+
+  it("locks safe mode after a renderer hang with command-line development sources", async () => {
+    const commandLine = { developmentDirectories: [await pluginFolder("hello")], safeMode: false };
+    const controller = await start(fakeDialogs(), { commandLine });
+    controller.markRendererUnresponsive();
+    controller.finishSession();
+    const restarted = await start(fakeDialogs(), { commandLine });
+    expect(restarted.state()).toMatchObject({
+      safeMode: true,
+      safeModeLock: { reason: "renderer-unresponsive" },
+    });
+    expect((await saved()).safeModeLock.reason).toBe("renderer-unresponsive");
+  });
+
   it("locks safe mode after an unclean exit with third-party plugins running until restored", async () => {
     const folder = await pluginFolder("hello");
     const key = developmentSourceKey(folder);
@@ -496,11 +587,30 @@ describe("PluginController with a fake manager", () => {
       },
     ],
   };
-  function setup() {
+  function setup(
+    options: {
+      document?: Partial<PluginStateDocument>;
+      snapshot?: PluginsSnapshot;
+      failUpdates?: boolean;
+    } = {},
+  ) {
     let listener: (event: PluginManagerEvent) => void = () => {};
+    let currentSnapshot = options.snapshot ?? snapshot;
     const manager = {
       active: false,
-      state: () => snapshot,
+      state: () => currentSnapshot,
+      addSource: vi.fn(async () => ({ ok: true })),
+      removeSource: vi.fn(async (sourceKey: string) => {
+        currentSnapshot = {
+          ...currentSnapshot,
+          plugins: currentSnapshot.plugins.filter((plugin) => plugin.sourceKey !== sourceKey),
+        };
+        return { ok: true };
+      }),
+      leaveSafeMode: vi.fn(async () => {
+        currentSnapshot = { ...currentSnapshot, safeMode: false };
+        return { ok: true };
+      }),
       executeCommand: vi.fn(
         (_command: string, signal?: AbortSignal) =>
           new Promise((resolve) =>
@@ -521,16 +631,20 @@ describe("PluginController with a fake manager", () => {
       sources: [],
       disabled: [],
       legacyDisabledIds: [],
+      ...options.document,
     };
+    const settings = {
+      settings: () => document,
+      update: vi.fn(async (change: (current: PluginStateDocument) => PluginStateDocument) => {
+        if (options.failUpdates) throw new Error("Settings are read-only.");
+        document = change(document);
+      }),
+    };
+    const dialogs = fakeDialogs();
     const controller = new PluginController({
       manager: manager as unknown as PluginManagerPort,
-      settings: {
-        settings: () => document,
-        update: async (change) => {
-          document = change(document);
-        },
-      },
-      dialogs: fakeDialogs(),
+      settings,
+      dialogs,
       logs: new PluginLogs(),
       notices: new PluginNotices(),
       marker,
@@ -540,8 +654,69 @@ describe("PluginController with a fake manager", () => {
       platform: "linux",
       session: { directories: [], safeMode: false },
     });
-    return { controller, manager, marker, emit: (event: PluginManagerEvent) => listener(event) };
+    return {
+      controller,
+      manager,
+      marker,
+      settings,
+      dialogs,
+      emit: (event: PluginManagerEvent) => listener(event),
+    };
   }
+
+  it("adds no plugin when saving a linked folder fails", async () => {
+    const { controller, manager, settings, dialogs } = setup({
+      snapshot: { ...snapshot, plugins: [] },
+      failUpdates: true,
+    });
+    dialogs.chooseFolder.mockResolvedValueOnce(await pluginFolder("hello"));
+    expect(await controller.linkFolder()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_STATE_SAVE",
+      message: "Settings are read-only.",
+    });
+    expect(settings.update).toHaveBeenCalledOnce();
+    expect(settings.settings().sources).toEqual([]);
+    expect(manager.addSource).not.toHaveBeenCalled();
+    expect(controller.state().plugins).toEqual([]);
+  });
+
+  it("keeps the safe-mode lock when saving its removal fails", async () => {
+    const safeModeLock = { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" as const };
+    const { controller, manager, settings } = setup({
+      document: { safeModeLock },
+      snapshot: { ...snapshot, safeMode: true },
+      failUpdates: true,
+    });
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_STATE_SAVE",
+      message: "Settings are read-only.",
+    });
+    expect(settings.update).toHaveBeenCalledOnce();
+    expect(settings.settings().safeModeLock).toEqual(safeModeLock);
+    expect(controller.state()).toMatchObject({ safeMode: true, safeModeLock });
+    expect(manager.leaveSafeMode).not.toHaveBeenCalled();
+  });
+
+  it("unlinks for this session with persisted false when saving fails", async () => {
+    const directory = await pluginFolder("hello");
+    const sourceKey = developmentSourceKey(directory);
+    const { controller, manager, settings } = setup({
+      document: { sources: [{ directory }] },
+      snapshot: { ...snapshot, plugins: [{ ...snapshot.plugins[0]!, sourceKey }] },
+      failUpdates: true,
+    });
+    expect(await controller.unlink(sourceKey)).toMatchObject({
+      ok: true,
+      persisted: false,
+      state: { plugins: [] },
+    });
+    expect(settings.update).toHaveBeenCalledOnce();
+    expect(manager.removeSource).toHaveBeenCalledWith(sourceKey);
+    expect(settings.settings().sources).toEqual([{ directory }]);
+    expect(controller.state().plugins).toEqual([]);
+  });
 
   it("tracks in-flight commands per source and cancels only that source", async () => {
     const { controller } = setup();

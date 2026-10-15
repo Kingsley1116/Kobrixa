@@ -192,6 +192,7 @@ describe("PluginManager", () => {
     expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({
       ok: false,
       code: "PLUGIN_E_SAFE_MODE",
+      message: "Restore plugins first, or restart without --safe-mode.",
     });
     expect(await manager.setEnabled(keyOf(hello), false)).toMatchObject({ ok: true });
     expect(savedDisabled(store)).toEqual([[keyOf(hello)]]);
@@ -608,6 +609,7 @@ describe("PluginManager", () => {
       const manager = await create([hello], memoryStore(), true);
       expect(await manager.reloadSource(keyOf(hello))).toMatchObject({
         code: "PLUGIN_E_SAFE_MODE",
+        message: "Restore plugins first, or restart without --safe-mode.",
       });
     });
     it("drops notices from a removed source but delivers them while disabling", async () => {

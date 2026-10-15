@@ -53,6 +53,17 @@ it("registers every plugin channel and forwards events", () => {
   expect(plugins.onEvent).toHaveBeenCalledWith(publish);
 });
 
+it.each(["acme.hello", "dev:../../etc"])(
+  "rejects bad source key %s for enabling and reading logs before calling the controller",
+  (sourceKey) => {
+    const { plugins, call } = setup();
+    expect.soft(() => call("plugins:set-enabled", sourceKey, true)).toThrow();
+    expect.soft(() => call("plugins:readLog", sourceKey, 0)).toThrow();
+    expect.soft(plugins.setEnabled).not.toHaveBeenCalled();
+    expect(plugins.readLog).not.toHaveBeenCalled();
+  },
+);
+
 it("validates every renderer argument before it reaches the controller", async () => {
   const { plugins, call } = setup();
   expect(await call("plugins:execute", "acme.hello.greet")).toEqual({ ok: true });

@@ -131,6 +131,16 @@ export async function probePython(
   try {
     return classifyProbe(await run(command, PYTHON_PROBE_SCRIPT));
   } catch (error) {
-    return { status: "error", problem: "failed", detail: messageOf(error) };
+    const failure = error as (NodeJS.ErrnoException & { killed?: boolean }) | undefined;
+    const message = messageOf(error);
+    let detail: string;
+    if (failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" || /maxBuffer/i.test(message))
+      detail = "Printed more than 4 KiB.";
+    else if (failure?.killed || failure?.code === "ETIMEDOUT" || /timed out|timeout/i.test(message))
+      detail = "Timed out after 3 s.";
+    else if (failure?.code === "ENOENT") detail = "Not found.";
+    else if (failure?.code === "EACCES") detail = "Not executable.";
+    else detail = message.replace(PYTHON_PROBE_SCRIPT, "").split("\n")[0]!.trim();
+    return { status: "error", problem: "failed", detail };
   }
 }

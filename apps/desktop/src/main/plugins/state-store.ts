@@ -62,6 +62,7 @@ export function filePluginStateStore(
 ): PluginSettingsStore {
   const file = path.join(userData, "plugins", "state.json");
   let document = empty();
+  let readError: Error | undefined;
   let writes: Promise<void> = Promise.resolve();
   const write = async (next: PluginStateDocument) => {
     await mkdir(path.dirname(file), { recursive: true });
@@ -76,6 +77,7 @@ export function filePluginStateStore(
   };
   const commit = (change: (current: PluginStateDocument) => PluginStateDocument) => {
     const run = writes.then(async () => {
+      if (readError) throw readError;
       const next = v2Schema.parse(change(document));
       await write(next);
       document = next;
@@ -89,7 +91,13 @@ export function filePluginStateStore(
       try {
         text = await readFile(file, "utf8");
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          readError = new Error(
+            "The plugin settings file could not be read and was left untouched.",
+            { cause: error },
+          );
+          throw error;
+        }
         document = empty();
         return persisted(document);
       }

@@ -229,7 +229,7 @@ export class PluginManager {
     if (enabled && this.#safeMode)
       return failure(
         "PLUGIN_E_SAFE_MODE",
-        "Restart Kobrixa without --safe-mode to enable development plugins.",
+        "Restore plugins first, or restart without --safe-mode.",
       );
     if (this.#disabled.has(sourceKey) !== enabled) return { ok: true, state: this.state() };
     const next = new Set(this.#disabled);
@@ -311,7 +311,7 @@ export class PluginManager {
     if (this.#safeMode)
       return failure(
         "PLUGIN_E_SAFE_MODE",
-        "Restart Kobrixa without safe mode to reload development plugins.",
+        "Restore plugins first, or restart without --safe-mode.",
       );
     const entry = this.#entryOf(sourceKey)!;
     // Block new commands and cancel running ones before the folder is read again.

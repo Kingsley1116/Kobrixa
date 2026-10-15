@@ -70,26 +70,48 @@ describe("runProbe", () => {
       await runProbe(node("process.stdout.write(process.argv.slice(1).join('|'))"), "S", limits),
     ).toBe("-c|S");
   });
-  it("stops a probe that hangs or floods stdout", async () => {
+  it("stops a probe that hangs and reports the timeout", async () => {
     const started = Date.now();
-    await expect(
-      runProbe(node("setTimeout(() => {}, 60_000)"), "", { timeoutMs: 200, outputBytes: 4096 }),
-    ).rejects.toThrow();
-    expect(Date.now() - started).toBeLessThan(5_000);
-    await expect(
-      runProbe(
-        node("process.stdout.write('x'.repeat(100_000)); setTimeout(() => {}, 60_000)"),
-        "",
-        limits,
+    expect(
+      await probePython(node("setTimeout(() => {}, 60_000)"), (command, script) =>
+        runProbe(command, script, { timeoutMs: 200, outputBytes: 4096 }),
       ),
-    ).rejects.toThrow(/maxBuffer/);
+    ).toEqual({ status: "error", problem: "failed", detail: "Timed out after 3 s." });
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
-  it("reports a runner failure as an unusable interpreter", async () => {
+  it("stops a probe that floods stdout and reports the output limit", async () => {
+    expect(
+      await probePython(
+        node("process.stdout.write('x'.repeat(100_000)); setTimeout(() => {}, 60_000)"),
+        (command, script) => runProbe(command, script, limits),
+      ),
+    ).toEqual({ status: "error", problem: "failed", detail: "Printed more than 4 KiB." });
+  });
+  it.each([
+    [Object.assign(new Error("probe killed"), { killed: true }), "Timed out after 3 s."],
+    [Object.assign(new Error("probe expired"), { code: "ETIMEDOUT" }), "Timed out after 3 s."],
+    [new Error("probe timed out"), "Timed out after 3 s."],
+    [
+      Object.assign(new Error("output limit"), {
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+        killed: true,
+      }),
+      "Printed more than 4 KiB.",
+    ],
+    [new Error("stdout maxBuffer length exceeded"), "Printed more than 4 KiB."],
+    [Object.assign(new Error("spawn python3 ENOENT"), { code: "ENOENT" }), "Not found."],
+    [Object.assign(new Error("spawn python3 EACCES"), { code: "EACCES" }), "Not executable."],
+    [
+      new Error(`Command failed: python3 -c ${PYTHON_PROBE_SCRIPT}\nTraceback: failure`),
+      "Command failed: python3 -c",
+    ],
+    [new Error("Unexpected failure\nMore details"), "Unexpected failure"],
+  ])("reports a readable runner failure for %s", async (error, detail) => {
     expect(
       await probePython({ executable: "python3", args: [] }, async () => {
-        throw new Error("spawn python3 ENOENT");
+        throw error;
       }),
-    ).toEqual({ status: "error", problem: "failed", detail: "spawn python3 ENOENT" });
+    ).toEqual({ status: "error", problem: "failed", detail });
   });
   const python = ["python3", "python"].find(
     (command) =>

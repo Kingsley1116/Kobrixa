@@ -371,6 +371,8 @@ export class PluginController {
   }
 
   markRendererUnresponsive(): void {
+    if (!this.deps.manager.state().plugins.some((plugin) => plugin.source === "development"))
+      return;
     this.deps.marker.update({ rendererUnresponsive: true });
   }
 
@@ -408,7 +410,9 @@ export class PluginController {
         ...current,
         sources:
           replacing === undefined
-            ? [...current.sources, { directory }]
+            ? current.sources.some((source) => developmentSourceKey(source.directory) === sourceKey)
+              ? current.sources
+              : [...current.sources, { directory }]
             : current.sources.map((source) =>
                 developmentSourceKey(source.directory) === replacing ? { directory } : source,
               ),
@@ -568,17 +572,6 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   }
   const marker = new SessionMarkerFile(options.userData, now);
   const unclean = marker.begin();
-  if (unclean && !settings.settings().safeModeLock)
-    await settings
-      .update((current) => ({
-        ...current,
-        safeModeLock: { since: now().toISOString(), reason: unclean },
-      }))
-      .catch(() => undefined);
-  const safeMode =
-    options.commandLine.safeMode ||
-    unclean !== undefined ||
-    settings.settings().safeModeLock !== undefined;
   const resolve = options.realpath ?? ((directory: string) => realpath(directory));
   const sessionDirectories = await Promise.all(
     options.commandLine.developmentDirectories.map((directory) =>
@@ -593,6 +586,18 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
         ...sessionDirectories,
       ])
     : [];
+  const relevantUnclean = directories.length > 0 ? unclean : undefined;
+  if (relevantUnclean && !settings.settings().safeModeLock)
+    await settings
+      .update((current) => ({
+        ...current,
+        safeModeLock: { since: now().toISOString(), reason: relevantUnclean },
+      }))
+      .catch(() => undefined);
+  const safeMode =
+    options.commandLine.safeMode ||
+    relevantUnclean !== undefined ||
+    settings.settings().safeModeLock !== undefined;
   const logs = new PluginLogs();
   const created: { controller?: PluginController } = {};
   const hooks = {

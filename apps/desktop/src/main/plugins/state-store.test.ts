@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { filePluginStateStore } from "./state-store.js";
 
 let root: string;
@@ -98,6 +98,25 @@ it("removes its temporary file when the final rename fails", async () => {
   expect(
     (await readdir(path.join(root, "plugins"))).filter((name) => name.endsWith(".tmp")),
   ).toEqual([]);
+});
+
+it("leaves unreadable settings untouched and rejects every later update and save", async () => {
+  await mkdir(file(), { recursive: true });
+  const sentinel = path.join(file(), "keep.txt");
+  await writeFile(sentinel, "Do not overwrite these settings.");
+  const store = filePluginStateStore(root);
+  await expect(store.load()).rejects.toThrow();
+  const before = store.settings();
+  const change = vi.fn((current: typeof before) => ({ ...current, developerMode: true }));
+  const message = "The plugin settings file could not be read and was left untouched.";
+  await expect(store.update(change)).rejects.toThrow(message);
+  await expect(store.save(state(["dev:aaaaaaaaaaaaaaaa"]))).rejects.toThrow(message);
+  await expect(store.update(change)).rejects.toThrow(message);
+  expect(change).not.toHaveBeenCalled();
+  expect(store.settings()).toBe(before);
+  expect(await readdir(path.join(root, "plugins"))).toEqual(["state.json"]);
+  expect(await readdir(file())).toEqual(["keep.txt"]);
+  expect(await readFile(sentinel, "utf8")).toBe("Do not overwrite these settings.");
 });
 
 const lockedSettings = {
