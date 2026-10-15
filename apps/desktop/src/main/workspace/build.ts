@@ -22,6 +22,7 @@ import type { SimulationPrepareResult } from "../../shared/simulator.js";
 import { snapshotSimulationAssets } from "./prepare-simulation.js";
 import { resolveBuiltinCompiler } from "./builtin-compilers.js";
 import { OutputQueue } from "./output-queue.js";
+import { ProjectLoadError } from "./project-load-error.js";
 interface BuildRecord {
   cancellation: Int32Array;
   worker?: Worker;
@@ -180,7 +181,11 @@ export class BuildService {
             complete(failedBuild(buildId, record.result.target, error, entry)),
           );
       } catch (error) {
-        complete(failedBuild(buildId, record.result.target, error, entry));
+        complete(
+          error instanceof ProjectLoadError
+            ? { ...record.result, success: false, artifacts: [], diagnostics: error.diagnostics }
+            : failedBuild(buildId, record.result.target, error, entry),
+        );
       }
     });
     this.#admissions = admission.catch(() => undefined);
@@ -212,6 +217,8 @@ export class BuildService {
       try {
         captured = await untilCancelled(this.capture(workspaceId, overlays), signal);
       } catch (error) {
+        if (error instanceof ProjectLoadError)
+          return { success: false, diagnostics: error.diagnostics };
         if (error instanceof BuildError)
           return {
             success: false,

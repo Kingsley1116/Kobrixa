@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,6 +84,30 @@ async function result(id: string) {
   expect(complete).toHaveLength(1);
   return (complete[0] as Extract<BuildEvent, { type: "complete" }>).result;
 }
+
+it.each(["./src/main.bp", "src//main.bp"])(
+  "builds a Basic Plus project with entry %s without BP1000",
+  async (entry) => {
+    await mkdir(path.join(root, "src"));
+    await writeFile(path.join(root, "src/main.bp"), "LCD.Clear()\n");
+    await writeFile(
+      path.join(root, "kobrixa.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "normalized",
+        language: "bp",
+        target: "ev3-native",
+        entry,
+        assets: [],
+        outputDir: "build",
+      }),
+    );
+    const built = await result(await service.start("project", {}));
+    expect(built.diagnostics.some((item) => item.code === "BP1000")).toBe(false);
+    expect(built.success).toBe(true);
+    expect(built.artifacts.some((item) => item.role === "deploy-main")).toBe(true);
+  },
+);
 
 it("asks the plugin registry for the project's frontend", async () => {
   const requests: BuildRequest[] = [];

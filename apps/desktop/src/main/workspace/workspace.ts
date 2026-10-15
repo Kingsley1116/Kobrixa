@@ -49,6 +49,7 @@ import type {
   WorkspaceSearchResult,
 } from "../../shared/workspace-search.js";
 import { isIgnoredWorkspacePath, searchWorkspace, workspaceSearchLimits } from "./search.js";
+import { ProjectLoadError } from "./project-load-error.js";
 
 export interface WorkspaceProjectInput {
   inputPath: string;
@@ -738,15 +739,13 @@ export class WorkspaceService {
       resolveFrontend,
     );
     if (!result.project) {
-      const message =
-        result.diagnostics.map((item) => item.message).join("\n") ||
-        "Choose an entry file before building.";
       if (
         result.error instanceof BuildError &&
         (result.error.code === "BUILD1001" || result.error.code === "BUILD1002")
       )
         throw result.error;
-      throw new Error(message);
+      if (result.diagnostics.length) throw new ProjectLoadError(result.diagnostics);
+      throw new Error("Choose an entry file before building.");
     }
     return result.project;
   }

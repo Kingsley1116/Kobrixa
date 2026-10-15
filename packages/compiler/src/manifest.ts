@@ -315,6 +315,8 @@ export async function loadProject(
     const sources = await loadSources(root, manifest, overlays, declaration, sourceCache);
 
     if (diagnostics.length) return { diagnostics, implicit };
+    // Validate the original path first, then expose the same spelling used by sources.
+    manifest = { ...manifest, entry: path.normalize(manifest.entry).replaceAll(path.sep, "/") };
     return {
       project: { root: await realpath(root), manifest, sources, assets: assetFiles },
       diagnostics,
@@ -329,8 +331,9 @@ export async function loadProject(
       ...(resolutionError ? { error: resolutionError } : {}),
       diagnostics: [
         diagnostic(
-          resolutionError?.code ?? "MAN1002",
-          error instanceof Error ? error.message : "Unable to load project.",
+          resolutionError?.code ?? (error instanceof SyntaxError ? "MAN1001" : "MAN1002"),
+          resolutionError?.detail ??
+            (error instanceof Error ? error.message : "Unable to load project."),
         ),
       ],
       implicit: false,

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -343,9 +343,20 @@ it.each(["./src/main.bp", "src//main.bp"])(
     const root = await fixture({ entry });
     const result = await loadProject(root);
     expect(result.diagnostics).toEqual([]);
+    expect(result.project!.manifest.entry).toBe("src/main.bp");
     expect(result.project!.sources).toEqual([{ path: "src/main.bp", content: "LCD.Clear()\n" }]);
+    expect(JSON.parse(await readFile(path.join(root, "kobrixa.json"), "utf8")).entry).toBe(entry);
   },
 );
+
+it("normalizes ./main.bp in the returned manifest and source list", async () => {
+  const root = await fixture({ entry: "./main.bp" });
+  await writeFile(path.join(root, "main.bp"), "LCD.Clear()\n");
+  const result = await loadProject(root);
+  expect(result.diagnostics).toEqual([]);
+  expect(result.project!.manifest.entry).toBe("main.bp");
+  expect(result.project!.sources).toContainEqual({ path: "main.bp", content: "LCD.Clear()\n" });
+});
 
 it.skipIf(process.platform === "win32")("loads source filenames containing a colon", async () => {
   const root = await fixture();
@@ -382,6 +393,10 @@ it.each(["BUILD1001", "BUILD1002", "BUILD1003", "BUILD9000"] as const)(
     });
     const providerFailure = code === "BUILD1001" || code === "BUILD1002";
     expect(result.diagnostics[0]!.code).toBe(providerFailure ? code : "MAN1002");
+    if (providerFailure) {
+      expect(result.diagnostics[0]!.message).toBe(error.detail);
+      expect(`${code}: ${result.diagnostics[0]!.message}`).toBe(error.message);
+    }
     expect(result.error).toBe(providerFailure ? error : undefined);
   },
 );
