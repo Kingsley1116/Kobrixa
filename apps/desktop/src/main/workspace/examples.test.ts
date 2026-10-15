@@ -2,9 +2,10 @@ import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { EV3Backend, inspectRbf } from "@kobrixa/backend-ev3";
+import { inspectRbf } from "@kobrixa/backend-ev3";
 import { BasicPlusFrontend } from "@kobrixa/basic-plus";
 import { BuildSession, loadProject } from "@kobrixa/compiler";
+import { createBuiltinCompilers, resolveBuiltinCompiler } from "./builtin-compilers.js";
 import { validateIR } from "@kobrixa/ir";
 
 const repositoryRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
@@ -128,7 +129,13 @@ describe("shipped examples", () => {
       expect(frontend.ir, projectPath).toBeDefined();
       expect(validateIR(frontend.ir!), projectPath).toEqual([]);
 
-      const result = await new BuildSession(new BasicPlusFrontend(), new EV3Backend()).compile(
+      const snapshot = resolveBuiltinCompiler(
+        loaded.project!.manifest.language,
+        loaded.project!.manifest.target,
+      );
+      if (!snapshot.ok) throw new Error(snapshot.message);
+      const compilers = createBuiltinCompilers(snapshot);
+      const result = await new BuildSession(compilers.frontend, compilers.backend).compile(
         loaded.project!,
       );
       expect(result.diagnostics, projectPath).toEqual([]);

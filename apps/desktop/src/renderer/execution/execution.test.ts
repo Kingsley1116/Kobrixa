@@ -5,12 +5,27 @@ import { DEVICE_CONTROL_DENIED, ExecutionController, filesToSave } from "./execu
 import { readTheme } from "../settings/theme.js";
 
 const success: CompileResult = {
+  buildId: "success",
+  target: "ev3-native",
+  deploy: "ev3",
   success: true,
   diagnostics: [],
   runtimeDirectory: "/robot",
-  artifacts: [{ kind: "rbf", path: "/tmp/build/demo.rbf", sha256: "abc" }],
+  artifacts: [
+    {
+      slot: "program",
+      kind: "rbf",
+      role: "deploy-main",
+      mediaType: "application/octet-stream",
+      byteLength: 1,
+      path: "/tmp/build/demo.rbf",
+      sha256: "abc",
+    },
+  ],
 };
 const failure: CompileResult = {
+  buildId: "failure",
+  target: "ev3-native",
   success: false,
   diagnostics: [
     {

@@ -160,7 +160,7 @@ it("invalidates overlapping conflict groups without changing source problems", a
   ).toMatchObject({ ok: true, ir: 3 });
 });
 
-it("keeps temporary frontend lookup independent of a backend and rejects conflicts", async () => {
+it("requires both compiler providers and rejects conflicting frontends", async () => {
   const create = (values: PluginSource[]) =>
     PluginManager.create({
       sources: values,
@@ -173,10 +173,19 @@ it("keeps temporary frontend lookup independent of a backend and rejects conflic
       },
     });
   const manager = await create([sources[0]!]);
-  expect(manager.frontendFor("test")).toBe("test.front");
-  expect(manager.frontendFor("missing")).toBeUndefined();
+  expect(manager.resolveCompiler("test", "test-vm")).toMatchObject({
+    ok: false,
+    code: "BUILD1001",
+  });
+  expect(manager.resolveCompiler("missing", "test-vm")).toMatchObject({
+    ok: false,
+    code: "BUILD1001",
+  });
   await manager.shutdown();
-  const conflicted = await create([sources[0]!, source("test.extra", { frontends: [front] })]);
-  expect(conflicted.frontendFor("test")).toBeUndefined();
+  const conflicted = await create([...sources, source("test.extra", { frontends: [front] })]);
+  expect(conflicted.resolveCompiler("test", "test-vm")).toMatchObject({
+    ok: false,
+    code: "BUILD1001",
+  });
   await conflicted.shutdown();
 });

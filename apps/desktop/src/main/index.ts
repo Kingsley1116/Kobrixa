@@ -186,8 +186,8 @@ void app.whenReady().then(async () => {
     const contents = mainWindow.webContents;
     return contents.isDestroyed() ? undefined : contents;
   };
-  const builds = new BuildService(workspaces, renderer, undefined, (language) =>
-    plugins.frontendFor(language),
+  const builds = new BuildService(workspaces, renderer, undefined, (language, target) =>
+    plugins.resolveCompiler(language, target),
   );
   const language = new LanguageService(workspaces);
   app.on("will-quit", () => {

@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { loadPlugins, resolveCompilerProviders } from "@kobrixa/plugin-runtime";
+import { BuildError, failedBuild } from "@kobrixa/compiler";
 import { BasicPlusFrontend } from "@kobrixa/basic-plus";
 import { EV3Backend } from "@kobrixa/backend-ev3";
 import { BUILTIN_PLUGIN_SOURCES } from "./builtin.js";
@@ -51,4 +52,30 @@ it("registers separate Basic Plus and EV3 providers in safe mode", async () => {
       backend: { ...snapshot.backend, pluginId: "test.missing" },
     }),
   ).toThrow("BUILD1001");
+});
+
+it("uses the package BuildError identity for missing built-in factories", async () => {
+  const plugins = await loadPlugins(BUILTIN_PLUGIN_SOURCES, {
+    disabled: new Set(),
+    safeMode: false,
+  });
+  const snapshot = resolveCompilerProviders(plugins, "bp", "ev3-native");
+  if (!snapshot.ok) throw new Error(snapshot.message);
+  const error = (() => {
+    try {
+      createBuiltinCompilers({
+        ...snapshot,
+        backend: { ...snapshot.backend, pluginId: "test.missing" },
+      });
+    } catch (caught) {
+      return caught;
+    }
+    throw new Error("Expected a missing factory error.");
+  })();
+  expect(error).toBeInstanceOf(BuildError);
+  expect(failedBuild("missing-factory", "ev3-native", error, "main.bp")).toMatchObject({
+    success: false,
+    artifacts: [],
+    diagnostics: [expect.objectContaining({ code: "BUILD1001" })],
+  });
 });

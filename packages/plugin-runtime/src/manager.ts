@@ -197,16 +197,6 @@ export class PluginManager {
     );
   }
 
-  /** @deprecated Temporary until Task 6 rewires index.ts. */
-  frontendFor(language: string): string | undefined {
-    const providers = this.#entries.filter(
-      ({ plugin }) =>
-        plugin.status === "enabled" &&
-        plugin.manifest?.contributes?.frontends?.some((item) => item.language === language),
-    );
-    return providers.length === 1 ? providers[0]!.plugin.id : undefined;
-  }
-
   async executeCommand(commandId: string, signal?: AbortSignal): Promise<PluginCommandResult> {
     if (this.#shutdown) return failure("PLUGIN_E_DISABLED", "Kobrixa is shutting down plugins.");
     const owner = this.#commands.get(commandId);

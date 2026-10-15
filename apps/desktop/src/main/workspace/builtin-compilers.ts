@@ -1,9 +1,14 @@
 import { BasicPlusFrontend } from "@kobrixa/basic-plus";
 import { EV3Backend } from "@kobrixa/backend-ev3";
-import type { CompilerBackend, LanguageFrontend } from "@kobrixa/compiler";
-import { BuildError } from "../../../../../packages/compiler/src/build-error.js";
-import type { CompilerSnapshot } from "@kobrixa/plugin-runtime";
-import type { BackendDecl } from "@kobrixa/plugin-protocol";
+import { BuildError, type CompilerBackend, type LanguageFrontend } from "@kobrixa/compiler";
+import {
+  resolveCompilerProviders,
+  resolvePlugins,
+  type CompilerResolution,
+  type CompilerSnapshot,
+} from "@kobrixa/plugin-runtime";
+import { pluginManifestSchema, type BackendDecl } from "@kobrixa/plugin-protocol";
+import { BUILTIN_PLUGIN_SOURCES } from "../plugins/builtin.js";
 
 const key = (pluginId: string, id: string): string => `${pluginId}:${id}`;
 export const BUILTIN_FRONTENDS: Readonly<Record<string, () => LanguageFrontend>> = {
@@ -44,4 +49,20 @@ export function createBuiltinCompilers(snapshot: CompilerSnapshot): {
       "No built-in compiler factory matches the provider snapshot.",
     );
   return { frontend: createFrontend(), backend: createBackend(back.contribution, snapshot.ir) };
+}
+
+export function resolveBuiltinCompiler(language: string, target: string): CompilerResolution {
+  const sources = BUILTIN_PLUGIN_SOURCES.map((source) => {
+    if (source.kind !== "builtin") throw new Error("Built-in sources only.");
+    const manifest = pluginManifestSchema.parse(source.manifest);
+    return {
+      id: manifest.id,
+      sourceKey: `builtin:${manifest.id}`,
+      source: "builtin" as const,
+      problems: [],
+      manifest,
+    };
+  });
+  const plugins = resolvePlugins(sources, { disabled: new Set(), safeMode: false });
+  return resolveCompilerProviders(plugins, language, target);
 }

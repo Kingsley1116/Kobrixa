@@ -6,3 +6,5 @@ export * from "./manifest.js";
 export * from "./artifacts.js";
 export * from "./safe-files.js";
 export * from "./compile-memory.js";
+export * from "./output-lock.js";
+export * from "./commit-artifacts.js";

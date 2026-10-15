@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BuildSession, loadProject } from "@kobrixa/compiler";
-import { BasicPlusFrontend } from "@kobrixa/basic-plus";
-import { EV3Backend, inspectRbf } from "@kobrixa/backend-ev3";
+import { createBuiltinCompilers, resolveBuiltinCompiler } from "./builtin-compilers.js";
+import { inspectRbf } from "@kobrixa/backend-ev3";
 
 describe("v1 compiler pipeline", () => {
   it("builds Basic Plus into an atomically committed RBF artifact", async () => {
@@ -29,7 +29,13 @@ describe("v1 compiler pipeline", () => {
     await writeFile(path.join(root, "assets", "lesson.txt"), "asset");
     const loaded = await loadProject(root);
     expect(loaded.diagnostics).toEqual([]);
-    const result = await new BuildSession(new BasicPlusFrontend(), new EV3Backend()).compile(
+    const snapshot = resolveBuiltinCompiler(
+      loaded.project!.manifest.language,
+      loaded.project!.manifest.target,
+    );
+    if (!snapshot.ok) throw new Error(snapshot.message);
+    const compilers = createBuiltinCompilers(snapshot);
+    const result = await new BuildSession(compilers.frontend, compilers.backend).compile(
       loaded.project!,
     );
     expect(result.success).toBe(true);
