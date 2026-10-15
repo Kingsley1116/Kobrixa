@@ -201,6 +201,36 @@ class PluginReceiveTest(unittest.TestCase):
         redirect.__enter__()
         self.addCleanup(redirect.__exit__, None, None, None)
 
+    def test_send_retries_partial_and_temporarily_unavailable_writes(self):
+        class PartialOutput(io.RawIOBase):
+            def __init__(self, unavailable):
+                self.data = bytearray()
+                self.writes = 0
+                self.flushes = 0
+                self.unavailable = unavailable
+
+            def write(self, data):
+                self.writes += 1
+                if self.writes == 2:
+                    return self.unavailable
+                size = min(3, len(data))
+                self.data.extend(data[:size])
+                return size
+
+            def flush(self):
+                self.flushes += 1
+
+        plugin = Plugin()
+        message = {"jsonrpc": "2.0", "id": 1, "result": "完整 frame"}
+        for unavailable in (None, 0):
+            with self.subTest(unavailable=unavailable):
+                output = PartialOutput(unavailable)
+                plugin._output = output
+                plugin._send(message)
+                self.assertEqual([json.loads(text) for text in Decoder().push(bytes(output.data))],
+                                 [message])
+                self.assertEqual(output.flushes, 1)
+
     def test_send_preserves_lone_surrogate_and_keeps_answering(self):
         plugin = Plugin()
         message = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "bad \ud800"}}

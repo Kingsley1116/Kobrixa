@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 from ._framing import Decoder, FramingError, encode
 from ._schema import SchemaError, Validator
@@ -99,7 +100,14 @@ class Plugin:
         if self._stopping:
             return
         try:
-            self._output.write(encode(json.dumps(message, ensure_ascii=True, separators=(",", ":"))))
+            remaining = memoryview(encode(json.dumps(message, ensure_ascii=True, separators=(",", ":"))))
+            while remaining:
+                written = self._output.write(remaining)
+                if written is None or written == 0:
+                    # Raw nonblocking streams may make no progress; wait briefly to avoid busy-waiting.
+                    time.sleep(0.001)
+                    continue
+                remaining = remaining[written:]
             self._output.flush()
         except OSError:
             self._stopping = True  # The host closed the pipe; the read loop ends on EOF.
