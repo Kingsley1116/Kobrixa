@@ -247,7 +247,7 @@ BuildSession 與模擬共用 `compileToMemory`：執行前端、檢查實際 IR 
 
 輸出仍位於 `outputDir/<名稱>.<extension>` 與 `outputDir/assets/<相對路徑>`，既有 `<名稱>.rbf`、`<名稱>.ir.json`、`<名稱>.lst` 位置不變。宿主在 `.kobrixa-<buildId>.tmp` 完成全部 staging 驗證後，才依 aux → deploy-asset → deploy-main 替換最終檔案。第一次 rename 前取消回 `BUILD0001`；開始 rename 後完成整段提交。I/O 失敗回 `BUILD9000`、成品清單為空，磁碟可能留下新舊混合的檔案；這不是多檔案原子交易。
 
-同一程序依 `realpath(outputDir)` FIFO 排隊。提交期間以 `wx` 建立 `.kobrixa-build.lock`，內容為 `{ pid, startedAt }`。pid 不存在，或內容無法解析且檔案超過 60 秒，才回收殘留鎖；活鎖每 100 ms 輪詢，最多 5 秒後回 `BUILD1004`。釋放時比對所有權，只刪自己的鎖。不同電腦共用網路磁碟時，pid 判斷不保證正確。
+同一程序依 `realpath(outputDir)` FIFO 排隊。提交期間以 `wx` 建立 `.kobrixa-build.lock`，內容為 `{ pid, startedAt }`。pid 不存在，或內容無法解析且檔案超過 60 秒，才回收殘留鎖；活鎖每 100 ms 輪詢，最多 5 秒後回 `BUILD1004`。釋放時比對所有權，只刪自己的鎖。不同電腦共用網路磁碟時，pid 判斷不保證正確。殘留鎖回收採「比對內容後 unlink」，並非原子操作：兩個程序同時回收同一殘留鎖時，極端排程下可能刪到另一程序剛建立的新鎖；2A 接受此限制。
 
 部署要求設備支援的 `deploy`（目前為 `ev3`），否則回 `BUILD1005`。先把全部待部署檔案讀進記憶體並驗 SHA-256，再開始任何上傳；檔案遺失或變更回 `BUILD1006`。資源依 remotePath 排序、主檔最後，傳送的就是驗過的同一批 bytes。Folder／runtimeDirectory、設備鎖與略過未變資源的行為保留；設備傳輸本身仍非原子操作。
 
@@ -255,7 +255,7 @@ BuildSession 與模擬共用 `compileToMemory`：執行前端、檢查實際 IR 
 
 Quick Fix 請求包含工作區、已接受的分析 session／revision／version、檔案、診斷及取消識別碼。語言 worker 依 parser token 與區塊資訊產生插入候選，在記憶體副本重新解析後，按分析版本快取通過驗證的候選。查詢上限為 1,000,000 個 UTF-16 code unit，每次最多解析該檔兩次，不在 renderer 執行完整專案分析。取消會設定共享旗標，不影響其他查詢或已接受的分析。套用前會重新檢查目標 model 版本、來源快照與磁碟衝突，再以單一復原步驟沿用文件、草稿與儲存流程；rename 仍檢查全專案來源檔。文件開啟 IPC 只接受目錄選項，由 main process 組合官方網址。
 
-`runtimeDirectory` 記錄入口來源的 `Folder` 目的地。素材成品的 `remotePath` 為專案相對路徑，部署時保留程式預期的素材位置。每個輸出檔透過同一檔案系統內的 rename 提交；整組輸出檔並非單一交易。
+`runtimeDirectory` 記錄入口來源的 `Folder` 目的地。素材成品的 `remotePath` 為專案相對路徑，部署時保留程式預期的素材位置。
 
 ## 設備契約
 
