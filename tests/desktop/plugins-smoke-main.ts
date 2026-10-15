@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { app } from "electron";
-import { PluginManager, type PluginNotice } from "@kobrixa/plugin-runtime";
+import {
+  PLUGIN_SHUTDOWN_DEADLINE_MS,
+  PluginManager,
+  type PluginNotice,
+} from "@kobrixa/plugin-runtime";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
 import { filePluginStateStore } from "../../apps/desktop/src/main/plugins/state-store.js";
 import { installPluginQuitCleanup } from "../../apps/desktop/src/main/plugins/quit.js";
+import { recordSmokeQuit } from "./plugins-smoke-process.mjs";
 
 const [directory, python] = process.argv.slice(-2) as [string, string];
 const fail = (error: unknown) => {
@@ -34,6 +39,7 @@ void app.whenReady().then(async () => {
   });
   // The same quit path as apps/desktop/src/main/index.ts.
   installPluginQuitCleanup(app, manager);
+  recordSmokeQuit(app, directory, PLUGIN_SHUTDOWN_DEADLINE_MS);
   const notices: PluginNotice[] = [];
   manager.onEvent((event) => {
     if (event.type === "notice") notices.push(event.notice);

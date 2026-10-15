@@ -4,6 +4,7 @@
 
 > 2026-10-15：插件載入 1a（[計畫](2026-10-15-plugin-loading-1a-runtime-hardening.md)）已處理部分項目，並從下表移除。
 > 2026-10-15：插件載入 1b（[計畫](2026-10-15-plugin-loading-1b-gui-management.md)）已處理設定頁插件面板的項目，以及「面板沒有取消正在執行的命令的按鈕」，並從下方移除。
+> 2026-10-16：第二階段 task 0 已處理高優先的四項（Python 完整寫入、重複 request id、resume 競態、smoke 強制終止與逾時），並從下方移除。
 
 - 設計：[插件系統設計](../specs/2026-10-14-plugin-system-design.md)
 - 第一階段計畫：[第一階段實作計畫](2026-10-14-plugin-system-phase-1.md)
@@ -16,12 +17,7 @@
 
 ## 高優先
 
-| 位置                                     | 問題                                                                                                                                                                                                    | 建議做法                                                                                                                      |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `sdks/python/kobrixa/_plugin.py`         | `_send` 沒有檢查 `write()` 的回傳值。在 `-u` 模式下 stdout 是原始的 `FileIO`，寫入不完整時協定格式會壞掉；寫入也會擋住 event loop。                                                                     | 迴圈寫到全部完成，或改用 `asyncio` 的 writer。                                                                                |
-| `sdks/python/kobrixa/_plugin.py`         | 同一個 request id 重複出現時會覆蓋 `_tasks`，第一個 task 的 done callback 會刪掉第二個的紀錄，第二個請求就無法取消。                                                                                    | 收到重複 id 時回錯誤，或 done callback 只刪除屬於自己的紀錄。                                                                 |
-| `packages/plugin-runtime/src/manager.ts` | 強制關閉後再 `resume()`，supervisor 可能還在自己的停止流程裡，這段時間的命令都會回 `PLUGIN_E_DISABLED`。supervisor 的 `#forced` 也不會重設。                                                            | `resume()` 等所有 supervisor 的 `stop()` 結束；`resume` 時重設 `#forced`。                                                    |
-| `tests/desktop/run-plugins-smoke.mjs`    | smoke 沒有證明強制終止這條路徑（Electron 結束時本來就會關掉 utilityProcess，Python 收到 EOF 也會結束）。runner 本身也沒有逾時，如果 Electron 在 `main.cjs` 執行前就卡住，要等到 CI job 的 30 分鐘上限。 | 在主程序記錄 quit 開始和 `will-quit` 完成的時間，斷言少於 `PLUGIN_SHUTDOWN_DEADLINE_MS`；runner 約 90 秒後自己終止 Electron。 |
+目前無待辦項目。
 
 ## 中優先
 

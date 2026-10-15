@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { access, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -5,10 +6,12 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { build } from "esbuild";
+import { waitForSmokeExit } from "./plugins-smoke-process.mjs";
 
 // Uses real Electron: utilityProcess, MessagePort transfer and the Python stdio launcher.
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
+const electron = require("electron");
 const temporary = await mkdtemp(path.join(tmpdir(), "kobrixa-plugins-smoke-"));
 const alias = {
   "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
@@ -106,9 +109,8 @@ try {
     path.join(temporary, "stubborn-ts/dist/index.cjs"),
   );
   const child = spawn(
-    process.execPath,
+    electron,
     [
-      require.resolve("electron/cli.js"),
       path.join(temporary, "main.cjs"),
       `--user-data-dir=${path.join(temporary, "user-data")}`,
       temporary,
@@ -119,11 +121,16 @@ try {
       env: { ...process.env, PYTHONPATH: path.join(root, "sdks/python") },
     },
   );
-  const code = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", resolve);
-  });
+  const code = await waitForSmokeExit(child, "Plugin smoke");
   if (code !== 0) throw new Error(`Plugin smoke failed (${code})`);
+  const quit = JSON.parse(await readFile(path.join(temporary, "quit-result.json"), "utf8"));
+  // The recorded deadline comes from plugin-runtime; allow 1 s for scheduling and file I/O.
+  assert.ok(
+    Number.isFinite(quit.elapsedMs) && quit.elapsedMs < quit.shutdownDeadlineMs + 1_000,
+    `Plugin quit took ${quit.elapsedMs} ms (deadline ${quit.shutdownDeadlineMs} ms + 1000 ms grace)`,
+  );
+  assert.equal(quit.stubbornAlive, false, "stubborn-ts was still alive before Electron exited");
+  console.log(`PASS forced plugin shutdown before Electron exit: ${quit.elapsedMs.toFixed(0)} ms`);
   // The graceful shutdown handshake ran before Electron exited.
   await access(path.join(temporary, "pid-ts/shutdown.txt"));
   const alive = (pid) => {
@@ -135,7 +142,6 @@ try {
     }
   };
   // No child may outlive Electron, which also kills utilityProcess children on exit.
-  // Runtime unit tests independently prove the forced-kill shutdown deadline.
   for (const name of ["pid-ts", "pid-python", "stubborn-ts"]) {
     const pid = Number(await readFile(path.join(temporary, name, "pid.txt"), "utf8"));
     const deadline = Date.now() + 3000;
@@ -153,24 +159,15 @@ try {
   const guiUserData = path.join(temporary, "gui-user-data");
   const runGui = async (phase) => {
     const gui = spawn(
-      process.execPath,
-      [
-        require.resolve("electron/cli.js"),
-        path.join(temporary, "gui-main.cjs"),
-        `--user-data-dir=${guiUserData}`,
-        temporary,
-        phase,
-      ],
+      electron,
+      [path.join(temporary, "gui-main.cjs"), `--user-data-dir=${guiUserData}`, temporary, phase],
       { stdio: "inherit" },
     );
-    return new Promise((resolve, reject) => {
-      gui.once("error", reject);
-      gui.once("exit", resolve);
-    });
+    return waitForSmokeExit(gui, `Plugin GUI smoke (${phase})`);
   };
   const first = await runGui("first");
   if (first !== 0) throw new Error(`Plugin GUI smoke (first) failed (${first})`);
-  // electron/cli.js exits with 1 when Electron is killed by a signal.
+  // Electron exits with a signal in the simulated crash phase.
   const second = await runGui("second");
   await access(path.join(temporary, "gui-crash-ready.txt")).catch(() => {
     throw new Error(`Plugin GUI smoke (second) failed before the simulated crash (${second})`);
