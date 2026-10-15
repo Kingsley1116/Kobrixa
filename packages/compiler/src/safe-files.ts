@@ -61,11 +61,18 @@ export async function readBoundedFile(
 ): Promise<Uint8Array> {
   signal.throwIfAborted();
   const file = await assertNoSymlinks(root, relative);
-  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  const expected = await lstat(file);
+  if (!expected.isFile()) invalid("A resource must be a regular file.");
+  const handle = await open(
+    file,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+  );
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.size > maxBytes)
-      invalid("Artifact exceeds the remaining byte budget.");
+    if (!before.isFile()) invalid("A resource must be a regular file.");
+    if (before.dev !== expected.dev || before.ino !== expected.ino)
+      invalid("A resource changed while capturing the build snapshot.");
+    if (before.size > maxBytes) invalid("Artifact exceeds the remaining byte budget.");
     const chunks: Uint8Array[] = [];
     let total = 0;
     for (;;) {

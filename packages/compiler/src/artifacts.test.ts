@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { constants } from "node:fs";
 import { mkdir, mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -18,6 +20,59 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 const data = new Uint8Array([1]);
 const signal = () => new AbortController().signal;
 const entry = (relativePath = "x", byteLength = 1) => ({ relativePath, byteLength });
+it.each(["ir", "asset"])("rejects reserved backend result slot %s", async (slot) => {
+  await expect(
+    validateArtifacts(
+      testProject(root),
+      TEST_BACKEND_DECL,
+      {
+        artifacts: [
+          { slot: "program", data },
+          { slot, data },
+        ],
+        diagnostics: [],
+      },
+      minimalIR,
+      signal(),
+    ),
+  ).rejects.toThrow("BUILD1003");
+});
+it.skipIf(process.platform === "win32")("rejects FIFO assets promptly", async (context) => {
+  const fifo = path.join(root, "pipe");
+  const created = spawnSync("mkfifo", [fifo]);
+  if ((created.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+    context.skip();
+    return;
+  }
+  expect(created.error).toBeUndefined();
+  expect(created.status).toBe(0);
+  const project = testProject(root);
+  project.assets = [{ path: "pipe", absolutePath: fifo }];
+  const pending = validateArtifacts(
+    project,
+    TEST_BACKEND_DECL,
+    { artifacts: [{ slot: "program", data }], diagnostics: [] },
+    minimalIR,
+    signal(),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await expect(
+      Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("FIFO read timed out after 2 s")), 2000);
+        }),
+      ]),
+    ).rejects.toThrow("BUILD1003");
+  } finally {
+    clearTimeout(timer);
+    // Release a blocked reader on regression so the test process can exit.
+    const rescue = await open(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+    await pending.catch(() => undefined);
+    await rescue.close();
+  }
+});
 it("accepts every numeric limit exactly and rejects one beyond", () => {
   expect(BUILD_LIMITS).toEqual({
     backendArtifacts: 64,
