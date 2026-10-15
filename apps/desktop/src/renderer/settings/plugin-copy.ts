@@ -1,17 +1,54 @@
 import type { Locale } from "../i18n/copy.js";
+import type { PythonChoice } from "../../shared/plugins.js";
 
 export const pluginCopy = {
   en: {
     trust:
       "Development plugins run as normal programs on this computer. Kobrixa permissions only limit what a plugin asks Kobrixa to do; they are not a sandbox. Load only plugins you trust.",
-    howTo:
-      "To load development plugins, start Kobrixa with --plugin-dev-dir=<folder>. Python plugins also need --plugin-python=<interpreter>.",
+    howTo: "Turn on developer mode below to link plugin folders.",
     safeMode:
-      "Safe mode: development plugins are off for this session. Disable a problem plugin here, then restart normally.",
+      "Safe mode: Kobrixa was started with --safe-mode, so third-party plugins are paused for this session. You can still disable or unlink a problem plugin.",
+    safeModeLocked:
+      "Kobrixa did not shut down normally last time, so third-party plugins are paused.",
+    restore: "Restore plugins",
+    openSettings: "Open plugin settings",
+    notPersisted:
+      "Applied for this session, but the setting could not be saved. It may be undone after a restart.",
+    alreadyLinked: "This folder is already linked.",
+    unknownError: "Unknown error",
+    developerMode: "Developer mode",
+    developerToggle: "Turn on developer mode",
+    developerHint: "Runs code from the folders you link on this computer. It is not a sandbox.",
+    developerCommandLine: "Turned on by --plugin-dev-dir for this session only; not saved.",
+    keptLinks: (count: number) =>
+      `${count} linked folder(s) are kept and load again when developer mode is on.`,
+    linkFolder: "Link folder…",
+    reload: "Reload",
+    relink: "Choose folder again…",
+    unlink: "Unlink",
+    showLog: "Show log",
+    hideLog: "Hide log",
+    cancel: "Cancel",
+    sessionSource: "From launch options",
+    pendingReload: "Reload to use the new Python interpreter.",
+    python: "Python interpreter",
+    pythonNone: "Not chosen",
+    pythonOther: "Other…",
+    pythonRefresh: "Detect again",
+    pythonCommandLine: (label: string) =>
+      `This session uses ${label} from --plugin-python; the choice here applies next time.`,
+    pythonProblems: {
+      "sdk-missing": "kobrixa SDK not installed",
+      "sdk-incompatible": "kobrixa SDK version is incompatible",
+      "too-old": "Needs Python 3.10 or later",
+      failed: "Could not run",
+    },
+    logTitle: "Plugin log",
+    logEmpty: "No output yet.",
+    logTruncated: "Earlier output was dropped.",
+    severity: { info: "Info", warning: "Warning", error: "Error" },
     loading: "Loading plugins…",
     requestFailed: "Plugin request failed",
-    notPersisted:
-      "Disabled for this session, but the choice could not be saved. The plugin may be enabled again after a restart.",
     builtin: "Built-in",
     development: "Development",
     status: {
@@ -31,12 +68,47 @@ export const pluginCopy = {
   "zh-TW": {
     trust:
       "開發插件會以一般程式身分在這部電腦執行。Kobrixa 權限只限制插件透過 Kobrixa 提出的要求，並不是沙箱。請只載入你信任的插件。",
-    howTo:
-      "要載入開發插件，請以 --plugin-dev-dir=<資料夾> 啟動 Kobrixa；Python 插件另需 --plugin-python=<直譯器>。",
-    safeMode: "安全模式：本次啟動已關閉所有開發插件。可以在這裡停用有問題的插件，再正常重新啟動。",
+    howTo: "開啟下方的開發者模式後，就能連結插件資料夾。",
+    safeMode:
+      "安全模式：因為以 --safe-mode 啟動，本次已暫停所有第三方插件。仍然可以停用或解除連結有問題的插件。",
+    safeModeLocked: "Kobrixa 上次沒有正常結束，已暫停第三方插件。",
+    restore: "恢復插件",
+    openSettings: "前往插件設定",
+    notPersisted: "已套用到本次啟動，但設定未能保存，重新啟動後可能會還原。",
+    alreadyLinked: "這個資料夾已經連結過了。",
+    unknownError: "未知錯誤",
+    developerMode: "開發者模式",
+    developerToggle: "開啟開發者模式",
+    developerHint: "會在這部電腦上執行你連結的資料夾裡的程式碼，不是沙箱。",
+    developerCommandLine: "本次由 --plugin-dev-dir 開啟，只在這次有效，不會保存。",
+    keptLinks: (count: number) => `已保留 ${count} 個連結的資料夾，開啟開發者模式後會重新載入。`,
+    linkFolder: "連結資料夾…",
+    reload: "重新載入",
+    relink: "重新指定資料夾…",
+    unlink: "解除連結",
+    showLog: "查看日誌",
+    hideLog: "收起日誌",
+    cancel: "取消",
+    sessionSource: "本次啟動參數",
+    pendingReload: "重新載入後套用新的 Python 直譯器。",
+    python: "Python 直譯器",
+    pythonNone: "尚未選擇",
+    pythonOther: "其他…",
+    pythonRefresh: "重新偵測",
+    pythonCommandLine: (label: string) =>
+      `本次使用 --plugin-python 指定的 ${label}，這裡的選擇下次啟動才會套用。`,
+    pythonProblems: {
+      "sdk-missing": "沒有安裝 kobrixa SDK",
+      "sdk-incompatible": "kobrixa SDK 版本不相容",
+      "too-old": "需要 Python 3.10 以上",
+      failed: "無法執行",
+    },
+    logTitle: "插件日誌",
+    logEmpty: "目前沒有輸出。",
+    logTruncated: "較早的輸出已截斷。",
+    severity: { info: "資訊", warning: "警告", error: "錯誤" },
     loading: "正在載入插件…",
     requestFailed: "插件要求失敗",
-    notPersisted: "本次已停用，但設定未能保存，重新啟動後可能會恢復啟用。",
     builtin: "內建",
     development: "開發",
     status: {
@@ -120,10 +192,40 @@ const problems: Record<string, readonly [zh: string, en: string]> = {
   PLUGIN_E_SHUTTING_DOWN: ["Kobrixa 正在關閉插件", "Kobrixa is shutting down plugins"],
   PLUGIN_E_SOURCE_TIMEOUT: ["讀取插件資料夾逾時", "Reading the plugin folder timed out"],
   PLUGIN_E_SOURCE_EXISTS: ["這個資料夾已經載入", "This folder is already loaded"],
+  PLUGIN_E_DEVELOPER_MODE: ["請先開啟開發者模式", "Turn on developer mode first"],
+  PLUGIN_E_SESSION_SOURCE: ["這個來源來自啟動參數", "This source comes from launch options"],
+  PLUGIN_E_PYTHON_UNUSABLE: ["這個 Python 無法使用", "This Python interpreter cannot be used"],
 };
 
 export function problemText(problem: { code: string; message: string }, locale: Locale): string {
   const text = problems[problem.code];
   const summary = text ? text[locale === "zh-TW" ? 0 : 1] : problem.code;
   return locale === "zh-TW" ? `${summary}：${problem.message}` : `${summary}: ${problem.message}`;
+}
+
+/** Readable text for anything an IPC call rejects with; never "[object Object]". */
+export function readableError(reason: unknown): string | undefined {
+  if (reason instanceof Error) return reason.message || undefined;
+  if (typeof reason === "string") return reason || undefined;
+  if (
+    reason &&
+    typeof reason === "object" &&
+    typeof (reason as { message?: unknown }).message === "string"
+  )
+    return (reason as { message: string }).message;
+  return undefined;
+}
+
+const statusIcons = { ok: "✅", warning: "⚠️", error: "❌" } as const;
+
+export function pythonChoiceText(choice: PythonChoice, locale: Locale): string {
+  const { probe } = choice;
+  return [
+    `${statusIcons[probe.status]} ${choice.label}`,
+    probe.version && `Python ${probe.version}`,
+    probe.path,
+    probe.problem && pluginCopy[locale].pythonProblems[probe.problem],
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

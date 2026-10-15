@@ -43,6 +43,21 @@ contextBridge.exposeInMainWorld("kobrixa", {
   },
   keyboard: { updateContext: call("keyboard") },
   documentation: { open: call("documentationOpen") },
+  // The workbench asks for plugin state at startup (recovery notice); the smoke has no plugins.
+  plugins: {
+    state: async () => ({
+      revision: 0,
+      safeMode: false,
+      developmentMode: false,
+      plugins: [],
+      developer: { enabled: false, commandLine: false, linkedCount: 0 },
+      origins: {},
+      python: { pendingReload: [] },
+      inflight: [],
+    }),
+    notices: async () => [],
+    onEvent: () => () => {},
+  },
   workspace: {
     getPreferences: call("filePreferences"),
     setPreferences: call("setFilePreferences"),

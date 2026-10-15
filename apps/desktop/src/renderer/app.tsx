@@ -78,6 +78,7 @@ import { BottomPanel } from "./workbench/bottom-panel.js";
 import { isModalOpen, subscribeModals } from "./components/modal.js";
 import { settingsStore, useSettings } from "./settings/settings-state.js";
 import { useFilePreferences } from "./settings/file-settings.js";
+import { PluginRecoveryNotice } from "./settings/plugin-recovery.js";
 import type { Settings } from "./settings/settings.js";
 import {
   SettingsPanel,
@@ -212,7 +213,7 @@ export function App(): React.JSX.Element {
   const deviceOpen = rightPanel !== null;
   const t = copy[locale];
   const [settingsCategory, setSettingsCategory] = useState<{
-    category: "appearance" | "shortcuts" | "updates";
+    category: "appearance" | "shortcuts" | "updates" | "plugins";
     request: number;
   }>({ category: "appearance", request: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -3218,6 +3219,16 @@ export function App(): React.JSX.Element {
             </button>
           </aside>
         )}
+        <PluginRecoveryNotice
+          locale={locale}
+          onOpenSettings={() => {
+            setSettingsCategory((previous) => ({
+              category: "plugins",
+              request: previous.request + 1,
+            }));
+            openSettings();
+          }}
+        />
         {updates &&
           ["ready", "manual"].includes(updates.phase) &&
           dismissedUpdate !== `${updates.version}:${updates.phase}` && (

@@ -209,7 +209,10 @@ export function SettingsPanel({
   updateBusy: boolean;
   onInstallUpdate(): void;
   keyboard: KeyboardSettings;
-  requestedCategory: { category: "appearance" | "shortcuts" | "updates"; request: number };
+  requestedCategory: {
+    category: "appearance" | "shortcuts" | "updates" | "plugins";
+    request: number;
+  };
   settings: Settings;
   onChange: Change;
   onReset(): void;

@@ -3165,3 +3165,25 @@ footer {
     display: none;
   }
 }
+
+.plugins-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plugins-list > li[data-highlighted] {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+.plugins-log pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.plugins-log-gap {
+  font-style: italic;
+  opacity: 0.7;
+}

@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { PluginEvent, PluginsApi, PluginsView } from "../../shared/plugins.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PluginEvent, PluginsApi, PluginsView, PythonChoice } from "../../shared/plugins.js";
 import { DEFAULT_DEVICE_PREFERENCES } from "../../shared/device-preferences.js";
 import { DEFAULT_FILE_PREFERENCES } from "../../shared/file-preferences.js";
 import type { Locale } from "../i18n/copy.js";
 import type { KeyboardSettings } from "../keybindings/keyboard-state.js";
 import { PluginsPanel, localizedText } from "./plugins-panel.js";
-import { pluginCopy, problemText } from "./plugin-copy.js";
+import { pluginCopy, problemText, readableError } from "./plugin-copy.js";
+import { PluginRecoveryNotice } from "./plugin-recovery.js";
+import { LOG_POLL_MS } from "./plugin-log.js";
 import { SettingsPanel } from "./settings-panel.js";
 import { defaultSettings } from "./settings.js";
 
@@ -19,6 +21,7 @@ let root: Root;
 let container: HTMLDivElement;
 let emit: (event: PluginEvent) => void;
 const originalScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTo");
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
 const unhandledRejection = vi.fn();
 const snapshot: PluginsView = {
   revision: 1,
@@ -109,6 +112,9 @@ afterEach(() => {
   process.off("unhandledRejection", unhandledRejection);
   if (originalScrollTo) Object.defineProperty(Element.prototype, "scrollTo", originalScrollTo);
   else delete (Element.prototype as Partial<Element>).scrollTo;
+  if (originalScrollIntoView)
+    Object.defineProperty(Element.prototype, "scrollIntoView", originalScrollIntoView);
+  else delete (Element.prototype as Partial<Element>).scrollIntoView;
   vi.unstubAllGlobals();
 });
 const render = async (locale: Locale = "zh-TW") => {
@@ -116,6 +122,10 @@ const render = async (locale: Locale = "zh-TW") => {
 };
 const button = (text: string) =>
   [...container.querySelectorAll("button")].find((item) => item.textContent?.includes(text))!;
+const flush = () =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 
 it("lists plugins in Traditional Chinese with the trust warning and problems", async () => {
   await render();
@@ -146,7 +156,7 @@ it.each(["execute", "setEnabled"] as const)(
     await act(async () => button(method === "execute" ? "打招呼" : "停用").click());
     expect(api[method]).toHaveBeenCalledOnce();
     expect(button("打招呼").disabled).toBe(true);
-    expect(button("停用").disabled).toBe(true);
+    expect(button("停用").disabled).toBe(method === "setEnabled");
 
     await act(async () => {
       reject(new Error("IPC connection lost"));
@@ -259,17 +269,18 @@ it("shows notices with their plugin id", async () => {
   expect(container.querySelector("[aria-live=polite]")?.textContent).toContain("哈囉");
 });
 
-it("explains how to load development plugins and safe mode", async () => {
+it("explains developer mode and command-line safe mode", async () => {
   api.state.mockResolvedValueOnce({
     ...snapshot,
     safeMode: true,
     developmentMode: false,
     plugins: [snapshot.plugins[0]!],
+    developer: { enabled: false, commandLine: false, linkedCount: 0 },
   });
   await render();
-  expect(container.textContent).toContain("--plugin-dev-dir");
-  expect(container.textContent).toContain("--plugin-python");
-  expect(container.textContent).toContain("安全模式");
+  expect(container.textContent).toContain(pluginCopy["zh-TW"].howTo);
+  expect(container.textContent).toContain("--safe-mode");
+  expect(container.textContent).not.toContain("--plugin-dev-dir");
 });
 
 it("renders English names, metadata, commands and translated errors", async () => {
@@ -312,6 +323,10 @@ it("localizes text with English fallback and preserves unknown problem codes", (
   expect(problemText({ code: "FUTURE_ERROR", message: "raw detail" }, "zh-TW")).toBe(
     "FUTURE_ERROR：raw detail",
   );
+  expect(readableError(new Error("boom"))).toBe("boom");
+  expect(readableError({ message: "from main" })).toBe("from main");
+  expect(readableError({ reason: "opaque" })).toBeUndefined();
+  expect(readableError("text")).toBe("text");
 });
 
 it.each(["disabled", "invalid", "failed"] as const)(
@@ -379,29 +394,6 @@ it("shows a translated save failure without changing the acknowledged plugin sta
   expect(button("停用").disabled).toBe(false);
 });
 
-it("blocks concurrent commands and toggles until the command finishes", async () => {
-  let finish!: (result: Awaited<ReturnType<PluginsApi["execute"]>>) => void;
-  api.execute.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-  );
-  await render();
-  await act(async () => button("打招呼").click());
-  expect(button("打招呼").disabled).toBe(true);
-  expect(button("停用").disabled).toBe(true);
-  await act(async () => {
-    button("打招呼").click();
-    button("停用").click();
-  });
-  expect(api.execute).toHaveBeenCalledOnce();
-  expect(api.setEnabled).not.toHaveBeenCalled();
-  await act(async () => finish({ ok: true }));
-  expect(button("打招呼").disabled).toBe(false);
-  expect(button("停用").disabled).toBe(false);
-});
-
 it("updates from state events and unsubscribes when unmounted", async () => {
   await render();
   await act(async () =>
@@ -433,8 +425,8 @@ it("keeps only the latest 20 notices, newest first, and renders plugin text lite
   });
   const notices = container.querySelectorAll("[aria-live=polite] li");
   expect(notices).toHaveLength(20);
-  expect(notices[0]?.textContent).toBe("acme.hello <img src=x> notice-20");
-  expect(notices[19]?.textContent).toBe("acme.hello <img src=x> notice-1");
+  expect(notices[0]?.textContent).toBe("資訊 acme.hello <img src=x> notice-20");
+  expect(notices[19]?.textContent).toBe("資訊 acme.hello <img src=x> notice-1");
   expect(container.querySelector("img")).toBeNull();
 });
 
@@ -555,4 +547,291 @@ it("shows a corrupt settings file and an unsaved disable", async () => {
   expect(container.querySelector("[role=alert]")?.textContent).toBe(
     pluginCopy["zh-TW"].notPersisted,
   );
+});
+
+it("keeps row actions usable while that row's command runs, and cancels it", async () => {
+  let finish!: (result: Awaited<ReturnType<PluginsApi["execute"]>>) => void;
+  api.execute.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await render();
+  await act(async () => button("打招呼").click());
+  expect(button("打招呼").disabled).toBe(true);
+  expect(button("停用").disabled).toBe(false);
+  expect(button("重新載入").disabled).toBe(false);
+  expect(button("解除連結").disabled).toBe(false);
+  await act(async () => button("取消").click());
+  expect(api.cancel).toHaveBeenCalledWith("dev:0123456789abcdef");
+  await act(async () => finish({ ok: false, code: "PLUGIN_E_CANCELLED", message: "cancelled" }));
+  expect(button("取消")).toBeUndefined();
+  expect(button("打招呼").disabled).toBe(false);
+  expect(container.querySelector("[role=alert]")?.textContent).toBe("命令已取消：cancelled");
+});
+
+it("shows a cancel button for a command main reports as running", async () => {
+  api.state.mockResolvedValueOnce({ ...snapshot, inflight: ["dev:0123456789abcdef"] });
+  await render();
+  expect(button("打招呼").disabled).toBe(true);
+  expect(button("取消")).toBeDefined();
+});
+
+it("never shows [object Object] and clears a stale request failure on newer state", async () => {
+  api.reload.mockRejectedValueOnce({ reason: "opaque" });
+  await render();
+  await act(async () => button("重新載入").click());
+  expect(container.querySelector("[role=alert]")?.textContent).toBe("插件要求失敗：未知錯誤");
+  await act(async () => emit({ type: "state", state: { ...snapshot, revision: 2 } }));
+  expect(container.querySelector("[role=alert]")).toBeNull();
+});
+
+it("turns developer mode on through main and then offers linking", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    developmentMode: false,
+    plugins: [snapshot.plugins[0]!],
+    developer: { enabled: false, commandLine: false, linkedCount: 2 },
+  });
+  api.setDeveloperMode.mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+  await render();
+  expect(container.textContent).toContain("已保留 2 個連結的資料夾");
+  expect(button("連結資料夾…")).toBeUndefined();
+  const toggle = () => container.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+  expect(toggle().checked).toBe(false);
+  await act(async () => toggle().click());
+  expect(api.setDeveloperMode).toHaveBeenCalledWith(true);
+  expect(toggle().checked).toBe(true);
+  expect(button("連結資料夾…")).toBeDefined();
+});
+
+it("links a folder and scrolls to one that is already linked", async () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  api.linkFolder.mockResolvedValueOnce({
+    ok: true,
+    state: snapshot,
+    outcome: "duplicate",
+    sourceKey: "dev:0123456789abcdef",
+  });
+  await render();
+  await act(async () => button("連結資料夾…").click());
+  expect(api.linkFolder).toHaveBeenCalledOnce();
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(
+    pluginCopy["zh-TW"].alreadyLinked,
+  );
+  expect(
+    container.querySelector("#plugin-dev-0123456789abcdef")?.hasAttribute("data-highlighted"),
+  ).toBe(true);
+  expect(scrollIntoView).toHaveBeenCalled();
+});
+
+it("labels session sources, offers relinking a broken folder and unlinks only linked ones", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    plugins: [
+      {
+        ...snapshot.plugins[1]!,
+        status: "invalid",
+        commands: [],
+        problems: [{ code: "PLUGIN_E_MANIFEST", message: "missing" }],
+      },
+      { ...snapshot.plugins[1]!, sourceKey: "dev:fedcba9876543210", id: "acme.cli", commands: [] },
+    ],
+    origins: { "dev:0123456789abcdef": "linked", "dev:fedcba9876543210": "session" },
+  });
+  api.relinkFolder.mockResolvedValueOnce({
+    ok: true,
+    state: snapshot,
+    sourceKey: "dev:0123456789abcdef",
+  });
+  await render();
+  const [linked, session] = [...container.querySelectorAll(".plugins-list > li")];
+  expect(linked!.textContent).toContain("重新指定資料夾…");
+  expect(session!.textContent).toContain("本次啟動參數");
+  expect(session!.textContent).not.toContain("解除連結");
+  await act(async () => button("重新指定資料夾…").click());
+  expect(api.relinkFolder).toHaveBeenCalledWith("dev:0123456789abcdef");
+});
+
+it("reloads and unlinks a row through main", async () => {
+  api.reload.mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+  api.unlink.mockResolvedValueOnce({
+    ok: true,
+    state: { ...snapshot, revision: 3, plugins: [snapshot.plugins[0]!] },
+  });
+  await render();
+  await act(async () => button("重新載入").click());
+  expect(api.reload).toHaveBeenCalledWith("dev:0123456789abcdef");
+  await act(async () => button("解除連結").click());
+  expect(api.unlink).toHaveBeenCalledWith("dev:0123456789abcdef");
+  expect(container.textContent).not.toContain("acme.hello");
+});
+
+it("lists Python candidates with their status and saves a choice by id", async () => {
+  const choices: PythonChoice[] = [
+    {
+      id: "python3",
+      label: "python3",
+      selected: true,
+      probe: { status: "ok", version: "3.12.1", path: "/usr/bin/python3", sdkApiVersion: "1.0.0" },
+    },
+    {
+      id: "python",
+      label: "python",
+      selected: false,
+      probe: {
+        status: "warning",
+        problem: "sdk-missing",
+        version: "3.11.0",
+        path: "/usr/bin/python",
+      },
+    },
+    {
+      id: "saved",
+      label: "/old/python",
+      selected: false,
+      probe: { status: "error", problem: "too-old", version: "3.8.0" },
+    },
+  ];
+  // Once for the first load and once for the refresh after saving.
+  api.pythonCandidates.mockResolvedValueOnce(choices).mockResolvedValueOnce(choices);
+  api.setPython.mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+  await render();
+  await flush();
+  const select = container.querySelector<HTMLSelectElement>("select")!;
+  expect([...select.options].map((option) => option.textContent)).toEqual([
+    "✅ python3 · Python 3.12.1 · /usr/bin/python3",
+    "⚠️ python · Python 3.11.0 · /usr/bin/python · 沒有安裝 kobrixa SDK",
+    "❌ /old/python · Python 3.8.0 · 需要 Python 3.10 以上",
+    "其他…",
+  ]);
+  expect(select.value).toBe("python3");
+  expect(select.options[2]!.disabled).toBe(true);
+  await act(async () => {
+    select.value = "python";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await flush();
+  expect(api.setPython).toHaveBeenCalledWith("python");
+  expect(api.pythonCandidates).toHaveBeenCalledTimes(2);
+});
+
+it("explains pending Python reloads and a --plugin-python override", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    python: {
+      current: { label: "/cli/python", origin: "command-line" },
+      pendingReload: ["dev:0123456789abcdef"],
+    },
+  });
+  await render();
+  expect(container.textContent).toContain(pluginCopy["zh-TW"].pendingReload);
+  expect(container.textContent).toContain(pluginCopy["zh-TW"].pythonCommandLine("/cli/python"));
+});
+
+it("reads a row's log in batches only while the viewer is open", async () => {
+  vi.useFakeTimers();
+  try {
+    api.readLog
+      .mockResolvedValueOnce({ lines: [{ seq: 1, text: "first" }], next: 1, truncated: true })
+      .mockResolvedValueOnce({ lines: [{ seq: 2, text: "second" }], next: 2, truncated: false });
+    await render();
+    expect(api.readLog).not.toHaveBeenCalled();
+    await act(async () => button("查看日誌").click());
+    expect(api.readLog).toHaveBeenLastCalledWith("dev:0123456789abcdef", 0);
+    const log = () => container.querySelector("[role=log]")!.textContent;
+    expect(log()).toContain(pluginCopy["zh-TW"].logTruncated);
+    expect(log()).toContain("first");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LOG_POLL_MS);
+    });
+    expect(api.readLog).toHaveBeenLastCalledWith("dev:0123456789abcdef", 1);
+    expect(log()).toContain("second");
+    await act(async () => button("收起日誌").click());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LOG_POLL_MS * 3);
+    });
+    expect(api.readLog).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows notices main kept while the panel was closed, with their severity", async () => {
+  const kept = {
+    id: 7,
+    pluginId: "acme.hello",
+    sourceKey: "dev:0123456789abcdef",
+    severity: "error" as const,
+    message: "broke",
+    at: 0,
+  };
+  api.notices.mockResolvedValueOnce([kept]);
+  await render();
+  expect(container.querySelector("[aria-live=polite] li")?.textContent).toBe(
+    "錯誤 acme.hello broke",
+  );
+  await act(async () => emit({ type: "notice", notice: kept }));
+  expect(container.querySelectorAll("[aria-live=polite] li")).toHaveLength(1);
+});
+
+it("restores plugins from a safe-mode lock inside the panel", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    safeMode: true,
+    safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" },
+  });
+  api.clearSafeModeLock.mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+  await render();
+  expect(container.textContent).toContain("Kobrixa 上次沒有正常結束，已暫停第三方插件。");
+  expect(button("重新載入").disabled).toBe(true);
+  expect(button("連結資料夾…").disabled).toBe(true);
+  await act(async () => button("恢復插件").click());
+  expect(api.clearSafeModeLock).toHaveBeenCalledOnce();
+  expect(container.textContent).not.toContain("上次沒有正常結束");
+});
+
+describe("PluginRecoveryNotice", () => {
+  const locked: PluginsView = {
+    ...snapshot,
+    safeMode: true,
+    safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "renderer-unresponsive" },
+  };
+  const renderNotice = async () => {
+    const onOpenSettings = vi.fn();
+    await act(async () =>
+      root.render(createElement(PluginRecoveryNotice, { locale: "zh-TW", onOpenSettings })),
+    );
+    return onOpenSettings;
+  };
+  it("renders nothing without a lock", async () => {
+    await renderNotice();
+    expect(container.textContent).toBe("");
+  });
+  it("restores plugins or opens the plugin settings", async () => {
+    api.state.mockResolvedValueOnce(locked);
+    api.clearSafeModeLock.mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+    const onOpenSettings = await renderNotice();
+    expect(container.textContent).toContain("Kobrixa 上次沒有正常結束，已暫停第三方插件。");
+    await act(async () => button("前往插件設定").click());
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+    await act(async () => button("恢復插件").click());
+    expect(container.textContent).toBe("");
+  });
+  it("keeps the banner with a readable failure", async () => {
+    api.state.mockResolvedValueOnce(locked);
+    api.clearSafeModeLock.mockResolvedValueOnce({
+      ok: false,
+      code: "PLUGIN_E_STATE_SAVE",
+      message: "disk full",
+    });
+    await renderNotice();
+    await act(async () => button("恢復插件").click());
+    expect(container.querySelector("[role=alert]")?.textContent).toBe(
+      "無法儲存插件設定：disk full",
+    );
+    expect(button("恢復插件").disabled).toBe(false);
+  });
 });
