@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock
 from kobrixa import Plugin
 from kobrixa._framing import Decoder, encode
+from kobrixa._plugin import _CANCELLED
 
 SDK = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "behaviors.py"
@@ -122,6 +123,19 @@ class PluginProcessTest(unittest.TestCase):
         self.send({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 3}})
         self.assertEqual(self.receive()["error"]["code"], -32800)
 
+    def test_duplicate_request_id_leaves_original_request_cancellable(self):
+        self.initialize()
+        request = {"jsonrpc": "2.0", "id": 3, "method": "command/execute",
+                   "params": {"command": "acme.behaviors.greet"}}
+        self.send(request)
+        self.assertEqual(self.receive()["method"], "ui/showMessage")
+        self.send(request)
+        self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 3, "error": {
+            "code": -32600, "message": "Duplicate request id."}})
+        self.send({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 3}})
+        self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 3, "error": {
+            "code": _CANCELLED, "message": "command/execute was cancelled."}})
+
     def test_cancel_before_start_replies_exactly_once(self):
         self.initialize()
         # Both frames arrive in one chunk, so the task is cancelled before it ever runs.
@@ -201,6 +215,36 @@ class PluginReceiveTest(unittest.TestCase):
         redirect.__enter__()
         self.addCleanup(redirect.__exit__, None, None, None)
 
+    def test_send_retries_partial_and_temporarily_unavailable_writes(self):
+        class PartialOutput(io.RawIOBase):
+            def __init__(self, unavailable):
+                self.data = bytearray()
+                self.writes = 0
+                self.flushes = 0
+                self.unavailable = unavailable
+
+            def write(self, data):
+                self.writes += 1
+                if self.writes == 2:
+                    return self.unavailable
+                size = min(3, len(data))
+                self.data.extend(data[:size])
+                return size
+
+            def flush(self):
+                self.flushes += 1
+
+        plugin = Plugin()
+        message = {"jsonrpc": "2.0", "id": 1, "result": "完整 frame"}
+        for unavailable in (None, 0):
+            with self.subTest(unavailable=unavailable):
+                output = PartialOutput(unavailable)
+                plugin._output = output
+                plugin._send(message)
+                self.assertEqual([json.loads(text) for text in Decoder().push(bytes(output.data))],
+                                 [message])
+                self.assertEqual(output.flushes, 1)
+
     def test_send_preserves_lone_surrogate_and_keeps_answering(self):
         plugin = Plugin()
         message = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "bad \ud800"}}
@@ -222,6 +266,17 @@ class PluginReceiveTest(unittest.TestCase):
         plugin._output.write.side_effect = BrokenPipeError("closed pipe")
         plugin._send({"jsonrpc": "2.0", "id": 2, "result": None})
         self.assertTrue(plugin._stopping)
+
+    def test_finished_only_removes_its_own_task(self):
+        plugin = Plugin()
+        original, replacement = Mock(), Mock()
+        original.cancelled.return_value = False
+        replacement.cancelled.return_value = False
+        plugin._tasks[1] = replacement
+        plugin._finished(1, "command/execute", original)
+        self.assertIs(plugin._tasks.get(1), replacement)
+        plugin._finished(1, "command/execute", replacement)
+        self.assertNotIn(1, plugin._tasks)
 
     def test_invalid_cancel_params_are_logged_without_cancelling_tasks(self):
         plugin = Plugin()

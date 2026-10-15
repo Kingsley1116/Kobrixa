@@ -125,6 +125,7 @@ export class PluginManager {
   readonly #commands = new Map<string, string>();
   readonly #listeners = new Set<(event: PluginManagerEvent) => void>();
   #shutdown: Promise<void> | undefined;
+  #supervisorsStopped: Promise<void> | undefined;
   #changes: Promise<unknown> = Promise.resolve();
   #revision = 0;
   #disabled: Set<string>;
@@ -390,9 +391,10 @@ export class PluginManager {
   shutdown(deadlineMs: number = PLUGIN_SHUTDOWN_DEADLINE_MS): Promise<void> {
     this.#shutdown ??= (async () => {
       const supervisors = [...this.#supervisors.values(), ...this.#retiring];
-      const stopped = Promise.all(supervisors.map((supervisor) => supervisor.stop())).then(
-        () => true,
-      );
+      this.#supervisorsStopped = Promise.all(
+        supervisors.map((supervisor) => supervisor.stop()),
+      ).then(() => undefined);
+      const stopped = this.#supervisorsStopped.then(() => true);
       const waitForStop = async (ms: number) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -421,6 +423,8 @@ export class PluginManager {
   async resume(): Promise<void> {
     if (!this.#shutdown) return;
     await this.#shutdown.catch(() => undefined);
+    await this.#supervisorsStopped?.catch(() => undefined);
+    this.#supervisorsStopped = undefined;
     this.#shutdown = undefined;
     // A change interrupted by the shutdown may have left an enabled plugin without a supervisor.
     await this.#enqueue(() => this.#apply("cancelled"));

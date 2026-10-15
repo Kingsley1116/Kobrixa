@@ -21,7 +21,7 @@
     "test:collab:live": "node tests/collab/run-live.mjs",
     "test:collab:remote": "node tests/collab/run-live.mjs --remote",
     "test:desktop:smoke": "node tests/desktop/run-smoke.mjs",
-    "test:plugins:smoke": "node tests/desktop/run-plugins-smoke.mjs",
+    "test:plugins:smoke": "node --test tests/desktop/plugins-smoke-process.test.mjs && node tests/desktop/run-plugins-smoke.mjs",
     "test:hardware": "node tests/hardware/run.mjs",
     "assets:build": "node tools/build-assets.mjs",
     "format": "prettier --write .",

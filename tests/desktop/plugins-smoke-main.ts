@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { app } from "electron";
-import { PluginManager, type PluginNotice } from "@kobrixa/plugin-runtime";
+import {
+  PLUGIN_FORCE_MARGIN_MS,
+  PLUGIN_SHUTDOWN_DEADLINE_MS,
+  PluginManager,
+  type PluginNotice,
+} from "@kobrixa/plugin-runtime";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
 import { filePluginStateStore } from "../../apps/desktop/src/main/plugins/state-store.js";
 import { installPluginQuitCleanup } from "../../apps/desktop/src/main/plugins/quit.js";
+import { recordSmokeQuit } from "./plugins-smoke-process.mjs";
 
 const [directory, python] = process.argv.slice(-2) as [string, string];
 const fail = (error: unknown) => {
@@ -15,6 +21,7 @@ process.on("unhandledRejection", fail);
 setTimeout(() => fail(new Error("Plugin smoke timed out")), 60_000).unref();
 
 void app.whenReady().then(async () => {
+  const launch = createDesktopLauncher({ python: () => ({ executable: python, args: [] }) });
   const manager = await PluginManager.create({
     sources: [
       "hello-ts",
@@ -29,11 +36,31 @@ void app.whenReady().then(async () => {
     })),
     store: filePluginStateStore(`${directory}/user-data`),
     safeMode: false,
-    launcher: createDesktopLauncher({ python: () => ({ executable: python, args: [] }) }),
+    // Windows cannot ignore SIGTERM; postpone its regular kill so this phase tests forceKill.
+    ...(process.platform === "win32"
+      ? { supervisor: { stopTimeoutMs: PLUGIN_SHUTDOWN_DEADLINE_MS } }
+      : {}),
+    launcher: async (plugin) => {
+      const child = await launch(plugin);
+      if (plugin.id !== "kobrixa-smoke.stubborn-ts") return child;
+      return {
+        ...child,
+        forceKill() {
+          recordForceKill();
+          child.forceKill();
+        },
+      };
+    },
     locale: "zh-TW",
   });
   // The same quit path as apps/desktop/src/main/index.ts.
   installPluginQuitCleanup(app, manager);
+  const recordForceKill = recordSmokeQuit(
+    app,
+    directory,
+    PLUGIN_SHUTDOWN_DEADLINE_MS,
+    PLUGIN_FORCE_MARGIN_MS,
+  );
   const notices: PluginNotice[] = [];
   manager.onEvent((event) => {
     if (event.type === "notice") notices.push(event.notice);

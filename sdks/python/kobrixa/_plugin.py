@@ -5,13 +5,16 @@ import json
 import os
 import sys
 import threading
+import time
 
 from ._framing import Decoder, FramingError, encode
 from ._schema import SchemaError, Validator
 
 API_VERSION = "1.0.0"
 SDK_VERSION = "0.1.0"
-_CANCELLED, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = -32800, -32602, -32601, -32603
+_CANCELLED, _INVALID_REQUEST, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = (
+    -32800, -32600, -32602, -32601, -32603
+)
 
 
 def _reject_json_constant(value: str) -> None:
@@ -99,13 +102,26 @@ class Plugin:
         if self._stopping:
             return
         try:
-            self._output.write(encode(json.dumps(message, ensure_ascii=True, separators=(",", ":"))))
+            remaining = memoryview(encode(json.dumps(
+                message, ensure_ascii=True, separators=(",", ":")
+            )))
+            # Only blocking stdout is supported. A raw nonblocking stream can retry forever
+            # if the host stops reading, blocking the event loop until the host force-kills us.
+            # A nonblocking BufferedWriter's BlockingIOError is treated as a closed pipe below.
+            while remaining:
+                written = self._output.write(remaining)
+                if written is None or written == 0:
+                    # Avoid busy-waiting when a raw stream temporarily makes no progress.
+                    time.sleep(0.001)
+                    continue
+                remaining = remaining[written:]
             self._output.flush()
         except OSError:
             self._stopping = True  # The host closed the pipe; the read loop ends on EOF.
 
     def _finished(self, request_id, method: str, task: "asyncio.Future") -> None:
-        self._tasks.pop(request_id, None)
+        if self._tasks.get(request_id) is task:
+            self._tasks.pop(request_id)
         # A request cancelled before its task started never entered _handle(), so it has not
         # replied yet. A started task catches CancelledError itself and finishes normally, so
         # every request gets exactly one reply.
@@ -119,6 +135,11 @@ class Plugin:
             self._validator.validate("message", message)
             if "method" in message and "id" in message:
                 request_id, method = message["id"], message["method"]
+                if request_id in self._tasks:
+                    self._send({"jsonrpc": "2.0", "id": request_id,
+                                "error": {"code": _INVALID_REQUEST,
+                                          "message": "Duplicate request id."}})
+                    return
                 task = asyncio.ensure_future(self._handle(message))
                 self._tasks[request_id] = task
                 task.add_done_callback(lambda done: self._finished(request_id, method, done))
