@@ -110,6 +110,42 @@ it("kills a utilityProcess that never reports spawn and fails the launch", async
   }
 });
 
+it("signals a spawned utilityProcess without blocking the manager's force-kill timer", async () => {
+  vi.useFakeTimers();
+  try {
+    const signal = vi.spyOn(process, "kill").mockReturnValue(true);
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      postMessage: vi.fn(),
+      kill: vi.fn(),
+      pid: 123,
+    });
+    vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+    const launching = createDesktopLauncher({})(plugin);
+    child.emit("spawn");
+    const launched = await launching;
+    const onExit = vi.fn();
+    launched.onExit(onExit);
+
+    launched.kill();
+    expect(signal).toHaveBeenCalledExactlyOnceWith(123, "SIGTERM");
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(onExit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    launched.forceKill();
+    expect(signal.mock.calls).toEqual([
+      [123, "SIGTERM"],
+      [123, "SIGKILL"],
+    ]);
+    child.emit("exit", 0);
+    expect(onExit).toHaveBeenCalledExactlyOnceWith({ code: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("reads the Python command on every launch and puts its arguments first", async () => {
   let python = { executable: "py", args: ["-3"] };
   const launch = createDesktopLauncher({ python: () => python });
