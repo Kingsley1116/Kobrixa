@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { inspectRbf } from "@kobrixa/backend-ev3";
 
 describe("v1 compiler pipeline", () => {
   it("builds Basic Plus into an atomically committed RBF artifact", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "kobrixa-integration-"));
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-integration-")));
     await writeFile(
       path.join(root, "kobrixa.json"),
       JSON.stringify({

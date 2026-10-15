@@ -1,17 +1,36 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import type * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commitArtifacts } from "./commit-artifacts.js";
 import { BuildSession } from "./build-session.js";
 import type { MemoryArtifact } from "./contracts.js";
 import { testBackend, testFrontend, testProject } from "./test-build.js";
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>();
+  return { ...actual, unlink: vi.fn(actual.unlink), rm: vi.fn(actual.rm) };
+});
 let root: string;
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "kobrixa-commit-"));
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-commit-")));
   await mkdir(path.join(root, "build"));
 });
-afterEach(() => rm(root, { recursive: true, force: true }));
+afterEach(async () => {
+  vi.mocked(unlink).mockReset();
+  vi.mocked(rm).mockReset();
+  await rm(root, { recursive: true, force: true });
+});
 function entries(): MemoryArtifact[] {
   return [
     {
@@ -138,7 +157,7 @@ it("keeps final files on staging failure and returns no artifacts on rename fail
 it("returns BUILD1004 with no final changes when commit lock acquisition times out", async () => {
   const output = path.join(root, "build");
   await writeFile(path.join(output, "demo.bin"), "old");
-  const held = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  const held = JSON.stringify({ pid: process.pid + 1, startedAt: Date.now() });
   await writeFile(path.join(output, ".kobrixa-build.lock"), held);
   let now = Date.now();
   const session = new BuildSession(testFrontend, testBackend(), undefined, undefined, "locked", {
@@ -171,6 +190,59 @@ it("rejects corrupted staging bytes before any final rename", async () => {
       },
     }),
   ).rejects.toThrow("BUILD1003");
+  expect(await readFile(path.join(root, "build/demo.bin"), "utf8")).toBe("old");
+});
+
+it.each(["lock release", "staging removal"] as const)(
+  "keeps committed artifacts successful when %s fails",
+  async (cleanup) => {
+    const output = path.join(root, "build");
+    const buildId = "cleanup-fail";
+    const cleanupIO = vi.mocked(cleanup === "lock release" ? unlink : rm);
+    cleanupIO.mockRejectedValueOnce(new Error(`${cleanup} failure`));
+    const session = new BuildSession(testFrontend, testBackend(), undefined, undefined, buildId);
+    const result = await session.compile(testProject(root));
+    expect(cleanupIO).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ success: true, diagnostics: [] });
+    expect(result.artifacts.map((item) => item.role)).toEqual(["aux", "deploy-main"]);
+    expect(await readFile(path.join(output, "demo.bin"))).toEqual(Buffer.from([1, 2, 3]));
+    expect(JSON.parse(await readFile(path.join(output, "demo.ir.json"), "utf8"))).toMatchObject({
+      version: 1,
+    });
+    expect((await readdir(output)).filter((name) => name.startsWith(".kobrixa"))).toEqual([
+      cleanup === "lock release" ? ".kobrixa-build.lock" : `.kobrixa-${buildId}.tmp`,
+    ]);
+  },
+);
+
+it("preserves the original commit error when cleanup also fails", async () => {
+  await writeFile(path.join(root, "build/demo.bin"), "old");
+  vi.mocked(unlink).mockRejectedValueOnce(new Error("lock release failure"));
+  vi.mocked(rm).mockRejectedValueOnce(new Error("staging removal failure"));
+  const session = new BuildSession(
+    testFrontend,
+    testBackend(),
+    undefined,
+    undefined,
+    "commit-and-cleanup-fail",
+    {
+      io: {
+        write: (file, bytes) => writeFile(file, bytes),
+        rename: async () => {
+          throw new Error("original rename failure");
+        },
+      },
+    },
+  );
+  expect(await session.compile(testProject(root))).toMatchObject({
+    success: false,
+    artifacts: [],
+    diagnostics: [
+      expect.objectContaining({ code: "BUILD9000", message: "original rename failure" }),
+    ],
+  });
+  expect(unlink).toHaveBeenCalledTimes(1);
+  expect(rm).toHaveBeenCalledTimes(1);
   expect(await readFile(path.join(root, "build/demo.bin"), "utf8")).toBe("old");
 });
 

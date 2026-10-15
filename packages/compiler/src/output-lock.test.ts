@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { acquireOutputLock } from "./output-lock.js";
 let root: string;
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "kobrixa-lock-"));
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-lock-")));
 });
 afterEach(() => rm(root, { recursive: true, force: true }));
 it("reclaims only stale locks and never releases another owner", async () => {
@@ -25,9 +25,30 @@ it("reclaims only stale locks and never releases another owner", async () => {
   await releaseOld();
   await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
 });
+it("reclaims a same-process stale lock without waiting", async () => {
+  const file = path.join(root, ".kobrixa-build.lock");
+  const content = JSON.stringify({ pid: process.pid, startedAt: Date.now() - 1_000 });
+  await writeFile(file, content);
+  let now = Date.now();
+  const waits: number[] = [];
+  const release = await acquireOutputLock(root, new AbortController().signal, {
+    now: () => now,
+    sleep: async (ms) => {
+      waits.push(ms);
+      now += ms;
+    },
+    pidAlive: () => true,
+  });
+  expect(waits).toEqual([]);
+  const current = await readFile(file, "utf8");
+  expect(JSON.parse(current)).toMatchObject({ pid: process.pid });
+  expect(current).not.toBe(content);
+  await release();
+  await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+});
 it("polls active or freshly malformed locks every 100 ms for at most 5 seconds", async () => {
   for (const content of [
-    JSON.stringify({ pid: process.pid, startedAt: Date.now() }),
+    JSON.stringify({ pid: process.pid + 1, startedAt: Date.now() }),
     "fresh malformed",
   ]) {
     await writeFile(path.join(root, ".kobrixa-build.lock"), content);
@@ -50,11 +71,12 @@ it("polls active or freshly malformed locks every 100 ms for at most 5 seconds",
 });
 it("cancels while waiting without removing the active lock", async () => {
   const file = path.join(root, ".kobrixa-build.lock");
-  const content = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
+  const content = JSON.stringify({ pid: process.pid + 1, startedAt: Date.now() });
   await writeFile(file, content);
   const controller = new AbortController();
   await expect(
     acquireOutputLock(root, controller.signal, {
+      pidAlive: () => true,
       sleep: async () => {
         controller.abort();
       },

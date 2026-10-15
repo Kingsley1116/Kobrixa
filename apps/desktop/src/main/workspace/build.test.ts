@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,7 @@ let events: BuildEvent[];
 let destroyed: boolean;
 let onEvent: ((event: BuildEvent) => void) | undefined;
 beforeAll(async () => {
-  workerRoot = await mkdtemp(path.join(tmpdir(), "kobrixa-build-worker-"));
+  workerRoot = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-build-worker-")));
   await build({
     entryPoints: [fileURLToPath(new URL("./build-worker.ts", import.meta.url))],
     outfile: path.join(workerRoot, "worker.cjs"),
@@ -35,7 +35,7 @@ beforeAll(async () => {
 });
 afterAll(() => rm(workerRoot, { recursive: true, force: true }));
 beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "kobrixa-build-"));
+  root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-build-")));
   await writeFile(path.join(root, "main.bp"), "LCD.Clear()\n");
   workers = [];
   events = [];

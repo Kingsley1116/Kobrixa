@@ -82,7 +82,9 @@ export async function acquireOutputLock(
             !Number.isFinite(value.startedAt)
           )
             throw new Error("Malformed lock");
-          stale = !pidAlive(Number(value.pid));
+          // BuildService queues commits per canonical outputDir. Workers share process.pid,
+          // so a lock from this process can only be left by an interrupted commit.
+          stale = value.pid === process.pid || !pidAlive(Number(value.pid));
         } catch {
           stale = now() - info.mtimeMs > 60_000;
         }

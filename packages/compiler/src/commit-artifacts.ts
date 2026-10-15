@@ -113,10 +113,9 @@ export async function commitArtifacts(
       throw error;
     throw new BuildError("BUILD9000", error instanceof Error ? error.message : String(error));
   } finally {
-    try {
-      await release?.();
-    } finally {
-      if (ownsStaging) await rm(staging, { recursive: true, force: true });
-    }
+    // There is no cleanup-warning channel here. Best-effort cleanup must neither
+    // invalidate committed artifacts nor replace the original build/cancellation error.
+    await release?.().catch(() => undefined);
+    if (ownsStaging) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
 }

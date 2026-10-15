@@ -34,6 +34,7 @@ interface SimulationPreparation {
   worker?: Worker;
   termination?: Promise<void>;
 }
+/** Stop awaiting a cancelled read without allowing its eventual result to start compilation. */
 function untilCancelled<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -107,6 +108,7 @@ export class BuildService {
       program?: OfflinePreviewProgram,
       previewError?: string,
     ) => {
+      // A reply, error and exit can all arrive for one worker; finish the record only once.
       if (record.finished) return;
       record.finished = true;
       delete record.worker;
@@ -122,6 +124,8 @@ export class BuildService {
         this.send({ type: "complete", workspaceId, buildId, result: record.result });
     };
     let entry = "<project>";
+    // Capture and enqueue in call order so a faster source read cannot jump the FIFO.
+    // Admission does not await compilation, allowing different output directories to run together.
     const admission = this.#admissions.then(async () => {
       try {
         const { project, compiler } = await this.capture(workspaceId, overlays, (manifest) => {
@@ -195,10 +199,12 @@ export class BuildService {
       cancellation: new Int32Array(new SharedArrayBuffer(4)),
       predecessor: previous?.termination ?? Promise.resolve(),
     };
+    // Reserve ownership before project/resource capture can yield to another request.
     this.#simulations.set(workspaceId, preparation);
     const signal = preparation.controller.signal;
     this.activeBuilds++;
     try {
+      // A replacement must not overlap the superseded compiler's CPU work.
       await untilCancelled(preparation.predecessor, signal);
       signal.throwIfAborted();
       let captured: { project: SourceProject; compiler: CompilerSnapshot };
@@ -242,6 +248,7 @@ export class BuildService {
       this.activeBuilds--;
     }
   }
+  /** Also used when the renderer stops/closes a preparation; unknown workspaces are harmless. */
   cancelSimulation(workspaceId: string): void {
     const preparation = this.#simulations.get(workspaceId);
     if (!preparation) return;
