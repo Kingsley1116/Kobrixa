@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock
 from kobrixa import Plugin
 from kobrixa._framing import Decoder, encode
+from kobrixa._plugin import _CANCELLED
 
 SDK = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "behaviors.py"
@@ -121,6 +122,19 @@ class PluginProcessTest(unittest.TestCase):
                    "params": {"command": "acme.behaviors.hang"}})
         self.send({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 3}})
         self.assertEqual(self.receive()["error"]["code"], -32800)
+
+    def test_duplicate_request_id_leaves_original_request_cancellable(self):
+        self.initialize()
+        request = {"jsonrpc": "2.0", "id": 3, "method": "command/execute",
+                   "params": {"command": "acme.behaviors.greet"}}
+        self.send(request)
+        self.assertEqual(self.receive()["method"], "ui/showMessage")
+        self.send(request)
+        self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 3, "error": {
+            "code": -32600, "message": "Duplicate request id."}})
+        self.send({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 3}})
+        self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 3, "error": {
+            "code": _CANCELLED, "message": "command/execute was cancelled."}})
 
     def test_cancel_before_start_replies_exactly_once(self):
         self.initialize()
@@ -252,6 +266,17 @@ class PluginReceiveTest(unittest.TestCase):
         plugin._output.write.side_effect = BrokenPipeError("closed pipe")
         plugin._send({"jsonrpc": "2.0", "id": 2, "result": None})
         self.assertTrue(plugin._stopping)
+
+    def test_finished_only_removes_its_own_task(self):
+        plugin = Plugin()
+        original, replacement = Mock(), Mock()
+        original.cancelled.return_value = False
+        replacement.cancelled.return_value = False
+        plugin._tasks[1] = replacement
+        plugin._finished(1, "command/execute", original)
+        self.assertIs(plugin._tasks.get(1), replacement)
+        plugin._finished(1, "command/execute", replacement)
+        self.assertNotIn(1, plugin._tasks)
 
     def test_invalid_cancel_params_are_logged_without_cancelling_tasks(self):
         plugin = Plugin()
