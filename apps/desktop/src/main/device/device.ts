@@ -1,7 +1,6 @@
 import { DevicePreferencesStore } from "./preferences.js";
 import type { DevicePreferences } from "../../shared/device-preferences.js";
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { WebContents } from "electron";
 import {
@@ -271,7 +270,7 @@ export class DeviceService {
   upload(id: string, buildId: string, remotePath: string): Promise<void> {
     return this.operation(id, async (session, signal) => {
       this.#deployments.delete(id);
-      await session.upload(remotePath, await this.builds.artifactBytes(buildId), signal);
+      await session.upload(remotePath, await this.builds.artifactBytes(buildId, signal), signal);
     });
   }
 
@@ -279,18 +278,18 @@ export class DeviceService {
     return this.operation(id, async (session, signal) => {
       this.#deployments.delete(id);
       const deployment: Deployment = { buildId, files: [] };
-      const files = await this.builds.deployableArtifacts(buildId);
+      const files = await this.builds.deployableArtifacts(buildId, signal);
       const skipUnchanged = this.getPreferences().skipUnchangedAssets;
       // Re-read the device on each deployment; another program or computer may
       // have replaced assets since the previous upload. Share one listing per directory.
       const listings = new Map<string, RemoteEntry[]>();
       for (const file of deploymentTargets(files, remoteDirectory)) {
         try {
-          const bytes = await readFile(file.path);
+          const bytes = file.bytes;
           signal.throwIfAborted();
           const checksum = createHash("md5").update(bytes).digest("hex");
           let unchanged = false;
-          if (skipUnchanged && file.kind === "asset") {
+          if (skipUnchanged && file.role === "deploy-asset") {
             const directory = path.posix.dirname(file.remotePath);
             if (!listings.has(directory)) {
               try {

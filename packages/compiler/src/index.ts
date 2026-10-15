@@ -8,3 +8,4 @@ export * from "./safe-files.js";
 export * from "./compile-memory.js";
 export * from "./output-lock.js";
 export * from "./commit-artifacts.js";
+export * from "./deployment.js";

@@ -5,7 +5,7 @@ import { DEVICE_CONTROL_DENIED, ExecutionController, filesToSave } from "./execu
 import { readTheme } from "../settings/theme.js";
 
 const success: CompileResult = {
-  buildId: "success",
+  buildId: "b1",
   target: "ev3-native",
   deploy: "ev3",
   success: true,
@@ -17,14 +17,14 @@ const success: CompileResult = {
       kind: "rbf",
       role: "deploy-main",
       mediaType: "application/octet-stream",
-      byteLength: 1,
       path: "/tmp/build/demo.rbf",
       sha256: "abc",
+      byteLength: 1,
     },
   ],
 };
 const failure: CompileResult = {
-  buildId: "failure",
+  buildId: "failed",
   target: "ev3-native",
   success: false,
   diagnostics: [
@@ -730,5 +730,37 @@ describe("file operation isolation", () => {
     });
     expect(h.controller.getSnapshot().deployed).toBeUndefined();
     expect(h.controller.getSnapshot().successfulBuild).toBeDefined();
+  });
+});
+
+it("keeps a successful non-deployable build without a build error", async () => {
+  const h = setup();
+  const local: CompileResult = {
+    buildId: "local",
+    target: "analysis",
+    success: true,
+    diagnostics: [],
+    artifacts: [],
+  };
+  h.api.build.start.mockImplementation(async () => {
+    h.emitBuild({ type: "complete", workspaceId: "w1", buildId: "local", result: local });
+    return "local";
+  });
+  await h.controller.build(h.request);
+  expect(h.controller.getSnapshot()).toMatchObject({
+    phase: "idle",
+    successfulBuild: { buildId: "local", undeployableReason: "BUILD1005" },
+  });
+  expect(h.controller.getSnapshot().error).toBeUndefined();
+  expect(h.controller.getSnapshot().logs.at(-1)).toMatchObject({ message: "built", failed: false });
+  await h.controller.connect(usb);
+  await h.controller.upload();
+  await h.controller.run(h.request);
+  expect(h.api.device.deploy).not.toHaveBeenCalled();
+  expect(h.api.device.run).not.toHaveBeenCalled();
+  expect(h.controller.getSnapshot().error).toBeUndefined();
+  expect(h.controller.getSnapshot().logs.at(-1)).toMatchObject({
+    detail: "BUILD1005: This target cannot deploy to EV3.",
+    failed: false,
   });
 });

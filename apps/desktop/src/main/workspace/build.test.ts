@@ -481,7 +481,7 @@ it("copies bounded project assets into the preview without exposing host paths",
 it("returns compiler diagnostics without deployable output", async () => {
   const id = await service.start("project", { "main.bp": "Unknown.Do()\n" });
   expect(await result(id)).toMatchObject({ success: false, diagnostics: [{ code: "BP3001" }] });
-  await expect(service.artifactBytes(id)).rejects.toThrow("no deployable");
+  await expect(service.artifactBytes(id)).rejects.toThrow("BUILD1005");
 });
 
 it("does not send into destroyed windows and rejects new builds after disposal", async () => {

@@ -1,10 +1,11 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import {
   BuildError,
   failedBuild,
+  readDeploymentSnapshot,
+  type DeploymentFile,
   resolveInside,
   type BuildArtifact,
   type CompileResult,
@@ -290,23 +291,12 @@ export class BuildService {
       throw new Error(this.previewSnapshot.error ?? "No offline preview snapshot.");
     return structuredClone(this.previewSnapshot.program);
   }
-  async artifactBytes(buildId: string): Promise<Uint8Array> {
-    const main = this.require(buildId).result.artifacts.find((item) => item.role === "deploy-main");
-    if (!main) throw new BuildError("BUILD1005", "This build has no deployable program.");
-    return readFile(main.path);
+  async artifactBytes(buildId: string, signal?: AbortSignal): Promise<Uint8Array> {
+    const files = await this.deployableArtifacts(buildId, signal);
+    return files.find((item) => item.role === "deploy-main")!.bytes;
   }
-  async deployableArtifacts(
-    buildId: string,
-  ): Promise<Array<{ kind: "asset" | "rbf"; path: string; remotePath: string }>> {
-    const artifacts = this.require(buildId).result.artifacts;
-    const main = artifacts.find((item) => item.role === "deploy-main");
-    if (!main) throw new BuildError("BUILD1005", "This build has no deployable program.");
-    return [
-      ...artifacts
-        .filter((item) => item.role === "deploy-asset")
-        .map((item) => ({ kind: "asset" as const, path: item.path, remotePath: item.remotePath! })),
-      { kind: "rbf", path: main.path, remotePath: path.basename(main.path) },
-    ];
+  async deployableArtifacts(buildId: string, signal?: AbortSignal): Promise<DeploymentFile[]> {
+    return readDeploymentSnapshot(this.require(buildId).result, "ev3", signal);
   }
   private require(id: string): BuildRecord {
     const record = this.#builds.get(id);
