@@ -105,7 +105,7 @@ Host main process                        Guest main process
 
 ## Plugins (development preview)
 
-Phase 1 supports trusted local JS/TS and Python plugins loaded from explicitly selected development directories. Third-party plugins load only in development mode. The Settings → Plugins panel lists built-in and development plugins, shows load errors and messages, runs contributed commands, and enables or disables development plugins. See the [runnable samples](../../plugins/samples/README.md) and [Python SDK](../../sdks/python/README.md).
+Phase 1 supports trusted local JS/TS and Python plugins. Third-party plugins load only in developer mode, which is off by default and turned on in Settings → Plugins after a native confirmation dialog. The panel links plugin folders through a native folder picker, chooses the Python interpreter, lists built-in and development plugins with their load errors, messages and logs, runs and cancels contributed commands, and reloads, enables, disables or unlinks development plugins. See the [runnable samples](../../plugins/samples/README.md) and [Python SDK](../../sdks/python/README.md).
 
 The public API has three layers: JSON-RPC 2.0, Zod definitions and committed JSON Schema, and language SDKs:
 
@@ -116,17 +116,23 @@ The public API has three layers: JSON-RPC 2.0, Zod definitions and committed JSO
 
 JS/TS plugins run in Electron `utilityProcess` children and exchange JSON-RPC messages through a transferred MessagePort. Python plugins run in a separate, explicitly selected local interpreter and use stdin/stdout with `Content-Length` framing. Python stdout is reserved for protocol messages; logs go to stderr. Kobrixa does not download or manage a Python runtime.
 
-Python stderr and JS/TS stdout/stderr appear in the main process's terminal/console (for example, the terminal running `pnpm dev`), with each line prefixed `[plugin <id>] `. UTF-8 output is decoded across chunks, and a final partial line is flushed on exit. The Python SDK redirects `print()` to stderr as soon as `Plugin()` is constructed, including before `run()`; logs written before construction must explicitly use stderr.
+The desktop main process wraps the runtime's `PluginManager` in a `PluginController` (`apps/desktop/src/main/plugins/controller.ts`). It owns developer mode, the native dialogs, Python probing, log and message buffers and the session marker, and it checks every request from the renderer: developer mode, safe mode and whether Kobrixa is shutting down are enforced in the main process, after any dialog closes. The renderer sends only source keys, command IDs, booleans, Python candidate IDs and log cursors — never a path or an executable. This prevents adding an arbitrary path or executable without the user's choice; it does not protect against a compromised renderer.
 
-Startup switches are parsed by the desktop main process:
+Linking stores the folder's real path (`fs.realpath`), and the source key is derived from it, so the same folder cannot be linked twice. Python candidates (`python3`, `python`, `py -3` on Windows, the saved choice, or one picked with **Other…**) are probed without a shell, with a 3-second limit and 4 KiB of output; a usable interpreter is Python 3.10 or newer with an importable `kobrixa` SDK of the same major API version.
 
-| Switch                          | Effect                                                                                                                                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--plugin-dev-dir=<folders>`    | Loads each named folder's `kobrixa-plugin.json`. Use `:` between folders on macOS/Linux and `;` on Windows. Relative paths resolve from the launch working directory; absolute paths are recommended. |
-| `--plugin-python=<interpreter>` | Selects the local Python executable for Python development plugins. Install the SDK in this interpreter's environment.                                                                                |
-| `--safe-mode`                   | Disables all development plugins for this session before contributions are registered or processes are launched. Built-in plugins remain enabled.                                                     |
+Python stderr and JS/TS stdout/stderr are kept in main-process memory for the panel's log viewer (256 KiB per plugin, 4 MiB in total, oldest lines dropped first, control characters removed, cleared on unlink), and are also written to the main process's terminal/console with each line prefixed `[plugin <id>] `. UTF-8 output is decoded across chunks, and a final partial line is flushed on exit. The Python SDK redirects `print()` to stderr as soon as `Plugin()` is constructed, including before `run()`; logs written before construction must explicitly use stderr.
 
-User-disabled plugin IDs are saved in `<userData>/plugins/state.json` and checked before registration. Safe mode alone does not persist a disable choice: use **Keep disabled after restart** in the Plugins panel for a problem plugin, then restart without `--safe-mode`. Development plugins cannot be enabled during safe mode.
+Advanced launch options apply to one session only and are never saved:
+
+| Switch                          | Effect                                                                                                                                                                                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--plugin-dev-dir=<folders>`    | Loads each named folder's `kobrixa-plugin.json` for this session, without turning on developer mode. Use `:` between folders on macOS/Linux and `;` on Windows. Relative paths resolve from the launch working directory; absolute paths are recommended. |
+| `--plugin-python=<interpreter>` | Uses this local Python executable for this session instead of the saved choice. Install the SDK in this interpreter's environment.                                                                                                                        |
+| `--safe-mode`                   | Disables all development plugins for this session before contributions are registered or processes are launched. Built-in plugins remain enabled. **Restore plugins** cannot end it.                                                                      |
+
+`<userData>/plugins/state.json` (schema version 2) stores developer mode, the linked folders, the chosen Python interpreter, the source keys of plugins kept disabled after restart, and the safe-mode lock. A file that cannot be read keeps third-party plugins off instead of being overwritten.
+
+`<userData>/plugins/session.json` records whether a third-party plugin process ran and whether the window stopped responding; it is written synchronously and removed on a normal quit. If it is still present at the next start and either flag is set, Kobrixa writes a safe-mode lock: third-party plugins stay paused and the app shows a banner until the user selects **Restore plugins**. A hung window keeps the marker even after a normal quit. Development plugins cannot be enabled, linked or reloaded during safe mode; they can still be disabled or unlinked.
 
 The phase 1 methods are:
 

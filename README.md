@@ -175,6 +175,7 @@ docs/                      Product and engineering documentation (en, zh-TW)
 - [Device and platform support](docs/en/device-support.md)
 - [Sensor Lab](docs/en/sensor-lab.md) · [Motor testing](docs/en/motor-test.md)
 - [Cloud collaboration](docs/en/collaboration.md)
+- [Plugin samples (development preview)](plugins/samples/README.md)
 - [Examples](examples/README.md) and [learning path](examples/LEARNING-PATH.md)
 
 **Project and engineering**
