@@ -27,6 +27,17 @@ const v2Schema = z.strictObject({
     .optional(),
 });
 export type PluginStateDocument = z.infer<typeof v2Schema>;
+export type SafeModeLock = NonNullable<PluginStateDocument["safeModeLock"]>;
+export type StoredPython = NonNullable<PluginStateDocument["python"]>;
+export interface PluginSettingsStore extends PluginStateStore {
+  /** The latest loaded or saved document. Treat it as read-only. */
+  settings(): PluginStateDocument;
+  /**
+   * Applies `change` to the latest document and writes it, serialized with save(). The result
+   * is validated first; a rejected change or a failed write leaves settings() unchanged.
+   */
+  update(change: (current: PluginStateDocument) => PluginStateDocument): Promise<void>;
+}
 
 const empty = (): PluginStateDocument => ({
   schemaVersion: 2,
@@ -48,7 +59,7 @@ const persisted = (document: PluginStateDocument): PluginPersistedState => ({
 export function filePluginStateStore(
   userData: string,
   options: { now?(): Date } = {},
-): PluginStateStore {
+): PluginSettingsStore {
   const file = path.join(userData, "plugins", "state.json");
   let document = empty();
   let writes: Promise<void> = Promise.resolve();
@@ -62,6 +73,15 @@ export function filePluginStateStore(
       await rm(temporary, { force: true }).catch(() => undefined);
       throw error;
     }
+  };
+  const commit = (change: (current: PluginStateDocument) => PluginStateDocument) => {
+    const run = writes.then(async () => {
+      const next = v2Schema.parse(change(document));
+      await write(next);
+      document = next;
+    });
+    writes = run.catch(() => undefined);
+    return run;
   };
   return {
     async load() {
@@ -99,18 +119,13 @@ export function filePluginStateStore(
         problem: `The plugin settings file could not be read and was moved to ${backup}.`,
       };
     },
-    save(state) {
-      const run = writes.then(async () => {
-        const next: PluginStateDocument = {
-          ...document,
-          disabled: [...state.disabled].sort(),
-          legacyDisabledIds: [...state.legacyDisabledIds].sort(),
-        };
-        await write(next);
-        document = next;
-      });
-      writes = run.catch(() => undefined);
-      return run;
-    },
+    save: (state) =>
+      commit((current) => ({
+        ...current,
+        disabled: [...state.disabled].sort(),
+        legacyDisabledIds: [...state.legacyDisabledIds].sort(),
+      })),
+    settings: () => document,
+    update: commit,
   };
 }

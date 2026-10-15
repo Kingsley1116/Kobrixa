@@ -99,3 +99,47 @@ it("removes its temporary file when the final rename fails", async () => {
     (await readdir(path.join(root, "plugins"))).filter((name) => name.endsWith(".tmp")),
   ).toEqual([]);
 });
+
+const lockedSettings = {
+  schemaVersion: 2,
+  developerMode: true,
+  sources: [{ directory: "/plugins/hello" }],
+  disabled: ["dev:aaaaaaaaaaaaaaaa"],
+  legacyDisabledIds: [],
+  python: { executable: "py", args: ["-3"] },
+  safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" },
+};
+
+it("updates the settings the manager does not own and keeps them across saves", async () => {
+  const store = filePluginStateStore(root);
+  await store.load();
+  await store.update((current) => ({
+    ...current,
+    developerMode: true,
+    sources: [{ directory: "/plugins/hello" }],
+    python: { executable: "py", args: ["-3"] },
+    safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" },
+  }));
+  await store.save(state(["dev:aaaaaaaaaaaaaaaa"]));
+  expect(await stored()).toEqual(lockedSettings);
+  expect(store.settings()).toEqual(lockedSettings);
+  const reloaded = filePluginStateStore(root);
+  await reloaded.load();
+  expect(reloaded.settings()).toEqual(lockedSettings);
+});
+
+it("rejects an invalid update or a failed write without changing the settings", async () => {
+  const store = filePluginStateStore(root);
+  await store.load();
+  await expect(
+    store.update((current) => ({ ...current, sources: [{ directory: "" }] })),
+  ).rejects.toThrow();
+  expect(store.settings().sources).toEqual([]);
+  // A file where the plugins folder should be makes the write fail.
+  await writeFile(path.join(root, "plugins"), "");
+  await expect(store.update((current) => ({ ...current, developerMode: true }))).rejects.toThrow();
+  expect(store.settings().developerMode).toBe(false);
+  await rm(path.join(root, "plugins"));
+  await store.update((current) => ({ ...current, developerMode: true }));
+  expect((await stored()).developerMode).toBe(true);
+});
