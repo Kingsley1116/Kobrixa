@@ -151,6 +151,7 @@ export class PluginSupervisor {
         this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
     } finally {
       this.#stopping = false;
+      this.#forced = false;
     }
   }
 
