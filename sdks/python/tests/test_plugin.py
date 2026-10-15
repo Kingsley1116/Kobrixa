@@ -94,10 +94,10 @@ class PluginProcessTest(unittest.TestCase):
 
     def initialize(self):
         self.send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "apiVersion": "1.0.0", "pluginId": "acme.behaviors", "locale": "zh-TW",
+            "apiVersion": "1.1.0", "pluginId": "acme.behaviors", "locale": "zh-TW",
             "grantedPermissions": ["ui.notifications"]}})
         reply = self.receive()
-        self.assertEqual(reply["result"]["apiVersion"], "1.0.0")
+        self.assertEqual(reply["result"]["apiVersion"], "1.1.0")
 
     def test_command_round_trip_with_print_redirected(self):
         self.initialize()

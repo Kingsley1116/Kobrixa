@@ -8,6 +8,7 @@ import {
   type Severity,
 } from "@kobrixa/plugin-protocol";
 
+export const API_VERSION = PLUGIN_API_VERSION;
 export const SDK_VERSION = "0.1.0";
 export type CommandHandler = (context: { readonly signal: AbortSignal }) => void | Promise<void>;
 export interface PluginContext {

@@ -34,7 +34,16 @@ const builtin = {
     version: "1.0.0",
     apiVersion: "^1.0.0",
     runtime: { kind: "builtin" },
-    contributes: { frontends: [{ language: "bp" }] },
+    contributes: {
+      frontends: [
+        {
+          language: "bp",
+          entryExtensions: ["bp"],
+          sourceExtensions: ["bp", "bpi", "bpm"],
+          ir: { min: 1, max: 1 },
+        },
+      ],
+    },
   },
 };
 const none = { disabled: new Set<string>(), safeMode: false };
@@ -107,7 +116,21 @@ describe("loadPlugins", () => {
   it.each([
     ["PLUGIN_E_API_VERSION", { apiVersion: "^2.0.0" }],
     ["PLUGIN_E_RUNTIME_NOT_ALLOWED", { runtime: { kind: "builtin" } }],
-    ["PLUGIN_E_FRONTEND_REQUIRES_BUILTIN", { contributes: { frontends: [{ language: "bp" }] } }],
+    [
+      "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
+      {
+        contributes: {
+          frontends: [
+            {
+              language: "bp",
+              entryExtensions: ["bp"],
+              sourceExtensions: ["bp", "bpi", "bpm"],
+              ir: { min: 1, max: 1 },
+            },
+          ],
+        },
+      },
+    ],
     [
       "PLUGIN_E_COMMAND_NAMESPACE",
       { contributes: { commands: [{ id: "other.greet", title: "x" }] }, activationEvents: [] },

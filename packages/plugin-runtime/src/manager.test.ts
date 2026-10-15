@@ -50,7 +50,16 @@ const builtin = {
     version: "1.0.0",
     apiVersion: "^1.0.0",
     runtime: { kind: "builtin" },
-    contributes: { frontends: [{ language: "bp" }] },
+    contributes: {
+      frontends: [
+        {
+          language: "bp",
+          entryExtensions: ["bp"],
+          sourceExtensions: ["bp", "bpi", "bpm"],
+          ir: { min: 1, max: 1 },
+        },
+      ],
+    },
   },
 };
 function memoryStore(
