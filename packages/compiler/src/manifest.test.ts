@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import micromatch from "micromatch";
 import { afterEach, describe, expect, it } from "vitest";
+import { BuildError } from "./build-error.js";
 import { loadProject, parseManifest } from "./manifest.js";
 
 const manifest = {
@@ -335,3 +336,52 @@ it("accepts validated language and target ids without changing schema version", 
   for (const id of ["UPPER", "x".repeat(33), "../x"])
     expect(parseManifest({ ...manifest, language: id }).manifest).toBeUndefined();
 });
+
+it.each(["./src/main.bp", "src//main.bp"])(
+  "loads the existing entry spelling %s",
+  async (entry) => {
+    const root = await fixture({ entry });
+    const result = await loadProject(root);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.project!.sources).toEqual([{ path: "src/main.bp", content: "LCD.Clear()\n" }]);
+  },
+);
+
+it.skipIf(process.platform === "win32")("loads source filenames containing a colon", async () => {
+  const root = await fixture();
+  await writeFile(path.join(root, "src/a:b.bp"), "colon");
+  const result = await loadProject(root);
+  expect(result.diagnostics).toEqual([]);
+  expect(result.project!.sources).toContainEqual({ path: "src/a:b.bp", content: "colon" });
+});
+
+it.each(["entry", "overlay", "parent"])("reports a symlinked %s as MAN1002", async (kind) => {
+  const root = await fixture({ entry: kind === "entry" ? "src/link.bp" : "src/main.bp" });
+  await symlink(path.join(root, "src/main.bp"), path.join(root, "src/link.bp"));
+  await symlink(
+    path.join(root, "src"),
+    path.join(root, "alias"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const overlays = new Map<string, string>();
+  if (kind === "overlay") overlays.set("src/link.bp", "unsafe");
+  if (kind === "parent") overlays.set("alias/new.bp", "unsafe");
+  const result = await loadProject(root, overlays);
+  expect(result.project).toBeUndefined();
+  expect(result.diagnostics[0]!.code).toBe("MAN1002");
+  expect(result.error).toBeUndefined();
+});
+
+it.each(["BUILD1001", "BUILD1002", "BUILD1003", "BUILD9000"] as const)(
+  "only preserves provider resolution failures when loading: %s",
+  async (code) => {
+    const root = await fixture();
+    const error = new BuildError(code, "Provider resolution failed.");
+    const result = await loadProject(root, undefined, undefined, undefined, () => {
+      throw error;
+    });
+    const providerFailure = code === "BUILD1001" || code === "BUILD1002";
+    expect(result.diagnostics[0]!.code).toBe(providerFailure ? code : "MAN1002");
+    expect(result.error).toBe(providerFailure ? error : undefined);
+  },
+);

@@ -1,6 +1,5 @@
 import { compilerIdSchema, type FrontendDecl } from "@kobrixa/plugin-protocol";
 import { BuildError } from "./build-error.js";
-import { assertNoSymlinks } from "./safe-files.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import micromatch from "micromatch";
@@ -146,6 +145,28 @@ export function parseManifest(value: unknown): {
   return { manifest: parsed.data as ProjectManifest, diagnostics: [] };
 }
 
+// Sources keep the manifest path rules; portable artifact naming rules do not apply.
+async function resolveSource(
+  root: string,
+  relative: string,
+  allowMissing = false,
+): Promise<string> {
+  const absolute = await resolveInside(root, relative);
+  let cursor = await realpath(root);
+  for (const part of relative.replaceAll(path.sep, "/").split("/")) {
+    if (!part || part === ".") continue;
+    cursor = path.join(cursor, part);
+    try {
+      if ((await lstat(cursor)).isSymbolicLink())
+        throw new Error("Source paths must not pass through symbolic links.");
+    } catch (error) {
+      if (allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  return absolute;
+}
+
 async function loadSources(
   root: string,
   manifest: ProjectManifest,
@@ -154,10 +175,10 @@ async function loadSources(
   cache?: ProjectSourceCache,
 ): Promise<SourceFile[]> {
   const extension = (file: string): string => path.posix.extname(file).slice(1).toLowerCase();
-  const entryPath = manifest.entry.replaceAll(path.sep, "/");
+  const entryPath = path.normalize(manifest.entry).replaceAll(path.sep, "/");
   if (!declaration.entryExtensions.includes(extension(entryPath)))
     throw new Error("The entry extension is not supported by the selected frontend.");
-  const entry = await assertNoSymlinks(root, entryPath);
+  const entry = await resolveSource(root, manifest.entry);
   if (!(await lstat(entry)).isFile()) throw new Error("The project entry must be a regular file.");
   const output = await resolveInside(root, manifest.outputDir);
   const excluded = async (relative: string) =>
@@ -178,14 +199,14 @@ async function loadSources(
   for (const relative of discovered) if (!(await excluded(relative))) sourcePaths.add(relative);
   for (const relative of overlays.keys()) {
     if (!declaration.sourceExtensions.includes(extension(relative))) continue;
-    await assertNoSymlinks(root, relative, true);
+    await resolveSource(root, relative, true);
     if (!(await excluded(relative))) sourcePaths.add(relative);
   }
   const paths = new Set<string>();
   cache?.begin();
   const sources = await Promise.all(
     [...sourcePaths].sort().map(async (relative) => {
-      const absolute = await assertNoSymlinks(root, relative, overlays.has(relative));
+      const absolute = await resolveSource(root, relative, overlays.has(relative));
       paths.add(absolute);
       return {
         path: relative,
@@ -300,11 +321,15 @@ export async function loadProject(
       implicit,
     };
   } catch (error) {
+    const resolutionError =
+      error instanceof BuildError && (error.code === "BUILD1001" || error.code === "BUILD1002")
+        ? error
+        : undefined;
     return {
-      ...(error instanceof BuildError ? { error } : {}),
+      ...(resolutionError ? { error: resolutionError } : {}),
       diagnostics: [
         diagnostic(
-          error instanceof BuildError ? error.code : "MAN1002",
+          resolutionError?.code ?? "MAN1002",
           error instanceof Error ? error.message : "Unable to load project.",
         ),
       ],

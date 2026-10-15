@@ -741,7 +741,11 @@ export class WorkspaceService {
       const message =
         result.diagnostics.map((item) => item.message).join("\n") ||
         "Choose an entry file before building.";
-      if (result.error instanceof BuildError) throw result.error;
+      if (
+        result.error instanceof BuildError &&
+        (result.error.code === "BUILD1001" || result.error.code === "BUILD1002")
+      )
+        throw result.error;
       throw new Error(message);
     }
     return result.project;
