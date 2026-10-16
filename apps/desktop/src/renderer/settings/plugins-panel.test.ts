@@ -25,6 +25,7 @@ const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype
 const unhandledRejection = vi.fn();
 const snapshot: PluginsView = {
   revision: 1,
+  diagnosticHelpRevision: 0,
   safeMode: false,
   developmentMode: true,
   developer: { enabled: true, commandLine: false, linkedCount: 1 },
@@ -81,6 +82,7 @@ const api = {
     },
   })),
   notices: vi.fn<PluginsApi["notices"]>(async () => []),
+  diagnosticHelp: vi.fn<PluginsApi["diagnosticHelp"]>(async () => ({ revision: 0, plugins: {} })),
   cancel: vi.fn<PluginsApi["cancel"]>(async () => {}),
   setDeveloperMode: vi.fn<PluginsApi["setDeveloperMode"]>(),
   linkFolder: vi.fn<PluginsApi["linkFolder"]>(),

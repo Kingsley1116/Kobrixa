@@ -8,6 +8,7 @@ import { expect, it, vi } from "vitest";
 import { BuildSession, loadProject } from "@kobrixa/compiler";
 import { PluginManager } from "@kobrixa/plugin-runtime";
 import { BuildService } from "./build.js";
+import { createBuiltinCompilers, resolveBuiltinCompiler } from "./builtin-compilers.js";
 import type { BuildEvent } from "../../shared/api.js";
 import {
   testBackend,
@@ -131,4 +132,13 @@ it("builds a test-only language and non-rbf target through resolution commit and
     await manager.shutdown();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it("publishes provider identities from the compiler snapshot", () => {
+  const resolution = resolveBuiltinCompiler("bp", "ev3-native");
+  if (!resolution.ok) throw new Error(resolution.message);
+  expect(createBuiltinCompilers(resolution).sources).toEqual({
+    frontend: "kobrixa.basic-plus",
+    backend: "kobrixa.ev3",
+  });
 });

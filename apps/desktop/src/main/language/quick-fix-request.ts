@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  namespacedIdSchema,
+  diagnosticCodeSchema,
+  diagnosticHelpKeySchema,
+} from "@kobrixa/plugin-protocol";
 
 export const quickFixRequestIdSchema = z
   .string()
@@ -20,12 +25,9 @@ export const quickFixRequestSchema = z
       .refine((value) => !value.includes("\0")),
     diagnostic: z
       .object({
-        code: z.string().regex(/^(BP|MAN|IR|EV3|BUILD)\d{4}$/),
-        helpKey: z
-          .string()
-          .regex(/^[a-z0-9-]+$/)
-          .max(100)
-          .optional(),
+        source: namespacedIdSchema,
+        code: diagnosticCodeSchema,
+        helpKey: diagnosticHelpKeySchema.optional(),
         range: z
           .object({
             startLine: position,

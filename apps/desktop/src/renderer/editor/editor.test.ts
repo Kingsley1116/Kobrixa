@@ -84,6 +84,7 @@ let container: HTMLDivElement;
 const diagnostics: Diagnostic[] = [
   {
     code: "BP3001",
+    source: "kobrixa.basic-plus",
     severity: "error",
     file: "main.bp",
     message: "Unknown operation",
@@ -91,6 +92,7 @@ const diagnostics: Diagnostic[] = [
   },
 ];
 const props = {
+  helpCatalog: undefined,
   theme: "light" as const,
   fontSize: 16,
   wordWrap: false,
@@ -216,4 +218,47 @@ it("updates visual and input preferences without replacing the editor, model or 
   expect(mocks.create).toHaveBeenCalledTimes(1);
   expect(mocks.model.setValue).not.toHaveBeenCalled();
   expect(mocks.instance.saveViewState).not.toHaveBeenCalled();
+});
+
+it("refreshes source labels and source-scoped messages when the catalog changes", async () => {
+  const items = [diagnostics[0]!, { ...diagnostics[0]!, source: "acme.x" }];
+  await act(async () => root.render(createElement(Editor, { ...props, diagnostics: items })));
+  expect(mocks.setModelMarkers.mock.lastCall?.[2]).toEqual([
+    expect.objectContaining({ source: "kobrixa.basic-plus" }),
+    expect.objectContaining({ source: "acme.x", message: "BP3001: Unknown operation" }),
+  ]);
+  mocks.setModelMarkers.mockClear();
+  await act(async () =>
+    root.render(
+      createElement(Editor, {
+        ...props,
+        diagnostics: items,
+        helpCatalog: {
+          revision: 1,
+          plugins: {
+            "kobrixa.basic-plus": { displayName: { en: "Basic Plus" }, entries: [] },
+            "acme.x": {
+              displayName: { en: "Acme" },
+              entries: [
+                {
+                  code: "BP3001",
+                  title: { en: "Acme title" },
+                  cause: { en: "Acme cause" },
+                  steps: { en: ["Acme step"] },
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ),
+  );
+  expect(mocks.setModelMarkers).toHaveBeenCalledOnce();
+  expect(mocks.setModelMarkers.mock.lastCall?.[2]).toEqual([
+    expect.objectContaining({ source: "Basic Plus" }),
+    expect.objectContaining({
+      source: "Acme (acme.x)",
+      message: "BP3001: Acme title\nAcme cause\nAcme step\n\nUnknown operation",
+    }),
+  ]);
 });

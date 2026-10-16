@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { emptySymbolIndex, type BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
+import { emptySymbolIndex } from "@kobrixa/basic-plus";
+import type { PublishedAnalysis } from "../../shared/language-sync.js";
 import type { WorkspaceSummary } from "../../shared/api.js";
 import { AnalysisSession } from "./analysis-session.js";
 import { Documents } from "./documents.js";
 
-const result = (): BasicPlusProjectAnalysis => ({
+const result = (): PublishedAnalysis => ({
   diagnostics: [],
   tokensByFile: {},
   index: emptySymbolIndex(),
@@ -12,11 +13,11 @@ const result = (): BasicPlusProjectAnalysis => ({
 function harness() {
   const documents = new Documents();
   documents.replace([{ file: "main.bp", content: "value = 1", saved: "value = 1" }]);
-  const requests: Array<(value: BasicPlusProjectAnalysis) => void> = [];
+  const requests: Array<(value: PublishedAnalysis) => void> = [];
   const callbacks = {
     analyze: vi.fn(
       (_workspaceId: string, _overlays: Record<string, string>) =>
-        new Promise<BasicPlusProjectAnalysis>((resolve) => requests.push(resolve)),
+        new Promise<PublishedAnalysis>((resolve) => requests.push(resolve)),
     ),
     cancel: vi.fn(),
     diagnostics: vi.fn(),

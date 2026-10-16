@@ -11,9 +11,12 @@ import {
   type PluginManifest,
 } from "@kobrixa/plugin-protocol";
 import { markProviderConflicts } from "./compiler-resolution.js";
+import { readDiagnosticHelp, type LoadedDiagnosticHelp } from "./diagnostic-help.js";
 import { messageOf, type PluginErrorCode, type PluginProblem } from "./errors.js";
 
 export const MANIFEST_FILE = "kobrixa-plugin.json";
+/** Identities Kobrixa itself uses for diagnostics; no plugin may claim them. */
+export const RESERVED_PLUGIN_IDS: ReadonlySet<string> = new Set(["kobrixa.core"]);
 /** Bound on reading one development folder, so a hung disk cannot block startup or recovery. */
 export const SOURCE_READ_TIMEOUT_MS = 5_000;
 export type PluginSource =
@@ -37,6 +40,10 @@ export interface ReadPlugin {
   directory?: string;
   manifest?: PluginManifest;
   entry?: string;
+  /** Loaded help resource; absent when undeclared, unread or invalid. */
+  diagnosticHelp?: LoadedDiagnosticHelp;
+  /** A broken help resource disables only the help, never the plugin. */
+  helpProblem?: PluginProblem;
   /** Problems of this source alone; empty means it is valid by itself. */
   problems: readonly PluginProblem[];
   /** Safe mode: the folder was deliberately not read. */
@@ -53,6 +60,8 @@ const problem = (code: PluginErrorCode, message: string): PluginProblem => ({ co
 
 function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]): PluginProblem[] {
   const problems: PluginProblem[] = [];
+  if (RESERVED_PLUGIN_IDS.has(manifest.id))
+    problems.push(problem("PLUGIN_E_RESERVED_ID", `${manifest.id} is reserved by Kobrixa.`));
   problems.push(
     ...compilerDeclarationProblems(manifest).map((message) =>
       problem("PLUGIN_E_MANIFEST", message),
@@ -162,7 +171,12 @@ async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
           problem("PLUGIN_E_ENTRY", `${runtime.entry} resolves outside the plugin folder.`),
         ],
       };
-    return { ...plugin, entry };
+    const decl = plugin.manifest?.contributes?.diagnosticHelp;
+    if (!decl) return { ...plugin, entry };
+    const help = await readDiagnosticHelp(root, decl);
+    return help.ok
+      ? { ...plugin, entry, diagnosticHelp: help.help }
+      : { ...plugin, entry, helpProblem: help.problem };
   } catch {
     return {
       ...plugin,
@@ -219,9 +233,9 @@ export async function readSource(
 }
 
 /**
- * Decides every status within the whole set, in source order: built-ins come first, so their ids
- * are protected, and an earlier source keeps an id or command over a later one. `disabled` holds
- * source keys; built-ins cannot be disabled.
+ * Decides every status within the whole set, reserving valid built-in ids before source order
+ * decides other id and command conflicts. `disabled` holds source keys; built-ins cannot be
+ * disabled.
  */
 export function resolvePlugins(
   read: readonly ReadPlugin[],
@@ -232,7 +246,11 @@ export function resolvePlugins(
     problems: [...plugin.problems],
     status: plugin.problems.length ? "invalid" : "enabled",
   }));
-  const seen = new Set<string>();
+  const seen = new Set<string>(
+    resolved
+      .filter((plugin) => plugin.source === "builtin" && plugin.status !== "invalid")
+      .map((plugin) => plugin.id),
+  );
   // Namespaces nest ("acme.hello." also covers "acme.hello.extra."), so command ids can collide
   // across plugins. Disabled plugins are checked too, so re-enabling one can never collide.
   const commandOwners = new Map<string, string>();
@@ -247,7 +265,7 @@ export function resolvePlugins(
       continue;
     }
     if (plugin.status === "invalid") continue;
-    if (seen.has(plugin.id)) {
+    if (plugin.source !== "builtin" && seen.has(plugin.id)) {
       plugin.status = "invalid";
       plugin.problems.push(
         problem("PLUGIN_E_DUPLICATE_ID", `Another plugin already uses the id ${plugin.id}.`),
@@ -267,7 +285,7 @@ export function resolvePlugins(
         );
       continue;
     }
-    seen.add(plugin.id);
+    if (plugin.source !== "builtin") seen.add(plugin.id);
     for (const id of commands) commandOwners.set(id, plugin.id);
     if (plugin.source !== "development") continue;
     // Recovery: this decision happens before any contribution is registered or process launched.

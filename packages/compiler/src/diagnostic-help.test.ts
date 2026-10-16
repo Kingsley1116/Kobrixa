@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   DIAGNOSTIC_HELP,
   DIAGNOSTIC_HELP_VARIANTS,
+  SHARED_BUILTIN_HELP,
+  builtinHelpOwners,
   diagnosticDocumentationUrl,
+  getBuiltinDiagnosticHelp,
   getDiagnosticHelp,
 } from "./diagnostic-help.js";
 
@@ -28,6 +31,36 @@ async function productionFiles(directory: string): Promise<string[]> {
 }
 
 describe("diagnostic documentation", () => {
+  it("assigns every built-in entry to at least one owner and only listed codes to several", () => {
+    for (const help of [...DIAGNOSTIC_HELP, ...DIAGNOSTIC_HELP_VARIANTS]) {
+      const owners = builtinHelpOwners(help.code);
+      expect(owners.length, help.code).toBeGreaterThan(0);
+      expect(owners.length > 1, help.code).toBe(Object.hasOwn(SHARED_BUILTIN_HELP, help.code));
+    }
+    expect(builtinHelpOwners("BP1015")).toEqual(["kobrixa.basic-plus"]);
+    expect(builtinHelpOwners("EV39000")).toEqual(["kobrixa.ev3"]);
+    expect(builtinHelpOwners("BUILD1007")).toEqual(["kobrixa.core"]);
+    expect(builtinHelpOwners("EV32031")).toEqual(["kobrixa.basic-plus", "kobrixa.ev3"]);
+  });
+
+  it("never falls back across sources", () => {
+    expect(getBuiltinDiagnosticHelp("kobrixa.basic-plus", "BP1015")).toBe(
+      getDiagnosticHelp("BP1015"),
+    );
+    expect(getBuiltinDiagnosticHelp("kobrixa.ev3", "BP1015")).toBeUndefined();
+    expect(getBuiltinDiagnosticHelp("acme.x", "BP1015")).toBeUndefined();
+    expect(getBuiltinDiagnosticHelp("kobrixa.basic-plus", "EV32031")).toBeDefined();
+  });
+
+  it("keeps helpKey variants and same-source fallback", () => {
+    const variant = DIAGNOSTIC_HELP_VARIANTS[0]!;
+    const owner = builtinHelpOwners(variant.code)[0]!;
+    expect(getBuiltinDiagnosticHelp(owner, variant.code, variant.helpKey)).toBe(variant);
+    expect(getBuiltinDiagnosticHelp(owner, variant.code, "no-such-key")).toBe(
+      getDiagnosticHelp(variant.code),
+    );
+  });
+
   it("covers exactly the diagnostic codes emitted by production producers", async () => {
     const directories = [
       "frontends/basic-plus/src",
@@ -47,7 +80,7 @@ describe("diagnostic documentation", () => {
       ),
     ].sort();
     expect(DIAGNOSTIC_HELP.map((help) => help.code).sort()).toEqual(codes);
-    expect(new Set(DIAGNOSTIC_HELP.map((help) => help.code)).size).toBe(94);
+    expect(new Set(DIAGNOSTIC_HELP.map((help) => help.code)).size).toBe(95);
     expect(
       Object.fromEntries(
         ["BP", "MAN", "IR", "EV3", "BUILD"].map((prefix) => [
@@ -55,7 +88,7 @@ describe("diagnostic documentation", () => {
           codes.filter((code) => code.startsWith(prefix)).length,
         ]),
       ),
-    ).toEqual({ BP: 50, MAN: 4, IR: 12, EV3: 20, BUILD: 8 });
+    ).toEqual({ BP: 50, MAN: 4, IR: 12, EV3: 20, BUILD: 9 });
   });
 
   it("provides complete bilingual explanations and existing documentation links", async () => {
@@ -118,9 +151,16 @@ describe("diagnostic documentation", () => {
     expect(diagnosticDocumentationUrl("BP2006", undefined, "xx" as "en")).toBeUndefined();
   });
 
-  it("keeps the documentation entrypoint free of runtime imports and Node globals", async () => {
+  it("keeps the documentation entrypoint and its constant dependency browser-safe", async () => {
     const source = await readFile(new URL("./diagnostic-help.ts", import.meta.url), "utf8");
-    expect(source).not.toMatch(/\bimport\s|\brequire\s*\(|\b(?:process|Buffer)\./);
+    const diagnostics = await readFile(new URL("./diagnostics.ts", import.meta.url), "utf8");
+    const allowedImport = 'import { CORE_DIAGNOSTIC_SOURCE } from "./diagnostics.js";';
+    expect(source.replace(allowedImport, "")).not.toMatch(
+      /\bimport\s*(?:\s|\()|\bexport\s+(?:\*|\{)[^;]*\bfrom\s|\brequire\s*\(|\b(?:process|Buffer)\./,
+    );
+    expect(diagnostics.replaceAll(/^import type\b[^;]*;\s*/gm, "")).not.toMatch(
+      /\bimport\s*(?:\s|\()|\bexport\s+(?:\*|\{)[^;]*\bfrom\s|\brequire\s*\(|\b(?:process|Buffer)\./,
+    );
     const manifest = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { exports: Record<string, string> };

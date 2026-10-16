@@ -2741,5 +2741,125 @@
       }
     },
     "valid": false
+  },
+  {
+    "name": "diagnostic help file",
+    "definition": "diagnostic-help",
+    "valid": true,
+    "value": {
+      "entries": [
+        {
+          "code": "ACME100",
+          "title": {
+            "en": "Failed"
+          },
+          "cause": {
+            "en": "Because"
+          },
+          "steps": {
+            "en": ["Retry"]
+          },
+          "links": [
+            {
+              "url": "https://example.com",
+              "label": {
+                "en": "Docs"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "diagnostic help rejects source",
+    "definition": "diagnostic-help",
+    "valid": false,
+    "value": {
+      "entries": [
+        {
+          "code": "ACME100",
+          "source": "acme.x",
+          "title": {
+            "en": "Failed"
+          },
+          "cause": {
+            "en": "Because"
+          },
+          "steps": {
+            "en": ["Retry"]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "diagnostic help rejects http link",
+    "definition": "diagnostic-help",
+    "valid": false,
+    "value": {
+      "entries": [
+        {
+          "code": "ACME100",
+          "title": {
+            "en": "Failed"
+          },
+          "cause": {
+            "en": "Because"
+          },
+          "steps": {
+            "en": ["Retry"]
+          },
+          "links": [
+            {
+              "url": "http://example.com",
+              "label": {
+                "en": "Docs"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "manifest declares diagnostic help",
+    "definition": "manifest",
+    "valid": true,
+    "value": {
+      "id": "acme.x",
+      "version": "1.0.0",
+      "apiVersion": "^1.2.0",
+      "runtime": {
+        "kind": "node",
+        "entry": "main.js"
+      },
+      "contributes": {
+        "diagnosticHelp": {
+          "version": 1,
+          "path": "diagnostics/help.json"
+        }
+      }
+    }
+  },
+  {
+    "name": "manifest rejects escaping diagnostic help path",
+    "definition": "manifest",
+    "valid": false,
+    "value": {
+      "id": "acme.x",
+      "version": "1.0.0",
+      "apiVersion": "^1.2.0",
+      "runtime": {
+        "kind": "node",
+        "entry": "main.js"
+      },
+      "contributes": {
+        "diagnosticHelp": {
+          "version": 1,
+          "path": "../help.json"
+        }
+      }
+    }
   }
 ]

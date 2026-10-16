@@ -16,6 +16,14 @@ export interface Diagnostic {
   file: string;
   range: SourceRange;
   message: string;
+  /** Host-assigned provider identity. Producers must leave it unset. */
+  source?: string;
+}
+
+export type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
+export interface DiagnosticSources {
+  frontend: string;
+  backend: string;
 }
 
 export interface BuildArtifact {
@@ -38,6 +46,10 @@ export interface CompileResult {
   diagnostics: Diagnostic[];
   artifacts: BuildArtifact[];
 }
+
+export type PublishedCompileResult = Omit<CompileResult, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
 
 export interface ProjectManifest {
   schemaVersion: 1;

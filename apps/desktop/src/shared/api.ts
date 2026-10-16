@@ -29,15 +29,14 @@ import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
 import type { PluginsApi } from "./plugins.js";
 import type { CompletionSyncReply, CompletionSyncRequest } from "./completion-sync.js";
-import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
-import type { LanguageSyncRequest, LanguageSyncReply } from "./language-sync.js";
+import type { LanguageSyncRequest, LanguageSyncReply, PublishedAnalysis } from "./language-sync.js";
 import type { KeyboardContext } from "./keyboard.js";
 import type { CollabApi } from "./collab.js";
 import type {
   BuildArtifact,
   BuildProgress,
-  CompileResult,
-  Diagnostic,
+  PublishedCompileResult,
+  PublishedDiagnostic,
   ProjectManifest,
 } from "@kobrixa/compiler";
 import type {
@@ -280,10 +279,7 @@ export interface KobrixaApi {
       request: CompletionSyncRequest,
     ): Promise<CompletionSyncReply>;
     sync(workspaceId: string, request: LanguageSyncRequest): Promise<LanguageSyncReply>;
-    analyze(
-      workspaceId: string,
-      overlays: Record<string, string>,
-    ): Promise<BasicPlusProjectAnalysis>;
+    analyze(workspaceId: string, overlays: Record<string, string>): Promise<PublishedAnalysis>;
     cancel(): Promise<void>;
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
@@ -326,7 +322,9 @@ export interface KobrixaApi {
   };
 }
 
-export type { BuildArtifact, CompileResult, Diagnostic, DeviceDescriptor, RemoteEntry };
+export type { BuildArtifact, DeviceDescriptor, RemoteEntry };
+export type Diagnostic = PublishedDiagnostic;
+export type CompileResult = PublishedCompileResult;
 export type {
   DeviceMonitorSnapshot,
   DeviceInputModes,

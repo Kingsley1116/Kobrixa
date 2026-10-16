@@ -3,6 +3,7 @@ import type {
   BuildProgress,
   CompileResult,
   CompilerBackend,
+  DiagnosticSources,
   LanguageFrontend,
   SourceProject,
 } from "./contracts.js";
@@ -18,6 +19,7 @@ export class BuildSession {
     private readonly controller = new AbortController(),
     readonly id: string = randomUUID(),
     private readonly commitOptions: CommitOptions = {},
+    private readonly diagnosticSources?: DiagnosticSources,
   ) {}
   cancel(): void {
     this.controller.abort();
@@ -48,6 +50,7 @@ export class BuildSession {
         },
       },
       this.controller.signal,
+      this.diagnosticSources,
     );
     const base = {
       buildId: this.id,

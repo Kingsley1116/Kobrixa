@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { build } from "esbuild";
-import { applyAnalysis, type LanguageSyncRequest } from "../../shared/language-sync.js";
+import {
+  applyAnalysis,
+  emptyAnalysis,
+  type LanguageSyncRequest,
+} from "../../shared/language-sync.js";
 import { CompletionService } from "./completion.js";
 import type { CompletionSyncRequest } from "../../shared/completion-sync.js";
 import { LanguageService } from "./language.js";
@@ -20,6 +24,33 @@ describe("LanguageService background checks", () => {
     await build({
       entryPoints: [fileURLToPath(new URL("./language-worker.ts", import.meta.url))],
       outfile: path.join(workerRoot, "worker.cjs"),
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+    });
+    await build({
+      stdin: {
+        resolveDir: path.dirname(fileURLToPath(import.meta.url)),
+        contents: `
+          import "./language-worker.ts";
+          import { workerData } from "node:worker_threads";
+          import { BasicPlusProjectAnalyzer } from "@kobrixa/basic-plus";
+          import { BuildError } from "@kobrixa/compiler";
+          const analyze = BasicPlusProjectAnalyzer.prototype.analyze;
+          BasicPlusProjectAnalyzer.prototype.analyze = function (...args) {
+            if (workerData?.analyzerFailure === "build")
+              throw new BuildError("BUILD1006", "Analyzer failure.");
+            if (workerData?.analyzerFailure === "lookalike")
+              throw Object.assign(new Error("Analyzer failure."), { code: "BUILD1007" });
+            const result = analyze.apply(this, args);
+            return {
+              ...result,
+              diagnostics: result.diagnostics.map((item) => ({ ...item, source: "acme.forged" })),
+            };
+          };
+        `,
+      },
+      outfile: path.join(workerRoot, "injected-worker.cjs"),
       bundle: true,
       platform: "node",
       format: "cjs",
@@ -58,12 +89,92 @@ describe("LanguageService background checks", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  function useInjectedAnalyzer(analyzerFailure?: "build" | "lookalike") {
+    createWorker.mockImplementation(() => {
+      const worker = new Worker(path.join(workerRoot, "injected-worker.cjs"), {
+        execArgv: [],
+        workerData: { analyzerFailure },
+      });
+      workers.push(worker);
+      return worker;
+    });
+  }
+
   it("checks unsaved overlays and reuses an idle worker", async () => {
     expect(await service.diagnostics("workspace", { "main.bp": "Unknown.Do()\n" })).toEqual([
       expect.objectContaining({ code: "BP3001", file: "main.bp" }),
     ]);
     expect(await service.diagnostics("workspace", {})).toEqual([]);
     expect(createWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes analysis diagnostics as Basic Plus and loader diagnostics as core", async () => {
+    expect(await service.diagnostics("workspace", { "main.bp": "Unknown.Do()\n" })).toEqual([
+      expect.objectContaining({ code: "BP3001", source: "kobrixa.basic-plus" }),
+    ]);
+    await writeFile(path.join(root, "kobrixa.json"), "{");
+    const loader = await service.diagnostics("workspace", {});
+    expect(loader.length).toBeGreaterThan(0);
+    expect(loader.every((item) => item.source === "kobrixa.core")).toBe(true);
+  });
+
+  it("publishes only a core BUILD1007 analysis when the analyzer forges a source", async () => {
+    useInjectedAnalyzer();
+    const analysis = await service.analyze("workspace", { "main.bp": "Unknown.Do()\n" });
+    expect(analysis).toEqual({
+      ...emptyAnalysis(),
+      diagnostics: [
+        expect.objectContaining({
+          code: "BUILD1007",
+          source: "kobrixa.core",
+          severity: "error",
+          message:
+            "A compiler provider returned diagnostics with a source; Kobrixa assigns diagnostic sources.",
+        }),
+      ],
+    });
+  });
+
+  it.each(["build", "lookalike"] as const)(
+    "still rejects other analyzer errors (%s)",
+    async (failure) => {
+      useInjectedAnalyzer(failure);
+      await expect(service.analyze("workspace", {})).rejects.toThrow(
+        failure === "build" ? "BUILD1006: Analyzer failure." : "Analyzer failure.",
+      );
+    },
+  );
+
+  it("returns stale when the requested source differs from the published diagnostic", async () => {
+    const request: LanguageSyncRequest = {
+      session: "source-test",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "LCD.Clear( ' comment\n" }, removed: [] },
+    };
+    const reply = await service.sync("workspace", request);
+    if (reply.kind !== "result") throw new Error("resync");
+    const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics.find(
+      (d) => d.code === "BP1043",
+    )!;
+    expect(diagnostic.source).toBe("kobrixa.basic-plus");
+    const query = {
+      requestId: "source-query",
+      session: request.session,
+      revision: request.revision,
+      analysisVersion: reply.patch.version,
+      file: "main.bp",
+      diagnostic,
+    };
+    expect(
+      await service.quickFixes("workspace", {
+        ...query,
+        requestId: "forged",
+        diagnostic: { ...diagnostic, source: "acme.x" },
+      }),
+    ).toEqual({ kind: "stale" });
+    expect(await service.quickFixes("workspace", query)).toMatchObject({ kind: "result" });
   });
 
   it("analyzes unsaved include/import overlays and returns exact token ranges with diagnostics", async () => {

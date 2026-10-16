@@ -1,6 +1,8 @@
-export interface DocumentationRequest {
+interface DocumentationTarget {
+  source: string;
   code: string;
   helpKey?: string;
   locale: "zh-TW" | "en";
-  relatedIndex?: number;
 }
+export type DocumentationRequest = DocumentationTarget &
+  ({ relatedIndex?: number } | { linkIndex: number });

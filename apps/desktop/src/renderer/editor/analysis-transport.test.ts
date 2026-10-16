@@ -62,6 +62,7 @@ it("binds quick fixes to the accepted source analysis and discards replies after
   const transport = new AnalysisTransport(sync, request);
   const analysis = await transport.analyze("one", { "main.bp": "LCD.Clear(" });
   const diagnostic = {
+    source: "kobrixa.basic-plus",
     code: "BP1043",
     severity: "error" as const,
     file: "main.bp",
@@ -75,7 +76,7 @@ it("binds quick fixes to the accepted source analysis and discards replies after
       revision: 1,
       analysisVersion: 1,
       file: "main.bp",
-      diagnostic: { code: "BP1043", range: diagnostic.range },
+      diagnostic: { source: "kobrixa.basic-plus", code: "BP1043", range: diagnostic.range },
     }),
   );
   let resolve!: (value: { kind: "result"; fixes: [] }) => void;
@@ -105,6 +106,7 @@ it("cancels only the requested query, settles immediately and removes the abort 
   const transport = new AnalysisTransport(sync, request, cancel);
   const analysis = await transport.analyze("one", { "main.bp": "LCD.Clear(" });
   const diagnostic = {
+    source: "kobrixa.basic-plus",
     code: "BP1043",
     severity: "error" as const,
     file: "main.bp",

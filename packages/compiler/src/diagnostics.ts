@@ -1,5 +1,8 @@
-import type { Diagnostic, SourceRange } from "./contracts.js";
+import type { Diagnostic, PublishedDiagnostic, SourceRange } from "./contracts.js";
 import type { SourceSpan } from "@kobrixa/ir";
+
+/** Reserved identity for diagnostics produced by Kobrixa itself; no plugin may register it. */
+export const CORE_DIAGNOSTIC_SOURCE = "kobrixa.core";
 
 export const ZERO_RANGE: SourceRange = {
   startLine: 1,
@@ -14,11 +17,15 @@ export function diagnostic(
   file = "kobrixa.json",
   range: SourceRange = ZERO_RANGE,
   severity: Diagnostic["severity"] = "error",
-): Diagnostic {
-  return { code, severity, file, range, message };
+): PublishedDiagnostic {
+  return { code, severity, file, range, message, source: CORE_DIAGNOSTIC_SOURCE };
 }
 
-export function diagnosticFromSpan(code: string, message: string, span?: SourceSpan): Diagnostic {
+export function diagnosticFromSpan(
+  code: string,
+  message: string,
+  span?: SourceSpan,
+): PublishedDiagnostic {
   return diagnostic(
     code,
     message,

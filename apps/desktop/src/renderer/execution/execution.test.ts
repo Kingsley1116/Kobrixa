@@ -30,6 +30,7 @@ const failure: CompileResult = {
   diagnostics: [
     {
       code: "BP001",
+      source: "kobrixa.basic-plus",
       severity: "error",
       file: "main.bp",
       message: "Invalid source",

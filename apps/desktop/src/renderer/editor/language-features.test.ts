@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { CancellationToken, editor, Position } from "monaco-editor";
 import { analyzeBasicPlusProject, getBasicPlusQuickFixes } from "@kobrixa/basic-plus";
+import { stampDiagnostics } from "@kobrixa/compiler";
+import { BASIC_PLUS_SOURCE } from "../../shared/basic-plus-quick-fixes.js";
 import type { Diagnostic } from "../../shared/api.js";
 import { ModelSnapshots } from "./model-snapshots.js";
 import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
@@ -57,7 +59,7 @@ function model(file: string, initial: string) {
 }
 function setup(sources: Record<string, string>) {
   let locale: "en" | "zh-TW" = "en";
-  const analysis = analyzeBasicPlusProject(
+  const raw = analyzeBasicPlusProject(
     {
       root: "/project",
       manifest: {
@@ -74,6 +76,7 @@ function setup(sources: Record<string, string>) {
     },
     new AbortController().signal,
   );
+  const analysis = { ...raw, diagnostics: stampDiagnostics(raw.diagnostics, BASIC_PLUS_SOURCE) };
   const models = new Map([["main.bp", model("main.bp", sources["main.bp"]!)]]);
   const snapshot = { analysis, overlays: sources };
   let editable = true;

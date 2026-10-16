@@ -340,6 +340,30 @@ describe("startPlugins", () => {
     );
   });
 
+  it("refreshes a plugin's display name in the help catalog after a reload changes its revision", async () => {
+    const folder = await pluginFolder("hello");
+    const controller = await start(fakeDialogs(), {
+      commandLine: { developmentDirectories: [folder], safeMode: false },
+    });
+    const first = controller.diagnosticHelp();
+    expect(first.plugins["acme.hello"]).toEqual({
+      displayName: { en: "Hello hello", "zh-TW": "哈囉 hello" },
+      entries: [],
+    });
+    const file = path.join(folder, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.displayName = { en: "Renamed hello", "zh-TW": "新名 hello" };
+    await writeFile(file, JSON.stringify(manifest));
+    expect(await controller.reload(developmentSourceKey(folder))).toMatchObject({ ok: true });
+    const refreshed = controller.diagnosticHelp();
+    expect(refreshed.plugins["acme.hello"]).toEqual({
+      displayName: manifest.displayName,
+      entries: [],
+    });
+    expect(refreshed.revision).toBeGreaterThan(first.revision);
+    expect(controller.state().diagnosticHelpRevision).toBe(refreshed.revision);
+  });
+
   it("points a linked folder that moved at its new location", async () => {
     const folder = await pluginFolder("hello");
     const oldKey = developmentSourceKey(folder);
@@ -569,9 +593,22 @@ describe("Python selection", () => {
 });
 
 describe("PluginController with a fake manager", () => {
+  const helpEntry = { code: "ACME1", title: { en: "t" }, cause: { en: "c" }, steps: { en: ["s"] } };
+  const builtin: PluginsSnapshot["plugins"][number] = {
+    sourceKey: "builtin:kobrixa.basic-plus",
+    id: "kobrixa.basic-plus",
+    source: "builtin",
+    runtime: "builtin",
+    displayName: { en: "Basic Plus", "zh-TW": "Basic Plus" },
+    status: "enabled",
+    running: false,
+    problems: [],
+    commands: [],
+  };
   const key = "dev:0123456789abcdef";
   const snapshot: PluginsSnapshot = {
     revision: 4,
+    diagnosticHelpRevision: 2,
     safeMode: false,
     developmentMode: true,
     plugins: [
@@ -599,6 +636,14 @@ describe("PluginController with a fake manager", () => {
     const manager = {
       active: false,
       state: () => currentSnapshot,
+      diagnosticHelp: vi.fn(() => ({
+        revision: currentSnapshot.diagnosticHelpRevision,
+        plugins: currentSnapshot.plugins.some(
+          (plugin) => plugin.id === "acme.hello" && plugin.status === "enabled",
+        )
+          ? [{ source: "acme.hello", sourceKey: key, entries: [helpEntry] }]
+          : [],
+      })),
       addSource: vi.fn(async () => ({ ok: true })),
       removeSource: vi.fn(async (sourceKey: string) => {
         currentSnapshot = {
@@ -660,9 +705,62 @@ describe("PluginController with a fake manager", () => {
       marker,
       settings,
       dialogs,
-      emit: (event: PluginManagerEvent) => listener(event),
+      emit: (event: PluginManagerEvent) => {
+        if (event.type === "state") currentSnapshot = event.state;
+        listener(event);
+      },
     };
   }
+
+  it("keys the help catalog by source and includes enabled plugins' names", () => {
+    const { controller } = setup({
+      snapshot: { ...snapshot, plugins: [...snapshot.plugins, builtin] },
+    });
+    expect(controller.diagnosticHelp()).toEqual({
+      revision: 2,
+      plugins: {
+        "acme.hello": { entries: [helpEntry] },
+        "kobrixa.basic-plus": {
+          displayName: { en: "Basic Plus", "zh-TW": "Basic Plus" },
+          entries: [],
+        },
+      },
+    });
+    expect(controller.diagnosticHelpEntry("acme.hello", "ACME1")).toEqual(helpEntry);
+    expect(controller.diagnosticHelpEntry("acme.other", "ACME1")).toBeUndefined();
+    expect(controller.diagnosticHelpEntry("kobrixa.basic-plus", "BP1015")).toBeUndefined();
+  });
+
+  it("caches the source-keyed catalog and entry lookups until the help revision changes", () => {
+    const { controller, manager, emit } = setup();
+    const first = controller.diagnosticHelp();
+    expect(controller.diagnosticHelp()).toBe(first);
+    expect(manager.diagnosticHelp).toHaveBeenCalledOnce();
+    expect(controller.diagnosticHelpEntry("acme.hello", "ACME1", "missing")).toEqual(helpEntry);
+    expect(controller.diagnosticHelpEntry("acme.other", "ACME1")).toBeUndefined();
+    emit({ type: "state", state: { ...snapshot, revision: snapshot.revision + 1 } });
+    expect(controller.diagnosticHelp()).toBe(first);
+    expect(manager.diagnosticHelp).toHaveBeenCalledOnce();
+    emit({ type: "state", state: { ...snapshot, diagnosticHelpRevision: 3, plugins: [builtin] } });
+    expect(controller.diagnosticHelp()).toEqual({
+      revision: 3,
+      plugins: {
+        "kobrixa.basic-plus": { displayName: builtin.displayName, entries: [] },
+      },
+    });
+    expect(controller.diagnosticHelpEntry("acme.hello", "ACME1")).toBeUndefined();
+    expect(manager.diagnosticHelp).toHaveBeenCalledTimes(2);
+  });
+
+  it("omits disabled plugins' names even when they have no help", () => {
+    const { controller } = setup({
+      snapshot: {
+        ...snapshot,
+        plugins: [{ ...builtin, status: "disabled" }],
+      },
+    });
+    expect(controller.diagnosticHelp()).toEqual({ revision: 2, plugins: {} });
+  });
 
   it("adds no plugin when saving a linked folder fails", async () => {
     const { controller, manager, settings, dialogs } = setup({

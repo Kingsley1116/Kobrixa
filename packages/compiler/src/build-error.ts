@@ -8,6 +8,7 @@ export type BuildErrorCode =
   | "BUILD1004"
   | "BUILD1005"
   | "BUILD1006"
+  | "BUILD1007"
   | "BUILD9000";
 export class BuildError extends Error {
   readonly detail: string;

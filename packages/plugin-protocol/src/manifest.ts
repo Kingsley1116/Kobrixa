@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PLUGIN_LIMITS } from "./limits.js";
+import { diagnosticHelpDeclSchema } from "./diagnostic-help.js";
 import {
   localizedTextSchema,
   namespacedIdSchema,
@@ -77,6 +78,7 @@ export const pluginManifestSchema = z.looseObject({
         .optional(),
       frontends: z.array(frontendDeclSchema).max(8).optional(),
       backends: z.array(backendDeclSchema).max(8).optional(),
+      diagnosticHelp: diagnosticHelpDeclSchema.optional(),
     })
     .optional(),
 });

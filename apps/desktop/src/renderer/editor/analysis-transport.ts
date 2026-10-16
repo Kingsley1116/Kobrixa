@@ -1,11 +1,11 @@
-import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { Diagnostic } from "../../shared/api.js";
 import type { QuickFixRequest, QuickFixReply } from "../../shared/quick-fixes.js";
 import {
   applyAnalysis,
   diffRecord,
   type LanguageSyncReply,
   type LanguageSyncRequest,
+  type PublishedAnalysis,
 } from "../../shared/language-sync.js";
 
 /** Ordered overlay synchronization is independent of whether a result is painted.
@@ -15,9 +15,9 @@ export class AnalysisTransport {
   private session = "";
   private revision = 0;
   private overlays: Record<string, string> | undefined;
-  private result: { version: number; analysis: BasicPlusProjectAnalysis } | undefined;
+  private result: { version: number; analysis: PublishedAnalysis } | undefined;
   private readonly versions = new WeakMap<
-    BasicPlusProjectAnalysis,
+    PublishedAnalysis,
     {
       workspaceId: string;
       session: string;
@@ -37,7 +37,7 @@ export class AnalysisTransport {
     private readonly cancelFix?: (workspaceId: string, requestId: string) => Promise<void>,
   ) {}
   async quickFixes(
-    analysis: BasicPlusProjectAnalysis,
+    analysis: PublishedAnalysis,
     diagnostic: Diagnostic,
     signal?: AbortSignal,
   ): Promise<QuickFixReply> {
@@ -59,6 +59,7 @@ export class AnalysisTransport {
       analysisVersion: version.analysisVersion,
       file: diagnostic.file,
       diagnostic: {
+        source: diagnostic.source,
         code: diagnostic.code,
         range: diagnostic.range,
         ...(diagnostic.helpKey ? { helpKey: diagnostic.helpKey } : {}),
@@ -86,10 +87,7 @@ export class AnalysisTransport {
       signal?.removeEventListener("abort", abort);
     }
   }
-  async analyze(
-    workspaceId: string,
-    overlays: Record<string, string>,
-  ): Promise<BasicPlusProjectAnalysis> {
+  async analyze(workspaceId: string, overlays: Record<string, string>): Promise<PublishedAnalysis> {
     if (this.workspaceId !== workspaceId) {
       this.workspaceId = workspaceId;
       this.session = crypto.randomUUID();

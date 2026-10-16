@@ -74,7 +74,45 @@ open -a Kobrixa --args \
 
 Python must be installed locally with the SDK; Kobrixa does not download or manage the interpreter. Python stdout carries only protocol messages; write logs to stderr. See the [Python SDK](../../sdks/python/README.md) and [plugin architecture](../../docs/en/architecture.md#plugins-development-preview).
 
-These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.1.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
+These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.2.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
+
+## Author diagnostic help
+
+Declare `contributes.diagnosticHelp = { "version": 1, "path": "diagnostic-help.json" }` in your manifest. The path is relative to the plugin folder and must point to a JSON file inside it. The resource has an `entries` array:
+
+```json
+{
+  "entries": [
+    {
+      "code": "ACME1001",
+      "helpKey": "missing-value",
+      "title": { "en": "Missing value", "zh-TW": "缺少值" },
+      "cause": { "en": "A required value is missing." },
+      "steps": { "en": ["Supply the required value."] },
+      "example": { "before": "value =", "after": "value = 1" },
+      "links": [{ "url": "https://example.com/help", "label": { "en": "More help" } }]
+    }
+  ]
+}
+```
+
+Each entry requires `code`, `title`, `cause` and `steps`; `helpKey`, `example` and `links` are optional. Localized text and steps require `en`; `zh-TW` is optional and falls back to English. Codes match `/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/`, and help keys match `/^[a-z0-9-]{1,100}$/`. Each `(code, helpKey)` pair must be unique within the file. Unknown fields, including `source`, are rejected.
+
+All content is plain text, without Markdown or HTML rendering. Titles, steps and link labels are single-line; causes and the `before`/`after` examples may span multiple lines. Links must use HTTPS. Version 1 limits come from [`DIAGNOSTIC_HELP_LIMITS`](../../packages/plugin-protocol/src/limits.ts):
+
+| Item                                 | Limit                   |
+| ------------------------------------ | ----------------------- |
+| Resource file                        | 1 MiB (1,048,576 bytes) |
+| Entries per plugin                   | 512                     |
+| Serialized JSON per entry (UTF-8)    | 16 KiB (16,384 bytes)   |
+| Steps per locale                     | 16                      |
+| Links per entry                      | 4                       |
+| URL                                  | 2048 characters         |
+| Title, individual step or link label | 500 characters          |
+| Cause or each example field          | 4000 characters         |
+| Total loaded help across plugins     | 8 MiB (8,388,608 bytes) |
+
+Help is published only while the plugin is enabled and shown only for diagnostics with the plugin's own source ID; matching another plugin's diagnostic code does not grant access to its help. This preview does not yet expose external diagnostic producers. An unreadable or invalid help resource adds `PLUGIN_E_DIAGNOSTIC_HELP` and leaves the plugin enabled without that help. The reserved plugin ID `kobrixa.core` is rejected with `PLUGIN_E_RESERVED_ID`.
 
 ## 繁體中文
 
@@ -152,4 +190,26 @@ open -a Kobrixa --args \
 
 必須在本機安裝 Python 與 SDK；Kobrixa 不下載或管理直譯器。Python stdout 只傳送協定訊息，日誌請寫入 stderr。詳見 [Python SDK](../../sdks/python/README.md) 與[插件架構](../../docs/zh-TW/architecture.md#插件開發預覽)。
 
-這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.1.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
+這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.2.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
+
+### 撰寫診斷說明
+
+在 manifest 宣告 `contributes.diagnosticHelp = { "version": 1, "path": "diagnostic-help.json" }`。路徑相對於插件資料夾，必須指向該資料夾內的 JSON 檔。資源格式如上方英文範例，以 `entries` 陣列包含各筆說明。
+
+每筆必須有 `code`、`title`、`cause` 與 `steps`；`helpKey`、`example` 與 `links` 可省略。在地化文字與步驟必須提供 `en`，`zh-TW` 可省略，缺漏時退回英文。代碼格式為 `/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/`，helpKey 格式為 `/^[a-z0-9-]{1,100}$/`；同一檔案內的 `(code, helpKey)` 不得重複。未知欄位（包含 `source`）一律拒絕。
+
+所有內容只以純文字呈現，不解析 Markdown 或 HTML。標題、步驟與連結標籤只能單行；原因及範例的 `before`／`after` 可多行。連結只接受 HTTPS。第 1 版上限來自 [`DIAGNOSTIC_HELP_LIMITS`](../../packages/plugin-protocol/src/limits.ts)：
+
+| 項目                          | 上限                     |
+| ----------------------------- | ------------------------ |
+| 資源檔                        | 1 MiB（1,048,576 bytes） |
+| 每插件條目數                  | 512                      |
+| 單筆 JSON 序列化大小（UTF-8） | 16 KiB（16,384 bytes）   |
+| 每語系步驟數                  | 16                       |
+| 每筆連結數                    | 4                        |
+| URL                           | 2048 字元                |
+| 標題、單一步驟或連結標籤      | 500 字元                 |
+| 原因或範例的單一欄位          | 4000 字元                |
+| 全部插件已載入的說明合計      | 8 MiB（8,388,608 bytes） |
+
+說明只在插件啟用時發布，並且只顯示於來源 ID 為該插件的診斷；即使代碼相同，也不會使用其他插件的說明。本預覽版尚未開放外部診斷提供者。說明資源無法讀取或驗證失敗時，會加上 `PLUGIN_E_DIAGNOSTIC_HELP`，插件仍保持啟用，但不提供該資源的說明。插件使用保留 ID `kobrixa.core` 時，會以 `PLUGIN_E_RESERVED_ID` 拒絕。

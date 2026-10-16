@@ -1,6 +1,11 @@
 import { BasicPlusFrontend } from "@kobrixa/basic-plus";
 import { EV3Backend } from "@kobrixa/backend-ev3";
-import { BuildError, type CompilerBackend, type LanguageFrontend } from "@kobrixa/compiler";
+import {
+  BuildError,
+  type CompilerBackend,
+  type DiagnosticSources,
+  type LanguageFrontend,
+} from "@kobrixa/compiler";
 import {
   resolveCompilerProviders,
   resolvePlugins,
@@ -38,6 +43,7 @@ export const BUILTIN_BACKENDS: Readonly<
 export function createBuiltinCompilers(snapshot: CompilerSnapshot): {
   frontend: LanguageFrontend;
   backend: CompilerBackend;
+  sources: DiagnosticSources;
 } {
   const front = snapshot.frontend;
   const back = snapshot.backend;
@@ -48,7 +54,11 @@ export function createBuiltinCompilers(snapshot: CompilerSnapshot): {
       "BUILD1001",
       "No built-in compiler factory matches the provider snapshot.",
     );
-  return { frontend: createFrontend(), backend: createBackend(back.contribution, snapshot.ir) };
+  return {
+    frontend: createFrontend(),
+    backend: createBackend(back.contribution, snapshot.ir),
+    sources: { frontend: front.pluginId, backend: back.pluginId },
+  };
 }
 
 export function resolveBuiltinCompiler(language: string, target: string): CompilerResolution {

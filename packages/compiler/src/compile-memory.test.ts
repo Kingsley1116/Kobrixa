@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { compileToMemory } from "./compile-memory.js";
 import { testBackend, testFrontend, testProject, minimalIR } from "./test-build.js";
 import { diagnostic } from "./diagnostics.js";
+import type { Diagnostic } from "./contracts.js";
 let root: string;
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), "kobrixa-memory-"));
@@ -96,4 +97,92 @@ it("keeps cancellation and never rereads captured simulation resources", async (
     artifacts: [],
     diagnostics: [expect.objectContaining({ code: "BUILD0001" })],
   });
+});
+
+const sources = { frontend: "test.front", backend: "test.back" };
+// Unstamped producer output: diagnostic() now adds the core source, so remove it again.
+const warning = (code: string) => {
+  const rest: Diagnostic = diagnostic(code, code);
+  delete rest.source;
+  return { ...rest, severity: "warning" as const };
+};
+
+it("stamps frontend, IR and backend diagnostics independently", async () => {
+  const backend = testBackend();
+  const compile = backend.compile.bind(backend);
+  backend.compile = async (ir, signal) => ({
+    ...(await compile(ir, signal)),
+    diagnostics: [warning("EV30001")],
+  });
+  const frontend = {
+    id: "toy",
+    compile: async (input: Parameters<typeof testFrontend.compile>[0], signal: AbortSignal) => ({
+      ...(await testFrontend.compile(input, signal)),
+      diagnostics: [warning("BP0001")],
+    }),
+  };
+  const result = await compileToMemory(
+    testProject(root),
+    frontend,
+    backend,
+    new AbortController().signal,
+    sources,
+  );
+  expect(result.diagnostics.map((item) => [item.code, item.source])).toEqual([
+    ["BP0001", "test.front"],
+    ["EV30001", "test.back"],
+  ]);
+});
+it("reports IR validation failures as core", async () => {
+  const badIR = structuredClone(minimalIR);
+  badIR.program.entryFunction = "missing";
+  const result = await compileToMemory(
+    testProject(root),
+    { id: "toy", compile: async () => ({ ir: badIR, diagnostics: [] }) },
+    testBackend(),
+    new AbortController().signal,
+    sources,
+  );
+  expect(result.diagnostics[0]).toMatchObject({ code: "IR1001", source: "kobrixa.core" });
+});
+it("fails with a core BUILD1007 when a provider forges a source", async () => {
+  const forged = {
+    id: "toy",
+    compile: async () => ({ diagnostics: [{ ...warning("BP0001"), source: "kobrixa.ev3" }] }),
+  };
+  const result = await compileToMemory(
+    testProject(root),
+    forged,
+    testBackend(),
+    new AbortController().signal,
+    sources,
+  );
+  expect(result.success).toBe(false);
+  expect(result.diagnostics).toEqual([
+    expect.objectContaining({ code: "BUILD1007", source: "kobrixa.core" }),
+  ]);
+  const backend = testBackend();
+  backend.compile = async () => ({
+    artifacts: [],
+    diagnostics: [{ ...warning("EV30001"), source: "x.y" }],
+  });
+  const late = await compileToMemory(
+    testProject(root),
+    testFrontend,
+    backend,
+    new AbortController().signal,
+    sources,
+  );
+  expect(late.diagnostics.at(-1)).toMatchObject({ code: "BUILD1007", source: "kobrixa.core" });
+  expect(late.diagnostics.some((item) => item.source === "x.y")).toBe(false);
+});
+it("keeps library calls without sources unchanged", async () => {
+  const frontend = { id: "toy", compile: async () => ({ diagnostics: [warning("BP0001")] }) };
+  const result = await compileToMemory(
+    testProject(root),
+    frontend,
+    testBackend(),
+    new AbortController().signal,
+  );
+  expect(result.diagnostics[0]!.source).toBeUndefined();
 });

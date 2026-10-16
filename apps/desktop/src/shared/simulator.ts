@@ -1,4 +1,4 @@
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { PublishedDiagnostic } from "@kobrixa/compiler";
 import type { SourceSpan } from "@kobrixa/ir";
 import type { OfflinePreviewProgram } from "./offline-preview.js";
 import type { PreviewSnapshot } from "../preview/runtime.js";
@@ -118,8 +118,8 @@ export interface PreparedSimulation {
   programs: Record<string, OfflinePreviewProgram>;
 }
 export type SimulationPrepareResult =
-  | { success: true; prepared: PreparedSimulation; diagnostics: Diagnostic[] }
-  | { success: false; diagnostics: Diagnostic[] };
+  | { success: true; prepared: PreparedSimulation; diagnostics: PublishedDiagnostic[] }
+  | { success: false; diagnostics: PublishedDiagnostic[] };
 /** A literal port the program uses that the simulated robot has no hardware on. */
 export interface PortWarning {
   robotId: string;

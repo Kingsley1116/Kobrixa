@@ -1,4 +1,5 @@
-import type { BasicPlusProjectAnalysis, BasicPlusSemanticToken } from "@kobrixa/basic-plus";
+import type { BasicPlusSemanticToken } from "@kobrixa/basic-plus";
+import type { PublishedAnalysis } from "../../shared/language-sync.js";
 import type { CancellationToken, IDisposable, editor, languages } from "monaco-editor";
 
 export const semanticLegend: languages.SemanticTokensLegend = {
@@ -153,7 +154,7 @@ export class BasicPlusSemanticTokens
     this.models.delete(model);
   }
   update(
-    tokensByFile: BasicPlusProjectAnalysis["tokensByFile"] | undefined,
+    tokensByFile: PublishedAnalysis["tokensByFile"] | undefined,
     sources?: Record<string, string>,
     versions?: ReadonlyMap<editor.ITextModel, number>,
   ): void {

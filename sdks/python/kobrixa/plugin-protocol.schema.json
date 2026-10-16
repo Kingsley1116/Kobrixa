@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kobrixa.com/schemas/plugin-protocol/1.1.0.json",
-  "title": "Kobrixa plugin protocol 1.1.0",
+  "$id": "https://kobrixa.com/schemas/plugin-protocol/1.2.0.json",
+  "title": "Kobrixa plugin protocol 1.2.0",
   "$defs": {
     "manifest": {
       "type": "object",
@@ -333,6 +333,25 @@
                 ],
                 "additionalProperties": {}
               }
+            },
+            "diagnosticHelp": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number",
+                  "const": 1
+                },
+                "path": {
+                  "type": "string",
+                  "maxLength": 600,
+                  "pattern": "^(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\\/){0,7}[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\\.json$"
+                }
+              },
+              "required": [
+                "version",
+                "path"
+              ],
+              "additionalProperties": false
             }
           },
           "additionalProperties": {}
@@ -345,6 +364,174 @@
         "runtime"
       ],
       "additionalProperties": {}
+    },
+    "diagnostic-help": {
+      "type": "object",
+      "properties": {
+        "entries": {
+          "maxItems": 512,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+              },
+              "helpKey": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,100}$"
+              },
+              "title": {
+                "type": "object",
+                "properties": {
+                  "en": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                  },
+                  "zh-TW": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                  }
+                },
+                "required": [
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "cause": {
+                "type": "object",
+                "properties": {
+                  "en": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000,
+                    "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F]*$"
+                  },
+                  "zh-TW": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000,
+                    "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F]*$"
+                  }
+                },
+                "required": [
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "steps": {
+                "type": "object",
+                "properties": {
+                  "en": {
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500,
+                      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                    }
+                  },
+                  "zh-TW": {
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500,
+                      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                    }
+                  }
+                },
+                "required": [
+                  "en"
+                ],
+                "additionalProperties": false
+              },
+              "example": {
+                "type": "object",
+                "properties": {
+                  "before": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000,
+                    "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F]*$"
+                  },
+                  "after": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000,
+                    "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F]*$"
+                  }
+                },
+                "required": [
+                  "before",
+                  "after"
+                ],
+                "additionalProperties": false
+              },
+              "links": {
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "maxLength": 2048,
+                      "pattern": "^https:\\/\\/[^\\u0000- \\u007F]+$"
+                    },
+                    "label": {
+                      "type": "object",
+                      "properties": {
+                        "en": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                        },
+                        "zh-TW": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                        }
+                      },
+                      "required": [
+                        "en"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "url",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "code",
+              "title",
+              "cause",
+              "steps"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "additionalProperties": false
     },
     "message": {
       "anyOf": [

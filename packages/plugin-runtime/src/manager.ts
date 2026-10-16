@@ -1,5 +1,11 @@
 import path from "node:path";
-import type { LocalizedText, PluginLocale, Severity } from "@kobrixa/plugin-protocol";
+import {
+  DIAGNOSTIC_HELP_LIMITS,
+  type LocalizedText,
+  type PluginDiagnosticHelpEntry,
+  type PluginLocale,
+  type Severity,
+} from "@kobrixa/plugin-protocol";
 import { resolveCompilerProviders, type CompilerResolution } from "./compiler-resolution.js";
 import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from "./errors.js";
 import {
@@ -38,6 +44,8 @@ export interface PluginManagerOptions {
   supervisor?: Omit<SupervisorOptions, "locale" | "onNotice" | "onStateChange">;
   /** Bound on reading one development folder; defaults to SOURCE_READ_TIMEOUT_MS. */
   sourceReadTimeoutMs?: number;
+  /** Total help budget; defaults to 8 MiB. Tests may lower this limit. */
+  diagnosticHelpTotalBytes?: number;
   now?(): number;
 }
 export interface PluginSummary {
@@ -57,11 +65,17 @@ export interface PluginSummary {
 export interface PluginsSnapshot {
   /** Increases with every state event; keep the snapshot with the highest revision. */
   revision: number;
+  /** Revision of the currently published diagnostic help catalog. */
+  diagnosticHelpRevision: number;
   safeMode: boolean;
   developmentMode: boolean;
   /** The settings file was corrupt or unreadable; cleared by the next successful save. */
   stateProblem?: PluginProblem;
   plugins: PluginSummary[];
+}
+export interface DiagnosticHelpCatalog {
+  revision: number;
+  plugins: Array<{ source: string; sourceKey: string; entries: PluginDiagnosticHelpEntry[] }>;
 }
 export interface PluginNotice {
   pluginId: string;
@@ -129,6 +143,12 @@ export class PluginManager {
   #supervisorsStopped: Promise<void> | undefined;
   #changes: Promise<unknown> = Promise.resolve();
   #revision = 0;
+  #help: {
+    revision: number;
+    key: string;
+    catalog: DiagnosticHelpCatalog["plugins"];
+    overBudget: Set<string>;
+  } = { revision: 0, key: "", catalog: [], overBudget: new Set() };
   #disabled: Set<string>;
   readonly #legacy: Set<string>;
   #stateProblem: PluginProblem | undefined;
@@ -182,11 +202,16 @@ export class PluginManager {
   state(): PluginsSnapshot {
     return {
       revision: this.#revision,
+      diagnosticHelpRevision: this.#help.revision,
       safeMode: this.#safeMode,
       developmentMode: this.#entries.some((entry) => entry.read.source === "development"),
       ...(this.#stateProblem ? { stateProblem: this.#stateProblem } : {}),
       plugins: this.#entries.map((entry) => this.#summary(entry)),
     };
+  }
+
+  diagnosticHelp(): DiagnosticHelpCatalog {
+    return structuredClone({ revision: this.#help.revision, plugins: this.#help.catalog });
   }
 
   resolveCompiler(language: string, target: string): CompilerResolution {
@@ -483,7 +508,47 @@ export class PluginManager {
         this.#supervisors.delete(key);
         retired.push(supervisor);
       }
+    this.#rebuildHelp();
     return retired;
+  }
+
+  #rebuildHelp(): void {
+    const budget = this.options.diagnosticHelpTotalBytes ?? DIAGNOSTIC_HELP_LIMITS.totalBytes;
+    const enabled = this.#entries
+      .filter((entry) => entry.plugin.status === "enabled")
+      .sort((a, b) =>
+        a.read.sourceKey < b.read.sourceKey ? -1 : a.read.sourceKey > b.read.sourceKey ? 1 : 0,
+      );
+    const key = enabled
+      .map((entry) =>
+        [
+          entry.read.sourceKey,
+          entry.generation,
+          entry.plugin.id,
+          JSON.stringify(entry.plugin.manifest?.displayName ?? null),
+          Boolean(entry.read.diagnosticHelp),
+        ].join("\t"),
+      )
+      .join("\n");
+    if (key === this.#help.key) return;
+    const contributors = enabled.filter((entry) => entry.read.diagnosticHelp);
+    let total = 0;
+    const catalog: DiagnosticHelpCatalog["plugins"] = [];
+    const overBudget = new Set<string>();
+    for (const entry of contributors) {
+      const help = entry.read.diagnosticHelp!;
+      if (total + help.bytes > budget) {
+        overBudget.add(entry.read.sourceKey);
+        continue;
+      }
+      total += help.bytes;
+      catalog.push({
+        source: entry.plugin.id,
+        sourceKey: entry.read.sourceKey,
+        entries: help.entries,
+      });
+    }
+    this.#help = { revision: this.#help.revision + 1, key, catalog, overBudget };
   }
 
   async #retire(supervisors: readonly PluginSupervisor[], reason: StopReason): Promise<void> {
@@ -568,7 +633,19 @@ export class PluginManager {
       status: supervisor?.state === "failed" ? "failed" : plugin.status,
       ...(plugin.disabledBy ? { disabledBy: plugin.disabledBy } : {}),
       running: supervisor?.state === "running",
-      problems: [...plugin.problems, ...(supervisor?.problem ? [supervisor.problem] : [])],
+      problems: [
+        ...plugin.problems,
+        ...(plugin.status === "enabled" && plugin.helpProblem ? [plugin.helpProblem] : []),
+        ...(this.#help.overBudget.has(plugin.sourceKey)
+          ? [
+              {
+                code: "PLUGIN_E_DIAGNOSTIC_HELP" as const,
+                message: "Diagnostic help was not loaded because all plugins' help exceeds 8 MiB.",
+              },
+            ]
+          : []),
+        ...(supervisor?.problem ? [supervisor.problem] : []),
+      ],
       commands:
         plugin.status === "enabled"
           ? (manifest?.contributes?.commands ?? []).map(({ id, title }) => ({ id, title }))

@@ -1,4 +1,4 @@
-import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
+import type { PublishedAnalysis } from "../../shared/language-sync.js";
 import type { WorkspaceSummary } from "../../shared/api.js";
 import type { EditorAnalysis } from "./editor.js";
 import type { Documents } from "./documents.js";
@@ -15,12 +15,9 @@ export class AnalysisSession {
   constructor(
     private readonly documents: Documents,
     callbacks: {
-      analyze(
-        workspaceId: string,
-        overlays: Record<string, string>,
-      ): Promise<BasicPlusProjectAnalysis>;
+      analyze(workspaceId: string, overlays: Record<string, string>): Promise<PublishedAnalysis>;
       cancel(): void;
-      diagnostics(result: BasicPlusProjectAnalysis): void;
+      diagnostics(result: PublishedAnalysis): void;
       checking(value: boolean): void;
       error(error: unknown): void;
     },

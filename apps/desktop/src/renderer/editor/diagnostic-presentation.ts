@@ -1,5 +1,10 @@
-import { getDiagnosticHelp, type DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
+import type { Diagnostic } from "../../shared/api.js";
+import {
+  resolveDiagnosticHelp,
+  localizeHelp,
+  type PluginHelpCatalogView,
+} from "../../shared/diagnostic-help.js";
 import type { BasicPlusQuickFix } from "@kobrixa/basic-plus";
 
 const fixTitles: Record<BasicPlusQuickFix["titleKey"], Record<DiagnosticLocale, string>> = {
@@ -13,13 +18,21 @@ export const quickFixTitle = (
   key: BasicPlusQuickFix["titleKey"],
   locale: DiagnosticLocale,
 ): string => fixTitles[key][locale];
-export function diagnosticSummary(diagnostic: Diagnostic, locale: DiagnosticLocale): string {
-  return (
-    getDiagnosticHelp(diagnostic.code, diagnostic.helpKey)?.title[locale] ?? diagnostic.message
-  );
+export function diagnosticSummary(
+  diagnostic: Diagnostic,
+  locale: DiagnosticLocale,
+  catalog: PluginHelpCatalogView | undefined,
+): string {
+  const resolved = resolveDiagnosticHelp(diagnostic, catalog);
+  return resolved ? localizeHelp(resolved, locale).title : diagnostic.message;
 }
-export function diagnosticMarkerMessage(diagnostic: Diagnostic, locale: DiagnosticLocale): string {
-  const help = getDiagnosticHelp(diagnostic.code, diagnostic.helpKey);
-  if (!help) return `${diagnostic.code}: ${diagnostic.message}`;
-  return `${diagnostic.code}: ${help.title[locale]}\n${help.cause[locale]}\n${help.steps[locale][0] ?? ""}\n\n${diagnostic.message}`;
+export function diagnosticMarkerMessage(
+  diagnostic: Diagnostic,
+  locale: DiagnosticLocale,
+  catalog: PluginHelpCatalogView | undefined,
+): string {
+  const resolved = resolveDiagnosticHelp(diagnostic, catalog);
+  if (!resolved) return `${diagnostic.code}: ${diagnostic.message}`;
+  const text = localizeHelp(resolved, locale);
+  return `${diagnostic.code}: ${text.title}\n${text.cause}\n${text.steps[0] ?? ""}\n\n${diagnostic.message}`;
 }
