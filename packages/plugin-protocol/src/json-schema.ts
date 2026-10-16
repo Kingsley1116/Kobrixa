@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { PLUGIN_API_VERSION } from "./limits.js";
+import { pluginDiagnosticHelpFileSchema } from "./diagnostic-help.js";
 import { pluginManifestSchema } from "./manifest.js";
 import { notificationMethods, requestMethods } from "./methods.js";
 import { jsonRpcMessageSchema } from "./rpc.js";
 
 export const SCHEMA_DEFINITIONS: Record<string, z.ZodType> = {
   manifest: pluginManifestSchema,
+  "diagnostic-help": pluginDiagnosticHelpFileSchema,
   message: jsonRpcMessageSchema,
   ...Object.fromEntries(
     Object.entries(requestMethods).flatMap(([method, { params, result }]) => [
