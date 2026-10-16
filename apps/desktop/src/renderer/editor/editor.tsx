@@ -3,7 +3,7 @@ import { EditorModels } from "./editor-models.js";
 import { completionWidget } from "./completion-widget.js";
 import type { CompletionSession } from "./completion-session.js";
 import type { PublishedAnalysis } from "../../shared/language-sync.js";
-import { basicPlusMonarch, basicPlusThemeRules } from "./basic-plus-language.js";
+import { registerBasicPlusLanguage } from "./companions/basic-plus/registration.js";
 import type { Documents, DocumentBuffer } from "./documents.js";
 import type { AnalysisSession } from "./analysis-session.js";
 import { ModelSnapshots } from "./model-snapshots.js";
@@ -25,7 +25,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
-import { BASIC_PLUS_INDENTATION_RULES, formatBasicPlus } from "@kobrixa/basic-plus/language";
+import { formatBasicPlus } from "@kobrixa/basic-plus/language";
 import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
 import type { Diagnostic } from "../../shared/api.js";
@@ -43,45 +43,7 @@ let registered = false;
 function registerLanguage(): void {
   if (registered) return;
   registered = true;
-  monaco.languages.register({ id: "basic-plus", extensions: [".bp", ".bpi", ".bpm"] });
-  monaco.languages.setLanguageConfiguration("basic-plus", {
-    comments: { lineComment: "'" },
-    brackets: [
-      ["(", ")"],
-      ["[", "]"],
-    ],
-    autoClosingPairs: [
-      { open: "(", close: ")" },
-      { open: "[", close: "]" },
-      { open: '"', close: '"', notIn: ["string", "comment"] },
-    ],
-    surroundingPairs: [
-      { open: "(", close: ")" },
-      { open: "[", close: "]" },
-      { open: '"', close: '"' },
-    ],
-    indentationRules: BASIC_PLUS_INDENTATION_RULES,
-  });
-  monaco.languages.setMonarchTokensProvider("basic-plus", basicPlusMonarch);
-  for (const theme of ["light", "dark"] as const) {
-    const dark = theme === "dark";
-    monaco.editor.defineTheme(`kobrixa-${theme}`, {
-      base: dark ? "vs-dark" : "vs",
-      inherit: true,
-      rules: basicPlusThemeRules(dark),
-      colors: {
-        "editor.background": dark ? "#18212b" : "#fdfaf4",
-        "editor.foreground": dark ? "#e6eaf0" : "#1e2933",
-        "editorLineNumber.foreground": dark ? "#697a8b" : "#91958f",
-        "editorLineNumber.activeForeground": dark ? "#88acff" : "#2457d6",
-        "editor.lineHighlightBackground": dark ? "#202c3a" : "#f0ede5",
-        "editor.selectionBackground": dark ? "#344a72" : "#cddbf8",
-        "editorCursor.foreground": dark ? "#88acff" : "#2457d6",
-        "editorWidget.background": dark ? "#222e3b" : "#fdfaf4",
-        "editorWidget.border": dark ? "#3a4857" : "#d7d1c7",
-      },
-    });
-  }
+  registerBasicPlusLanguage();
   monaco.languages.registerDocumentFormattingEditProvider("basic-plus", {
     provideDocumentFormattingEdits: (model, options) => [
       {

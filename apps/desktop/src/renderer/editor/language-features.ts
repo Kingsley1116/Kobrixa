@@ -295,6 +295,7 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
       return { title, kind: "quickfix", edit };
     });
   }
+  // Transient Basic Plus completion algorithm copy; Task 6 removes it.
   async completions(
     model: monaco.editor.ITextModel,
     position: monaco.Position,

@@ -1,6 +1,7 @@
 import type { BasicPlusCompletionIndex, BasicPlusSymbol } from "@kobrixa/basic-plus";
 import type { SourceRange } from "@kobrixa/compiler";
 import type { editor, IRange, Position } from "monaco-editor";
+import { structuralChange } from "./companions/basic-plus/structure.js";
 
 export interface CompletionChange {
   before: number;
@@ -9,23 +10,11 @@ export interface CompletionChange {
   flush: boolean;
   structural?: boolean;
 }
-const structuralText = /\b(?:function|sub|endfunction|endsub|include|import)\b/i;
-/** Inspect only the two edited boundary lines, including a keyword typed one letter at a time. */
 export function structuralCompletionChange(
   model: editor.ITextModel,
   event: editor.IModelContentChangedEvent,
 ): boolean {
-  let delta = 0;
-  for (const change of [...event.changes].sort((a, b) => a.rangeOffset - b.rangeOffset)) {
-    if (structuralText.test(change.text)) return true;
-    const start = change.rangeOffset + delta;
-    for (const offset of [start, start + change.text.length]) {
-      if (structuralText.test(model.getLineContent(model.getPositionAt(offset).lineNumber)))
-        return true;
-    }
-    delta += change.text.length - change.rangeLength;
-  }
-  return false;
+  return structuralChange(model, event);
 }
 const asRange = (r: SourceRange): IRange => ({
   startLineNumber: r.startLine,
@@ -49,12 +38,10 @@ export function rebaseCompletionRanges(
   if (
     event.flush ||
     event.structural ||
-    event.changes.some(
-      (c) =>
-        structuralText.test(c.text) ||
-        guards.some(
-          (g) => c.range.startLineNumber <= g.endLine && c.range.endLineNumber >= g.startLine,
-        ),
+    event.changes.some((c) =>
+      guards.some(
+        (g) => c.range.startLineNumber <= g.endLine && c.range.endLineNumber >= g.startLine,
+      ),
     )
   )
     return;

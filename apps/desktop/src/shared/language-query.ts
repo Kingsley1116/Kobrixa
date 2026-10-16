@@ -7,6 +7,10 @@ export interface AnalysisIdentity {
   revision: number;
   analysisVersion: number;
 }
+/**
+ * Query `line`/`column` fields use the same 1-based source coordinates as SourceRange,
+ * BOM-inclusive (not Monaco columns).
+ */
 export type LanguageFeatureQuery =
   | { kind: "hover"; file: string; line: number; column: number }
   | { kind: "signatureHelp"; file: string; line: number; column: number }

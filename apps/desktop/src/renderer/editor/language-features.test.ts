@@ -2,10 +2,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { CancellationToken, editor, Position } from "monaco-editor";
 import { analyzeBasicPlusProject, getBasicPlusQuickFixes } from "@kobrixa/basic-plus";
 import { stampDiagnostics } from "@kobrixa/compiler";
-import { BASIC_PLUS_SOURCE } from "../../shared/basic-plus-quick-fixes.js";
+import { BASIC_PLUS_SOURCE } from "../../main/language/basic-plus-quick-fixes.js";
 import type { Diagnostic } from "../../shared/api.js";
 import { ModelSnapshots } from "./model-snapshots.js";
 import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
+import { basicPlusCompanion } from "./companions/basic-plus/companion.js";
 import {
   bindWorkspaceEdits,
   renameSnapshot,
@@ -135,6 +136,74 @@ function setup(sources: Record<string, string>) {
   };
 }
 afterEach(() => vi.useRealTimers());
+
+it.each([2, 4])("companion preserves closing completion indentation with %i spaces", (tabSize) => {
+  const spaces = " ".repeat(tabSize);
+  const { main, position } = setup({
+    "main.bp": `If True\n${spaces}While True\n${spaces.repeat(2)}EndWh`,
+  });
+  vi.spyOn(main, "getOptions").mockReturnValue({ tabSize } as editor.TextModelResolvedOptions);
+  const list = basicPlusCompanion.completions(main, position(3, tabSize * 2 + 6), [], token);
+  const item = list.suggestions.find((item) => item.label === "EndWhile")!;
+  expect(item.range).toMatchObject({
+    startLineNumber: 3,
+    startColumn: 1,
+    endLineNumber: 3,
+    endColumn: tabSize * 2 + 6,
+  });
+  expect(item.insertText).toBe(spaces + "EndWhile");
+  expect(item.filterText).toBe(spaces.repeat(2) + "EndWhile");
+});
+
+it("companion filters generic labels and preserves their display details", () => {
+  const { main, position } = setup({ "main.bp": "VaLue" });
+  const list = basicPlusCompanion.completions(
+    main,
+    position(1, 4),
+    [
+      {
+        id: "value",
+        name: "value",
+        kind: "variable",
+        signature: "parameter number value",
+        group: "scope",
+        shadowKey: "value:value",
+        labels: [{ text: "value", detail: "parameter number value" }],
+      },
+    ],
+    token,
+  );
+  expect(list.suggestions).toEqual([
+    expect.objectContaining({
+      label: "value",
+      insertText: "value",
+      detail: "parameter number value",
+      range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 6 },
+    }),
+  ]);
+});
+
+it("companion completes APIs immediately and suppresses literals, comments and cancellation", () => {
+  const { main, position } = setup({ "main.bp": "LCD." });
+  const read = vi.spyOn(main, "getValue");
+  expect(
+    basicPlusCompanion.completions(main, position(1, 5), [], token).suggestions,
+  ).toContainEqual(expect.objectContaining({ label: "LCD.Clear" }));
+  expect(read).not.toHaveBeenCalled();
+  for (const text of ['"LCD.', "'LCD."]) {
+    main.setValue(text);
+    expect(basicPlusCompanion.completions(main, position(1, 6), [], token).suggestions).toEqual([]);
+  }
+  main.setValue("LCD.");
+  expect(
+    basicPlusCompanion.completions(main, position(1, 5), [], {
+      ...token,
+      isCancellationRequested: true,
+    }).suggestions,
+  ).toEqual([]);
+  main.dispose();
+  expect(basicPlusCompanion.completions(main, position(1, 5), [], token).suggestions).toEqual([]);
+});
 
 it.each([2, 4])(
   "accepts closing completions with %i-space indentation in one edit",

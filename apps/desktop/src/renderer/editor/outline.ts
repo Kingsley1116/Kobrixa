@@ -14,6 +14,7 @@ export interface OutlineItem {
   children: OutlineItem[];
 }
 
+// Transient Basic Plus outline copy; Task 6 removes it.
 const CALLABLE = new Set(["sub", "function", "method"]);
 const before = (a: SourceRange, b: SourceRange) =>
   a.startLine - b.startLine || a.startColumn - b.startColumn;
