@@ -187,3 +187,18 @@ it("keeps plugin examples and uses available Chinese titles and steps", () => {
     example: entry.example,
   });
 });
+
+it("merges same-source duplicates and keeps different sources apart", () => {
+  const base = {
+    code: "BP1015",
+    severity: "error" as const,
+    file: "a.bp",
+    range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
+    message: "m",
+  };
+  const live = { ...base, source: "kobrixa.basic-plus" };
+  const build = { ...base, source: "kobrixa.basic-plus" };
+  const other = { ...base, source: "acme.x" };
+  const unique = new Map([live, build, other].map((item) => [diagnosticIdentity(item), item]));
+  expect([...unique.values()]).toEqual([live, other]);
+});

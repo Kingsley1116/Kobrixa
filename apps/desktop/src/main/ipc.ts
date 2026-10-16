@@ -4,6 +4,7 @@ import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
 import { app, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
+import type { PluginController } from "./plugins/controller.js";
 import { documentationUrl } from "./window/documentation.js";
 import { quickFixRequestIdSchema, quickFixRequestSchema } from "./language/quick-fix-request.js";
 import { isIP } from "node:net";
@@ -91,6 +92,7 @@ export function registerIpc(
   modules: readonly ((handle: IpcHandle) => void)[] = [],
   /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
   beforeUpdateInstall: () => Promise<void> = async () => {},
+  plugins?: Pick<PluginController, "diagnosticHelpEntry">,
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -195,7 +197,11 @@ export function registerIpc(
     );
   }
   handle("documentation:open", (_event, request: unknown) =>
-    shell.openExternal(documentationUrl(request)),
+    shell.openExternal(
+      documentationUrl(request, (source, code, helpKey) =>
+        plugins?.diagnosticHelpEntry(source, code, helpKey),
+      ),
+    ),
   );
   handle("language:quick-fixes", (_event, workspaceId: unknown, request: unknown) =>
     language.quickFixes(id.parse(workspaceId), quickFixRequestSchema.parse(request)),

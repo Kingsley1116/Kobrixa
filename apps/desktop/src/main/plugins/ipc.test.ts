@@ -9,6 +9,7 @@ function setup() {
   const ok = async () => ({ ok: true }) as never;
   const plugins = {
     state: vi.fn(),
+    diagnosticHelp: vi.fn(() => ({ revision: 0, plugins: {} })),
     notices: vi.fn(() => []),
     execute: vi.fn(async () => ({ ok: true as const })),
     cancel: vi.fn(),
@@ -35,6 +36,7 @@ it("registers every plugin channel and forwards events", () => {
   expect([...handlers.keys()].sort()).toEqual(
     [
       "plugins:state",
+      "plugins:diagnosticHelp",
       "plugins:notices",
       "plugins:execute",
       "plugins:cancel",
@@ -93,4 +95,10 @@ it("validates every renderer argument before it reaches the controller", async (
   // Channels without arguments ignore anything the renderer adds.
   await call("plugins:linkFolder", "/etc");
   expect(plugins.linkFolder).toHaveBeenCalledWith();
+});
+
+it("forwards the diagnostic help catalog", () => {
+  const { plugins, call } = setup();
+  expect(call("plugins:diagnosticHelp")).toEqual({ revision: 0, plugins: {} });
+  expect(plugins.diagnosticHelp).toHaveBeenCalledOnce();
 });

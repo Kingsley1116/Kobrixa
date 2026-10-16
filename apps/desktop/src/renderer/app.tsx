@@ -1,3 +1,5 @@
+import { diagnosticIdentity } from "../shared/diagnostic-help.js";
+import { useDiagnosticHelpCatalog } from "./editor/diagnostic-help-store.js";
 import { SIMULATOR_ENABLED } from "../shared/features.js";
 import { ProjectSessions, type ProjectSession } from "./workspace/project-sessions.js";
 import { ProjectTabs } from "./workspace/project-tabs.js";
@@ -249,6 +251,7 @@ export function App(): React.JSX.Element {
       | Settings["problemsHeight"]
       | ((previous: Settings["problemsHeight"]) => Settings["problemsHeight"]),
   ): void => settingsStore.set("problemsHeight", value);
+  const helpCatalog = useDiagnosticHelpCatalog(window.kobrixa.plugins);
   const [sessions] = useState(() => new ProjectSessions());
   const projects = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot);
   const activeSession = sessions.active;
@@ -684,9 +687,7 @@ export function App(): React.JSX.Element {
   const diagnostics = useMemo(() => {
     const seen = new Set<string>();
     return [...liveDiagnostics, ...buildDiagnostics].filter((item) => {
-      const key = `${item.code}\0${item.severity}\0${item.file}\0${item.range.startLine}\0${
-        item.range.startColumn
-      }\0${item.range.endLine}\0${item.range.endColumn}\0${item.message}`;
+      const key = diagnosticIdentity(item);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -3723,6 +3724,7 @@ export function App(): React.JSX.Element {
                   <div className={`editor-panes ${splitFile && active ? "split" : ""}`}>
                     {active ? (
                       <Editor
+                        helpCatalog={helpCatalog}
                         locale={locale}
                         onQuickFixes={(snapshot, diagnostic, signal) =>
                           analysisTransport.quickFixes(snapshot.analysis, diagnostic, signal)
@@ -3836,6 +3838,7 @@ export function App(): React.JSX.Element {
                 onChange={setProblemsHeight}
               />
               <BottomPanel
+                helpCatalog={helpCatalog}
                 t={t}
                 tab={bottomTab}
                 onTab={(tab) => {

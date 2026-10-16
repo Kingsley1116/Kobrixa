@@ -8,6 +8,7 @@ import type { PluginController } from "./controller.js";
 export type PluginIpcTarget = Pick<
   PluginController,
   | "state"
+  | "diagnosticHelp"
   | "notices"
   | "execute"
   | "cancel"
@@ -38,6 +39,7 @@ export function registerPluginIpc(
 ): () => void {
   const key = (value: unknown) => sourceKeySchema.parse(value);
   handle("plugins:state", () => plugins.state());
+  handle("plugins:diagnosticHelp", () => plugins.diagnosticHelp());
   handle("plugins:notices", () => plugins.notices());
   handle("plugins:execute", (_event, commandId: unknown) =>
     plugins.execute(namespacedIdSchema.parse(commandId)),

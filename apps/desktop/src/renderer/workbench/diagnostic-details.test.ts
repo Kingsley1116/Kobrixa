@@ -36,6 +36,7 @@ function setup() {
   >;
   const host: DiagnosticDetailsHost = {
     locale: "en",
+    helpCatalog: undefined,
     analysisSession: {
       subscribe: (listener: () => void) => {
         listeners.add(listener);
@@ -75,7 +76,11 @@ it("keeps the original diagnostic while changing explanations, action titles and
   expect(container.querySelector(".diagnostic-fixes button")?.textContent).toBe("補上右括號 )");
   expect(container.querySelector(".diagnostic-original pre")?.textContent).toBe(diagnostic.message);
   await act(() => container.querySelector<HTMLButtonElement>(".diagnostic-links button")!.click());
-  expect(host.openDocumentation).toHaveBeenCalledWith({ code: "BP1043", locale: "zh-TW" });
+  expect(host.openDocumentation).toHaveBeenCalledWith({
+    source: "kobrixa.basic-plus",
+    code: "BP1043",
+    locale: "zh-TW",
+  });
 });
 
 it("discards a late fix when its analysis is invalidated and leaves historical guidance readable", async () => {
@@ -106,4 +111,74 @@ it("shows unknown diagnostics and preserves raw text without offering an unautho
   expect(container.querySelector(".diagnostic-original pre")?.textContent).toBe(unknown.message);
   expect(container.querySelector(".diagnostic-links")).toBeNull();
   expect(host.getQuickFixes).not.toHaveBeenCalled();
+});
+
+const pluginCatalog = {
+  revision: 1,
+  plugins: {
+    "acme.x": {
+      displayName: { en: "Acme" },
+      entries: [
+        {
+          code: "BP1043",
+          title: { en: "Acme title" },
+          cause: { en: "Acme cause" },
+          steps: { en: ["Acme step"] },
+          links: [{ url: "https://acme.example/help", label: { en: "Acme docs" } }],
+        },
+      ],
+    },
+  },
+};
+
+it("shows a plugin's own help with its links and no official link", async () => {
+  const { host, render } = setup();
+  host.helpCatalog = pluginCatalog;
+  await render({ ...diagnostic, source: "acme.x" });
+  expect(container.textContent).toContain("Acme title");
+  expect(container.textContent).toContain("Provided by Acme");
+  expect(container.textContent).not.toContain("Call is missing a closing parenthesis");
+  expect(container.textContent).not.toContain("View this diagnostic online");
+  expect(host.getQuickFixes).not.toHaveBeenCalled();
+  const buttons = [...container.querySelectorAll<HTMLButtonElement>(".diagnostic-links button")];
+  expect(buttons.map((button) => button.textContent)).toEqual(["Acme docs ↗"]);
+  await act(() => buttons[0]!.click());
+  expect(host.openDocumentation).toHaveBeenCalledWith({
+    source: "acme.x",
+    code: "BP1043",
+    locale: "en",
+    linkIndex: 0,
+  });
+});
+
+it("keeps the original message when no help exists for the source", async () => {
+  const { host, render } = setup();
+  host.helpCatalog = pluginCatalog;
+  await render({ ...diagnostic, source: "acme.y", message: "raw" });
+  expect(container.textContent).toContain("Check the original message and source location.");
+  expect(container.textContent).not.toContain("Call is missing a closing parenthesis");
+  expect(container.querySelector(".diagnostic-original pre")?.textContent).toBe("raw");
+  expect(container.querySelector(".diagnostic-links")).toBeNull();
+});
+
+it("localizes plugin attribution, preserves literal names and keeps helpKey in link requests", async () => {
+  const { host, render } = setup();
+  host.locale = "zh-TW";
+  host.helpCatalog = {
+    ...pluginCatalog,
+    plugins: { "acme.x": { ...pluginCatalog.plugins["acme.x"], displayName: { en: "Acme $&" } } },
+  };
+  await render({ ...diagnostic, source: "acme.x", helpKey: "specific" });
+  expect(container.textContent).toContain("由 Acme $& 提供");
+  expect(container.textContent).toContain("Acme cause");
+  const button = container.querySelector<HTMLButtonElement>(".diagnostic-links button")!;
+  expect(button.textContent).toBe("Acme docs ↗");
+  await act(() => button.click());
+  expect(host.openDocumentation).toHaveBeenCalledWith({
+    source: "acme.x",
+    code: "BP1043",
+    helpKey: "specific",
+    locale: "zh-TW",
+    linkIndex: 0,
+  });
 });

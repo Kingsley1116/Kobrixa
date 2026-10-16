@@ -1,6 +1,10 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import type { LocalizedText, PluginLocale } from "@kobrixa/plugin-protocol";
+import type {
+  LocalizedText,
+  PluginLocale,
+  PluginDiagnosticHelpEntry,
+} from "@kobrixa/plugin-protocol";
 import {
   developmentSourceKey,
   messageOf,
@@ -27,6 +31,7 @@ import type {
   PythonProbe,
   StoredNotice,
 } from "../../shared/plugins.js";
+import { resolveDiagnosticHelp, type PluginHelpCatalogView } from "../../shared/diagnostic-help.js";
 import type { PluginDialogs } from "./dialogs.js";
 import { createDesktopLauncher } from "./launchers.js";
 import { PluginLogs, PluginNotices } from "./logs.js";
@@ -60,6 +65,7 @@ function uniqueDirectories(directories: readonly string[]): string[] {
 export type PluginManagerPort = Pick<
   PluginManager,
   | "state"
+  | "diagnosticHelp"
   | "executeCommand"
   | "setEnabled"
   | "addSource"
@@ -104,6 +110,7 @@ type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey
  */
 export class PluginController {
   #revision = 0;
+  #helpCatalog: PluginHelpCatalogView | undefined;
   #developer: boolean;
   #commandLine: boolean;
   #closing = false;
@@ -130,6 +137,36 @@ export class PluginController {
 
   state(): PluginsView {
     return this.#view(this.deps.manager.state());
+  }
+
+  /** Clone the manager catalog only once per help revision, including for link lookups. */
+  diagnosticHelp(): PluginHelpCatalogView {
+    const snapshot = this.deps.manager.state();
+    if (this.#helpCatalog?.revision === snapshot.diagnosticHelpRevision) return this.#helpCatalog;
+    const catalog = this.deps.manager.diagnosticHelp();
+    const plugins: PluginHelpCatalogView["plugins"] = Object.create(null);
+    for (const plugin of snapshot.plugins)
+      if (plugin.status === "enabled")
+        plugins[plugin.id] = {
+          ...(plugin.displayName ? { displayName: plugin.displayName } : {}),
+          entries: [],
+        };
+    for (const item of catalog.plugins)
+      plugins[item.source] = { ...plugins[item.source], entries: item.entries };
+    this.#helpCatalog = { revision: catalog.revision, plugins };
+    return this.#helpCatalog;
+  }
+
+  diagnosticHelpEntry(
+    source: string,
+    code: string,
+    helpKey?: string,
+  ): PluginDiagnosticHelpEntry | undefined {
+    const resolved = resolveDiagnosticHelp(
+      { source, code, ...(helpKey ? { helpKey } : {}) },
+      this.diagnosticHelp(),
+    );
+    return resolved?.kind === "plugin" ? resolved.entry : undefined;
   }
 
   notices(): StoredNotice[] {

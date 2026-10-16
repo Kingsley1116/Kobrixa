@@ -54,6 +54,7 @@ const api: KobrixaApi = {
   },
   plugins: {
     state: () => ipcRenderer.invoke("plugins:state"),
+    diagnosticHelp: () => ipcRenderer.invoke("plugins:diagnosticHelp"),
     notices: () => ipcRenderer.invoke("plugins:notices"),
     execute: (commandId) => ipcRenderer.invoke("plugins:execute", commandId),
     cancel: (sourceKey) => ipcRenderer.invoke("plugins:cancel", sourceKey),

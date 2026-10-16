@@ -1,6 +1,12 @@
+import {
+  resolveDiagnosticHelp,
+  localizeHelp,
+  diagnosticSourceLabel,
+  type PluginHelpCatalogView,
+} from "../../shared/diagnostic-help.js";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { languages } from "monaco-editor";
-import { getDiagnosticHelp, type DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
+import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
 import type { Diagnostic } from "../../shared/api.js";
 import type { DocumentationRequest } from "../../shared/documentation.js";
 import { sameDiagnostic } from "../../shared/quick-fixes.js";
@@ -10,6 +16,7 @@ import type { AnalysisSession } from "../editor/analysis-session.js";
 export interface DiagnosticDetailsHost {
   fixesDisabled?: boolean;
   locale: DiagnosticLocale;
+  helpCatalog: PluginHelpCatalogView | undefined;
   analysisSession: AnalysisSession;
   getQuickFixes(diagnostic: Diagnostic, signal?: AbortSignal): Promise<languages.CodeAction[]>;
   applyQuickFix(action: languages.CodeAction): Promise<void>;
@@ -28,7 +35,8 @@ export function DiagnosticDetails({
   const [pending, setPending] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
-  const help = getDiagnosticHelp(diagnostic.code, diagnostic.helpKey);
+  const resolved = resolveDiagnosticHelp(diagnostic, host.helpCatalog);
+  const text = resolved && localizeHelp(resolved, locale);
   const t = (zh: string, en: string) => (locale === "zh-TW" ? zh : en);
   useEffect(() => {
     let current = true;
@@ -62,32 +70,39 @@ export function DiagnosticDetails({
       controller.abort();
     };
   }, [diagnostic, snapshot, locale, host.fixesDisabled]);
-  const open = (relatedIndex?: number) => {
+  const open = (link: { relatedIndex?: number } | { linkIndex: number } = {}) => {
     void host
       .openDocumentation({
+        source: diagnostic.source,
         code: diagnostic.code,
         ...(diagnostic.helpKey ? { helpKey: diagnostic.helpKey } : {}),
         locale,
-        ...(relatedIndex === undefined ? {} : { relatedIndex }),
+        ...link,
       })
       .catch((reason) => setError(String(reason instanceof Error ? reason.message : reason)));
   };
   return (
     <section className="diagnostic-details" aria-label={t("診斷解說", "Diagnostic explanation")}>
       <h3>
-        <code>{diagnostic.code}</code>{" "}
-        {help?.title[locale] ?? t("診斷資訊", "Diagnostic information")}
+        <code>{diagnostic.code}</code> {text?.title ?? t("診斷資訊", "Diagnostic information")}
       </h3>
+      {resolved?.kind === "plugin" && (
+        <p>
+          {t("由 {name} 提供", "Provided by {name}").replace("{name}", () =>
+            diagnosticSourceLabel(diagnostic.source, host.helpCatalog, locale),
+          )}
+        </p>
+      )}
       <p>
-        {help?.cause[locale] ??
+        {text?.cause ??
           t(
             "尚未提供此代碼的專用解說。請查看原始訊息及來源位置。",
             "There is no specific explanation for this code yet. Check the original message and source location.",
           )}
       </p>
-      {help && (
+      {text && (
         <ol>
-          {help.steps[locale].map((step) => (
+          {text.steps.map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ol>
@@ -127,18 +142,18 @@ export function DiagnosticDetails({
           {error}
         </p>
       )}
-      {help?.example && (
+      {text?.example && (
         <div className="diagnostic-examples">
           <div>
             <h4>{t("錯誤範例", "Before")}</h4>
             <pre>
-              <code>{help.example.before}</code>
+              <code>{text.example.before}</code>
             </pre>
           </div>
           <div>
             <h4>{t("修正範例", "After")}</h4>
             <pre>
-              <code>{help.example.after}</code>
+              <code>{text.example.after}</code>
             </pre>
           </div>
         </div>
@@ -150,14 +165,23 @@ export function DiagnosticDetails({
           {diagnostic.file}:{diagnostic.range.startLine}:{diagnostic.range.startColumn}
         </small>
       </details>
-      {help && (
+      {resolved?.kind === "builtin" && (
         <div className="diagnostic-links">
           <button onClick={() => open()}>
             {t("在官網查看此錯誤 ↗", "View this diagnostic online ↗")}
           </button>
-          {help.related.map((link, index) => (
-            <button key={link.path} onClick={() => open(index)}>
+          {resolved.help.related.map((link, index) => (
+            <button key={link.path} onClick={() => open({ relatedIndex: index })}>
               {link.label[locale]} ↗
+            </button>
+          ))}
+        </div>
+      )}
+      {resolved?.kind === "plugin" && !!resolved.entry.links?.length && (
+        <div className="diagnostic-links">
+          {resolved.entry.links.map((link, index) => (
+            <button key={index} onClick={() => open({ linkIndex: index })}>
+              {locale === "zh-TW" ? (link.label["zh-TW"] ?? link.label.en) : link.label.en} ↗
             </button>
           ))}
         </div>

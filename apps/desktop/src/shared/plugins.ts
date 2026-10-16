@@ -1,3 +1,4 @@
+import type { PluginHelpCatalogView } from "./diagnostic-help.js";
 import type {
   PluginActionResult,
   PluginCommandResult,
@@ -87,6 +88,7 @@ export type PluginsViewEvent =
 export type PluginEvent = PluginsViewEvent;
 export interface PluginsApi {
   state(): Promise<PluginsView>;
+  diagnosticHelp(): Promise<PluginHelpCatalogView>;
   notices(): Promise<StoredNotice[]>;
   execute(commandId: string): Promise<PluginCommandResult>;
   cancel(sourceKey: string): Promise<void>;

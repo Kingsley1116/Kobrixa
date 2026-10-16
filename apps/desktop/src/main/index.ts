@@ -349,6 +349,7 @@ void app.whenReady().then(async () => {
         throw error;
       }
     },
+    plugins,
   );
   const flushDeviceWork = async () => {
     await motors.flush();

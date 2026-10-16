@@ -1,3 +1,4 @@
+import { diagnosticSourceLabel, type PluginHelpCatalogView } from "../../shared/diagnostic-help.js";
 import { EditorModels } from "./editor-models.js";
 import { completionWidget } from "./completion-widget.js";
 import type { CompletionSession } from "./completion-session.js";
@@ -125,6 +126,7 @@ export interface EditorAnalysis {
 }
 
 interface EditorProps {
+  helpCatalog: PluginHelpCatalogView | undefined;
   locale?: DiagnosticLocale;
   onQuickFixes?(
     snapshot: EditorAnalysis,
@@ -192,6 +194,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   {
     file,
     locale = "en",
+    helpCatalog,
     onQuickFixes,
     retainedModels,
     focusOnMount = true,
@@ -835,13 +838,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           .map((item) => ({
             severity: markerSeverity(item.severity),
             code: item.code,
-            source: "Kobrixa",
-            message: diagnosticMarkerMessage(item, locale),
+            source: diagnosticSourceLabel(item.source, helpCatalog, locale),
+            message: diagnosticMarkerMessage(item, locale, helpCatalog),
             ...editorRange(item.range, modelSnapshots.source(model) ?? ""),
           })),
       );
     }
-  }, [diagnostics, file, locale]);
+  }, [diagnostics, file, locale, helpCatalog]);
 
   useEffect(() => {
     if (focusTarget?.file === file) reveal(focusTarget.range);
