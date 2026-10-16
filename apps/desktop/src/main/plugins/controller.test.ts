@@ -636,6 +636,12 @@ describe("PluginController with a fake manager", () => {
     const manager = {
       active: false,
       state: () => currentSnapshot,
+      resolveLanguageService: vi.fn((language: string) => ({
+        ok: false as const,
+        reason: "missing" as const,
+        language,
+        conflicts: [],
+      })),
       diagnosticHelp: vi.fn(() => ({
         revision: currentSnapshot.diagnosticHelpRevision,
         plugins: currentSnapshot.plugins.some(
@@ -711,6 +717,17 @@ describe("PluginController with a fake manager", () => {
       },
     };
   }
+
+  it("forwards frontend-only language service selection", () => {
+    const { controller, manager } = setup();
+    expect(controller.resolveLanguageService("case")).toEqual({
+      ok: false,
+      reason: "missing",
+      language: "case",
+      conflicts: [],
+    });
+    expect(manager.resolveLanguageService).toHaveBeenCalledWith("case");
+  });
 
   it("keys the help catalog by source and includes enabled plugins' names", () => {
     const { controller } = setup({

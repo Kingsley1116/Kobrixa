@@ -6,7 +6,13 @@ import {
   type PluginLocale,
   type Severity,
 } from "@kobrixa/plugin-protocol";
-import { resolveCompilerProviders, type CompilerResolution } from "./compiler-resolution.js";
+import {
+  resolveCompilerProviders,
+  resolveFrontendProvider,
+  resolveLanguageService,
+  type CompilerResolution,
+  type LanguageServiceResolution,
+} from "./compiler-resolution.js";
 import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from "./errors.js";
 import {
   developmentSourceKey,
@@ -220,6 +226,16 @@ export class PluginManager {
       language,
       target,
     );
+  }
+
+  resolveLanguageService(language: string): LanguageServiceResolution {
+    const plugins = this.#entries.map((entry) => entry.plugin);
+    const result = resolveFrontendProvider(plugins, language);
+    if (!result.ok) return result;
+    const entry = this.#entries.find(
+      (entry) => entry.plugin.sourceKey === result.frontend.sourceKey,
+    )!;
+    return resolveLanguageService(plugins, language, entry.generation);
   }
 
   async executeCommand(commandId: string, signal?: AbortSignal): Promise<PluginCommandResult> {
