@@ -5,6 +5,7 @@ import {
   diffAnalysis,
   diffRecord,
   emptyAnalysis,
+  emptyLanguageIndex,
 } from "./language-sync.js";
 
 it("round trips changed/deleted sections and preserves unchanged identities", () => {
@@ -58,4 +59,40 @@ it("packs exact ranges, modifier order and cross-context occurrences into clonea
   expect(patch.tokensByFile.set["中文.bp"]!.data).toBeInstanceOf(Uint32Array);
   expect(patch.index.occurrencesByFile.set["中文.bp"]!.data).toBeInstanceOf(Uint32Array);
   expect(applyAnalysis(undefined, structuredClone(patch)).analysis).toEqual(analysis);
+});
+
+it("preserves opaque shadow keys and token dictionaries", () => {
+  expect(emptyLanguageIndex().symbols).toEqual({});
+  const analysis = emptyAnalysis();
+  const range = { startLine: 1, startColumn: 2, endLine: 1, endColumn: 5 };
+  analysis.index.sources["名字.csx"] = "\uFEFFFoo foo 😀\r\n";
+  analysis.index.symbols = Object.fromEntries(
+    ["Foo", "foo"].map((name) => [
+      name,
+      {
+        id: name,
+        name,
+        kind: "variable" as const,
+        signature: `case ${name}`,
+        labels: [{ text: name, detail: `case ${name}` }],
+        group: "opaque/context",
+        shadowKey: name,
+        location: { file: "名字.csx", range },
+      },
+    ]),
+  );
+  analysis.tokensByFile["名字.csx"] = [{ range, type: "caseIdentifier", modifiers: ["mutable"] }];
+  const patch = diffAnalysis(undefined, analysis, null, 1);
+  expect(patch.tokensByFile.set["名字.csx"]!.data).toBeInstanceOf(Uint32Array);
+  expect(patch.tokensByFile.set["名字.csx"]!.data.byteLength).toBe(6 * 4);
+  const received = applyAnalysis(undefined, structuredClone(patch));
+  expect(received.analysis).toEqual(analysis);
+  expect(Object.values(received.analysis.index.symbols).map((s) => s.shadowKey)).toEqual([
+    "Foo",
+    "foo",
+  ]);
+  const delta = diffAnalysis(analysis, structuredClone(analysis), 1, 2);
+  expect(delta.tokensByFile.set).toEqual({});
+  expect(delta.index.symbols.set).toEqual({});
+  expect(applyAnalysis(received, delta).analysis.tokensByFile).toBe(received.analysis.tokensByFile);
 });

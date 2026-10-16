@@ -1,3 +1,8 @@
+import { createLanguageStatusStore } from "./editor/language-status-store.js";
+import { BUILTIN_LANGUAGE_COMPANIONS } from "./editor/builtin-language-companions.js";
+import { bindingKey } from "../shared/language-services.js";
+import { LanguageStatusRow } from "./editor/language-status.js";
+import type { LanguageFeatureQuery } from "../shared/language-query.js";
 import { diagnosticIdentity } from "../shared/diagnostic-help.js";
 import { useDiagnosticHelpCatalog } from "./editor/diagnostic-help-store.js";
 import { SIMULATOR_ENABLED } from "../shared/features.js";
@@ -31,7 +36,7 @@ import { Dialog, DialogActions } from "./components/dialog.js";
 import { useKeyboard } from "./keybindings/keyboard-state.js";
 import type { AppCommand } from "./keybindings/keybindings.js";
 import { FileWriteQueue, saveSnapshot } from "./workspace/save-coordinator.js";
-import { formatSource } from "./editor/editor-format.js";
+import { formatSourceForSave } from "./editor/editor-format.js";
 import {
   useCallback,
   useEffect,
@@ -540,10 +545,31 @@ export function App(): React.JSX.Element {
   const [cursorStore] = useState(() => new CursorStore());
   const [diagnosticIndex, setDiagnosticIndex] = useState(-1);
   const [checking, setChecking] = useState(false);
+  const languageStatusStore = useMemo(
+    () => createLanguageStatusStore(window.kobrixa.language, report),
+    [],
+  );
+  const languageStatus = useSyncExternalStore(
+    languageStatusStore.subscribe,
+    languageStatusStore.getSnapshot,
+  );
+  useLayoutEffect(() => {
+    languageStatusStore.configure(workspace?.id);
+  }, [languageStatusStore, workspace?.id]);
+  useEffect(() => () => languageStatusStore.dispose(), [languageStatusStore]);
+  const languageBinding =
+    languageStatus?.availability.kind === "available"
+      ? languageStatus.availability.binding
+      : undefined;
+  const languageCompanion = languageBinding
+    ? BUILTIN_LANGUAGE_COMPANIONS[bindingKey(languageBinding)]
+    : undefined;
+
   const completionSession = useMemo(
     () =>
-      new CompletionSession((workspaceId, request) =>
-        window.kobrixa.language.completionSync(workspaceId, request),
+      new CompletionSession(
+        (workspaceId, request) => window.kobrixa.language.completionSync(workspaceId, request),
+        (workspaceId) => window.kobrixa.language.status(workspaceId, true),
       ),
     [documents],
   );
@@ -554,6 +580,9 @@ export function App(): React.JSX.Element {
         (workspaceId, request) => window.kobrixa.language.sync(workspaceId, request),
         (workspaceId, request) => window.kobrixa.language.quickFixes(workspaceId, request),
         (workspaceId, requestId) => window.kobrixa.language.cancelQuickFix(workspaceId, requestId),
+        (workspaceId, request) => window.kobrixa.language.feature(workspaceId, request),
+        (workspaceId, requestId) => window.kobrixa.language.cancelFeature(workspaceId, requestId),
+        (workspaceId) => window.kobrixa.language.status(workspaceId, true),
       ),
   );
   const analysisSession = useMemo(
@@ -566,6 +595,9 @@ export function App(): React.JSX.Element {
         diagnostics: (analysis) => {
           if (sessions.active?.documents === documents) setLiveDiagnostics(analysis.diagnostics);
         },
+        unavailable: () => {
+          if (sessions.active?.documents === documents) setLiveDiagnostics([]);
+        },
         checking: (value) => {
           if (sessions.active?.documents === documents) setChecking(value);
         },
@@ -576,9 +608,23 @@ export function App(): React.JSX.Element {
     [documents],
   );
   useLayoutEffect(() => {
-    analysisSession.configure(workspace);
-    completionSession.configure(workspace);
-  }, [analysisSession, completionSession, workspace]);
+    if (workspace && languageStatus)
+      analysisTransport.configure(workspace.id, languageStatus.epoch);
+    analysisSession.configure(workspace, languageStatus);
+    completionSession.configure(workspace, languageStatus, languageCompanion);
+  }, [
+    analysisTransport,
+    analysisSession,
+    completionSession,
+    workspace,
+    languageStatus,
+    languageCompanion,
+  ]);
+  const queryLanguageFeature = useCallback(
+    (snapshot: EditorAnalysis, query: LanguageFeatureQuery, signal: AbortSignal) =>
+      analysisTransport.feature(snapshot.analysis, query, signal),
+    [analysisTransport],
+  );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectName, setProjectName] = useState("my-robot");
   const [pendingWorkspace, setPendingWorkspace] = useState<WorkspaceSummary>();
@@ -2027,8 +2073,24 @@ export function App(): React.JSX.Element {
           read,
           format:
             !automatic && settingsStore.getSnapshot().values.formatOnSave
-              ? (content) =>
-                  formatSource(file, content, settingsStore.getSnapshot().values.indentSize)
+              ? async (content) => {
+                  const revision = project.documents.revision;
+                  const model = project.editor.models.get(file);
+                  const version = model?.getVersionId();
+                  return formatSourceForSave(
+                    file,
+                    content,
+                    settingsStore.getSnapshot().values.indentSize,
+                    () =>
+                      sessions.activeId === workspaceId
+                        ? languageStatusStore.getSnapshot()
+                        : window.kobrixa.language.status(workspaceId),
+                    () =>
+                      project.documents.revision === revision &&
+                      project.editor.models.get(file) === model &&
+                      model?.getVersionId() === version,
+                  );
+                }
               : undefined,
           apply: (before, after) => {
             if (!canWrite()) throw new Error("This shared project is read-only.");
@@ -3220,6 +3282,21 @@ export function App(): React.JSX.Element {
             </button>
           </aside>
         )}
+        {languageStatus?.availability.kind === "unavailable" &&
+          languageStatus.availability.reason === "conflict" && (
+            <LanguageStatusRow
+              status={languageStatus}
+              locale={locale}
+              openSettings={() => {
+                setSettingsCategory((previous) => ({
+                  category: "plugins",
+                  request: previous.request + 1,
+                }));
+                setSettingsOpen(true);
+                setSettingsActive(true);
+              }}
+            />
+          )}
         <PluginRecoveryNotice
           locale={locale}
           onOpenSettings={() => {
@@ -3487,6 +3564,7 @@ export function App(): React.JSX.Element {
                   <Breadcrumbs
                     file={active.file}
                     analysisSession={analysisSession}
+                    query={queryLanguageFeature}
                     cursor={cursorStore}
                     locale={locale}
                     onReveal={(range) => {
@@ -3694,9 +3772,24 @@ export function App(): React.JSX.Element {
                 hidden={settingsActive}
               >
                 <div
-                  className={`editor-stage ${activeConflict ? "file-change-stage" : ""}`}
+                  className={`editor-stage ${activeConflict || languageStatus?.availability.kind === "unavailable" ? "file-change-stage" : ""}`}
                   hidden={settingsActive}
                 >
+                  {languageStatus?.availability.kind === "unavailable" &&
+                    languageStatus.availability.reason !== "conflict" && (
+                      <LanguageStatusRow
+                        status={languageStatus}
+                        locale={locale}
+                        openSettings={() => {
+                          setSettingsCategory((previous) => ({
+                            category: "plugins",
+                            request: previous.request + 1,
+                          }));
+                          setSettingsOpen(true);
+                          setSettingsActive(true);
+                        }}
+                      />
+                    )}
                   {activeConflict && active && (
                     <div className="file-change-banner" role="status">
                       <span>
@@ -3724,6 +3817,8 @@ export function App(): React.JSX.Element {
                   <div className={`editor-panes ${splitFile && active ? "split" : ""}`}>
                     {active ? (
                       <Editor
+                        status={languageStatus}
+                        query={queryLanguageFeature}
                         helpCatalog={helpCatalog}
                         locale={locale}
                         onQuickFixes={(snapshot, diagnostic, signal) =>
@@ -3763,6 +3858,7 @@ export function App(): React.JSX.Element {
                     )}
                     {active && splitFile && tabs.some((tab) => tab.file === splitFile) && (
                       <SplitEditor
+                        status={languageStatus}
                         key={workspace.id}
                         file={splitFile}
                         files={tabs.map((tab) => tab.file)}

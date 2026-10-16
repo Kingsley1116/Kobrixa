@@ -7,8 +7,43 @@ import {
   type CompletionSyncRequest,
   type CompletionSyncReply,
 } from "../../shared/completion-sync.js";
+import type { LanguageStatus } from "../../shared/language-services.js";
+import type { LanguageCompanion } from "./language-companion.js";
+import { legend, structuralChange } from "./companions/basic-plus/structure.js";
 import { CompletionSession } from "./completion-session.js";
 
+const status = (epoch = 1): LanguageStatus => ({
+  epoch,
+  conflicts: [],
+  availability: {
+    kind: "available",
+    binding: {
+      epoch,
+      pluginId: "kobrixa.basic-plus",
+      sourceKey: "builtin:kobrixa.basic-plus",
+      language: "bp",
+      extensions: ["bp", "bpi", "bpm"],
+      capabilities: ["analysis", "completion"],
+      frontend: {
+        language: "bp",
+        entryExtensions: ["bp"],
+        sourceExtensions: ["bp", "bpi", "bpm"],
+        ir: { min: 1, max: 1 },
+      },
+    },
+  },
+});
+const companion: LanguageCompanion = {
+  monacoLanguage: "basic-plus",
+  legend,
+  structuralChange,
+  triggerCharacters: [],
+  signatureTriggers: [],
+  signatureRetriggers: [],
+  completions: () => ({ suggestions: [] }),
+  formatSource: (source) => source,
+  rangeFormatting: () => [],
+};
 function model(initial = "known = 1\n") {
   let text = initial,
     version = 1;
@@ -63,6 +98,7 @@ function reply(
 ): CompletionSyncReply {
   return {
     kind: "result",
+    epoch: request.epoch,
     session: request.session,
     revision: request.revision,
     versions: Object.fromEntries([...documents].map(([file, value]) => [file, value.version])),
@@ -70,13 +106,12 @@ function reply(
       symbols: {
         known: {
           id: "known",
-          context: "main.bp",
-          scopeId: "global",
           name: "known",
           kind: "variable",
-          scope: "global",
-          type: "number",
-          aliases: ["known"],
+          signature: "global number known",
+          labels: [{ text: "known", detail: "global number known" }],
+          group: "main.bp",
+          shadowKey: "value:known",
         },
       },
       scopes: [],
@@ -87,6 +122,24 @@ function reply(
   };
 }
 afterEach(() => vi.useRealTimers());
+
+it("uses the guarded completion binding's epoch for sync requests", async () => {
+  vi.useFakeTimers();
+  const sync = vi.fn(async (_workspace: string, request: CompletionSyncRequest) =>
+    reply(request, applyCompletionUpdates(new Map(), request.updates)!),
+  );
+  const session = new CompletionSession(sync, async () => status(7));
+  // Distinct values verify that the binding, rather than its status envelope, owns the request.
+  const configured = { ...status(7), epoch: 9 };
+  try {
+    session.configure(workspace(), configured, companion);
+    session.bind("main.bp", model().value);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sync).toHaveBeenCalledExactlyOnceWith("project", expect.objectContaining({ epoch: 7 }));
+  } finally {
+    session.dispose();
+  }
+});
 
 it("discards an in-flight index after a workspace switch or model replacement", async () => {
   vi.useFakeTimers();
@@ -99,13 +152,13 @@ it("discards an in-flight index after a workspace switch or model replacement", 
         ),
       ),
   );
-  const session = new CompletionSession(sync),
+  const session = new CompletionSession(sync, async () => status()),
     old = model(),
     next = model("other = 2\n");
-  session.configure(workspace());
+  session.configure(workspace(), status(), companion);
   session.bind("main.bp", old.value);
   await vi.advanceTimersByTimeAsync(50);
-  session.configure(workspace("other"));
+  session.configure(workspace("other"), status(), companion);
   session.bind("main.bp", next.value);
   pending[0]!();
   await vi.advanceTimersByTimeAsync(0);
@@ -129,9 +182,9 @@ it("does not adopt an older index across a structural edit while it is computing
         finish = () => resolve(reply(request, applyCompletionUpdates(new Map(), request.updates)!));
       }),
   );
-  const session = new CompletionSession(sync),
+  const session = new CompletionSession(sync, async () => status()),
     main = model();
-  session.configure(workspace());
+  session.configure(workspace(), status(), companion);
   session.bind("main.bp", main.value);
   await vi.advanceTimersByTimeAsync(50);
   main.append('Import "new"\n');
@@ -151,9 +204,9 @@ it("retains known variables immediately and sends edits without reading the full
     )!;
     return reply(request, documents);
   });
-  const session = new CompletionSession(sync),
+  const session = new CompletionSession(sync, async () => status()),
     main = model();
-  session.configure(workspace());
+  session.configure(workspace(), status(), companion);
   session.bind("main.bp", main.value);
   await vi.advanceTimersByTimeAsync(50);
   vi.mocked(main.value.getValue).mockClear();
@@ -184,9 +237,9 @@ it("does not starve continuous typing or overlap requests and safely rebases a p
       finish = () => resolve(reply(request, docs));
     });
   });
-  const session = new CompletionSession(sync),
+  const session = new CompletionSession(sync, async () => status()),
     main = model();
-  session.configure(workspace());
+  session.configure(workspace(), status(), companion);
   session.bind("main.bp", main.value);
   for (let i = 0; i < 10; i++) {
     main.append("x");
@@ -207,18 +260,92 @@ it("resynchronizes after worker restart, and ignores results from another worksp
   vi.useFakeTimers();
   const sync = vi.fn(
     async (_workspace: string, request: CompletionSyncRequest): Promise<CompletionSyncReply> => {
-      if (sync.mock.calls.length === 1) return { kind: "resync" };
+      if (sync.mock.calls.length === 1) return { kind: "resync", epoch: request.epoch };
       return reply(request, applyCompletionUpdates(new Map(), request.updates)!);
     },
   );
-  const session = new CompletionSession(sync),
+  const session = new CompletionSession(sync, async () => status()),
     main = model();
-  session.configure(workspace());
+  session.configure(workspace(), status(), companion);
   session.bind("main.bp", main.value);
   await vi.advanceTimersByTimeAsync(50);
   expect(sync).toHaveBeenCalledTimes(2);
   expect(sync.mock.calls[1]![1].baseRevision).toBeNull();
-  session.configure(workspace("other"));
+  session.configure(workspace("other"), status(), companion);
   expect(session.symbols("main.bp", position)).toBeUndefined();
+  session.dispose();
+});
+
+it.each(["result", "unavailable"] as const)(
+  "keeps a new epoch index after a delayed old %s reply",
+  async (oldKind) => {
+    vi.useFakeTimers();
+    const pending: Array<() => void> = [];
+    const sync = vi.fn(
+      (_workspace: string, request: CompletionSyncRequest) =>
+        new Promise<CompletionSyncReply>((resolve) =>
+          pending.push(() =>
+            resolve(
+              request.epoch === 1 && oldKind === "unavailable"
+                ? { kind: "unavailable", epoch: 1, reason: "missing", language: "bp" }
+                : reply(request, applyCompletionUpdates(new Map(), request.updates)!),
+            ),
+          ),
+        ),
+    );
+    const session = new CompletionSession(sync, async () => status(2));
+    const main = model();
+    session.configure(workspace(), status(), companion);
+    session.bind("main.bp", main.value);
+    await vi.advanceTimersByTimeAsync(50);
+    session.configure(workspace(), status(2), companion);
+    session.bind("main.bp", main.value);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(sync.mock.calls[1]![1]).toMatchObject({ epoch: 2, baseRevision: null, refresh: true });
+    pending[1]!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
+    pending[0]!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
+    session.configure(workspace(), {
+      epoch: 3,
+      conflicts: [],
+      availability: { kind: "unavailable", reason: "missing", language: "bp" },
+    });
+    expect(session.symbols("main.bp", position)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sync).toHaveBeenCalledTimes(2);
+    session.dispose();
+  },
+);
+
+it("clears unavailable completions without retrying and recovers on a new status", async () => {
+  vi.useFakeTimers();
+  const sync = vi.fn(
+    async (_workspace: string, request: CompletionSyncRequest): Promise<CompletionSyncReply> => {
+      if (sync.mock.calls.length === 2)
+        return { kind: "unavailable", epoch: request.epoch, reason: "missing", language: "bp" };
+      return reply(request, applyCompletionUpdates(new Map(), request.updates)!);
+    },
+  );
+  const session = new CompletionSession(sync, async () => status(2));
+  const main = model();
+  session.configure(workspace(), status(), companion);
+  session.bind("main.bp", main.value);
+  await vi.advanceTimersByTimeAsync(50);
+  expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
+  main.append("x");
+  await vi.advanceTimersByTimeAsync(50);
+  expect(session.symbols("main.bp", position)).toBeUndefined();
+  session.request();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(sync).toHaveBeenCalledTimes(2);
+  session.configure(workspace(), status(2), companion);
+  session.bind("main.bp", main.value);
+  await vi.advanceTimersByTimeAsync(50);
+  expect(sync.mock.calls[2]![1]).toMatchObject({ epoch: 2, baseRevision: null, refresh: true });
+  expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
   session.dispose();
 });

@@ -6,7 +6,7 @@ import path from "node:path";
 import micromatch from "micromatch";
 import { afterEach, describe, expect, it } from "vitest";
 import { BuildError } from "./build-error.js";
-import { loadProject, parseManifest } from "./manifest.js";
+import { loadProject, parseManifest, readProjectDescription } from "./manifest.js";
 
 const manifest = {
   schemaVersion: 1,
@@ -32,6 +32,29 @@ async function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("manifest", () => {
+  it("reads a validated description without loading sources or requiring a backend", async () => {
+    const root = await fixture();
+    const value = {
+      schemaVersion: 1,
+      name: "case",
+      language: "case",
+      target: "missing-vm",
+      entry: "not-created.csx",
+      assets: [],
+      outputDir: "out",
+    };
+    await writeFile(path.join(root, "kobrixa.json"), JSON.stringify(value));
+    expect(await readProjectDescription(root)).toMatchObject({
+      description: { root, manifest: value, implicit: false },
+      diagnostics: [],
+      implicit: false,
+    });
+    await writeFile(path.join(root, "kobrixa.json"), "{");
+    expect((await readProjectDescription(root)).diagnostics).toEqual([
+      expect.objectContaining({ source: "kobrixa.core", code: "MAN1001" }),
+    ]);
+  });
+
   it("installs parser nesting and expansion guards without truncating valid results", () => {
     const options = { expand: true, nodupes: true, keepEscaping: true };
     expect(() => micromatch.braces("{".repeat(65) + "a,b" + "}".repeat(65), options)).toThrow(

@@ -1,7 +1,10 @@
-import type { BasicPlusQuickFix } from "@kobrixa/basic-plus";
 import type { PublishedDiagnostic } from "@kobrixa/compiler";
+import type { QuickFix } from "./language-types.js";
+
+export type { QuickFix } from "./language-types.js";
 
 export interface QuickFixRequest {
+  epoch: number;
   requestId: string;
   session: string;
   revision: number;
@@ -9,7 +12,8 @@ export interface QuickFixRequest {
   file: string;
   diagnostic: Pick<PublishedDiagnostic, "source" | "code" | "helpKey" | "range">;
 }
-export type QuickFixReply = { kind: "result"; fixes: BasicPlusQuickFix[] } | { kind: "stale" };
+export type QuickFixReply =
+  { kind: "result"; epoch: number; fixes: QuickFix[] } | { kind: "stale"; epoch: number };
 
 export function sameDiagnostic(
   a: Pick<PublishedDiagnostic, "source" | "code" | "helpKey" | "range">,

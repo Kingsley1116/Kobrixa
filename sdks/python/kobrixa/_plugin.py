@@ -10,7 +10,7 @@ import time
 from ._framing import Decoder, FramingError, encode
 from ._schema import SchemaError, Validator
 
-API_VERSION = "1.2.0"
+API_VERSION = "1.3.0"
 SDK_VERSION = "0.1.0"
 _CANCELLED, _INVALID_REQUEST, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = (
     -32800, -32600, -32602, -32601, -32603

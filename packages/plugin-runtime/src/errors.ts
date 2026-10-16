@@ -10,6 +10,7 @@ export const PLUGIN_ERROR_CODES = [
   "PLUGIN_E_RUNTIME_NOT_ALLOWED",
   "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
   "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+  "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
   "PLUGIN_E_PROVIDER_CONFLICT",
   "PLUGIN_E_ENTRY",
   "PLUGIN_E_LAUNCH",
@@ -39,6 +40,7 @@ export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 export interface PluginProblem {
   code: PluginErrorCode;
   message: string;
+  providerKey?: `language:${string}` | `target:${string}`;
 }
 export class PluginError extends Error {
   constructor(

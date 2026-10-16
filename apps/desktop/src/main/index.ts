@@ -189,8 +189,19 @@ void app.whenReady().then(async () => {
   const builds = new BuildService(workspaces, renderer, undefined, (language, target) =>
     plugins.resolveCompiler(language, target),
   );
-  const language = new LanguageService(workspaces);
+  const language = new LanguageService(workspaces, undefined, (language) =>
+    plugins.resolveLanguageService(language),
+  );
+  const offLanguageStatus = language.onStatus((event) => {
+    const target = renderer();
+    if (target && !target.isDestroyed()) target.send("language:status-changed", event);
+  });
+  const offLanguagePlugins = plugins.onEvent((event) => {
+    if (event.type === "state") void language.refresh().catch(console.error);
+  });
   app.on("will-quit", () => {
+    offLanguageStatus();
+    offLanguagePlugins();
     updates?.dispose();
     language.dispose();
     builds.dispose();

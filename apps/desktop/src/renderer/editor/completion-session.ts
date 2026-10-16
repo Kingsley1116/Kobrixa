@@ -1,4 +1,6 @@
-import type { BasicPlusSymbol } from "@kobrixa/basic-plus";
+import type { LanguageSymbol } from "../../shared/language-types.js";
+import { supportsFile, type LanguageStatus } from "../../shared/language-services.js";
+import type { LanguageCompanion } from "./language-companion.js";
 import type { editor, IDisposable, Position } from "monaco-editor";
 import type { WorkspaceSummary } from "../../shared/api.js";
 import type {
@@ -6,13 +8,8 @@ import type {
   CompletionSyncRequest,
   CompletionUpdate,
 } from "../../shared/completion-sync.js";
-import {
-  CompletionCache,
-  structuralCompletionChange,
-  type CompletionChange,
-} from "./completion-cache.js";
+import { CompletionCache, type CompletionChange } from "./completion-cache.js";
 
-const basic = (file: string) => /\.(bp|bpi|bpm)$/i.test(file);
 interface BoundModel {
   model: editor.ITextModel;
   version: number;
@@ -23,6 +20,9 @@ interface BoundModel {
 /** Completion has its own revision stream and bounded, non-starving scheduler. */
 export class CompletionSession {
   private workspace: WorkspaceSummary | undefined;
+  private status: LanguageStatus | undefined;
+  private companion: LanguageCompanion | undefined;
+  private suspended = false;
   private session = crypto.randomUUID();
   private revision = 0;
   private generation = 0;
@@ -34,7 +34,7 @@ export class CompletionSession {
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private firstQueued: number | undefined;
-  private running = false;
+  private running: object | undefined;
   private due = false;
   private failures = 0;
   constructor(
@@ -42,6 +42,7 @@ export class CompletionSession {
       workspaceId: string,
       request: CompletionSyncRequest,
     ) => Promise<CompletionSyncReply>,
+    private readonly refreshStatus: (workspaceId: string) => Promise<LanguageStatus>,
   ) {}
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -49,10 +50,20 @@ export class CompletionSession {
       this.listeners.delete(listener);
     };
   }
-  configure(workspace: WorkspaceSummary | undefined): void {
+  configure(
+    workspace: WorkspaceSummary | undefined,
+    status?: LanguageStatus,
+    companion?: LanguageCompanion,
+  ): void {
     const previous = this.workspace;
+    const previousEpoch = this.status?.epoch;
     this.workspace = workspace;
-    if (workspace?.id !== previous?.id) {
+    this.status = status;
+    this.companion = companion;
+    if (workspace?.id !== previous?.id || previousEpoch !== status?.epoch) {
+      this.generation++;
+      this.running = undefined;
+      this.suspended = false;
       clearTimeout(this.timer);
       this.firstQueued = undefined;
       this.due = false;
@@ -74,7 +85,7 @@ export class CompletionSession {
       let changed = filesChanged;
       for (const file of draftFiles) {
         if (
-          !basic(file) ||
+          !this.supports(file) ||
           this.models.has(file) ||
           previous?.drafts[file] === workspace.drafts[file]
         )
@@ -95,7 +106,7 @@ export class CompletionSession {
     if (workspace) this.schedule();
   }
   bind(file: string, model: editor.ITextModel): void {
-    if (!basic(file) || this.models.get(file)?.model === model) return;
+    if (!this.supports(file) || this.models.get(file)?.model === model) return;
     this.unbind(file);
     const state: BoundModel = {
       model,
@@ -107,7 +118,7 @@ export class CompletionSession {
           version: event.versionId,
           changes: event.changes,
           flush: event.isFlush || event.isEolChange,
-          structural: structuralCompletionChange(model, event),
+          structural: this.companion?.structuralChange(model, event) ?? true,
         };
         state.version = event.versionId;
         state.history.push(change);
@@ -149,10 +160,10 @@ export class CompletionSession {
     this.refresh = true;
     this.schedule();
   }
-  symbols(file: string, position: Position): BasicPlusSymbol[] | undefined {
-    return this.cache.symbols(file, position);
+  symbols(file: string, position: Position): LanguageSymbol[] | undefined {
+    return this.cache.symbols(file, position, this.status?.epoch ?? 0);
   }
-  enrich(symbols: Record<string, BasicPlusSymbol>): void {
+  enrich(symbols: Record<string, LanguageSymbol>): void {
     this.cache.enrich(symbols);
   }
   request(): void {
@@ -171,7 +182,7 @@ export class CompletionSession {
     });
   }
   private schedule(): void {
-    if (!this.workspace) return;
+    if (!this.workspace || !this.binding() || this.suspended) return;
     this.firstQueued ??= Date.now();
     clearTimeout(this.timer);
     this.timer = setTimeout(
@@ -183,18 +194,21 @@ export class CompletionSession {
     );
   }
   private async run(): Promise<void> {
-    if (this.running || !this.due || !this.workspace) return;
+    const binding = this.binding();
+    if (this.running || !this.due || !this.workspace || !binding || this.suspended) return;
     this.due = false;
     this.firstQueued = undefined;
     clearTimeout(this.timer);
     const session = this.session;
+    const epoch = binding.epoch;
+    const workspaceId = this.workspace.id;
     const generation = this.generation;
     const requestedModels = new Map(this.models);
     let updates = this.updates;
     this.updates = [];
     if (this.base === null) {
       updates = Object.entries(this.workspace.drafts)
-        .filter(([file]) => basic(file) && !this.models.has(file))
+        .filter(([file]) => this.supports(file) && !this.models.has(file))
         .map(([file, text]) => ({
           kind: "reset",
           file,
@@ -208,6 +222,7 @@ export class CompletionSession {
         });
     }
     const request: CompletionSyncRequest = {
+      epoch,
       session,
       revision: ++this.revision,
       baseRevision: this.base,
@@ -215,17 +230,38 @@ export class CompletionSession {
       updates,
     };
     this.refresh = false;
-    this.running = true;
+    const running = (this.running = {});
     try {
-      const result = await this.sync(this.workspace.id, request);
-      if (session !== this.session) return;
-      if (result.kind === "resync") throw new Error("Completion documents need resynchronization.");
+      const result = await this.sync(workspaceId, request);
+      if (session !== this.session || epoch !== this.status?.epoch) return;
+      if (result.kind === "resync") {
+        const status = await this.refreshStatus(workspaceId);
+        if (session !== this.session || epoch !== this.status?.epoch) return;
+        const models = [...this.models].map(([file, state]) => [file, state.model] as const);
+        this.configure(this.workspace, status, this.companion);
+        for (const [file, model] of models) this.bind(file, model);
+        if (session !== this.session) {
+          this.request();
+          return;
+        }
+        throw new Error("Completion documents need resynchronization.");
+      }
+      if (result.epoch !== epoch) return;
+      if (result.kind === "unavailable") {
+        this.cache.clear();
+        this.base = null;
+        this.due = false;
+        this.suspended = true;
+        clearTimeout(this.timer);
+        for (const listener of this.listeners) listener();
+        return;
+      }
       if (result.session !== session || result.revision !== request.revision)
         throw new Error("Completion version mismatch.");
       this.base = request.revision;
       this.failures = 0;
       if (generation !== this.generation) return;
-      this.cache.update(result.index);
+      this.cache.update(result.index, epoch);
       for (const [file, state] of this.models) {
         const version = result.versions[file];
         const history = state.history.filter((h) => h.version > (version ?? -1));
@@ -249,9 +285,22 @@ export class CompletionSession {
         if (++this.failures <= 1) this.due = true;
       }
     } finally {
-      this.running = false;
-      if (this.due) void this.run();
+      if (this.running === running) {
+        this.running = undefined;
+        if (this.due) void this.run();
+      }
     }
+  }
+  private binding() {
+    const availability = this.status?.availability;
+    return availability?.kind === "available" &&
+      availability.binding.capabilities.includes("completion")
+      ? availability.binding
+      : undefined;
+  }
+  private supports(file: string): boolean {
+    const binding = this.binding();
+    return !!binding && supportsFile(binding, file);
   }
   dispose(): void {
     this.configure(undefined);

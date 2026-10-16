@@ -28,8 +28,8 @@ const manifest = {
   runtime: { kind: "builtin" as const },
   contributes: { frontends: [frontend], backends: [backend] },
 };
-it("exports API 1.2 and accepts complete compiler declarations", () => {
-  expect(PLUGIN_API_VERSION).toBe("1.2.0");
+it("exports API 1.3 and accepts complete compiler declarations", () => {
+  expect(PLUGIN_API_VERSION).toBe("1.3.0");
   expect(pluginManifestSchema.parse(manifest).contributes?.backends).toEqual([backend]);
   expect(compilerDeclarationProblems(pluginManifestSchema.parse(manifest))).toEqual([]);
 });

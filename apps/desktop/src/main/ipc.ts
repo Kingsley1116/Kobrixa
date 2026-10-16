@@ -6,7 +6,13 @@ import { validStroke } from "../shared/keyboard.js";
 import { app, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from "electron";
 import type { PluginController } from "./plugins/controller.js";
 import { documentationUrl } from "./window/documentation.js";
-import { quickFixRequestIdSchema, quickFixRequestSchema } from "./language/quick-fix-request.js";
+import {
+  quickFixRequestIdSchema,
+  validateQuickFixRequest,
+  languageFeatureRequestSchema,
+  languageSyncRequestSchema,
+  completionSyncRequestSchema,
+} from "./language/quick-fix-request.js";
 import { isIP } from "node:net";
 import { z } from "zod";
 import type { BuildService } from "./workspace/build.js";
@@ -203,8 +209,30 @@ export function registerIpc(
       ),
     ),
   );
+  const afterRouting = <T>(
+    workspaceId: string,
+    work: () => T | Promise<T>,
+    waitForRouting = true,
+  ): Promise<T> =>
+    Promise.resolve(work()).then(async (result) => {
+      const routing = Promise.resolve()
+        .then(() => language.refresh(workspaceId))
+        .catch((error) => console.error("Failed to refresh language routing.", error));
+      if (waitForRouting) await routing;
+      return result;
+    });
+
+  handle("language:status", (_event, workspaceId: unknown, refresh: unknown) =>
+    language.status(id.parse(workspaceId), z.boolean().parse(refresh)),
+  );
+  handle("language:feature", (_event, workspaceId: unknown, request: unknown) =>
+    language.feature(id.parse(workspaceId), languageFeatureRequestSchema.parse(request)),
+  );
+  handle("language:cancel-feature", (_event, workspaceId: unknown, requestId: unknown) =>
+    language.cancelFeature(id.parse(workspaceId), quickFixRequestIdSchema.parse(requestId)),
+  );
   handle("language:quick-fixes", (_event, workspaceId: unknown, request: unknown) =>
-    language.quickFixes(id.parse(workspaceId), quickFixRequestSchema.parse(request)),
+    language.quickFixes(id.parse(workspaceId), validateQuickFixRequest(request)),
   );
   handle("language:cancel-quick-fix", (_event, workspaceId: unknown, requestId: unknown) =>
     language.cancelQuickFix(id.parse(workspaceId), quickFixRequestIdSchema.parse(requestId)),
@@ -254,9 +282,12 @@ export function registerIpc(
   handle("workspace:save-session", (_event, state: unknown) =>
     workspaces.saveSession(workspaceSessionSchema.parse(state)),
   );
-  handle("workspace:close", (_event, workspaceId: unknown) =>
-    workspaces.close(id.parse(workspaceId)),
-  );
+  handle("workspace:close", (_event, workspaceId: unknown) => {
+    const workspace = id.parse(workspaceId);
+    const result = workspaces.close(workspace);
+    language.close(workspace);
+    return result;
+  });
   handle("workspace:finish-close", async (_event, requestId: unknown, ready: unknown) => {
     const parsedId = id.parse(requestId),
       parsedReady = z.boolean().parse(ready);
@@ -267,7 +298,9 @@ export function registerIpc(
     workspaces.create(z.string().min(1).max(80).parse(name)),
   );
   handle("workspace:select-entry", (_event, workspaceId: unknown, entry: unknown) =>
-    workspaces.selectEntry(id.parse(workspaceId), file.parse(entry)),
+    afterRouting(id.parse(workspaceId), () =>
+      workspaces.selectEntry(id.parse(workspaceId), file.parse(entry)),
+    ),
   );
   handle("workspace:read", (_event, workspaceId: unknown, sourceFile: unknown) =>
     workspaces.read(id.parse(workspaceId), file.parse(sourceFile)),
@@ -276,23 +309,29 @@ export function registerIpc(
     workspaces.readFile(id.parse(workspaceId), file.parse(sourceFile)),
   );
   handle("workspace:refresh", (_event, workspaceId: unknown, known: unknown) =>
-    workspaces.refresh(
+    afterRouting(
       id.parse(workspaceId),
-      z
-        .record(file, fileRevision)
-        .refine((value) => Object.keys(value).length <= 10000)
-        .parse(known),
+      () =>
+        workspaces.refresh(
+          id.parse(workspaceId),
+          z
+            .record(file, fileRevision)
+            .refine((value) => Object.keys(value).length <= 10000)
+            .parse(known),
+        ),
+      false,
     ),
   );
   handle(
     "workspace:write",
-    (_event, workspaceId: unknown, sourceFile: unknown, source: unknown, expected: unknown) =>
-      workspaces.write(
-        id.parse(workspaceId),
-        file.parse(sourceFile),
-        content.parse(source),
-        fileRevision.parse(expected),
-      ),
+    (_event, workspaceId: unknown, sourceFile: unknown, source: unknown, expected: unknown) => {
+      const workspace = id.parse(workspaceId),
+        name = file.parse(sourceFile);
+      const text = content.parse(source),
+        revision = fileRevision.parse(expected);
+      const write = () => workspaces.write(workspace, name, text, revision);
+      return /(?:^|\/)kobrixa\.json$/i.test(name) ? afterRouting(workspace, write) : write();
+    },
   );
   handle("workspace:history", (_event, workspaceId: unknown, sourceFile: unknown) =>
     workspaces.history(id.parse(workspaceId), file.parse(sourceFile)),
@@ -315,18 +354,24 @@ export function registerIpc(
   handle(
     "workspace:create-entry",
     (_event, workspaceId: unknown, parent: unknown, kind: unknown, name: unknown) =>
-      workspaces.createEntry(
-        id.parse(workspaceId),
-        directory.parse(parent),
-        z.enum(["file", "directory"]).parse(kind),
-        entryName.parse(name),
+      afterRouting(id.parse(workspaceId), () =>
+        workspaces.createEntry(
+          id.parse(workspaceId),
+          directory.parse(parent),
+          z.enum(["file", "directory"]).parse(kind),
+          entryName.parse(name),
+        ),
       ),
   );
   handle("workspace:move-entry", (_event, workspaceId: unknown, source: unknown, target: unknown) =>
-    workspaces.moveEntry(id.parse(workspaceId), file.parse(source), file.parse(target)),
+    afterRouting(id.parse(workspaceId), () =>
+      workspaces.moveEntry(id.parse(workspaceId), file.parse(source), file.parse(target)),
+    ),
   );
   handle("workspace:trash-entry", (_event, workspaceId: unknown, entry: unknown) =>
-    workspaces.trashEntry(id.parse(workspaceId), file.parse(entry)),
+    afterRouting(id.parse(workspaceId), () =>
+      workspaces.trashEntry(id.parse(workspaceId), file.parse(entry)),
+    ),
   );
 
   handle("build:start", (_event, workspaceId: unknown, overlays: unknown, preview: unknown) =>
@@ -341,57 +386,13 @@ export function registerIpc(
   handle("build:artifacts", (_event, buildId: unknown) => builds.artifacts(id.parse(buildId)));
 
   handle("language:completion-sync", (_event, workspaceId: unknown, request: unknown) =>
-    language.completionSync(
-      id.parse(workspaceId),
-      z
-        .object({
-          session: z.string().min(1).max(100),
-          revision: z.number().int().positive(),
-          baseRevision: z.number().int().nonnegative().nullable(),
-          refresh: z.boolean(),
-          updates: z.array(
-            z.discriminatedUnion("kind", [
-              z.object({
-                kind: z.literal("reset"),
-                file,
-                document: z.object({ version: z.number().int().nonnegative(), text: content }),
-              }),
-              z.object({ kind: z.literal("remove"), file }),
-              z.object({
-                kind: z.literal("edit"),
-                file,
-                before: z.number().int().nonnegative(),
-                version: z.number().int().positive(),
-                changes: z.array(
-                  z.object({
-                    offset: z.number().int().nonnegative(),
-                    length: z.number().int().nonnegative(),
-                    text: content,
-                  }),
-                ),
-              }),
-            ]),
-          ),
-        })
-        .parse(request),
-    ),
+    language.completionSync(id.parse(workspaceId), completionSyncRequestSchema.parse(request)),
   );
   handle("language:analyze", (_event, workspaceId: unknown, overlays: unknown) =>
     language.analyze(id.parse(workspaceId), z.record(file, content).parse(overlays)),
   );
   handle("language:sync", (_event, workspaceId: unknown, update: unknown) =>
-    language.sync(
-      id.parse(workspaceId),
-      z
-        .object({
-          session: z.string().min(1).max(100),
-          revision: z.number().int().positive(),
-          baseRevision: z.number().int().nonnegative().nullable(),
-          analysisBase: z.number().int().positive().nullable(),
-          overlays: z.object({ set: z.record(file, content), removed: z.array(file) }),
-        })
-        .parse(update),
-    ),
+    language.sync(id.parse(workspaceId), languageSyncRequestSchema.parse(update)),
   );
   handle("language:diagnostics", (_event, workspaceId: unknown, overlays: unknown) =>
     language.diagnostics(id.parse(workspaceId), z.record(file, content).parse(overlays)),

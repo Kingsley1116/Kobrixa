@@ -1,11 +1,18 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { CancellationToken, editor, Position } from "monaco-editor";
-import { analyzeBasicPlusProject, getBasicPlusQuickFixes } from "@kobrixa/basic-plus";
+import { analyzeBasicPlusProject, BasicPlusCompletionAnalyzer } from "@kobrixa/basic-plus";
+import { LANGUAGE_CAPABILITIES } from "@kobrixa/plugin-protocol";
+import { basicPlusLanguageService } from "../../main/language/basic-plus-service.js";
+import { basicPlusAnalysis, basicPlusCompletion } from "../../main/language/basic-plus-results.js";
+import type { LanguageAnalysis } from "../../shared/language-types.js";
+import type { LanguageAnalysisProvider } from "../../main/language/language-provider.js";
+import { CompletionCache } from "./completion-cache.js";
 import { stampDiagnostics } from "@kobrixa/compiler";
-import { BASIC_PLUS_SOURCE } from "../../shared/basic-plus-quick-fixes.js";
+import { BASIC_PLUS_SOURCE } from "../../main/language/basic-plus-quick-fixes.js";
 import type { Diagnostic } from "../../shared/api.js";
 import { ModelSnapshots } from "./model-snapshots.js";
-import { BasicPlusLanguageFeatures, normalizeSource } from "./language-features.js";
+import { LanguageFeatures, normalizeSource } from "./language-features.js";
+import { basicPlusCompanion } from "./companions/basic-plus/companion.js";
 import {
   bindWorkspaceEdits,
   renameSnapshot,
@@ -36,7 +43,27 @@ function model(file: string, initial: string) {
   let value = normalizeSource(initial),
     version = 1,
     disposed = false;
+  const decorations = new Map<string, editor.IModelDeltaDecoration>();
   return {
+    deltaDecorations: (_old: string[], items: editor.IModelDeltaDecoration[]) =>
+      items.map((item, index) => {
+        const id = String(index);
+        decorations.set(id, item);
+        return id;
+      }),
+    getDecorationRange: (id: string) => {
+      const range = decorations.get(id)?.range;
+      return range
+        ? {
+            ...range,
+            containsPosition: (p: Position) =>
+              (p.lineNumber > range.startLineNumber ||
+                (p.lineNumber === range.startLineNumber && p.column >= range.startColumn)) &&
+              (p.lineNumber < range.endLineNumber ||
+                (p.lineNumber === range.endLineNumber && p.column <= range.endColumn)),
+          }
+        : null;
+    },
     uri: { toString: () => `kobrixa:/${file}` },
     getValue: () => value,
     setValue: (next: string) => {
@@ -57,43 +84,77 @@ function model(file: string, initial: string) {
     isDisposed: () => disposed,
   } as unknown as editor.ITextModel;
 }
+const providers = new WeakMap<LanguageAnalysis, LanguageAnalysisProvider>();
 function setup(sources: Record<string, string>) {
   let locale: "en" | "zh-TW" = "en";
-  const raw = analyzeBasicPlusProject(
-    {
-      root: "/project",
-      manifest: {
-        schemaVersion: 1,
-        name: "test",
-        language: "bp",
-        entry: "main.bp",
-        target: "ev3-native",
-        assets: [],
-        outputDir: "out",
-      },
-      sources: Object.entries(sources).map(([path, content]) => ({ path, content })),
+  const project = {
+    root: "/project",
+    manifest: {
+      schemaVersion: 1 as const,
+      name: "test",
+      language: "bp",
+      entry: "main.bp",
+      target: "ev3-native",
       assets: [],
+      outputDir: "out",
     },
-    new AbortController().signal,
+    sources: Object.entries(sources).map(([path, content]) => ({ path, content })),
+    assets: [],
+  };
+  const signal = new AbortController().signal;
+  const raw = analyzeBasicPlusProject(project, signal);
+  const analysis = {
+    ...basicPlusAnalysis(raw),
+    diagnostics: stampDiagnostics(raw.diagnostics, BASIC_PLUS_SOURCE),
+  };
+  const provider = basicPlusLanguageService.createAnalysis();
+  provider.analyze(project, 1, signal);
+  providers.set(analysis, provider);
+  const cache = new CompletionCache();
+  const completionIndex = basicPlusCompletion(
+    new BasicPlusCompletionAnalyzer().analyze(project, signal),
   );
-  const analysis = { ...raw, diagnostics: stampDiagnostics(raw.diagnostics, BASIC_PLUS_SOURCE) };
+  cache.update(completionIndex, 1);
   const models = new Map([["main.bp", model("main.bp", sources["main.bp"]!)]]);
-  const snapshot = { analysis, overlays: sources };
+  for (const [file, model] of models) cache.attach(file, model, []);
+  const binding = {
+    epoch: 1,
+    pluginId: "kobrixa.basic-plus",
+    sourceKey: "builtin:kobrixa.basic-plus",
+    language: "bp",
+    extensions: ["bp", "bpi", "bpm"],
+    capabilities: [...LANGUAGE_CAPABILITIES],
+    frontend: {
+      language: "bp",
+      entryExtensions: ["bp"],
+      sourceExtensions: ["bp", "bpi", "bpm"],
+      ir: { min: 1, max: 1 },
+    },
+  };
+  const snapshot = { epoch: 1, binding, analysis, overlays: sources };
   let editable = true;
   const versions = new ModelSnapshots();
   const refreshCompletions = vi.fn();
   const quickFixes = vi.fn(
     async (current: typeof snapshot, diagnostic: Diagnostic, _signal: AbortSignal) => ({
       kind: "result" as const,
-      fixes: getBasicPlusQuickFixes(
-        diagnostic.file,
-        current.analysis.index.sources[diagnostic.file]!,
-        diagnostic,
-      ),
+      epoch: current.epoch,
+      fixes: providers.get(current.analysis)!.quickFixes(1, diagnostic.file, diagnostic, _signal),
     }),
   );
-  const features = new BasicPlusLanguageFeatures({
+  const features = new LanguageFeatures({
     locale: () => locale,
+    binding: () => binding,
+    companion: () => basicPlusCompanion,
+    completionSymbols: (model, position) => {
+      const file = [...models].find(([, value]) => value === model)?.[0];
+      return file ? cache.symbols(file, position, 1) : undefined;
+    },
+    query: async (snapshot, query, signal) => ({
+      kind: "result",
+      epoch: snapshot.epoch,
+      result: providers.get(snapshot.analysis)!.query(1, query, signal),
+    }),
     quickFixes,
     fileFor: (m) => [...models].find(([, value]) => value === m)?.[0],
     ensureModel: (file, content) => {
@@ -119,6 +180,8 @@ function setup(sources: Record<string, string>) {
   features.update(snapshot);
   const position = (lineNumber: number, column: number) => ({ lineNumber, column }) as Position;
   return {
+    cache,
+    completionIndex,
     quickFixes,
     setLocale: (value: "en" | "zh-TW") => {
       locale = value;
@@ -135,6 +198,74 @@ function setup(sources: Record<string, string>) {
   };
 }
 afterEach(() => vi.useRealTimers());
+
+it.each([2, 4])("companion preserves closing completion indentation with %i spaces", (tabSize) => {
+  const spaces = " ".repeat(tabSize);
+  const { main, position } = setup({
+    "main.bp": `If True\n${spaces}While True\n${spaces.repeat(2)}EndWh`,
+  });
+  vi.spyOn(main, "getOptions").mockReturnValue({ tabSize } as editor.TextModelResolvedOptions);
+  const list = basicPlusCompanion.completions(main, position(3, tabSize * 2 + 6), [], token);
+  const item = list.suggestions.find((item) => item.label === "EndWhile")!;
+  expect(item.range).toMatchObject({
+    startLineNumber: 3,
+    startColumn: 1,
+    endLineNumber: 3,
+    endColumn: tabSize * 2 + 6,
+  });
+  expect(item.insertText).toBe(spaces + "EndWhile");
+  expect(item.filterText).toBe(spaces.repeat(2) + "EndWhile");
+});
+
+it("companion filters generic labels and preserves their display details", () => {
+  const { main, position } = setup({ "main.bp": "VaLue" });
+  const list = basicPlusCompanion.completions(
+    main,
+    position(1, 4),
+    [
+      {
+        id: "value",
+        name: "value",
+        kind: "variable",
+        signature: "parameter number value",
+        group: "scope",
+        shadowKey: "value:value",
+        labels: [{ text: "value", detail: "parameter number value" }],
+      },
+    ],
+    token,
+  );
+  expect(list.suggestions).toEqual([
+    expect.objectContaining({
+      label: "value",
+      insertText: "value",
+      detail: "parameter number value",
+      range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 6 },
+    }),
+  ]);
+});
+
+it("companion completes APIs immediately and suppresses literals, comments and cancellation", () => {
+  const { main, position } = setup({ "main.bp": "LCD." });
+  const read = vi.spyOn(main, "getValue");
+  expect(
+    basicPlusCompanion.completions(main, position(1, 5), [], token).suggestions,
+  ).toContainEqual(expect.objectContaining({ label: "LCD.Clear" }));
+  expect(read).not.toHaveBeenCalled();
+  for (const text of ['"LCD.', "'LCD."]) {
+    main.setValue(text);
+    expect(basicPlusCompanion.completions(main, position(1, 6), [], token).suggestions).toEqual([]);
+  }
+  main.setValue("LCD.");
+  expect(
+    basicPlusCompanion.completions(main, position(1, 5), [], {
+      ...token,
+      isCancellationRequested: true,
+    }).suggestions,
+  ).toEqual([]);
+  main.dispose();
+  expect(basicPlusCompanion.completions(main, position(1, 5), [], token).suggestions).toEqual([]);
+});
 
 it.each([2, 4])(
   "accepts closing completions with %i-space indentation in one edit",
@@ -212,6 +343,34 @@ it("returns built-ins immediately while analysis is missing without reading the 
   expect(read).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each(["cleared", "invalid"] as const)(
+  "refreshes current analysis completions after the cache is %s and restores user symbols",
+  async (state) => {
+    const { features, main, cache, completionIndex, position, refreshCompletions } = setup({
+      "main.bp": "LCDValue = 1\nLC",
+    });
+    const cursor = position(2, 3);
+    expect((await features.completions(main, cursor, token)).incomplete).toBe(false);
+    if (state === "cleared") cache.clear();
+    else cache.invalidate("main.bp");
+    const pending = await features.completions(main, cursor, token);
+    expect.soft(pending.incomplete).toBe(true);
+    expect(pending.suggestions.some((item) => item.label === "LCDValue")).toBe(false);
+    expect(pending.suggestions.some((item) => item.label === "LCD.Clear")).toBe(true);
+
+    cache.update(completionIndex, 1);
+    cache.attach("main.bp", main, []);
+    features.refreshCompletion();
+    expect.soft(refreshCompletions).toHaveBeenCalledExactlyOnceWith(main, cursor);
+    const refreshed = await features.completions(main, cursor, token);
+    expect(refreshed.incomplete).toBe(false);
+    expect(refreshed.suggestions.find((item) => item.label === "LCDValue")).toMatchObject({
+      insertText: "LCDValue",
+      detail: "global number LCDValue",
+    });
+  },
+);
 
 it("validates accepted model versions for repeated hover and rejects a newer model", async () => {
   vi.useFakeTimers();
@@ -378,7 +537,7 @@ it("discards delayed fixes after edits, cancellation or workspace replacement", 
   );
   const pending = h.features.quickFixes(h.main, diagnostic);
   h.main.setValue("LCD.Clear()\n");
-  resolve({ kind: "result", fixes: [] });
+  resolve({ kind: "result", epoch: 1, fixes: [] });
   expect(await pending).toEqual([]);
   const other = setup({ "main.bp": "LCD.Clear(\n" });
   const cancelled = { ...token, isCancellationRequested: true };
@@ -427,9 +586,98 @@ it.each(["monaco", "panel", "invalidation", "dispose"] as const)(
     expect(signal.aborted).toBe(true);
     finish({
       kind: "result",
-      fixes: getBasicPlusQuickFixes("main.bp", "LCD.Clear(\n", diagnostic),
+      epoch: 1,
+      fixes: providers
+        .get(h.snapshot.analysis)!
+        .quickFixes(1, "main.bp", diagnostic, new AbortController().signal),
     });
     expect(await pending).toEqual([]);
     expect(dispose).toHaveBeenCalledOnce();
   },
 );
+
+it("keeps API signature help available while analysis is pending", async () => {
+  vi.useFakeTimers();
+  const h = setup({ "main.bp": "LCD.Text(1, " });
+  h.features.update(undefined);
+  const read = vi.spyOn(h.main, "getValue");
+  const pending = h.features.signature(h.main, h.position(1, 13), token);
+  await vi.advanceTimersByTimeAsync(2000);
+  const signature = await pending;
+  expect(signature?.value.signatures[0]?.label).toContain("LCD.Text(");
+  expect(signature?.value.activeParameter).toBe(1);
+  expect(read).not.toHaveBeenCalled();
+});
+it("tolerates built-in occurrences whose symbols are absent from the generic index", async () => {
+  const h = setup({ "main.bp": "LCD.Clear()" });
+  const occurrence = h.snapshot.analysis.index.occurrencesByFile["main.bp"]!.find(
+    (entry) => !h.snapshot.analysis.index.symbols[entry.symbolId],
+  );
+  expect(occurrence).toBeDefined();
+  expect(
+    await h.features.hover(
+      h.main,
+      h.position(occurrence!.range.startLine, occurrence!.range.startColumn),
+      token,
+    ),
+  ).toBeDefined();
+  expect(
+    await h.features.definition(
+      h.main,
+      h.position(occurrence!.range.startLine, occurrence!.range.startColumn),
+      token,
+    ),
+  ).toEqual([]);
+  expect
+    .soft(
+      await h.features.references(
+        h.main,
+        h.position(occurrence!.range.startLine, occurrence!.range.startColumn),
+        true,
+        token,
+      ),
+    )
+    .toEqual([
+      {
+        uri: h.main.uri,
+        range: { startLineNumber: 1, startColumn: 5, endLineNumber: 1, endColumn: 10 },
+      },
+    ]);
+  expect(
+    (
+      await h.features.renameLocation(
+        h.main,
+        h.position(occurrence!.range.startLine, occurrence!.range.startColumn),
+        token,
+      )
+    ).rejectReason,
+  ).toBe("A current, editable user-defined symbol is required.");
+});
+it("gates fixes by the binding capability, source, and epoch", async () => {
+  const h = setup({ "main.bp": "LCD.Clear(" });
+  const diagnostic = h.snapshot.analysis.diagnostics.find((d) => d.code === "BP1043")!;
+  h.snapshot.binding.capabilities = ["analysis"];
+  expect(await h.features.quickFixes(h.main, diagnostic)).toEqual([]);
+  expect(h.quickFixes).not.toHaveBeenCalled();
+  h.snapshot.binding.capabilities.push("quickFixes");
+  expect(await h.features.quickFixes(h.main, { ...diagnostic, source: "test.other" })).toEqual([]);
+  h.snapshot.binding.epoch = 2;
+  expect(await h.features.quickFixes(h.main, diagnostic)).toEqual([]);
+  expect(h.quickFixes).not.toHaveBeenCalled();
+});
+
+it("cancels a waiting feature when its model is rebound to another path", async () => {
+  vi.useFakeTimers();
+  const h = setup({ "main.bp": "value = 1" });
+  h.features.update(undefined);
+  const pending = h.features.hover(h.main, h.position(1, 2), token);
+  h.models.delete("main.bp");
+  h.models.set("kobrixa.json", h.main);
+  try {
+    h.features.unbind(h.main);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await pending).toBeUndefined();
+  } finally {
+    h.features.dispose();
+  }
+});

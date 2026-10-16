@@ -1,3 +1,5 @@
+import type { LanguageStatus, LanguageStatusEvent } from "./language-services.js";
+import type { LanguageFeatureRequest, LanguageFeatureReply } from "./language-query.js";
 import type { FilePreferences } from "./file-preferences.js";
 import type { OfflinePreviewProgram } from "./offline-preview.js";
 import type { SimulationPrepareResult } from "./simulator.js";
@@ -272,6 +274,10 @@ export interface KobrixaApi {
     onEvent(listener: (event: BuildEvent) => void): () => void;
   };
   language: {
+    status(workspaceId: string, refresh?: boolean): Promise<LanguageStatus>;
+    feature(workspaceId: string, request: LanguageFeatureRequest): Promise<LanguageFeatureReply>;
+    cancelFeature(workspaceId: string, requestId: string): Promise<void>;
+    onStatus(listener: (event: LanguageStatusEvent) => void): () => void;
     quickFixes(workspaceId: string, request: QuickFixRequest): Promise<QuickFixReply>;
     cancelQuickFix(workspaceId: string, requestId: string): Promise<void>;
     completionSync(

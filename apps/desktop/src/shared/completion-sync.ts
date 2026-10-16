@@ -1,4 +1,5 @@
-import type { BasicPlusCompletionIndex } from "@kobrixa/basic-plus";
+import type { LanguageUnavailable } from "./language-services.js";
+import type { CompletionIndex } from "./language-types.js";
 
 export interface CompletionDocument {
   version: number;
@@ -20,6 +21,7 @@ export type CompletionUpdate =
       changes: CompletionEdit[];
     };
 export interface CompletionSyncRequest {
+  epoch: number;
   session: string;
   revision: number;
   baseRevision: number | null;
@@ -27,13 +29,15 @@ export interface CompletionSyncRequest {
   updates: CompletionUpdate[];
 }
 export type CompletionSyncReply =
-  | { kind: "resync" }
+  | { kind: "resync"; epoch: number }
+  | (LanguageUnavailable & { epoch: number })
   | {
       kind: "result";
+      epoch: number;
       session: string;
       revision: number;
       versions: Record<string, number>;
-      index: BasicPlusCompletionIndex;
+      index: CompletionIndex;
     };
 
 /** Offsets are Monaco UTF-16 offsets; each event's edits address its old text. */

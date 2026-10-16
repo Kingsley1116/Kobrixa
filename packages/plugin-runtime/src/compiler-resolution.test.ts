@@ -4,6 +4,8 @@ import {
   readSource,
   resolvePlugins,
   resolveCompilerProviders,
+  resolveFrontendProvider,
+  resolveLanguageService,
   type PluginSource,
   type ReadPlugin,
 } from "./index.js";
@@ -33,6 +35,141 @@ async function reads(values = sources): Promise<ReadPlugin[]> {
   return Promise.all(values.map((value) => readSource(value, { safeMode: false })));
 }
 const options = { disabled: new Set<string>(), safeMode: false };
+it("resolves a frontend without a backend or compatible backend IR", async () => {
+  for (const values of [
+    [source("test.front", { frontends: [front] })],
+    [
+      source("test.front", { frontends: [front] }),
+      source("test.back", {
+        backends: [{ ...back, ir: { min: 99, max: 100 } }],
+      }),
+    ],
+  ]) {
+    const plugins = resolvePlugins(await reads(values), options);
+    expect(resolveFrontendProvider(plugins, "test")).toMatchObject({
+      ok: true,
+      frontend: { pluginId: "test.front", contribution: front },
+    });
+    expect(resolveCompilerProviders(plugins, "test", "test-vm").ok).toBe(false);
+  }
+});
+it("reports both invalid frontend owners as conflict before missing", async () => {
+  const plugins = resolvePlugins(
+    await reads([
+      source("test.one", { frontends: [front] }),
+      source("test.two", { frontends: [front] }),
+    ]),
+    options,
+  );
+  expect(plugins.map((p) => p.status)).toEqual(["invalid", "invalid"]);
+  for (const plugin of plugins)
+    for (const problem of plugin.problems) problem.message = "Reworded conflict explanation";
+  expect(resolveFrontendProvider(plugins, "test")).toEqual({
+    ok: false,
+    reason: "conflict",
+    language: "test",
+    conflicts: ["test.one", "test.two"],
+  });
+  expect(resolveFrontendProvider(plugins, "other")).toEqual({
+    ok: false,
+    reason: "missing",
+    language: "other",
+    conflicts: [],
+  });
+});
+it("resolves the frontend owner's language service with detached snapshots and a generation", async () => {
+  const declaration = {
+    language: "test",
+    extensions: ["test", "inc"],
+    capabilities: ["analysis"],
+  };
+  const plugins = resolvePlugins(
+    await reads([source("test.front", { frontends: [front], languageServices: [declaration] })]),
+    options,
+  );
+  const selected = resolveLanguageService(plugins, "test", 7);
+  expect(selected).toEqual({
+    ok: true,
+    frontend: { pluginId: "test.front", sourceKey: "builtin:test.front", contribution: front },
+    generation: 7,
+    declaration,
+  });
+  if (!selected.ok) throw new Error("Expected language service");
+  selected.frontend.contribution.sourceExtensions.push("mutated");
+  selected.declaration.extensions.push("mutated");
+  expect(resolveLanguageService(plugins, "test")).toEqual({
+    ok: true,
+    frontend: { pluginId: "test.front", sourceKey: "builtin:test.front", contribution: front },
+    generation: 0,
+    declaration,
+  });
+});
+it("distinguishes missing language service declarations from frontend conflicts", async () => {
+  const plugins = resolvePlugins(await reads(), options);
+  for (const language of ["test", "missing"])
+    expect(resolveLanguageService(plugins, language)).toEqual({
+      ok: false,
+      reason: "missing",
+      language,
+      conflicts: [],
+    });
+  const conflicted = resolvePlugins(
+    await reads([
+      source("test.two", { frontends: [front] }),
+      source("test.one", { frontends: [front] }),
+    ]),
+    options,
+  );
+  expect(resolveLanguageService(conflicted, "test")).toEqual({
+    ok: false,
+    reason: "conflict",
+    language: "test",
+    conflicts: ["test.one", "test.two"],
+  });
+});
+it("selects a manager language service without launching plugins or requiring a backend", async () => {
+  const launcher = vi.fn();
+  const manager = await PluginManager.create({
+    sources: [
+      source("test.front", {
+        frontends: [front],
+        languageServices: [
+          { language: "test", extensions: ["test", "inc"], capabilities: ["analysis"] },
+        ],
+      }),
+    ],
+    safeMode: true,
+    launcher,
+    locale: "en",
+    store: {
+      load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+      save: async () => {},
+    },
+  });
+  try {
+    const selected = manager.resolveLanguageService("test");
+    expect(selected).toMatchObject({
+      ok: true,
+      generation: 0,
+      frontend: { pluginId: "test.front" },
+      declaration: { extensions: ["test", "inc"], capabilities: ["analysis"] },
+    });
+    if (!selected.ok) throw new Error("Expected language service");
+    selected.declaration.extensions.push("mutated");
+    expect(manager.resolveLanguageService("test")).toMatchObject({
+      declaration: { extensions: ["test", "inc"] },
+    });
+    expect(manager.resolveLanguageService("missing")).toEqual({
+      ok: false,
+      reason: "missing",
+      language: "missing",
+      conflicts: [],
+    });
+    expect(launcher).not.toHaveBeenCalled();
+  } finally {
+    await manager.shutdown();
+  }
+});
 it("chooses the largest IR intersection and returns an immutable snapshot", async () => {
   const launcher = vi.fn();
   const manager = await PluginManager.create({

@@ -5,7 +5,12 @@ const call =
   (name) =>
   (...args) =>
     ipcRenderer.invoke("smoke", name, args);
+const unsupportedPluginOperation = async () => {
+  throw new Error("Development plugin operations are not supported by the smoke harness.");
+};
 contextBridge.exposeInMainWorld("kobrixa", {
+  // The harness does not customize the native Windows title bar.
+  windowChrome: { setAppearance: async () => {} },
   collab: {
     serverUrl: call("collabServerUrl"),
     getPreferences: call("collabPreferences"),
@@ -43,10 +48,23 @@ contextBridge.exposeInMainWorld("kobrixa", {
   },
   keyboard: { updateContext: call("keyboard") },
   documentation: { open: call("documentationOpen") },
-  // The workbench asks for plugin state at startup (recovery notice); the smoke has no plugins.
+  // No development plugins; built-in help entries come from the renderer's catalog.
   plugins: {
+    execute: unsupportedPluginOperation,
+    cancel: unsupportedPluginOperation,
+    setEnabled: unsupportedPluginOperation,
+    setDeveloperMode: unsupportedPluginOperation,
+    linkFolder: unsupportedPluginOperation,
+    relinkFolder: unsupportedPluginOperation,
+    unlink: unsupportedPluginOperation,
+    reload: unsupportedPluginOperation,
+    pythonCandidates: unsupportedPluginOperation,
+    setPython: unsupportedPluginOperation,
+    readLog: unsupportedPluginOperation,
+    clearSafeModeLock: unsupportedPluginOperation,
     state: async () => ({
       revision: 0,
+      diagnosticHelpRevision: 0,
       safeMode: false,
       developmentMode: false,
       plugins: [],
@@ -54,6 +72,16 @@ contextBridge.exposeInMainWorld("kobrixa", {
       origins: {},
       python: { pendingReload: [] },
       inflight: [],
+    }),
+    diagnosticHelp: async () => ({
+      revision: 0,
+      plugins: {
+        "kobrixa.basic-plus": { displayName: "Basic Plus", entries: [] },
+        "kobrixa.ev3": {
+          displayName: { en: "EV3 native backend", "zh-TW": "EV3 原生後端" },
+          entries: [],
+        },
+      },
     }),
     notices: async () => [],
     onEvent: () => () => {},
@@ -97,13 +125,21 @@ contextBridge.exposeInMainWorld("kobrixa", {
     },
   },
   language: {
+    status: (workspaceId, refresh) => call("languageStatus")(workspaceId, refresh ?? false),
+    feature: call("languageFeature"),
+    cancelFeature: call("languageCancelFeature"),
+    onStatus: (listener) => {
+      const receive = (_event, event) => listener(event);
+      ipcRenderer.on("language:status-changed", receive);
+      return () => ipcRenderer.removeListener("language:status-changed", receive);
+    },
     quickFixes: call("diagnosticQuickFixes"),
     cancelQuickFix: call("diagnosticCancelQuickFix"),
     completionSync: call("completionSync"),
     sync: call("languageSync"),
     cancel: call("languageCancel"),
     analyze: call("analyze"),
-    diagnostics: async () => [],
+    diagnostics: call("languageDiagnostics"),
   },
   sensorLab: {
     getState: call("labGetState"),

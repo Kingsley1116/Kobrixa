@@ -17,6 +17,18 @@ def expand(value):
 
 
 class ConformanceTest(unittest.TestCase):
+    def test_language_services_are_strict_and_api_is_1_3(self):
+        from kobrixa._plugin import API_VERSION
+        self.assertEqual(API_VERSION, "1.3.0")
+        validator = Validator.bundled()
+        value = {"id": "test.language", "version": "1.0.0", "apiVersion": "^1.3.0",
+                 "runtime": {"kind": "builtin"}, "contributes": {"languageServices": [
+                     {"language": "case", "extensions": ["csx"], "capabilities": ["analysis"]}]}}
+        validator.validate("manifest", value)
+        value["contributes"]["languageServices"][0]["entry"] = "service.py"
+        with self.assertRaises(SchemaError):
+            validator.validate("manifest", value)
+
     def test_integer_validation_does_not_convert_python_ints_to_float(self):
         validator = Validator({"$defs": {"integer": {"type": "integer"}}})
         for value in (0, 10 ** 399, -(10 ** 399), 1.0, -1.0):

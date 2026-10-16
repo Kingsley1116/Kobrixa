@@ -77,6 +77,7 @@ export type PluginManagerPort = Pick<
   | "shutdown"
   | "resume"
   | "resolveCompiler"
+  | "resolveLanguageService"
 >;
 export interface PluginControllerDependencies {
   manager: PluginManagerPort;
@@ -188,6 +189,10 @@ export class PluginController {
 
   resolveCompiler(language: string, target: string): ReturnType<PluginManager["resolveCompiler"]> {
     return this.deps.manager.resolveCompiler(language, target);
+  }
+
+  resolveLanguageService(language: string): ReturnType<PluginManager["resolveLanguageService"]> {
+    return this.deps.manager.resolveLanguageService(language);
   }
 
   onEvent(listener: (event: PluginsViewEvent) => void): () => void {

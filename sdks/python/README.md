@@ -48,6 +48,10 @@ Keep the manifest and registered command IDs in agreement. Each command ID must 
 
 Command handlers must be `async def` functions. Their context exposes `plugin_id`, `locale` (`en` or `zh-TW`) and `ui.show_message(message, severity="info")`; supported severities are `info`, `warning` and `error`. Await message requests, which require the manifest's `ui.notifications` permission. Handlers have no command arguments in phase 1, and successful execution returns `null` on the wire.
 
+## API 1.3.0 language services
+
+API 1.3.0 includes the structural `languageServices` manifest schema for parity with the host. Python development plugins cannot provide language services; declaring the field, including an empty array, produces `PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN`. This release does not add language-service RPC methods. Registry-only checks are separate from JSON Schema validation.
+
 ## Protocol and cancellation
 
 `plugin.run()` serves JSON-RPC 2.0 over stdin/stdout using `Content-Length` frames. Stdout is reserved for the protocol. Constructing `Plugin()` saves the real stdout buffer for protocol frames and redirects Python `print()` to stderr, including top-level prints before `run()`. Write any logs before construction explicitly to stderr; direct writes to the stdout file descriptor can still corrupt the protocol.
@@ -104,6 +108,10 @@ export PYTHONPATH="$PWD/sdks/python${PYTHONPATH:+:$PYTHONPATH}"
 manifest 與程式註冊的命令 ID 必須一致。每個命令 ID 都必須以 manifest 的插件 ID 加上 `.` 開頭。`Plugin()` 不接受插件 ID 參數；身分由宿主在 `initialize` 時提供。
 
 命令處理函式必須使用 `async def`。其 context 提供 `plugin_id`、`locale`（`en` 或 `zh-TW`）及 `ui.show_message(message, severity="info")`；支援的嚴重程度為 `info`、`warning` 與 `error`。訊息請求必須使用 `await`，且 manifest 必須要求 `ui.notifications` 權限。第一階段的命令不接受命令參數，執行成功時在通訊層回傳 `null`。
+
+### API 1.3.0 語言服務
+
+API 1.3.0 隨附 `languageServices` 的結構 schema，供跨語言驗證一致性使用；Python 開發插件不能提供語言服務，宣告欄位（含空陣列）會收到 `PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN`。此版本沒有新增語言服務 RPC，registry 語意檢查與 JSON Schema 驗證分開執行。
 
 ### 協定與取消
 

@@ -57,6 +57,18 @@ const manifestSchema = z
   })
   .loose();
 
+export interface ProjectDescription {
+  root: string;
+  manifest: ProjectManifest;
+  implicit: boolean;
+}
+export interface ProjectDescriptionResult {
+  description?: ProjectDescription;
+  diagnostics: Diagnostic[];
+  implicit: boolean;
+  candidates?: string[];
+}
+
 export interface ProjectLoadResult {
   /** Original compiler failure for in-process callers that need to rethrow it. */
   error?: BuildError;
@@ -220,13 +232,10 @@ async function loadSources(
   return sources;
 }
 
-export async function loadProject(
+export async function readProjectDescription(
   inputPath: string,
-  overlays: ReadonlyMap<string, string> = new Map(),
   selectedEntry?: string,
-  sourceCache?: ProjectSourceCache,
-  resolveFrontend?: (manifest: ProjectManifest) => FrontendDecl,
-): Promise<ProjectLoadResult> {
+): Promise<ProjectDescriptionResult> {
   const diagnostics: Diagnostic[] = [];
   try {
     const stat = await lstat(inputPath);
@@ -275,6 +284,34 @@ export async function loadProject(
         implicit: false,
       };
     }
+
+    return { description: { root, manifest, implicit }, diagnostics, implicit };
+  } catch (error) {
+    return {
+      diagnostics: [
+        diagnostic(
+          error instanceof SyntaxError ? "MAN1001" : "MAN1002",
+          error instanceof Error ? error.message : "Unable to load project.",
+        ),
+      ],
+      implicit: false,
+    };
+  }
+}
+
+export async function loadProject(
+  inputPath: string,
+  overlays: ReadonlyMap<string, string> = new Map(),
+  selectedEntry?: string,
+  sourceCache?: ProjectSourceCache,
+  resolveFrontend?: (manifest: ProjectManifest) => FrontendDecl,
+): Promise<ProjectLoadResult> {
+  const diagnostics: Diagnostic[] = [];
+  try {
+    const described = await readProjectDescription(inputPath, selectedEntry);
+    if (!described.description) return described;
+    const { root, implicit } = described.description;
+    let { manifest } = described.description;
 
     const entryAbsolute = await resolveInside(root, manifest.entry);
     const sourceRoot = path.dirname(entryAbsolute);

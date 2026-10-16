@@ -5,6 +5,7 @@ import semver from "semver";
 import { z } from "zod";
 import {
   compilerDeclarationProblems,
+  languageServiceDeclarationProblems,
   PLUGIN_API_VERSION,
   PLUGIN_LIMITS,
   pluginManifestSchema,
@@ -67,6 +68,18 @@ function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]
       problem("PLUGIN_E_MANIFEST", message),
     ),
   );
+  problems.push(
+    ...languageServiceDeclarationProblems(manifest).map((message) =>
+      problem("PLUGIN_E_MANIFEST", message),
+    ),
+  );
+  if (manifest.contributes?.languageServices !== undefined && source !== "builtin")
+    problems.push(
+      problem(
+        "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
+        "Language services can only be contributed by built-in plugins in this version.",
+      ),
+    );
   if (!semver.satisfies(PLUGIN_API_VERSION, manifest.apiVersion))
     problems.push(
       problem(

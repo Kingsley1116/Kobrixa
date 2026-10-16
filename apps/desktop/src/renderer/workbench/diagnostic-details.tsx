@@ -10,7 +10,6 @@ import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
 import type { Diagnostic } from "../../shared/api.js";
 import type { DocumentationRequest } from "../../shared/documentation.js";
 import { sameDiagnostic } from "../../shared/quick-fixes.js";
-import { offersBasicPlusQuickFix } from "../../shared/basic-plus-quick-fixes.js";
 import type { AnalysisSession } from "../editor/analysis-session.js";
 
 export interface DiagnosticDetailsHost {
@@ -46,7 +45,9 @@ export function DiagnosticDetails({
     if (
       host.fixesDisabled ||
       !snapshot ||
-      !offersBasicPlusQuickFix(diagnostic) ||
+      !snapshot.binding.capabilities.includes("quickFixes") ||
+      diagnostic.source !== snapshot.binding.pluginId ||
+      snapshot.epoch !== snapshot.binding.epoch ||
       !snapshot.analysis.diagnostics.some(
         (d) => d.file === diagnostic.file && sameDiagnostic(d, diagnostic),
       )

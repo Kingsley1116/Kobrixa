@@ -49,6 +49,44 @@ const builtin = {
 const none = { disabled: new Set<string>(), safeMode: false };
 
 describe("loadPlugins", () => {
+  it.each([
+    { languageServices: [] },
+    { languageServices: [{ language: "bp", extensions: ["bp"], capabilities: ["analysis"] }] },
+  ])(
+    "rejects development languageServices even when empty: $languageServices",
+    async ({ languageServices }) => {
+      const source = await plugin(
+        "language",
+        manifest({ activationEvents: [], contributes: { languageServices } }),
+      );
+      const [loaded] = await loadPlugins([source], none);
+      expect(loaded?.status).toBe("invalid");
+      expect(loaded?.problems.map((p) => p.code)).toContain(
+        "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
+      );
+    },
+  );
+  it("rejects a built-in language declaration without its frontend", async () => {
+    await expect(
+      readSource(
+        {
+          kind: "builtin",
+          manifest: {
+            id: "test.language",
+            version: "1.0.0",
+            apiVersion: "^1.3.0",
+            runtime: { kind: "builtin" },
+            contributes: {
+              languageServices: [
+                { language: "bp", extensions: ["bp"], capabilities: ["analysis"] },
+              ],
+            },
+          },
+        },
+        { safeMode: false },
+      ),
+    ).rejects.toThrow("Invalid built-in plugin manifest");
+  });
   it("rejects the reserved kobrixa.core identity", async () => {
     const [loaded] = await loadPlugins(
       [

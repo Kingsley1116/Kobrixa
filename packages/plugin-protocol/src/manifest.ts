@@ -46,6 +46,29 @@ export const backendDeclSchema = z.looseObject({
   capabilities: z.looseObject({ deploy: z.literal("ev3").optional() }),
   artifacts: z.array(artifactDeclSchema).max(16),
 });
+export const LANGUAGE_CAPABILITIES = [
+  "analysis",
+  "completion",
+  "quickFixes",
+  "semanticTokens",
+  "hover",
+  "signatureHelp",
+  "definition",
+  "references",
+  "rename",
+  "documentSymbols",
+  "documentFormatting",
+  "rangeFormatting",
+] as const;
+export const languageCapabilitySchema = z.enum(LANGUAGE_CAPABILITIES);
+export type LanguageCapability = z.infer<typeof languageCapabilitySchema>;
+export const languageServiceDeclSchema = z.strictObject({
+  language: compilerIdSchema,
+  extensions: z.array(extensionSchema).min(1),
+  capabilities: z.array(languageCapabilitySchema).min(1),
+});
+export type LanguageServiceDecl = z.infer<typeof languageServiceDeclSchema>;
+
 export type FrontendDecl = z.infer<typeof frontendDeclSchema>;
 export type BackendDecl = z.infer<typeof backendDeclSchema>;
 export type ArtifactDecl = z.infer<typeof artifactDeclSchema>;
@@ -79,6 +102,7 @@ export const pluginManifestSchema = z.looseObject({
       frontends: z.array(frontendDeclSchema).max(8).optional(),
       backends: z.array(backendDeclSchema).max(8).optional(),
       diagnosticHelp: diagnosticHelpDeclSchema.optional(),
+      languageServices: z.array(languageServiceDeclSchema).max(8).optional(),
     })
     .optional(),
 });
@@ -102,6 +126,36 @@ export function compilerDeclarationProblems(manifest: PluginManifest): string[] 
     const mains = backend.artifacts.filter((artifact) => artifact.role === "deploy-main");
     if (backend.capabilities.deploy && (mains.length !== 1 || !mains[0]!.required))
       problems.push("A deployable backend requires exactly one required deploy-main.");
+  }
+  return problems;
+}
+
+export function languageServiceDeclarationProblems(manifest: PluginManifest): string[] {
+  const problems: string[] = [];
+  const languages = new Set<string>();
+  for (const service of manifest.contributes?.languageServices ?? []) {
+    if (languages.has(service.language))
+      problems.push("Language services must have unique languages.");
+    languages.add(service.language);
+    if (new Set(service.extensions).size !== service.extensions.length)
+      problems.push("Language service extensions must be unique.");
+    if (new Set(service.capabilities).size !== service.capabilities.length)
+      problems.push("Language service capabilities must be unique.");
+    if (!service.capabilities.includes("analysis"))
+      problems.push("Language services must support analysis.");
+    const frontends = (manifest.contributes?.frontends ?? []).filter(
+      (f) => f.language === service.language,
+    );
+    const frontend = frontends[0];
+    if (
+      frontends.length !== 1 ||
+      !frontend ||
+      new Set(frontend.sourceExtensions).size !== new Set(service.extensions).size ||
+      frontend.sourceExtensions.some((extension) => !service.extensions.includes(extension))
+    )
+      problems.push(
+        "Language services require one matching frontend with the same source extensions.",
+      );
   }
   return problems;
 }
