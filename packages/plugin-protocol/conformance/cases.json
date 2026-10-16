@@ -2861,5 +2861,108 @@
         }
       }
     }
+  },
+  {
+    "name": "API 1.3 built-in language services",
+    "definition": "manifest",
+    "valid": true,
+    "registry": {
+      "source": "builtin",
+      "codes": []
+    },
+    "value": {
+      "id": "test.language",
+      "version": "1.0.0",
+      "apiVersion": "^1.3.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "frontends": [
+          {
+            "language": "case",
+            "entryExtensions": ["csx"],
+            "sourceExtensions": ["csx"],
+            "ir": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        ],
+        "languageServices": [
+          {
+            "language": "case",
+            "extensions": ["csx"],
+            "capabilities": ["analysis", "completion"]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "language service rejects implementation path",
+    "definition": "manifest",
+    "valid": false,
+    "value": {
+      "id": "test.language",
+      "version": "1.0.0",
+      "apiVersion": "^1.3.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "languageServices": [
+          {
+            "language": "case",
+            "extensions": ["csx"],
+            "capabilities": ["analysis"],
+            "entry": "service.js"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "language service rejects empty capabilities",
+    "definition": "manifest",
+    "valid": false,
+    "value": {
+      "id": "test.language",
+      "version": "1.0.0",
+      "apiVersion": "^1.3.0",
+      "runtime": {
+        "kind": "builtin"
+      },
+      "contributes": {
+        "languageServices": [
+          {
+            "language": "case",
+            "extensions": ["csx"],
+            "capabilities": []
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "development empty services are structurally valid but forbidden by registry",
+    "definition": "manifest",
+    "valid": true,
+    "registry": {
+      "source": "development",
+      "codes": ["PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN"]
+    },
+    "value": {
+      "id": "test.language",
+      "version": "1.0.0",
+      "apiVersion": "^1.3.0",
+      "runtime": {
+        "kind": "node",
+        "entry": "main.js"
+      },
+      "contributes": {
+        "languageServices": []
+      }
+    }
   }
 ]

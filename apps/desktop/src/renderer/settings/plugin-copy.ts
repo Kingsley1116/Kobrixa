@@ -154,6 +154,10 @@ const problems: Record<string, readonly [zh: string, en: string]> = {
     "目前只有內建插件能提供編譯後端",
     "Only built-in plugins can provide compiler backends for now",
   ],
+  PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN: [
+    "此版本僅允許內建插件提供語言服務。",
+    "Only built-in plugins can provide language services in this version.",
+  ],
   PLUGIN_E_PROVIDER_CONFLICT: [
     "有多個已啟用的插件提供相同語言或目標",
     "Multiple enabled plugins provide the same language or target",

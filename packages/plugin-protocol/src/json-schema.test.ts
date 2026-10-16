@@ -20,6 +20,13 @@ function keywords(node: unknown, found = new Set<string>(), inProperties = false
 }
 
 describe("published JSON Schema", () => {
+  it("publishes the 1.3.0 schema and a strict language service declaration", () => {
+    const schema = JSON.parse(serializeJsonSchema());
+    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.3.0.json");
+    const services = schema.$defs.manifest.properties.contributes.properties.languageServices;
+    expect(services.maxItems).toBe(8);
+    expect(services.items.additionalProperties).toBe(false);
+  });
   it("matches the committed schema (run pnpm --filter @kobrixa/plugin-protocol schema)", async () => {
     expect(await read("../schema/plugin-protocol.schema.json")).toBe(serializeJsonSchema());
   });

@@ -122,6 +122,28 @@ const create = async (
 ) => PluginManager.create({ sources, store, safeMode, launcher, locale: "en", now: () => 1000 });
 
 describe("PluginManager", () => {
+  it("keeps a built-in language-service plugin required", async () => {
+    const manifest = {
+      ...builtin.manifest,
+      apiVersion: "^1.3.0",
+      contributes: {
+        ...builtin.manifest.contributes,
+        languageServices: [
+          { language: "bp", extensions: ["bp", "bpi", "bpm"], capabilities: ["analysis"] },
+        ],
+      },
+    };
+    const manager = await create([{ kind: "builtin", manifest }]);
+    try {
+      expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_BUILTIN_REQUIRED",
+      });
+      expect(manager.state().plugins[0]?.status).toBe("enabled");
+    } finally {
+      await manager.shutdown();
+    }
+  });
   it("routes commands, tags notices with the channel's plugin id and resolves frontends", async () => {
     const hello = await devPlugin("hello");
     const manager = await create([builtin, builtinBackend, hello]);
