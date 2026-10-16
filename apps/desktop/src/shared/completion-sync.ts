@@ -1,4 +1,4 @@
-import type { BasicPlusCompletionIndex } from "@kobrixa/basic-plus";
+import type { CompletionIndex } from "./language-types.js";
 
 export interface CompletionDocument {
   version: number;
@@ -33,7 +33,7 @@ export type CompletionSyncReply =
       session: string;
       revision: number;
       versions: Record<string, number>;
-      index: BasicPlusCompletionIndex;
+      index: CompletionIndex;
     };
 
 /** Offsets are Monaco UTF-16 offsets; each event's edits address its old text. */
