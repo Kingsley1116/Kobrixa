@@ -91,23 +91,32 @@ it("notifies subscribers only for newer catalogs and unsubscribes", async () => 
   store.dispose();
 });
 
-it("retains the last catalog on failure and loads the next revision", async () => {
-  const fake = fakeApi();
-  const store = createDiagnosticHelpStore(fake.api as never);
-  fake.resolve(0, view(1));
-  await Promise.resolve();
-  fake.emitRevision(2);
-  fake.reject(1);
-  await Promise.resolve();
-  expect(store.getSnapshot()?.revision).toBe(1);
-  fake.emitRevision(2);
-  expect(fake.api.diagnosticHelp).toHaveBeenCalledTimes(2);
-  fake.emitRevision(3);
-  fake.resolve(2, view(3));
-  await Promise.resolve();
-  expect(store.getSnapshot()?.revision).toBe(3);
-  store.dispose();
-});
+it.each([undefined, 1])(
+  "retains the last catalog and retries the same revision after failure (applied revision: %s)",
+  async (appliedRevision) => {
+    const fake = fakeApi();
+    const store = createDiagnosticHelpStore(fake.api as never);
+    if (appliedRevision === undefined) fake.reject(0);
+    else fake.resolve(0, view(appliedRevision));
+    await Promise.resolve();
+    const last = store.getSnapshot();
+    fake.emitRevision(2);
+    fake.reject(1);
+    await Promise.resolve();
+    expect(store.getSnapshot()).toBe(last);
+    expect(store.getSnapshot()?.revision).toBe(appliedRevision);
+    fake.emitRevision(2);
+    expect(fake.api.diagnosticHelp).toHaveBeenCalledTimes(3);
+    fake.resolve(2, view(2));
+    await Promise.resolve();
+    expect(store.getSnapshot()?.revision).toBe(2);
+    fake.emitRevision(3);
+    fake.resolve(3, view(3));
+    await Promise.resolve();
+    expect(store.getSnapshot()?.revision).toBe(3);
+    store.dispose();
+  },
+);
 
 it("stops listening and ignores pending responses after disposal", async () => {
   const fake = fakeApi();

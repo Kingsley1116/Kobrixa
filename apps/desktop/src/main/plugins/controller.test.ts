@@ -340,6 +340,30 @@ describe("startPlugins", () => {
     );
   });
 
+  it("refreshes a plugin's display name in the help catalog after a reload changes its revision", async () => {
+    const folder = await pluginFolder("hello");
+    const controller = await start(fakeDialogs(), {
+      commandLine: { developmentDirectories: [folder], safeMode: false },
+    });
+    const first = controller.diagnosticHelp();
+    expect(first.plugins["acme.hello"]).toEqual({
+      displayName: { en: "Hello hello", "zh-TW": "哈囉 hello" },
+      entries: [],
+    });
+    const file = path.join(folder, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.displayName = { en: "Renamed hello", "zh-TW": "新名 hello" };
+    await writeFile(file, JSON.stringify(manifest));
+    expect(await controller.reload(developmentSourceKey(folder))).toMatchObject({ ok: true });
+    const refreshed = controller.diagnosticHelp();
+    expect(refreshed.plugins["acme.hello"]).toEqual({
+      displayName: manifest.displayName,
+      entries: [],
+    });
+    expect(refreshed.revision).toBeGreaterThan(first.revision);
+    expect(controller.state().diagnosticHelpRevision).toBe(refreshed.revision);
+  });
+
   it("points a linked folder that moved at its new location", async () => {
     const folder = await pluginFolder("hello");
     const oldKey = developmentSourceKey(folder);

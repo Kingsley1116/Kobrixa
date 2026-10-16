@@ -514,15 +514,24 @@ export class PluginManager {
 
   #rebuildHelp(): void {
     const budget = this.options.diagnosticHelpTotalBytes ?? DIAGNOSTIC_HELP_LIMITS.totalBytes;
-    const contributors = this.#entries
-      .filter((entry) => entry.plugin.status === "enabled" && entry.read.diagnosticHelp)
+    const enabled = this.#entries
+      .filter((entry) => entry.plugin.status === "enabled")
       .sort((a, b) =>
         a.read.sourceKey < b.read.sourceKey ? -1 : a.read.sourceKey > b.read.sourceKey ? 1 : 0,
       );
-    const key = contributors
-      .map((entry) => `${entry.read.sourceKey}@${entry.generation}`)
+    const key = enabled
+      .map((entry) =>
+        [
+          entry.read.sourceKey,
+          entry.generation,
+          entry.plugin.id,
+          JSON.stringify(entry.plugin.manifest?.displayName ?? null),
+          Boolean(entry.read.diagnosticHelp),
+        ].join("\t"),
+      )
       .join("\n");
     if (key === this.#help.key) return;
+    const contributors = enabled.filter((entry) => entry.read.diagnosticHelp);
     let total = 0;
     const catalog: DiagnosticHelpCatalog["plugins"] = [];
     const overBudget = new Set<string>();

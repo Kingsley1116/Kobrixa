@@ -983,6 +983,49 @@ describe("diagnostic help", () => {
     expect(manager.state().diagnosticHelpRevision).toBe(manager.diagnosticHelp().revision);
     expect(launcher).not.toHaveBeenCalled();
   });
+  it.each(["enable", "disable", "remove"] as const)(
+    "bumps the help revision when a plugin without help is changed: %s",
+    async (action) => {
+      const source = await devPlugin("plain");
+      const manager = await create(
+        [builtin, source],
+        memoryStore(action === "enable" ? [keyOf(source)] : []),
+      );
+      const before = manager.state().diagnosticHelpRevision;
+      const result =
+        action === "remove"
+          ? await manager.removeSource(keyOf(source))
+          : await manager.setEnabled(keyOf(source), action === "enable");
+      expect(result).toMatchObject({ ok: true });
+      expect(manager.state().diagnosticHelpRevision).toBeGreaterThan(before);
+      expect(manager.diagnosticHelp().plugins).toEqual([]);
+    },
+  );
+  it("bumps the help revision when a plugin without help reloads with a new display name", async () => {
+    const source = await devPlugin("plain");
+    const file = path.join(source.directory, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.displayName = { en: "Original", "zh-TW": "原名" };
+    await writeFile(file, JSON.stringify(manifest));
+    const manager = await create([source]);
+    const before = manager.state().diagnosticHelpRevision;
+    manifest.displayName = { en: "Renamed", "zh-TW": "新名" };
+    await writeFile(file, JSON.stringify(manifest));
+    expect(await manager.reloadSource(keyOf(source))).toMatchObject({ ok: true });
+    expect(manager.state().plugins[0]!.displayName).toEqual(manifest.displayName);
+    expect(manager.state().diagnosticHelpRevision).toBeGreaterThan(before);
+    expect(manager.diagnosticHelp().plugins).toEqual([]);
+  });
+  it("keeps the help revision stable when an unrelated disabled plugin is removed", async () => {
+    const source = await devPlugin("plain");
+    const manager = await create([builtin, source], memoryStore([keyOf(source)]));
+    const before = manager.state();
+    expect(await manager.removeSource(keyOf(source))).toMatchObject({ ok: true });
+    const after = manager.state();
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.plugins).toEqual(before.plugins.filter((plugin) => plugin.status === "enabled"));
+    expect(after.diagnosticHelpRevision).toBe(before.diagnosticHelpRevision);
+  });
   it("keeps the plugin enabled when its help file is invalid", async () => {
     const source = await helpPlugin("broken", "{");
     const manager = await createWith([source]);
@@ -1117,7 +1160,7 @@ describe("diagnostic help", () => {
     expect(manager.diagnosticHelp().plugins).toEqual(first.plugins);
     expect(manager.diagnosticHelp().revision).toBeGreaterThan(removed.revision);
   });
-  it("returns isolated catalogs and keeps the revision stable for unrelated changes", async () => {
+  it("returns isolated catalogs and bumps the revision when adding a plugin without help", async () => {
     const source = await helpPlugin("one", [helpEntry("ACME100")]);
     const manager = await createWith([source]);
     const first = manager.diagnosticHelp();
@@ -1126,10 +1169,12 @@ describe("diagnostic help", () => {
     returned.plugins.length = 0;
     expect(manager.diagnosticHelp()).toEqual(first);
     await manager.addSource(await devPlugin("plain"));
-    expect(manager.diagnosticHelp()).toEqual(first);
+    const added = manager.diagnosticHelp();
+    expect(added.plugins).toEqual(first.plugins);
+    expect(added.revision).toBeGreaterThan(first.revision);
     await manager.reloadSource(keyOf(source));
     expect(manager.diagnosticHelp().plugins).toEqual(first.plugins);
-    expect(manager.diagnosticHelp().revision).toBeGreaterThan(first.revision);
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(added.revision);
     expect(launcher).not.toHaveBeenCalled();
   });
 });

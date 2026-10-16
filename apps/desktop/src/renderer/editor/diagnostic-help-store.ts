@@ -15,7 +15,9 @@ export function createDiagnosticHelpStore(api: Pick<PluginsApi, "diagnosticHelp"
         current = next;
         for (const listener of listeners) listener();
       },
-      () => undefined,
+      () => {
+        requested = current?.revision ?? -1;
+      },
     );
   };
   const off = api.onEvent((event) => {
