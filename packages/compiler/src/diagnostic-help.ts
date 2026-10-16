@@ -1,4 +1,7 @@
 /** Browser-safe diagnostic documentation shared by the IDE and documentation site. */
+import { CORE_DIAGNOSTIC_SOURCE } from "./diagnostics.js";
+
+export { CORE_DIAGNOSTIC_SOURCE };
 export type DiagnosticLocale = "zh-TW" | "en";
 export type Localized<T> = Record<DiagnosticLocale, T>;
 export interface DiagnosticHelp {
@@ -1661,6 +1664,44 @@ const byVariant = new Map(
 
 export function getDiagnosticHelp(code: string, helpKey?: string): DiagnosticHelp | undefined {
   return (helpKey ? byVariant.get(`${code}:${helpKey}`) : undefined) ?? byCode.get(code);
+}
+
+export const BUILTIN_DIAGNOSTIC_SOURCES = [
+  CORE_DIAGNOSTIC_SOURCE,
+  "kobrixa.basic-plus",
+  "kobrixa.ev3",
+] as const;
+export type BuiltinDiagnosticSource = (typeof BUILTIN_DIAGNOSTIC_SOURCES)[number];
+export const isBuiltinDiagnosticSource = (source: string): source is BuiltinDiagnosticSource =>
+  (BUILTIN_DIAGNOSTIC_SOURCES as readonly string[]).includes(source);
+
+/** Catalog entries emitted by more than one built-in provider. */
+export const SHARED_BUILTIN_HELP: Readonly<Record<string, readonly BuiltinDiagnosticSource[]>> = {
+  // Basic Plus lowering and the EV3 backend both validate Sensor.ReadSIValue arguments.
+  EV32031: ["kobrixa.basic-plus", "kobrixa.ev3"],
+};
+// Ownership of this static catalog. Runtime diagnostics get their source from the host, never
+// from these prefixes; the table only decides which source may show which built-in entry.
+const CATALOG_OWNERS: ReadonlyArray<[RegExp, BuiltinDiagnosticSource]> = [
+  [/^BP[0-9]{4}$/, "kobrixa.basic-plus"],
+  [/^EV3[0-9]{4}$/, "kobrixa.ev3"],
+  [/^(?:MAN|IR|BUILD)[0-9]{4}$/, CORE_DIAGNOSTIC_SOURCE],
+];
+export function builtinHelpOwners(code: string): readonly BuiltinDiagnosticSource[] {
+  if (!byCode.has(code)) return [];
+  return (
+    SHARED_BUILTIN_HELP[code] ??
+    CATALOG_OWNERS.filter(([pattern]) => pattern.test(code)).map(([, owner]) => owner)
+  );
+}
+export function getBuiltinDiagnosticHelp(
+  source: string,
+  code: string,
+  helpKey?: string,
+): DiagnosticHelp | undefined {
+  return isBuiltinDiagnosticSource(source) && builtinHelpOwners(code).includes(source)
+    ? getDiagnosticHelp(code, helpKey)
+    : undefined;
 }
 
 /** Accept known catalog identifiers only; callers cannot supply arbitrary external URLs. */
