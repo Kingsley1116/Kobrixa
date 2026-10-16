@@ -186,3 +186,81 @@ it("keeps empty success distinct from unavailable and resynchronizes on recovery
     analysisBase: null,
   });
 });
+
+it("rejects an in-flight old provider after a new provider publishes", async () => {
+  const pending: Array<{
+    request: LanguageSyncRequest;
+    resolve: (reply: LanguageSyncReply) => void;
+  }> = [];
+  const sync = vi.fn(
+    (_workspace: string, request: LanguageSyncRequest) =>
+      new Promise<LanguageSyncReply>((resolve) => pending.push({ request, resolve })),
+  );
+  const diagnostic = {
+    source: "test.case",
+    code: "BP1043",
+    severity: "error" as const,
+    file: "main.csx",
+    range: { startLine: 1, startColumn: 9, endLine: 1, endColumn: 10 },
+    message: "Exclamation marks are forbidden in Case.",
+  };
+  const fixes = [
+    {
+      id: "case.remove-bang",
+      title: { en: "Remove !" },
+      edits: [{ range: diagnostic.range, newText: "" }],
+    },
+  ];
+  const requestFixes = vi.fn(async (): Promise<QuickFixReply> => ({
+    kind: "result",
+    epoch: 2,
+    fixes,
+  }));
+  const transport = new AnalysisTransport(sync, requestFixes);
+  transport.configure("w", 1);
+  const old = transport.analyze("w", { "main.bp": "LCD.Clear(\n" });
+  const rejected = expect(old).rejects.toThrow("cancelled");
+  transport.configure("w", 2);
+  const next = transport.analyze("w", { "main.csx": "Foo foo !" });
+  const analysis = emptyAnalysis();
+  analysis.index.sources["main.csx"] = "Foo foo !";
+  analysis.diagnostics = [diagnostic];
+  const second = pending[1]!;
+  second.resolve({
+    kind: "result",
+    epoch: 2,
+    session: second.request.session,
+    revision: second.request.revision,
+    patch: diffAnalysis(undefined, analysis, null, 2),
+  });
+  const accepted = await next;
+  expect(accepted).toMatchObject({ kind: "result", epoch: 2, analysis });
+  if (accepted.kind !== "result") throw new Error("Expected analysis");
+  pending[0]!.resolve({ kind: "unavailable", epoch: 1, reason: "missing", language: "bp" });
+  await rejected;
+  expect(await transport.quickFixes(accepted.analysis, diagnostic)).toEqual({
+    kind: "result",
+    epoch: 2,
+    fixes,
+  });
+  expect(requestFixes).toHaveBeenCalledExactlyOnceWith(
+    "w",
+    expect.objectContaining({
+      epoch: 2,
+      session: second.request.session,
+      revision: second.request.revision,
+      analysisVersion: 2,
+      diagnostic: { source: "test.case", code: "BP1043", range: diagnostic.range },
+    }),
+  );
+  const third = transport.analyze("w", { "main.csx": "Foo foo !" });
+  expect(pending[2]!.request.analysisBase).toBe(2);
+  pending[2]!.resolve({
+    kind: "result",
+    epoch: 2,
+    session: pending[2]!.request.session,
+    revision: pending[2]!.request.revision,
+    patch: diffAnalysis(analysis, analysis, 2, 3),
+  });
+  expect(await third).toMatchObject({ kind: "result", epoch: 2 });
+});

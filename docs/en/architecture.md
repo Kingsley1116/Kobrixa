@@ -149,13 +149,31 @@ The host derives caller identity from the bound channel, never from a plugin ID 
 
 These are **trusted local plugins**. Separate processes provide crash isolation; manifest permissions only restrict calls through Kobrixa and are **not an operating-system sandbox**. Plugin code can still access files and the network directly.
 
-Plugin API **1.2.0** supports compiler frontend and backend declarations and `contributes.diagnosticHelp`. `kobrixa.basic-plus` provides language `bp`; the separate built-in `kobrixa.ev3` provides target `ev3-native`. Both declare IR version `{ min: 1, max: 1 }` and remain available in safe mode. Built-in plugins retain the phase 1 disable restrictions. Valid API 1.0 and 1.1 plugins remain compatible, but external plugins declaring `frontends` or `backends` are invalid (`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN` / `PLUGIN_E_BACKEND_REQUIRES_BUILTIN`). This release has no external compiler RPC.
+Plugin API **1.3.0** supports compiler frontend and backend declarations and `contributes.diagnosticHelp`. `kobrixa.basic-plus` provides language `bp`; the separate built-in `kobrixa.ev3` provides target `ev3-native`. Both declare IR version `{ min: 1, max: 1 }` and remain available in safe mode. Built-in plugins retain the phase 1 disable restrictions. Valid API 1.0, 1.1 and 1.2 plugins remain compatible, but external plugins declaring `frontends` or `backends` are invalid (`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN` / `PLUGIN_E_BACKEND_REQUIRES_BUILTIN`). This release has no external compiler RPC.
 
 The host resolves one enabled, valid provider for each language and target. Every conflicting provider is rejected with `PLUGIN_E_PROVIDER_CONFLICT`; no provider wins by load order. Recomputing a provider set excludes disabled providers and clears obsolete conflicts. The selected IR version is the maximum of the overlapping ranges. Missing/conflicting providers report `BUILD1001` before a worker starts; incompatible IR ranges report `BUILD1002`.
 
 Frontend declarations supply entry and source extensions. Backend declarations supply artifact slots, kinds, media types, extensions, roles and required flags; the backend returns only slot/bytes. The host owns `ir` and `asset` slots and produces resource artifacts. A deployable backend must declare exactly one required, non-empty `deploy-main`. Compiler contributions are limited to 8 frontends and 8 backends per plugin and 16 artifact declarations per backend. IDs use `/^[a-z][a-z0-9-]{0,31}$/`; extensions use `/^[a-z0-9]{1,16}$/`. The committed JSON Schema describes structural validation; the host additionally validates extension subsets, IR ranges, unique slots and the main-artifact relationship.
 
-The host assigns `Diagnostic.source`, and diagnostic help is scoped to that source. Language analysis providers and static language contributions remain planned for 2B-2/2C; the `devices` API remains planned for phase 3. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
+Plugin API **1.3.0** adds `contributes.languageServices`. Only built-in plugins may declare it, including an empty array; development plugins receive `PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN`. The declaration must include `analysis`, match a frontend owned by the same plugin, and use exactly that frontend's source extensions. A plugin may declare at most eight services. Valid API 1.0, 1.1 and 1.2 plugins remain compatible.
+
+The main process selects the enabled frontend owner for the validated project's language, independently of backend availability and IR compatibility. Its `pluginId:language` key selects a compiled-in worker factory and browser companion. Each workspace has independent analysis/Quick Fix and completion workers. All messages and accepted results carry a host-issued binding epoch; provider generation, routing changes or either worker restarting invalidates both channels and requires a full sync. Ordinary typing changes document revisions only.
+
+Workers retain native semantic state and publish provider-neutral symbols, packed tokens and occurrences, completion visibility groups, and editor results. The host stamps diagnostic sources. Basic Plus completion filtering, structural edit checks and formatting live in its browser companion; generic renderer and shared modules do not import Basic Plus. Missing services show a language status row; configuration conflicts show a workspace banner naming the plugins. Both link to plugin settings. Built-in plugins remain required. Static language contributions are reserved for 2C; external language-service RPC is not implemented.
+
+The host assigns `Diagnostic.source`, and diagnostic help is scoped to that source. The `devices` API remains planned for phase 3. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
+
+### Language-service acceptance
+
+Run `pnpm test:desktop:smoke` from the repository root. Its runner calls `checkCompletionPerformance` alongside language-features, indentation and highlighting checks; loading the performance module alone does not run the checks. Keep the thresholds unchanged: **warm completion p95 ≤100 ms, new variable ≤200 ms, 30,000 lines ≤300 ms**. If Electron cannot run locally, record the actual error and leave performance and UI acceptance pending for a machine that can run it.
+
+Manual acceptance in both English and Traditional Chinese:
+
+- [ ] Distinguish missing services from conflicts; list conflicting plugins and open plugin settings from each status action. An available service with no diagnostics shows no unavailable row.
+- [ ] Confirm status changes preserve document contents, JSON formatting and Basic Plus lexical highlighting; recovery starts analysis without typing.
+- [ ] Verify completion candidates and local scope visibility inside and outside functions **while analysis is pending**, and check API-call signature help during that pending period.
+- [ ] Exercise Basic Plus completion (including closing-keyword indentation), Quick Fix, semantic tokens, hover, signature help, definition, references, rename, outline/breadcrumbs, and document/range formatting.
+- [ ] Run the full Electron smoke and verify all three completion latency limits above; unit/integration passes do not establish performance acceptance.
 
 ## Project manifest
 

@@ -276,43 +276,50 @@ it("resynchronizes after worker restart, and ignores results from another worksp
   session.dispose();
 });
 
-it("starts a full sync in a new epoch while the previous request is pending", async () => {
-  vi.useFakeTimers();
-  const pending: Array<() => void> = [];
-  const sync = vi.fn(
-    (_workspace: string, request: CompletionSyncRequest) =>
-      new Promise<CompletionSyncReply>((resolve) =>
-        pending.push(() =>
-          resolve(reply(request, applyCompletionUpdates(new Map(), request.updates)!)),
+it.each(["result", "unavailable"] as const)(
+  "keeps a new epoch index after a delayed old %s reply",
+  async (oldKind) => {
+    vi.useFakeTimers();
+    const pending: Array<() => void> = [];
+    const sync = vi.fn(
+      (_workspace: string, request: CompletionSyncRequest) =>
+        new Promise<CompletionSyncReply>((resolve) =>
+          pending.push(() =>
+            resolve(
+              request.epoch === 1 && oldKind === "unavailable"
+                ? { kind: "unavailable", epoch: 1, reason: "missing", language: "bp" }
+                : reply(request, applyCompletionUpdates(new Map(), request.updates)!),
+            ),
+          ),
         ),
-      ),
-  );
-  const session = new CompletionSession(sync, async () => status(2));
-  const main = model();
-  session.configure(workspace(), status(), companion);
-  session.bind("main.bp", main.value);
-  await vi.advanceTimersByTimeAsync(50);
-  session.configure(workspace(), status(2), companion);
-  session.bind("main.bp", main.value);
-  await vi.advanceTimersByTimeAsync(50);
-  expect(sync).toHaveBeenCalledTimes(2);
-  expect(sync.mock.calls[1]![1]).toMatchObject({ epoch: 2, baseRevision: null, refresh: true });
-  pending[1]!();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
-  pending[0]!();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
-  session.configure(workspace(), {
-    epoch: 3,
-    conflicts: [],
-    availability: { kind: "unavailable", reason: "missing", language: "bp" },
-  });
-  expect(session.symbols("main.bp", position)).toBeUndefined();
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(sync).toHaveBeenCalledTimes(2);
-  session.dispose();
-});
+    );
+    const session = new CompletionSession(sync, async () => status(2));
+    const main = model();
+    session.configure(workspace(), status(), companion);
+    session.bind("main.bp", main.value);
+    await vi.advanceTimersByTimeAsync(50);
+    session.configure(workspace(), status(2), companion);
+    session.bind("main.bp", main.value);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(sync.mock.calls[1]![1]).toMatchObject({ epoch: 2, baseRevision: null, refresh: true });
+    pending[1]!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
+    pending[0]!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.symbols("main.bp", position)?.[0]?.name).toBe("known");
+    session.configure(workspace(), {
+      epoch: 3,
+      conflicts: [],
+      availability: { kind: "unavailable", reason: "missing", language: "bp" },
+    });
+    expect(session.symbols("main.bp", position)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sync).toHaveBeenCalledTimes(2);
+    session.dispose();
+  },
+);
 
 it("clears unavailable completions without retrying and recovers on a new status", async () => {
   vi.useFakeTimers();

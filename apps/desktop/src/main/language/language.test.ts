@@ -14,6 +14,10 @@ import {
 import type { CompletionSyncRequest } from "../../shared/completion-sync.js";
 import type { LanguageFeatureRequest } from "../../shared/language-query.js";
 import { LanguageService } from "./language.js";
+import type { editor, Position } from "monaco-editor";
+import type { CompletionWorkerReply } from "./completion-worker.js";
+import { secondBinding } from "./testing/second-language.js";
+import { CompletionCache } from "../../renderer/editor/completion-cache.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -66,6 +70,21 @@ describe("LanguageService background checks", () => {
       platform: "node",
       format: "cjs",
     });
+    await build({
+      stdin: {
+        resolveDir: path.dirname(fileURLToPath(import.meta.url)),
+        contents: `
+    import { BUILTIN_LANGUAGE_SERVICES } from "../workspace/builtin-language-services.ts";
+    import { secondLanguageService } from "./testing/second-language.ts";
+    Object.assign(BUILTIN_LANGUAGE_SERVICES, { "test.case:case": secondLanguageService });
+    void import("./language-worker.ts");
+  `,
+      },
+      outfile: path.join(workerRoot, "second-worker.cjs"),
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+    });
   });
   afterAll(async () => {
     await rm(workerRoot, { recursive: true, force: true });
@@ -108,6 +127,102 @@ describe("LanguageService background checks", () => {
     vi.restoreAllMocks();
     await Promise.all(workers.map((worker) => worker.terminate()));
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("loads the second frontend once and keeps completion disk reads behind refresh", async () => {
+    await writeFile(
+      path.join(root, "kobrixa.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "case",
+        language: "case",
+        target: "absent",
+        entry: "main.csx",
+        assets: [],
+        outputDir: "out",
+      }),
+    );
+    await writeFile(path.join(root, "main.csx"), "Foo foo");
+    const worker = new Worker(path.join(workerRoot, "second-worker.cjs"), {
+      execArgv: [],
+      workerData: { completion: true },
+    });
+    workers.push(worker);
+    let id = 0;
+    const send = (request: CompletionSyncRequest) =>
+      new Promise<CompletionWorkerReply>((resolve) => {
+        const nextId = ++id;
+        const listener = (reply: CompletionWorkerReply) => {
+          if (reply.id !== nextId) return;
+          worker.off("message", listener);
+          resolve(reply);
+        };
+        worker.on("message", listener);
+        worker.postMessage({
+          id: nextId,
+          workspaceId: "case",
+          input: { inputPath: root },
+          binding: secondBinding(1),
+          cancellation: new SharedArrayBuffer(4),
+          request,
+        });
+      });
+    const first = await send({
+      epoch: 1,
+      session: "case",
+      revision: 1,
+      baseRevision: null,
+      refresh: true,
+      updates: [],
+    });
+    expect(first).toMatchObject({ ok: true, reply: { kind: "result" } });
+    await writeFile(path.join(root, "new.csi"), "DiskOnly");
+    await writeFile(path.join(root, "main.csx"), "ChangedOnDisk");
+    const second = await send({
+      epoch: 1,
+      session: "case",
+      revision: 2,
+      baseRevision: 1,
+      refresh: false,
+      updates: [],
+    });
+    if (!second.ok || second.reply.kind !== "result") throw new Error("Expected completion");
+    expect(Object.values(second.reply.index.symbols).map((s) => s.name)).toEqual(["Foo", "foo"]);
+    // Exercise the real worker DTO through the renderer cache, including its shadow keys.
+    const cache = new CompletionCache();
+    const model = {
+      deltaDecorations: () => [],
+      isDisposed: () => false,
+      getDecorationRange: () => null,
+    } as unknown as editor.ITextModel;
+    try {
+      cache.update(second.reply.index, second.reply.epoch);
+      expect(cache.attach("main.csx", model, [])).toBe(true);
+      expect(
+        cache
+          .symbols("main.csx", { lineNumber: 1, column: 1 } as Position, 1)
+          ?.map(({ name, shadowKey }) => [name, shadowKey]),
+      ).toEqual([
+        ["Foo", "Foo"],
+        ["foo", "foo"],
+      ]);
+      expect(
+        cache.symbols("main.csx", { lineNumber: 1, column: 1 } as Position, 2),
+      ).toBeUndefined();
+    } finally {
+      cache.clear();
+    }
+    const third = await send({
+      epoch: 1,
+      session: "case",
+      revision: 3,
+      baseRevision: 2,
+      refresh: true,
+      updates: [],
+    });
+    if (!third.ok || third.reply.kind !== "result") throw new Error("Expected refresh");
+    expect(Object.values(third.reply.index.symbols).map((s) => s.name)).toContain("DiskOnly");
+    expect(Object.values(third.reply.index.symbols).map((s) => s.name)).toContain("ChangedOnDisk");
   });
 
   it("shares one routing read across three concurrent first-time status calls", async () => {

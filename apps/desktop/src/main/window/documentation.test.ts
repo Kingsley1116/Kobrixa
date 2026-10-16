@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { documentationUrl } from "./documentation.js";
-import { quickFixRequestSchema } from "../language/quick-fix-request.js";
+import { validateQuickFixRequest } from "../language/quick-fix-request.js";
 
 const entry = {
   code: "BP1015",
@@ -101,6 +101,7 @@ it("rejects non-https catalog links and ambiguous link requests", () => {
 
 it("validates bounded quick-fix requests without accepting source edits from the renderer", () => {
   const query = {
+    epoch: 1,
     requestId: "request-1",
     session: "test",
     revision: 1,
@@ -112,7 +113,7 @@ it("validates bounded quick-fix requests without accepting source edits from the
       range: { startLine: 1, startColumn: 3, endLine: 1, endColumn: 4 },
     },
   };
-  expect(quickFixRequestSchema.parse(query)).toEqual(query);
+  expect(validateQuickFixRequest(query)).toEqual(query);
   for (const invalid of [
     { ...query, revision: 0 },
     { ...query, file: "main\0.bp" },
@@ -122,5 +123,5 @@ it("validates bounded quick-fix requests without accepting source edits from the
       diagnostic: { ...query.diagnostic, range: { ...query.diagnostic.range, endColumn: 1 } },
     },
   ])
-    expect(quickFixRequestSchema.safeParse(invalid).success).toBe(false);
+    expect(() => validateQuickFixRequest(invalid)).toThrow();
 });

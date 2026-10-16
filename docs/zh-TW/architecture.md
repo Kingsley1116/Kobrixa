@@ -149,13 +149,31 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
 
-插件 API **1.2.0** 支援編譯前端、後端與 `contributes.diagnosticHelp` 宣告。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0 與 1.1 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
+插件 API **1.3.0** 支援編譯前端、後端與 `contributes.diagnosticHelp` 宣告。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
 
 宿主為每個語言／目標解析唯一、有效且已啟用的提供者。衝突的提供者全部以 `PLUGIN_E_PROVIDER_CONFLICT` 失效，不依載入順序取首筆；重新檢查提供者集合時排除停用者，清除已消失的衝突。IR 版本選前後端範圍交集的最大值。找不到提供者或發生衝突時，在開 worker 前回 `BUILD1001`；IR 不相容回 `BUILD1002`。
 
 前端宣告入口與來源副檔名；後端宣告成品 slot、kind、mediaType、副檔名、role 與 required，實際只回傳 slot／bytes。宿主保留 `ir`、`asset` slot，並負責產生資源成品。可部署後端必須宣告唯一、必填且非空的 `deploy-main`。每個插件最多 8 個前端、8 個後端，每個後端最多 16 個成品宣告；ID 格式為 `/^[a-z][a-z0-9-]{0,31}$/`，副檔名為 `/^[a-z0-9]{1,16}$/`。提交的 JSON Schema 驗證結構，宿主另外檢查副檔名子集、IR 閉區間、slot 唯一性與主檔關聯。
 
-宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。語言分析提供者與靜態語言貢獻仍規劃於 2B-2／2C；`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+插件 API **1.3.0** 新增 `contributes.languageServices`。只有內建插件可宣告，空陣列也受限制；開發插件會收到 `PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN`。宣告必須包含 `analysis`，由同插件的 frontend 擁有該語言，且副檔名集合必須與該 frontend 的 `sourceExtensions` 完全相同。每插件最多八筆服務。有效的 API 1.0、1.1、1.2 插件仍相容。
+
+main 依通過驗證的專案語言選取啟用中的 frontend 擁有者，backend 缺席或 IR 不相容不影響編輯器分析。以 `pluginId:language` 選取編譯期內建 worker factory 與 browser companion；每工作區保留獨立的分析／Quick Fix 和補全 worker。所有訊息及已接受結果都帶宿主發放的 binding epoch；提供者 generation、路由設定或任一 worker 重啟都讓兩條通道失效並要求完整同步，一般輸入只改文件 revision。
+
+worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建插件仍不可停用；靜態語言貢獻留待 2C，沒有第三方語言服務 RPC。
+
+宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+
+### 語言服務驗收
+
+從儲存庫根目錄執行 `pnpm test:desktop:smoke`。runner 會呼叫 `checkCompletionPerformance`，並涵蓋 language-features、indentation、highlighting；單獨載入效能模組不算執行測試。門檻維持 **熱補全 p95 ≤100 ms、新變數 ≤200 ms、30,000 行 ≤300 ms**。本機無法啟動 Electron 時，記錄實際錯誤，效能及 UI 驗收保留為未完成，待可執行的機器驗證。
+
+中英文各執行一次人工驗收：
+
+- [ ] missing 與 conflict 顯示不同說明；衝突列出插件，兩者的動作皆可開啟插件設定；available 且診斷為空時不顯示不可用列。
+- [ ] 狀態切換保留文件內容、JSON 格式化與 Basic Plus 詞法高亮；恢復後不必輸入就重新分析。
+- [ ] **分析尚在進行時**，確認補全候選及函式內外的區域作用域可見性，並確認此時 API 呼叫仍有簽名提示。
+- [ ] 逐項驗證 Basic Plus 補全（含收尾關鍵字縮排）、Quick Fix、semantic tokens、hover、簽名提示、定義、引用、重新命名、大綱／breadcrumbs、文件與範圍格式化。
+- [ ] 執行完整 Electron smoke，確認上述三個補全延遲門檻；單元／整合測試通過不代表效能驗收完成。
 
 ## 專案 manifest
 

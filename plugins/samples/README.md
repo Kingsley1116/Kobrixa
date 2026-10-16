@@ -74,7 +74,45 @@ open -a Kobrixa --args \
 
 Python must be installed locally with the SDK; Kobrixa does not download or manage the interpreter. Python stdout carries only protocol messages; write logs to stderr. See the [Python SDK](../../sdks/python/README.md) and [plugin architecture](../../docs/en/architecture.md#plugins-development-preview).
 
-These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.2.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
+These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.3.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
+
+## Language services / 語言服務
+
+Built-in manifests place this complete `bp` declaration under `contributes`:
+內建 manifest 在 `contributes` 下使用以下完整 `bp` 宣告：
+
+```json
+{
+  "languageServices": [
+    {
+      "language": "bp",
+      "extensions": ["bp", "bpi", "bpm"],
+      "capabilities": [
+        "analysis",
+        "completion",
+        "quickFixes",
+        "semanticTokens",
+        "hover",
+        "signatureHelp",
+        "definition",
+        "references",
+        "rename",
+        "documentSymbols",
+        "documentFormatting",
+        "rangeFormatting"
+      ]
+    }
+  ]
+}
+```
+
+`languageServices` is a built-in-only API 1.3.0 contribution. Do not add it to the development samples, even as `[]`. Structural schema validation is shared with Python; the host additionally validates uniqueness, required `analysis`, frontend ownership, extension-set equality and trusted source. A declaration contains no implementation path. The runtime resolves frontend conflicts before deciding whether a service is missing. Built-in factory capabilities must cover every declared capability; a mismatch makes the language unavailable without changing the plugin's status.
+
+`languageServices` 僅供 API 1.3.0 的內建插件使用，請勿加到開發插件範例，空陣列也不允許。Python 共用結構 schema；唯一性、必要的 `analysis`、frontend 擁有者、副檔名集合相等及可信來源由宿主另行驗證。宣告沒有實作路徑。runtime 先判定 frontend 衝突再判定缺少服務；工廠能力不足會讓語言不可用，但不改變插件本身狀態。
+
+Duplicate languages within `languageServices`, and duplicate extensions or capabilities within a declaration, are rejected by the **host registry**, not by the published JSON Schema or the Python SDK validator. Passing structural validation alone does not make a language-service declaration valid for the host.
+
+`languageServices` 中重複的語言，以及單筆宣告中重複的副檔名或能力，由**宿主 registry** 拒絕；已發布的 JSON Schema 與 Python SDK 驗證器不會拒絕這些重複值。通過結構驗證不代表宣告符合宿主規則。
 
 ## Author diagnostic help
 
@@ -190,7 +228,7 @@ open -a Kobrixa --args \
 
 必須在本機安裝 Python 與 SDK；Kobrixa 不下載或管理直譯器。Python stdout 只傳送協定訊息，日誌請寫入 stderr。詳見 [Python SDK](../../sdks/python/README.md) 與[插件架構](../../docs/zh-TW/architecture.md#插件開發預覽)。
 
-這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.2.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
+這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.3.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
 
 ### 撰寫診斷說明
 

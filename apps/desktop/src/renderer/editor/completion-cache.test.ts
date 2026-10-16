@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
-import type { editor } from "monaco-editor";
-import { rebaseCompletionRanges, type CompletionChange } from "./completion-cache.js";
+import type { editor, Position } from "monaco-editor";
+import {
+  CompletionCache,
+  rebaseCompletionRanges,
+  type CompletionChange,
+} from "./completion-cache.js";
 import { structuralChange } from "./companions/basic-plus/structure.js";
 
 const scope = { startLine: 3, startColumn: 1, endLine: 8, endColumn: 12 };
@@ -59,4 +63,42 @@ it("invalidates function/parameter boundaries, imports, removed boundaries and m
   }
   for (const event of [change(3, "x"), change(7, "", 9), { ...change(4, "x"), flush: true }])
     expect(rebaseCompletionRanges([scope], guards, event)).toBeUndefined();
+});
+
+it("does not fold another provider's case-sensitive shadow keys", () => {
+  const cache = new CompletionCache();
+  const symbols = Object.fromEntries(
+    ["Foo", "foo"].map((name) => [
+      name,
+      {
+        id: name,
+        name,
+        kind: "variable" as const,
+        signature: name,
+        labels: [{ text: name, detail: name }],
+        group: "case",
+        shadowKey: name,
+      },
+    ]),
+  );
+  cache.update(
+    {
+      symbols,
+      scopes: [],
+      fileContexts: { "main.csx": "case" },
+      contextFiles: { case: ["main.csx"] },
+      guardsByFile: {},
+    },
+    2,
+  );
+  const model = {
+    deltaDecorations: () => [],
+    isDisposed: () => false,
+    getDecorationRange: () => null,
+  } as unknown as editor.ITextModel;
+  expect(cache.attach("main.csx", model, [])).toBe(true);
+  const position = { lineNumber: 1, column: 1 } as Position;
+  expect(cache.symbols("main.csx", position, 2)?.map((s) => s.name)).toEqual(["Foo", "foo"]);
+  expect(cache.symbols("main.csx", position, 1)).toBeUndefined();
+  cache.clear();
 });
