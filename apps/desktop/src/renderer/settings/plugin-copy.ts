@@ -133,6 +133,7 @@ const problems: Record<string, readonly [zh: string, en: string]> = {
     "插件需要其他版本的插件 API",
     "The plugin needs a different plugin API version",
   ],
+  PLUGIN_E_RESERVED_ID: ["這個插件 ID 由 Kobrixa 保留", "This plugin id is reserved by Kobrixa"],
   PLUGIN_E_DUPLICATE_ID: ["另一個插件已使用相同 id", "Another plugin uses the same id"],
   PLUGIN_E_COMMAND_NAMESPACE: [
     "命令 id 必須以插件 id 開頭",

@@ -14,6 +14,8 @@ import { markProviderConflicts } from "./compiler-resolution.js";
 import { messageOf, type PluginErrorCode, type PluginProblem } from "./errors.js";
 
 export const MANIFEST_FILE = "kobrixa-plugin.json";
+/** Identities Kobrixa itself uses for diagnostics; no plugin may claim them. */
+export const RESERVED_PLUGIN_IDS: ReadonlySet<string> = new Set(["kobrixa.core"]);
 /** Bound on reading one development folder, so a hung disk cannot block startup or recovery. */
 export const SOURCE_READ_TIMEOUT_MS = 5_000;
 export type PluginSource =
@@ -53,6 +55,8 @@ const problem = (code: PluginErrorCode, message: string): PluginProblem => ({ co
 
 function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]): PluginProblem[] {
   const problems: PluginProblem[] = [];
+  if (RESERVED_PLUGIN_IDS.has(manifest.id))
+    problems.push(problem("PLUGIN_E_RESERVED_ID", `${manifest.id} is reserved by Kobrixa.`));
   problems.push(
     ...compilerDeclarationProblems(manifest).map((message) =>
       problem("PLUGIN_E_MANIFEST", message),
@@ -219,9 +223,9 @@ export async function readSource(
 }
 
 /**
- * Decides every status within the whole set, in source order: built-ins come first, so their ids
- * are protected, and an earlier source keeps an id or command over a later one. `disabled` holds
- * source keys; built-ins cannot be disabled.
+ * Decides every status within the whole set, reserving valid built-in ids before source order
+ * decides other id and command conflicts. `disabled` holds source keys; built-ins cannot be
+ * disabled.
  */
 export function resolvePlugins(
   read: readonly ReadPlugin[],
@@ -232,7 +236,11 @@ export function resolvePlugins(
     problems: [...plugin.problems],
     status: plugin.problems.length ? "invalid" : "enabled",
   }));
-  const seen = new Set<string>();
+  const seen = new Set<string>(
+    resolved
+      .filter((plugin) => plugin.source === "builtin" && plugin.status !== "invalid")
+      .map((plugin) => plugin.id),
+  );
   // Namespaces nest ("acme.hello." also covers "acme.hello.extra."), so command ids can collide
   // across plugins. Disabled plugins are checked too, so re-enabling one can never collide.
   const commandOwners = new Map<string, string>();
@@ -247,7 +255,7 @@ export function resolvePlugins(
       continue;
     }
     if (plugin.status === "invalid") continue;
-    if (seen.has(plugin.id)) {
+    if (plugin.source !== "builtin" && seen.has(plugin.id)) {
       plugin.status = "invalid";
       plugin.problems.push(
         problem("PLUGIN_E_DUPLICATE_ID", `Another plugin already uses the id ${plugin.id}.`),
@@ -267,7 +275,7 @@ export function resolvePlugins(
         );
       continue;
     }
-    seen.add(plugin.id);
+    if (plugin.source !== "builtin") seen.add(plugin.id);
     for (const id of commands) commandOwners.set(id, plugin.id);
     if (plugin.source !== "development") continue;
     // Recovery: this decision happens before any contribution is registered or process launched.

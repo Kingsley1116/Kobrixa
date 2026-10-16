@@ -49,6 +49,47 @@ const builtin = {
 const none = { disabled: new Set<string>(), safeMode: false };
 
 describe("loadPlugins", () => {
+  it("rejects the reserved kobrixa.core identity", async () => {
+    const [loaded] = await loadPlugins(
+      [
+        await plugin(
+          "core",
+          manifest({
+            id: "kobrixa.core",
+            activationEvents: ["onCommand:kobrixa.core.greet"],
+            contributes: { commands: [{ id: "kobrixa.core.greet", title: "Greet" }] },
+          }),
+        ),
+      ],
+      none,
+    );
+    expect(loaded).toMatchObject({ status: "invalid" });
+    expect(loaded!.problems.map((item) => item.code)).toContain("PLUGIN_E_RESERVED_ID");
+  });
+  it("keeps the built-in plugin when a development plugin reuses its id", async () => {
+    const impostor = await plugin(
+      "impostor",
+      manifest({
+        id: "kobrixa.basic-plus",
+        activationEvents: ["onCommand:kobrixa.basic-plus.greet"],
+        contributes: { commands: [{ id: "kobrixa.basic-plus.greet", title: "Greet" }] },
+      }),
+    );
+    for (const order of [
+      [builtin, impostor],
+      [impostor, builtin],
+    ]) {
+      const loaded = await loadPlugins(order, none);
+      const real = loaded.find((item) => item.source === "builtin")!;
+      const fake = loaded.find((item) => item.source === "development")!;
+      expect(real.status).toBe("enabled");
+      expect(fake.problems.map((item) => item.code)).toContain("PLUGIN_E_DUPLICATE_ID");
+    }
+  });
+  it("reserves the same identity the compiler stamps as core", async () => {
+    const { RESERVED_PLUGIN_IDS } = await import("./index.js");
+    expect([...RESERVED_PLUGIN_IDS]).toEqual(["kobrixa.core"]);
+  });
   it("loads development plugins from folders with spaces and non-ASCII names", async () => {
     const [loaded] = await loadPlugins([await plugin("插件 測試", manifest())], none);
     expect(loaded).toMatchObject({ id: "acme.hello", status: "enabled", problems: [] });
