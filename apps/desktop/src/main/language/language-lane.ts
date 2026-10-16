@@ -1,11 +1,7 @@
 import type { Worker } from "node:worker_threads";
 import type { LanguageBinding } from "../../shared/language-services.js";
 import type { LanguageFeatureRequest, LanguageFeatureReply } from "../../shared/language-query.js";
-import {
-  applyRecord,
-  type LanguageSyncReply,
-  type LanguageSyncRequest,
-} from "../../shared/language-sync.js";
+import type { LanguageSyncReply, LanguageSyncRequest } from "../../shared/language-sync.js";
 import type {
   FeatureWorkerRequest,
   FeatureWorkerReply,
@@ -21,10 +17,7 @@ export class LanguageLane {
   private epoch = 0;
   private worker: Worker | undefined;
   private nextId = 0;
-  private documents:
-    | { workspaceId: string; session: string; revision: number; overlays: Record<string, string> }
-    | undefined;
-  private workerSession: string | undefined;
+  private documents: { workspaceId: string; session: string; revision: number } | undefined;
   private disposed = false;
   private accepted:
     | {
@@ -70,7 +63,6 @@ export class LanguageLane {
     const worker = this.worker;
     this.worker = undefined;
     this.documents = undefined;
-    this.workerSession = undefined;
     this.accepted = undefined;
     if (worker) void worker.terminate();
   }
@@ -93,31 +85,15 @@ export class LanguageLane {
         update.revision <= previous.revision)
     )
       return { kind: "resync", epoch: this.epoch };
-    const overlays = applyRecord(
-      update.baseRevision === null ? Object.create(null) : previous!.overlays,
-      update.overlays,
-    );
-    this.documents = { workspaceId, session: update.session, revision: update.revision, overlays };
+    this.documents = { workspaceId, session: update.session, revision: update.revision };
     this.cancel();
     const worker = this.worker ?? this.startWorker();
-    const workerSession = JSON.stringify([workspaceId, input, update.session]);
-    // After restart the main process can seed the worker without retransmitting
-    // unchanged buffers from the renderer.
-    const sync =
-      this.workerSession === workerSession
-        ? update
-        : {
-            ...update,
-            baseRevision: null,
-            overlays: { set: overlays, removed: [] },
-          };
-    this.workerSession = workerSession;
     const cancellation = new Int32Array(new SharedArrayBuffer(4));
     const request: DiagnosticsRequest = {
       binding,
       id: ++this.nextId,
       input,
-      sync,
+      sync: update,
       workspaceId,
       cancellation: cancellation.buffer as SharedArrayBuffer,
     };
@@ -365,7 +341,6 @@ export class LanguageLane {
   private fail(worker: Worker, error: Error): void {
     if (worker !== this.worker) return;
     this.worker = undefined;
-    this.workerSession = undefined;
     this.documents = undefined;
     const pending = this.pending;
     this.pending = undefined;

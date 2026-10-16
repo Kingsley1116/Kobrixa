@@ -85,6 +85,48 @@ it("returns resync when the project language changes during loading", async () =
     epoch: 1,
   });
 });
+it("returns an empty result when the binding has no quickFixes capability", async () => {
+  const fixes = vi.fn(() => []);
+  worker.dispose();
+  worker = new LanguageWorkerSession({
+    "kobrixa.basic-plus:bp": {
+      ...basicPlusLanguageService,
+      createAnalysis() {
+        const provider = basicPlusLanguageService.createAnalysis();
+        provider.quickFixes = fixes;
+        return provider;
+      },
+    },
+  });
+  const update = request(1, 1, null, "LCD.Clear(\n");
+  update.binding.capabilities = update.binding.capabilities.filter(
+    (capability) => capability !== "quickFixes",
+  );
+  const reply = await worker.sync(update);
+  if (reply.kind !== "result") throw new Error("Expected result");
+  const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics.find(
+    (item) => item.code === "BP1043",
+  )!;
+  expect(diagnostic.source).toBe(update.binding.pluginId);
+  expect(
+    worker.quickFixes({
+      kind: "quick-fixes",
+      id: 2,
+      workspaceId: "w",
+      cancellation: new SharedArrayBuffer(4),
+      request: {
+        epoch: 1,
+        session: "s",
+        revision: 1,
+        analysisVersion: reply.patch.version,
+        requestId: "unsupported-fixes",
+        file: "main.bp",
+        diagnostic,
+      },
+    }),
+  ).toEqual({ kind: "result", epoch: 1, fixes: [] });
+  expect(fixes).not.toHaveBeenCalled();
+});
 it("publishes BUILD1007 for forged sources without retaining a usable fix snapshot", async () => {
   const fixes = vi.fn(() => []);
   const factory = {

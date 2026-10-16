@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { build } from "esbuild";
+import * as compiler from "@kobrixa/compiler";
 import {
   applyAnalysis,
   emptyAnalysis,
@@ -13,6 +14,14 @@ import {
 import type { CompletionSyncRequest } from "../../shared/completion-sync.js";
 import type { LanguageFeatureRequest } from "../../shared/language-query.js";
 import { LanguageService } from "./language.js";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 // Run the actual worker entry, including project loading and the compiler.
 // Use the same bundled CommonJS entry as the packaged Electron build.
@@ -94,9 +103,113 @@ describe("LanguageService background checks", () => {
 
   afterEach(async () => {
     service.dispose();
+    vi.restoreAllMocks();
     await Promise.all(workers.map((worker) => worker.terminate()));
     await rm(root, { recursive: true, force: true });
   });
+
+  it("shares one routing read across three concurrent first-time status calls", async () => {
+    const description = await compiler.readProjectDescription(root, "main.bp");
+    const read = deferred<typeof description>();
+    const reader = vi
+      .spyOn(compiler, "readProjectDescription")
+      .mockRejectedValue(new Error("Unexpected description read."))
+      .mockReturnValueOnce(read.promise);
+    const pending = Promise.allSettled([
+      service.status("workspace"),
+      service.status("workspace"),
+      service.status("workspace"),
+    ]);
+    read.resolve(description);
+    const results = await pending;
+    expect(reader).toHaveBeenCalledTimes(1);
+    const status = await service.status("workspace");
+    expect(results).toEqual(
+      Array.from({ length: 3 }, () => ({ status: "fulfilled", value: status })),
+    );
+    expect(status.epoch).toBe(1);
+    expect(reader).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares a failed first routing read until an explicit refresh", async () => {
+    await writeFile(path.join(root, "kobrixa.json"), "{");
+    const description = await compiler.readProjectDescription(root, "main.bp");
+    const read = deferred<typeof description>();
+    const reader = vi
+      .spyOn(compiler, "readProjectDescription")
+      .mockRejectedValue(new Error("Unexpected description read."))
+      .mockReturnValueOnce(read.promise);
+    const pending = Promise.allSettled([
+      service.status("workspace"),
+      service.status("workspace"),
+      service.status("workspace"),
+    ]);
+    read.resolve(description);
+    const results = await pending;
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(results).toEqual(
+      Array.from({ length: 3 }, () => ({
+        status: "rejected",
+        reason: expect.objectContaining({ diagnostics: description.diagnostics }),
+      })),
+    );
+    await expect(service.status("workspace")).rejects.toMatchObject({
+      diagnostics: description.diagnostics,
+    });
+    expect(reader).toHaveBeenCalledTimes(1);
+    reader.mockResolvedValueOnce(description);
+    await service.refresh("workspace");
+    expect(reader).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { initialized: false, firstFinished: "old" },
+    { initialized: false, firstFinished: "new" },
+    { initialized: true, firstFinished: "old" },
+    { initialized: true, firstFinished: "new" },
+  ])(
+    "shares the newest routing read during refresh ($initialized, $firstFinished first)",
+    async ({ initialized, firstFinished }) => {
+      const previousEpoch = initialized ? (await service.status("workspace")).epoch : 0;
+      const description = await compiler.readProjectDescription(root, "main.bp");
+      const changed = {
+        ...description,
+        description: {
+          ...description.description!,
+          manifest: { ...description.description!.manifest, outputDir: "changed" },
+        },
+      };
+      const oldRead = deferred<typeof description>();
+      const newRead = deferred<typeof description>();
+      const reader = vi
+        .spyOn(compiler, "readProjectDescription")
+        .mockRejectedValue(new Error("Unexpected description read."))
+        .mockReturnValueOnce(oldRead.promise)
+        .mockReturnValueOnce(newRead.promise);
+      const listener = vi.fn();
+      service.onStatus(listener);
+      const first = service.status("workspace", initialized);
+      const refresh = service.refresh("workspace");
+      const follower = service.status("workspace");
+      const pending = Promise.allSettled([first, refresh, follower]);
+      if (firstFinished === "old") oldRead.resolve(description);
+      else newRead.resolve(changed);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      oldRead.resolve(description);
+      newRead.resolve(changed);
+      const results = await pending;
+      expect(reader).toHaveBeenCalledTimes(2);
+      const status = await service.status("workspace");
+      expect(results).toEqual([
+        { status: "fulfilled", value: status },
+        { status: "fulfilled", value: undefined },
+        { status: "fulfilled", value: status },
+      ]);
+      expect(status.epoch).toBe(previousEpoch + 1);
+      expect(listener).toHaveBeenCalledExactlyOnceWith({ workspaceId: "workspace", status });
+      expect(reader).toHaveBeenCalledTimes(2);
+    },
+  );
 
   function useInjectedAnalyzer(analyzerFailure?: "build" | "lookalike") {
     createWorker.mockImplementation(() => {
@@ -108,6 +221,27 @@ describe("LanguageService background checks", () => {
       return worker;
     });
   }
+
+  it.each(["close", "dispose"] as const)(
+    "ignores a routing refresh when %s runs during its read",
+    async (action) => {
+      await service.status("workspace");
+      const description = await compiler.readProjectDescription(root, "main.bp");
+      const read = deferred<typeof description>();
+      const reader = vi.spyOn(compiler, "readProjectDescription").mockReturnValueOnce(read.promise);
+      const listener = vi.fn();
+      service.onStatus(listener);
+      const pending = service.refresh("workspace");
+      const settled = expect(pending).resolves.toBeUndefined();
+      if (action === "close") service.close("workspace");
+      else service.dispose();
+      read.resolve(description);
+      await settled;
+      expect(listener).not.toHaveBeenCalled();
+      await service.refresh("workspace");
+      expect(reader).toHaveBeenCalledTimes(1);
+    },
+  );
 
   // Faults must happen after dispatch, now that status reads are asynchronous.
   function onNextDispatch(action: (worker: Worker) => void) {

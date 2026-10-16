@@ -209,9 +209,16 @@ export function registerIpc(
       ),
     ),
   );
-  const afterRouting = <T>(workspaceId: string, work: () => T | Promise<T>): Promise<T> =>
+  const afterRouting = <T>(
+    workspaceId: string,
+    work: () => T | Promise<T>,
+    waitForRouting = true,
+  ): Promise<T> =>
     Promise.resolve(work()).then(async (result) => {
-      await language.refresh(workspaceId);
+      const routing = Promise.resolve()
+        .then(() => language.refresh(workspaceId))
+        .catch((error) => console.error("Failed to refresh language routing.", error));
+      if (waitForRouting) await routing;
       return result;
     });
 
@@ -302,14 +309,17 @@ export function registerIpc(
     workspaces.readFile(id.parse(workspaceId), file.parse(sourceFile)),
   );
   handle("workspace:refresh", (_event, workspaceId: unknown, known: unknown) =>
-    afterRouting(id.parse(workspaceId), () =>
-      workspaces.refresh(
-        id.parse(workspaceId),
-        z
-          .record(file, fileRevision)
-          .refine((value) => Object.keys(value).length <= 10000)
-          .parse(known),
-      ),
+    afterRouting(
+      id.parse(workspaceId),
+      () =>
+        workspaces.refresh(
+          id.parse(workspaceId),
+          z
+            .record(file, fileRevision)
+            .refine((value) => Object.keys(value).length <= 10000)
+            .parse(known),
+        ),
+      false,
     ),
   );
   handle(

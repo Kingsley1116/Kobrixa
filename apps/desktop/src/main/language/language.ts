@@ -31,7 +31,7 @@ interface WorkspaceLanes {
   completion: CompletionService;
   description?: ProjectDescription;
   inputKey: string;
-  refreshSerial: number;
+  loading?: ReturnType<typeof readProjectDescription>;
   projectErrorKey?: string;
 }
 export class LanguageService {
@@ -60,7 +60,6 @@ export class LanguageService {
         analysis: new LanguageLane(this.workspaces, this.createWorker, restarted),
         completion: new CompletionService(this.workspaces, this.createCompletionWorker, restarted),
         inputKey: "",
-        refreshSerial: 0,
       };
       this.lanes.set(id, lanes);
     }
@@ -72,7 +71,6 @@ export class LanguageService {
       lanes.analysis.setBinding(status.availability.binding);
       lanes.completion.setBinding(status.availability.binding);
     } else {
-      lanes.analysis.cancel();
       lanes.analysis.reset();
       lanes.completion.reset();
     }
@@ -82,32 +80,42 @@ export class LanguageService {
     const lanes = this.workspace(workspaceId);
     const input = this.workspaces.projectInput(workspaceId);
     const inputKey = JSON.stringify(input);
-    if (!lanes.description || refresh || lanes.inputKey !== inputKey) {
-      const serial = ++lanes.refreshSerial;
-      const result = await readProjectDescription(input.inputPath, input.selectedEntry);
+    if (!lanes.loading || refresh || lanes.inputKey !== inputKey) {
+      lanes.inputKey = inputKey;
+      // Keep the latest read, including failures, until refresh or an input change.
+      lanes.loading = readProjectDescription(input.inputPath, input.selectedEntry);
+    }
+    let result: Awaited<ReturnType<typeof readProjectDescription>>;
+    while (true) {
+      const loading: ReturnType<typeof readProjectDescription> = lanes.loading;
+      try {
+        result = await loading;
+      } catch (error) {
+        if (loading !== lanes.loading) continue;
+        throw error;
+      }
       if (this.disposed || this.lanes.get(workspaceId) !== lanes)
         throw new Error("Diagnostics cancelled.");
-      if (serial !== lanes.refreshSerial) return this.status(workspaceId);
-      if (!result.description) {
-        // A malformed project is a core loader error, not a missing language provider.
-        const key = JSON.stringify(result.diagnostics);
-        if (lanes.projectErrorKey !== key) {
-          lanes.projectErrorKey = key;
-          const invalidated = this.bindings.restart(workspaceId);
-          if (invalidated) this.publish(workspaceId, invalidated);
-        }
-        const previous = this.bindings.get(workspaceId);
-        if (previous && lanes.description) return previous;
-        throw new ProjectLoadError(requirePublished(result.diagnostics));
-      }
-      const recovered = lanes.projectErrorKey !== undefined;
-      delete lanes.projectErrorKey;
-      lanes.description = result.description;
-      lanes.inputKey = inputKey;
-      if (recovered) {
+      if (loading === lanes.loading) break;
+    }
+    if (!result.description) {
+      // A malformed project is a core loader error, not a missing language provider.
+      const key = JSON.stringify(result.diagnostics);
+      if (lanes.projectErrorKey !== key) {
+        lanes.projectErrorKey = key;
         const invalidated = this.bindings.restart(workspaceId);
         if (invalidated) this.publish(workspaceId, invalidated);
       }
+      const previous = this.bindings.get(workspaceId);
+      if (previous && lanes.description) return previous;
+      throw new ProjectLoadError(requirePublished(result.diagnostics));
+    }
+    const recovered = lanes.projectErrorKey !== undefined;
+    delete lanes.projectErrorKey;
+    lanes.description = result.description;
+    if (recovered) {
+      const invalidated = this.bindings.restart(workspaceId);
+      if (invalidated) this.publish(workspaceId, invalidated);
     }
     const previous = this.bindings.get(workspaceId);
     const manifest = lanes.description.manifest;
@@ -115,19 +123,21 @@ export class LanguageService {
       workspaceId,
       manifest,
       this.resolve(manifest.language),
-      inputKey,
+      lanes.inputKey,
     );
     if (previous?.epoch !== status.epoch) this.publish(workspaceId, status);
     return status;
   }
   async refresh(workspaceId?: string): Promise<void> {
     await Promise.all(
-      [...this.lanes.keys()]
-        .filter((id) => !workspaceId || id === workspaceId)
-        .map(async (id) => {
+      [...this.lanes]
+        .filter(([id]) => !workspaceId || id === workspaceId)
+        .map(async ([id, lanes]) => {
+          if (this.disposed || this.lanes.get(id) !== lanes) return;
           try {
             await this.status(id, true);
           } catch (error) {
+            if (this.disposed || this.lanes.get(id) !== lanes) return;
             if (!(error instanceof ProjectLoadError)) throw error;
           }
         }),
@@ -231,7 +241,6 @@ export class LanguageService {
   close(workspaceId: string): void {
     const lanes = this.lanes.get(workspaceId);
     if (lanes) {
-      lanes.refreshSerial++;
       lanes.analysis.dispose();
       lanes.completion.dispose();
     }

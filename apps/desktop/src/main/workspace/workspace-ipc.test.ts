@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>());
 vi.mock("electron", () => ({
@@ -28,6 +28,14 @@ const requests = [
   { channel: "workspace:write", method: "write", args: [sourceFile, "edited", revision] },
   { channel: "workspace:save-draft", method: "saveDraft", args: [sourceFile, "draft", revision] },
 ] as const;
+const routingRequests = [
+  { channel: "workspace:refresh", method: "refresh", args: [{ [sourceFile]: revision }] },
+  { channel: "workspace:write", method: "write", args: ["kobrixa.json", "{}", revision] },
+  { channel: "workspace:select-entry", method: "selectEntry", args: [sourceFile] },
+  { channel: "workspace:create-entry", method: "createEntry", args: ["src", "file", "new.bp"] },
+  { channel: "workspace:move-entry", method: "moveEntry", args: [sourceFile, "renamed.bp"] },
+  { channel: "workspace:trash-entry", method: "trashEntry", args: [sourceFile] },
+] as const;
 
 describe("workspace file IPC", () => {
   const renderer = { id: 1, mainFrame: {} };
@@ -43,6 +51,10 @@ describe("workspace file IPC", () => {
     historyContent: vi.fn(),
     write: vi.fn(),
     saveDraft: vi.fn(),
+    selectEntry: vi.fn(),
+    createEntry: vi.fn(),
+    moveEntry: vi.fn(),
+    trashEntry: vi.fn(),
   };
   const language = { refresh: vi.fn(async () => {}), close: vi.fn() };
   const run = vi.fn((_channel: string, work: () => unknown) => work());
@@ -61,6 +73,24 @@ describe("workspace file IPC", () => {
       { run } as never,
     );
   });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(routingRequests)(
+    "returns the successful $channel result when routing fails",
+    async (request) => {
+      const result = { status: "success" };
+      service[request.method].mockResolvedValueOnce(result);
+      const error = new Error("Routing failed.");
+      language.refresh.mockRejectedValueOnce(error);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      await expect(
+        handlers.get(request.channel)!(event, workspaceId, ...request.args),
+      ).resolves.toBe(result);
+      expect(service[request.method]).toHaveBeenCalledWith(workspaceId, ...request.args);
+      expect(language.refresh).toHaveBeenCalledWith(workspaceId);
+      expect(log).toHaveBeenCalledExactlyOnceWith("Failed to refresh language routing.", error);
+    },
+  );
 
   it("rejects untrusted senders and frames before running any workspace operation", () => {
     for (const request of requests) {
@@ -239,5 +269,67 @@ describe("workspace file IPC", () => {
     expect(language.refresh).not.toHaveBeenCalled();
     await handlers.get("workspace:write")!(event, workspaceId, "kobrixa.json", "{}", revision);
     expect(language.refresh).toHaveBeenCalledWith(workspaceId);
+  });
+
+  it("lets the external poll reply before routing but keeps explicit operations after the status event", async () => {
+    for (const request of routingRequests) {
+      const order: string[] = [];
+      let finishRouting!: () => void;
+      const routing = new Promise<void>((resolve) => {
+        finishRouting = resolve;
+      });
+      language.refresh.mockImplementationOnce(async () => {
+        order.push("routing");
+        await routing;
+        order.push("status-changed");
+      });
+      const result = { status: "success" };
+      service[request.method].mockResolvedValueOnce(result);
+      const reply = Promise.resolve(
+        handlers.get(request.channel)!(event, workspaceId, ...request.args),
+      ).then((value) => {
+        order.push("reply");
+        return value;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      try {
+        expect(order).toEqual(request.method === "refresh" ? ["routing", "reply"] : ["routing"]);
+      } finally {
+        finishRouting();
+        await reply;
+      }
+      expect(await reply).toBe(result);
+      expect(order).toEqual(
+        request.method === "refresh"
+          ? ["routing", "reply", "status-changed"]
+          : ["routing", "status-changed", "reply"],
+      );
+    }
+  });
+
+  it("logs a delayed external poll routing failure after returning the workspace result", async () => {
+    let failRouting!: (error: Error) => void;
+    language.refresh.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        failRouting = reject;
+      }),
+    );
+    const result = { status: "success" };
+    service.refresh.mockResolvedValueOnce(result);
+    const replied = vi.fn();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const error = new Error("Delayed routing failure.");
+    const reply = Promise.resolve(handlers.get("workspace:refresh")!(event, workspaceId, {})).then(
+      replied,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      expect(replied).toHaveBeenCalledExactlyOnceWith(result);
+    } finally {
+      failRouting(error);
+      await reply;
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(log).toHaveBeenCalledExactlyOnceWith("Failed to refresh language routing.", error);
   });
 });
