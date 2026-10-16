@@ -11,6 +11,7 @@ import {
   type PluginManifest,
 } from "@kobrixa/plugin-protocol";
 import { markProviderConflicts } from "./compiler-resolution.js";
+import { readDiagnosticHelp, type LoadedDiagnosticHelp } from "./diagnostic-help.js";
 import { messageOf, type PluginErrorCode, type PluginProblem } from "./errors.js";
 
 export const MANIFEST_FILE = "kobrixa-plugin.json";
@@ -39,6 +40,10 @@ export interface ReadPlugin {
   directory?: string;
   manifest?: PluginManifest;
   entry?: string;
+  /** Loaded help resource; absent when undeclared, unread or invalid. */
+  diagnosticHelp?: LoadedDiagnosticHelp;
+  /** A broken help resource disables only the help, never the plugin. */
+  helpProblem?: PluginProblem;
   /** Problems of this source alone; empty means it is valid by itself. */
   problems: readonly PluginProblem[];
   /** Safe mode: the folder was deliberately not read. */
@@ -166,7 +171,12 @@ async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
           problem("PLUGIN_E_ENTRY", `${runtime.entry} resolves outside the plugin folder.`),
         ],
       };
-    return { ...plugin, entry };
+    const decl = plugin.manifest?.contributes?.diagnosticHelp;
+    if (!decl) return { ...plugin, entry };
+    const help = await readDiagnosticHelp(root, decl);
+    return help.ok
+      ? { ...plugin, entry, diagnosticHelp: help.help }
+      : { ...plugin, entry, helpProblem: help.problem };
   } catch {
     return {
       ...plugin,

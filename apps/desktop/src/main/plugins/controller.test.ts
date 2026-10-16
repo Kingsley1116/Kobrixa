@@ -572,6 +572,7 @@ describe("PluginController with a fake manager", () => {
   const key = "dev:0123456789abcdef";
   const snapshot: PluginsSnapshot = {
     revision: 4,
+    diagnosticHelpRevision: 0,
     safeMode: false,
     developmentMode: true,
     plugins: [

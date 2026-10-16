@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
+import { DIAGNOSTIC_HELP_LIMITS } from "@kobrixa/plugin-protocol";
 import {
   developmentSourceKey,
   PLUGIN_FORCE_MARGIN_MS,
@@ -915,5 +916,220 @@ describe("PluginManager", () => {
       expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
       await manager.shutdown();
     });
+  });
+});
+
+describe("diagnostic help", () => {
+  const helpEntry = (code: string) => ({
+    code,
+    title: { en: "T" },
+    cause: { en: "C" },
+    steps: { en: ["S"] },
+  });
+  const writeHelp = (name: string, help: unknown) =>
+    writeFile(
+      path.join(root, name, "help.json"),
+      typeof help === "string" ? help : JSON.stringify({ entries: help }),
+    );
+  async function helpPlugin(name: string, help: unknown) {
+    const source = await devPlugin(name);
+    const file = path.join(source.directory, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.contributes.diagnosticHelp = { version: 1, path: "help.json" };
+    await writeFile(file, JSON.stringify(manifest));
+    await writeHelp(name, help);
+    return source;
+  }
+  const createWith = (
+    sources: Parameters<typeof PluginManager.create>[0]["sources"],
+    options: { safeMode?: boolean; diagnosticHelpTotalBytes?: number } = {},
+  ) =>
+    PluginManager.create({
+      sources,
+      store: memoryStore(),
+      safeMode: options.safeMode ?? false,
+      launcher,
+      locale: "en",
+      now: () => 1000,
+      ...(options.diagnosticHelpTotalBytes === undefined
+        ? {}
+        : { diagnosticHelpTotalBytes: options.diagnosticHelpTotalBytes }),
+    });
+
+  it("publishes enabled plugins' help and drops it when disabled or reloaded", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([builtin, source]);
+    const first = manager.diagnosticHelp();
+    expect(first.plugins).toEqual([
+      expect.objectContaining({
+        source: "acme.one",
+        sourceKey: keyOf(source),
+        entries: [expect.objectContaining({ code: "ACME100" })],
+      }),
+    ]);
+    expect(manager.state().diagnosticHelpRevision).toBe(first.revision);
+    await manager.setEnabled(keyOf(source), false);
+    const disabled = manager.diagnosticHelp();
+    expect(disabled.plugins).toEqual([]);
+    expect(disabled.revision).toBeGreaterThan(first.revision);
+    await manager.setEnabled(keyOf(source), true);
+    const enabled = manager.diagnosticHelp();
+    expect(enabled.plugins).toEqual(first.plugins);
+    expect(enabled.revision).toBeGreaterThan(disabled.revision);
+    await writeHelp("one", [helpEntry("ACME200")]);
+    await manager.reloadSource(keyOf(source));
+    expect(manager.diagnosticHelp().plugins[0]!.entries[0]!.code).toBe("ACME200");
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(enabled.revision);
+    expect(manager.state().diagnosticHelpRevision).toBe(manager.diagnosticHelp().revision);
+    expect(launcher).not.toHaveBeenCalled();
+  });
+  it("keeps the plugin enabled when its help file is invalid", async () => {
+    const source = await helpPlugin("broken", "{");
+    const manager = await createWith([source]);
+    const summary = manager.state().plugins.find((item) => item.sourceKey === keyOf(source))!;
+    expect(summary.status).toBe("enabled");
+    expect(summary.problems.map((item) => item.code)).toEqual(["PLUGIN_E_DIAGNOSTIC_HELP"]);
+    expect(summary.problems[0]!.message).toContain("help.json");
+    expect(manager.diagnosticHelp().plugins).toEqual([]);
+    await manager.setEnabled(keyOf(source), false);
+    expect(manager.state().plugins[0]!.problems).toEqual([]);
+  });
+  it("does not read help in safe mode", async () => {
+    const source = await helpPlugin("safe", [helpEntry("ACME100")]);
+    const manager = await createWith([source], { safeMode: true });
+    expect(manager.diagnosticHelp().plugins).toEqual([]);
+    const revision = manager.diagnosticHelp().revision;
+    expect(manager.state().plugins[0]).toMatchObject({
+      id: "safe",
+      status: "disabled",
+      problems: [],
+    });
+    await manager.leaveSafeMode();
+    expect(manager.diagnosticHelp().plugins[0]!.source).toBe("acme.safe");
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(revision);
+    expect(launcher).not.toHaveBeenCalled();
+  });
+  it("fails the first plugin by source key that exceeds the total budget", async () => {
+    const sources = await Promise.all(
+      ["a", "b", "c"].map((name) => helpPlugin(name, [helpEntry("ACME100")])),
+    );
+    const size = Buffer.byteLength(await readFile(path.join(root, "a", "help.json")));
+    const manager = await createWith(sources, { diagnosticHelpTotalBytes: size * 2 });
+    const keys = sources.map(keyOf).sort();
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(
+      keys.slice(0, 2),
+    );
+    const last = manager.state().plugins.find((item) => item.sourceKey === keys[2])!;
+    expect(last.status).toBe("enabled");
+    expect(last.problems.map((item) => item.code)).toContain("PLUGIN_E_DIAGNOSTIC_HELP");
+    await manager.setEnabled(keys[0]!, false);
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(keys.slice(1));
+    expect(manager.state().plugins.find((item) => item.sourceKey === keys[2])!.problems).toEqual(
+      [],
+    );
+  });
+  it("accepts exactly 8 MiB by default and rejects the plugin that adds one byte too many", async () => {
+    const body = JSON.stringify({ entries: [helpEntry("ACME100")] });
+    const size = Buffer.byteLength(body);
+    const sources = await Promise.all(
+      Array.from({ length: 9 }, (_, index) => helpPlugin(`limit${index}`, body)),
+    );
+    const sorted = [...sources].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+    await Promise.all(
+      sorted
+        .slice(0, 8)
+        .map((source, index) =>
+          writeFile(
+            path.join(source.directory, "help.json"),
+            body + " ".repeat(DIAGNOSTIC_HELP_LIMITS.fileBytes - size - (index === 7 ? size : 0)),
+          ),
+        ),
+    );
+    const manager = await createWith(sources.reverse());
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(
+      sorted.map(keyOf),
+    );
+    expect(manager.state().plugins.every((item) => item.problems.length === 0)).toBe(true);
+    await appendFile(path.join(sorted[7]!.directory, "help.json"), " ");
+    await manager.reloadSource(keyOf(sorted[7]!));
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(
+      sorted.slice(0, 8).map(keyOf),
+    );
+    expect(
+      manager.state().plugins.find((item) => item.sourceKey === keyOf(sorted[8]!)),
+    ).toMatchObject({
+      status: "enabled",
+      problems: [{ code: "PLUGIN_E_DIAGNOSTIC_HELP", message: expect.stringMatching(/8 MiB/) }],
+    });
+  });
+  it("continues checking later plugins after a resource exceeds the remaining budget", async () => {
+    const body = JSON.stringify({ entries: [helpEntry("ACME100")] });
+    const size = Buffer.byteLength(body);
+    const sources = await Promise.all(["a", "b", "c"].map((name) => helpPlugin(name, body)));
+    const sorted = [...sources].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+    await writeFile(path.join(sorted[1]!.directory, "help.json"), body + " ".repeat(size));
+    const manager = await createWith(sources, { diagnosticHelpTotalBytes: size * 2 });
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual([
+      keyOf(sorted[0]!),
+      keyOf(sorted[2]!),
+    ]);
+    expect(
+      manager.state().plugins.find((item) => item.sourceKey === keyOf(sorted[1]!)),
+    ).toMatchObject({
+      status: "enabled",
+      problems: [{ code: "PLUGIN_E_DIAGNOSTIC_HELP" }],
+    });
+  });
+  it("removes stale help on an invalid reload and recovers when the resource is fixed", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([source]);
+    const first = manager.diagnosticHelp();
+    await writeHelp("one", "{");
+    await manager.reloadSource(keyOf(source));
+    const broken = manager.diagnosticHelp();
+    expect(broken.plugins).toEqual([]);
+    expect(broken.revision).toBeGreaterThan(first.revision);
+    expect(manager.state().plugins[0]).toMatchObject({
+      status: "enabled",
+      problems: [{ code: "PLUGIN_E_DIAGNOSTIC_HELP" }],
+    });
+    await writeHelp("one", [helpEntry("ACME200")]);
+    await manager.reloadSource(keyOf(source));
+    expect(manager.diagnosticHelp().plugins[0]!.entries[0]!.code).toBe("ACME200");
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(broken.revision);
+    expect(manager.state().plugins[0]!.problems).toEqual([]);
+  });
+  it("removes and re-adds help atomically with the source's state events", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([source]);
+    const first = manager.diagnosticHelp();
+    const events: PluginManagerEvent[] = [];
+    manager.onEvent((event) => events.push(event));
+    await manager.removeSource(keyOf(source));
+    const removed = manager.diagnosticHelp();
+    expect(removed.plugins).toEqual([]);
+    expect(removed.revision).toBeGreaterThan(first.revision);
+    expect(events).toContainEqual({
+      type: "state",
+      state: expect.objectContaining({ diagnosticHelpRevision: removed.revision, plugins: [] }),
+    });
+    await manager.addSource(source);
+    expect(manager.diagnosticHelp().plugins).toEqual(first.plugins);
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(removed.revision);
+  });
+  it("returns isolated catalogs and keeps the revision stable for unrelated changes", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([source]);
+    const first = manager.diagnosticHelp();
+    const returned = manager.diagnosticHelp();
+    returned.plugins[0]!.entries[0]!.steps.en.push("Changed");
+    returned.plugins.length = 0;
+    expect(manager.diagnosticHelp()).toEqual(first);
+    await manager.addSource(await devPlugin("plain"));
+    expect(manager.diagnosticHelp()).toEqual(first);
+    await manager.reloadSource(keyOf(source));
+    expect(manager.diagnosticHelp().plugins).toEqual(first.plugins);
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(first.revision);
+    expect(launcher).not.toHaveBeenCalled();
   });
 });
