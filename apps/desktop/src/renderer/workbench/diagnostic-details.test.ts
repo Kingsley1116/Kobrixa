@@ -136,7 +136,7 @@ it("shows a plugin's own help with its links and no official link", async () => 
   host.helpCatalog = pluginCatalog;
   await render({ ...diagnostic, source: "acme.x" });
   expect(container.textContent).toContain("Acme title");
-  expect(container.textContent).toContain("Provided by Acme");
+  expect(container.textContent).toContain("Provided by Acme (acme.x)");
   expect(container.textContent).not.toContain("Call is missing a closing parenthesis");
   expect(container.textContent).not.toContain("View this diagnostic online");
   expect(host.getQuickFixes).not.toHaveBeenCalled();
@@ -169,7 +169,7 @@ it("localizes plugin attribution, preserves literal names and keeps helpKey in l
     plugins: { "acme.x": { ...pluginCatalog.plugins["acme.x"], displayName: { en: "Acme $&" } } },
   };
   await render({ ...diagnostic, source: "acme.x", helpKey: "specific" });
-  expect(container.textContent).toContain("由 Acme $& 提供");
+  expect(container.textContent).toContain("由 Acme $& (acme.x) 提供");
   expect(container.textContent).toContain("Acme cause");
   const button = container.querySelector<HTMLButtonElement>(".diagnostic-links button")!;
   expect(button.textContent).toBe("Acme docs ↗");
@@ -181,4 +181,32 @@ it("localizes plugin attribution, preserves literal names and keeps helpKey in l
     locale: "zh-TW",
     linkIndex: 0,
   });
+});
+
+it("renders and replaces duplicate plugin steps without React key warnings", async () => {
+  const { host, render } = setup();
+  const entry = {
+    ...pluginCatalog.plugins["acme.x"].entries[0]!,
+    steps: { en: ["Repeat", "Repeat"] },
+  };
+  host.helpCatalog = {
+    revision: 1,
+    plugins: { "acme.x": { entries: [entry] } },
+  };
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await render({ ...diagnostic, source: "acme.x" });
+    expect([...container.querySelectorAll("ol li")].map((item) => item.textContent)).toEqual([
+      "Repeat",
+      "Repeat",
+    ]);
+    entry.steps.en = ["Replacement"];
+    await render({ ...diagnostic, source: "acme.x" });
+    expect([...container.querySelectorAll("ol li")].map((item) => item.textContent)).toEqual([
+      "Replacement",
+    ]);
+    expect(errors).not.toHaveBeenCalled();
+  } finally {
+    errors.mockRestore();
+  }
 });

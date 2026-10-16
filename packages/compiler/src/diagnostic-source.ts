@@ -1,4 +1,5 @@
 import type { Diagnostic, PublishedDiagnostic } from "./contracts.js";
+import { namespacedIdSchema } from "@kobrixa/plugin-protocol";
 import { BuildError } from "./build-error.js";
 
 export { CORE_DIAGNOSTIC_SOURCE } from "./diagnostics.js";
@@ -17,11 +18,14 @@ export function stampDiagnostics(
 }
 
 export const isPublishedDiagnostic = (item: Diagnostic): item is PublishedDiagnostic =>
-  typeof item.source === "string" && item.source.length > 0;
+  namespacedIdSchema.safeParse(item.source).success;
 
-/** Publication guard: an unsourced diagnostic means a host path forgot to stamp it. */
+/** Publication guard: every diagnostic must carry a valid host-assigned source. */
 export function requirePublished(items: readonly Diagnostic[]): PublishedDiagnostic[] {
-  const missing = items.find((item) => !isPublishedDiagnostic(item));
-  if (missing) throw new Error(`Diagnostic ${missing.code} was published without a source.`);
+  const invalid = items.find((item) => !isPublishedDiagnostic(item));
+  if (invalid)
+    throw new Error(
+      `Diagnostic ${invalid.code} was published without a source or with an invalid source.`,
+    );
   return items as PublishedDiagnostic[];
 }

@@ -76,7 +76,8 @@ export function diagnosticSourceLabel(
       ? catalog.plugins[source]!.displayName
       : undefined;
   if (name === undefined) return source;
-  return typeof name === "string" ? name : pick(name, locale);
+  const label = typeof name === "string" ? name : pick(name, locale);
+  return isBuiltinDiagnosticSource(source) ? label : `${label} (${source})`;
 }
 
 export const diagnosticIdentity = (item: PublishedDiagnostic): string =>

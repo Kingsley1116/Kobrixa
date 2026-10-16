@@ -40,3 +40,29 @@ it("requires a source before publication", () => {
   const published = { ...raw, source: "kobrixa.basic-plus" };
   expect(requirePublished([published])).toEqual([published]);
 });
+
+it.each(["kobrixa.core", "kobrixa.basic-plus", "acme.plugin-1", "acme.tools.plugin", "a.b"])(
+  "publishes a valid namespaced source: %s",
+  (source) => {
+    const published = { ...raw, source };
+    expect(isPublishedDiagnostic(published)).toBe(true);
+    expect(requirePublished([published])).toEqual([published]);
+  },
+);
+
+it.each([
+  "",
+  " ",
+  "acme",
+  "Acme.plugin",
+  "acme.plugin_name",
+  "acme..plugin",
+  "acme.-plugin",
+  "acme.plugin-",
+  "acme.plugin\n",
+  `acme.${"a".repeat(124)}`,
+])("rejects an empty or malformed source: %j", (source) => {
+  const invalid = { ...raw, source };
+  expect(isPublishedDiagnostic(invalid)).toBe(false);
+  expect(() => requirePublished([{ ...raw, source: "kobrixa.core" }, invalid])).toThrow();
+});

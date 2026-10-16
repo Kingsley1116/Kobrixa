@@ -257,7 +257,7 @@ it("refreshes source labels and source-scoped messages when the catalog changes"
   expect(mocks.setModelMarkers.mock.lastCall?.[2]).toEqual([
     expect.objectContaining({ source: "Basic Plus" }),
     expect.objectContaining({
-      source: "Acme",
+      source: "Acme (acme.x)",
       message: "BP3001: Acme title\nAcme cause\nAcme step\n\nUnknown operation",
     }),
   ]);

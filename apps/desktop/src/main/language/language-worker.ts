@@ -2,6 +2,8 @@ import { startCompletionWorker } from "./completion-worker.js";
 import { parentPort, workerData } from "node:worker_threads";
 import { BasicPlusProjectAnalyzer, getBasicPlusQuickFixes } from "@kobrixa/basic-plus";
 import {
+  BuildError,
+  diagnostic,
   loadProject,
   ProjectSourceCache,
   requirePublished,
@@ -147,7 +149,18 @@ else
           const raw = analyzer.analyze(loaded.project, signal);
           // 2B-1 compatibility adapter: the worker still hosts Basic Plus directly; 2B-2 stamps
           // the selected language-service provider instead.
-          analysis = { ...raw, diagnostics: stampDiagnostics(raw.diagnostics, BASIC_PLUS_SOURCE) };
+          try {
+            analysis = {
+              ...raw,
+              diagnostics: stampDiagnostics(raw.diagnostics, BASIC_PLUS_SOURCE),
+            };
+          } catch (error) {
+            if (!(error instanceof BuildError) || error.code !== "BUILD1007") throw error;
+            analysis = {
+              ...emptyAnalysis(),
+              diagnostics: [diagnostic(error.code, error.detail)],
+            };
+          }
         }
         check();
         const base = sync.analysisBase === null ? undefined : history.get(sync.analysisBase);

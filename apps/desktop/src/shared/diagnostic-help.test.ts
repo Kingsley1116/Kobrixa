@@ -94,23 +94,39 @@ it("localizes plugin text with an English fallback", () => {
 
 it("labels sources for markers", () => {
   expect(diagnosticSourceLabel("kobrixa.core", catalog, "en")).toBe("Kobrixa");
-  expect(diagnosticSourceLabel("acme.x", catalog, "zh-TW")).toBe("愛克米");
+  expect(diagnosticSourceLabel("acme.x", catalog, "zh-TW")).toBe("愛克米 (acme.x)");
+  expect(diagnosticSourceLabel("acme.x", catalog, "en")).toBe("Acme (acme.x)");
   expect(diagnosticSourceLabel("acme.z", catalog, "en")).toBe("acme.z");
   const names: PluginHelpCatalogView = {
     revision: 4,
     plugins: {
       "kobrixa.core": { displayName: "Override", entries: [] },
       "kobrixa.basic-plus": { displayName: "Basic Plus", entries: [] },
+      "kobrixa.ev3": { displayName: "EV3", entries: [] },
       "acme.en": { displayName: { en: "English only" }, entries: [] },
       "acme.unnamed": { entries: [] },
     },
   };
   expect(diagnosticSourceLabel("kobrixa.core", names, "zh-TW")).toBe("Kobrixa");
   expect(diagnosticSourceLabel("kobrixa.basic-plus", names, "zh-TW")).toBe("Basic Plus");
-  expect(diagnosticSourceLabel("acme.en", names, "zh-TW")).toBe("English only");
+  expect(diagnosticSourceLabel("kobrixa.ev3", names, "en")).toBe("EV3");
+  expect(diagnosticSourceLabel("acme.en", names, "zh-TW")).toBe("English only (acme.en)");
   expect(diagnosticSourceLabel("acme.unnamed", names, "en")).toBe("acme.unnamed");
   expect(diagnosticSourceLabel("acme.x", undefined, "zh-TW")).toBe("acme.x");
 });
+
+it.each(["Kobrixa", "Basic Plus", "EV3"])(
+  "identifies a plugin whose display name impersonates %s",
+  (displayName) => {
+    const impersonator: PluginHelpCatalogView = {
+      revision: 1,
+      plugins: { "acme.fake": { displayName, entries: [] } },
+    };
+    expect(diagnosticSourceLabel("acme.fake", impersonator, "en")).toBe(
+      `${displayName} (acme.fake)`,
+    );
+  },
+);
 
 it("includes the source in the diagnostic identity", () => {
   const base = {

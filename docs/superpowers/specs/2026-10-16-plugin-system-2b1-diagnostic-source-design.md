@@ -120,19 +120,19 @@ interface PluginDiagnosticHelpFile {
 
 新增 `packages/plugin-runtime/src/diagnostic-help.ts`：
 
-- 只在插件解析為 `enabled` 後載入；不需要也不會啟動插件程序。安全模式或未讀取的插件不載入。
-- 載入步驟：`realpath` 解析路徑 → 確認位於插件根目錄內（同 entry 的越界判斷）→ `stat` 確認為一般檔案且未超過大小上限 → 讀取（去除 BOM）→ JSON 解析 → schema 與上限驗證。符號連結逃逸、目錄、超量、格式錯誤都拒絕。
+- 開發插件的說明檔在 `readSource` 讀取來源時，以有大小上限的方式讀取，並納入同一次 `readSource` 的逾時範圍；只有插件解析為 `enabled` 時才發布到說明目錄。不需要也不會啟動插件程序。安全模式或未讀取的插件不載入。
+- 載入步驟：`realpath` 解析路徑 → 確認位於插件根目錄內（同 entry 的越界判斷）→ `stat` 確認為一般檔案 → 最多讀取大小上限加 1 byte，拒絕超量資料並去除 BOM → JSON 解析 → schema 與上限驗證。符號連結逃逸、目錄、超量、格式錯誤都拒絕。
 - 失敗時插件**仍為啟用**，只是不註冊說明，並在插件問題清單加上 `PLUGIN_E_DIAGNOSTIC_HELP`，訊息指出哪個檔案與哪項限制失敗。合計上限超出時，依 `sourceKey` 字典序載入，第一個使合計超限的插件失敗，之後的插件照常檢查。
-- 註冊表以 source（插件 ID）分組。停用、重新載入、移除或安全模式切換時，原子地移除或替換該插件的目錄，並遞增世代號。
+- 註冊表以 source（插件 ID）分組。停用、重新載入、移除或安全模式切換時，原子地移除或替換該插件的目錄，並在已啟用插件的相關資料變更時遞增 `diagnosticHelpRevision`。
 
-**傳遞到 renderer：** main 透過 preload 提供 `diagnosticHelp.snapshot()`（已驗證的條目，依 source 分組）與世代變更事件；renderer 收到新世代時整份替換。
+**傳遞到 renderer：** main 透過 preload 的 `plugins.diagnosticHelp()` IPC 提供已驗證的條目（依 source 分組），並在插件 state 事件附上 `diagnosticHelpRevision`。此 revision 涵蓋每個已啟用插件的 `sourceKey`、`id`、`generation`、`displayName` 與是否有已載入的說明，包含沒有說明條目的插件，讓名稱變更也能使快取失效。renderer 收到新 revision 時重新查詢並整份替換，忽略較舊的回覆。
 
 ## 6. 說明查詢與內建擁有者
 
 **內建擁有者對照**（`packages/compiler/src/diagnostic-help.ts`，維持 browser-safe）：
 
-- 新增明確的 `BUILTIN_HELP_OWNERS`：`kobrixa.basic-plus` 擁有 BP 條目、`kobrixa.ev3` 擁有 EV3 條目、`kobrixa.core` 擁有 MAN、IR、BUILD 條目。這是目錄的所有權宣告，以測試保證每筆條目（含 variants）至少屬於一個 owner；不是 runtime 依代碼推測 `source`。
-- 少數條目由多個內建提供者發出，需明確列為共有：`EV32031` 同時由 Basic Plus 前端（`frontends/basic-plus/src/lower.ts`）與 EV3 後端發出，歸屬 `kobrixa.basic-plus` 與 `kobrixa.ev3`。共有清單是明確的例外表，不以前綴推導。
+- `CATALOG_OWNERS` 以代碼前綴規則宣告目錄所有權：`kobrixa.basic-plus` 擁有 BP 條目、`kobrixa.ev3` 擁有 EV3 條目、`kobrixa.core` 擁有 MAN、IR、BUILD 條目，透過 `builtinHelpOwners(code)` 對外提供查詢。以測試保證每筆條目（含 variants）至少屬於一個 owner；這些規則只決定說明目錄的所有權，不在 runtime 依代碼推測診斷的 `source`。
+- 明確的 `SHARED_BUILTIN_HELP` 例外表優先於前綴規則：`EV32031` 同時由 Basic Plus 前端（`frontends/basic-plus/src/lower.ts`）與 EV3 後端發出，歸屬 `kobrixa.basic-plus` 與 `kobrixa.ev3`。`builtinHelpOwners()` 會回傳兩個 owner；共有清單不以前綴推導。
 - 新增 `getBuiltinDiagnosticHelp(source, code, helpKey?)`：只在條目屬於該 source 時回傳。
 - 既有的 `getDiagnosticHelp(code, helpKey)`、`diagnosticDocumentationUrl`、`DIAGNOSTIC_HELP` 等匯出不變，網站照舊使用；網站路由與網址都不改。
 
@@ -187,7 +187,7 @@ BUILD1007 在 [`diagnostic-help.ts`](../../../packages/compiler/src/diagnostic-h
 - **來源加註：** 混合來源建置（MAN、BP、IR、EV3、BUILD）每筆診斷的 `source` 正確；模擬的 SIM1001 為 core；語言分析診斷為 `kobrixa.basic-plus`、載入診斷為 core；彙整後不被覆寫。
 - **偽造與保留：** 前端、後端或分析器自帶 `source` 時回 BUILD1007；`kobrixa.core` 插件被拒；開發插件冒用內建 ID 時內建勝出；缺少 `source` 的發布資料被 wire schema 拒絕。
 - **隔離：** 用測試註冊的假來源與 Basic Plus 使用相同 `code`／`helpKey`，說明、去重、marker 與 Quick Fix 都不串用；第三方 `BP1015` 不顯示 Basic Plus 說明，也不觸發 Quick Fix。
-- **查詢：** 精確 helpKey 命中、同 source 退回無 helpKey 條目、查不到時保留原始訊息；`BUILTIN_HELP_OWNERS` 涵蓋所有內建條目；只有共有例外表中的條目有多個 owner；Basic Plus 前端發出的 `EV32031` 仍顯示說明。
+- **查詢：** 精確 helpKey 命中、同 source 退回無 helpKey 條目、查不到時保留原始訊息；`builtinHelpOwners()` 涵蓋所有內建條目；只有共有例外表中的條目有多個 owner；Basic Plus 前端發出的 `EV32031` 仍顯示說明。
 - **資源載入：** 越界路徑、符號連結逃逸、目錄、超過每項上限（含剛好到上限的正例）、重複鍵、未知欄位、`http:` 與 `javascript:` 連結都被拒並回 `PLUGIN_E_DIAGNOSTIC_HELP`，插件仍啟用；停用、重新載入與安全模式會移除或替換目錄並遞增世代號。
 - **連結開啟：** renderer 送出越界 `linkIndex` 或不存在的 source 時拒絕；只對 https 呼叫 `openExternal`。
 - **相容：** 既有代碼、helpKey、官方網址（含網站測試）、bytecode、`pnpm test:bytecode`、schema drift、JSON Schema 與兩個 SDK 的 conformance、打包後 worker 測試全部通過。
@@ -200,6 +200,6 @@ BUILD1007 在 [`diagnostic-help.ts`](../../../packages/compiler/src/diagnostic-h
 2. registry 保留 ID、內建優先的重複 ID 測試。
 3. `diagnosticHelp` manifest 欄位、資源 schema 與 `DIAGNOSTIC_HELP_LIMITS`、API 1.2.0、JSON Schema 與兩個 SDK 同步。
 4. 資源載入器、以 source 分組的說明註冊表、世代號與生命週期。
-5. `BUILTIN_HELP_OWNERS`、`getBuiltinDiagnosticHelp`、`resolveDiagnosticHelp` 與網站網址鎖定測試。
+5. `CATALOG_OWNERS`、`SHARED_BUILTIN_HELP`、`builtinHelpOwners`、`getBuiltinDiagnosticHelp`、`resolveDiagnosticHelp` 與網站網址鎖定測試。
 6. 語言 worker 相容 adapter 加註、`language-sync` 與 analysis transport 帶 `source`、Quick Fix 請求與 `sameDiagnostic` 納入來源、`QUICK_FIX_CODES` 移入 Basic Plus。
 7. preload 說明快照與事件、說明面板與 marker、文件與第三方連結開啟。

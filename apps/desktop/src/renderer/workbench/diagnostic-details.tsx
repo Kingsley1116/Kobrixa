@@ -102,8 +102,8 @@ export function DiagnosticDetails({
       </p>
       {text && (
         <ol>
-          {text.steps.map((step) => (
-            <li key={step}>{step}</li>
+          {text.steps.map((step, index) => (
+            <li key={index}>{step}</li>
           ))}
         </ol>
       )}
