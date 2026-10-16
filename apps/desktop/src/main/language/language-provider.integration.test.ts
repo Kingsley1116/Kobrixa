@@ -7,7 +7,10 @@ import {
   resolvePlugins,
   resolveFrontendProvider,
   resolveCompilerProviders,
+  resolveLanguageService,
 } from "@kobrixa/plugin-runtime";
+import { readProjectDescription } from "@kobrixa/compiler";
+import { LanguageBindings } from "../workspace/language-binding.js";
 import { applyAnalysis } from "../../shared/language-sync.js";
 import { LanguageWorkerSession } from "./language-worker-session.js";
 import {
@@ -38,6 +41,45 @@ beforeEach(async () => {
   await writeFile(path.join(root, "main.csx"), "Foo foo !\n");
 });
 afterEach(() => rm(root, { recursive: true, force: true }));
+it("rejects a second-language service whose extensions differ from its frontend", async () => {
+  const manifest = structuredClone(SECOND_MANIFEST);
+  manifest.contributes!.languageServices![0]!.extensions = ["csx"];
+  await expect(readSource({ kind: "builtin", manifest }, { safeMode: false })).rejects.toThrow(
+    "Language services require one matching frontend with the same source extensions.",
+  );
+});
+
+it("reports both second-language owners as unavailable due to conflict", async () => {
+  const other = { ...structuredClone(SECOND_MANIFEST), id: "test.other-case" };
+  const reads = await Promise.all(
+    [SECOND_MANIFEST, other].map((manifest) =>
+      readSource({ kind: "builtin", manifest }, { safeMode: false }),
+    ),
+  );
+  expect(reads.every((read) => read.problems.length === 0)).toBe(true);
+  const plugins = resolvePlugins(reads, { safeMode: false, disabled: new Set() });
+  for (const plugin of plugins) {
+    expect(plugin.status).toBe("invalid");
+    expect(plugin.problems).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "PLUGIN_E_PROVIDER_CONFLICT" })]),
+    );
+  }
+  const resolution = resolveLanguageService(plugins, "case");
+  expect(resolution).toEqual({
+    ok: false,
+    reason: "conflict",
+    language: "case",
+    conflicts: [SECOND_MANIFEST.id, other.id],
+  });
+  const { description } = await readProjectDescription(root);
+  expect(description).toBeDefined();
+  const bindings = new LanguageBindings({ "test.case:case": secondLanguageService });
+  expect(bindings.select("w", description!.manifest, resolution)).toMatchObject({
+    availability: { kind: "unavailable", reason: "conflict", language: "case" },
+    conflicts: [SECOND_MANIFEST.id, other.id],
+  });
+});
+
 it("isolates case-sensitive symbols, legends and overlapping diagnostic codes", async () => {
   const read = await readSource(
     { kind: "builtin", manifest: SECOND_MANIFEST },

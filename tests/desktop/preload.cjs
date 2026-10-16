@@ -43,10 +43,11 @@ contextBridge.exposeInMainWorld("kobrixa", {
   },
   keyboard: { updateContext: call("keyboard") },
   documentation: { open: call("documentationOpen") },
-  // The workbench asks for plugin state at startup (recovery notice); the smoke has no plugins.
+  // No development plugins; built-in help entries come from the renderer's catalog.
   plugins: {
     state: async () => ({
       revision: 0,
+      diagnosticHelpRevision: 0,
       safeMode: false,
       developmentMode: false,
       plugins: [],
@@ -54,6 +55,16 @@ contextBridge.exposeInMainWorld("kobrixa", {
       origins: {},
       python: { pendingReload: [] },
       inflight: [],
+    }),
+    diagnosticHelp: async () => ({
+      revision: 0,
+      plugins: {
+        "kobrixa.basic-plus": { displayName: "Basic Plus", entries: [] },
+        "kobrixa.ev3": {
+          displayName: { en: "EV3 native backend", "zh-TW": "EV3 原生後端" },
+          entries: [],
+        },
+      },
     }),
     notices: async () => [],
     onEvent: () => () => {},
@@ -97,13 +108,21 @@ contextBridge.exposeInMainWorld("kobrixa", {
     },
   },
   language: {
+    status: (workspaceId, refresh) => call("languageStatus")(workspaceId, refresh ?? false),
+    feature: call("languageFeature"),
+    cancelFeature: call("languageCancelFeature"),
+    onStatus: (listener) => {
+      const receive = (_event, event) => listener(event);
+      ipcRenderer.on("language:status-changed", receive);
+      return () => ipcRenderer.removeListener("language:status-changed", receive);
+    },
     quickFixes: call("diagnosticQuickFixes"),
     cancelQuickFix: call("diagnosticCancelQuickFix"),
     completionSync: call("completionSync"),
     sync: call("languageSync"),
     cancel: call("languageCancel"),
     analyze: call("analyze"),
-    diagnostics: async () => [],
+    diagnostics: call("languageDiagnostics"),
   },
   sensorLab: {
     getState: call("labGetState"),

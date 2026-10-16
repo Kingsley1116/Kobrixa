@@ -9,6 +9,12 @@ import { build } from "esbuild";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const temporary = await mkdtemp(path.join(tmpdir(), "kobrixa-desktop-smoke-"));
 const require = createRequire(import.meta.url);
+function replaceProbe(code, anchor, replacement) {
+  const matches =
+    typeof anchor === "string" ? code.split(anchor).length - 1 : Number(anchor.test(code));
+  if (matches !== 1) throw new Error(`Update the smoke renderer probe: ${anchor}`);
+  return code.replace(anchor, replacement);
+}
 const server = await createServer({
   root: path.join(root, "apps/desktop"),
   configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
@@ -49,32 +55,34 @@ const server = await createServer({
         }
 
         if (id === path.join(root, "apps/desktop/src/renderer/editor/completion-session.ts")) {
-          return code.replace(
-            "for (const listener of this.listeners) listener();",
-            'for (const listener of this.listeners) listener(); window.dispatchEvent(new CustomEvent("smoke-completion-applied",{detail:{time:performance.now()}}));',
+          return replaceProbe(
+            code,
+            "      for (const listener of this.listeners) listener();\n    } catch {",
+            '      for (const listener of this.listeners) listener(); window.dispatchEvent(new CustomEvent("smoke-completion-applied",{detail:{time:performance.now()}}));\n    } catch {',
           );
         }
         if (id === path.join(root, "apps/desktop/src/renderer/editor/analysis-session.ts")) {
-          return code
-            .replace(
+          return replaceProbe(
+            replaceProbe(
+              code,
               "private emit(event: Event): void {",
               "private emit(event: Event): void { const smokeStart=performance.now();",
-            )
-            .replace(
-              "for (const listener of this.listeners) listener(this.getCurrent(), event);",
-              'for (const listener of this.listeners) listener(this.getCurrent(), event); if(event === "result") window.dispatchEvent(new CustomEvent("smoke-analysis-applied",{detail:{duration:performance.now()-smokeStart,time:performance.now()}}));',
-            );
+            ),
+            "for (const listener of this.listeners) listener(this.getCurrent(), event);",
+            'for (const listener of this.listeners) listener(this.getCurrent(), event); if(event === "result") window.dispatchEvent(new CustomEvent("smoke-analysis-applied",{detail:{duration:performance.now()-smokeStart,time:performance.now()}}));',
+          );
         }
         if (id === path.join(root, "apps/desktop/src/renderer/editor/analysis-transport.ts")) {
-          return code.replace(
+          return replaceProbe(
+            code,
             /this.result\s*=\s*applyAnalysis\(this.result,\s*reply.patch\);/,
             'const smokeStart=performance.now(); this.result=applyAnalysis(this.result,reply.patch); window.dispatchEvent(new CustomEvent("smoke-analysis-merged",{detail:{duration:performance.now()-smokeStart,time:performance.now()}}));',
           );
         }
         if (id !== path.join(root, "apps/desktop/src/renderer/app.tsx")) return;
         const entry = "export function App(): React.JSX.Element {";
-        if (!code.includes(entry)) throw new Error("Update the smoke App render probe.");
-        return code.replace(
+        return replaceProbe(
+          code,
           entry,
           `${entry}\nwindow.dispatchEvent(new Event("smoke-app-render"));`,
         );
@@ -94,6 +102,7 @@ try {
       path.join(root, "apps/desktop/src/shared/workspace-search.ts"),
       path.join(root, "apps/desktop/src/main/language/language.ts"),
       path.join(root, "apps/desktop/src/main/language/language-worker.ts"),
+      path.join(root, "apps/desktop/src/main/workspace/builtin-language-resolution.ts"),
     ],
     outdir: temporary,
     entryNames: "[name]",

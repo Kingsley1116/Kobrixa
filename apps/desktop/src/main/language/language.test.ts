@@ -129,7 +129,7 @@ describe("LanguageService background checks", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("loads the second frontend once and keeps completion disk reads behind refresh", async () => {
+  it("keeps second-language completion disk reads behind refresh", async () => {
     await writeFile(
       path.join(root, "kobrixa.json"),
       JSON.stringify({
