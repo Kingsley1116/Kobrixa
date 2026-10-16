@@ -1,3 +1,4 @@
+import { emptyAnalysis } from "../../shared/language-sync.js";
 import type { LanguageAnalysis } from "../../shared/language-types.js";
 import { supportsFile, type LanguageStatus } from "../../shared/language-services.js";
 import type { WorkspaceSummary } from "../../shared/api.js";
@@ -23,7 +24,7 @@ export class AnalysisSession {
   private readonly checker: LiveDiagnostics<Checked>;
   constructor(
     private readonly documents: Documents,
-    callbacks: {
+    private readonly callbacks: {
       analyze(workspaceId: string, overlays: Record<string, string>): Promise<AnalysisOutcome>;
       cancel(): void;
       diagnostics(result: LanguageAnalysis): void;
@@ -115,6 +116,14 @@ export class AnalysisSession {
       this.checker.cancel();
       this.snapshot = undefined;
       this.emit("reset");
+      const availability = status?.availability;
+      this.callbacks.diagnostics({
+        ...emptyAnalysis(),
+        diagnostics:
+          availability?.kind === "unavailable" && availability.reason === "project-error"
+            ? availability.diagnostics
+            : [],
+      });
     }
     this.schedule();
   }

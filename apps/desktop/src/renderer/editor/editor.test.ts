@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as monaco from "monaco-editor";
 import { LANGUAGE_CAPABILITIES } from "@kobrixa/plugin-protocol";
 import type { LanguageStatus } from "../../shared/language-services.js";
-import type { Diagnostic } from "../../shared/api.js";
+import type { Diagnostic, WorkspaceSummary } from "../../shared/api.js";
 
 const mocks = vi.hoisted(() => {
   let contentListener: () => void = () => undefined;
@@ -520,3 +520,72 @@ it.each([2, 4])(
     }
   },
 );
+
+it("shows project-error live markers on kobrixa.json without a binding and clears them on recovery", async () => {
+  const file = "kobrixa.json";
+  const diagnostic = {
+    ...diagnostics[0]!,
+    file,
+    source: "kobrixa.core",
+    code: "MAN1001",
+    message: "Invalid JSON",
+  };
+  props.documents.replace([{ file, content: "{", saved: "{" }]);
+  mocks.model.getValue.mockReturnValue("{");
+  let live: Diagnostic[] = [];
+  const analyze = vi.fn();
+  const session = new AnalysisSession(props.documents, {
+    analyze,
+    cancel: vi.fn(),
+    unavailable: vi.fn(),
+    checking: vi.fn(),
+    error: vi.fn(),
+    diagnostics: (analysis) => {
+      live = analysis.diagnostics;
+    },
+  });
+  const workspace = { id: "broken", files: [file], drafts: {} } as WorkspaceSummary;
+  const detach = session.attach();
+  const render = async (status: LanguageStatus) => {
+    session.configure(workspace, status);
+    await act(() =>
+      root.render(
+        createElement(Editor, {
+          ...props,
+          file,
+          openFiles: [file],
+          status,
+          analysisSession: session,
+          diagnostics: live,
+        }),
+      ),
+    );
+  };
+  try {
+    await render({
+      epoch: 1,
+      conflicts: [],
+      availability: {
+        kind: "unavailable",
+        reason: "project-error",
+        message: diagnostic.message,
+        diagnostics: [diagnostic],
+      },
+    });
+    expect(live).toEqual([diagnostic]);
+    expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", [
+      expect.objectContaining({
+        code: "MAN1001",
+        source: "Kobrixa",
+        message: expect.stringContaining("Invalid JSON"),
+      }),
+    ]);
+    expect(monaco.languages.registerHoverProvider).not.toHaveBeenCalled();
+    expect(analyze).not.toHaveBeenCalled();
+    await render(available(2));
+    expect(live).toEqual([]);
+    expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", []);
+  } finally {
+    detach();
+  }
+});

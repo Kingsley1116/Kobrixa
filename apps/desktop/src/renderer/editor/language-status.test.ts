@@ -144,3 +144,58 @@ it("keeps the App status subscription live through StrictMode effect replay", as
     vi.unstubAllGlobals();
   }
 });
+
+it.each(["en", "zh-TW"] as const)(
+  "shows project errors and the no-entry message in %s",
+  async (locale) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      for (const hasDiagnostics of [true, false]) {
+        await act(() =>
+          root.render(
+            createElement(LanguageStatusRow, {
+              locale,
+              openSettings: vi.fn(),
+              status: {
+                epoch: 1,
+                conflicts: [],
+                availability: {
+                  kind: "unavailable",
+                  reason: "project-error",
+                  message: hasDiagnostics
+                    ? "Invalid JSON"
+                    : "Choose an entry file before checking.",
+                  diagnostics: hasDiagnostics
+                    ? [
+                        {
+                          code: "MAN1001",
+                          source: "kobrixa.core",
+                          severity: "error",
+                          message: "Invalid JSON",
+                          file: "kobrixa.json",
+                          range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 2 },
+                        },
+                      ]
+                    : [],
+                },
+              },
+            }),
+          ),
+        );
+        expect(container.querySelector('[role="status"]')?.textContent).toBe(
+          hasDiagnostics
+            ? "Invalid JSON"
+            : locale === "en"
+              ? "Choose an entry file before checking."
+              : "請先選擇進入點檔案，再進行檢查。",
+        );
+        expect(container.querySelector("button")).toBeNull();
+      }
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  },
+);

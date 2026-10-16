@@ -5,7 +5,12 @@ const call =
   (name) =>
   (...args) =>
     ipcRenderer.invoke("smoke", name, args);
+const unsupportedPluginOperation = async () => {
+  throw new Error("Development plugin operations are not supported by the smoke harness.");
+};
 contextBridge.exposeInMainWorld("kobrixa", {
+  // The harness does not customize the native Windows title bar.
+  windowChrome: { setAppearance: async () => {} },
   collab: {
     serverUrl: call("collabServerUrl"),
     getPreferences: call("collabPreferences"),
@@ -45,6 +50,18 @@ contextBridge.exposeInMainWorld("kobrixa", {
   documentation: { open: call("documentationOpen") },
   // No development plugins; built-in help entries come from the renderer's catalog.
   plugins: {
+    execute: unsupportedPluginOperation,
+    cancel: unsupportedPluginOperation,
+    setEnabled: unsupportedPluginOperation,
+    setDeveloperMode: unsupportedPluginOperation,
+    linkFolder: unsupportedPluginOperation,
+    relinkFolder: unsupportedPluginOperation,
+    unlink: unsupportedPluginOperation,
+    reload: unsupportedPluginOperation,
+    pythonCandidates: unsupportedPluginOperation,
+    setPython: unsupportedPluginOperation,
+    readLog: unsupportedPluginOperation,
+    clearSafeModeLock: unsupportedPluginOperation,
     state: async () => ({
       revision: 0,
       diagnosticHelpRevision: 0,

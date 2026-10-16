@@ -1,3 +1,4 @@
+import type { LanguageUnavailable } from "../../shared/language-services.js";
 import type { Diagnostic } from "../../shared/api.js";
 import type { LanguageAnalysis } from "../../shared/language-types.js";
 import type { LanguageStatus } from "../../shared/language-services.js";
@@ -17,7 +18,7 @@ import {
 
 export type AnalysisOutcome =
   | { kind: "result"; epoch: number; analysis: LanguageAnalysis }
-  | { kind: "unavailable"; epoch: number; reason: "missing" | "conflict"; language: string };
+  | (LanguageUnavailable & { epoch: number });
 type AcceptedVersion = AnalysisIdentity & { workspaceId: string };
 export class AnalysisTransport {
   private workspaceId: string | undefined;

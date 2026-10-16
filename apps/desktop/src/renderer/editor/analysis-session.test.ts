@@ -4,6 +4,8 @@ import type { LanguageStatus } from "../../shared/language-services.js";
 import type { AnalysisOutcome } from "./analysis-transport.js";
 import type { WorkspaceSummary } from "../../shared/api.js";
 import { AnalysisSession } from "./analysis-session.js";
+import { createLanguageStatusStore } from "./language-status-store.js";
+import type { LanguageStatusEvent } from "../../shared/language-services.js";
 import { Documents } from "./documents.js";
 
 const result = (epoch = 1): AnalysisOutcome => ({
@@ -34,7 +36,7 @@ function analysisStatus(epoch: number): LanguageStatus {
     },
   };
 }
-function harness() {
+function harness(initialized = true) {
   const documents = new Documents();
   documents.replace([{ file: "main.bp", content: "value = 1", saved: "value = 1" }]);
   const requests: Array<(value: AnalysisOutcome) => void> = [];
@@ -58,7 +60,8 @@ function harness() {
     drafts: { "helper.bpm": "Sub Help()\nEndSub", "kobrixa.json": "{}" },
   } as unknown as WorkspaceSummary;
   const detach = session.attach();
-  session.configure(workspace, analysisStatus(1));
+  if (initialized) session.configure(workspace, analysisStatus(1));
+  callbacks.diagnostics.mockClear();
   return { documents, callbacks, requests, session, workspace, detach, events };
 }
 beforeEach(() => vi.useFakeTimers());
@@ -109,6 +112,8 @@ it("discards results from older document versions and workspaces, including effe
   await vi.advanceTimersByTimeAsync(500);
   expect(callbacks.diagnostics).not.toHaveBeenCalled();
   session.configure({ ...workspace, id: "two" }, analysisStatus(1));
+  expect(callbacks.diagnostics).toHaveBeenCalledExactlyOnceWith(emptyAnalysis());
+  callbacks.diagnostics.mockClear();
   requests[1]!(result());
   await vi.advanceTimersByTimeAsync(500);
   expect(callbacks.diagnostics).not.toHaveBeenCalled();
@@ -146,7 +151,7 @@ it("restarts analysis after availability recovers without a document edit", asyn
     requests[1]!(result(3));
     await vi.advanceTimersByTimeAsync(0);
     expect(session.getCurrent()?.epoch).toBe(3);
-    expect(callbacks.diagnostics).toHaveBeenCalledTimes(2);
+    expect(callbacks.diagnostics).toHaveBeenCalledTimes(4);
   } finally {
     detach();
   }
@@ -171,3 +176,70 @@ it("publishes unavailable separately from an empty successful analysis", async (
     detach();
   }
 });
+
+it.each([false, true])(
+  "publishes project-error diagnostics once and clears on recovery (previous binding: %s)",
+  async (initialized) => {
+    const { session, callbacks, workspace, detach, requests } = harness(initialized);
+    const diagnostics = [
+      {
+        code: "MAN1001",
+        source: "kobrixa.core",
+        severity: "error" as const,
+        message: "Invalid JSON",
+        file: "kobrixa.json",
+        range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 2 },
+      },
+    ];
+    const broken: LanguageStatus = {
+      epoch: 2,
+      conflicts: [],
+      availability: {
+        kind: "unavailable",
+        reason: "project-error",
+        message: "Invalid JSON",
+        diagnostics,
+      },
+    };
+    let emit!: (event: LanguageStatusEvent) => void;
+    const report = vi.fn();
+    const store = createLanguageStatusStore(
+      {
+        status: async () => broken,
+        onStatus: (listener) => {
+          emit = listener;
+          return () => {};
+        },
+      },
+      report,
+    );
+    const off = store.subscribe(() => session.configure(workspace, store.getSnapshot()));
+    try {
+      // If already bound, keep old analysis in flight during the status transition.
+      await vi.advanceTimersByTimeAsync(500);
+      store.configure(workspace.id);
+      await Promise.resolve();
+      expect(store.getSnapshot()).toEqual(broken);
+      expect(report).not.toHaveBeenCalled();
+      expect(callbacks.diagnostics).toHaveBeenLastCalledWith({ ...emptyAnalysis(), diagnostics });
+      const calls = callbacks.diagnostics.mock.calls.length;
+      session.configure({ ...workspace, files: [...workspace.files] }, broken);
+      emit({ workspaceId: workspace.id, status: broken });
+      requests[0]?.(result(1));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(callbacks.diagnostics).toHaveBeenCalledTimes(calls);
+      expect(callbacks.analyze).toHaveBeenCalledTimes(initialized ? 1 : 0);
+      expect(session.getCurrent()).toBeUndefined();
+      emit({ workspaceId: workspace.id, status: analysisStatus(3) });
+      expect(callbacks.diagnostics).toHaveBeenLastCalledWith(emptyAnalysis());
+      emit({ workspaceId: workspace.id, status: broken });
+      expect(callbacks.diagnostics).toHaveBeenCalledTimes(calls + 1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(callbacks.analyze).toHaveBeenCalledTimes(initialized ? 2 : 1);
+    } finally {
+      off();
+      store.dispose();
+      detach();
+    }
+  },
+);

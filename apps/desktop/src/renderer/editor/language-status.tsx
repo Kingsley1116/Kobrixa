@@ -10,7 +10,8 @@ export function LanguageStatusRow({
   openSettings(): void;
 }) {
   if (status?.availability.kind !== "unavailable") return null;
-  const { reason, language } = status.availability;
+  const availability = status.availability;
+  const { reason } = availability;
   const t = copy[locale];
   return (
     <div
@@ -19,11 +20,15 @@ export function LanguageStatusRow({
       data-workspace-banner={reason === "conflict" ? "true" : undefined}
     >
       <span>
-        {reason === "missing"
-          ? t.languageMissing(language)
-          : t.languageConflict(language, status.conflicts.join(", "))}
+        {availability.reason === "project-error"
+          ? availability.diagnostics.length
+            ? availability.message
+            : t.languageChooseEntry
+          : availability.reason === "missing"
+            ? t.languageMissing(availability.language)
+            : t.languageConflict(availability.language, status.conflicts.join(", "))}
       </span>
-      <button onClick={openSettings}>{t.languageSettings}</button>
+      {reason !== "project-error" && <button onClick={openSettings}>{t.languageSettings}</button>}
     </div>
   );
 }

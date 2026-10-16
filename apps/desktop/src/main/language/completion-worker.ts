@@ -48,7 +48,8 @@ export function startCompletionWorker(
           } satisfies CompletionWorkerReply);
           return;
         }
-        if (binding.epoch !== epoch) {
+        const changed = binding.epoch !== epoch;
+        if (changed) {
           provider?.dispose();
           provider = factories[bindingKey(binding)]?.createCompletion();
           epoch = binding.epoch;
@@ -74,8 +75,10 @@ export function startCompletionWorker(
           key = nextKey;
           revision = 0;
           documents = new Map();
-          provider?.dispose();
-          provider = factories[bindingKey(binding)]!.createCompletion();
+          if (!changed) {
+            provider?.dispose();
+            provider = factories[bindingKey(binding)]!.createCompletion();
+          }
           sources = new ProjectSourceCache();
           project = undefined;
         }

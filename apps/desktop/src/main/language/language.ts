@@ -3,7 +3,6 @@ import { Worker } from "node:worker_threads";
 import {
   readProjectDescription,
   requirePublished,
-  type ProjectDescription,
   type PublishedDiagnostic,
 } from "@kobrixa/compiler";
 import type { LanguageServiceResolution } from "@kobrixa/plugin-runtime";
@@ -12,7 +11,6 @@ import { CompletionService } from "./completion.js";
 import { LanguageBindings } from "../workspace/language-binding.js";
 import { BUILTIN_LANGUAGE_SERVICES } from "../workspace/builtin-language-services.js";
 import { resolveBuiltinLanguageService } from "../workspace/builtin-language-resolution.js";
-import { ProjectLoadError } from "../workspace/project-load-error.js";
 import type { WorkspaceService } from "../workspace/workspace.js";
 import {
   applyAnalysis,
@@ -36,10 +34,8 @@ interface RoutingRead {
 interface WorkspaceLanes {
   analysis: LanguageLane;
   completion: CompletionService;
-  description?: ProjectDescription;
   inputKey: string;
   loading?: RoutingRead;
-  projectErrorKey?: string;
 }
 export class LanguageService {
   private readonly bindings = new LanguageBindings(BUILTIN_LANGUAGE_SERVICES);
@@ -155,33 +151,19 @@ export class LanguageService {
       if (loading !== first || !loading.trailing) break;
       loading = loading.trailing;
     }
-    if (!result.description) {
-      // A malformed project is a core loader error, not a missing language provider.
-      const key = JSON.stringify(result.diagnostics);
-      if (lanes.projectErrorKey !== key) {
-        lanes.projectErrorKey = key;
-        const invalidated = this.bindings.restart(workspaceId);
-        if (invalidated) this.publish(workspaceId, invalidated);
-      }
-      const previous = this.bindings.get(workspaceId);
-      if (previous && lanes.description) return previous;
-      throw new ProjectLoadError(requirePublished(result.diagnostics));
-    }
-    const recovered = lanes.projectErrorKey !== undefined;
-    delete lanes.projectErrorKey;
-    lanes.description = result.description;
-    if (recovered) {
-      const invalidated = this.bindings.restart(workspaceId);
-      if (invalidated) this.publish(workspaceId, invalidated);
-    }
     const previous = this.bindings.get(workspaceId);
-    const manifest = lanes.description.manifest;
-    const status = this.bindings.select(
-      workspaceId,
-      manifest,
-      this.resolve(manifest.language),
-      loading.inputKey,
-    );
+    const status = result.description
+      ? this.bindings.select(
+          workspaceId,
+          result.description.manifest,
+          this.resolve(result.description.manifest.language),
+          loading.inputKey,
+        )
+      : this.bindings.projectError(
+          workspaceId,
+          requirePublished(result.diagnostics),
+          loading.inputKey,
+        );
     if (previous?.epoch !== status.epoch) this.publish(workspaceId, status);
     return status;
   }
@@ -195,7 +177,7 @@ export class LanguageService {
             await this.status(id, true);
           } catch (error) {
             if (this.disposed || this.lanes.get(id) !== lanes) return;
-            if (!(error instanceof ProjectLoadError)) throw error;
+            throw error;
           }
         }),
     );
@@ -318,28 +300,29 @@ export class LanguageService {
   private compatibilityRevision = 0;
   async analyze(workspaceId: string, overlays: Record<string, string>): Promise<LanguageAnalysis> {
     const cancellationVersion = this.cancellationVersion;
-    try {
-      const status = await this.status(workspaceId, true);
-      if (cancellationVersion !== this.cancellationVersion)
-        throw new Error("Diagnostics cancelled.");
-      if (!this.bindings.get(workspaceId)) throw new Error("Diagnostics cancelled.");
-      const reply = await this.sync(workspaceId, {
-        epoch: status.epoch,
-        session: "compatibility",
-        revision: ++this.compatibilityRevision,
-        baseRevision: null,
-        analysisBase: null,
-        overlays: { set: overlays, removed: [] },
-      });
-      if (reply.kind !== "result")
-        throw new Error("Language service unavailable or resynchronizing.");
-      return applyAnalysis(undefined, reply.patch).analysis;
-    } catch (error) {
-      if (!(error instanceof ProjectLoadError)) throw error;
-      if (!error.diagnostics.length) throw new Error("Choose an entry file before checking.");
-      return { ...emptyAnalysis(), diagnostics: requirePublished(error.diagnostics) };
+    const status = await this.status(workspaceId, true);
+    if (cancellationVersion !== this.cancellationVersion) throw new Error("Diagnostics cancelled.");
+    if (!this.bindings.get(workspaceId)) throw new Error("Diagnostics cancelled.");
+    if (
+      status.availability.kind === "unavailable" &&
+      status.availability.reason === "project-error"
+    ) {
+      if (!status.availability.diagnostics.length) throw new Error(status.availability.message);
+      return { ...emptyAnalysis(), diagnostics: status.availability.diagnostics };
     }
+    const reply = await this.sync(workspaceId, {
+      epoch: status.epoch,
+      session: "compatibility",
+      revision: ++this.compatibilityRevision,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: overlays, removed: [] },
+    });
+    if (reply.kind !== "result")
+      throw new Error("Language service unavailable or resynchronizing.");
+    return applyAnalysis(undefined, reply.patch).analysis;
   }
+
   async diagnostics(
     workspaceId: string,
     overlays: Record<string, string>,

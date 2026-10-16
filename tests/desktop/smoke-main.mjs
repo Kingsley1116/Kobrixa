@@ -42,6 +42,7 @@ const searchHelpers = await import(
 );
 const languageRoot = path.join(temporary, "language-project");
 fs.mkdirSync(languageRoot);
+// This UI smoke harness does not mirror production afterRouting refreshes or IPC zod schemas.
 const language = new LanguageService(
   {
     projectInput: (id) => ({

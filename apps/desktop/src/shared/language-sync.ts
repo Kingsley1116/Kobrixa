@@ -1,3 +1,4 @@
+import type { LanguageUnavailable } from "./language-services.js";
 import type { PublishedDiagnostic } from "@kobrixa/compiler";
 import {
   emptyLanguageIndex,
@@ -145,7 +146,7 @@ export interface AnalysisPatch {
 }
 export type LanguageSyncReply =
   | { kind: "resync"; epoch: number }
-  | { kind: "unavailable"; epoch: number; reason: "missing" | "conflict"; language: string }
+  | (LanguageUnavailable & { epoch: number })
   | { kind: "result"; epoch: number; session: string; revision: number; patch: AnalysisPatch };
 
 export const equalValue = (a: unknown, b: unknown): boolean =>

@@ -62,6 +62,8 @@ it("reports both invalid frontend owners as conflict before missing", async () =
     options,
   );
   expect(plugins.map((p) => p.status)).toEqual(["invalid", "invalid"]);
+  for (const plugin of plugins)
+    for (const problem of plugin.problems) problem.message = "Reworded conflict explanation";
   expect(resolveFrontendProvider(plugins, "test")).toEqual({
     ok: false,
     reason: "conflict",

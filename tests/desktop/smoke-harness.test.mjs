@@ -3,9 +3,10 @@ import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
+import ts from "typescript";
 
 const preload = await readFile(new URL("./preload.cjs", import.meta.url), "utf8");
-function loadPreload() {
+function loadPreload(source = preload) {
   let api;
   const calls = [];
   const ipcRenderer = new EventEmitter();
@@ -14,7 +15,9 @@ function loadPreload() {
     calls.push(args);
     return reply;
   };
-  runInNewContext(preload, {
+  runInNewContext(source, {
+    exports: {},
+    process: { platform: "win32" },
     require: () => ({
       contextBridge: {
         exposeInMainWorld(name, value) {
@@ -75,4 +78,33 @@ test("smoke preload forwards language status events and unsubscribes", () => {
   ipcRenderer.emit("language:status-changed", {}, event);
   assert.deepEqual(received, [event]);
   assert.equal(ipcRenderer.listenerCount("language:status-changed"), 0);
+});
+
+function assertApiKeys(actual, expected, prefix = "kobrixa") {
+  for (const key of Object.keys(expected)) {
+    const name = `${prefix}.${key}`;
+    assert.ok(Object.hasOwn(actual, key), `Smoke preload is missing ${name}`);
+    assert.equal(typeof actual[key], typeof expected[key], `${name} has a different type`);
+    if (expected[key] && typeof expected[key] === "object")
+      assertApiKeys(actual[key], expected[key], name);
+  }
+}
+
+test("smoke preload contains the real preload's complete API key tree", async () => {
+  const source = await readFile(
+    new URL("../../apps/desktop/src/preload/index.ts", import.meta.url),
+    "utf8",
+  );
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const real = loadPreload(compiled).api;
+  const smoke = loadPreload().api;
+  assertApiKeys(smoke, real);
+  // Guard the comparison itself against the drift that prompted this test.
+  delete smoke.language.onStatus;
+  assert.throws(() => assertApiKeys(smoke, real), /kobrixa\.language\.onStatus/);
+  const missingHelp = loadPreload().api;
+  delete missingHelp.plugins.diagnosticHelp;
+  assert.throws(() => assertApiKeys(missingHelp, real), /kobrixa\.plugins\.diagnosticHelp/);
 });

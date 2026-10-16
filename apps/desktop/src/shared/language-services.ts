@@ -1,4 +1,5 @@
 import type { FrontendDecl, LanguageCapability } from "@kobrixa/plugin-protocol";
+import type { PublishedDiagnostic } from "@kobrixa/compiler";
 export type LanguageBinding = {
   epoch: number;
   pluginId: string;
@@ -10,7 +11,14 @@ export type LanguageBinding = {
 };
 export type LanguageAvailability =
   | { kind: "available"; binding: LanguageBinding }
-  | { kind: "unavailable"; reason: "missing" | "conflict"; language: string };
+  | { kind: "unavailable"; reason: "missing" | "conflict"; language: string }
+  | {
+      kind: "unavailable";
+      reason: "project-error";
+      message: string;
+      diagnostics: PublishedDiagnostic[];
+    };
+export type LanguageUnavailable = Extract<LanguageAvailability, { kind: "unavailable" }>;
 export interface LanguageStatus {
   epoch: number;
   availability: LanguageAvailability;

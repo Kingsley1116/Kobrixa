@@ -1,3 +1,4 @@
+import type { LanguageUnavailable } from "./language-services.js";
 import type { CompletionIndex } from "./language-types.js";
 
 export interface CompletionDocument {
@@ -29,7 +30,7 @@ export interface CompletionSyncRequest {
 }
 export type CompletionSyncReply =
   | { kind: "resync"; epoch: number }
-  | { kind: "unavailable"; epoch: number; reason: "missing" | "conflict"; language: string }
+  | (LanguageUnavailable & { epoch: number })
   | {
       kind: "result";
       epoch: number;

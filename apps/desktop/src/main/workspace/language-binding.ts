@@ -1,4 +1,4 @@
-import type { ProjectManifest } from "@kobrixa/compiler";
+import type { ProjectManifest, PublishedDiagnostic } from "@kobrixa/compiler";
 import type { LanguageCapability } from "@kobrixa/plugin-protocol";
 import type { LanguageServiceResolution } from "@kobrixa/plugin-runtime";
 import type { LanguageStatus } from "../../shared/language-services.js";
@@ -85,6 +85,29 @@ export class LanguageBindings {
     if (entry.status.availability.kind === "available")
       entry.status.availability.binding.epoch = entry.status.epoch;
     return structuredClone(entry.status);
+  }
+  projectError(
+    workspaceId: string,
+    diagnostics: PublishedDiagnostic[],
+    routingKey = "",
+  ): LanguageStatus {
+    const fingerprint = JSON.stringify(["project-error", routingKey, diagnostics]);
+    const previous = this.states.get(workspaceId);
+    if (previous?.fingerprint === fingerprint) return structuredClone(previous.status);
+    const status: LanguageStatus = {
+      epoch: ++this.nextEpoch,
+      conflicts: [],
+      availability: {
+        kind: "unavailable",
+        reason: "project-error",
+        message:
+          diagnostics.map((item) => item.message).join("\n") ||
+          "Choose an entry file before checking.",
+        diagnostics: structuredClone(diagnostics),
+      },
+    };
+    this.states.set(workspaceId, { fingerprint, status });
+    return structuredClone(status);
   }
   get(workspaceId: string): LanguageStatus | undefined {
     const status = this.states.get(workspaceId)?.status;

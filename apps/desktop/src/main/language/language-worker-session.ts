@@ -158,12 +158,10 @@ export class LanguageWorkerSession {
     const published = this.history
       .get(query.analysisVersion)!
       .diagnostics.find((d) => d.file === query.file && sameDiagnostic(d, query.diagnostic));
-    if (
-      !published ||
-      published.source !== this.binding.pluginId ||
-      !supportsFile(this.binding, query.file)
-    )
-      return stale;
+    if (!published) return stale;
+    if (published.source !== this.binding.pluginId)
+      return { kind: "result", epoch: query.epoch, fixes: [] };
+    if (!supportsFile(this.binding, query.file)) return stale;
     if (!this.binding.capabilities.includes("quickFixes"))
       return { kind: "result", epoch: query.epoch, fixes: [] };
     const key = JSON.stringify([

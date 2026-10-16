@@ -620,9 +620,6 @@ export function App(): React.JSX.Element {
     languageStatus,
     languageCompanion,
   ]);
-  useLayoutEffect(() => {
-    setLiveDiagnostics([]);
-  }, [workspace?.id, languageStatus?.epoch]);
   const queryLanguageFeature = useCallback(
     (snapshot: EditorAnalysis, query: LanguageFeatureQuery, signal: AbortSignal) =>
       analysisTransport.feature(snapshot.analysis, query, signal),
@@ -3779,7 +3776,7 @@ export function App(): React.JSX.Element {
                   hidden={settingsActive}
                 >
                   {languageStatus?.availability.kind === "unavailable" &&
-                    languageStatus.availability.reason === "missing" && (
+                    languageStatus.availability.reason !== "conflict" && (
                       <LanguageStatusRow
                         status={languageStatus}
                         locale={locale}

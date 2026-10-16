@@ -248,6 +248,68 @@ describe("LanguageService background checks", () => {
     expect(reader).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["{", "MAN1001"],
+    ["{}", "MAN1001"],
+  ])("publishes a first project-load failure (%s) as status and recovers", async (text, code) => {
+    const listener = vi.fn();
+    service.onStatus(listener);
+    await writeFile(path.join(root, "kobrixa.json"), text);
+    const broken = await service.status("workspace");
+    expect(broken).toMatchObject({
+      epoch: 1,
+      conflicts: [],
+      availability: {
+        kind: "unavailable",
+        reason: "project-error",
+        message: expect.stringMatching(/\S/),
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code,
+            source: "kobrixa.core",
+            file: "kobrixa.json",
+            range: expect.any(Object),
+          }),
+        ]),
+      },
+    });
+    expect(listener).toHaveBeenCalledExactlyOnceWith({ workspaceId: "workspace", status: broken });
+    expect(createWorker).not.toHaveBeenCalled();
+    await writeFile(
+      path.join(root, "kobrixa.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "fixed",
+        language: "bp",
+        target: "ev3-native",
+        entry: "main.bp",
+        outputDir: "out",
+        assets: [],
+      }),
+    );
+    await service.refresh("workspace");
+    const fixed = await service.status("workspace");
+    expect(fixed.availability.kind).toBe("available");
+    expect(fixed.epoch).toBe(broken.epoch + 1);
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenLastCalledWith({ workspaceId: "workspace", status: fixed });
+  });
+
+  it("provides a non-empty status message when no entry is chosen", async () => {
+    await writeFile(path.join(root, "other.bp"), "LCD.Clear()\n");
+    service.dispose();
+    service = new LanguageService({ projectInput: () => ({ inputPath: root }) }, createWorker);
+    await expect(service.status("workspace")).resolves.toMatchObject({
+      availability: {
+        kind: "unavailable",
+        reason: "project-error",
+        message: "Choose an entry file before checking.",
+        diagnostics: [],
+      },
+    });
+    expect(createWorker).not.toHaveBeenCalled();
+  });
+
   it("shares a failed first routing read until an explicit refresh", async () => {
     await writeFile(path.join(root, "kobrixa.json"), "{");
     const description = await compiler.readProjectDescription(root, "main.bp");
@@ -266,12 +328,20 @@ describe("LanguageService background checks", () => {
     expect(reader).toHaveBeenCalledTimes(1);
     expect(results).toEqual(
       Array.from({ length: 3 }, () => ({
-        status: "rejected",
-        reason: expect.objectContaining({ diagnostics: description.diagnostics }),
+        status: "fulfilled",
+        value: expect.objectContaining({
+          epoch: 1,
+          availability: expect.objectContaining({
+            kind: "unavailable",
+            reason: "project-error",
+            diagnostics: description.diagnostics,
+          }),
+        }),
       })),
     );
-    await expect(service.status("workspace")).rejects.toMatchObject({
-      diagnostics: description.diagnostics,
+    await expect(service.status("workspace")).resolves.toMatchObject({
+      epoch: 1,
+      availability: { reason: "project-error", diagnostics: description.diagnostics },
     });
     expect(reader).toHaveBeenCalledTimes(1);
     reader.mockResolvedValueOnce(description);
@@ -1274,12 +1344,13 @@ describe("LanguageService background checks", () => {
     const invalid = await service.status("workspace");
     expect(invalid.epoch).toBeGreaterThan(first.epoch);
     const broken = await service.sync("workspace", { ...update, epoch: invalid.epoch });
-    if (broken.kind !== "result") throw new Error("Expected core diagnostics");
-    expect(applyAnalysis(undefined, broken.patch).analysis).toMatchObject({
+    expect(broken).toMatchObject({
+      kind: "unavailable",
+      reason: "project-error",
+      epoch: invalid.epoch,
       diagnostics: [expect.objectContaining({ code: "MAN1001", source: "kobrixa.core" })],
-      index: { symbols: {} },
-      tokensByFile: {},
     });
+    expect(broken).toEqual({ ...invalid.availability, epoch: invalid.epoch });
     await writeFile(path.join(root, "kobrixa.json"), JSON.stringify(manifest));
     await service.refresh("workspace");
     const recovered = await service.status("workspace");

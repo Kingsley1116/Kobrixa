@@ -1,5 +1,6 @@
 import type { BackendDecl, FrontendDecl, LanguageServiceDecl } from "@kobrixa/plugin-protocol";
 import type { RegisteredPlugin } from "./registry.js";
+import type { PluginProblem } from "./errors.js";
 
 export type ProviderRef<T extends FrontendDecl | BackendDecl = FrontendDecl | BackendDecl> = {
   pluginId: string;
@@ -23,12 +24,16 @@ export type LanguageServiceResolution =
   | { ok: false; reason: "missing" | "conflict"; language: string; conflicts: string[] };
 
 export function markProviderConflicts(plugins: RegisteredPlugin[]): void {
-  const owners = new Map<string, RegisteredPlugin[]>();
+  const owners = new Map<NonNullable<PluginProblem["providerKey"]>, RegisteredPlugin[]>();
   for (const plugin of plugins) {
     if (plugin.status !== "enabled") continue;
     const keys = [
-      ...(plugin.manifest?.contributes?.frontends ?? []).map((item) => `language:${item.language}`),
-      ...(plugin.manifest?.contributes?.backends ?? []).map((item) => `target:${item.target}`),
+      ...(plugin.manifest?.contributes?.frontends ?? []).map(
+        (item) => `language:${item.language}` as const,
+      ),
+      ...(plugin.manifest?.contributes?.backends ?? []).map(
+        (item) => `target:${item.target}` as const,
+      ),
     ];
     for (const key of keys) owners.set(key, [...(owners.get(key) ?? []), plugin]);
   }
@@ -39,6 +44,7 @@ export function markProviderConflicts(plugins: RegisteredPlugin[]): void {
       plugin.status = "invalid";
       plugin.problems.push({
         code: "PLUGIN_E_PROVIDER_CONFLICT",
+        providerKey: key,
         message: `Multiple enabled plugins provide ${key}.`,
       });
     }
@@ -48,10 +54,10 @@ export function resolveFrontendProvider(
   plugins: readonly RegisteredPlugin[],
   language: string,
 ): FrontendResolution {
-  const message = `Multiple enabled plugins provide language:${language}.`;
+  const key = `language:${language}`;
   const conflicts = plugins
     .filter((plugin) =>
-      plugin.problems.some((p) => p.code === "PLUGIN_E_PROVIDER_CONFLICT" && p.message === message),
+      plugin.problems.some((p) => p.code === "PLUGIN_E_PROVIDER_CONFLICT" && p.providerKey === key),
     )
     .map((plugin) => plugin.id)
     .sort();

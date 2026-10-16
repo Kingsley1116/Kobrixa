@@ -166,11 +166,52 @@ it("publishes BUILD1007 for forged sources without retaining a usable fix snapsh
           revision: 1,
           analysisVersion: reply.patch.version,
           requestId: source,
-          file: "main.bp",
+          file: diagnostic.file,
           diagnostic: { ...diagnostic, source },
         },
       }),
-    ).toEqual({ kind: "stale", epoch: 1 });
+    ).toEqual(
+      source === "kobrixa.core"
+        ? { kind: "result", epoch: 1, fixes: [] }
+        : { kind: "stale", epoch: 1 },
+    );
   }
   expect(fixes).not.toHaveBeenCalled();
+});
+
+it("returns empty fixes for a current core loader diagnostic without calling the provider", async () => {
+  const fixes = vi.spyOn(basicPlusLanguageService, "createAnalysis");
+  await writeFile(path.join(root, "kobrixa.json"), "{");
+  const reply = await worker.sync(request(1, 1, null, ""));
+  if (reply.kind !== "result") throw new Error("Expected loader diagnostics");
+  const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics[0]!;
+  expect(diagnostic).toMatchObject({
+    code: "MAN1001",
+    source: "kobrixa.core",
+    file: "kobrixa.json",
+  });
+  const providerFixes = vi.spyOn(fixes.mock.results[0]!.value, "quickFixes");
+  try {
+    expect(
+      worker.quickFixes({
+        kind: "quick-fixes",
+        id: 2,
+        workspaceId: "w",
+        cancellation: new SharedArrayBuffer(4),
+        request: {
+          epoch: 1,
+          session: "s",
+          revision: 1,
+          analysisVersion: reply.patch.version,
+          requestId: "core",
+          file: "kobrixa.json",
+          diagnostic,
+        },
+      }),
+    ).toEqual({ kind: "result", epoch: 1, fixes: [] });
+    expect(providerFixes).not.toHaveBeenCalled();
+  } finally {
+    providerFixes.mockRestore();
+    fixes.mockRestore();
+  }
 });

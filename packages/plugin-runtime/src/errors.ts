@@ -40,6 +40,7 @@ export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 export interface PluginProblem {
   code: PluginErrorCode;
   message: string;
+  providerKey?: `language:${string}` | `target:${string}`;
 }
 export class PluginError extends Error {
   constructor(
