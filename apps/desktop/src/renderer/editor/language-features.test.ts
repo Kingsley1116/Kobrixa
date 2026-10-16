@@ -111,7 +111,10 @@ function setup(sources: Record<string, string>) {
   provider.analyze(project, 1, signal);
   providers.set(analysis, provider);
   const cache = new CompletionCache();
-  cache.update(basicPlusCompletion(new BasicPlusCompletionAnalyzer().analyze(project, signal)), 1);
+  const completionIndex = basicPlusCompletion(
+    new BasicPlusCompletionAnalyzer().analyze(project, signal),
+  );
+  cache.update(completionIndex, 1);
   const models = new Map([["main.bp", model("main.bp", sources["main.bp"]!)]]);
   for (const [file, model] of models) cache.attach(file, model, []);
   const binding = {
@@ -177,6 +180,8 @@ function setup(sources: Record<string, string>) {
   features.update(snapshot);
   const position = (lineNumber: number, column: number) => ({ lineNumber, column }) as Position;
   return {
+    cache,
+    completionIndex,
     quickFixes,
     setLocale: (value: "en" | "zh-TW") => {
       locale = value;
@@ -338,6 +343,34 @@ it("returns built-ins immediately while analysis is missing without reading the 
   expect(read).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each(["cleared", "invalid"] as const)(
+  "refreshes current analysis completions after the cache is %s and restores user symbols",
+  async (state) => {
+    const { features, main, cache, completionIndex, position, refreshCompletions } = setup({
+      "main.bp": "LCDValue = 1\nLC",
+    });
+    const cursor = position(2, 3);
+    expect((await features.completions(main, cursor, token)).incomplete).toBe(false);
+    if (state === "cleared") cache.clear();
+    else cache.invalidate("main.bp");
+    const pending = await features.completions(main, cursor, token);
+    expect.soft(pending.incomplete).toBe(true);
+    expect(pending.suggestions.some((item) => item.label === "LCDValue")).toBe(false);
+    expect(pending.suggestions.some((item) => item.label === "LCD.Clear")).toBe(true);
+
+    cache.update(completionIndex, 1);
+    cache.attach("main.bp", main, []);
+    features.refreshCompletion();
+    expect.soft(refreshCompletions).toHaveBeenCalledExactlyOnceWith(main, cursor);
+    const refreshed = await features.completions(main, cursor, token);
+    expect(refreshed.incomplete).toBe(false);
+    expect(refreshed.suggestions.find((item) => item.label === "LCDValue")).toMatchObject({
+      insertText: "LCDValue",
+      detail: "global number LCDValue",
+    });
+  },
+);
 
 it("validates accepted model versions for repeated hover and rejects a newer model", async () => {
   vi.useFakeTimers();
@@ -595,14 +628,21 @@ it("tolerates built-in occurrences whose symbols are absent from the generic ind
       token,
     ),
   ).toEqual([]);
-  expect(
-    await h.features.references(
-      h.main,
-      h.position(occurrence!.range.startLine, occurrence!.range.startColumn),
-      true,
-      token,
-    ),
-  ).toBeDefined();
+  expect
+    .soft(
+      await h.features.references(
+        h.main,
+        h.position(occurrence!.range.startLine, occurrence!.range.startColumn),
+        true,
+        token,
+      ),
+    )
+    .toEqual([
+      {
+        uri: h.main.uri,
+        range: { startLineNumber: 1, startColumn: 5, endLineNumber: 1, endColumn: 10 },
+      },
+    ]);
   expect(
     (
       await h.features.renameLocation(
@@ -611,7 +651,7 @@ it("tolerates built-in occurrences whose symbols are absent from the generic ind
         token,
       )
     ).rejectReason,
-  ).toBeDefined();
+  ).toBe("A current, editable user-defined symbol is required.");
 });
 it("gates fixes by the binding capability, source, and epoch", async () => {
   const h = setup({ "main.bp": "LCD.Clear(" });

@@ -36,7 +36,7 @@ import { Dialog, DialogActions } from "./components/dialog.js";
 import { useKeyboard } from "./keybindings/keyboard-state.js";
 import type { AppCommand } from "./keybindings/keybindings.js";
 import { FileWriteQueue, saveSnapshot } from "./workspace/save-coordinator.js";
-import { formatSource } from "./editor/editor-format.js";
+import { formatSourceForSave } from "./editor/editor-format.js";
 import {
   useCallback,
   useEffect,
@@ -2080,26 +2080,19 @@ export function App(): React.JSX.Element {
                   const revision = project.documents.revision;
                   const model = project.editor.models.get(file);
                   const version = model?.getVersionId();
-                  const status =
-                    sessions.activeId === workspaceId
-                      ? languageStatusStore.getSnapshot()
-                      : await window.kobrixa.language.status(workspaceId);
-                  const formatted = await formatSource(
+                  return formatSourceForSave(
                     file,
                     content,
                     settingsStore.getSnapshot().values.indentSize,
-                    status,
+                    () =>
+                      sessions.activeId === workspaceId
+                        ? languageStatusStore.getSnapshot()
+                        : window.kobrixa.language.status(workspaceId),
+                    () =>
+                      project.documents.revision === revision &&
+                      project.editor.models.get(file) === model &&
+                      model?.getVersionId() === version,
                   );
-                  const latest =
-                    sessions.activeId === workspaceId
-                      ? languageStatusStore.getSnapshot()
-                      : await window.kobrixa.language.status(workspaceId);
-                  return project.documents.revision === revision &&
-                    project.editor.models.get(file) === model &&
-                    model?.getVersionId() === version &&
-                    latest?.epoch === status?.epoch
-                    ? formatted
-                    : content;
                 }
               : undefined,
           apply: (before, after) => {

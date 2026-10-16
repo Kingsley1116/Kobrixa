@@ -17,6 +17,16 @@ const mocks = vi.hoisted(() => {
     getVersionId: vi.fn(() => 1),
     getAlternativeVersionId: vi.fn(() => 1),
     getValueLength: vi.fn(() => model.getValue().length),
+    getLineContent: vi.fn((line: number) => model.getValue().split("\n")[line - 1]!),
+    getFullModelRange: vi.fn(() => {
+      const lines = model.getValue().split("\n");
+      return {
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: lines.length,
+        endColumn: lines.at(-1)!.length + 1,
+      };
+    }),
     onDidChangeContent: vi.fn(() => ({ dispose: vi.fn() })),
     updateOptions: vi.fn(),
     dispose: vi.fn(),
@@ -99,6 +109,7 @@ vi.mock("monaco-editor/languages/features/json/json.worker?worker", () => ({ def
 import { Editor, type EditorHandle } from "./editor.js";
 import { Documents } from "./documents.js";
 import { AnalysisSession } from "./analysis-session.js";
+import { basicPlusCompanion } from "./companions/basic-plus/companion.js";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -327,6 +338,7 @@ it("detaches dynamic services on unavailability, restores them without edits, an
       createElement(Editor, {
         ...props,
         ref,
+        diagnostics: [],
         status: {
           epoch: 2,
           conflicts: [],
@@ -372,6 +384,68 @@ it("detaches dynamic services on unavailability, restores them without edits, an
   expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
 });
 
+it.each([
+  { file: "main.bp", source: "kobrixa.basic-plus", code: "BUILD1001" },
+  { file: "kobrixa.json", source: "kobrixa.core", code: "BUILD1007" },
+])(
+  "retains $source build markers on $file when language services become unavailable",
+  async ({ file, source, code }) => {
+    const build = [{ ...diagnostics[0]!, file, source, code, message: "Build failed" }];
+    const live = { ...diagnostics[0]!, file, message: "Live analysis error" };
+    props.documents.replace([{ file, content: "LCD.Clear()", saved: "LCD.Clear()" }]);
+    const render = (status: LanguageStatus, items: Diagnostic[]) =>
+      act(() =>
+        root.render(
+          createElement(Editor, {
+            ...props,
+            file,
+            openFiles: [file],
+            status,
+            diagnostics: items,
+          }),
+        ),
+      );
+    await render(available(), [...build, live]);
+    expect(mocks.setModelMarkers.mock.lastCall?.[2]).toEqual([
+      expect.objectContaining({
+        code,
+        source: source === "kobrixa.core" ? "Kobrixa" : source,
+        message: expect.stringContaining("Build failed"),
+      }),
+      expect.objectContaining({
+        code: live.code,
+        message: expect.stringContaining("Live analysis error"),
+      }),
+    ]);
+
+    // App clears live diagnostics on unavailable/epoch changes, retaining build diagnostics.
+    await render(
+      {
+        epoch: 2,
+        conflicts: [],
+        availability: { kind: "unavailable", reason: "missing", language: "bp" },
+      },
+      build,
+    );
+    expect(mocks.setModelMarkers.mock.lastCall?.[2]).toEqual([
+      expect.objectContaining({
+        code,
+        source: source === "kobrixa.core" ? "Kobrixa" : source,
+        message: expect.stringContaining("Build failed"),
+      }),
+    ]);
+    mocks.setModelMarkers.mockClear();
+    await render(available(3), build);
+    expect(mocks.setModelMarkers.mock.lastCall?.[2]).toEqual([
+      expect.objectContaining({
+        code,
+        source: source === "kobrixa.core" ? "Kobrixa" : source,
+        message: expect.stringContaining("Build failed"),
+      }),
+    ]);
+  },
+);
+
 it("registers only declared capabilities and gates both formatting providers by the model route", async () => {
   const onlyHover = available();
   if (onlyHover.availability.kind !== "available") throw new Error("Expected binding");
@@ -402,3 +476,47 @@ it("registers only declared capabilities and gates both formatting providers by 
     await rangeProvider.provideDocumentRangeFormattingEdits(model, range, options, active),
   ).toEqual([]);
 });
+
+it.each([2, 4])(
+  "formats a .bp document and selected range through its companion with %i spaces",
+  async (tabSize) => {
+    const source = "If True\nLCD.Clear()\nEndIf";
+    mocks.model.getValue.mockReturnValue(source);
+    props.documents.replace([{ file: "main.bp", content: source, saved: source }]);
+    const formatDocument = vi.spyOn(basicPlusCompanion, "formatSource");
+    const formatRange = vi.spyOn(basicPlusCompanion, "rangeFormatting");
+    try {
+      await act(() => root.render(createElement(Editor, props)));
+      const documentProvider = vi.mocked(monaco.languages.registerDocumentFormattingEditProvider)
+        .mock.lastCall![1];
+      const rangeProvider = vi.mocked(monaco.languages.registerDocumentRangeFormattingEditProvider)
+        .mock.lastCall![1];
+      const model = mocks.model as unknown as monaco.editor.ITextModel;
+      const token = { isCancellationRequested: false } as monaco.CancellationToken;
+      const options = { tabSize, insertSpaces: true };
+      const range = new monaco.Range(2, 1, 2, 12);
+      expect
+        .soft(await documentProvider.provideDocumentFormattingEdits(model, options, token))
+        .toEqual([
+          {
+            range: { startLineNumber: 1, startColumn: 1, endLineNumber: 3, endColumn: 6 },
+            text: `If True\n${" ".repeat(tabSize)}LCD.Clear()\nEndIf\n`,
+          },
+        ]);
+      expect.soft(formatDocument).toHaveBeenCalledExactlyOnceWith(source, tabSize);
+      expect
+        .soft(await rangeProvider.provideDocumentRangeFormattingEdits(model, range, options, token))
+        .toEqual([
+          {
+            range: { startLineNumber: 2, startColumn: 1, endLineNumber: 2, endColumn: 1 },
+            text: " ".repeat(tabSize),
+          },
+        ]);
+      expect.soft(formatRange).toHaveBeenCalledExactlyOnceWith(model, range, options, token);
+      expect(mocks.model.setValue).not.toHaveBeenCalled();
+    } finally {
+      formatDocument.mockRestore();
+      formatRange.mockRestore();
+    }
+  },
+);

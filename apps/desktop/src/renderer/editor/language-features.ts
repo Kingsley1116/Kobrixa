@@ -446,9 +446,13 @@ export class LanguageFeatures implements monaco.IDisposable {
     if (!companion || !this.routed(model, "completion") || token.isCancellationRequested)
       return { suggestions: [] };
     const current = this.current(model);
-    if (!current) this.pendingCompletion = { model, version: model.getVersionId(), position };
-    const candidates = this.host.completionSymbols?.(model, position) ?? [];
-    return { ...companion.completions(model, position, candidates, token), incomplete: !current };
+    const cached = this.host.completionSymbols?.(model, position);
+    if (!current || !cached)
+      this.pendingCompletion = { model, version: model.getVersionId(), position };
+    return {
+      ...companion.completions(model, position, cached ?? [], token),
+      incomplete: !current || !cached,
+    };
   }
   async hover(
     model: monaco.editor.ITextModel,

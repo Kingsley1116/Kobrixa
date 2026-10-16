@@ -194,12 +194,13 @@ export class CompletionSession {
     );
   }
   private async run(): Promise<void> {
-    if (this.running || !this.due || !this.workspace || !this.binding() || this.suspended) return;
+    const binding = this.binding();
+    if (this.running || !this.due || !this.workspace || !binding || this.suspended) return;
     this.due = false;
     this.firstQueued = undefined;
     clearTimeout(this.timer);
     const session = this.session;
-    const epoch = this.status!.epoch;
+    const epoch = binding.epoch;
     const workspaceId = this.workspace.id;
     const generation = this.generation;
     const requestedModels = new Map(this.models);

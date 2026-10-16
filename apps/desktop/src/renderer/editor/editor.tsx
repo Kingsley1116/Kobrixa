@@ -884,7 +884,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       monaco.editor.setModelMarkers(
         model,
         "kobrixa",
-        (status?.availability.kind === "unavailable" ? [] : diagnostics)
+        diagnostics
           .filter((item) => item.file === modelFile)
           .map((item) => ({
             severity: markerSeverity(item.severity),

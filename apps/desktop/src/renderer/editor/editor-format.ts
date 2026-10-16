@@ -13,6 +13,30 @@ interface JsonFormatter {
   ): Promise<JsonEdit[]>;
 }
 let request = 0;
+/** Keep format-on-save bound to the same language epoch and document snapshot. */
+export async function formatSourceForSave(
+  file: string,
+  source: string,
+  indentSize: 2 | 4,
+  getStatus: () => LanguageStatus | undefined | Promise<LanguageStatus | undefined>,
+  isCurrent: () => boolean,
+): Promise<string> {
+  let status: LanguageStatus | undefined;
+  try {
+    status = await getStatus();
+  } catch {
+    return source;
+  }
+  const formatted = await formatSource(file, source, indentSize, status);
+  let latest: LanguageStatus | undefined;
+  try {
+    latest = await getStatus();
+  } catch {
+    return source;
+  }
+  return isCurrent() && latest?.epoch === status?.epoch ? formatted : source;
+}
+
 /** Format a snapshot, including recovered files that are not currently open. */
 export async function formatSource(
   file: string,

@@ -123,6 +123,24 @@ function reply(
 }
 afterEach(() => vi.useRealTimers());
 
+it("uses the guarded completion binding's epoch for sync requests", async () => {
+  vi.useFakeTimers();
+  const sync = vi.fn(async (_workspace: string, request: CompletionSyncRequest) =>
+    reply(request, applyCompletionUpdates(new Map(), request.updates)!),
+  );
+  const session = new CompletionSession(sync, async () => status(7));
+  // Distinct values verify that the binding, rather than its status envelope, owns the request.
+  const configured = { ...status(7), epoch: 9 };
+  try {
+    session.configure(workspace(), configured, companion);
+    session.bind("main.bp", model().value);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sync).toHaveBeenCalledExactlyOnceWith("project", expect.objectContaining({ epoch: 7 }));
+  } finally {
+    session.dispose();
+  }
+});
+
 it("discards an in-flight index after a workspace switch or model replacement", async () => {
   vi.useFakeTimers();
   const pending: Array<() => void> = [];
