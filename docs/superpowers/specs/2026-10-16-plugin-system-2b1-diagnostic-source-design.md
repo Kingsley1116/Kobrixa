@@ -131,7 +131,8 @@ interface PluginDiagnosticHelpFile {
 
 **內建擁有者對照**（`packages/compiler/src/diagnostic-help.ts`，維持 browser-safe）：
 
-- 新增明確的 `BUILTIN_HELP_OWNERS`：`kobrixa.basic-plus` 擁有 BP 條目、`kobrixa.ev3` 擁有 EV3 條目、`kobrixa.core` 擁有 MAN、IR、BUILD 條目。這是目錄的所有權宣告，以測試保證每筆條目（含 variants）恰好屬於一個 owner；不是 runtime 依代碼推測 `source`。
+- 新增明確的 `BUILTIN_HELP_OWNERS`：`kobrixa.basic-plus` 擁有 BP 條目、`kobrixa.ev3` 擁有 EV3 條目、`kobrixa.core` 擁有 MAN、IR、BUILD 條目。這是目錄的所有權宣告，以測試保證每筆條目（含 variants）至少屬於一個 owner；不是 runtime 依代碼推測 `source`。
+- 少數條目由多個內建提供者發出，需明確列為共有：`EV32031` 同時由 Basic Plus 前端（`frontends/basic-plus/src/lower.ts`）與 EV3 後端發出，歸屬 `kobrixa.basic-plus` 與 `kobrixa.ev3`。共有清單是明確的例外表，不以前綴推導。
 - 新增 `getBuiltinDiagnosticHelp(source, code, helpKey?)`：只在條目屬於該 source 時回傳。
 - 既有的 `getDiagnosticHelp(code, helpKey)`、`diagnosticDocumentationUrl`、`DIAGNOSTIC_HELP` 等匯出不變，網站照舊使用；網站路由與網址都不改。
 
@@ -186,7 +187,7 @@ BUILD1007 在 [`diagnostic-help.ts`](../../../packages/compiler/src/diagnostic-h
 - **來源加註：** 混合來源建置（MAN、BP、IR、EV3、BUILD）每筆診斷的 `source` 正確；模擬的 SIM1001 為 core；語言分析診斷為 `kobrixa.basic-plus`、載入診斷為 core；彙整後不被覆寫。
 - **偽造與保留：** 前端、後端或分析器自帶 `source` 時回 BUILD1007；`kobrixa.core` 插件被拒；開發插件冒用內建 ID 時內建勝出；缺少 `source` 的發布資料被 wire schema 拒絕。
 - **隔離：** 用測試註冊的假來源與 Basic Plus 使用相同 `code`／`helpKey`，說明、去重、marker 與 Quick Fix 都不串用；第三方 `BP1015` 不顯示 Basic Plus 說明，也不觸發 Quick Fix。
-- **查詢：** 精確 helpKey 命中、同 source 退回無 helpKey 條目、查不到時保留原始訊息；`BUILTIN_HELP_OWNERS` 涵蓋所有內建條目且不重疊。
+- **查詢：** 精確 helpKey 命中、同 source 退回無 helpKey 條目、查不到時保留原始訊息；`BUILTIN_HELP_OWNERS` 涵蓋所有內建條目；只有共有例外表中的條目有多個 owner；Basic Plus 前端發出的 `EV32031` 仍顯示說明。
 - **資源載入：** 越界路徑、符號連結逃逸、目錄、超過每項上限（含剛好到上限的正例）、重複鍵、未知欄位、`http:` 與 `javascript:` 連結都被拒並回 `PLUGIN_E_DIAGNOSTIC_HELP`，插件仍啟用；停用、重新載入與安全模式會移除或替換目錄並遞增世代號。
 - **連結開啟：** renderer 送出越界 `linkIndex` 或不存在的 source 時拒絕；只對 https 呼叫 `openExternal`。
 - **相容：** 既有代碼、helpKey、官方網址（含網站測試）、bytecode、`pnpm test:bytecode`、schema drift、JSON Schema 與兩個 SDK 的 conformance、打包後 worker 測試全部通過。
