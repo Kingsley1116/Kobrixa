@@ -1,5 +1,6 @@
 import * as monaco from "monaco-editor";
-import { formatBasicPlus } from "@kobrixa/basic-plus/language";
+import type { LanguageStatus } from "../../shared/language-services.js";
+import { routeLanguage } from "./language-routing.js";
 interface JsonEdit {
   range: { start: { line: number; character: number }; end: { line: number; character: number } };
   newText: string;
@@ -17,8 +18,11 @@ export async function formatSource(
   file: string,
   source: string,
   indentSize: 2 | 4,
+  status: LanguageStatus | undefined,
 ): Promise<string> {
-  if (/\.(bp|bpi|bpm)$/i.test(file)) return formatBasicPlus(source, { indentSize });
+  const route = routeLanguage(file, status);
+  if (route.binding?.capabilities.includes("documentFormatting") && route.companion)
+    return route.companion.formatSource(source, indentSize);
   if (!/\.json$/i.test(file)) return source;
   const uri = monaco.Uri.from({ scheme: "kobrixa-format", path: `/${++request}/${file}` });
   const model = monaco.editor.createModel(source, "json", uri);

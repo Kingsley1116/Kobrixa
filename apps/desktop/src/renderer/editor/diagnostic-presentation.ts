@@ -5,19 +5,9 @@ import {
   localizeHelp,
   type PluginHelpCatalogView,
 } from "../../shared/diagnostic-help.js";
-import type { BasicPlusQuickFix } from "@kobrixa/basic-plus";
-
-const fixTitles: Record<BasicPlusQuickFix["titleKey"], Record<DiagnosticLocale, string>> = {
-  "insert-type-bracket": { "zh-TW": "補上型別陣列的 ]", en: "Insert ] in array type" },
-  "insert-parenthesis": { "zh-TW": "補上右括號 )", en: "Insert closing parenthesis )" },
-  "insert-for-equals": { "zh-TW": "補上 For 的 =", en: "Insert = in For statement" },
-  "insert-for-to": { "zh-TW": "補上 For 的 To", en: "Insert To in For statement" },
-  "close-blocks": { "zh-TW": "在檔尾補齊區塊結尾", en: "Close unfinished blocks at end of file" },
-};
-export const quickFixTitle = (
-  key: BasicPlusQuickFix["titleKey"],
-  locale: DiagnosticLocale,
-): string => fixTitles[key][locale];
+import type { QuickFix } from "../../shared/language-types.js";
+export const quickFixTitle = (title: QuickFix["title"], locale: DiagnosticLocale): string =>
+  locale === "zh-TW" ? (title["zh-TW"] ?? title.en) : title.en;
 export function diagnosticSummary(
   diagnostic: Diagnostic,
   locale: DiagnosticLocale,

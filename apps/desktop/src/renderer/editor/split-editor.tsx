@@ -1,3 +1,4 @@
+import type { LanguageStatus } from "../../shared/language-services.js";
 import * as monaco from "monaco-editor";
 import { useEffect, useRef } from "react";
 import type { Locale } from "../i18n/copy.js";
@@ -9,6 +10,7 @@ import { editorOptions as resolveEditorOptions, type EditorSettings } from "./ed
  */
 export function SplitEditor({
   file,
+  status,
   files,
   modelFor,
   locale,
@@ -23,6 +25,7 @@ export function SplitEditor({
   onBlur,
 }: {
   file: string;
+  status: LanguageStatus | undefined;
   files: string[];
   modelFor(file: string): monaco.editor.ITextModel | undefined;
   locale: Locale;
@@ -98,7 +101,11 @@ export function SplitEditor({
     // modelFor is stable for the lifetime of the main editor.
   }, [file]);
   return (
-    <section className="split-editor" aria-label={zh ? "分割編輯器" : "Split editor"}>
+    <section
+      data-language-epoch={status?.epoch}
+      className="split-editor"
+      aria-label={zh ? "分割編輯器" : "Split editor"}
+    >
       <header>
         <select
           aria-label={zh ? "分割編輯器檔案" : "Split editor file"}

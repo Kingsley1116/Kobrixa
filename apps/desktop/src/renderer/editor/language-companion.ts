@@ -1,6 +1,13 @@
 import type { editor, languages, Position, IRange, CancellationToken } from "monaco-editor";
 import type { LanguageSymbol, SemanticLegend } from "../../shared/language-types.js";
+import type { LanguageFeatureResult } from "../../shared/language-query.js";
 export interface LanguageCompanion {
+  /** Optional immediate signatures for APIs that do not need a semantic snapshot. */
+  signatureHelp?(
+    model: editor.ITextModel,
+    position: Position,
+    token: CancellationToken,
+  ): Extract<LanguageFeatureResult, { kind: "signatureHelp" }>["value"] | undefined;
   monacoLanguage: string;
   legend: SemanticLegend;
   triggerCharacters: string[];

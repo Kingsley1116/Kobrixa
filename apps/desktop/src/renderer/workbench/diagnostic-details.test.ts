@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { languages } from "monaco-editor";
 import type { Diagnostic } from "../../shared/api.js";
+import type { LanguageBinding } from "../../shared/language-services.js";
 import type { AnalysisSession } from "../editor/analysis-session.js";
 import { DiagnosticDetails, type DiagnosticDetailsHost } from "./diagnostic-details.js";
 
@@ -29,11 +30,26 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup() {
+function setup(capabilities: LanguageBinding["capabilities"] = ["analysis", "quickFixes"]) {
   const listeners = new Set<() => void>();
-  let snapshot = { analysis: { diagnostics: [diagnostic] } } as ReturnType<
-    AnalysisSession["getCurrent"]
-  >;
+  let snapshot = {
+    epoch: 1,
+    binding: {
+      epoch: 1,
+      pluginId: "kobrixa.basic-plus",
+      sourceKey: "builtin:kobrixa.basic-plus",
+      language: "bp",
+      extensions: ["bp", "bpi", "bpm"],
+      capabilities,
+      frontend: {
+        language: "bp",
+        entryExtensions: ["bp"],
+        sourceExtensions: ["bp", "bpi", "bpm"],
+        ir: { min: 1, max: 1 },
+      },
+    },
+    analysis: { diagnostics: [diagnostic] },
+  } as ReturnType<AnalysisSession["getCurrent"]>;
   const host: DiagnosticDetailsHost = {
     locale: "en",
     helpCatalog: undefined,
@@ -209,4 +225,11 @@ it("renders and replaces duplicate plugin steps without React key warnings", asy
   } finally {
     errors.mockRestore();
   }
+});
+
+it("does not request fixes when the selected binding lacks the capability", async () => {
+  const { host, render } = setup(["analysis"]);
+  await render();
+  expect(host.getQuickFixes).not.toHaveBeenCalled();
+  expect(container.querySelector(".diagnostic-fixes button")).toBeNull();
 });

@@ -1,7 +1,6 @@
-import type { BasicPlusCompletionIndex, BasicPlusSymbol } from "@kobrixa/basic-plus";
+import type { CompletionIndex, LanguageSymbol } from "../../shared/language-types.js";
 import type { SourceRange } from "@kobrixa/compiler";
 import type { editor, IRange, Position } from "monaco-editor";
-import { structuralChange } from "./companions/basic-plus/structure.js";
 
 export interface CompletionChange {
   before: number;
@@ -9,12 +8,6 @@ export interface CompletionChange {
   changes: readonly editor.IModelContentChange[];
   flush: boolean;
   structural?: boolean;
-}
-export function structuralCompletionChange(
-  model: editor.ITextModel,
-  event: editor.IModelContentChangedEvent,
-): boolean {
-  return structuralChange(model, event);
 }
 const asRange = (r: SourceRange): IRange => ({
   startLineNumber: r.startLine,
@@ -84,8 +77,9 @@ export function rebaseCompletionRanges(
 
 /** Group symbols once per index; Monaco tracks only scope/guard ranges, not occurrences. */
 export class CompletionCache {
-  private index: BasicPlusCompletionIndex | undefined;
-  private groups = new Map<string, BasicPlusSymbol[]>();
+  private epoch = 0;
+  private index: CompletionIndex | undefined;
+  private groups = new Map<string, LanguageSymbol[]>();
   private invalid = new Set<string>();
   private files = new Map<
     string,
@@ -97,12 +91,12 @@ export class CompletionCache {
       guards: SourceRange[];
     }
   >();
-  update(index: BasicPlusCompletionIndex): void {
+  update(index: CompletionIndex, epoch: number): void {
     this.clear();
     this.index = index;
+    this.epoch = epoch;
     for (const symbol of Object.values(index.symbols)) {
-      if (symbol.scope === "builtin") continue;
-      const key = symbol.scope === "global" ? symbol.context : symbol.scopeId;
+      const key = symbol.group;
       let group = this.groups.get(key);
       if (!group) this.groups.set(key, (group = []));
       group.push(symbol);
@@ -129,7 +123,7 @@ export class CompletionCache {
       [],
       ranges.map((range) => ({
         range,
-        options: { description: "basic-plus-completion-scope", stickiness: 1 },
+        options: { description: "language-completion-scope", stickiness: 1 },
       })),
     );
     this.files.set(file, { model, ids, scopeIds: items.map((s) => s.id), ranges: scopes, guards });
@@ -151,7 +145,8 @@ export class CompletionCache {
     const context = this.index?.fileContexts[file];
     if (context) this.invalid.add(context);
   }
-  symbols(file: string, position: Position): BasicPlusSymbol[] | undefined {
+  symbols(file: string, position: Position, epoch: number): LanguageSymbol[] | undefined {
+    if (epoch !== this.epoch) return;
     const context = this.index?.fileContexts[file];
     const state = this.files.get(file);
     if (!context || !state || this.invalid.has(context)) return;
@@ -163,17 +158,17 @@ export class CompletionCache {
       ...(this.groups.get(state.scopeIds[local] ?? "") ?? []),
       ...(this.groups.get(context) ?? []),
     ].filter((symbol) => {
-      const key = `${symbol.kind === "function" || symbol.kind === "sub" ? "call" : symbol.kind === "label" ? "label" : "value"}:${symbol.name.toLowerCase()}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      if (seen.has(symbol.shadowKey)) return false;
+      seen.add(symbol.shadowKey);
       return true;
     });
   }
-  enrich(symbols: Record<string, BasicPlusSymbol>): void {
+  enrich(symbols: Record<string, LanguageSymbol>): void {
     for (const group of this.groups.values())
       for (let i = 0; i < group.length; i++) {
         const precise = symbols[group[i]!.id];
-        if (precise) group[i] = precise;
+        if (precise)
+          group[i] = { ...precise, group: group[i]!.group, shadowKey: group[i]!.shadowKey };
       }
   }
   clear(): void {

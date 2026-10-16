@@ -1,6 +1,12 @@
 export type Locale = "en" | "zh-TW";
 export const copy = {
   en: {
+    languageMissing: (language: string) =>
+      `No language service is available for this project's language '${language}'.`,
+    languageConflict: (language: string, plugins: string) =>
+      `Language service configuration conflict for '${language}': ${plugins}.`,
+    languageSettings: "Open plugin settings",
+
     runOnDevice: "Run on EV3",
     advanced: "More actions",
     lightTheme: "Light theme",
@@ -180,6 +186,11 @@ export const copy = {
     managingFiles: "Updating project files…",
   },
   "zh-TW": {
+    languageMissing: (language: string) => `此專案的語言 ${language} 沒有可用的語言服務。`,
+    languageConflict: (language: string, plugins: string) =>
+      `語言 ${language} 的語言服務設定衝突：${plugins}。`,
+    languageSettings: "前往插件設定",
+
     runOnDevice: "在 EV3 執行",
     advanced: "更多操作",
     lightTheme: "淺色主題",

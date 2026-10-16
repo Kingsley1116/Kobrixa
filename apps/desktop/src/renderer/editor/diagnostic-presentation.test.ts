@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 import type { Diagnostic } from "../../shared/api.js";
 import type { PluginHelpCatalogView } from "../../shared/diagnostic-help.js";
-import { diagnosticMarkerMessage, diagnosticSummary } from "./diagnostic-presentation.js";
+import {
+  diagnosticMarkerMessage,
+  diagnosticSummary,
+  quickFixTitle,
+} from "./diagnostic-presentation.js";
 
 const diagnostic: Diagnostic = {
   source: "acme.x",
@@ -42,4 +46,10 @@ it("keeps built-in help available without a plugin catalog", () => {
   const builtin = { ...diagnostic, source: "kobrixa.basic-plus" };
   expect(diagnosticSummary(builtin, "en", undefined)).toBe("Call is missing a closing parenthesis");
   expect(diagnosticMarkerMessage(builtin, "en", undefined)).toContain("\n\nraw message");
+});
+
+it("localizes provider fix titles with English fallback", () => {
+  expect(quickFixTitle({ en: "Provider fix", "zh-TW": "提供者修正" }, "zh-TW")).toBe("提供者修正");
+  expect(quickFixTitle({ en: "Provider fix" }, "zh-TW")).toBe("Provider fix");
+  expect(quickFixTitle({ en: "Provider fix", "zh-TW": "提供者修正" }, "en")).toBe("Provider fix");
 });

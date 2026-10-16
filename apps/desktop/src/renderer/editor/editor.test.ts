@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { act, createElement } from "react";
+import { act, createElement, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import * as monaco from "monaco-editor";
+import { LANGUAGE_CAPABILITIES } from "@kobrixa/plugin-protocol";
+import type { LanguageStatus } from "../../shared/language-services.js";
 import type { Diagnostic } from "../../shared/api.js";
 
 const mocks = vi.hoisted(() => {
@@ -10,6 +13,7 @@ const mocks = vi.hoisted(() => {
     getValue: vi.fn(() => "LCD.Clear()"),
     setValue: vi.fn(() => contentListener()),
     getLanguageId: vi.fn(() => "basic-plus"),
+    isDisposed: vi.fn(() => false),
     getVersionId: vi.fn(() => 1),
     getAlternativeVersionId: vi.fn(() => 1),
     getValueLength: vi.fn(() => model.getValue().length),
@@ -25,6 +29,7 @@ const mocks = vi.hoisted(() => {
     }),
     getValue: model.getValue,
     getModel: vi.fn(),
+    getSelection: vi.fn(),
     onDidScrollChange: vi.fn(() => ({ dispose: vi.fn() })),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     saveViewState: vi.fn(),
@@ -33,7 +38,20 @@ const mocks = vi.hoisted(() => {
     updateOptions: vi.fn(),
     dispose: vi.fn(),
   };
-  return { model, instance, setModelMarkers: vi.fn(), create: vi.fn(() => instance) };
+  const registrations: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+  const register = () => {
+    const handle = { dispose: vi.fn() };
+    registrations.push(handle);
+    return handle;
+  };
+  return {
+    model,
+    instance,
+    registrations,
+    register,
+    setModelMarkers: vi.fn(),
+    create: vi.fn(() => instance),
+  };
 });
 
 vi.mock("monaco-editor", () => ({
@@ -51,17 +69,17 @@ vi.mock("monaco-editor", () => ({
     register: vi.fn(),
     setLanguageConfiguration: vi.fn(),
     setMonarchTokensProvider: vi.fn(),
-    registerDocumentSemanticTokensProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerCompletionItemProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerHoverProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerSignatureHelpProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerDefinitionProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerDocumentSymbolProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerReferenceProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerRenameProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerCodeActionProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerDocumentFormattingEditProvider: vi.fn(),
-    registerDocumentRangeFormattingEditProvider: vi.fn(),
+    registerDocumentSemanticTokensProvider: vi.fn(mocks.register),
+    registerCompletionItemProvider: vi.fn(mocks.register),
+    registerHoverProvider: vi.fn(mocks.register),
+    registerSignatureHelpProvider: vi.fn(mocks.register),
+    registerDefinitionProvider: vi.fn(mocks.register),
+    registerDocumentSymbolProvider: vi.fn(mocks.register),
+    registerReferenceProvider: vi.fn(mocks.register),
+    registerRenameProvider: vi.fn(mocks.register),
+    registerCodeActionProvider: vi.fn(mocks.register),
+    registerDocumentFormattingEditProvider: vi.fn(mocks.register),
+    registerDocumentRangeFormattingEditProvider: vi.fn(mocks.register),
   },
   editor: {
     create: mocks.create,
@@ -70,12 +88,15 @@ vi.mock("monaco-editor", () => ({
     defineTheme: vi.fn(),
     setTheme: vi.fn(),
     setModelMarkers: mocks.setModelMarkers,
+    setModelLanguage: vi.fn((_model, language) =>
+      mocks.model.getLanguageId.mockReturnValue(language),
+    ),
   },
 }));
 vi.mock("monaco-editor/editor/editor.worker?worker", () => ({ default: class {} }));
 vi.mock("monaco-editor/languages/features/json/json.worker?worker", () => ({ default: class {} }));
 
-import { Editor } from "./editor.js";
+import { Editor, type EditorHandle } from "./editor.js";
 import { Documents } from "./documents.js";
 import { AnalysisSession } from "./analysis-session.js";
 
@@ -91,7 +112,34 @@ const diagnostics: Diagnostic[] = [
     range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 4 },
   },
 ];
+const available = (epoch = 1): LanguageStatus => ({
+  epoch,
+  conflicts: [],
+  availability: {
+    kind: "available",
+    binding: {
+      ...{
+        epoch: 1,
+        pluginId: "kobrixa.basic-plus",
+        sourceKey: "builtin:kobrixa.basic-plus",
+        language: "bp",
+        extensions: ["bp", "bpi", "bpm"],
+        capabilities: ["analysis", "quickFixes"],
+        frontend: {
+          language: "bp",
+          entryExtensions: ["bp"],
+          sourceExtensions: ["bp", "bpi", "bpm"],
+          ir: { min: 1, max: 1 },
+        },
+      },
+      epoch,
+      capabilities: [...LANGUAGE_CAPABILITIES],
+    },
+  },
+});
 const props = {
+  status: available(),
+  query: vi.fn(async () => ({ kind: "stale" as const, epoch: 1 })),
   helpCatalog: undefined,
   theme: "light" as const,
   fontSize: 16,
@@ -105,6 +153,7 @@ const props = {
     analyze: vi.fn(),
     cancel: vi.fn(),
     diagnostics: vi.fn(),
+    unavailable: vi.fn(),
     checking: vi.fn(),
     error: vi.fn(),
   }),
@@ -118,6 +167,8 @@ const props = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.registrations.length = 0;
+  mocks.model.getLanguageId.mockReturnValue("basic-plus");
   props.documents = new Documents();
   props.documents.replace([{ file: "main.bp", content: "LCD.Clear()", saved: "LCD.Clear()" }]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -175,7 +226,9 @@ it("applies diagnostics when a file is opened and still accepts external content
       }),
     ),
   );
-  expect(mocks.setModelMarkers).toHaveBeenCalledTimes(2);
+  // This fixture reuses one model for two paths; replacing its route clears its old markers first.
+  expect(mocks.setModelMarkers).toHaveBeenNthCalledWith(1, mocks.model, "kobrixa", []);
+  expect(mocks.setModelMarkers).toHaveBeenCalledTimes(3);
   expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", []);
   props.onChange.mockClear();
   await act(async () => {
@@ -261,4 +314,91 @@ it("refreshes source labels and source-scoped messages when the catalog changes"
       message: "BP3001: Acme title\nAcme cause\nAcme step\n\nUnknown operation",
     }),
   ]);
+});
+
+it("detaches dynamic services on unavailability, restores them without edits, and leaves JSON unbound", async () => {
+  const ref = createRef<EditorHandle>();
+  await act(() => root.render(createElement(Editor, { ...props, ref })));
+  expect(mocks.registrations).toHaveLength(11);
+  const previous = [...mocks.registrations];
+  const writes = mocks.model.setValue.mock.calls.length;
+  await act(() =>
+    root.render(
+      createElement(Editor, {
+        ...props,
+        ref,
+        status: {
+          epoch: 2,
+          conflicts: [],
+          availability: { kind: "unavailable", reason: "missing", language: "bp" },
+        },
+      }),
+    ),
+  );
+  expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", []);
+  expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
+  for (const handle of previous) expect(handle.dispose).toHaveBeenCalledOnce();
+  expect(mocks.model.dispose).not.toHaveBeenCalled();
+  await act(() => root.render(createElement(Editor, { ...props, ref, status: available(3) })));
+  expect(mocks.registrations).toHaveLength(22);
+  expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
+  await act(() => {
+    ref.current!.remapFiles({ "main.bp": "kobrixa.json" });
+    props.documents.replace(
+      props.documents.getSnapshot().map((tab) => ({ ...tab, file: "kobrixa.json" })),
+    );
+  });
+  await act(() =>
+    root.render(
+      createElement(Editor, {
+        ...props,
+        ref,
+        status: available(3),
+        file: "kobrixa.json",
+        openFiles: ["kobrixa.json"],
+      }),
+    ),
+  );
+  const provider = vi.mocked(monaco.languages.registerHoverProvider).mock.lastCall![1];
+  expect(
+    await provider.provideHover(
+      mocks.model as unknown as monaco.editor.ITextModel,
+      { lineNumber: 1, column: 1 } as monaco.Position,
+      { isCancellationRequested: false } as monaco.CancellationToken,
+    ),
+  ).toBeUndefined();
+  expect(props.query).not.toHaveBeenCalled();
+  expect(monaco.editor.setModelLanguage).toHaveBeenLastCalledWith(mocks.model, "json");
+  expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
+});
+
+it("registers only declared capabilities and gates both formatting providers by the model route", async () => {
+  const onlyHover = available();
+  if (onlyHover.availability.kind !== "available") throw new Error("Expected binding");
+  onlyHover.availability.binding.capabilities = ["analysis", "hover"];
+  const ref = createRef<EditorHandle>();
+  await act(() => root.render(createElement(Editor, { ...props, ref, status: onlyHover })));
+  expect(mocks.registrations).toHaveLength(1);
+  expect(monaco.languages.registerHoverProvider).toHaveBeenCalledOnce();
+  expect(monaco.languages.registerDocumentFormattingEditProvider).not.toHaveBeenCalled();
+  expect(monaco.languages.registerDocumentRangeFormattingEditProvider).not.toHaveBeenCalled();
+  await act(() => root.render(createElement(Editor, { ...props, ref, status: available(2) })));
+  const documentProvider = vi.mocked(monaco.languages.registerDocumentFormattingEditProvider).mock
+    .lastCall![1];
+  const rangeProvider = vi.mocked(monaco.languages.registerDocumentRangeFormattingEditProvider).mock
+    .lastCall![1];
+  const model = mocks.model as unknown as monaco.editor.ITextModel;
+  const token = { isCancellationRequested: true } as monaco.CancellationToken;
+  const options = { tabSize: 2, insertSpaces: true };
+  const range = new monaco.Range(1, 1, 1, 1);
+  expect(await documentProvider.provideDocumentFormattingEdits(model, options, token)).toEqual([]);
+  expect(
+    await rangeProvider.provideDocumentRangeFormattingEdits(model, range, options, token),
+  ).toEqual([]);
+  await act(() => ref.current!.remapFiles({ "main.bp": "kobrixa.json" }));
+  const active = { isCancellationRequested: false } as monaco.CancellationToken;
+  expect(await documentProvider.provideDocumentFormattingEdits(model, options, active)).toEqual([]);
+  expect(
+    await rangeProvider.provideDocumentRangeFormattingEdits(model, range, options, active),
+  ).toEqual([]);
 });
