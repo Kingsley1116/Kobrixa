@@ -26,12 +26,19 @@ import type { LanguageStatus, LanguageStatusEvent } from "../../shared/language-
 import type { LanguageFeatureRequest, LanguageFeatureReply } from "../../shared/language-query.js";
 import type { QuickFixRequest, QuickFixReply } from "../../shared/quick-fixes.js";
 type Resolver = (language: string) => LanguageServiceResolution;
+interface RoutingRead {
+  input: ReturnType<WorkspaceService["projectInput"]>;
+  inputKey: string;
+  promise: ReturnType<typeof readProjectDescription>;
+  pending: boolean;
+  trailing?: RoutingRead;
+}
 interface WorkspaceLanes {
   analysis: LanguageLane;
   completion: CompletionService;
   description?: ProjectDescription;
   inputKey: string;
-  loading?: ReturnType<typeof readProjectDescription>;
+  loading?: RoutingRead;
   projectErrorKey?: string;
 }
 export class LanguageService {
@@ -76,27 +83,77 @@ export class LanguageService {
     }
     for (const listener of this.listeners) listener({ workspaceId, status });
   }
+  private checkRoutingRead(workspaceId: string, lanes: WorkspaceLanes): void {
+    if (this.disposed || this.lanes.get(workspaceId) !== lanes)
+      throw new Error("Diagnostics cancelled.");
+  }
+  private readDescription(
+    workspaceId: string,
+    lanes: WorkspaceLanes,
+    input: RoutingRead["input"],
+    inputKey: string,
+    after?: RoutingRead,
+  ): RoutingRead {
+    const start = () => {
+      this.checkRoutingRead(workspaceId, lanes);
+      return readProjectDescription(read.input.inputPath, read.input.selectedEntry);
+    };
+    const read: RoutingRead = {
+      input,
+      inputKey,
+      pending: true,
+      promise: after
+        ? after.promise.then(start, start)
+        : readProjectDescription(input.inputPath, input.selectedEntry),
+    };
+    read.promise = read.promise.finally(() => {
+      read.pending = false;
+      if (this.lanes.get(workspaceId) === lanes && read.trailing) lanes.loading = read.trailing;
+    });
+    // Closing can abandon a queued read before any waiter reaches its promise.
+    void read.promise.catch(() => {});
+    return read;
+  }
   async status(workspaceId: string, refresh = false): Promise<LanguageStatus> {
     const lanes = this.workspace(workspaceId);
     const input = this.workspaces.projectInput(workspaceId);
     const inputKey = JSON.stringify(input);
     if (!lanes.loading || refresh || lanes.inputKey !== inputKey) {
       lanes.inputKey = inputKey;
-      // Keep the latest read, including failures, until refresh or an input change.
-      lanes.loading = readProjectDescription(input.inputPath, input.selectedEntry);
+      if (lanes.loading?.pending) {
+        // All changes during this read share one trailing read of the latest input.
+        const trailing = (lanes.loading.trailing ??= this.readDescription(
+          workspaceId,
+          lanes,
+          input,
+          inputKey,
+          lanes.loading,
+        ));
+        trailing.input = input;
+        trailing.inputKey = inputKey;
+      } else {
+        // Keep settled reads, including failures, until refresh or an input change.
+        lanes.loading = this.readDescription(workspaceId, lanes, input, inputKey);
+      }
     }
+    let loading = lanes.loading;
+    const first = loading;
     let result: Awaited<ReturnType<typeof readProjectDescription>>;
+    // Follow at most one trailing read; ongoing polling must not move this waiter's target.
     while (true) {
-      const loading: ReturnType<typeof readProjectDescription> = lanes.loading;
       try {
-        result = await loading;
+        result = await loading.promise;
       } catch (error) {
-        if (loading !== lanes.loading) continue;
+        this.checkRoutingRead(workspaceId, lanes);
+        if (loading === first && loading.trailing) {
+          loading = loading.trailing;
+          continue;
+        }
         throw error;
       }
-      if (this.disposed || this.lanes.get(workspaceId) !== lanes)
-        throw new Error("Diagnostics cancelled.");
-      if (loading === lanes.loading) break;
+      this.checkRoutingRead(workspaceId, lanes);
+      if (loading !== first || !loading.trailing) break;
+      loading = loading.trailing;
     }
     if (!result.description) {
       // A malformed project is a core loader error, not a missing language provider.
@@ -123,7 +180,7 @@ export class LanguageService {
       workspaceId,
       manifest,
       this.resolve(manifest.language),
-      lanes.inputKey,
+      loading.inputKey,
     );
     if (previous?.epoch !== status.epoch) this.publish(workspaceId, status);
     return status;

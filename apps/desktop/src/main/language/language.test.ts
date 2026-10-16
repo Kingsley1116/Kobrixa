@@ -17,10 +17,12 @@ import { LanguageService } from "./language.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 // Run the actual worker entry, including project loading and the compiler.
@@ -210,6 +212,149 @@ describe("LanguageService background checks", () => {
       expect(reader).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("coalesces ten rapid refreshes behind one slow routing read", async () => {
+    const description = await compiler.readProjectDescription(root, "main.bp");
+    const changed = {
+      ...description,
+      description: {
+        ...description.description!,
+        manifest: { ...description.description!.manifest, language: "missing-language" },
+      },
+    };
+    const firstRead = deferred<typeof description>();
+    const trailingRead = deferred<typeof description>();
+    const reader = vi
+      .spyOn(compiler, "readProjectDescription")
+      .mockRejectedValue(new Error("Unexpected description read."))
+      .mockReturnValueOnce(firstRead.promise)
+      .mockReturnValueOnce(trailingRead.promise);
+    const first = service.status("workspace");
+    const refreshes = Array.from({ length: 10 }, () => service.refresh("workspace"));
+    const plain = service.status("workspace");
+    const pending = Promise.allSettled([first, ...refreshes, plain]);
+    expect(reader).toHaveBeenCalledTimes(1);
+    firstRead.resolve(description);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reader).toHaveBeenCalledTimes(2);
+    trailingRead.resolve(changed);
+    const results = await pending;
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(await plain).toMatchObject({
+      availability: { kind: "unavailable", reason: "missing", language: "missing-language" },
+    });
+    expect(await service.status("workspace")).toEqual(await plain);
+    expect(reader.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("cancels status when a pending routing read rejects after close", async () => {
+    const read = deferred<Awaited<ReturnType<typeof compiler.readProjectDescription>>>();
+    const reader = vi.spyOn(compiler, "readProjectDescription").mockReturnValueOnce(read.promise);
+    const listener = vi.fn();
+    service.onStatus(listener);
+    const pending = service.status("workspace");
+    const rejected = expect(pending).rejects.toThrow("Diagnostics cancelled.");
+    service.close("workspace");
+    read.reject(new Error("Description read failed."));
+    await rejected;
+    expect(listener).not.toHaveBeenCalled();
+    expect(workers).toHaveLength(0);
+    await service.refresh("workspace");
+    expect(reader).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles routing waiters within two reads while refreshes keep arriving", async () => {
+    const description = await compiler.readProjectDescription(root, "main.bp");
+    const reads = Array.from({ length: 3 }, () => deferred<typeof description>());
+    const reader = vi
+      .spyOn(compiler, "readProjectDescription")
+      .mockRejectedValue(new Error("Unexpected description read."));
+    for (const read of reads) reader.mockReturnValueOnce(read.promise);
+    const first = service.status("workspace");
+    const refresh = service.refresh("workspace");
+    const plain = service.status("workspace");
+    const settled = vi.fn();
+    const pending = Promise.allSettled([first, refresh, plain]).then(settled);
+    reads[0]!.resolve(description);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const later = Promise.allSettled(
+      Array.from({ length: 10 }, () => service.refresh("workspace")),
+    );
+    reads[1]!.resolve(description);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toHaveBeenCalledExactlyOnceWith([
+      { status: "fulfilled", value: expect.objectContaining({ epoch: 1 }) },
+      { status: "fulfilled", value: undefined },
+      { status: "fulfilled", value: expect.objectContaining({ epoch: 1 }) },
+    ]);
+    expect(reader).toHaveBeenCalledTimes(3);
+    reads[2]!.resolve(description);
+    expect((await later).every((result) => result.status === "fulfilled")).toBe(true);
+    await pending;
+    expect(reader).toHaveBeenCalledTimes(3);
+  });
+
+  it("coalesces input changes into a trailing read of the latest input", async () => {
+    const description = await compiler.readProjectDescription(root, "main.bp");
+    const firstRead = deferred<typeof description>();
+    const trailingRead = deferred<typeof description>();
+    const reader = vi
+      .spyOn(compiler, "readProjectDescription")
+      .mockRejectedValue(new Error("Unexpected description read."))
+      .mockReturnValueOnce(firstRead.promise)
+      .mockReturnValueOnce(trailingRead.promise);
+    let selectedEntry = "main.bp";
+    service.dispose();
+    service = new LanguageService(
+      { projectInput: () => ({ inputPath: root, selectedEntry }) },
+      createWorker,
+    );
+    const first = service.status("workspace");
+    selectedEntry = "middle.bp";
+    const middle = service.status("workspace");
+    selectedEntry = "last.bp";
+    const last = service.status("workspace");
+    const pending = Promise.allSettled([first, middle, last]);
+    expect(reader).toHaveBeenCalledTimes(1);
+    firstRead.resolve(description);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reader).toHaveBeenLastCalledWith(root, "last.bp");
+    trailingRead.resolve(description);
+    const status = await last;
+    expect(await pending).toEqual(
+      Array.from({ length: 3 }, () => ({ status: "fulfilled", value: status })),
+    );
+    expect(await service.status("workspace")).toEqual(status);
+    expect(status.epoch).toBe(1);
+    expect(reader).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a rejected routing read superseded by a trailing refresh", async () => {
+    const description = await compiler.readProjectDescription(root, "main.bp");
+    const firstRead = deferred<typeof description>();
+    const trailingRead = deferred<typeof description>();
+    const reader = vi
+      .spyOn(compiler, "readProjectDescription")
+      .mockRejectedValue(new Error("Unexpected description read."))
+      .mockReturnValueOnce(firstRead.promise)
+      .mockReturnValueOnce(trailingRead.promise);
+    const first = service.status("workspace");
+    const refresh = service.refresh("workspace");
+    const plain = service.status("workspace");
+    const pending = Promise.allSettled([first, refresh, plain]);
+    expect(reader).toHaveBeenCalledTimes(1);
+    firstRead.reject(new Error("Superseded read failed."));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reader).toHaveBeenCalledTimes(2);
+    trailingRead.resolve(description);
+    const status = await plain;
+    expect(await pending).toEqual([
+      { status: "fulfilled", value: status },
+      { status: "fulfilled", value: undefined },
+      { status: "fulfilled", value: status },
+    ]);
+    expect(status.epoch).toBe(1);
+  });
 
   function useInjectedAnalyzer(analyzerFailure?: "build" | "lookalike") {
     createWorker.mockImplementation(() => {
