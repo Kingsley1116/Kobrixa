@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { BuildSession, failedBuild } from "@kobrixa/compiler";
+import { BuildSession, failedBuild, requirePublished } from "@kobrixa/compiler";
 import type { KobrixaIR } from "@kobrixa/ir";
 import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -34,7 +34,7 @@ async function run(): Promise<void> {
     send({ type: "simulation", result });
     return;
   }
-  const { frontend, backend } = createBuiltinCompilers(request.compiler);
+  const { frontend, backend, sources } = createBuiltinCompilers(request.compiler);
   let previewIR: KobrixaIR | undefined;
   const session = new BuildSession(
     {
@@ -49,6 +49,8 @@ async function run(): Promise<void> {
     (progress) => send({ type: "progress", progress }),
     controller,
     request.buildId,
+    {},
+    sources,
   );
   const result = await session.compile(request.project);
   let preview: OfflinePreviewProgram | undefined;
@@ -96,7 +98,10 @@ void run()
       request.project.manifest.entry,
     );
     if (request.simulation)
-      send({ type: "simulation", result: { success: false, diagnostics: result.diagnostics } });
+      send({
+        type: "simulation",
+        result: { success: false, diagnostics: requirePublished(result.diagnostics) },
+      });
     else send({ type: "complete", result });
   })
   .finally(() => port.close());

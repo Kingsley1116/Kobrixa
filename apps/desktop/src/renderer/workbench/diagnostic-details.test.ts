@@ -9,6 +9,7 @@ import { DiagnosticDetails, type DiagnosticDetailsHost } from "./diagnostic-deta
 
 const diagnostic: Diagnostic = {
   code: "BP1043",
+  source: "kobrixa.basic-plus",
   severity: "error",
   file: "main.bp",
   range: { startLine: 1, startColumn: 11, endLine: 1, endColumn: 12 },

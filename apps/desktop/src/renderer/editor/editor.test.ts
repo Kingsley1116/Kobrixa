@@ -84,6 +84,7 @@ let container: HTMLDivElement;
 const diagnostics: Diagnostic[] = [
   {
     code: "BP3001",
+    source: "kobrixa.basic-plus",
     severity: "error",
     file: "main.bp",
     message: "Unknown operation",

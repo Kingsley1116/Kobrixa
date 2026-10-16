@@ -27,7 +27,7 @@ import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker
 import { BASIC_PLUS_INDENTATION_RULES, formatBasicPlus } from "@kobrixa/basic-plus/language";
 import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
-import type { Diagnostic } from "../../shared/api.js";
+import type { Diagnostic } from "@kobrixa/compiler";
 import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
 import type { CollabSession } from "../collab/types.js";
 import { EditorCollab } from "../collab/editor-binding.js";

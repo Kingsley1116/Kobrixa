@@ -29,7 +29,11 @@ it("requires backend success for all four simulation entries", async () => {
   project.sources = entries.map((path) => ({ path, content: "test" }));
   const backend = testBackend();
   const compile = vi.spyOn(backend, "compile");
-  const create = () => ({ frontend: testFrontend, backend });
+  const create = () => ({
+    frontend: testFrontend,
+    backend,
+    sources: { frontend: "test.front", backend: "test.back" },
+  });
   const result = await prepareSimulation(
     project,
     entries,
@@ -66,7 +70,11 @@ it("keeps 64 resources and 1 MiB inclusive and rejects overflow", async () => {
     Array.from({ length: 64 }, (_, i) => [`a${i}`, Array(16 * 1024).fill(1)]),
   );
   project.assets = Object.keys(files).map((path) => ({ path, absolutePath: "/not-read" }));
-  const create = () => ({ frontend: testFrontend, backend: testBackend() });
+  const create = () => ({
+    frontend: testFrontend,
+    backend: testBackend(),
+    sources: { frontend: "test.front", backend: "test.back" },
+  });
   expect(
     (
       await prepareSimulation(
@@ -104,4 +112,35 @@ it("keeps 64 resources and 1 MiB inclusive and rejects overflow", async () => {
       )
     ).success,
   ).toBe(false);
+});
+
+it("stamps frontend diagnostics with the snapshot provider and SIM1001 with core", async () => {
+  const project = testProject("/unused");
+  project.sources = [{ path: "a.toy", content: "test" }];
+  const warn = {
+    code: "TOY1",
+    severity: "warning" as const,
+    file: "a.toy",
+    range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
+    message: "w",
+  };
+  const frontend = {
+    id: "toy",
+    compile: async (input: Parameters<typeof testFrontend.compile>[0], signal: AbortSignal) => ({
+      ...(await testFrontend.compile(input, signal)),
+      diagnostics: [warn],
+    }),
+  };
+  const create = () => ({
+    frontend,
+    backend: testBackend(),
+    sources: { frontend: snapshot.frontend.pluginId, backend: snapshot.backend.pluginId },
+  });
+  const signal = new AbortController().signal;
+  const ok = await prepareSimulation(project, ["a.toy"], {}, signal, snapshot, create);
+  expect(ok.diagnostics).toEqual([expect.objectContaining({ code: "TOY1", source: "test.front" })]);
+  const missing = await prepareSimulation(project, ["missing.toy"], {}, signal, snapshot, create);
+  expect(missing.diagnostics).toEqual([
+    expect.objectContaining({ code: "SIM1001", source: "kobrixa.core" }),
+  ]);
 });

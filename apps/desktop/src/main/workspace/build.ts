@@ -5,10 +5,12 @@ import {
   BuildError,
   failedBuild,
   readDeploymentSnapshot,
+  requirePublished,
   type DeploymentFile,
   resolveInside,
   type BuildArtifact,
   type CompileResult,
+  type PublishedCompileResult,
   type ProjectManifest,
   type SourceProject,
 } from "@kobrixa/compiler";
@@ -27,7 +29,7 @@ interface BuildRecord {
   cancellation: Int32Array;
   worker?: Worker;
   finished: boolean;
-  result: CompileResult;
+  result: PublishedCompileResult;
 }
 interface SimulationPreparation {
   controller: AbortController;
@@ -115,8 +117,19 @@ export class BuildService {
       record.finished = true;
       delete record.worker;
       this.activeBuilds--;
-      record.result = { ...result, buildId, artifacts: result.success ? result.artifacts : [] };
-      if (result.success && preview && !Atomics.load(cancellation, 0))
+      let published: PublishedCompileResult;
+      try {
+        published = { ...result, diagnostics: requirePublished(result.diagnostics) };
+      } catch (error) {
+        const failed = failedBuild(buildId, result.target, error, entry);
+        published = { ...failed, diagnostics: requirePublished(failed.diagnostics) };
+      }
+      record.result = {
+        ...published,
+        buildId,
+        artifacts: published.success ? published.artifacts : [],
+      };
+      if (published.success && preview && !Atomics.load(cancellation, 0))
         this.previewSnapshot = {
           buildId,
           ...(program ? { program } : {}),
@@ -217,13 +230,24 @@ export class BuildService {
       try {
         captured = await untilCancelled(this.capture(workspaceId, overlays), signal);
       } catch (error) {
-        if (error instanceof ProjectLoadError)
-          return { success: false, diagnostics: error.diagnostics };
-        if (error instanceof BuildError)
-          return {
-            success: false,
-            diagnostics: failedBuild("simulation", "unknown", error, "<project>").diagnostics,
-          };
+        if (error instanceof ProjectLoadError || error instanceof BuildError)
+          try {
+            return {
+              success: false,
+              diagnostics: requirePublished(
+                error instanceof ProjectLoadError
+                  ? error.diagnostics
+                  : failedBuild("simulation", "unknown", error, "<project>").diagnostics,
+              ),
+            };
+          } catch (publicationError) {
+            return {
+              success: false,
+              diagnostics: requirePublished(
+                failedBuild("simulation", "unknown", publicationError, "<project>").diagnostics,
+              ),
+            };
+          }
         throw error;
       }
       const { project, compiler } = captured;
@@ -241,7 +265,21 @@ export class BuildService {
       return await untilCancelled(
         new Promise<SimulationPrepareResult>((resolve, reject) => {
           worker.on("message", (reply: BuildReply) => {
-            if (reply.type === "simulation") resolve(reply.result);
+            if (reply.type === "simulation") {
+              try {
+                resolve({
+                  ...reply.result,
+                  diagnostics: requirePublished(reply.result.diagnostics),
+                });
+              } catch (error) {
+                resolve({
+                  success: false,
+                  diagnostics: requirePublished(
+                    failedBuild("simulation", "unknown", error, "<project>").diagnostics,
+                  ),
+                });
+              }
+            }
           });
           worker.once("error", reject);
           worker.once("exit", (code) =>

@@ -659,3 +659,57 @@ it("cancels a queued build without starting its worker and releases the queue af
   expect((await result(third)).success).toBe(false);
   expect(service.busy).toBe(false);
 });
+
+it("replaces an unsourced result with a core BUILD9000", async () => {
+  service.dispose();
+  service = new BuildService(
+    { project: async (_id, overlays) => (await loadProject(root, overlays, "main.bp")).project! },
+    () =>
+      ({
+        isDestroyed: () => false,
+        send: (_channel: string, event: BuildEvent) => events.push(event),
+      }) as unknown as WebContents,
+    (request) => {
+      const worker = Object.assign(new EventEmitter(), {
+        terminate: async () => 0,
+        postMessage: () => undefined,
+      });
+      // A wrapper that forgot to stamp sources: the diagnostic has no `source`.
+      setImmediate(() =>
+        worker.emit("message", {
+          type: "complete",
+          result: {
+            buildId: request.buildId,
+            target: "ev3-native",
+            success: false,
+            artifacts: [],
+            diagnostics: [
+              {
+                code: "BP3001",
+                severity: "error",
+                file: "main.bp",
+                range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 2 },
+                message: "unstamped",
+              },
+            ],
+          },
+        }),
+      );
+      return worker as unknown as Worker;
+    },
+  );
+  const built = await result(await service.start("project", {}));
+  expect(built.success).toBe(false);
+  expect(built.diagnostics).toEqual([
+    expect.objectContaining({ code: "BUILD9000", source: "kobrixa.core" }),
+  ]);
+});
+
+it("stamps Basic Plus, core and EV3 sources on a real build", async () => {
+  const failed = await result(await service.start("project", { "main.bp": "Unknown.Do()\n" }));
+  expect(failed.diagnostics).toEqual([
+    expect.objectContaining({ code: "BP3001", source: "kobrixa.basic-plus" }),
+  ]);
+  const ok = await result(await service.start("project", {}));
+  expect(ok.diagnostics.every((item) => typeof item.source === "string")).toBe(true);
+});

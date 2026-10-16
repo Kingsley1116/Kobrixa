@@ -1411,6 +1411,18 @@ export const DIAGNOSTIC_HELP: readonly DiagnosticHelp[] = [
     ],
     "architecture",
   ),
+  internal(
+    "BUILD1007",
+    ["編譯提供者自行設定了診斷來源", "A compiler provider set its own diagnostic source"],
+    [
+      "診斷來源由 Kobrixa 依提供者身分填入；提供者回傳的診斷不可自帶 source。",
+      "Kobrixa assigns diagnostic sources from the provider identity; providers must not return diagnostics with a source.",
+    ],
+    [
+      "更新或停用造成問題的插件，然後重新建置。",
+      "Update or disable the plugin that caused the problem, then build again.",
+    ],
+  ),
   entry(
     "BUILD9000",
     ["建置因未預期錯誤中止", "Build stopped after an unexpected error"],

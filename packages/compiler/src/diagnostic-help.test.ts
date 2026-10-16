@@ -47,7 +47,7 @@ describe("diagnostic documentation", () => {
       ),
     ].sort();
     expect(DIAGNOSTIC_HELP.map((help) => help.code).sort()).toEqual(codes);
-    expect(new Set(DIAGNOSTIC_HELP.map((help) => help.code)).size).toBe(94);
+    expect(new Set(DIAGNOSTIC_HELP.map((help) => help.code)).size).toBe(95);
     expect(
       Object.fromEntries(
         ["BP", "MAN", "IR", "EV3", "BUILD"].map((prefix) => [
@@ -55,7 +55,7 @@ describe("diagnostic documentation", () => {
           codes.filter((code) => code.startsWith(prefix)).length,
         ]),
       ),
-    ).toEqual({ BP: 50, MAN: 4, IR: 12, EV3: 20, BUILD: 8 });
+    ).toEqual({ BP: 50, MAN: 4, IR: 12, EV3: 20, BUILD: 9 });
   });
 
   it("provides complete bilingual explanations and existing documentation links", async () => {

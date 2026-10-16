@@ -36,8 +36,8 @@ import type { CollabApi } from "./collab.js";
 import type {
   BuildArtifact,
   BuildProgress,
-  CompileResult,
-  Diagnostic,
+  PublishedCompileResult,
+  PublishedDiagnostic,
   ProjectManifest,
 } from "@kobrixa/compiler";
 import type {
@@ -326,7 +326,9 @@ export interface KobrixaApi {
   };
 }
 
-export type { BuildArtifact, CompileResult, Diagnostic, DeviceDescriptor, RemoteEntry };
+export type { BuildArtifact, DeviceDescriptor, RemoteEntry };
+export type Diagnostic = PublishedDiagnostic;
+export type CompileResult = PublishedCompileResult;
 export type {
   DeviceMonitorSnapshot,
   DeviceInputModes,

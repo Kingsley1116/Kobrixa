@@ -18,6 +18,7 @@ import {
   WHATS_NEW_SEEN_KEY,
   type WhatsNewEntry,
 } from "./updates/whats-new.js";
+import type { Diagnostic, PublishedDiagnostic } from "@kobrixa/compiler";
 import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
 import { ResizeHandle } from "./components/resize-handle.js";
@@ -42,7 +43,6 @@ import {
 } from "react";
 import type {
   DeviceDescriptor,
-  Diagnostic,
   WorkspaceEntry,
   WorkspaceMutationResult,
   WorkspaceSummary,
@@ -523,8 +523,9 @@ export function App(): React.JSX.Element {
   const autoSaveTimers = useRef(new Map<string, { revision: number; timer: number }>());
   const focusSaves = useRef(new Set<string>());
   const [activeFile, setActiveFile] = useState<string>();
+  // Language analysis retains its library contract until its host publication adapter is added.
   const [liveDiagnostics, setLiveDiagnostics] = useState<Diagnostic[]>([]);
-  const [buildDiagnostics, setBuildDiagnostics] = useState<Diagnostic[]>([]);
+  const [buildDiagnostics, setBuildDiagnostics] = useState<PublishedDiagnostic[]>([]);
   const [status, setStatus] = useState<string>(t.ready);
   const [devices, setDevices] = useState<DeviceDescriptor[]>([]);
   const [discovering, setDiscovering] = useState(false);
@@ -2451,7 +2452,7 @@ export function App(): React.JSX.Element {
     setFocusTarget((current) =>
       current ? { ...current, file: moved[current.file] ?? current.file } : current,
     );
-    const remapDiagnostic = (item: Diagnostic): Diagnostic => ({
+    const remapDiagnostic = <T extends Diagnostic>(item: T): T => ({
       ...item,
       file: moved[item.file] ?? item.file,
     });

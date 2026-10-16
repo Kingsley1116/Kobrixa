@@ -1,7 +1,10 @@
 import {
   compileToMemory,
   diagnostic,
+  failedBuild,
   readBoundedFile,
+  requirePublished,
+  type Diagnostic,
   type SourceProject,
 } from "@kobrixa/compiler";
 import type { CompilerSnapshot } from "@kobrixa/plugin-runtime";
@@ -42,8 +45,9 @@ export async function prepareSimulation(
   compiler: CompilerSnapshot,
   create: typeof createBuiltinCompilers = createBuiltinCompilers,
 ): Promise<SimulationPrepareResult> {
-  const diagnostics: SimulationPrepareResult["diagnostics"] = [];
+  const diagnostics: Diagnostic[] = [];
   const programs: PreparedSimulation["programs"] = Object.create(null);
+  let success = false;
   try {
     if (entries.length > 4) throw new Error("Simulation supports at most four program entries.");
     if (
@@ -66,12 +70,13 @@ export async function prepareSimulation(
         !project.sources.some((source) => source.path === entry)
       )
         throw new Error(`Unknown project program entry: ${entry}`);
-      const { frontend, backend } = create(compiler);
+      const { frontend, backend, sources } = create(compiler);
       const result = await compileToMemory(
         { ...project, assetSnapshots, manifest: { ...project.manifest, entry } },
         frontend,
         backend,
         signal,
+        sources,
       );
       diagnostics.push(...result.diagnostics);
       if (!result.success) continue;
@@ -79,12 +84,9 @@ export async function prepareSimulation(
       programs[entry] = { ir: result.ir, files: structuredClone(files) };
     }
     signal.throwIfAborted();
-    if (
-      diagnostics.some((item) => item.severity === "error") ||
-      Object.keys(programs).length !== new Set(entries).size
-    )
-      return { success: false, diagnostics };
-    return { success: true, diagnostics, prepared: { programs } };
+    success =
+      !diagnostics.some((item) => item.severity === "error") &&
+      Object.keys(programs).length === new Set(entries).size;
   } catch (error) {
     diagnostics.push(
       diagnostic(
@@ -93,6 +95,18 @@ export async function prepareSimulation(
         project.manifest.entry,
       ),
     );
-    return { success: false, diagnostics };
+  }
+  try {
+    const published = requirePublished(diagnostics);
+    return success
+      ? { success: true, diagnostics: published, prepared: { programs } }
+      : { success: false, diagnostics: published };
+  } catch (error) {
+    return {
+      success: false,
+      diagnostics: requirePublished(
+        failedBuild("simulation", "unknown", error, "<project>").diagnostics,
+      ),
+    };
   }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { languages } from "monaco-editor";
 import { getDiagnosticHelp, type DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
-import type { Diagnostic } from "../../shared/api.js";
+import type { Diagnostic } from "@kobrixa/compiler";
 import type { DocumentationRequest } from "../../shared/documentation.js";
 import { QUICK_FIX_CODES, sameDiagnostic } from "../../shared/quick-fixes.js";
 import type { AnalysisSession } from "../editor/analysis-session.js";
