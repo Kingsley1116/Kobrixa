@@ -44,6 +44,7 @@ describe("workspace file IPC", () => {
     write: vi.fn(),
     saveDraft: vi.fn(),
   };
+  const language = { refresh: vi.fn(async () => {}), close: vi.fn() };
   const run = vi.fn((_channel: string, work: () => unknown) => work());
 
   beforeEach(() => {
@@ -54,7 +55,7 @@ describe("workspace file IPC", () => {
       () => (rendererAvailable ? (renderer as never) : undefined),
       service as never,
       {} as never,
-      {} as never,
+      language as never,
       {} as never,
       {} as never,
       { run } as never,
@@ -190,7 +191,7 @@ describe("workspace file IPC", () => {
       const promise = Promise.resolve(result);
       service[request.method].mockReturnValueOnce(promise);
       const returned = handlers.get(request.channel)!(event, workspaceId, ...request.args);
-      expect(returned).toBe(promise);
+      if (request.method !== "refresh") expect(returned).toBe(promise);
       expect(await returned).toBe(result);
       expect(service[request.method]).toHaveBeenLastCalledWith(workspaceId, ...request.args);
       expect(run).toHaveBeenLastCalledWith(request.channel, expect.any(Function));
@@ -229,5 +230,14 @@ describe("workspace file IPC", () => {
     expect(set(event, patch)).toBe(preferences);
     expect(service.setPreferences).toHaveBeenCalledWith(patch);
     expect(run).toHaveBeenLastCalledWith("workspace:set-preferences", expect.any(Function));
+  });
+  it("refreshes language routing after external project refresh but not ordinary source writes", async () => {
+    await handlers.get("workspace:refresh")!(event, workspaceId, { [sourceFile]: revision });
+    expect(language.refresh).toHaveBeenCalledWith(workspaceId);
+    language.refresh.mockClear();
+    await handlers.get("workspace:write")!(event, workspaceId, sourceFile, "edited", revision);
+    expect(language.refresh).not.toHaveBeenCalled();
+    await handlers.get("workspace:write")!(event, workspaceId, "kobrixa.json", "{}", revision);
+    expect(language.refresh).toHaveBeenCalledWith(workspaceId);
   });
 });

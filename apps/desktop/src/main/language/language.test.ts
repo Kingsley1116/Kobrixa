@@ -10,8 +10,8 @@ import {
   emptyAnalysis,
   type LanguageSyncRequest,
 } from "../../shared/language-sync.js";
-import { CompletionService } from "./completion.js";
 import type { CompletionSyncRequest } from "../../shared/completion-sync.js";
+import type { LanguageFeatureRequest } from "../../shared/language-query.js";
 import { LanguageService } from "./language.js";
 
 // Run the actual worker entry, including project loading and the compiler.
@@ -75,11 +75,20 @@ describe("LanguageService background checks", () => {
     service = new LanguageService(
       {
         projectInput: (id) => {
-          if (id !== "workspace") throw new Error("Unknown workspace.");
+          if (id !== "workspace" && id !== "other") throw new Error("Unknown workspace.");
           return { inputPath: root, selectedEntry: "main.bp" };
         },
       },
       createWorker,
+      undefined,
+      () => {
+        const worker = new Worker(path.join(workerRoot, "worker.cjs"), {
+          execArgv: [],
+          workerData: { completion: true },
+        });
+        workers.push(worker);
+        return worker;
+      },
     );
   });
 
@@ -96,6 +105,20 @@ describe("LanguageService background checks", () => {
         workerData: { analyzerFailure },
       });
       workers.push(worker);
+      return worker;
+    });
+  }
+
+  // Faults must happen after dispatch, now that status reads are asynchronous.
+  function onNextDispatch(action: (worker: Worker) => void) {
+    const create = createWorker.getMockImplementation()!;
+    createWorker.mockImplementationOnce(() => {
+      const worker = create();
+      const post = worker.postMessage.bind(worker);
+      vi.spyOn(worker, "postMessage").mockImplementationOnce((message) => {
+        post(message);
+        action(worker);
+      });
       return worker;
     });
   }
@@ -147,6 +170,7 @@ describe("LanguageService background checks", () => {
 
   it("returns stale when the requested source differs from the published diagnostic", async () => {
     const request: LanguageSyncRequest = {
+      epoch: (await service.status("workspace")).epoch,
       session: "source-test",
       revision: 1,
       baseRevision: null,
@@ -160,6 +184,7 @@ describe("LanguageService background checks", () => {
     )!;
     expect(diagnostic.source).toBe("kobrixa.basic-plus");
     const query = {
+      epoch: (await service.status("workspace")).epoch,
       requestId: "source-query",
       session: request.session,
       revision: request.revision,
@@ -173,7 +198,7 @@ describe("LanguageService background checks", () => {
         requestId: "forged",
         diagnostic: { ...diagnostic, source: "acme.x" },
       }),
-    ).toEqual({ kind: "stale" });
+    ).toEqual({ kind: "stale", epoch: (await service.status("workspace")).epoch });
     expect(await service.quickFixes("workspace", query)).toMatchObject({ kind: "result" });
   });
 
@@ -202,8 +227,8 @@ describe("LanguageService background checks", () => {
     );
     expect(result.index.symbols[reference!.symbolId]).toMatchObject({
       name: "Double",
-      type: "number",
-      declaration: { file: "helper.bpm" },
+      signature: "Double(in number value): number",
+      location: { file: "helper.bpm" },
     });
     expect(result.index.sources["config.bpi"]).toBe("shared = 2\n");
     const changed = await service.analyze("workspace", { "main.bp": "Unknown.Do()\n" });
@@ -249,9 +274,9 @@ describe("LanguageService background checks", () => {
   it.each([new Error("worker failure"), "worker failure"])(
     "recovers from worker error %s",
     async (error) => {
+      onNextDispatch((worker) => worker.emit("error", error));
       const pending = service.diagnostics("workspace", {});
       const rejected = expect(pending).rejects.toThrow("worker failure");
-      workers[0]!.emit("error", error);
       await rejected;
       expect(await service.diagnostics("workspace", {})).toEqual([]);
       expect(createWorker).toHaveBeenCalledTimes(2);
@@ -259,9 +284,11 @@ describe("LanguageService background checks", () => {
   );
 
   it("recovers after the worker exits unexpectedly", async () => {
+    onNextDispatch((worker) => {
+      void worker.terminate();
+    });
     const pending = service.diagnostics("workspace", {});
     const rejected = expect(pending).rejects.toThrow("Diagnostics worker exited");
-    await workers[0]!.terminate();
     await rejected;
     expect(await service.diagnostics("workspace", {})).toEqual([]);
     expect(createWorker).toHaveBeenCalledTimes(2);
@@ -279,6 +306,7 @@ describe("LanguageService background checks", () => {
 
   it("synchronizes deltas through cancellation, file removal and worker restart", async () => {
     const initial: LanguageSyncRequest = {
+      epoch: (await service.status("workspace")).epoch,
       session: "test",
       revision: 1,
       baseRevision: null,
@@ -312,6 +340,11 @@ describe("LanguageService background checks", () => {
     expect(Object.keys(second.patch.index.symbols.set)).toEqual([]);
     expect(Object.keys(messages.mock.calls[0]![0].sync.overlays.set)).toEqual(["main.bp"]);
     accepted = applyAnalysis(accepted, second.patch);
+    const post = workers[0]!.postMessage.bind(workers[0]!);
+    messages.mockImplementationOnce((message) => {
+      post(message);
+      service.cancel();
+    });
     const obsolete = service.sync("workspace", {
       ...initial,
       revision: 3,
@@ -320,7 +353,6 @@ describe("LanguageService background checks", () => {
       overlays: { set: { "unrelated.bp": "latest = 3\n" }, removed: [] },
     });
     const rejection = expect(obsolete).rejects.toThrow("cancelled");
-    service.cancel();
     await rejection;
     const latest = await service.sync("workspace", {
       ...initial,
@@ -341,10 +373,11 @@ describe("LanguageService background checks", () => {
     await workers[0]!.terminate();
     const restarted = await service.sync("workspace", {
       ...initial,
+      epoch: (await service.status("workspace")).epoch,
       revision: 5,
-      baseRevision: 4,
+      baseRevision: null,
       analysisBase: accepted.version,
-      overlays: { set: {}, removed: [] },
+      overlays: { set: accepted.analysis.index.sources, removed: [] },
     });
     if (restarted.kind !== "result") throw new Error("resync");
     expect(restarted.patch.base).toBeNull();
@@ -352,11 +385,13 @@ describe("LanguageService background checks", () => {
     expect(createWorker).toHaveBeenCalledTimes(2);
     expect(await service.sync("workspace", { ...initial, revision: 6, baseRevision: 1 })).toEqual({
       kind: "resync",
+      epoch: (await service.status("workspace")).epoch,
     });
   });
 
   it("resolves cached quick fixes only for the accepted workspace and analysis revision", async () => {
     const request: LanguageSyncRequest = {
+      epoch: (await service.status("workspace")).epoch,
       session: "fix-test",
       revision: 1,
       baseRevision: null,
@@ -368,6 +403,7 @@ describe("LanguageService background checks", () => {
     const analysis = applyAnalysis(undefined, reply.patch).analysis;
     const diagnostic = analysis.diagnostics.find((d) => d.code === "BP1043")!;
     const query = {
+      epoch: (await service.status("workspace")).epoch,
       requestId: "fix-query",
       session: request.session,
       revision: request.revision,
@@ -378,7 +414,7 @@ describe("LanguageService background checks", () => {
     const first = await service.quickFixes("workspace", query);
     expect(first).toMatchObject({
       kind: "result",
-      fixes: [{ titleKey: "insert-parenthesis", edits: [{ newText: ")" }] }],
+      fixes: [{ title: { en: "Insert closing parenthesis )" }, edits: [{ newText: ")" }] }],
     });
     expect(await service.quickFixes("workspace", query)).toEqual(first);
     expect(
@@ -386,20 +422,27 @@ describe("LanguageService background checks", () => {
         ...query,
         analysisVersion: query.analysisVersion + 100,
       }),
-    ).toEqual({ kind: "stale" });
+    ).toEqual({ kind: "stale", epoch: (await service.status("workspace")).epoch });
     expect(await service.quickFixes("workspace", { ...query, file: "../outside.bp" })).toEqual({
       kind: "stale",
+      epoch: (await service.status("workspace")).epoch,
     });
     expect(
       await service.quickFixes("workspace", {
         ...query,
         diagnostic: { ...diagnostic, code: "BP1030" },
       }),
-    ).toEqual({ kind: "stale" });
+    ).toEqual({ kind: "stale", epoch: (await service.status("workspace")).epoch });
     const cancelled = service.quickFixes("workspace", query);
     service.cancel();
-    expect(await cancelled).toEqual({ kind: "stale" });
-    expect(await service.quickFixes("workspace", query)).toEqual({ kind: "stale" });
+    expect(await cancelled).toEqual({
+      kind: "stale",
+      epoch: (await service.status("workspace")).epoch,
+    });
+    expect(await service.quickFixes("workspace", query)).toEqual({
+      kind: "stale",
+      epoch: (await service.status("workspace")).epoch,
+    });
     const next = await service.sync("workspace", {
       ...request,
       revision: 2,
@@ -408,12 +451,16 @@ describe("LanguageService background checks", () => {
       overlays: { set: { "main.bp": "LCD.Clear()\n" }, removed: [] },
     });
     expect(next.kind).toBe("result");
-    expect(await service.quickFixes("workspace", query)).toEqual({ kind: "stale" });
+    expect(await service.quickFixes("workspace", query)).toEqual({
+      kind: "stale",
+      epoch: (await service.status("workspace")).epoch,
+    });
     expect(createWorker).toHaveBeenCalledTimes(1);
   });
 
   it("cancels one quick-fix query through shared memory without invalidating other queries or analysis", async () => {
     const reply = await service.sync("workspace", {
+      epoch: (await service.status("workspace")).epoch,
       session: "isolated-fixes",
       revision: 1,
       baseRevision: null,
@@ -425,6 +472,7 @@ describe("LanguageService background checks", () => {
       (d) => d.code === "BP1043",
     )!;
     const query = {
+      epoch: (await service.status("workspace")).epoch,
       requestId: "first",
       session: "isolated-fixes",
       revision: 1,
@@ -442,15 +490,18 @@ describe("LanguageService background checks", () => {
     service.cancelQuickFix("workspace", "first");
     expect(Atomics.load(new Int32Array(firstMessage.cancellation), 0)).toBe(1);
     expect(Atomics.load(new Int32Array(secondMessage.cancellation), 0)).toBe(0);
-    expect(await first).toEqual({ kind: "stale" });
+    expect(await first).toEqual({
+      kind: "stale",
+      epoch: (await service.status("workspace")).epoch,
+    });
     expect(await second).toMatchObject({
       kind: "result",
-      fixes: [{ titleKey: "insert-parenthesis" }],
+      fixes: [{ title: { en: "Insert closing parenthesis )" } }],
     });
     // Accepted analysis remains queryable after individual cancellation.
     expect(await service.quickFixes("workspace", { ...query, requestId: "third" })).toMatchObject({
       kind: "result",
-      fixes: [{ titleKey: "insert-parenthesis" }],
+      fixes: [{ title: { en: "Insert closing parenthesis )" } }],
     });
     service.cancelQuickFix("workspace", "first"); // Late cancellation is harmless.
     expect(createWorker).toHaveBeenCalledTimes(1);
@@ -458,6 +509,7 @@ describe("LanguageService background checks", () => {
 
   it("discards quick-fix requests on a worker exit and reanalysis creates a fresh version", async () => {
     const update: LanguageSyncRequest = {
+      epoch: (await service.status("workspace")).epoch,
       session: "fix",
       revision: 1,
       baseRevision: null,
@@ -470,6 +522,7 @@ describe("LanguageService background checks", () => {
       (d) => d.code === "BP1031",
     )!;
     const query = {
+      epoch: (await service.status("workspace")).epoch,
       requestId: "fix-query",
       session: "fix",
       revision: 1,
@@ -478,32 +531,33 @@ describe("LanguageService background checks", () => {
       diagnostic,
     };
     await workers[0]!.terminate();
-    expect(await service.quickFixes("workspace", query)).toEqual({ kind: "stale" });
-    const fresh = await service.sync("workspace", { ...update, revision: 2, baseRevision: 1 });
+    expect(await service.quickFixes("workspace", query)).toEqual({
+      kind: "stale",
+      epoch: (await service.status("workspace")).epoch,
+    });
+    const fresh = await service.sync("workspace", {
+      ...update,
+      epoch: (await service.status("workspace")).epoch,
+      revision: 2,
+      baseRevision: null,
+    });
     if (fresh.kind !== "result") throw new Error("resync");
     expect(
       await service.quickFixes("workspace", {
         ...query,
+        epoch: fresh.epoch,
         revision: 2,
         analysisVersion: fresh.patch.version,
       }),
-    ).toMatchObject({ kind: "result", fixes: [{ titleKey: "close-blocks" }] });
+    ).toMatchObject({
+      kind: "result",
+      fixes: [{ title: { en: "Close unfinished blocks at end of file" } }],
+    });
   });
 
   it("runs completion independently, synchronizes edits and recovers from worker restarts", async () => {
-    const completionWorkers: Worker[] = [];
-    const completion = new CompletionService(
-      { projectInput: () => ({ inputPath: root, selectedEntry: "main.bp" }) },
-      () => {
-        const worker = new Worker(path.join(workerRoot, "worker.cjs"), {
-          execArgv: [],
-          workerData: { completion: true },
-        });
-        completionWorkers.push(worker);
-        return worker;
-      },
-    );
     const initial: CompletionSyncRequest = {
+      epoch: (await service.status("workspace")).epoch,
       session: "completion",
       revision: 1,
       baseRevision: null,
@@ -525,11 +579,12 @@ describe("LanguageService background checks", () => {
       ],
     };
     try {
-      const first = await completion.sync("workspace", initial);
+      const first = await service.completionSync("workspace", initial);
       if (first.kind !== "result") throw new Error("resync");
       expect(
         Object.values(first.index.symbols).some(
-          (s) => s.name === "localValue" && s.scope === "local",
+          (s) =>
+            s.name === "localValue" && first.index.scopes.some((scope) => scope.id === s.group),
         ),
       ).toBe(true);
       expect(first.index).not.toHaveProperty("sources");
@@ -553,26 +608,31 @@ describe("LanguageService background checks", () => {
           },
         ],
       };
-      const second = await completion.sync("workspace", edited);
+      const second = await service.completionSync("workspace", edited);
       if (second.kind !== "result") throw new Error("resync");
       expect(second.versions["main.bp"]).toBe(2);
       expect(Object.values(second.index.symbols).some((s) => s.name === "fresh")).toBe(true);
       service.cancel();
       await diagnostics.catch((error) => expect(String(error)).toContain("cancelled"));
-      await completionWorkers[0]!.terminate();
+      await workers[0]!.terminate();
       expect(
-        await completion.sync("workspace", {
+        await service.completionSync("workspace", {
           ...edited,
           revision: 3,
           baseRevision: 2,
           updates: [],
         }),
-      ).toEqual({ kind: "resync" });
-      const restarted = await completion.sync("workspace", { ...initial, revision: 4 });
-      expect(restarted.kind).toBe("result");
-      expect(completionWorkers).toHaveLength(2);
-      const switched = await completion.sync("other", {
+      ).toEqual({ kind: "resync", epoch: (await service.status("workspace")).epoch });
+      const restarted = await service.completionSync("workspace", {
         ...initial,
+        epoch: (await service.status("workspace")).epoch,
+        revision: 4,
+      });
+      expect(restarted.kind).toBe("result");
+      expect(workers.filter((worker) => worker.threadId !== -1)).toHaveLength(1);
+      const switched = await service.completionSync("other", {
+        ...initial,
+        epoch: (await service.status("other")).epoch,
         session: "other",
         updates: [
           { kind: "reset", file: "main.bp", document: { version: 1, text: "different = 1" } },
@@ -581,8 +641,284 @@ describe("LanguageService background checks", () => {
       if (switched.kind !== "result") throw new Error("resync");
       expect(Object.values(switched.index.symbols).map((s) => s.name)).toEqual(["different"]);
     } finally {
-      completion.dispose();
-      await Promise.all(completionWorkers.map((worker) => worker.terminate()));
+      service.close("other");
     }
   });
+  it("rejects an old result after a same-provider restart", async () => {
+    const first = await service.status("workspace");
+    const update = {
+      epoch: first.epoch,
+      session: "restart",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "LCD.Clear(\n" }, removed: [] },
+    };
+    const reply = await service.sync("workspace", update);
+    if (reply.kind !== "result") throw new Error("Expected result");
+    const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics[0]!;
+    await workers[0]!.terminate();
+    await vi.waitFor(async () =>
+      expect((await service.status("workspace")).epoch).toBeGreaterThan(first.epoch),
+    );
+    expect(
+      await service.quickFixes("workspace", {
+        epoch: first.epoch,
+        requestId: "old",
+        session: update.session,
+        revision: 1,
+        analysisVersion: reply.patch.version,
+        file: "main.bp",
+        diagnostic,
+      }),
+    ).toMatchObject({ kind: "stale", epoch: (await service.status("workspace")).epoch });
+    expect(await service.sync("workspace", update)).toMatchObject({ kind: "resync" });
+    const next = await service.status("workspace");
+    expect(
+      await service.sync("workspace", { ...update, epoch: next.epoch, revision: 2 }),
+    ).toMatchObject({
+      kind: "result",
+      epoch: next.epoch,
+      patch: { base: null },
+    });
+  });
+  it("does not start a worker for a missing language service", async () => {
+    await writeFile(
+      path.join(root, "kobrixa.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "missing",
+        language: "case",
+        target: "missing-vm",
+        entry: "main.csx",
+        assets: [],
+        outputDir: "out",
+      }),
+    );
+    const status = await service.status("workspace", true);
+    const reply = await service.sync("workspace", {
+      epoch: status.epoch,
+      session: "s",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: {}, removed: [] },
+    });
+    expect(reply).toEqual({
+      kind: "unavailable",
+      epoch: status.epoch,
+      reason: "missing",
+      language: "case",
+    });
+    expect(createWorker).not.toHaveBeenCalled();
+  });
+
+  it("routes semantic queries by accepted identity and cancels them independently", async () => {
+    const epoch = (await service.status("workspace")).epoch;
+    const update: LanguageSyncRequest = {
+      epoch,
+      session: "features",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "value = 1\nLCD.Clear(\n" }, removed: [] },
+    };
+    const analysis = await service.sync("workspace", update);
+    if (analysis.kind !== "result") throw new Error("Expected analysis");
+    const request: LanguageFeatureRequest = {
+      epoch,
+      session: update.session,
+      revision: 1,
+      analysisVersion: analysis.patch.version,
+      requestId: "first",
+      query: { kind: "hover", file: "main.bp", line: 1, column: 1 },
+    };
+    const post = vi.spyOn(workers[0]!, "postMessage");
+    const first = service.feature("workspace", request);
+    const duplicate = service.feature("workspace", request);
+    const second = service.feature("workspace", { ...request, requestId: "second" });
+    expect(await duplicate).toEqual({ kind: "stale", epoch });
+    service.cancelFeature("other", request.requestId);
+    expect(Atomics.load(new Int32Array(post.mock.calls[0]![0].cancellation), 0)).toBe(0);
+    service.cancelFeature("workspace", request.requestId);
+    expect(Atomics.load(new Int32Array(post.mock.calls[0]![0].cancellation), 0)).toBe(1);
+    expect(Atomics.load(new Int32Array(post.mock.calls[1]![0].cancellation), 0)).toBe(0);
+    expect(await first).toEqual({ kind: "stale", epoch });
+    expect(await second).toMatchObject({
+      kind: "result",
+      epoch,
+      result: {
+        kind: "hover",
+        value: { contents: [expect.stringContaining("value")] },
+      },
+    });
+    expect(await service.feature("workspace", { ...request, epoch: epoch + 1 })).toEqual({
+      kind: "stale",
+      epoch,
+    });
+    expect(
+      await service.feature("workspace", {
+        ...request,
+        query: { kind: "documentSymbols", file: "kobrixa.json" },
+      }),
+    ).toEqual({ kind: "stale", epoch });
+    await service.sync("workspace", {
+      ...update,
+      revision: 2,
+      baseRevision: 1,
+      analysisBase: analysis.patch.version,
+    });
+    expect(await service.feature("workspace", request)).toEqual({ kind: "stale", epoch });
+    expect(createWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies superseded completion edits in order and discovers disk files only on refresh", async () => {
+    const epoch = (await service.status("workspace")).epoch;
+    const initial: CompletionSyncRequest = {
+      epoch,
+      session: "ordered-completion",
+      revision: 1,
+      baseRevision: null,
+      refresh: true,
+      updates: [{ kind: "reset", file: "main.bp", document: { version: 1, text: "kept = 1\n" } }],
+    };
+    expect((await service.completionSync("workspace", initial)).kind).toBe("result");
+    await writeFile(path.join(root, "extra.bpm"), "Sub FromDisk()\nEndSub\n");
+    const worker = workers[0]!;
+    const post = worker.postMessage.bind(worker);
+    let latest!: ReturnType<LanguageService["completionSync"]>;
+    let dispatched!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      dispatched = resolve;
+    });
+    vi.spyOn(worker, "postMessage").mockImplementationOnce((message) => {
+      post(message);
+      latest = service.completionSync("workspace", {
+        ...initial,
+        refresh: false,
+        revision: 3,
+        baseRevision: 2,
+        updates: [
+          {
+            kind: "edit",
+            file: "main.bp",
+            before: 2,
+            version: 3,
+            changes: [{ offset: "kept = 1\nmiddle = 2\n".length, length: 0, text: "last = 3\n" }],
+          },
+        ],
+      });
+      dispatched();
+    });
+    const obsolete = service.completionSync("workspace", {
+      ...initial,
+      refresh: false,
+      revision: 2,
+      baseRevision: 1,
+      updates: [
+        {
+          kind: "edit",
+          file: "main.bp",
+          before: 1,
+          version: 2,
+          changes: [{ offset: "kept = 1\n".length, length: 0, text: "middle = 2\n" }],
+        },
+        { kind: "reset", file: "ignored.json", document: { version: 1, text: "ignored = 1\n" } },
+      ],
+    });
+    const rejected = expect(obsolete).rejects.toThrow("superseded");
+    await ready;
+    await rejected;
+    const result = await latest;
+    if (result.kind !== "result") throw new Error("Expected completion");
+    expect(result.versions["main.bp"]).toBe(3);
+    expect(
+      Object.values(result.index.symbols)
+        .map((s) => s.name)
+        .sort(),
+    ).toEqual(["kept", "last", "middle"]);
+    expect(workers).toHaveLength(1);
+    expect((await service.status("workspace")).epoch).toBe(epoch);
+    const refreshed = await service.completionSync("workspace", {
+      ...initial,
+      revision: 4,
+      baseRevision: 3,
+      refresh: true,
+      updates: [],
+    });
+    if (refreshed.kind !== "result") throw new Error("Expected completion");
+    expect(Object.values(refreshed.index.symbols).some((s) => s.name === "FromDisk")).toBe(true);
+  });
+
+  it("keeps raw manifest routing stable through loading and invalidates malformed/recovered descriptions", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "raw",
+      language: "bp",
+      target: "missing-vm",
+      entry: "./main.bp",
+      outputDir: "out",
+      assets: [],
+    };
+    await writeFile(path.join(root, "kobrixa.json"), JSON.stringify(manifest));
+    const first = await service.status("workspace");
+    const listener = vi.fn();
+    const off = service.onStatus(listener);
+    const update: LanguageSyncRequest = {
+      epoch: first.epoch,
+      session: "raw",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "value = 1\n" }, removed: [] },
+    };
+    expect((await service.sync("workspace", update)).kind).toBe("result");
+    expect((await service.status("workspace", true)).epoch).toBe(first.epoch);
+    expect(listener).not.toHaveBeenCalled();
+    await writeFile(path.join(root, "kobrixa.json"), "{");
+    await service.refresh("workspace");
+    const invalid = await service.status("workspace");
+    expect(invalid.epoch).toBeGreaterThan(first.epoch);
+    const broken = await service.sync("workspace", { ...update, epoch: invalid.epoch });
+    if (broken.kind !== "result") throw new Error("Expected core diagnostics");
+    expect(applyAnalysis(undefined, broken.patch).analysis).toMatchObject({
+      diagnostics: [expect.objectContaining({ code: "MAN1001", source: "kobrixa.core" })],
+      index: { symbols: {} },
+      tokensByFile: {},
+    });
+    await writeFile(path.join(root, "kobrixa.json"), JSON.stringify(manifest));
+    await service.refresh("workspace");
+    const recovered = await service.status("workspace");
+    expect(recovered.epoch).toBeGreaterThan(invalid.epoch);
+    const next = await service.sync("workspace", { ...update, epoch: recovered.epoch });
+    expect(next).toMatchObject({ kind: "result", epoch: recovered.epoch, patch: { base: null } });
+    off();
+    const calls = listener.mock.calls.length;
+    await service.refresh("workspace");
+    expect(listener).toHaveBeenCalledTimes(calls);
+  });
+
+  it.each(["analysis", "completion"] as const)(
+    "does not revive a closed workspace while %s awaits its cached status",
+    async (lane) => {
+      const status = await service.status("workspace");
+      const identity = { epoch: status.epoch, session: "close", revision: 1, baseRevision: null };
+      const pending =
+        lane === "analysis"
+          ? service.sync("workspace", {
+              ...identity,
+              analysisBase: null,
+              overlays: { set: {}, removed: [] },
+            })
+          : service.completionSync("workspace", { ...identity, refresh: false, updates: [] });
+      const rejected = expect(pending).rejects.toThrow("Diagnostics cancelled.");
+      service.close("workspace");
+      await rejected;
+      expect(workers).toHaveLength(0);
+      const listener = vi.fn();
+      service.onStatus(listener);
+      await service.refresh();
+      expect(listener).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -20,6 +20,7 @@ export type CompletionUpdate =
       changes: CompletionEdit[];
     };
 export interface CompletionSyncRequest {
+  epoch: number;
   session: string;
   revision: number;
   baseRevision: number | null;
@@ -27,9 +28,11 @@ export interface CompletionSyncRequest {
   updates: CompletionUpdate[];
 }
 export type CompletionSyncReply =
-  | { kind: "resync" }
+  | { kind: "resync"; epoch: number }
+  | { kind: "unavailable"; epoch: number; reason: "missing" | "conflict"; language: string }
   | {
       kind: "result";
+      epoch: number;
       session: string;
       revision: number;
       versions: Record<string, number>;

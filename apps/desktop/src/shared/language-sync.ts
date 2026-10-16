@@ -120,6 +120,7 @@ export interface RecordPatch<T> {
   removed: string[];
 }
 export interface LanguageSyncRequest {
+  epoch: number;
   session: string;
   revision: number;
   /** null replaces the overlay set, including after an uncertain transport failure. */
@@ -143,7 +144,9 @@ export interface AnalysisPatch {
   };
 }
 export type LanguageSyncReply =
-  { kind: "resync" } | { kind: "result"; session: string; revision: number; patch: AnalysisPatch };
+  | { kind: "resync"; epoch: number }
+  | { kind: "unavailable"; epoch: number; reason: "missing" | "conflict"; language: string }
+  | { kind: "result"; epoch: number; session: string; revision: number; patch: AnalysisPatch };
 
 export const equalValue = (a: unknown, b: unknown): boolean =>
   a === b ||
