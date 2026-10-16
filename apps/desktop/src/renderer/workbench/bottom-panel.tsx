@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { Diagnostic } from "../../shared/api.js";
 import type { Copy } from "../i18n/copy.js";
 import { DiagnosticDetails, type DiagnosticDetailsHost } from "./diagnostic-details.js";
 import { diagnosticSummary } from "../editor/diagnostic-presentation.js";

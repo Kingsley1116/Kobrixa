@@ -1,7 +1,7 @@
 import { EditorModels } from "./editor-models.js";
 import { completionWidget } from "./completion-widget.js";
 import type { CompletionSession } from "./completion-session.js";
-import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
+import type { PublishedAnalysis } from "../../shared/language-sync.js";
 import { basicPlusMonarch, basicPlusThemeRules } from "./basic-plus-language.js";
 import type { Documents, DocumentBuffer } from "./documents.js";
 import type { AnalysisSession } from "./analysis-session.js";
@@ -27,7 +27,7 @@ import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker
 import { BASIC_PLUS_INDENTATION_RULES, formatBasicPlus } from "@kobrixa/basic-plus/language";
 import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
 import type { Theme } from "../settings/theme.js";
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { Diagnostic } from "../../shared/api.js";
 import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
 import type { CollabSession } from "../collab/types.js";
 import { EditorCollab } from "../collab/editor-binding.js";
@@ -120,7 +120,7 @@ export interface EditorHandle {
 }
 
 export interface EditorAnalysis {
-  analysis: BasicPlusProjectAnalysis;
+  analysis: PublishedAnalysis;
   overlays: Record<string, string>;
 }
 

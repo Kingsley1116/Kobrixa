@@ -1,12 +1,18 @@
 import { startCompletionWorker } from "./completion-worker.js";
 import { parentPort, workerData } from "node:worker_threads";
+import { BasicPlusProjectAnalyzer, getBasicPlusQuickFixes } from "@kobrixa/basic-plus";
 import {
-  BasicPlusProjectAnalyzer,
-  getBasicPlusQuickFixes,
-  type BasicPlusProjectAnalysis,
-} from "@kobrixa/basic-plus";
-import { loadProject, ProjectSourceCache } from "@kobrixa/compiler";
-import { applyRecord, diffAnalysis, emptyAnalysis } from "../../shared/language-sync.js";
+  loadProject,
+  ProjectSourceCache,
+  requirePublished,
+  stampDiagnostics,
+} from "@kobrixa/compiler";
+import {
+  applyRecord,
+  diffAnalysis,
+  emptyAnalysis,
+  type PublishedAnalysis,
+} from "../../shared/language-sync.js";
 import type {
   DiagnosticsReply,
   DiagnosticsRequest,
@@ -14,6 +20,7 @@ import type {
   QuickFixWorkerReply,
 } from "./language-protocol.js";
 import { sameDiagnostic, type QuickFixReply } from "../../shared/quick-fixes.js";
+import { BASIC_PLUS_SOURCE, offersBasicPlusQuickFix } from "../../shared/basic-plus-quick-fixes.js";
 
 const port = parentPort;
 if (!port) throw new Error("Diagnostics must run in a worker.");
@@ -23,7 +30,7 @@ let sources = new ProjectSourceCache();
 let documentSession = "";
 let documentRevision = 0;
 let overlays: Record<string, string> = Object.create(null);
-const history = new Map<number, BasicPlusProjectAnalysis>();
+const history = new Map<number, PublishedAnalysis>();
 const fixes = new Map<string, QuickFixReply>();
 let currentWorkspaceId = "";
 // Serialize async project loading as well as parsing. Superseded requests are
@@ -47,14 +54,16 @@ else
           controller.signal.throwIfAborted();
           const analysis = history.get(query.analysisVersion);
           const source = analysis?.index.sources[query.file];
+          const published = analysis?.diagnostics.find(
+            (d) => d.file === query.file && sameDiagnostic(d, query.diagnostic),
+          );
           if (
             request.workspaceId === currentWorkspaceId &&
             query.session === documentSession &&
             query.revision === documentRevision &&
             source !== undefined &&
-            analysis?.diagnostics.some(
-              (d) => d.file === query.file && sameDiagnostic(d, query.diagnostic),
-            )
+            published !== undefined &&
+            offersBasicPlusQuickFix(published)
           ) {
             const key = JSON.stringify([
               query.session,
@@ -65,12 +74,7 @@ else
             ]);
             result = fixes.get(key) ?? {
               kind: "result",
-              fixes: getBasicPlusQuickFixes(
-                query.file,
-                source,
-                query.diagnostic,
-                controller.signal,
-              ),
+              fixes: getBasicPlusQuickFixes(query.file, source, published, controller.signal),
             };
             controller.signal.throwIfAborted();
             fixes.set(key, result);
@@ -135,11 +139,16 @@ else
           sources,
         );
         check();
-        let analysis: BasicPlusProjectAnalysis;
+        let analysis: PublishedAnalysis;
         if (!loaded.project) {
           if (!loaded.diagnostics.length) throw new Error("Choose an entry file before checking.");
-          analysis = { ...emptyAnalysis(), diagnostics: loaded.diagnostics };
-        } else analysis = analyzer.analyze(loaded.project, signal);
+          analysis = { ...emptyAnalysis(), diagnostics: requirePublished(loaded.diagnostics) };
+        } else {
+          const raw = analyzer.analyze(loaded.project, signal);
+          // 2B-1 compatibility adapter: the worker still hosts Basic Plus directly; 2B-2 stamps
+          // the selected language-service provider instead.
+          analysis = { ...raw, diagnostics: stampDiagnostics(raw.diagnostics, BASIC_PLUS_SOURCE) };
+        }
         check();
         const base = sync.analysisBase === null ? undefined : history.get(sync.analysisBase);
         const patch = diffAnalysis(base, analysis, sync.analysisBase, id);

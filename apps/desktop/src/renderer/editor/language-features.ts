@@ -15,8 +15,9 @@ import {
   visibleSymbols,
 } from "@kobrixa/basic-plus/intelligence";
 import { rememberQuickFix, rememberRename } from "./workspace-edits.js";
-import { QUICK_FIX_CODES, sameDiagnostic, type QuickFixReply } from "../../shared/quick-fixes.js";
-import type { Diagnostic } from "@kobrixa/compiler";
+import { sameDiagnostic, type QuickFixReply } from "../../shared/quick-fixes.js";
+import { offersBasicPlusQuickFix } from "../../shared/basic-plus-quick-fixes.js";
+import type { Diagnostic } from "../../shared/api.js";
 import type { DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
 import { quickFixTitle } from "./diagnostic-presentation.js";
 import { documentOutline, type OutlineItem } from "./outline.js";
@@ -203,7 +204,7 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
             const actions: monaco.languages.CodeAction[] = [];
             const seen = new Set<string>();
             for (const diagnostic of current.snapshot.analysis.diagnostics) {
-              if (diagnostic.file !== current.file || !QUICK_FIX_CODES.has(diagnostic.code))
+              if (diagnostic.file !== current.file || !offersBasicPlusQuickFix(diagnostic))
                 continue;
               const source = current.snapshot.analysis.index.sources[current.file] ?? "";
               const marker = model.validateRange(editorRange(diagnostic.range, source));
@@ -245,7 +246,7 @@ export class BasicPlusLanguageFeatures implements monaco.IDisposable {
       token?.isCancellationRequested ||
       signal?.aborted ||
       diagnostic.file !== current.file ||
-      !QUICK_FIX_CODES.has(diagnostic.code) ||
+      !offersBasicPlusQuickFix(diagnostic) ||
       !current.snapshot.analysis.diagnostics.some(
         (d) => d.file === diagnostic.file && sameDiagnostic(d, diagnostic),
       )

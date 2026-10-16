@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { languages } from "monaco-editor";
 import { getDiagnosticHelp, type DiagnosticLocale } from "@kobrixa/compiler/diagnostic-help";
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { Diagnostic } from "../../shared/api.js";
 import type { DocumentationRequest } from "../../shared/documentation.js";
-import { QUICK_FIX_CODES, sameDiagnostic } from "../../shared/quick-fixes.js";
+import { sameDiagnostic } from "../../shared/quick-fixes.js";
+import { offersBasicPlusQuickFix } from "../../shared/basic-plus-quick-fixes.js";
 import type { AnalysisSession } from "../editor/analysis-session.js";
 
 export interface DiagnosticDetailsHost {
@@ -37,7 +38,7 @@ export function DiagnosticDetails({
     if (
       host.fixesDisabled ||
       !snapshot ||
-      !QUICK_FIX_CODES.has(diagnostic.code) ||
+      !offersBasicPlusQuickFix(diagnostic) ||
       !snapshot.analysis.diagnostics.some(
         (d) => d.file === diagnostic.file && sameDiagnostic(d, diagnostic),
       )

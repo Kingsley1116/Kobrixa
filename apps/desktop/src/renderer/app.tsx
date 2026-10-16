@@ -18,7 +18,6 @@ import {
   WHATS_NEW_SEEN_KEY,
   type WhatsNewEntry,
 } from "./updates/whats-new.js";
-import type { Diagnostic, PublishedDiagnostic } from "@kobrixa/compiler";
 import type { EditorAnalysis } from "./editor/editor.js";
 import { normalizeSource } from "./editor/language-features.js";
 import { ResizeHandle } from "./components/resize-handle.js";
@@ -42,6 +41,7 @@ import {
   type CSSProperties,
 } from "react";
 import type {
+  Diagnostic,
   DeviceDescriptor,
   WorkspaceEntry,
   WorkspaceMutationResult,
@@ -523,9 +523,8 @@ export function App(): React.JSX.Element {
   const autoSaveTimers = useRef(new Map<string, { revision: number; timer: number }>());
   const focusSaves = useRef(new Set<string>());
   const [activeFile, setActiveFile] = useState<string>();
-  // Language analysis retains its library contract until its host publication adapter is added.
   const [liveDiagnostics, setLiveDiagnostics] = useState<Diagnostic[]>([]);
-  const [buildDiagnostics, setBuildDiagnostics] = useState<PublishedDiagnostic[]>([]);
+  const [buildDiagnostics, setBuildDiagnostics] = useState<Diagnostic[]>([]);
   const [status, setStatus] = useState<string>(t.ready);
   const [devices, setDevices] = useState<DeviceDescriptor[]>([]);
   const [discovering, setDiscovering] = useState(false);

@@ -2,14 +2,14 @@ import { CompletionService } from "./completion.js";
 import type { CompletionSyncRequest } from "../../shared/completion-sync.js";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import type { BasicPlusProjectAnalysis } from "@kobrixa/basic-plus";
-import type { Diagnostic } from "@kobrixa/compiler";
+import type { Diagnostic } from "../../shared/api.js";
 import {
   applyAnalysis,
   applyRecord,
   type AnalysisPatch,
   type LanguageSyncReply,
   type LanguageSyncRequest,
+  type PublishedAnalysis,
 } from "../../shared/language-sync.js";
 import type {
   DiagnosticsReply,
@@ -65,10 +65,7 @@ export class LanguageService {
     return (await this.analyze(workspaceId, overlays)).diagnostics;
   }
 
-  async analyze(
-    workspaceId: string,
-    overlays: Record<string, string>,
-  ): Promise<BasicPlusProjectAnalysis> {
+  async analyze(workspaceId: string, overlays: Record<string, string>): Promise<PublishedAnalysis> {
     const reply = await this.sync(workspaceId, {
       session: "compatibility",
       revision: this.nextId + 1,

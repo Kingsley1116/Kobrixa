@@ -66,6 +66,48 @@ describe("LanguageService background checks", () => {
     expect(createWorker).toHaveBeenCalledTimes(1);
   });
 
+  it("publishes analysis diagnostics as Basic Plus and loader diagnostics as core", async () => {
+    expect(await service.diagnostics("workspace", { "main.bp": "Unknown.Do()\n" })).toEqual([
+      expect.objectContaining({ code: "BP3001", source: "kobrixa.basic-plus" }),
+    ]);
+    await writeFile(path.join(root, "kobrixa.json"), "{");
+    const loader = await service.diagnostics("workspace", {});
+    expect(loader.length).toBeGreaterThan(0);
+    expect(loader.every((item) => item.source === "kobrixa.core")).toBe(true);
+  });
+
+  it("returns stale when the requested source differs from the published diagnostic", async () => {
+    const request: LanguageSyncRequest = {
+      session: "source-test",
+      revision: 1,
+      baseRevision: null,
+      analysisBase: null,
+      overlays: { set: { "main.bp": "LCD.Clear( ' comment\n" }, removed: [] },
+    };
+    const reply = await service.sync("workspace", request);
+    if (reply.kind !== "result") throw new Error("resync");
+    const diagnostic = applyAnalysis(undefined, reply.patch).analysis.diagnostics.find(
+      (d) => d.code === "BP1043",
+    )!;
+    expect(diagnostic.source).toBe("kobrixa.basic-plus");
+    const query = {
+      requestId: "source-query",
+      session: request.session,
+      revision: request.revision,
+      analysisVersion: reply.patch.version,
+      file: "main.bp",
+      diagnostic,
+    };
+    expect(
+      await service.quickFixes("workspace", {
+        ...query,
+        requestId: "forged",
+        diagnostic: { ...diagnostic, source: "acme.x" },
+      }),
+    ).toEqual({ kind: "stale" });
+    expect(await service.quickFixes("workspace", query)).toMatchObject({ kind: "result" });
+  });
+
   it("analyzes unsaved include/import overlays and returns exact token ranges with diagnostics", async () => {
     const result = await service.analyze("workspace", {
       "main.bp": 'Include "config"\nImport "helper"\nresult = Double(shared)\n',

@@ -4,6 +4,11 @@ import type {
   BasicPlusSemanticToken,
   BasicPlusOccurrence,
 } from "@kobrixa/basic-plus";
+import type { PublishedDiagnostic } from "@kobrixa/compiler";
+
+export type PublishedAnalysis = Omit<BasicPlusProjectAnalysis, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
 
 // Large token/occurrence arrays otherwise clone hundreds of thousands of nested
 // range objects across both worker and Electron IPC boundaries.
@@ -127,7 +132,7 @@ export interface LanguageSyncRequest {
 export interface AnalysisPatch {
   base: number | null;
   version: number;
-  diagnostics?: BasicPlusProjectAnalysis["diagnostics"];
+  diagnostics?: PublishedDiagnostic[];
   tokensByFile: RecordPatch<TokenWire>;
   index: {
     symbols: RecordPatch<BasicPlusSymbolIndex["symbols"][string]>;
@@ -167,7 +172,7 @@ export function applyRecord<T>(
   for (const key of patch.removed) delete result[key];
   return result;
 }
-export function emptyAnalysis(): BasicPlusProjectAnalysis {
+export function emptyAnalysis(): PublishedAnalysis {
   return {
     diagnostics: [],
     tokensByFile: Object.create(null),
@@ -184,8 +189,8 @@ export function emptyAnalysis(): BasicPlusProjectAnalysis {
 }
 /** Run in the worker: unchanged files, symbols and source text never cross IPC. */
 export function diffAnalysis(
-  before: BasicPlusProjectAnalysis | undefined,
-  after: BasicPlusProjectAnalysis,
+  before: PublishedAnalysis | undefined,
+  after: PublishedAnalysis,
   base: number | null,
   version: number,
 ): AnalysisPatch {
@@ -216,7 +221,7 @@ export function diffAnalysis(
 }
 /** Retain immutable identities for unchanged token arrays and index sections. */
 export function applyAnalysis(
-  before: { version: number; analysis: BasicPlusProjectAnalysis } | undefined,
+  before: { version: number; analysis: PublishedAnalysis } | undefined,
   patch: AnalysisPatch,
 ) {
   if (patch.base !== null && before?.version !== patch.base)
