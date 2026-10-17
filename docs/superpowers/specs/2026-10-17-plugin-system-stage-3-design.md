@@ -1,10 +1,10 @@
 # Kobrixa 插件系統設計（第三階段總體規格）
 
 日期：2026-10-17  
-狀態：第三階段 umbrella design；依使用者十五項最終決策定稿範圍與共用契約，尚未實作或完成驗收。各子專案另走 spec → plan → 實作 → 驗收，不重新開啟已定決策。
+狀態：第三階段 umbrella design；依使用者十七項最終決策定稿範圍與共用契約，尚未實作或完成驗收。各子專案另走 spec → plan → 實作 → 驗收，不重新開啟已定決策。
 
 - 上層設計：[插件系統設計](2026-10-14-plugin-system-design.md)（§5 公開 API、§6 介面與例外、§8 生命週期與設備控制、§11 階段驗收）。
-- 決策依據：使用者於 2026-10-17 確認的十五項決策，全文收錄於 §2；設計前的程式碼盤點與選項比較已由這些決策收斂，不再作為待選方案。
+- 決策依據：使用者於 2026-10-17 確認的十七項決策，全文收錄於 §2；設計前的程式碼盤點與選項比較已由這些決策收斂，不再作為待選方案。
 - 前階段：[2A](2026-10-16-plugin-system-2a-build-chain-design.md)、[2B-1](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)、[2B-2](2026-10-16-plugin-system-2b2-language-services-design.md)、[2C](2026-10-17-plugin-system-2c-static-languages-design.md)。本階段基底為 stage-2 的 `79a9ea6`；現行 Plugin API 為 **1.4.0**。
 
 本文固定跨子專案的責任、版本、ownership、安全行為與完成門檻。下文標示「新增」的名稱是第三階段契約，不是對目前程式碼的描述；完整 wire fields、method signatures 與資源 schema 由所屬子規格在 T0 凍結。數值初案均指定確認者，不留無 owner 的待辦。
@@ -39,7 +39,7 @@
 
 ## 2. 決策紀錄
 
-以下十五項**全部為最終決策**。理由與後果是後續子規格的約束。
+以下十七項**全部為最終決策**。理由與後果是後續子規格的約束。
 
 1. **遷移設備相關三個功能。** 理由：以共用設備流程驗證插件邊界，控制本階段範圍。後果：motor 與 Lab 完整遷移；device-ev3 遷移 provider／連線／監測／設定，remote-files UI 與其餘主規格例外逐項保留。
 2. **main core broker＋builtin in-process EV3 provider。** 理由：集中 authority、獨占與停止，重用既有 EV3 transport／finite-motion 實作。後果：provider interface 必須文件化並驗收；broker 不建立 raw transport；`kobrixa.ev3` compiler 與 `kobrixa.device-ev3` 生命週期分離。
@@ -56,6 +56,8 @@
 13. **OS suspend 結束並保存背景 Lab 錄製，所有 motion 要求停止。** 理由：睡眠期間無法維持安全意圖與連續取樣。後果：採 §4.7 suspend 列，保留停止未確認／保存失敗狀態與 committed checkpoint；喚醒後不自動恢復 motion 或錄製。
 14. **本階段 optional builtins 預設啟用，一般使用者可逐一切換。** 理由：隨 app 提供功能且保留獨立停用選擇。後果：插件設定中的開關不需 developer mode，選擇持久化；safe mode 的抑制與必要 builtin 政策仍適用。
 15. **EV3 file-transfer exchange 維持 10 秒，其餘普通 exchange 為 5 秒。** 理由：保留現有經硬體驗證的檔案傳輸期限，避免較弱 Wi-Fi 下原本可完成的傳輸提早失敗。後果：§4.8 分列期限，motor exchange 仍為 2 秒；file／deploy overall deadline 與 partial／unconfirmed 語意不變。
+16. **維持現有 unclean-exit safe-mode lock 規則。** 理由：optional builtins 本身不新增全域鎖定條件。後果：只有第三方／development 風險或 renderer unresponsive 才觸發此 lock；預設啟用的 optional builtin 單獨 crash／unclean exit 不觸發，程序故障由 supervisor crash-loop limits 處理，motion uncertainty 留在 core fault journal。
+17. **contributed settings 逐欄立即套用，沒有 Apply 按鈕。** 理由：維持現有 EV3 連線偏好的互動。後果：每次有效欄位變更經驗證與 atomic CAS write，成功才發布新值；失敗保留該欄 draft／error／重試入口，單欄重設走相同路徑。
 
 ## 3. 架構與資料流
 
@@ -101,6 +103,8 @@ core adapter 供既有 deploy／run／remote-files／battery／monitor 使用，
 
 使用者的 **Disconnect 是一次 host-orchestrated core action**：先阻擋該 session 的新工作，要求 motor stop/readback 與 recording end／drain／save，顯示各階段進度，完成後才斷線。停止未確認或保存失敗不能回報正常完成，core 保留 fault／retry／checkpoint 說明。插件呼叫公開 `devices/disconnect` 不取得這項跨 owner 的協調權；其他 owner 仍有 active foreground operation／recording reservation 時回 `PLUGIN_E_DEVICE_BUSY`，不得藉 API 強制中斷他人工作。
 
+3A 的 host-only `DeviceSessionControlPort.quiesce` 為 core Disconnect 與 suspend 封鎖 session 新工作、stop/readback 並結束 reservation；`ReservationBindingPort.onEnded` 由 3B-1 coordinator 訂閱，轉交 3B-2 `PersistenceParticipant.endReservation(event, deadline)`，再以 `drain(offer, dispatch)` 收尾該 recording。一般 Lab stop recording 的 `released`、Disconnect 的 `core-disconnect`、suspend 的 `suspended` 與 provider/session loss 的 `disconnected` 都有同一路徑，不因此 retire 健康 consumer owner。Disconnect 等 device／storage disposition 均成功後才呼叫 `DeviceSessionControlPort.disconnect`；兩個 ports 只供 host 使用。
+
 ### 3.2 Builtin EV3 provider interface
 
 3A 定義並凍結新增 `BuiltinDeviceProvider` 的 host-only interface，至少包含探索、連線／斷線、public descriptor 轉換、capability discovery、讀取／mode、finite motion、停止／readback、legacy program／file operation adapters 與 disposal。這是可信任的 in-process interface，不是第三方 provider RPC。
@@ -136,6 +140,8 @@ hold action 的 pointer／keyboard begin／end／cancel 與實際 panel／window
 ### 3.5 Settings、record storage 與資料遷移
 
 3B-2 提供 application-local typed settings，限 boolean、finite number／integer、bounded string、enum、default／range／label／help。namespace 綁定 source；schema version、value revision、reset、驗證與持久化錯誤均公開。停用保留值、撤銷 watcher；workspace overrides、secrets、sync 不在本階段。
+
+依決策 17，通用設定頁逐欄立即驗證並 atomic CAS 保存，沒有 Apply 按鈕；boolean／enum 變更即送出，text／number 在有效輸入完成（blur／Enter）送出，單欄重設同樣立即提交。保存狀態與錯誤逐欄顯示，不因 watch 或 CAS conflict 靜默覆蓋尚未確認的輸入。
 
 record storage 與 settings 分開：opaque record ID、schema version、compare-and-swap revision、atomic replacement、bounded staged chunks、paged list／read、delete、flush 與 quota。commit 成功前舊版本仍可讀；失敗不得半寫入或悄悄清空。跨筆資料不承諾通用 transaction。export 由使用者明確觸發，host 開啟 save dialog、持有 destination handle 並原子提交；插件不取得任意本機路徑。copy 也須由公開的使用者 action 觸發。
 
@@ -305,6 +311,10 @@ remote-files 的 prepared batch 目前跨掃描與使用者確認持鎖（[`File
 
 safe mode 在還原 panel／文件前決定 catalog、provider、process 與 settings contribution 的可用性。第二階段必要 Basic Plus／EV3 compiler 政策保留；擴充的是本階段 optional builtin 的抑制與持久化停用，不把所有 builtin 改成可停用。退出 safe mode 也不自動恢復使用者已停用的 source。
 
+依決策 16，unclean exit 只有第三方／development 風險或 renderer unresponsive 才鎖 safe mode；optional builtins 單獨載入、crash、斷電或強制結束不新增 lock。既有 CLI／persisted lock／state corruption 的抑制仍適用，core journal／checkpoint recovery 不以是否鎖定為前提。
+
+健康 feature process 在一般停錄、Disconnect、suspend 與 provider loss 後存續，execution generation 不變；舊 reservation／motion scope 失效，Disconnect／provider loss 亦撤銷舊 session；suspend 可保留 gated session，wake 僅解除已釐清的 suspend gate，provider 恢復亦不續作。被 disable／replace 的 provider source 本身仍 teardown，其他健康 consumers 不跟著退役。renderer loss／window destroyed 則 retire 受影響 owner，bounded drain 後關閉其 process；下一次允許的明確 open／command 才以新 generation／processEpoch 啟動並建立新 panel／status bindings。safe mode／user disable 仍優先，renderer reload 不自行啟動 feature 或重播操作。
+
 core recovery／stop view 不依賴三個 optional feature。已有可用 session／cleanup handle 時可由 broker 要求停止；provider 已撤銷、冷啟動尚未連線或設備斷線時，畫面保留「停止未確認」及復原入口，不能為了顯示成功偷偷啟用 provider／連線。正常 disable 可留下有期限的 host cleanup handle，但不能保留一般操作權。
 
 現有 [`motor-test-smoke.mjs`](../../../tests/desktop/motor-test-smoke.mjs) 會切換 `rightPanel` 並斷言 timed motion 繼續；[英文使用文件](../../en/motor-test.md) 卻已描述關閉側欄要求停止。3C 必須改成矩陣行為的雙語文件與 smoke，增加「start 未回覆前 hide」案例，不能只刪掉舊斷言。
@@ -313,24 +323,24 @@ core recovery／stop view 不依賴三個 optional feature。已有可用 sessio
 
 以下為實作前的**初始數值**。所列 owner 必須在自己的子規格以最大合法 fixture、邊界反例與效能證據確認或調整，於其 T0 凍結；調整共同上限須同步本文。resource version 發布後不可原地放寬。bytes 指序列化 UTF-8 大小；數量與 bytes 兩者均須通過，插件不得自訂較大 quota。
 
-| 類別                     | 初案                                                                                                                                                                  | 確認 owner／超限行為                                                                                                                                          |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 共用 wire／manifest      | 維持 1 MiB／64 KiB；commands／activation events 各 64                                                                                                                 | 3A／3B-1；保留現有 `PLUGIN_LIMITS`，不能靠提高 frame 上限承載完整歷史。                                                                                       |
-| UI resource              | 每份 256 KiB、每 source 合計 1 MiB、host 合計 8 MiB；每份 256 nodes、depth 8、純文字單值 4,000 字元                                                                   | 3B-1；註冊前拒絕超限，不截斷安全控制。                                                                                                                        |
-| UI instances／patches    | 每 source 4 panels／2 status items，host 16 panels／16 status items；單 patch 64 KiB、每 panel 10 次／秒、待送 4 個 patches                                           | 3B-1；合併一般更新，超限顯示問題；stop 不排在 patch queue。                                                                                                   |
-| Action／event            | arguments 16 KiB；每 source 32 subscriptions、16 pending 一般 RPC；telemetry batch 64 frames／64 KiB、queue 256 KiB                                                   | 3A／3B-1；解除或 gap 必須明示，不無限緩衝。                                                                                                                   |
-| 安全狀態／gesture        | 8 個獨立 control-event slots／source；gesture 每 100 ms 更新、350 ms 過期；單 source 同時一個 active hold                                                             | 3A／3B-1；overflow 或 renderer heartbeat 停滯撤銷 intent，core snapshot 保留 terminal 狀態。                                                                  |
-| Device operation         | 一個 active connection、一個 foreground operation、一個 recording reservation；prepare reference 5 秒失效                                                             | 3A；衝突回 busy，過期 reference 無副作用。                                                                                                                    |
-| I/O／operation deadlines | motor exchange 2 秒，EV3 file-transfer exchange 10 秒，其餘普通 exchange 5 秒；motion overall 30 秒、stop/readback 15 秒；普通 foreground 60 秒、file／deploy 10 分鐘 | 3A；file-transfer 沿用現有硬體驗證值；各 deadline 獨立，超時進 cancel／stop／partial／unconfirmed，不宣稱 transport 可強制中斷；provider 細分每種 operation。 |
-| File confirmation        | 120 秒 idle lease，明確續租但總共最多 10 分鐘                                                                                                                         | 3A；abandon plan、釋鎖並保留 UI 可重試結果。                                                                                                                  |
-| Telemetry sampler        | 有 monitor／Lab demand 時每次 poll 完成後等 500 ms，無重疊；fresh sample 2.5 秒                                                                                       | 3A；沿用現況的最多約 2 Hz，而非固定硬體取樣率。                                                                                                               |
-| Battery-only sampler     | 僅剩 battery demand 時，每次 read 完成後等 30 秒，無重疊                                                                                                              | 3A；沿用現有 `BATTERY_POLL_MS` 的較低需求，仍使用同一 sampler；monitor／Lab demand 恢復時回到上一列 cadence，不啟動第二個 clock。                             |
-| Settings                 | 每 source 128 keys、schema 64 KiB、values 64 KiB、單 string 4 KiB                                                                                                     | 3B-2；型別／revision／容量不符拒絕，保留 committed values。                                                                                                   |
-| Record storage           | 單 record 8 MiB、每 source 256 records／512 MiB、host 1 GiB；page 64 entries 或 256 KiB、chunk 256 KiB，先達者為界                                                    | 3B-2；容量包含 staged writes 的 reservation；50 筆 Lab 最大合法 records 必須可遷移。atomic replacement 的暫存空間另行預留並檢查 disk-full。                   |
-| Storage／export 工作     | 每 source 2 staged writes、1 export；staging idle 30 秒、整筆 120 秒；一般 write／flush 10 秒                                                                         | 3B-2；逾時刪除未 commit staging，既有 record 不受影響；export 等待使用者選檔不占設備鎖。                                                                      |
-| Lab／charts              | 4 channels、30 分鐘或 3,600 frames、50 recordings；5 秒 checkpoint；preview 60 秒／240 frames；每圖 2 series、每 series 800 display points、4 圖共 6,400 points       | 3D；保留 raw samples、extrema／segments／null gaps；table 一頁 50 rows，dialog 同 panel 最多 1 個。                                                           |
-| Lifecycle                | 沿用 initialize 10 秒、普通 command 30 秒、shutdown request 2 秒；先給 storage drain 10 秒，再進 manager 的 4 秒 shutdown bound                                       | 3B-1／3B-2；安全 stop 與資料 drain 的期限不可被普通 RPC cancellation 當成已完成；整體 close budget 由兩者在 T0 對齊。                                         |
-| Core fault journal       | 64 個 unresolved/recent entries、單筆 8 KiB；8 MiB 總容量含替換空間                                                                                                   | 3A；不可淘汰 unresolved fault 來接受新 motion，滿額拒絕新風險操作並提供清理／復原說明。                                                                       |
+| 類別                     | 初案                                                                                                                                                                                                                | 確認 owner／超限行為                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 共用 wire／manifest      | 維持 1 MiB／64 KiB；commands／activation events 各 64                                                                                                                                                               | 3A／3B-1；保留現有 `PLUGIN_LIMITS`，不能靠提高 frame 上限承載完整歷史。                                                                                       |
+| UI resource              | 每份 256 KiB、每 source 合計 1 MiB、host 合計 8 MiB；每份 256 nodes、depth 8、純文字單值 4,000 字元                                                                                                                 | 3B-1；註冊前拒絕超限，不截斷安全控制。                                                                                                                        |
+| UI instances／patches    | 每 source 4 panels／2 status items，host 16 panels／16 status items；單 patch 64 KiB、每 panel 10 次／秒、待送 4 個 patches                                                                                         | 3B-1；合併一般更新，超限顯示問題；stop 不排在 patch queue。                                                                                                   |
+| Action／event            | arguments 16 KiB；每 source 32 subscriptions、16 pending 一般 RPC；telemetry batch 64 frames／64 KiB、queue 256 KiB                                                                                                 | 3A／3B-1；解除或 gap 必須明示，不無限緩衝。                                                                                                                   |
+| 安全狀態／gesture        | 8 個獨立 control-event slots／source；gesture 每 100 ms 更新、350 ms 過期；單 source 同時一個 active hold                                                                                                           | 3A／3B-1；overflow 或 renderer heartbeat 停滯撤銷 intent，core snapshot 保留 terminal 狀態。                                                                  |
+| Device operation         | 一個 active connection、一個 foreground operation、一個 recording reservation；prepare reference 5 秒失效                                                                                                           | 3A；衝突回 busy，過期 reference 無副作用。                                                                                                                    |
+| I/O／operation deadlines | motor exchange 2 秒，EV3 file-transfer exchange 10 秒，其餘普通 exchange 5 秒；motion overall 30 秒、stop/readback 15 秒；普通 foreground 60 秒、file／deploy 10 分鐘                                               | 3A；file-transfer 沿用現有硬體驗證值；各 deadline 獨立，超時進 cancel／stop／partial／unconfirmed，不宣稱 transport 可強制中斷；provider 細分每種 operation。 |
+| File confirmation        | 120 秒 idle lease，明確續租但總共最多 10 分鐘                                                                                                                                                                       | 3A；abandon plan、釋鎖並保留 UI 可重試結果。                                                                                                                  |
+| Telemetry sampler        | 有 monitor／Lab demand 時每次 poll 完成後等 500 ms，無重疊；fresh sample 2.5 秒                                                                                                                                     | 3A；沿用現況的最多約 2 Hz，而非固定硬體取樣率。                                                                                                               |
+| Battery-only sampler     | 僅剩 battery demand 時，每次 read 完成後等 30 秒，無重疊                                                                                                                                                            | 3A；沿用現有 `BATTERY_POLL_MS` 的較低需求，仍使用同一 sampler；monitor／Lab demand 恢復時回到上一列 cadence，不啟動第二個 clock。                             |
+| Settings                 | 每 source 128 keys、schema 64 KiB、values 64 KiB、單 string 4 KiB                                                                                                                                                   | 3B-2；型別／revision／容量不符拒絕，保留 committed values。                                                                                                   |
+| Record storage           | 單 record 8 MiB、每 source 256 records／512 MiB、host 1 GiB；page 64 entries 或 256 KiB、chunk 256 KiB，先達者為界                                                                                                  | 3B-2；容量包含 staged writes 的 reservation；50 筆 Lab 最大合法 records 必須可遷移。atomic replacement 的暫存空間另行預留並檢查 disk-full。                   |
+| Storage／export 工作     | 每 source 2 staged writes、1 export；staging idle 30 秒、整筆 120 秒；一般 write／flush 10 秒                                                                                                                       | 3B-2；逾時刪除未 commit staging，既有 record 不受影響；export 等待使用者選檔不占設備鎖。                                                                      |
+| Lab／charts              | 4 channels、30 分鐘或 3,600 frames、50 recordings；5 秒 checkpoint；preview 60 秒／240 frames；每圖 2 series、每 series 800 display points、4 圖共 6,400 points                                                     | 3D；保留 raw samples、extrema／segments／null gaps；table 一頁 50 rows，dialog 同 panel 最多 1 個。                                                           |
+| Lifecycle                | 沿用 initialize 10 秒、普通 command 30 秒；storage drain 10 秒與 device stop/readback 15 秒＋journal commit 5 秒平行，再進 manager 4 秒 shutdown（內含 request 2 秒）；`max(10,15+5)+4 = 24` 秒 cleanup，外層 25 秒 | 3A／3B-1／3B-2 共用；25 秒只是一次清理嘗試上限，不是自動 force exit。unconfirmed／save error／journal error 保留 blocker。                                    |
+| Core fault journal       | 64 個 unresolved/recent entries、單筆 8 KiB；8 MiB 總容量含替換空間                                                                                                                                                 | 3A；不可淘汰 unresolved fault 來接受新 motion，滿額拒絕新風險操作並提供清理／復原說明。                                                                       |
 
 安全 timeout、firmware watchdog、gesture expiry、RPC timeout 與 shutdown deadline 是不同 clock。3A／3B-1 T0 要列完整時間線，stop cleanup 不沿用已 abort 的一般工作 signal。健康系統每 5 秒 checkpoint；若 storage 卡住則停止錄製並顯示保存失敗，不能承諾任意 I/O 故障下最多只丟 5 秒資料。crash 只保證最後成功提交的 checkpoint。
 
@@ -478,14 +488,14 @@ core recovery／stop view 不依賴三個 optional feature。已有可用 sessio
 - [ ] **S3-05／broker、provider 與 locks。** fake-provider conformance、非 builtin provider declaration（含空陣列）拒絕、duplicate provider／physical identity、provider disable／disconnect／replacement、cross-owner／generation handles 均有測試；legacy deploy／files／mode／battery／monitor 與 public consumers 無第二套鎖。recording 與 motor 排除、mode pin、reads yield、stop 不死鎖均以實際入口驗證；使用者 Disconnect 的 stop/readback／end/save／disconnect 順序與進度，以及插件 API 對其他 owner 回 busy，分別驗收。
 - [ ] **S3-06／collaboration。** host／editor／viewer、request／grant／decline／reclaim／release、demotion／offline／reconnect 與 room 未同步測試；admission 後每個 consequential await 邊界失權都不開始下一次寫入，motion 要求 stop；read／download／stop 保留，偽造 holder／window／owner／download plan 失敗。不能只驗按鈕 disabled。
 - [ ] **S3-07／UI 與事件上限。** 未知 component／version、超 bytes／nodes／depth／queue、stale patch／resource generation、subscription leak、slow consumer／event gap 有案例；terminal／stop 狀態不因 telemetry 合併消失，renderer freeze 仍由 main intent expiry 撤銷。最大合法 charts／records 下記錄延遲與記憶體，通過各子規格 T0 固定的 budget。
-- [ ] **S3-08／Lab 完整遷移。** 公開 channels／calibration／raw-calibrated display／history／delete／compare／CSV／code-copy／status，隱藏／關閉 view 繼續錄製、停用／provider loss／renderer crash 正確收尾。浮點運算順序、null gaps、segments、extrema、cursor／unit／source 相容及 checkpoints 有 parity fixtures；不保留 private recorder service。
-- [ ] **S3-09／設定與資料完整性。** EV3 有真實 public settings consumer；舊 preferences／Lab history／calibrations 一次性遷移成功且可重入，保留 originals；跨 namespace／revision race／stale commit／quota／disk-full／損壞／強制退出／save retry／分頁／explicit export 全覆蓋。crash 復原只聲稱最後 committed checkpoint。
-- [ ] **S3-10／lifecycle 與 safe mode。** §4.7 每一列均有 automated failure-injection，包含 OS suspend 後不自動恢復與 second-instance launch 只聚焦既有視窗；三個 optional features 預設啟用、無 developer mode 也可獨立切換並持久保存，stage-2 必要 compiler 不受影響。cold safe mode 在載入 executable／data-only contributions、provider、還原 panel／文件之前生效；全部 optional 關閉仍有 core 管理／recovery／stop-uncertainty view，無自動連線／錄製／motion。
+- [ ] **S3-08／Lab 完整遷移。** 公開 channels／calibration／raw-calibrated display／history／delete／compare／CSV／code-copy／status，隱藏／關閉 view 繼續錄製、一般 stop recording／Disconnect／suspend／provider loss 經 endReservation 收尾且健康 process 存續；停用／renderer crash drain 後 process teardown，明確再開啟才建新 bindings。浮點運算順序、null gaps、segments、extrema、cursor／unit／source 相容及 checkpoints 有 parity fixtures；不保留 private recorder service。
+- [ ] **S3-09／設定與資料完整性。** EV3 有真實 public settings consumer，逐欄立即驗證／atomic CAS／field error，無 Apply 按鈕；舊 preferences／Lab history／calibrations 一次性遷移成功且可重入，保留 originals；跨 namespace／revision race／stale commit／quota／disk-full／損壞／強制退出／save retry／分頁／explicit export 全覆蓋。crash 復原只聲稱最後 committed checkpoint。
+- [ ] **S3-10／lifecycle 與 safe mode。** §4.7 每一列均有 automated failure-injection，包含 OS suspend 後不自動恢復與 second-instance launch 只聚焦既有視窗；三個 optional features 預設啟用、無 developer mode 也可獨立切換並持久保存，stage-2 必要 compiler 不受影響。驗收 optional-only unclean exit 不鎖 safe mode，第三方／development 風險或 renderer unresponsive 則鎖；core journal／checkpoint 在兩種結果都可見。cold safe mode 在載入 executable／data-only contributions、provider、還原 panel／文件之前生效；全部 optional 關閉仍有 core 管理／recovery／stop-uncertainty view，無自動連線／錄製／motion。
 - [ ] **S3-11／close／update／無孤兒。** pending command／motion／read／checkpoint／settings commit 時停用、shutdown、update preparation，均先撤權再 bounded drain／stop，不能提前顯示安全；確認 stop 與已 commit 資料才完成正常 close，force exit 有可復原 fault／checkpoint，沒有 orphan process／lease／subscription。
 - [ ] **S3-12／installed-app 自動化。** Forge 產物含各 feature entry／SDK／manifest／UI resources；以不依賴 source tree 的位置、離線及無外部 Node 的環境啟動，完成公開 feature smoke、disable／re-enable、quit。缺檔只報錯、不找 checkout；provider native dependency 布局驗證通過。
 - [ ] **S3-13／MANUAL：硬體 motion。** 人工分別以 USB／Wi-Fi 驗收 jog／timed／angle、負載／停止確認、hold release、hide／close／window loss、失權／disable／kill、拔線／失聯與重連；記錄設備／firmware／平台／app artifact／觀察結果。以[現有硬體清單](../../../tests/hardware/motor-test.md)補充 public-route 案例，明確區分要求停止與實際觀察停止，軟體 mock 不可代簽。
 - [ ] **S3-14／MANUAL：硬體監測與仲裁。** 實體 EV3 驗證四 channel、mode changes、recording／motor 排除、program／file foreground gaps、斷線／source change 停錄、CSV／校正與最大錄製；含合作持權轉移與 remote-files 共用 broker。記錄部分傳輸／停止未確認情況，不把重連當成恢復原操作。
-- [ ] **S3-15／MANUAL：安裝與復原 UI。** 在未掛載 checkout、未提供使用者 Node 的乾淨機器，逐一驗收本階段實際交付的 OS／architecture 安裝產物；`en`／`zh-TW`、明暗主題、320 px 側欄、125% scale、鍵盤／focus／dialog／charts、optional switches 與真實 renderer／plugin 故障後 cold safe mode。未測平台逐項標記，不能以開發機 bundle 或 stage-2 V03 取代。
+- [ ] **S3-15／MANUAL：安裝與復原 UI。** 在未掛載 checkout、未提供使用者 Node 的乾淨機器，逐一驗收本階段實際交付的 OS／architecture 安裝產物；`en`／`zh-TW`、明暗主題、320 px 側欄、125% scale、鍵盤／focus／dialog／charts、optional switches、optional-only crash 不鎖 safe mode，以及 renderer unresponsive／第三方風險後的 cold safe mode 與 core recovery。未測平台逐項標記，不能以開發機 bundle 或 stage-2 V03 取代。
 - [ ] **S3-16／文件與例外結案。** 雙語 architecture、motor／Lab／device 文件、roadmap、samples、visibility／second-launch smoke 與 §8 ledger 更新，涵蓋插件工具 pane、單一 Disconnect、suspend 與一般使用者開關的行為變更；motor／Lab 退出例外，device-ev3 只核銷完成部分。主規格仍保留的 stage-2 V01–V04 與本階段人工項分開記錄；完整 smoke 的略過／失敗不能記成全套通過。
 
 ## 10. 風險與緩解

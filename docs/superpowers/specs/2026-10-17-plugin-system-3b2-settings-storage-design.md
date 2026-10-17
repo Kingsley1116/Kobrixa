@@ -59,9 +59,9 @@
 | import 是 host allowlist＋具 receipt 的逐筆 migration                         | 可重入、保留 originals、先完成 marker 再切換；不新增跨筆 transaction 或公開 legacy path access。                                             |
 | 通用設定頁的 save 走可信 core action                                          | 不用插件 command 轉送 64 KiB values，保持 3B-1 arguments 16 KiB 限制，且停用程序不會破壞核心保存錯誤 UI。                                    |
 
-### 2.2 使用者最終決策 10–15 的落點
+### 2.2 使用者最終決策 10–17 的落點
 
-以下逐項引用 [umbrella §2 決策 10–15](2026-10-17-plugin-system-stage-3-design.md#2-決策紀錄)，均已決定，不是 T0 待選方案。
+以下逐項引用 [umbrella §2 決策 10–17](2026-10-17-plugin-system-stage-3-design.md#2-決策紀錄)，均已決定，不是 T0 待選方案。
 
 | 決策                                             | 對 3B-2 的約束與實作落點                                                                                                                                                                                                                                   |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -71,6 +71,8 @@
 | 13：OS suspend 停止並保存                        | §8.4 在 suspend 結束背景錄製、bounded drain／save，並由 3A 要求 motion stop；wake 不自動續錄或重播。OS 未給足時間時只承諾最後 committed checkpoint，顯示 interrupted／save fault。                                                                         |
 | 14：optional builtins 預設啟用、一般使用者可切換 | plugin management 不需 developer mode；由 3B-1 保存各 source 的 enable/disable 狀態。3B-2 的 values／records 在停用後保留，撤 watcher 並保留 core recovery；不將管理開關寫入 feature settings。                                                            |
 | 15：EV3 file-transfer exchange 維持 10 秒        | 消費 3A／umbrella §4.8 的 device deadlines：file transfer 10 秒、其他普通 exchange 5 秒。§8.3 仍為 storage drain 10 秒、device stop/readback 15 秒加 journal 5 秒、cleanup 24 秒與 outer net 25 秒，不改成較短的檔案 exchange 假設。                       |
+| 16：維持既有 safe-mode lock 規則                 | optional builtin 單獨 crash／unclean exit 不鎖 safe mode；第三方／development 風險或 renderer unresponsive 依 3B-1 規則鎖定。無論 lock 結果，core 可讀最後 committed checkpoint／recovery evidence，不自動續錄。                                           |
+| 17：逐欄立即套用設定                             | 通用設定頁每個有效欄位變更驗證後立即 atomic CAS 保存、逐欄顯示錯誤；沒有 Apply 按鈕。單欄 Reset 同路徑，維持 EV3 連線偏好互動，見 §4.3。                                                                                                                   |
 
 ### 2.3 數量、bytes 與時間
 
@@ -247,9 +249,11 @@ type SettingsMutation = { snapshot: SettingsSnapshot; receipt: Receipt<SettingsR
 
 通用設定頁一次顯示 16 fields，最多 8 頁；一頁包括 errors/actions 在內最多 128 nodes、depth≤8，採 UI v1 的 layout budgets，仍用 settings validator 驗值；choice 1–8 options 可 segmented，9–32 使用 select。core 同時掛載一個 contributed settings form，不占 feature panel 配額。依 umbrella §2 決策 11，三個 feature tabs 由 3B-1 放在「插件工具 / Plugin tools」pane；contributed settings 在通用設定頁，切換 pane／tab 不停止 Lab 背景錄製。
 
-輸入只修改本地 draft；按「套用」或單欄「重設」才提交，不每按鍵持久化。Save／Reset 為 core actions，使用同一 validator／namespace CAS service，授權繫結 catalog binding 與可信 sender；64 KiB changes 不經 16 KiB plugin command arguments。public plugin form 若要更新設定，可經 command 取受限 arguments 再自行呼叫 `settings/update`。
+依 umbrella §2 決策 17，設定逐欄立即套用，沒有 Apply 按鈕。boolean／enum 在 change 時提交；text／number 保留正在輸入的 draft，在有效輸入完成（blur／Enter）立即提交，不每按鍵保存半成品。每次只提交該 key 的 change／reset，core 仍驗完整 effective values 並以 baseline revision atomic CAS；成功 receipt 後才更新 committed snapshot／通知 consumer。單欄「重設」同樣立即保存。欄位各自顯示 saving／saved／error，無變動的 draft 不發 mutation。授權繫結 catalog binding 與可信 sender，使用相同 validator／namespace CAS service，不經 plugin command arguments；public plugin form 仍可經 command 呼叫 settings/update。
 
-收到 watch：無 dirty draft 直接更新；有 dirty draft 保留輸入、標示外部已變更並禁用舊 CAS 套用，提供「重新載入」及在最新 baseline 上重新編輯。不得 silent last-write-wins。save 失敗保留 draft／field errors／重試入口，已 committed snapshot 不變；unknown outcome 先 read／flush，再決定重試。欄位缺權限顯示唯讀原因；停用撤貢獻與 watcher，核心 recovery 保留錯誤，重新啟用不回填過期 draft。
+同一 settings namespace 的 core mutations 序列化；最多每 key 保留一份尚未送出的最新有效 draft（共 ≤128 keys／64 KiB），每次以上一個已確認 receipt 的 revision 送出下一欄，不能把多欄當整頁 Apply。快速同欄變更只合併未送出的值，不改已 dispatch payload；invalid draft 逐欄報錯且不寫入。未知 outcome 先 read／flush 對帳，暫停該 namespace 後續提交，不自動重送 mutation。
+
+收到 watch：對已確認的本次 commit 依 receipt 對帳，其餘無 dirty draft 的欄位更新。外部 revision 變更若與 dirty／queued／in-flight 欄位競爭，保留其輸入、顯示欄位 conflict 並停止舊 CAS；提供重新載入或明確重試，重新確認修改意圖後才基於最新 snapshot 提交，不 silent last-write-wins。已確認的自家前一欄 receipt 可以供尚未送出的欄位使用，不視為外部衝突。保存失敗保留該欄 draft／error／重試入口，committed snapshot 不變；欄位缺權限顯示唯讀原因。停用撤貢獻與 watcher，取消未送出 edits、對帳已 dispatch 工作，core recovery 保留錯誤；重新啟用不回填過期 draft。
 
 設定頁加入獨立「插件設定」來源列／搜尋，不重寫 legacy catalog。一般文字比對 label／help／key，沒有插件 callbacks。core recovery／plugin management 即使所有 optional features 關閉仍可用；cold safe mode 不為了顯示 settings 而讀被抑制的 resource 或啟動 process。
 
@@ -491,25 +495,32 @@ clipboard adapter 失敗回 `PLUGIN_E_STORAGE_IO`／clipboard-unavailable，UI �
 | plugin→host `storage/abandonCheckpoint`  | `{checkpoint:Handle}`                                               | `{record:RecordMeta}`；需 `storage.write`，無 pending write 且相關 reservation 已結束才允許；保留最後 checkpoint 並標 interrupted，不假造 final。                    |
 | host→plugin `storage/drain`              | `DrainRequest`                                                      | `{status:"submitted" \| "checkpoint-only",writes:Handle[]}`；writes 最多 2，僅供 host 對帳，不構成保存成功證據。                                                     |
 
-`reservation` 若有值，直接消費 [3A §9](2026-10-17-plugin-system-3a-device-broker-design.md) 的 host-only `ReservationBindingPort`，原樣匯入其型別；註冊以 `validate(owner, reservationId)` 驗證同 source／generation／session 的有效 recording reservation，失敗不登記或保存 binding。3D 在承諾背景錄製前須以 initial committed record 完成 binding。通用非設備背景工作可不帶 reservation，這不建立 device 權限。3B-2 透過同一 port 的 `onEnded(listener)` 消費 ended 通知，依原 owner／reservation idempotently 交給 3B-1 coordinator 結束來源及 drain，不等待保存才釋放設備。validation、持久化 registration 與 ended 到達的競態依 port 的失效規則對帳；ended 若先發生，pending binding 不得回報仍可錄製。這個 port 不在本案重定義，也不取代 `DeviceDrainGrant` 的 final-read 授權。
+`reservation` 若有值，直接消費 [3A §9.5](2026-10-17-plugin-system-3a-device-broker-design.md#95-recording-的-reservationbindingport) 的 `ReservationBindingPort.validate(owner, reservationId)`，原樣匯入其型別，驗證同 source／generation／session 的 active reservation。3D 在承諾背景錄製前須以 initial committed record 完成 binding；通用非設備工作可不帶 reservation，不取得設備權限。3B-1 coordinator 在任何 registration admission 前安裝唯一 `ReservationBindingPort.onEnded` listener，將每個 event 同步送本文 `PersistenceParticipant.endReservation(event, deadline)`，本案不另安裝第二個 dispatch listener。validate → durable registration 的 await 期間若 end，ack 前重驗失敗、不得回報仍可錄製；已 committed evidence／record 納入首次 end 的原期限 drain，已無剩餘時間則 interrupted recovery，不撤回已保存資料。此對帳不取代 `DeviceDrainGrant` final-read 授權。
 
 ```ts
 type DrainReason =
   | "disable"
   | "reload"
   | "remove"
-  | "provider-loss"
   | "renderer-crash"
   | "window-destroyed"
   | "shutdown"
   | "update"
   | "safe-mode"
-  | "suspend";
+  | "reservation-ended";
 type DrainRequest = {
   token: Handle;
   reason: DrainReason;
   remainingMs: number; // 0..10_000；host monotonic deadline 才是權威
-  checkpoints: Array<{ checkpoint: Handle; record: RecordMeta }>;
+  checkpoints: Array<{
+    checkpoint: Handle;
+    record: RecordMeta;
+    reservationEnd?: {
+      reservationId: Handle;
+      reason: Exclude<ReservationSnapshot["reason"], "active">;
+      lastSequence: Counter;
+    };
+  }>;
   writes: Array<{ write: Handle; id: RecordId; state: "receiving" | "sealed" }>;
 };
 type DrainReport = {
@@ -529,9 +540,13 @@ type DrainReport = {
 };
 ```
 
-report records 最多 2、errors 最多 16、整體 8 KiB；不含 payload／paths。`saved` 要求所有已登記工作有 final receipt、所有先前受理的 settings／commit 已確定、flush barrier 成功；process 回「submitted」或 `deactivate` resolve 都不能單獨使它成立。沒有 checkpoint／pending mutation 的 idle source 可立即 saved。state≠saved 時 blocker=true，除非使用者明確 discard／接受 checkpoint-only 的資料損失；這個決定保留在 recovery evidence。retryable 才列出有期限的 retryAction 選項，實際點擊由 3B-1 建立 CoreActionReference；unknown 先對帳，不能用 retry 再 publish。此 report 是 host-only，不能經 plugin result 洩漏 core action。
+report records 最多 2、errors 最多 16、整體 8 KiB；不含 payload／paths。`saved` 要求本 offer 範圍內所有已登記工作有 final receipt、已受理的 settings／commit 已確定、flush barrier 成功；process 回「submitted」或 `deactivate` resolve 都不能單獨使它成立。沒有 checkpoint／pending mutation 的 idle source 可立即 saved。state≠saved 時 blocker=true，除非使用者明確 discard／接受 checkpoint-only 的資料損失；這個決定保留在 recovery evidence。retryable 才列出有期限的 retryAction 選項，實際點擊由 3B-1 建立 CoreActionReference；unknown 先對帳，不能用 retry 再 publish。此 report 是 host-only，不能經 plugin result 洩漏 core action。
 
-drain callback 使用獨立 cancellation signal／async task，不沿用已 abort 的一般 command signal。只可對 request 中的 checkpoint target 做一次 final replacement，或完成 request 中已開始的 write；不得 create 新 record、任意改 settings、delete、export、copy 或重新取得 recording reservation。`beginWrite` 與 `commitWrite` 必須帶 token；後續 writeChunk／sealWrite 的 handle 已綁 token，逐次查其期限。payload 仍受 8 MiB、2 slots、既有 reservation／120 秒上限；drain 不提高 quota。
+`DrainRequest.checkpoints[].reservationEnd` 的 reason type-only 使用 3A `ReservationSnapshot`；`reservation-ended` 時每個 target 必填、其他 reason 若涵蓋 ended recording 亦原樣保留。逐 checkpoint 關聯可同時攜帶最多 2 個不同 reservation 的末筆 evidence，不以最後一個 end 覆蓋前者。它只是末筆 sequence／起因通知，不授予設備權限，不複製 `ReservationEnded` 的 owner／host grant 到 wire。新增 reason 與欄位由 1.7.0 批次同步 JS／Python／schema。
+
+非 retirement 的一般 Lab stop recording（released）、core Disconnect（core-disconnect）、suspend（suspended）、provider/session loss（disconnected），以及 source change／limit／overflow 全部走 `endReservation` → `drain`，`DrainReason` 一律 `reservation-ended`，起因由 `reservationEnd.reason` 保留。owner 的普通 settings／其他 records／commands 保持可用；只有綁定 checkpoint target 的普通 replacement 被封住，避免正常 checkpoint timer 與 final CAS 競爭。registration 保留到 final receipt 或明確 abandon／discard；逾時則留 recovery evidence，不能聲稱 final 成功。callback 用 grant read 到固定 lastSequence，再以 token 提交最後 payload／flush；保存失敗保留 core retry／checkpoint，不能由一般寫入繞過同 record fence。
+
+drain callback 使用獨立 cancellation signal／async task，不沿用已 abort 的一般 command signal。drain token 只可對 request 中的 checkpoint target 做一次 final replacement，或完成 request 中已開始的 write；token 不得 create 新 record、任意改 settings、delete、export、copy 或重新取得 recording reservation；non-retirement owner 在 token 外仍可使用未被封鎖的普通權限，session gate 與原 quotas 仍適用。`beginWrite` 與 `commitWrite` 必須帶 token；後續 writeChunk／sealWrite 的 handle 已綁 token，逐次查其期限。payload 仍受 8 MiB、2 slots、既有 reservation／120 秒上限；drain 不提高 quota。
 
 若 final 前有正在提交的 checkpoint，先對帳並完成它，再用其已確認 revision 做 final CAS；deadline 不重算。同 record 的舊 write lock 釋放前不能預傳另一個 replacement，第二個 slot 只能用於另一個已登記 target；沒有 bypass。feature 應在平時避免接近 drain 才傳首份大 record。
 
@@ -543,6 +558,8 @@ final commit 自動關閉 checkpoint registration。registration recovery entry 
 
 ```ts
 interface PersistenceParticipant {
+  // 同步對帳 ended／pending bindings，只封住該 recording target，不 freeze owner。
+  endReservation(event: ReservationEnded, deadline: number): DrainOffer | null;
   // 同步關閉普通 admission，擷取已受理工作；可與 broker revocation 同一回合呼叫。
   freeze(
     owner: PersistenceOwner,
@@ -561,17 +578,27 @@ interface PersistenceParticipant {
 }
 ```
 
-`PersistenceOwner` type-only alias 3A 的 `ResourceOwner`，含 sourceKey、pluginId、generation、hostEpoch、processEpoch，從 principal 查同一 registry；不另產生身分。`DrainOffer` 保存 immutable owner、reason、monotonic deadline、一次 token、最多 2 checkpoints、先前 accepted ticket set；`DrainDispatcher` 只封裝向原 process 傳 `storage/drain`。`CoreActionReference`／`CoreWindowScope` 只引用 [3B-1 §13.1](2026-10-17-plugin-system-3b1-declarative-ui-design.md) 的正式型別與 scope 驗證，不在本案重定 shape 或另收 actionToken／scope 參數；普通 plugin actionRef 不能取得 core 管理權。
+`PersistenceOwner` type-only alias 3A 的 `ResourceOwner`，含 sourceKey、pluginId、generation、hostEpoch、processEpoch，從 principal 查同一 registry；不另產生身分。`DrainOffer` 保存 immutable owner、reason、monotonic deadline、一次 token、最多 2 checkpoints、先前 accepted ticket set 與每個 checkpoint 的可選 reservationEnd；`DrainDispatcher` 只封裝向原 process 傳 `storage/drain`。`CoreActionReference`／`CoreWindowScope` 只引用 [3B-1 §13.1](2026-10-17-plugin-system-3b1-declarative-ui-design.md) 的正式型別與 scope 驗證，不在本案重定 shape 或另收 actionToken／scope 參數；普通 plugin actionRef 不能取得 core 管理權。
 
-retirement → device／storage reason 的唯一 mapping 由 [3B-1 §11.4](2026-10-17-plugin-system-3b1-declarative-ui-design.md#114-lifecycle-participants-與-3b-2-drain-port) coordinator 表定義，包含 remove 與 suspend；本案直接消費該表，不另投影或改寫 sibling enum。`DrainReason` 是 storage wire 的正式 enum；plugin crash 走 ownerLost，不虛構 drain callback。
+retirement → device／storage reason 的唯一 mapping 由 [3B-1 §11.4](2026-10-17-plugin-system-3b1-declarative-ui-design.md#114-lifecycle-participants-與-3b-2-drain-port) coordinator 表定義，包含 retirement 及 non-retirement 的 suspend／core Disconnect／provider loss；本案直接消費該表，不另投影或改寫 sibling enum。`DrainReason` 是 storage wire 的正式 enum；plugin crash 走 ownerLost，不虛構 drain callback。
+
+`ReservationEnded` 原樣 type-only 匯入 3A §9.5。`endReservation(event, deadline)` 同步記錄首次 end evidence，定位完整 owner／reservation 的 pending／durable checkpoint；deadline 取 caller、`event.endedMonotonicMs + 10_000`、grant 及既有 ticket deadlines 的最早者。健康 process 且有待收尾 target 時回 `DrainOffer`，reason=`reservation-ended`；沒有 pending／registered target 且無未完成 final／recovery 時才回 null（無保存工作），不能將尚在 registration await 的工作漏算。null grant／已死亡 process 不 dispatch，coordinator 走 `ownerLost`，僅處理 host tickets／checkpoint。
+
+對 null grant／已死亡 process 仍回傳待對帳 offer（若有 target），由 coordinator 以 ownerLost 合併，不能當成 null／saved。只在同 reservation 的 ordinary writes 上同步建立 fence，已受理 checkpoint commit 先由固定 completion ticket 對帳；final token 再用已確認 revision。`drain` 對同 offer idempotent，pending durable registration 亦須先在原 deadline 內對帳後才可回 saved。範圍限定這份 offer：report.pendingSettings=false，不等待無關 settings／其他 records；若 `freeze` 合併為 owner retirement，才納入當時所有已受理 settings／writes。freeze 不接受 reason=`reservation-ended`，不能把非退休事件誤當 owner 撤權。
+
+同一 owner／reservation 的重複 end、core quiesce 回傳 ended 及後續 retirement 共用已建立的 final 工作；`freeze` 產生新的 immutable offer snapshot，接手相同 checkpoint token／evidence，採較早期限並合併其他已登記 targets，已 dispatch 的 record 不再呼叫第二次 final handler。coordinator 同回合先完成 end／retire／freeze 才 dispatch；跨回合升級只 dispatch 尚未涵蓋的 targets，不能讓同 checkpoint final 兩次或續租。先 retire 的 freeze 與後到通知亦同。對已 final／abandoned 的 binding 保留 bounded terminal receipt 供對帳，不重新建立 callback。
+
+正常 stop recording 的 release caller 只結束 reservation，final write 由同一 storage/drain handler 處理，不另送競爭的普通 final commit；在 final receipt 前仍顯示 saving。原 process 可在 callback 中提交 final，或以 storage/abandonCheckpoint 明確結束為 interrupted。後者及任何 deadline／save failure 仍產生 checkpoint-only／retryable／uncertain report，除非使用者明確接受資料損失，不算 Disconnect 的 saved。保存後 owner 可接受新使用者工作；舊 token、reservation 或同 record mutation fence 不因健康 process 存續而延長。
 
 `PersistenceRecoverySnapshot` 為最多 16/source、64/host 的 bounded fault summaries，每筆包括 source display identity、record ID、last committed revision、DrainReport state、是否仍有完整 payload、expiresAt 及允許的 retry/export/discard actions；不含路徑／record 內容。超額拒絕新相關背景工作，保留 unresolved 問題，不與 3A safety fault journal 共用容量。view 由 3B-1 擁有；3B-2 不在 manager／renderer/app 加 feature 分支。
 
-使用 [3A §9.2](2026-10-17-plugin-system-3a-device-broker-design.md#92-lifecycle-participant-與-drain-port) 的 `DeviceResourceParticipant`／`DeviceDrainGrant`，型別原樣引用。3B-1 coordinator 先同步呼叫 `DeviceResourceParticipant.retire(owner, deviceReason)`，將回傳的 `.drain` 傳入 `freeze(owner, storageReason, deadline, deviceDrain?)` 第四參數；`.drain === null` 時省略該參數，不 await `.settled` 才 freeze。retire 已阻擋新 samples／reservation continuation，grant 保留 3A 定義的原 owner／reservation／最後 sequence／期限。3B-2 token 將這份 grant 與已登記 record 綁定，deadline 取兩者最早。健康原 process 可在 grant 內對同 reservation query/read 最後樣本，不能 reserve 新工作；host router 驗證關聯，不要求 devices wire 自報 grant。process crash 沒有原 process 可讀 ring，只保證 checkpoint。保存不用持有 device lock。3B-1 將 broker report 與 persistence report 合併成 close/update blocker，不以其中一者 saved 覆蓋另一者 unconfirmed。
+owner retirement 使用 [3A §9.2](2026-10-17-plugin-system-3a-device-broker-design.md#92-lifecycle-participant-與-drain-port) 的 `DeviceResourceParticipant`／`DeviceDrainGrant`，型別原樣引用。3B-1 coordinator 先同步呼叫 `DeviceResourceParticipant.retire(owner, deviceReason)`，將回傳的 `.drain` 傳入 `freeze(owner, storageReason, deadline, deviceDrain?)` 第四參數；`.drain === null` 時省略該參數，不 await `.settled` 才 freeze。retire 已阻擋新 samples／reservation continuation，grant 保留 3A 定義的原 owner／reservation／最後 sequence／期限。3B-2 token 將這份 grant 與已登記 record 綁定，deadline 取兩者最早。健康原 process 可在 grant 內對同 reservation query/read 最後樣本，不能 reserve 新工作；host router 驗證關聯，不要求 devices wire 自報 grant。process crash 沒有原 process 可讀 ring，只保證 checkpoint。保存不用持有 device lock。3B-1 將 broker report 與 persistence report 合併成 close/update blocker，不以其中一者 saved 覆蓋另一者 unconfirmed。
 
 freeze 前已由 host 收到的普通 settings／record commit 可由 host-owned completion ticket 完成，該 ticket 固定 payload／target CAS，與 drain token 同享 10 秒 admission fence；原 process 不能替換其內容。未 commit 的普通 receiving／sealed writes 若不在 offer accepted set，不允許 retirement 後繼續。新 generation 在舊 ticket outcome 未定前不得寫同 namespace。
 
 ### 8.3 時間線與 retention 規則
+
+以下是 owner retirement／app close 時間線。non-retirement endReservation 只使用原 10 秒 final window，不關閉健康 process，也不進 manager 4 秒 shutdown；session quiesce 的 stop/readback／journal 與 final drain 仍平行。
 
 ```text
 t0        3B-1 關閉新工作；3A 撤權／停止來源；3B-2 freeze admission
@@ -604,11 +631,11 @@ host process crash 使普通 mutation fence 的程序內狀態消失；下一程
 
 ### 8.4 對齊 umbrella 生命週期矩陣
 
-panel hide／close、window blur／hide／minimize 不觸發 Lab drain，僅撤與 view 綁定的 reads／watches；background checkpoint registration 保留。window destroyed／最後視窗關閉、feature disable／remove／reload、provider loss、renderer crash、shutdown／update、OS suspend 走 coordinator mapping 的相應 drain；plugin crash 走 ownerLost，不呼叫不存在的 handler。provider 恢復／重新啟用／reconnect 不續錄。safe mode 不啟動 feature／mapper／watcher，但 core 可以顯示持久化 recovery evidence，並由使用者明確 export last checkpoint。
+panel hide／close、window blur／hide／minimize 不觸發 Lab drain，僅撤與 view 綁定的 reads／watches；background checkpoint registration 保留。window destroyed／最後視窗關閉、feature disable／remove／reload、renderer crash、shutdown／update 走 retirement freeze／drain；正常 release、Disconnect、provider loss、OS suspend 走 non-retirement endReservation／drain；plugin crash 走 ownerLost，不呼叫不存在的 handler。provider 恢復／重新啟用／reconnect 不續錄。safe mode 不啟動 feature／mapper／watcher，但 core 可以顯示持久化 recovery evidence，並由使用者明確 export last checkpoint。
 
-依 umbrella §2 決策 12，使用者的 Disconnect 是 core 的單一操作：3B-1 coordinator 顯示停止／保存進度，3A 要求 motor stop/readback 並結束 recording admission，3B-2 完成已登記 record 的 final commit／flush，兩邊 disposition 確認後才斷線。保存或 stop 未確認時保留 blocker／retry／明確 force 決策，不先顯示成功或斷線。reservation ended 通知經 `ReservationBindingPort` 接入，同一 owner 的重複通知與 retirement 合併，不再產生第二段 drain。plugin 的 `devices/disconnect` 仍由 3A 拒絕另一 owner active work 的 busy，不能呼叫 core force 路徑。
+依 umbrella §2 決策 12，使用者的 Disconnect 是 core 的單一操作：3B-1 呼叫 3A `DeviceSessionControlPort.quiesce(sessionId, {reason:"core-disconnect", action})`，onEnded listener 呼叫 `PersistenceParticipant.endReservation(event, deadline)`，再 `drain(offer, dispatch)` 等該 session 全部 pending final／recording 保存。device stopConfirmed／journalCommitted 與 storage final commit／flush 全成功後才 `DeviceSessionControlPort.disconnect(sessionId, action)`。失敗保留 blocker／retry，不先斷線。健康 owner 不 retire／freeze，settings／其他 record 權限不受此保存影響；plugin devices/disconnect 仍按 3A busy 規則，無 core port 權限。
 
-依 umbrella §2 決策 13／§4.7 suspend row，OS suspend 時停止背景錄製並走 `DrainReason:"suspend"` 的 bounded drain／save，同時由 3A 要求 motion stop；wake 不自動重建 reservation／錄製／motion。OS 不保證留足 10 秒，來不及完成時只承諾最後 committed checkpoint，保留 interrupted／save fault；resume 先對帳已 dispatch 的 I/O，不續期舊 token。正常 panel hide 與此情境分開。
+依 umbrella §2 決策 13／§4.7 suspend row，OS suspend 呼叫 `DeviceSessionControlPort.quiesce(sessionId, {reason:"suspended"})`，經 onEnded／endReservation 的 `DrainReason:"reservation-ended"`（reservationEnd.reason=`suspended`）保存背景錄製，同時要求 motion stop。健康 feature process 存續，generation／processEpoch 不變；wake 先對帳原 deadline／I/O，再由 3A resume 解除純 suspend gate，不續期 token、不續錄／motion。OS 不保證留足 10 秒，未完成時只承諾最後 committed checkpoint 及實際 host-held payload／fault。provider loss 同樣保留健康 consumer process，使用 reservationEnd.reason=`disconnected`；renderer loss／window destroyed 則 retirement drain 後 shutdown process，下一次允許的明確 open／command 以新 generation／bindings 啟動。三者都不因恢復可用而重播。
 
 依 umbrella §2 決策 14，三個 optional builtins 預設 enabled，普通使用者可在 plugin settings 各自切換，無須 developer mode。停用 values／records 保留，watcher 撤銷、core recovery 留存；重新啟用不自動續錄，也不將 enable 狀態寫入公開 feature settings。
 
@@ -742,12 +769,12 @@ protocol integrator 在 1.6.0 基底加入所有本案 schema／methods／permis
 
 新增共用 fixture family `settings-storage-v1`，由 protocol integrator 持有正式 conformance；各 task 自備 unit fixtures，不跨寫別人的 mocks。每個 fixture 記錄 input、有效／無效、預期 numeric 或 business code／reason、permission、lifetime 與最終 persisted hash。至少包含：
 
-1. 每種 setting type、mixed enum（1 與 "1" 不混淆）、dotted key↔LocalId／option ID map、stale map 拒絕、defaults／reset、128 keys 與 129 keys、schema／values 64 KiB 邊界、單字串 4 KiB 邊界、未知欄位／重複鍵、危險 key segments、非法 default／range、相同版本變更語意、upgrade／downgrade、損壞檔。
+1. 逐欄 immediate：boolean／enum change、text／number blur／Enter、單欄 Reset、無 Apply 按鈕；invalid 不提交、快速輸入只合併未送值、兩欄序列 CAS、外部 watch conflict／unknown 對帳與 field retry；每種 setting type、mixed enum（1 與 "1" 不混淆）、dotted key↔LocalId／option ID map、stale map 拒絕、defaults／reset、128 keys 與 129 keys、schema／values 64 KiB 邊界、單字串 4 KiB 邊界、未知欄位／重複鍵、危險 key segments、非法 default／range、相同版本變更語意、upgrade／downgrade、損壞檔。
 2. 0 byte／8 MiB／8 MiB＋1 records、256／257 筆、source 512 MiB／host 1 GiB 邊界，replacement double reservation、2／3 staging、16／17 host staging，另同時允許 source 1／host 4 exports 而不占 write slots、僅加 bytes reservation，scratch／metadata budget、50 最大 Lab-size synthetic records。
 3. 256 KiB chunk 與＋1、base64 padding／尾端 bits、short writes、chunk ack 遺失重送、seal hash mismatch、雙 commit 相同 receipt、取消／timeout 前後 publication、delete CAS、openRead pin、固定 list snapshot／到期。
 4. watch baseline 與 commit 競態、events/unsubscribe removed=true／tombstone=false、無 settings/unwatch wire alias、sequence gap、validation＋bounded enqueue 後 ack（slow callbacks 不延遲 ack）、disable／reload／crash／safe-mode 後舊 owner 回覆；core errors 不依賴事件成功送達。
 5. §10 每列 failure injection，包括兩次 app 啟動時 primary 聚焦／secondary 在 store 初始化前退出、primary kill 後新 primary recovery、Windows replace conformance、file-sync-only receipt、unknown 對帳與 GC 不刪 active data。
-6. drain 的所有矩陣事件、ReservationBindingPort validate／onEnded 競態與同 owner 檢查、DeviceResourceParticipant.retire().drain 原樣傳入 freeze 第四參數、停止來源先於 final、callback hang、完整 sealed／未收到尾端分別呈現、30 秒 idle／120 秒 total、10 秒 drain／4 秒 process bound、與 3A 15 秒 stop＋5 秒 journal 並行、24 秒 cleanup／25 秒 outer net、Disconnect 先 stop/save 再斷線、suspend 停存與 wake 不續錄、取消 close 後不恢復舊 handles。
+6. drain 的所有矩陣事件；正常 released／core-disconnect／suspended／disconnected 經 endReservation 的 target-only fence，健康 process／其他 settings 權限存續，renderer loss drain 後 teardown／新 bindings；null grant／ownerLost、重複 end 與 retirement 合併不續期／不雙 final；ReservationBindingPort validate／onEnded 競態與同 owner 檢查、DeviceResourceParticipant.retire().drain 原樣傳入 freeze 第四參數、停止來源先於 final、callback hang、完整 sealed／未收到尾端分別呈現、30 秒 idle／120 秒 total、10 秒 drain／4 秒 process bound、與 3A 15 秒 stop＋5 秒 journal 並行、24 秒 cleanup／25 秒 outer net、Disconnect 先 stop/save 再斷線、suspend 停存與 wake 不續錄、取消 close 後不恢復舊 handles。
 7. import crash 位於每個 item commit／receipt／complete marker 的前後；重跑至少三次 records 數／ID／bytes 相同；source 改變、target conflict、missing／permission 分別處理，originals byte-for-byte 不變，renderer nonce／allowlist 負例。
 8. export cancel／foreign actionRef／以 invocationId 冒充／過期／重播、native dialog 晚回覆、無 device lock、磁碟滿／destination race；copy 超量／無 action／OS fail；所有錯誤不洩漏路徑或 raw values。
 
@@ -759,7 +786,7 @@ T0 固定量測環境欄位：OS／architecture、CPU／RAM、filesystem、app a
 
 | 工作負載                                                      | 通過門檻                                                                                                                       |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 128 keys／64 KiB values，通用設定頁 16 fields                 | 本地 draft 更新 p95≤50 ms；切頁 p95≤100 ms；save 有 busy／error 狀態，不阻塞 input。                                           |
+| 128 keys／64 KiB values，通用設定頁 16 fields                 | 本地 draft 更新 p95≤50 ms；切頁 p95≤100 ms；逐欄立即提交有 busy／error 狀態，無 Apply 按鈕，不阻塞其他欄位 input。             |
 | 50×8 MiB records 的 list／256 KiB read，4 個 persistence jobs | warm metadata list p95≤200 ms；main 單段同步工作≤16 ms；peak 額外 main RSS≤32 MiB、worker RSS≤64 MiB，不常駐 400 MiB payload。 |
 | 最大 8 MiB replacement／final commit                          | 在指定 local SSD fixture 下單 commit／flush≤10 秒；超時回誠實 outcome／blocker，不能無限延長。                                 |
 | storage 壓力與 3A safety path 並行                            | persistence 引入的 stop dispatch 額外延遲 p95≤50 ms；不串入 device foreground queue。這不是實體 stop/readback 時間承諾。       |
