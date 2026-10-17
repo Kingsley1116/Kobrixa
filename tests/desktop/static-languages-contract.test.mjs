@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { developmentSourceKey } from "../../packages/plugin-runtime/dist/index.js";
+import { HOSTILE_PATTERN } from "./static-languages-stress.mjs";
 import {
   readStaticLanguageFixtures,
   writeStaticLanguageFixtures,
@@ -31,7 +32,7 @@ test("copies T0 toy bytes and constructs distinct conflict and invalid-resource 
     const bad = JSON.parse(await read("invalid", "language/tokenizer.json"));
     assert.equal(Object.hasOwn(bad.states[0].rules[0].regex, "flags"), false);
     const hostile = JSON.parse(await read("hostile", "language/tokenizer.json"));
-    assert.equal(hostile.states[0].rules[0].regex.pattern, "(a+)+$");
+    assert.equal(hostile.states[0].rules[0].regex.pattern, HOSTILE_PATTERN);
     // Do not compile or execute the hostile regex in this process.
     for (const name of ["toy", "shared", "duplicate", "invalid", "hostile"]) {
       const manifest = JSON.parse(await read(name, "kobrixa-plugin.json"));

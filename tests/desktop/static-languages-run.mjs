@@ -14,6 +14,13 @@ import {
   writeStaticLanguageFixtures,
 } from "./static-languages-fixtures.mjs";
 import { waitForSmokeExit } from "./plugins-smoke-process.mjs";
+import {
+  HOSTILE_PATTERN,
+  HOSTILE_COMPILED_PATTERN,
+  HOSTILE_DOCUMENT,
+  killStaticAcceptanceChild,
+  waitForHostileTermination,
+} from "./static-languages-stress.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
@@ -61,14 +68,24 @@ try {
     },
   });
   const run = async (phase, profile, killed = false) => {
+    const recovery = phase === "recover-hostile";
     const child = spawn(
       electron,
       [main, `--user-data-dir=${profile}`, rendererUrl, directory, phase],
       {
         stdio: "inherit",
+        detached: recovery && process.platform !== "win32",
       },
     );
-    const result = await waitForSmokeExit(child, `static languages ${phase}`);
+    // A regression that re-registers the hostile language during Restore must
+    // also stay bounded and cannot leave a renderer running in the background.
+    const recoveryDeadline = recovery
+      ? setTimeout(() => killStaticAcceptanceChild(child), 10_000)
+      : undefined;
+    const result = await waitForSmokeExit(child, `static languages ${phase}`).finally(() => {
+      clearTimeout(recoveryDeadline);
+      if (recovery) killStaticAcceptanceChild(child);
+    });
     if (killed) {
       assert.notEqual(result.code, 0);
       const ready = JSON.parse(await readFile(path.join(directory, `${phase}-ready.json`), "utf8"));
@@ -88,6 +105,45 @@ try {
     await run(recover, profile);
     await assert.rejects(readFile(path.join(profile, "plugins/session.json")), { code: "ENOENT" });
   }
+  const stressProfile = path.join(directory, "hostile-profile");
+  const stressStarted = performance.now();
+  const hostile = spawn(
+    electron,
+    [main, `--user-data-dir=${stressProfile}`, rendererUrl, directory, "hostile-tokenization"],
+    { detached: process.platform !== "win32", stdio: ["ignore", "pipe", "inherit"] },
+  );
+  const proof = await waitForHostileTermination(hostile);
+  assert.equal(proof.ready.launches, 0);
+  assert.ok(Number.isSafeInteger(proof.ready.rendererPid) && proof.ready.rendererPid > 0);
+  assert.equal(proof.ready.languageId, "toy-hostile");
+  assert.equal(proof.ready.pattern, HOSTILE_PATTERN);
+  assert.equal(proof.ready.codeUnits, HOSTILE_DOCUMENT.length);
+  assert.equal(proof.entered.pattern, HOSTILE_COMPILED_PATTERN);
+  assert.equal(proof.entered.languageId, "toy-hostile");
+  assert.equal(proof.entered.codeUnits, HOSTILE_DOCUMENT.length);
+  assert.equal(proof.entered.documentUri, "file:///stress/document.hostile");
+  const stressMarker = JSON.parse(
+    await readFile(path.join(stressProfile, "plugins/session.json"), "utf8"),
+  );
+  assert.equal(stressMarker.thirdPartyStaticContributions, true);
+  assert.equal(stressMarker.thirdPartyRunning, false);
+  if (proof.unresponsive) assert.equal(stressMarker.rendererUnresponsive, true);
+  await writeFile(
+    path.join(directory, "stress-result.json"),
+    JSON.stringify({ ...proof, marker: stressMarker }, null, 2),
+  );
+  console.log(
+    `PASS static acceptance: hostile-tokenization ${JSON.stringify({ ...proof, marker: stressMarker })}`,
+  );
+  await run("recover-hostile", stressProfile);
+  await assert.rejects(readFile(path.join(stressProfile, "plugins/session.json")), {
+    code: "ENOENT",
+  });
+  const recovery = JSON.parse(await readFile(path.join(directory, "stress-recovery.json"), "utf8"));
+  recovery.sessionMarkerCleared = true;
+  recovery.totalMs = Math.round(performance.now() - stressStarted);
+  await writeFile(path.join(directory, "stress-recovery.json"), JSON.stringify(recovery, null, 2));
+  console.log(`PASS static stress recovery evidence: ${JSON.stringify(recovery)}`);
   const failureProfile = path.join(directory, "failure-profile");
   await mkdir(path.join(failureProfile, "plugins"), { recursive: true });
   await writeFile(
@@ -104,6 +160,7 @@ try {
   passed = true;
 } finally {
   await server.close();
-  if (passed) await rm(directory, { recursive: true, force: true });
+  if (passed && process.env.STATIC_LANGUAGE_ACCEPTANCE_KEEP_ARTIFACTS !== "1")
+    await rm(directory, { recursive: true, force: true });
   else console.error(`Static language acceptance artifacts: ${directory}`);
 }
