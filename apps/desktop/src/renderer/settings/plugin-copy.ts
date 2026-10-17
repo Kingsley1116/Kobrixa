@@ -1,15 +1,30 @@
 import type { Locale } from "../i18n/copy.js";
 import type { PythonChoice } from "../../shared/plugins.js";
+import type { PluginSummary } from "../../shared/plugins.js";
 
 export const pluginCopy = {
   en: {
+    staticRuntime: "Static contributions",
+    staticRestart: "Restart Kobrixa to register more languages.",
+    staticDetail: {
+      language: "Language",
+      resource: "Resource",
+      field: "Field",
+      limit: "Limit",
+      allowed: "Allowed",
+      actual: "Actual",
+      conflicts: "Conflicting source",
+    },
+
     trust:
-      "Development plugins run as normal programs on this computer. Kobrixa permissions only limit what a plugin asks Kobrixa to do; they are not a sandbox. Load only plugins you trust.",
+      "Development plugins can run normal programs or load static regular expressions on this computer. Static regular expressions can block the editor even without a plugin process. Kobrixa permissions only limit what a plugin asks Kobrixa to do; they are not a sandbox. Load only plugins you trust. After an unresponsive session, restart Kobrixa to use safe mode and disable the problem plugin.",
     howTo: "Turn on developer mode below to link plugin folders.",
     safeMode:
       "Safe mode: Kobrixa was started with --safe-mode, so third-party plugins are paused for this session. You can still disable or unlink a problem plugin.",
     safeModeLocked:
       "Kobrixa did not shut down normally last time, so third-party plugins are paused.",
+    sessionRecovery:
+      "Third-party plugins are paused because a development plugin folder could not be resolved or its settings could not be saved. Fix the problem and restore plugins, or restart Kobrixa without --plugin-dev-dir for the affected folder.",
     restore: "Restore plugins",
     openSettings: "Open plugin settings",
     notPersisted:
@@ -18,7 +33,8 @@ export const pluginCopy = {
     unknownError: "Unknown error",
     developerMode: "Developer mode",
     developerToggle: "Turn on developer mode",
-    developerHint: "Runs code from the folders you link on this computer. It is not a sandbox.",
+    developerHint:
+      "Loads code and static language resources from folders you link on this computer. Only link plugins you trust.",
     developerCommandLine: "Turned on by --plugin-dev-dir for this session only; not saved.",
     keptLinks: (count: number) =>
       `${count} linked folder(s) are kept and load again when developer mode is on.`,
@@ -66,12 +82,26 @@ export const pluginCopy = {
     noNotices: "No messages yet.",
   },
   "zh-TW": {
+    staticRuntime: "靜態貢獻",
+    staticRestart: "請重新啟動 Kobrixa，才能註冊更多語言。",
+    staticDetail: {
+      language: "語言",
+      resource: "資源",
+      field: "欄位",
+      limit: "上限",
+      allowed: "允許值",
+      actual: "實際值",
+      conflicts: "衝突來源",
+    },
+
     trust:
-      "開發插件會以一般程式身分在這部電腦執行。Kobrixa 權限只限制插件透過 Kobrixa 提出的要求，並不是沙箱。請只載入你信任的插件。",
+      "開發插件可在這部電腦執行一般程式，或載入靜態正規表示式。即使沒有插件程序，靜態正規表示式仍可能阻塞編輯器。Kobrixa 權限只限制插件透過 Kobrixa 提出的要求，並不是沙箱。請只載入你信任的插件。若畫面沒有回應，請重新啟動 Kobrixa，透過安全模式停用有問題的插件。",
     howTo: "開啟下方的開發者模式後，就能連結插件資料夾。",
     safeMode:
       "安全模式：因為以 --safe-mode 啟動，本次已暫停所有第三方插件。仍然可以停用或解除連結有問題的插件。",
     safeModeLocked: "Kobrixa 上次沒有正常結束，已暫停第三方插件。",
+    sessionRecovery:
+      "因為無法解析開發插件資料夾的實際路徑，或無法儲存其設定，已暫停第三方插件。修正問題後可恢復插件，或移除受影響資料夾的 --plugin-dev-dir 啟動參數後重新啟動 Kobrixa。",
     restore: "恢復插件",
     openSettings: "前往插件設定",
     notPersisted: "已套用到本次啟動，但設定未能保存，重新啟動後可能會還原。",
@@ -79,7 +109,7 @@ export const pluginCopy = {
     unknownError: "未知錯誤",
     developerMode: "開發者模式",
     developerToggle: "開啟開發者模式",
-    developerHint: "會在這部電腦上執行你連結的資料夾裡的程式碼，不是沙箱。",
+    developerHint: "會從你連結的資料夾載入程式碼與靜態語言資源。請只連結你信任的插件。",
     developerCommandLine: "本次由 --plugin-dev-dir 開啟，只在這次有效，不會保存。",
     keptLinks: (count: number) => `已保留 ${count} 個連結的資料夾，開啟開發者模式後會重新載入。`,
     linkFolder: "連結資料夾…",
@@ -128,6 +158,19 @@ export const pluginCopy = {
 } as const;
 
 const problems: Record<string, readonly [zh: string, en: string]> = {
+  PLUGIN_E_STATIC_LANGUAGE: [
+    "無法載入靜態語言資源",
+    "Static language resources could not be loaded",
+  ],
+  PLUGIN_E_STATIC_LANGUAGE_CONFLICT: [
+    "靜態語言或副檔名有衝突",
+    "Static language or extension conflict",
+  ],
+  PLUGIN_E_STATIC_LANGUAGE_REGISTRATION: [
+    "無法在編輯器啟用靜態語言",
+    "The static language could not be enabled in the editor",
+  ],
+
   PLUGIN_E_MANIFEST: ["kobrixa-plugin.json 無效", "kobrixa-plugin.json is invalid"],
   PLUGIN_E_API_VERSION: [
     "插件需要其他版本的插件 API",
@@ -245,4 +288,29 @@ export function pythonChoiceText(choice: PythonChoice, locale: Locale): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+export function problemDetailLines(
+  problem: PluginSummary["problems"][number],
+  locale: Locale,
+): string[] {
+  const detail = problem.detail;
+  if (!detail) return [];
+  const t = pluginCopy[locale];
+  const labels = t.staticDetail;
+  const lines = [`${labels.language}: ${detail.languageId}`];
+  if (detail.resourcePath) lines.push(`${labels.resource}: ${detail.resourcePath}`);
+  if (detail.fieldPath) lines.push(`${labels.field}: ${detail.fieldPath}`);
+  if (detail.limit) lines.push(`${labels.limit}: ${detail.limit}`);
+  if (detail.allowed !== undefined)
+    lines.push(
+      `${labels.allowed}: ${Array.isArray(detail.allowed) ? detail.allowed.join(", ") : detail.allowed}`,
+    );
+  if (detail.actual !== undefined) lines.push(`${labels.actual}: ${detail.actual}`);
+  for (const source of detail.conflictingSources ?? [])
+    lines.push(
+      `${labels.conflicts}: ${source.pluginId} / ${source.sourceKey} / ${source.languageId}`,
+    );
+  if (detail.limit === "STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds") lines.push(t.staticRestart);
+  return lines;
 }

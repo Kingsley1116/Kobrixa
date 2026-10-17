@@ -1,3 +1,17 @@
+import type {
+  StaticLanguagesCatalog,
+  ReportLanguageRegistrationFailureInput,
+  ReportLanguageRegistrationFailureResult,
+} from "./static-languages.js";
+export type {
+  StaticLanguageOwner,
+  StaticLanguageProblemDetail,
+  ValidatedStaticLanguage,
+  StaticLanguageConflict,
+  StaticLanguagesCatalog,
+  ReportLanguageRegistrationFailureInput,
+  ReportLanguageRegistrationFailureResult,
+} from "./static-languages.js";
 import type { PluginHelpCatalogView } from "./diagnostic-help.js";
 import type {
   PluginActionResult,
@@ -54,6 +68,8 @@ export interface PluginsView extends PluginsSnapshot {
     linkedCount: number;
   };
   safeModeLock?: SafeModeLockView;
+  /** Startup session-source recovery, kept in memory even when settings cannot be saved. */
+  sessionRecovery?: boolean;
   /** Keyed by source key. */
   origins: Record<string, PluginOrigin>;
   python: PythonView;
@@ -89,6 +105,10 @@ export type PluginEvent = PluginsViewEvent;
 export interface PluginsApi {
   state(): Promise<PluginsView>;
   diagnosticHelp(): Promise<PluginHelpCatalogView>;
+  staticLanguages(): Promise<StaticLanguagesCatalog>;
+  reportLanguageRegistrationFailure(
+    input: ReportLanguageRegistrationFailureInput,
+  ): Promise<ReportLanguageRegistrationFailureResult>;
   notices(): Promise<StoredNotice[]>;
   execute(commandId: string): Promise<PluginCommandResult>;
   cancel(sourceKey: string): Promise<void>;

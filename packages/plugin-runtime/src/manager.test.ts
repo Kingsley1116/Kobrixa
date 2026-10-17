@@ -46,6 +46,7 @@ async function devPlugin(name: string) {
 }
 const builtin = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
     version: "1.0.0",
@@ -65,6 +66,7 @@ const builtin = {
 };
 const builtinBackend = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "test.back",
     version: "1.0.0",
@@ -122,6 +124,71 @@ const create = async (
 ) => PluginManager.create({ sources, store, safeMode, launcher, locale: "en", now: () => 1000 });
 
 describe("PluginManager", () => {
+  it.each([true, false])(
+    "migrates a disabled identity atomically with its alias present: %s",
+    async (present) => {
+      const alias = { kind: "development" as const, directory: path.join(root, "alias") };
+      const canonical = { kind: "development" as const, directory: path.join(root, "canonical") };
+      const unrelated = "dev:1111111111111111";
+      const store = memoryStore([keyOf(alias), unrelated], ["acme.legacy"]);
+      const manager = await create(present ? [alias] : [], store, true);
+      const save = vi.spyOn(store, "save").mockRejectedValueOnce(new Error("Disk unavailable."));
+      expect(await manager.migrateSourceDisable(keyOf(alias), keyOf(canonical))).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_STATE_SAVE",
+      });
+      expect([...(await store.load()).disabled]).toEqual([keyOf(alias), unrelated]);
+      if (present)
+        expect(manager.state().plugins[0]).toMatchObject({
+          sourceKey: keyOf(alias),
+          disabledBy: "user",
+        });
+      expect(await manager.migrateSourceDisable(keyOf(alias), keyOf(canonical))).toMatchObject({
+        ok: true,
+      });
+      expect(save).toHaveBeenCalledTimes(2);
+      expect([...(await store.load()).disabled].sort()).toEqual(
+        [keyOf(canonical), unrelated].sort(),
+      );
+      expect([...(await store.load()).legacyDisabledIds]).toEqual(["acme.legacy"]);
+      // Later ordinary saves must use the migrated set, not revive the alias.
+      if (present) await manager.removeSource(keyOf(alias), { forget: false });
+      await manager.addSource(canonical);
+      expect(manager.state().plugins).toMatchObject([
+        { sourceKey: keyOf(canonical), disabledBy: "user" },
+      ]);
+      await manager.removeSource(keyOf(canonical));
+      expect([...(await store.load()).disabled]).toEqual([unrelated]);
+    },
+  );
+
+  it("migrates a disable held only in memory after a failed user-disable save", async () => {
+    const source = await devPlugin("hello");
+    const target = developmentSourceKey(path.join(root, "canonical"));
+    const store = memoryStore();
+    const manager = await create([source], store, true);
+    vi.spyOn(store, "save").mockRejectedValueOnce(new Error("Disk unavailable."));
+    expect(await manager.setEnabled(keyOf(source), false)).toMatchObject({
+      ok: true,
+      persisted: false,
+    });
+    expect(await manager.migrateSourceDisable(keyOf(source), target)).toMatchObject({ ok: true });
+    expect([...(await store.load()).disabled]).toEqual([target]);
+  });
+
+  it("refuses disable migration outside safe mode", async () => {
+    const source = await devPlugin("hello");
+    const store = memoryStore([keyOf(source)]);
+    const manager = await create([source], store);
+    expect(
+      await manager.migrateSourceDisable(
+        keyOf(source),
+        developmentSourceKey(path.join(root, "canonical")),
+      ),
+    ).toMatchObject({ ok: false, code: "PLUGIN_E_SAFE_MODE" });
+    expect(store.saved).toEqual([]);
+  });
+
   it("keeps a built-in language-service plugin required", async () => {
     const manifest = {
       ...builtin.manifest,
@@ -133,7 +200,7 @@ describe("PluginManager", () => {
         ],
       },
     };
-    const manager = await create([{ kind: "builtin", manifest }]);
+    const manager = await create([{ kind: "builtin", resources: {}, manifest }]);
     try {
       expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
         ok: false,
@@ -622,9 +689,17 @@ describe("PluginManager", () => {
       message: "moved to state.json.corrupt-1",
     });
     expect(manager.state().plugins.map((plugin) => plugin.status)).toEqual(["enabled", "disabled"]);
+    expect(manager.state().safeMode).toBe(true);
+    expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect(await manager.leaveSafeMode()).toMatchObject({ ok: true });
+    // Corruption conservatively disabled every development source; leaving safe mode does not undo that choice.
+    expect(manager.state().plugins[1]?.status).toBe("disabled");
     expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({ ok: true });
     expect(manager.state().stateProblem).toBeUndefined();
-    expect(savedDisabled(store)).toEqual([[]]);
+    expect(savedDisabled(store).at(-1)).toEqual([]);
   });
   it("treats a store that cannot be read like a corrupt one", async () => {
     const hello = await devPlugin("hello");

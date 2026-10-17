@@ -34,7 +34,6 @@ const status = (epoch = 1): LanguageStatus => ({
   },
 });
 const companion: LanguageCompanion = {
-  monacoLanguage: "basic-plus",
   legend,
   structuralChange,
   triggerCharacters: [],

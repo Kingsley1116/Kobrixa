@@ -1,3 +1,4 @@
+import type { ModelLanguageRoute } from "./model-language-route.js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CancellationToken, editor, Position } from "monaco-editor";
 import { analyzeBasicPlusProject, BasicPlusCompletionAnalyzer } from "@kobrixa/basic-plus";
@@ -65,6 +66,7 @@ function model(file: string, initial: string) {
         : null;
     },
     uri: { toString: () => `kobrixa:/${file}` },
+    getLanguageId: () => "bp",
     getValue: () => value,
     setValue: (next: string) => {
       value = normalizeSource(next);
@@ -142,7 +144,26 @@ function setup(sources: Record<string, string>) {
       fixes: providers.get(current.analysis)!.quickFixes(1, diagnostic.file, diagnostic, _signal),
     }),
   );
+  const route = {
+    monacoLanguage: "bp",
+    kind: "static" as const,
+    displayName: "Basic Plus",
+    catalogRevision: 1,
+    staticOwner: {
+      pluginId: binding.pluginId,
+      sourceKey: binding.sourceKey,
+      generation: 1,
+      languageId: "bp",
+    },
+    binding,
+    companion: basicPlusCompanion,
+  };
+  const routes = new Map<editor.ITextModel, ModelLanguageRoute>(
+    [...models.values()].map((model) => [model, route]),
+  );
+
   const features = new LanguageFeatures({
+    route: (model) => routes.get(model),
     locale: () => locale,
     binding: () => binding,
     companion: () => basicPlusCompanion,
@@ -159,6 +180,7 @@ function setup(sources: Record<string, string>) {
     fileFor: (m) => [...models].find(([, value]) => value === m)?.[0],
     ensureModel: (file, content) => {
       if (!models.has(file)) models.set(file, model(file, content));
+      routes.set(models.get(file)!, route);
       return models.get(file)!;
     },
     canEdit: () => editable,
@@ -180,6 +202,8 @@ function setup(sources: Record<string, string>) {
   features.update(snapshot);
   const position = (lineNumber: number, column: number) => ({ lineNumber, column }) as Position;
   return {
+    routes,
+    route,
     cache,
     completionIndex,
     quickFixes,
@@ -679,5 +703,43 @@ it("cancels a waiting feature when its model is rebound to another path", async 
     expect(await pending).toBeUndefined();
   } finally {
     h.features.dispose();
+  }
+});
+
+it("keeps services on the selected plaintext model and rejects an adjacent model or stale owner", async () => {
+  const s = setup({ "main.bp": "value = 1" });
+  vi.spyOn(s.main, "getLanguageId").mockReturnValue("plaintext");
+  const fallback = {
+    ...s.route,
+    kind: "plaintext" as const,
+    monacoLanguage: "plaintext",
+    displayName: "Plain Text",
+    catalogRevision: 2,
+  };
+  delete (fallback as { staticOwner?: unknown }).staticOwner;
+  s.routes.set(s.main, fallback);
+  const complete = vi.spyOn(basicPlusCompanion, "completions").mockReturnValue({ suggestions: [] });
+  try {
+    await s.features.completions(s.main, s.position(1, 2), token);
+    expect(complete).toHaveBeenCalledOnce();
+    complete.mockClear();
+    const neighbor = model("main.bp", "value = 1");
+    vi.spyOn(neighbor, "getLanguageId").mockReturnValue("plaintext");
+    expect(await s.features.completions(neighbor, s.position(1, 2), token)).toEqual({
+      suggestions: [],
+    });
+    s.routes.set(s.main, {
+      ...fallback,
+      binding: { ...s.snapshot.binding, sourceKey: "builtin:other" },
+    });
+    expect(await s.features.completions(s.main, s.position(1, 2), token)).toEqual({
+      suggestions: [],
+    });
+    s.routes.set(s.main, { ...fallback, binding: { ...s.snapshot.binding, epoch: 99 } });
+    expect(await s.features.signature(s.main, s.position(1, 2), token)).toBeUndefined();
+    expect(complete).not.toHaveBeenCalled();
+  } finally {
+    complete.mockRestore();
+    s.features.dispose();
   }
 });

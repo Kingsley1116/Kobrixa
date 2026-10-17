@@ -1,4 +1,4 @@
-export const PLUGIN_API_VERSION = "1.3.0";
+export const PLUGIN_API_VERSION = "1.4.0";
 export const PLUGIN_LIMITS = {
   messageBytes: 1024 * 1024,
   headerBytes: 1024,

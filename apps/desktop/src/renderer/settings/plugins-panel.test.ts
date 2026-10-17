@@ -13,6 +13,8 @@ import { PluginRecoveryNotice } from "./plugin-recovery.js";
 import { LOG_POLL_MS } from "./plugin-log.js";
 import { SettingsPanel } from "./settings-panel.js";
 import { defaultSettings } from "./settings.js";
+import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
 
 vi.mock("../keybindings/shortcuts-panel.js", () => ({ ShortcutsPanel: () => null }));
 vi.mock("../updates/updates.js", () => ({ UpdatesPanel: () => null }));
@@ -26,6 +28,8 @@ const unhandledRejection = vi.fn();
 const snapshot: PluginsView = {
   revision: 1,
   diagnosticHelpRevision: 0,
+  staticLanguagesRevision: 0,
+  staticLanguageOwners: [],
   safeMode: false,
   developmentMode: true,
   developer: { enabled: true, commandLine: false, linkedCount: 1 },
@@ -81,6 +85,17 @@ const api = {
       ],
     },
   })),
+  staticLanguages: vi.fn<PluginsApi["staticLanguages"]>(async () => ({
+    formatVersion: 1,
+    limitsVersion: 1,
+    revision: 0,
+    languages: [],
+    extensionRoutes: {},
+    conflicts: [],
+  })),
+  reportLanguageRegistrationFailure: vi.fn<PluginsApi["reportLanguageRegistrationFailure"]>(
+    async () => ({ accepted: false, revision: 0 }),
+  ),
   notices: vi.fn<PluginsApi["notices"]>(async () => []),
   diagnosticHelp: vi.fn<PluginsApi["diagnosticHelp"]>(async () => ({ revision: 0, plugins: {} })),
   cancel: vi.fn<PluginsApi["cancel"]>(async () => {}),
@@ -837,3 +852,147 @@ describe("PluginRecoveryNotice", () => {
     expect(button("恢復插件").disabled).toBe(false);
   });
 });
+
+it.each(
+  (["en", "zh-TW"] as const).flatMap((locale) =>
+    (["panel", "banner"] as const).map((surface) => ({ locale, surface })),
+  ),
+)(
+  "restores session recovery without a lock from the $surface in $locale",
+  async ({ locale, surface }) => {
+    const t = pluginCopy[locale];
+    api.state.mockResolvedValueOnce({ ...snapshot, safeMode: true, sessionRecovery: true });
+    api.clearSafeModeLock
+      .mockResolvedValueOnce({ ok: false, code: "PLUGIN_E_STATE_SAVE", message: "disk full" })
+      .mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+    if (surface === "panel") await render(locale);
+    else
+      await act(async () =>
+        root.render(createElement(PluginRecoveryNotice, { locale, onOpenSettings: vi.fn() })),
+      );
+    expect(container.textContent).toContain(t.sessionRecovery);
+    expect(container.textContent).not.toContain(t.safeMode);
+    expect(container.textContent).not.toContain(t.safeModeLocked);
+    expect(button(t.restore).disabled).toBe(false);
+    await act(async () => button(t.restore).click());
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("disk full");
+    expect(container.textContent).toContain(t.sessionRecovery);
+    expect(button(t.restore).disabled).toBe(false);
+    await act(async () => button(t.restore).click());
+    expect(api.clearSafeModeLock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain(t.sessionRecovery);
+    expect(button(t.restore)).toBeUndefined();
+  },
+);
+
+const toyManifest = JSON.parse(
+  readFileSync(
+    new NodeURL(
+      "../../../../../packages/plugin-protocol/test-fixtures/static-languages/toy/kobrixa-plugin.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as { id: string; runtime: { kind: "static" } };
+
+it.each(["en", "zh-TW"] as const)(
+  "shows enabled static contributions without a process in %s",
+  async (locale) => {
+    api.state.mockResolvedValueOnce({
+      ...snapshot,
+      plugins: [
+        snapshot.plugins[0]!,
+        {
+          ...snapshot.plugins[1]!,
+          id: toyManifest.id,
+          runtime: toyManifest.runtime.kind,
+          status: "enabled",
+          running: false,
+          commands: [],
+          problems: [],
+        },
+      ],
+    });
+    await render(locale);
+    expect(container.textContent).toContain(locale === "en" ? "Static contributions" : "靜態貢獻");
+    expect(container.textContent).toContain(locale === "en" ? "Enabled" : "已啟用");
+    expect(container.textContent).not.toContain(locale === "en" ? "Running" : "執行中");
+    const label = locale === "en" ? "Disable" : "停用";
+    const toggles = [...container.querySelectorAll("button")].filter(
+      (item) => item.textContent === label,
+    );
+    expect(toggles).toHaveLength(1);
+    await act(async () => toggles[0]!.click());
+    expect(api.setEnabled).toHaveBeenCalledWith(snapshot.plugins[1]!.sourceKey, false);
+    expect(api.execute).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      locale === "en" ? "static regular expressions" : "靜態正規表示式",
+    );
+  },
+);
+it.each(["en", "zh-TW"] as const)(
+  "shows complete static resource, conflict and registration problems in %s",
+  async (locale) => {
+    api.state.mockResolvedValueOnce({
+      ...snapshot,
+      plugins: [
+        {
+          ...snapshot.plugins[1]!,
+          runtime: "static",
+          commands: [],
+          problems: [
+            {
+              code: "PLUGIN_E_STATIC_LANGUAGE",
+              message: "acme.toy resource rejected",
+              detail: {
+                languageId: "toy",
+                resourcePath: "language/tokenizer.json",
+                fieldPath: "states[0].rules[0].regex.pattern",
+                limit: "STATIC_LANGUAGE_LIMITS_V1.patternLength",
+                allowed: 2048,
+                actual: 2049,
+              },
+            },
+            {
+              code: "PLUGIN_E_STATIC_LANGUAGE_CONFLICT",
+              message: "acme.toy extension conflict",
+              detail: {
+                languageId: "toy",
+                conflictingSources: [
+                  { pluginId: "acme.toy", sourceKey: "dev:toy", languageId: "toy" },
+                  { pluginId: "acme.other", sourceKey: "dev:other", languageId: "other" },
+                ],
+              },
+            },
+            {
+              code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+              message: "acme.toy registration rejected",
+              detail: {
+                languageId: "toy",
+                limit: "STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds",
+                allowed: 256,
+                actual: 257,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await render(locale);
+    for (const text of [
+      "language/tokenizer.json",
+      "states[0].rules[0].regex.pattern",
+      "2048",
+      "2049",
+      "acme.other",
+      "dev:other",
+      "256",
+      "257",
+    ])
+      expect(container.textContent).toContain(text);
+    expect(container.textContent).toContain(
+      locale === "en" ? "Restart Kobrixa" : "重新啟動 Kobrixa",
+    );
+    expect(container.textContent).not.toContain("[object Object]");
+  },
+);

@@ -49,7 +49,7 @@ export async function checkHighlighting({ js, until, files, win, temporary }) {
 
     // Real Monarch, including recovery at the next line and case-insensitive keywords.
     const lexical = await js(
-      `smoke.monaco.editor.tokenize('rEgIoN Demo\\nIf True And count != @value Then\\ntext = "say ""hello"""\\ntext = "unfinished""\\nEndRegion', 'basic-plus').map(line=>line.map(t=>t.type))`,
+      `smoke.monaco.editor.tokenize('rEgIoN Demo\\nIf True And count != @value Then\\ntext = "say ""hello"""\\ntext = "unfinished""\\nEndRegion', 'bp').map(line=>line.map(t=>t.type))`,
     );
     assert(lexical[0].includes("keyword.basic-plus"));
     for (const token of [
@@ -66,6 +66,51 @@ export async function checkHighlighting({ js, until, files, win, temporary }) {
       `smoke.monaco.editor.tokenize('{"name":"value","enabled":true}', 'json').flat().map(t=>t.type)`,
     );
     assert(json.every((type) => !type.endsWith("basic-plus")));
+
+    const codeSize = await js("smoke.settingsStore.getSnapshot().values.codeSize");
+    const position = await js("ed.getPosition()");
+    try {
+      for (const length of [9999, 10000, 10001]) {
+        const line = "If True Then".padEnd(length, " ");
+        await js(`ed.setValue(${JSON.stringify(line + "\nEndIf")});
+              ed.getModel().tokenization.forceTokenization(2)`);
+        assert.equal(await js("ed.getModel().getLineLength(1)"), length);
+        assert.equal(
+          await js(
+            "ed._configurationService.getValue('editor.maxTokenizationLineLength',{overrideIdentifier:'bp'})",
+          ),
+          10000,
+        );
+        const count = await js("ed.getModel().tokenization.getLineTokens(1).getCount()");
+        assert.equal(
+          count > 1,
+          length < 10000,
+          `actual model tokenization at ${length} UTF-16 units`,
+        );
+        assert.equal(
+          await js("smoke.monaco.editor.tokenize('EndIf','bp')[0][0].type"),
+          "keyword.control.basic-plus",
+        );
+        await js(
+          "ed.executeEdits('long-line-smoke',[{range:new smoke.monaco.Range(2,6,2,6),text:' '}]);ed.trigger('long-line-smoke','undo',null)",
+        );
+        assert.equal(await js("ed.getValue()"), line + "\nEndIf");
+      }
+      const updatedCodeSize = codeSize === 18 ? 19 : 18;
+      await js(`smoke.settingsStore.set('codeSize',${updatedCodeSize})`);
+      await until(`ed.getOption(smoke.monaco.editor.EditorOption.fontSize) === ${updatedCodeSize}`);
+      assert.equal(
+        await js(
+          "ed._configurationService.getValue('editor.maxTokenizationLineLength',{overrideIdentifier:'bp'})",
+        ),
+        10000,
+      );
+    } finally {
+      await js(
+        `smoke.settingsStore.set('codeSize',${JSON.stringify(codeSize)});ed.setValue(${JSON.stringify(sample)});ed.setPosition(${JSON.stringify(position)})`,
+      );
+    }
+    await until('highlightColor(3,15) === "rgb(121, 94, 38)"');
 
     // Changing a dependency must remove obsolete function semantics in the active file.
     files["math.bpm"] = "Sub Other()\nEndSub\n";

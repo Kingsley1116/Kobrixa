@@ -5,9 +5,16 @@ import { pluginManifestSchema } from "./manifest.js";
 import { notificationMethods, requestMethods } from "./methods.js";
 import { jsonRpcMessageSchema } from "./rpc.js";
 
+import {
+  staticLanguageTokenizerV1Schema,
+  staticLanguageConfigurationV1Schema,
+} from "./static-languages.js";
+
 export const SCHEMA_DEFINITIONS: Record<string, z.ZodType> = {
   manifest: pluginManifestSchema,
   "diagnostic-help": pluginDiagnosticHelpFileSchema,
+  "static-language-tokenizer-v1": staticLanguageTokenizerV1Schema,
+  "static-language-configuration-v1": staticLanguageConfigurationV1Schema,
   message: jsonRpcMessageSchema,
   ...Object.fromEntries(
     Object.entries(requestMethods).flatMap(([method, { params, result }]) => [

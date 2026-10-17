@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -13,7 +15,14 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   developmentSourceKey,
+  emptyStaticLanguagesCatalog,
+  type StaticLanguagesCatalog,
+  type ValidatedStaticLanguage,
+  type ReportLanguageRegistrationFailureInput,
   PluginError,
+  PluginManager,
+  type PluginManagerOptions,
+  type PluginPersistedState,
   type LaunchablePlugin,
   type PluginManagerEvent,
   type PluginsSnapshot,
@@ -26,6 +35,9 @@ import {
   type StartPluginsOptions,
 } from "./controller.js";
 import { PluginLogs, PluginNotices } from "./logs.js";
+import { BUILTIN_PLUGIN_SOURCES } from "./builtin.js";
+import { registerPluginIpc } from "./ipc.js";
+import type { IpcMainInvokeEvent } from "electron";
 import type { PluginStateDocument } from "./state-store.js";
 
 vi.mock("electron", () => ({ utilityProcess: {}, MessageChannelMain: class {} }));
@@ -94,6 +106,63 @@ const enabled = async (dialogs = fakeDialogs(), options: Partial<StartPluginsOpt
 };
 const saved = async () =>
   JSON.parse(await readFile(path.join(userData, "plugins/state.json"), "utf8"));
+
+it("accepts same-revision sibling failures through IPC and the real controller/runtime", async () => {
+  const sources = structuredClone(BUILTIN_PLUGIN_SOURCES);
+  const source = sources[0]!;
+  if (source.kind !== "builtin") throw new Error("Expected a builtin fixture");
+  const manifest = source.manifest as {
+    contributes: { languages: { id: string; extensions: string[] }[] };
+  };
+  manifest.contributes.languages.push({
+    ...manifest.contributes.languages[0]!,
+    id: "second",
+    extensions: ["second"],
+  });
+  const controller = await start(fakeDialogs(), { builtins: sources });
+  const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const off = registerPluginIpc(
+    (channel, action) => {
+      handlers.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+    },
+    controller,
+    () => {},
+  );
+  try {
+    const catalog = controller.staticLanguages();
+    expect(catalog.languages).toHaveLength(2);
+    const report = handlers.get("plugins:report-language-registration-failure")!;
+    const reports = catalog.languages.map((language) => ({
+      sourceKey: language.sourceKey,
+      generation: language.generation,
+      languageId: language.id,
+      revision: catalog.revision,
+      reason: "dto-version",
+      detail: "Unsupported catalog version.",
+    }));
+    expect(reports.map((input) => report({} as IpcMainInvokeEvent, input))).toEqual([
+      { accepted: true, revision: catalog.revision + 1 },
+      { accepted: true, revision: catalog.revision + 2 },
+    ]);
+    expect(controller.staticLanguages().languages).toEqual([]);
+    expect(controller.state().plugins[0]!.problems).toEqual(
+      reports.map((input) =>
+        expect.objectContaining({
+          code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+          detail: { languageId: input.languageId },
+        }),
+      ),
+    );
+    for (const input of reports)
+      expect(report({} as IpcMainInvokeEvent, input)).toEqual({
+        accepted: false,
+        revision: catalog.revision + 2,
+      });
+  } finally {
+    off();
+    await controller.shutdown();
+  }
+});
 
 describe("startPlugins", () => {
   it("starts with developer mode off and refuses developer actions before any dialog", async () => {
@@ -480,6 +549,116 @@ describe("startPlugins", () => {
     expect((await saved()).safeModeLock.reason).toBe("renderer-unresponsive");
   });
 
+  it.each(
+    [
+      { reason: "unclean-exit", disable: "before-crash" },
+      { reason: "renderer-unresponsive", disable: "before-crash" },
+      { reason: "unclean-exit", disable: "in-safe-mode" },
+      { reason: "renderer-unresponsive", disable: "in-safe-mode" },
+    ].flatMap((scenario) => [
+      { ...scenario, spelling: "alias-only" },
+      { ...scenario, spelling: "alias-and-canonical" },
+    ]),
+  )(
+    "preserves an aliased session source disable across $reason ($disable, $spelling)",
+    async ({ reason, disable, spelling }) => {
+      const folder = path.join(root, "toy");
+      await cp(
+        new URL(
+          "../../../../../packages/plugin-protocol/test-fixtures/static-languages/toy/",
+          import.meta.url,
+        ),
+        folder,
+        { recursive: true },
+      );
+      const alias = path.join(root, "toy-alias");
+      await symlink(folder, alias, "dir");
+      const key = developmentSourceKey(folder);
+      const aliasKey = developmentSourceKey(alias);
+      expect(aliasKey).not.toBe(key);
+      // Also exercise deduplication when both spellings were supplied on the command line.
+      const commandLine = {
+        developmentDirectories: spelling === "alias-only" ? [alias] : [alias, folder, alias],
+        safeMode: false,
+      };
+      const launcher = vi.fn(async () => {
+        throw new Error("Static contributions must not launch a process.");
+      });
+      const options = { commandLine, builtins: BUILTIN_PLUGIN_SOURCES, launcher: () => launcher };
+      const first = await start(fakeDialogs(), options);
+      expect(first.staticLanguages().languages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "toy", sourceKey: key })]),
+      );
+      if (reason === "renderer-unresponsive") first.markRendererUnresponsive();
+      if (disable === "before-crash") {
+        const result = await first.setEnabled(key, false);
+        expect(result.ok).toBe(true);
+        expect(result).not.toHaveProperty("persisted", false);
+        expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+      }
+      expect(
+        JSON.parse(await readFile(path.join(userData, "plugins/session.json"), "utf8")),
+      ).toMatchObject({
+        thirdPartyStaticContributions: true,
+        thirdPartyRunning: false,
+        rendererUnresponsive: reason === "renderer-unresponsive",
+      });
+      // Do not finish the first session: the next controller reads its real persisted crash marker.
+      const resolve = vi.fn((directory: string) => realpath(directory));
+      const recovered = await start(fakeDialogs(), { ...options, realpath: resolve });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(recovered.state()).toMatchObject({ safeMode: true, safeModeLock: { reason } });
+      expect(
+        recovered
+          .staticLanguages()
+          .languages.every((language) => language.sourceKey.startsWith("builtin:")),
+      ).toBe(true);
+      if (disable === "in-safe-mode") {
+        expect(await recovered.setEnabled(aliasKey, false)).toMatchObject({ ok: true });
+        expect((await saved()).disabled).toEqual([aliasKey]);
+      }
+      const events: PluginsViewEvent[] = [];
+      const off = recovered.onEvent((event) => events.push(event));
+      expect(await recovered.clearSafeModeLock()).toMatchObject({ ok: true });
+      off();
+      expect(recovered.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        false,
+      );
+      expect(
+        recovered
+          .staticLanguages()
+          .languages.some((language) => language.sourceKey.startsWith("builtin:")),
+      ).toBe(true);
+      expect(
+        recovered.state().plugins.filter((plugin) => plugin.source === "development"),
+      ).toMatchObject([{ sourceKey: key, status: "disabled", disabledBy: "user" }]);
+      expect(
+        events
+          .filter((event) => event.type === "state")
+          .every((event) =>
+            event.state.staticLanguageOwners.every((owner) =>
+              owner.sourceKey.startsWith("builtin:"),
+            ),
+          ),
+      ).toBe(true);
+      expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+      expect((await saved()).safeModeLock).toBeUndefined();
+      expect(await recovered.setEnabled(key, true)).toMatchObject({ ok: true });
+      expect(recovered.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        true,
+      );
+      expect((await saved()).disabled).toEqual([]);
+      recovered.finishSession();
+      const restarted = await start(fakeDialogs(), options);
+      expect(restarted.state().safeMode).toBe(false);
+      expect(restarted.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        true,
+      );
+      expect(launcher).not.toHaveBeenCalled();
+      restarted.finishSession();
+    },
+  );
+
   it("locks safe mode after an unclean exit with third-party plugins running until restored", async () => {
     const folder = await pluginFolder("hello");
     const key = developmentSourceKey(folder);
@@ -515,6 +694,411 @@ describe("startPlugins", () => {
     expect(still.state().safeModeLock).toBeUndefined();
     expect((await saved()).safeModeLock).toBeUndefined();
     expect((await start(dialogs)).state().safeMode).toBe(false);
+  });
+});
+
+describe("session source recovery regressions", () => {
+  function barrier() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  async function fixture(safeMode = false) {
+    const folder = path.join(root, "toy");
+    await cp(
+      new URL(
+        "../../../../../packages/plugin-protocol/test-fixtures/static-languages/toy/",
+        import.meta.url,
+      ),
+      folder,
+      { recursive: true },
+    );
+    const alias = path.join(root, "toy-alias");
+    await symlink(folder, alias, "dir");
+    const key = developmentSourceKey(folder);
+    const aliasKey = developmentSourceKey(alias);
+    await mkdir(path.join(userData, "plugins"), { recursive: true });
+    await writeFile(
+      path.join(userData, "plugins/state.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        developerMode: false,
+        sources: [],
+        disabled: [],
+        legacyDisabledIds: [],
+        ...(!safeMode
+          ? { safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" } }
+          : {}),
+      }),
+    );
+    const resolve = vi.fn((directory: string) => realpath(directory));
+    const launcher = vi.fn(async () => {
+      throw new Error("Static contributions must not launch a process.");
+    });
+    const options = {
+      commandLine: { developmentDirectories: [alias], safeMode },
+      builtins: BUILTIN_PLUGIN_SOURCES,
+      realpath: resolve,
+      launcher: () => launcher,
+    };
+    const controller = await start(fakeDialogs(), options);
+    expect(resolve).not.toHaveBeenCalled();
+    return { controller, folder, alias, key, aliasKey, options, resolve, launcher };
+  }
+
+  function observe(controller: PluginController) {
+    const states = [controller.state()];
+    controller.onEvent((event) => {
+      if (event.type === "state") states.push(event.state);
+    });
+    return () => {
+      for (const state of states)
+        expect(
+          state.staticLanguageOwners.every((owner) => owner.sourceKey.startsWith("builtin:")),
+        ).toBe(true);
+      expect(controller.staticLanguages().languages.map((language) => language.id)).not.toContain(
+        "toy",
+      );
+    };
+  }
+
+  async function blockStateWrites() {
+    const file = path.join(userData, "plugins/state.json");
+    const backup = `${file}.saved`;
+    await rename(file, backup);
+    await mkdir(file);
+    return async () => {
+      await rm(file, { recursive: true });
+      await rename(backup, file);
+    };
+  }
+
+  it("reports a missing folder, retains its alias and disable, and migrates on retry", async () => {
+    const { controller, folder, alias, aliasKey, key, resolve } = await fixture();
+    expect(await controller.setEnabled(aliasKey, false)).toMatchObject({ ok: true });
+    const assertNoToy = observe(controller);
+    await rename(folder, `${folder}-away`);
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_MANIFEST",
+      message: expect.stringContaining(alias),
+    });
+    expect(controller.state()).toMatchObject({ safeMode: true });
+    expect(await controller.reload(aliasKey)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect(controller.state().plugins).toContainEqual(
+      expect.objectContaining({ sourceKey: aliasKey, disabledBy: "user" }),
+    );
+    expect((await saved()).disabled).toEqual([aliasKey]);
+    await rename(`${folder}-away`, folder);
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(resolve).toHaveBeenCalledWith(alias);
+    expect((await saved()).disabled).toEqual([key]);
+    assertNoToy();
+  });
+
+  it("retries Restore after a failed migration save without losing or reviving a disable", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    const assertNoToy = observe(controller);
+    const repair = await blockStateWrites();
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_STATE_SAVE",
+    });
+    expect(controller.state().safeMode).toBe(true);
+    await repair();
+    expect((await saved()).disabled).toEqual([aliasKey]);
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+    expect((await saved()).safeModeLock).toBeUndefined();
+    assertNoToy();
+  });
+
+  it("leaves no stale alias after an alias-removal write failure and a later successful save", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    const remove = PluginManager.prototype.removeSource;
+    vi.spyOn(PluginManager.prototype, "removeSource").mockImplementationOnce(async function (
+      this: PluginManager,
+      sourceKey,
+      options,
+    ) {
+      const repair = await blockStateWrites();
+      try {
+        return await remove.call(this, sourceKey, options);
+      } finally {
+        await repair();
+      }
+    });
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+  });
+
+  it("Restore under CLI safe mode never resolves or loads a development folder", async () => {
+    const { controller, aliasKey, resolve, launcher } = await fixture(true);
+    await controller.setEnabled(aliasKey, false);
+    const assertNoToy = observe(controller);
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: true,
+      state: { safeMode: true },
+    });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(launcher).not.toHaveBeenCalled();
+    expect(await controller.reload(aliasKey)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect((await saved()).disabled).toEqual([aliasKey]);
+    assertNoToy();
+  });
+
+  it.each(["cli", "developer-off"] as const)(
+    "migrates a %s session alias disable on the next normal startup",
+    async (condition) => {
+      const { controller, options, aliasKey, key, resolve } = await fixture(condition === "cli");
+      await controller.setEnabled(aliasKey, false);
+      if (condition === "developer-off") await controller.setDeveloperMode(false);
+      if (condition !== "cli")
+        expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+      controller.finishSession();
+      const restarted = await start(fakeDialogs(), {
+        ...options,
+        commandLine: { ...options.commandLine, safeMode: false },
+      });
+      expect(restarted.state().safeMode).toBe(false);
+      expect(restarted.state().plugins).toContainEqual(
+        expect.objectContaining({ sourceKey: key, status: "disabled", disabledBy: "user" }),
+      );
+      expect(restarted.staticLanguages().languages.map((language) => language.id)).not.toContain(
+        "toy",
+      );
+      expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+      expect(resolve).toHaveBeenCalled();
+      restarted.finishSession();
+    },
+  );
+
+  it("migrates a retained disable while developer mode is off before Restore", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    await controller.setDeveloperMode(false);
+    const assertNoToy = observe(controller);
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(await saved()).toMatchObject({ developerMode: false, sources: [], disabled: [key] });
+    expect(await controller.setDeveloperMode(true)).toMatchObject({ ok: true });
+    expect(controller.state().plugins).toContainEqual(
+      expect.objectContaining({ sourceKey: key, disabledBy: "user" }),
+    );
+    assertNoToy();
+  });
+
+  it.each([
+    { condition: "missing-folder", disabled: false },
+    { condition: "missing-folder", disabled: true },
+    { condition: "missing-folder-read-only", disabled: true },
+    { condition: "save-failure", disabled: true },
+  ] as const)(
+    "exposes recovery after $condition (disabled: $disabled) and retries migration",
+    async ({ condition, disabled }) => {
+      const { controller, options, folder, aliasKey, key, resolve } = await fixture(true);
+      if (disabled) await controller.setEnabled(aliasKey, false);
+      controller.finishSession();
+      let repair = async () => {};
+      if (condition !== "save-failure") {
+        await rename(folder, `${folder}-away`);
+        repair = async () => {
+          await rename(`${folder}-away`, folder);
+        };
+        if (condition === "missing-folder-read-only")
+          resolve.mockImplementationOnce(async () => {
+            const repairWrites = await blockStateWrites();
+            const repairFolder = repair;
+            repair = async () => {
+              await repairWrites();
+              await repairFolder();
+            };
+            throw new Error("Folder is unavailable and settings are read-only.");
+          });
+      } else
+        resolve.mockImplementationOnce(async (directory) => {
+          repair = await blockStateWrites();
+          return realpath(directory);
+        });
+      const restarted = await start(fakeDialogs(), {
+        ...options,
+        commandLine: { ...options.commandLine, safeMode: false },
+      });
+      const states = [restarted.state()];
+      restarted.onEvent((event) => {
+        if (event.type === "state") states.push(event.state);
+      });
+      expect(restarted.state()).toMatchObject({
+        safeMode: true,
+        sessionRecovery: true,
+        stateProblem: {
+          code: condition === "save-failure" ? "PLUGIN_E_STATE_SAVE" : "PLUGIN_E_MANIFEST",
+        },
+      });
+      expect(restarted.state().safeModeLock).toBeUndefined();
+      expect(restarted.state().stateProblem?.message).toContain("--plugin-dev-dir");
+      expect(restarted.state().plugins).toContainEqual(
+        expect.objectContaining({
+          sourceKey: aliasKey,
+          disabledBy: disabled ? "user" : "safe-mode",
+        }),
+      );
+      expect(await restarted.clearSafeModeLock()).toMatchObject({ ok: false });
+      expect(restarted.state()).toMatchObject({ safeMode: true, sessionRecovery: true });
+      await repair();
+      expect((await saved()).disabled).toEqual(disabled ? [aliasKey] : []);
+      expect(await restarted.clearSafeModeLock()).toMatchObject({
+        ok: true,
+        state: { safeMode: false },
+      });
+      expect((await saved()).disabled).toEqual(disabled ? [key] : []);
+      expect(restarted.state().sessionRecovery).toBeUndefined();
+      expect(restarted.state().stateProblem).toBeUndefined();
+      expect(restarted.state().plugins).toContainEqual(
+        expect.objectContaining({ sourceKey: key, status: disabled ? "disabled" : "enabled" }),
+      );
+      for (const state of states) {
+        if (state.safeMode) expect(state.sessionRecovery).toBe(true);
+        if (state.safeMode || disabled)
+          expect(
+            state.staticLanguageOwners.every((owner) => owner.sourceKey.startsWith("builtin:")),
+          ).toBe(true);
+      }
+      expect(restarted.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        !disabled,
+      );
+    },
+  );
+
+  it("keeps the corrupt-state backup notice alongside a failed session-folder restore", async () => {
+    const { controller, options, folder, alias } = await fixture(true);
+    controller.finishSession();
+    await writeFile(path.join(userData, "plugins/state.json"), "{broken");
+    const restarted = await start(fakeDialogs(), {
+      ...options,
+      commandLine: { ...options.commandLine, safeMode: false },
+    });
+    const original = restarted.state().stateProblem!;
+    expect(original.code).toBe("PLUGIN_E_STATE_CORRUPT");
+    expect(original.message).toContain("state.json.corrupt-");
+    const states = [restarted.state()];
+    restarted.onEvent((event) => {
+      if (event.type === "state") states.push(event.state);
+    });
+    await rename(folder, `${folder}-away`);
+    expect(await restarted.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_MANIFEST",
+    });
+    for (const state of [restarted.state(), states.at(-1)!]) {
+      expect(state.stateProblem?.code).toBe("PLUGIN_E_STATE_CORRUPT");
+      expect(state.stateProblem?.message).toContain(original.message);
+      expect(state.stateProblem?.message).toContain(`${alias} cannot be resolved`);
+    }
+  });
+
+  it.each(["disable", "developer-off", "restore"] as const)(
+    "serializes concurrent %s during descriptor replacement",
+    async (action) => {
+      const { controller, aliasKey, key } = await fixture();
+      if (action === "restore") await controller.setEnabled(aliasKey, false);
+      const assertNoToy = observe(controller);
+      const entered = barrier();
+      const release = barrier();
+      const add = PluginManager.prototype.addSource;
+      vi.spyOn(PluginManager.prototype, "addSource").mockImplementationOnce(async function (
+        this: PluginManager,
+        source,
+      ) {
+        entered.resolve();
+        await release.promise;
+        return add.call(this, source);
+      });
+      const restoring = controller.clearSafeModeLock();
+      await entered.promise;
+      const concurrent =
+        action === "disable"
+          ? controller.setEnabled(aliasKey, false)
+          : action === "developer-off"
+            ? controller.setDeveloperMode(false)
+            : controller.clearSafeModeLock();
+      // Give an unprotected mutation time to run while restoration is paused.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release.resolve();
+      const results = await Promise.all([restoring, concurrent]);
+      for (const result of results) expect(result).toMatchObject({ ok: true });
+      expect(controller.state().safeMode).toBe(false);
+      if (action === "developer-off") {
+        expect(controller.state().developer.enabled).toBe(false);
+        expect(controller.state().plugins.every((plugin) => plugin.source === "builtin")).toBe(
+          true,
+        );
+      } else expect((await saved()).disabled).toEqual([key]);
+      assertNoToy();
+    },
+  );
+
+  it("waits for a disable already in progress before starting restoration", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    const assertNoToy = observe(controller);
+    const entered = barrier();
+    const release = barrier();
+    const setEnabled = PluginManager.prototype.setEnabled;
+    vi.spyOn(PluginManager.prototype, "setEnabled").mockImplementationOnce(async function (
+      this: PluginManager,
+      sourceKey,
+      enabled,
+    ) {
+      entered.resolve();
+      await release.promise;
+      return setEnabled.call(this, sourceKey, enabled);
+    });
+    const disabling = controller.setEnabled(aliasKey, false);
+    await entered.promise;
+    const restoring = controller.clearSafeModeLock();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release.resolve();
+    for (const result of await Promise.all([disabling, restoring]))
+      expect(result).toMatchObject({ ok: true });
+    expect((await saved()).disabled).toEqual([key]);
+    assertNoToy();
+  });
+
+  it("serializes developer mode being enabled during directory resolution", async () => {
+    const { controller, aliasKey, key, resolve, alias } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    await controller.setDeveloperMode(false);
+    const assertNoToy = observe(controller);
+    const entered = barrier();
+    const release = barrier();
+    resolve.mockImplementationOnce(async (directory) => {
+      entered.resolve();
+      await release.promise;
+      return realpath(directory);
+    });
+    const restoring = controller.clearSafeModeLock();
+    await entered.promise;
+    const enabling = controller.setDeveloperMode(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release.resolve();
+    for (const result of await Promise.all([restoring, enabling]))
+      expect(result).toMatchObject({ ok: true });
+    expect(resolve).toHaveBeenCalledWith(alias);
+    expect(
+      controller.state().plugins.filter((plugin) => plugin.source === "development"),
+    ).toMatchObject([{ sourceKey: key, disabledBy: "user" }]);
+    expect((await saved()).disabled).toEqual([key]);
+    assertNoToy();
   });
 });
 
@@ -609,6 +1193,8 @@ describe("PluginController with a fake manager", () => {
   const snapshot: PluginsSnapshot = {
     revision: 4,
     diagnosticHelpRevision: 2,
+    staticLanguagesRevision: 0,
+    staticLanguageOwners: [],
     safeMode: false,
     developmentMode: true,
     plugins: [
@@ -624,16 +1210,123 @@ describe("PluginController with a fake manager", () => {
       },
     ],
   };
+  const fixtureText = (name: "tokenizer" | "configuration") =>
+    readFileSync(
+      new URL(
+        `../../../../../packages/plugin-protocol/test-fixtures/static-languages/minimal/${name}.json`,
+        import.meta.url,
+      ),
+      "utf8",
+    );
+  const tokenizerText = fixtureText("tokenizer");
+  const configurationText = fixtureText("configuration");
+  const language = (id: string, pluginId: string, sourceKey: string): ValidatedStaticLanguage => ({
+    id,
+    pluginId,
+    sourceKey,
+    generation: 1,
+    extensions: [id],
+    aliases: [],
+    resourceDigest: "mock-resource-digest",
+    tokenizer: JSON.parse(tokenizerText),
+    configuration: JSON.parse(configurationText),
+    resourceBytes: {
+      tokenizer: Buffer.byteLength(tokenizerText, "utf8"),
+      configuration: Buffer.byteLength(configurationText, "utf8"),
+    },
+    expandedRules: 1,
+  });
+  const toy = language("toy", "acme.toy", key);
+  const bp = language("bp", builtin.id, builtin.sourceKey);
+  const catalog = (
+    revision = 1,
+    languages: ValidatedStaticLanguage[] = [bp, toy],
+  ): StaticLanguagesCatalog => ({
+    formatVersion: 1,
+    limitsVersion: 1,
+    revision,
+    languages,
+    extensionRoutes: Object.fromEntries(
+      languages.flatMap((item) => item.extensions.map((extension) => [extension, item.id])),
+    ),
+    conflicts: [],
+  });
+  const owners = (value: StaticLanguagesCatalog): PluginsSnapshot["staticLanguageOwners"] =>
+    value.languages.map(({ id, pluginId, sourceKey, generation, extensions }) => ({
+      languageId: id,
+      pluginId,
+      sourceKey,
+      generation,
+      extensions: [...extensions],
+    }));
+  const staticSnapshot = (value: StaticLanguagesCatalog): PluginsSnapshot => ({
+    ...snapshot,
+    staticLanguagesRevision: value.revision,
+    staticLanguageOwners: owners(value),
+    plugins: [
+      builtin,
+      {
+        sourceKey: key,
+        id: "acme.toy",
+        source: "development",
+        runtime: "static",
+        status: "enabled",
+        running: false,
+        problems: [],
+        commands: [],
+      },
+    ],
+  });
+  const report = (revision = 1): ReportLanguageRegistrationFailureInput => ({
+    sourceKey: key,
+    generation: 1,
+    languageId: "toy",
+    revision,
+    reason: "monaco",
+    detail: "The language configuration could not be installed.",
+  });
   function setup(
     options: {
       document?: Partial<PluginStateDocument>;
       snapshot?: PluginsSnapshot;
+      catalog?: StaticLanguagesCatalog;
       failUpdates?: boolean;
     } = {},
   ) {
     let listener: (event: PluginManagerEvent) => void = () => {};
     let currentSnapshot = options.snapshot ?? snapshot;
+    let currentCatalog =
+      options.catalog ?? emptyStaticLanguagesCatalog(currentSnapshot.staticLanguagesRevision);
+    const publishCatalog = (
+      value: StaticLanguagesCatalog,
+      plugins: PluginsSnapshot["plugins"] = currentSnapshot.plugins,
+    ) => {
+      currentCatalog = value;
+      currentSnapshot = {
+        ...currentSnapshot,
+        plugins,
+        revision: currentSnapshot.revision + 1,
+        staticLanguagesRevision: value.revision,
+        staticLanguageOwners: owners(value),
+      };
+      listener({ type: "state", state: currentSnapshot });
+    };
     const manager = {
+      get staticLanguagesRevision() {
+        return currentCatalog.revision;
+      },
+      staticLanguages: vi.fn(() => structuredClone(currentCatalog)),
+      reportLanguageRegistrationFailure: vi.fn<
+        PluginManagerPort["reportLanguageRegistrationFailure"]
+      >(() => ({ accepted: false, revision: currentCatalog.revision })),
+      setEnabled: vi.fn<PluginManagerPort["setEnabled"]>(async () => ({
+        ok: true,
+        state: currentSnapshot,
+      })),
+      reloadSource: vi.fn<PluginManagerPort["reloadSource"]>(async () => ({
+        ok: true,
+        state: currentSnapshot,
+      })),
       active: false,
       state: () => currentSnapshot,
       resolveLanguageService: vi.fn((language: string) => ({
@@ -675,7 +1368,11 @@ describe("PluginController with a fake manager", () => {
         return () => {};
       },
     };
-    const marker = { update: vi.fn(), finish: vi.fn() };
+    const marker = {
+      update: vi.fn(),
+      finish: vi.fn(),
+      markThirdPartyStaticContributions: vi.fn(),
+    };
     let document: PluginStateDocument = {
       schemaVersion: 2,
       developerMode: true,
@@ -709,6 +1406,7 @@ describe("PluginController with a fake manager", () => {
       controller,
       manager,
       marker,
+      publishCatalog,
       settings,
       dialogs,
       emit: (event: PluginManagerEvent) => {
@@ -893,5 +1591,505 @@ describe("PluginController with a fake manager", () => {
       state: { ...snapshot, plugins: [{ ...snapshot.plugins[0]!, running: false }] },
     });
     expect(controller.state().python.pendingReload).toEqual([]);
+  });
+  it.each(["fetch", "state", "event"] as const)(
+    "persists risk before the first third-party %s delivery without a process",
+    (entry) => {
+      const value = catalog();
+      const { controller, manager, marker, publishCatalog } = setup({
+        catalog: value,
+        snapshot: staticSnapshot(value),
+      });
+      const order: string[] = [];
+      marker.markThirdPartyStaticContributions.mockImplementation(() => order.push("persist"));
+      controller.onEvent((event) => {
+        if (event.type === "state") {
+          order.push("deliver");
+          expect(event.state.staticLanguageOwners).toEqual(owners(value));
+        }
+      });
+      if (entry === "fetch") {
+        expect(controller.staticLanguages()).toEqual(value);
+        order.push("deliver");
+      } else if (entry === "state") {
+        expect(controller.state().staticLanguageOwners).toEqual(owners(value));
+        order.push("deliver");
+      } else publishCatalog(value);
+      expect(order).toEqual(["persist", "deliver"]);
+      expect(manager.active).toBe(false);
+      controller.staticLanguages();
+      controller.state();
+      expect(marker.markThirdPartyStaticContributions).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("refuses post-startup static catalog delivery when marker persistence fails", async () => {
+    const initial = catalog(1, [bp]);
+    const { controller, manager, marker, publishCatalog } = setup({
+      catalog: initial,
+      snapshot: staticSnapshot(initial),
+    });
+    expect(controller.staticLanguages().languages).toEqual([bp]);
+    expect(marker.markThirdPartyStaticContributions).not.toHaveBeenCalled();
+    marker.markThirdPartyStaticContributions.mockImplementation(() => {
+      throw new PluginError("PLUGIN_E_STATE_SAVE", "Marker storage is unavailable.");
+    });
+    const events: PluginsViewEvent[] = [];
+    controller.onEvent((event) => events.push(event));
+    manager.setEnabled.mockImplementation(async () => {
+      publishCatalog(catalog(2));
+      return { ok: true, state: manager.state() };
+    });
+    expect(await controller.setEnabled(key, true)).toMatchObject({
+      ok: true,
+      state: { stateProblem: { code: "PLUGIN_E_STATE_SAVE" } },
+    });
+    expect(controller.staticLanguages()).toMatchObject({
+      revision: 2,
+      languages: [bp],
+      extensionRoutes: { bp: "bp" },
+    });
+    const state = controller.state();
+    expect(state.staticLanguageOwners).toEqual(owners(catalog(2, [bp])));
+    expect(state.plugins.find((item) => item.id === "acme.toy")?.problems).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "PLUGIN_E_STATE_SAVE" })]),
+    );
+    expect(() => controller.reportLanguageRegistrationFailure(report(2))).toThrow("owner");
+    expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+    for (const event of events)
+      if (event.type === "state")
+        expect(event.state.staticLanguageOwners.every((owner) => owner.sourceKey !== key)).toBe(
+          true,
+        );
+    // A delivery failure is latched for this session: the same revision never changes
+    // from a builtin-only DTO to a third-party DTO on a later poll.
+    marker.markThirdPartyStaticContributions.mockImplementation(() => {});
+    publishCatalog(catalog(3));
+    expect(controller.staticLanguages().languages).toEqual([bp]);
+    expect(marker.markThirdPartyStaticContributions).toHaveBeenCalledOnce();
+    expect(manager.resolveLanguageService).not.toHaveBeenCalled();
+  });
+
+  it("protects first-fetch failure and later reload delivery with the same gate", async () => {
+    const value = catalog();
+    const failed = setup({ catalog: value, snapshot: staticSnapshot(value) });
+    failed.marker.markThirdPartyStaticContributions.mockImplementation(() => {
+      throw new Error("read-only storage");
+    });
+    expect(failed.controller.staticLanguages().languages).toEqual([bp]);
+    expect(failed.controller.state().stateProblem?.code).toBe("PLUGIN_E_STATE_SAVE");
+
+    const initial = catalog(1, [bp]);
+    const next = setup({ catalog: initial, snapshot: staticSnapshot(initial) });
+    next.manager.reloadSource.mockImplementation(async () => {
+      next.publishCatalog(catalog(2));
+      return { ok: true, state: next.manager.state() };
+    });
+    expect(await next.controller.reload(key)).toMatchObject({ ok: true });
+    expect(next.marker.markThirdPartyStaticContributions).toHaveBeenCalledOnce();
+    expect(next.controller.staticLanguages().languages).toEqual([bp, toy]);
+  });
+
+  it("retains builtin routes, ambiguity and static-only status without PID checks", () => {
+    const value = catalog();
+    value.languages[0] = { ...bp, extensions: ["bp", "shared"] };
+    value.languages[1] = { ...toy, extensions: ["toy", "shared"] };
+    value.extensionRoutes.shared = null;
+    value.conflicts = [
+      {
+        kind: "extension",
+        key: "shared",
+        sources: owners(value).map(({ pluginId, sourceKey, languageId }) => ({
+          pluginId,
+          sourceKey,
+          languageId,
+        })),
+      },
+    ];
+    const { controller, marker } = setup({
+      catalog: value,
+      snapshot: staticSnapshot(value),
+    });
+    expect(controller.staticLanguages()).toEqual(value);
+    expect(controller.state().plugins.find((item) => item.id === "acme.toy")).toMatchObject({
+      runtime: "static",
+      status: "enabled",
+      running: false,
+    });
+    expect(marker.markThirdPartyStaticContributions).toHaveBeenCalledOnce();
+  });
+
+  it("does not expose third-party owners in safe mode even from an overpermissive mock", () => {
+    const value = catalog();
+    const { controller, manager, marker } = setup({
+      catalog: value,
+      snapshot: { ...staticSnapshot(value), safeMode: true },
+    });
+    expect(controller.staticLanguages().languages).toEqual([bp]);
+    expect(controller.state().staticLanguageOwners).toEqual(owners(catalog(1, [bp])));
+    expect(() => controller.reportLanguageRegistrationFailure(report())).toThrow("owner");
+    expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+    expect(marker.markThirdPartyStaticContributions).not.toHaveBeenCalled();
+  });
+
+  it("retains hang detection after an exposed static source is removed", () => {
+    const value = catalog();
+    const { controller, marker, emit, publishCatalog } = setup({
+      catalog: value,
+      snapshot: staticSnapshot(value),
+    });
+    controller.staticLanguages();
+    publishCatalog(catalog(2, [bp]));
+    emit({ type: "state", state: { ...staticSnapshot(catalog(2, [bp])), plugins: [builtin] } });
+    controller.markRendererUnresponsive();
+    expect(marker.update).toHaveBeenLastCalledWith({ rendererUnresponsive: true });
+  });
+
+  it("rejects forged current ownership and ignores stale or duplicate registration reports", () => {
+    const value = catalog();
+    const { controller, manager, publishCatalog } = setup({
+      catalog: value,
+      snapshot: staticSnapshot(value),
+    });
+    for (const forged of [
+      { ...report(), sourceKey: "dev:ffffffffffffffff" },
+      { ...report(), languageId: "bp" },
+      { ...report(), generation: 2 },
+    ])
+      expect(() => controller.reportLanguageRegistrationFailure(forged)).toThrow("owner");
+    expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+    expect(controller.reportLanguageRegistrationFailure(report(2))).toEqual({
+      accepted: false,
+      revision: 1,
+    });
+    manager.reportLanguageRegistrationFailure.mockImplementation(() => {
+      publishCatalog(catalog(2, [bp]));
+      return { accepted: true, revision: 2 };
+    });
+    expect(controller.reportLanguageRegistrationFailure(report(0))).toEqual({
+      accepted: true,
+      revision: 2,
+    });
+    expect(manager.reportLanguageRegistrationFailure).toHaveBeenCalledExactlyOnceWith(report(0));
+    expect(controller.reportLanguageRegistrationFailure(report())).toEqual({
+      accepted: false,
+      revision: 2,
+    });
+    expect(manager.reportLanguageRegistrationFailure).toHaveBeenCalledOnce();
+    expect(controller.staticLanguages().languages).toEqual([bp]);
+  });
+
+  it.each(["node", "python"] as const)(
+    "accepts one registration failure for a current static owner after its %s process crashes",
+    (runtime) => {
+      const value = catalog();
+      const initial = staticSnapshot(value);
+      initial.plugins[1] = { ...initial.plugins[1]!, runtime, running: true };
+      const { controller, manager, emit, publishCatalog } = setup({
+        catalog: value,
+        snapshot: initial,
+      });
+      manager.active = true;
+      expect(controller.staticLanguages()).toEqual(value);
+      const crashProblem: PluginsSnapshot["plugins"][number]["problems"][number] = {
+        code: "PLUGIN_E_CRASHED",
+        message: "acme.toy: plugin process exited unexpectedly.",
+      };
+      manager.active = false;
+      emit({
+        type: "state",
+        state: {
+          ...initial,
+          revision: initial.revision + 1,
+          plugins: initial.plugins.map((plugin) =>
+            plugin.sourceKey === key
+              ? { ...plugin, status: "failed", running: false, problems: [crashProblem] }
+              : plugin,
+          ),
+        },
+      });
+      expect(controller.state().plugins.find((plugin) => plugin.sourceKey === key)).toMatchObject({
+        runtime,
+        status: "failed",
+        running: false,
+      });
+      expect(controller.state().staticLanguageOwners).toEqual(owners(value));
+      expect(controller.staticLanguages()).toEqual(value);
+
+      const events: PluginsViewEvent[] = [];
+      controller.onEvent((event) => events.push(event));
+      const registrationProblem: PluginsSnapshot["plugins"][number]["problems"][number] = {
+        code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+        message: `acme.toy / toy: renderer registration failed (monaco): ${report().detail}`,
+        detail: { languageId: "toy" },
+      };
+      // Simulate a single host transaction: quarantine this contribution, append
+      // its structured problem, advance the revision and publish complete owners.
+      manager.reportLanguageRegistrationFailure.mockImplementation(() => {
+        publishCatalog(
+          catalog(2, [bp]),
+          manager
+            .state()
+            .plugins.map((plugin) =>
+              plugin.sourceKey === key
+                ? { ...plugin, problems: [...plugin.problems, registrationProblem] }
+                : plugin,
+            ),
+        );
+        return { accepted: true, revision: 2 };
+      });
+      expect(controller.reportLanguageRegistrationFailure(report())).toEqual({
+        accepted: true,
+        revision: 2,
+      });
+      expect(manager.reportLanguageRegistrationFailure).toHaveBeenCalledExactlyOnceWith(report());
+      expect(controller.staticLanguages()).toEqual(catalog(2, [bp]));
+      expect(controller.state().staticLanguagesRevision).toBe(2);
+      expect(controller.state().staticLanguageOwners).toEqual(owners(catalog(2, [bp])));
+      expect(controller.state().plugins.find((plugin) => plugin.sourceKey === key)).toMatchObject({
+        status: "failed",
+        running: false,
+        problems: [crashProblem, registrationProblem],
+      });
+      expect(events).toEqual([{ type: "state", state: controller.state() }]);
+      // Exact duplicates and older revisions are ignored. Rewriting the revision
+      // cannot authorize an owner that the host has already quarantined.
+      for (const stale of [report(), report(0)])
+        expect(controller.reportLanguageRegistrationFailure(stale)).toEqual({
+          accepted: false,
+          revision: 2,
+        });
+      expect(() => controller.reportLanguageRegistrationFailure(report(2))).toThrow("owner");
+      publishCatalog(catalog(3, [bp]));
+      expect(controller.staticLanguages()).toEqual(catalog(3, [bp]));
+      expect(() => controller.reportLanguageRegistrationFailure(report(3))).toThrow("owner");
+      expect(manager.reportLanguageRegistrationFailure).toHaveBeenCalledOnce();
+      expect(manager.setEnabled).not.toHaveBeenCalled();
+      expect(manager.reloadSource).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["disabled", "invalid"] as const)(
+    "rejects reports from a %s plugin even if a mock retains its catalog and owner",
+    (status) => {
+      const value = catalog();
+      const inactive = staticSnapshot(value);
+      inactive.plugins[1] = { ...inactive.plugins[1]!, status };
+      const { controller, manager } = setup({ catalog: value, snapshot: inactive });
+      expect(() => controller.reportLanguageRegistrationFailure(report())).toThrow("owner");
+      expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["catalog", "owner", "plugin"] as const)(
+    "rejects a failed-process report after its %s identity is withdrawn",
+    (withdrawn) => {
+      const value = catalog();
+      const inactive = staticSnapshot(value);
+      inactive.plugins[1] = { ...inactive.plugins[1]!, runtime: "node", status: "failed" };
+      if (withdrawn === "owner") inactive.staticLanguageOwners = owners(catalog(1, [bp]));
+      if (withdrawn === "plugin") inactive.plugins = [builtin];
+      const { controller, manager } = setup({
+        catalog: withdrawn === "catalog" ? catalog(1, [bp]) : value,
+        snapshot: inactive,
+      });
+      expect(() => controller.reportLanguageRegistrationFailure(report())).toThrow("owner");
+      expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["owner", "plugin"] as const)(
+    "does not borrow another %s identity from a matching source and language",
+    (mismatch) => {
+      const value = catalog();
+      const inconsistent = staticSnapshot(value);
+      if (mismatch === "owner")
+        inconsistent.staticLanguageOwners[1] = {
+          ...inconsistent.staticLanguageOwners[1]!,
+          pluginId: "acme.forged",
+        };
+      else inconsistent.plugins[1] = { ...inconsistent.plugins[1]!, id: "acme.forged" };
+      const { controller, manager } = setup({ catalog: value, snapshot: inconsistent });
+      expect(() => controller.reportLanguageRegistrationFailure(report())).toThrow("owner");
+      expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+    },
+  );
+  function captureStartup(manager: ReturnType<typeof setup>["manager"]) {
+    const creates: PluginManagerOptions[] = [];
+    const persisted: (PluginPersistedState & { problem?: string })[] = [];
+    vi.spyOn(PluginManager, "create").mockImplementation(async (options) => {
+      creates.push(options);
+      persisted.push(await options.store.load());
+      return manager as unknown as PluginManager;
+    });
+    return { creates, persisted };
+  }
+
+  it.each(["cli", "lock", "corrupt", "static-crash", "hang"] as const)(
+    "decides %s safe mode before resolving any development folder",
+    async (condition) => {
+      const directory = path.join(root, "must-not-be-read");
+      const sourceKey = developmentSourceKey(directory);
+      const document: PluginStateDocument = {
+        schemaVersion: 2,
+        developerMode: true,
+        sources: [{ directory }],
+        disabled: [sourceKey],
+        legacyDisabledIds: ["acme.old"],
+        ...(condition === "lock"
+          ? {
+              safeModeLock: {
+                since: "2026-10-15T00:00:00.000Z",
+                reason: "unclean-exit" as const,
+              },
+            }
+          : {}),
+      };
+      await mkdir(path.join(userData, "plugins"), { recursive: true });
+      await writeFile(
+        path.join(userData, "plugins/state.json"),
+        condition === "corrupt" ? "{broken" : JSON.stringify(document),
+      );
+      if (condition === "static-crash" || condition === "hang")
+        await writeFile(
+          path.join(userData, "plugins/session.json"),
+          JSON.stringify({
+            startedAt: "2026-10-15T00:00:00.000Z",
+            thirdPartyRunning: false,
+            thirdPartyStaticContributions: true,
+            rendererUnresponsive: condition === "hang",
+          }),
+        );
+      const { manager } = setup({ snapshot: { ...snapshot, safeMode: true } });
+      const captured = captureStartup(manager);
+      const resolve = vi.fn(async () => {
+        throw new Error("Safe mode must not touch a development directory.");
+      });
+      const launcher = vi.fn();
+      const controller = await start(fakeDialogs(), {
+        commandLine: { developmentDirectories: [directory], safeMode: condition === "cli" },
+        realpath: resolve,
+        launcher: () => launcher,
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(launcher).not.toHaveBeenCalled();
+      expect(captured.creates).toHaveLength(1);
+      expect(captured.creates[0]!.safeMode).toBe(true);
+      // The runtime receives inert source descriptors for the recovery UI and owns
+      // proving that safeMode prevents manifest and resource reads of those descriptors.
+      expect(captured.creates[0]!.sources).toEqual([{ kind: "development", directory }]);
+      if (condition === "corrupt") expect(captured.persisted[0]!.problem).toBeDefined();
+      else {
+        expect([...captured.persisted[0]!.disabled]).toEqual([sourceKey]);
+        expect([...captured.persisted[0]!.legacyDisabledIds]).toEqual(["acme.old"]);
+      }
+      if (condition === "static-crash" || condition === "hang") {
+        const reason = condition === "hang" ? "renderer-unresponsive" : "unclean-exit";
+        expect(controller.state().safeModeLock?.reason).toBe(reason);
+        expect((await saved()).safeModeLock.reason).toBe(reason);
+      }
+    },
+  );
+
+  it("retains static crash recovery after the last development source was removed", async () => {
+    await mkdir(path.join(userData, "plugins"), { recursive: true });
+    await writeFile(
+      path.join(userData, "plugins/session.json"),
+      JSON.stringify({
+        startedAt: "2026-10-15T00:00:00.000Z",
+        thirdPartyRunning: false,
+        thirdPartyStaticContributions: true,
+        rendererUnresponsive: false,
+      }),
+    );
+    const { manager } = setup({ snapshot: { ...snapshot, safeMode: true, plugins: [] } });
+    const captured = captureStartup(manager);
+    const controller = await start();
+    expect(captured.creates[0]!.safeMode).toBe(true);
+    expect(captured.creates[0]!.sources).toEqual([]);
+    expect(controller.state().safeModeLock?.reason).toBe("unclean-exit");
+    expect((await saved()).safeModeLock.reason).toBe("unclean-exit");
+  });
+
+  it("gives a renderer hang priority over an older unclean-exit lock", async () => {
+    const directory = path.join(root, "static-source");
+    const document: PluginStateDocument = {
+      schemaVersion: 2,
+      developerMode: true,
+      sources: [{ directory }],
+      disabled: [],
+      legacyDisabledIds: [],
+      safeModeLock: { since: "2026-10-14T00:00:00.000Z", reason: "unclean-exit" },
+    };
+    await mkdir(path.join(userData, "plugins"), { recursive: true });
+    await writeFile(path.join(userData, "plugins/state.json"), JSON.stringify(document));
+    await writeFile(
+      path.join(userData, "plugins/session.json"),
+      JSON.stringify({
+        startedAt: "2026-10-15T00:00:00.000Z",
+        thirdPartyRunning: false,
+        thirdPartyStaticContributions: true,
+        rendererUnresponsive: true,
+      }),
+    );
+    const { manager } = setup({ snapshot: { ...snapshot, safeMode: true } });
+    captureStartup(manager);
+    const controller = await start();
+    expect(controller.state().safeModeLock?.reason).toBe("renderer-unresponsive");
+    expect((await saved()).safeModeLock.reason).toBe("renderer-unresponsive");
+  });
+
+  it("preserves individual disables when the user explicitly leaves recovery mode", async () => {
+    const directory = path.join(root, "disabled-static-source");
+    const sourceKey = developmentSourceKey(directory);
+    const document: PluginStateDocument = {
+      schemaVersion: 2,
+      developerMode: true,
+      sources: [{ directory }],
+      disabled: [sourceKey],
+      legacyDisabledIds: ["acme.old"],
+      safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" },
+    };
+    await mkdir(path.join(userData, "plugins"), { recursive: true });
+    await writeFile(path.join(userData, "plugins/state.json"), JSON.stringify(document));
+    const { manager } = setup({ snapshot: { ...snapshot, safeMode: true } });
+    captureStartup(manager);
+    const controller = await start();
+    expect(manager.leaveSafeMode).not.toHaveBeenCalled();
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(manager.leaveSafeMode).toHaveBeenCalledOnce();
+    expect(await saved()).toMatchObject({
+      disabled: [sourceKey],
+      legacyDisabledIds: ["acme.old"],
+    });
+    expect((await saved()).safeModeLock).toBeUndefined();
+  });
+
+  it("still canonicalizes command-line folders outside safe mode after loading disables", async () => {
+    const directory = path.join(root, "spelling");
+    const canonical = path.join(root, "canonical");
+    const sourceKey = developmentSourceKey(canonical);
+    await mkdir(path.join(userData, "plugins"), { recursive: true });
+    await writeFile(
+      path.join(userData, "plugins/state.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        developerMode: false,
+        sources: [],
+        disabled: [sourceKey],
+        legacyDisabledIds: [],
+      }),
+    );
+    const { manager } = setup();
+    const captured = captureStartup(manager);
+    const resolve = vi.fn(async () => canonical);
+    await start(fakeDialogs(), {
+      commandLine: { developmentDirectories: [directory], safeMode: false },
+      realpath: resolve,
+    });
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(directory);
+    expect(captured.creates[0]!.safeMode).toBe(false);
+    expect(captured.creates[0]!.sources).toEqual([{ kind: "development", directory: canonical }]);
+    expect([...captured.persisted[0]!.disabled]).toEqual([sourceKey]);
   });
 });

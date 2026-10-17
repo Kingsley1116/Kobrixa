@@ -1,5 +1,9 @@
-import { BUILTIN_LANGUAGE_COMPANIONS } from "./builtin-language-companions.js";
-import { bindingKey } from "../../shared/language-services.js";
+import { useStaticLanguages } from "./static-language-bootstrap.js";
+import {
+  sameBinding,
+  modelLanguageSelector,
+  type ModelLanguageRoute,
+} from "./model-language-route.js";
 import type { LanguageFeatureQuery, LanguageFeatureReply } from "../../shared/language-query.js";
 import { routeLanguage, replaceModelRoute } from "./language-routing.js";
 import type { LanguageBinding, LanguageStatus } from "../../shared/language-services.js";
@@ -8,7 +12,6 @@ import { EditorModels } from "./editor-models.js";
 import { completionWidget } from "./completion-widget.js";
 import type { CompletionSession } from "./completion-session.js";
 import type { PublishedAnalysis } from "../../shared/language-sync.js";
-import { registerBasicPlusLanguage } from "./companions/basic-plus/registration.js";
 import type { Documents, DocumentBuffer } from "./documents.js";
 import type { AnalysisSession } from "./analysis-session.js";
 import { ModelSnapshots } from "./model-snapshots.js";
@@ -35,19 +38,13 @@ import type { Diagnostic } from "../../shared/api.js";
 import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
 import type { CollabSession } from "../collab/types.js";
 import { EditorCollab } from "../collab/editor-binding.js";
+import { copy } from "../i18n/copy.js";
 
 // Without worker factories Monaco falls back to running worker tasks on the UI
 // thread. Vite bundles these for both the dev server and the packaged file URL.
 self.MonacoEnvironment = {
   getWorker: (_workerId, label) => (label === "json" ? new JsonWorker() : new EditorWorker()),
 };
-
-let registered = false;
-function registerLanguage(): void {
-  if (registered) return;
-  registered = true;
-  registerBasicPlusLanguage();
-}
 
 export interface CursorPosition {
   line: number;
@@ -82,6 +79,7 @@ export interface EditorAnalysis {
 }
 
 interface EditorProps {
+  workspaceId?: string;
   status: LanguageStatus | undefined;
   query(
     snapshot: EditorAnalysis,
@@ -131,15 +129,9 @@ interface EditorProps {
 
 let modelSequence = 0;
 function modelUri(file: string): monaco.Uri {
-  return monaco.Uri.from({
-    scheme: "kobrixa",
-    path: `/${file}`,
-    query: `model=${++modelSequence}`,
-  });
-}
-
-function languageFor(file: string, status?: LanguageStatus): string {
-  return routeLanguage(file, status).monacoLanguage;
+  // Keep the workspace-relative path intact. Monaco selectors ignore URI query
+  // and authority, so a unique scheme isolates each model's dynamic providers.
+  return monaco.Uri.from({ scheme: `kobrixa-model-${++modelSequence}`, path: `/${file}` });
 }
 
 function markerSeverity(severity: Diagnostic["severity"]): monaco.MarkerSeverity {
@@ -152,9 +144,10 @@ function toMonacoRange(range: Diagnostic["range"]): monaco.Range {
   return new monaco.Range(range.startLine, range.startColumn, range.endLine, range.endColumn);
 }
 
-export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
+const ReadyEditor = forwardRef<EditorHandle, EditorProps>(function ReadyEditor(
   {
     file,
+    workspaceId,
     status,
     query,
     locale = "en",
@@ -188,8 +181,9 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   },
   handleRef,
 ): React.JSX.Element {
+  const { runtime: staticLanguages } = useStaticLanguages();
   const [modelSnapshots] = useState(() => new ModelSnapshots());
-  const semanticTokens = useRef<LanguageSemanticTokens | undefined>(undefined);
+  const semanticTokens = useRef(new Map<monaco.editor.ITextModel, LanguageSemanticTokens>());
   const modelRoutes = useRef(
     new Map<
       monaco.editor.ITextModel,
@@ -217,7 +211,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const applyingValue = useRef(false);
   const composing = useRef(false);
   const suggestions = useRef<ReturnType<typeof completionWidget> | undefined>(undefined);
-  const features = useRef<LanguageFeatures | undefined>(undefined);
+  const features = useRef(new Map<monaco.editor.ITextModel, LanguageFeatures>());
   const modelSubscriptions = useRef(new Map<monaco.editor.ITextModel, monaco.IDisposable>());
   const currentProps = useRef({
     readOnly,
@@ -225,6 +219,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     onWorkspaceEdit,
     locale,
     onQuickFixes,
+    workspaceId,
     status,
     query,
   });
@@ -234,6 +229,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     onWorkspaceEdit,
     locale,
     onQuickFixes,
+    workspaceId,
     status,
     query,
   };
@@ -241,27 +237,125 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   const collab = useRef<EditorCollab | undefined>(undefined);
   const fileFor = (model: monaco.editor.ITextModel): string | undefined =>
     [...models.current].find(([, item]) => item === model)?.[0];
+  const detachModelRoute = (model: monaco.editor.ITextModel) => {
+    modelRoutes.current.get(model)?.dispose();
+    modelRoutes.current.delete(model);
+  };
   const bindModelRoute = (model: monaco.editor.ITextModel, file: string) => {
     const status = currentProps.current.status;
-    const language = languageFor(file, status);
-    if (model.getLanguageId() !== language) monaco.editor.setModelLanguage(model, language);
-    modelRoutes.current.set(
+    const context = ownedModels.languageContext(model);
+    const route = routeLanguage(
+      file,
+      status,
+      undefined,
+      staticLanguages.registrar.resolve(context),
+    );
+    const attached = replaceModelRoute(
+      modelRoutes.current.get(model),
       model,
-      replaceModelRoute(modelRoutes.current.get(model), model, file, status, () => {
-        const tokens = semanticTokens.current,
-          languageFeatures = features.current;
-        tokens?.bind(model, file);
+      file,
+      currentProps.current.workspaceId,
+      route,
+      (_target, selected: ModelLanguageRoute) => {
+        const { binding, companion } = selected;
+        if (!binding || !companion) return { dispose() {} };
+        const uri = model.uri.toString();
+        const workspaceId = currentProps.current.workspaceId;
+        const currentRoute = (candidate: monaco.editor.ITextModel) => {
+          if (
+            candidate !== model ||
+            candidate.uri.toString() !== uri ||
+            fileFor(candidate) !== file ||
+            currentProps.current.workspaceId !== workspaceId
+          )
+            return undefined;
+          return modelRoutes.current.get(candidate)?.route;
+        };
+        const currentBinding = () => {
+          const availability = currentProps.current.status?.availability;
+          return availability?.kind === "available" && sameBinding(availability.binding, binding)
+            ? availability.binding
+            : undefined;
+        };
+        const tokens =
+          selected.kind !== "plaintext" && binding.capabilities.includes("semanticTokens")
+            ? new LanguageSemanticTokens(
+                companion.legend,
+                selected.monacoLanguage,
+                binding.epoch,
+                (candidate) => currentRoute(candidate) === selected && !!currentBinding(),
+              )
+            : undefined;
+        const semanticRegistration = tokens
+          ? monaco.languages.registerDocumentSemanticTokensProvider(
+              modelLanguageSelector(model, selected),
+              tokens,
+            )
+          : undefined;
+        if (tokens) {
+          semanticTokens.current.set(model, tokens);
+          tokens.bind(model, file);
+        }
+        const languageFeatures = new LanguageFeatures({
+          binding: currentBinding,
+          companion: () => companion,
+          route: currentRoute,
+          query: (snapshot, query, signal) => currentProps.current.query(snapshot, query, signal),
+          locale: () => currentProps.current.locale,
+          quickFixes: (snapshot, diagnostic, signal) =>
+            currentProps.current.onQuickFixes?.(snapshot, diagnostic, signal) ??
+            Promise.resolve({ kind: "stale", epoch: binding.epoch }),
+          fileFor: (candidate) => (candidate === model ? fileFor(candidate) : undefined),
+          ensureModel,
+          completionSymbols: (candidate, position) => {
+            const name = fileFor(candidate);
+            const symbols = name && completionSession?.symbols(name, position);
+            if (!symbols) completionSession?.request();
+            return symbols || undefined;
+          },
+          isCurrent: (candidate, name, snapshot) =>
+            analysisSession.getCurrent() === snapshot &&
+            modelSnapshots.isCurrent(candidate, name, snapshot),
+          refreshCompletions: (candidate, position) =>
+            suggestions.current?.refresh(candidate, position),
+          canEdit: () =>
+            !currentProps.current.readOnly && !editor.current?.getRawOptions().readOnly,
+        });
+        features.current.set(model, languageFeatures);
+        languageFeatures.register(selected, model);
         completionSession?.bind(file, model);
+        const snapshot = analysisSession.getCurrent();
+        languageFeatures.update(snapshot);
+        if (snapshot?.epoch === binding.epoch)
+          tokens?.update(
+            snapshot.analysis.tokensByFile,
+            snapshot.analysis.index.sources,
+            modelSnapshots.versions(snapshot),
+            snapshot.epoch,
+          );
         return {
           dispose() {
-            tokens?.unbind(model);
+            tokens?.unbind(model); // Fire empty tokens before unregister/disposal.
+            semanticRegistration?.dispose();
+            tokens?.dispose();
+            semanticTokens.current.delete(model);
+            languageFeatures.unbind(model);
+            languageFeatures.dispose();
+            features.current.delete(model);
             completionSession?.unbind(file, model);
-            languageFeatures?.unbind(model);
-            if (!model.isDisposed()) monaco.editor.setModelMarkers(model, "kobrixa", []);
+            monaco.editor.setModelMarkers(model, "kobrixa", []);
           },
         };
-      }),
+      },
     );
+    modelRoutes.current.set(model, attached);
+    ownedModels.trackLanguage(model, {
+      beforeChange: () => detachModelRoute(model),
+      afterChange: () => {
+        const currentFile = fileFor(model);
+        if (currentFile) bindModelRoute(model, currentFile);
+      },
+    });
   };
   const ensureModel = (file: string, content: string): monaco.editor.ITextModel => {
     const existing = models.current.get(file);
@@ -275,7 +369,15 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       existing ??
       monaco.editor.createModel(
         content,
-        languageFor(file, currentProps.current.status),
+        staticLanguages.registrar.resolve({
+          file,
+          ...(currentProps.current.workspaceId
+            ? { workspaceId: currentProps.current.workspaceId }
+            : {}),
+          ...(currentProps.current.status?.availability.kind === "available"
+            ? { binding: currentProps.current.status.availability.binding }
+            : {}),
+        }).monacoLanguage,
         modelUri(file),
       );
     models.current.set(file, model);
@@ -309,7 +411,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       model,
       model.onDidChangeContent(() => {
         if (applyingValue.current) return;
-        features.current?.update(undefined);
+        for (const feature of features.current.values()) feature.update(undefined);
         const currentFile = fileFor(model);
         if (currentFile && documents.getOpenFiles().includes(currentFile)) {
           documents.changed(currentFile);
@@ -332,6 +434,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
     modelSubscriptions.current.get(model)?.dispose();
     modelSubscriptions.current.delete(model);
     modelSnapshots.unbind(model);
+    ownedModels.forgetLanguage(model);
     model.dispose();
   };
   const onBlurRef = useRef(onBlur);
@@ -361,7 +464,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         const source = snapshot?.analysis.index.sources[diagnostic.file];
         if (!snapshot || source === undefined) return [];
         const model = ensureModel(diagnostic.file, source);
-        return features.current?.quickFixes(model, diagnostic, undefined, signal) ?? [];
+        return features.current.get(model)?.quickFixes(model, diagnostic, undefined, signal) ?? [];
       },
       applyQuickFix: async (action) => {
         if (!action.edit || workspaceEditContext(action.edit)?.kind !== "quick-fix")
@@ -455,7 +558,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           : undefined,
       remapFiles: (moved) => {
         ownedModels.remap(moved);
-        features.current?.update(undefined);
+        for (const feature of features.current.values()) feature.update(undefined);
         const instance = editor.current;
         const currentFile = activeFile.current;
         if (instance && currentFile) {
@@ -469,7 +572,6 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             models.current.delete(source);
             models.current.set(target, model);
             modelSnapshots.remap(model, target);
-            bindModelRoute(model, target);
           }
           const state = viewStates.current.get(source);
           if (state) {
@@ -477,6 +579,8 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             viewStates.current.set(target, state);
           }
         }
+        staticLanguages.registrar.refreshModels();
+        for (const [file, model] of models.current) bindModelRoute(model, file);
         if (currentFile && moved[currentFile]) activeFile.current = moved[currentFile];
         collab.current?.refresh();
       },
@@ -485,7 +589,11 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   );
 
   useEffect(() => {
-    registerLanguage();
+    ownedModels.configureLanguages(
+      staticLanguages.registrar,
+      workspaceId,
+      currentProps.current.status,
+    );
     if (!container.current) return undefined;
     let mounted = true;
     const detachEdits = bindWorkspaceEdits(async (edit) => {
@@ -542,7 +650,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
           } finally {
             applyingValue.current = false;
           }
-          features.current?.update(undefined);
+          for (const feature of features.current.values()) feature.update(undefined);
           return changes;
         },
         context,
@@ -570,6 +678,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       renderValidationDecorations: "on",
       ...resolveEditorOptions(editorOptions, fontSize, wordWrap, reducedMotion),
       overviewRulerBorder: false,
+      maxTokenizationLineLength: 10000,
     });
     const opener = monaco.editor.registerEditorOpener({
       openCodeEditor: async (_source, resource, selection) => {
@@ -642,6 +751,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
         modelSubscriptions.current.get(model)?.dispose();
         modelSnapshots.unbind(model);
       }
+      ownedModels.releaseLanguageHooks();
       buffers.current.clear();
       modelSubscriptions.current.clear();
       activeFile.current = undefined;
@@ -651,71 +761,17 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, []);
 
   useEffect(() => {
-    const binding =
-      status?.availability.kind === "available" ? status.availability.binding : undefined;
-    const companion = binding ? BUILTIN_LANGUAGE_COMPANIONS[bindingKey(binding)] : undefined;
-    if (!binding || !companion) {
-      for (const [file, model] of models.current) bindModelRoute(model, file);
-      return;
-    }
-    const tokens = binding.capabilities.includes("semanticTokens")
-      ? new LanguageSemanticTokens(companion.legend, companion.monacoLanguage, binding.epoch)
-      : undefined;
-    semanticTokens.current = tokens;
-    const semanticRegistration = tokens
-      ? monaco.languages.registerDocumentSemanticTokensProvider(
-          { language: companion.monacoLanguage, scheme: "kobrixa" },
-          tokens,
-        )
-      : undefined;
-    const languageFeatures = new LanguageFeatures({
-      binding: () => {
-        const availability = currentProps.current.status?.availability;
-        return availability?.kind === "available" && availability.binding.epoch === binding.epoch
-          ? availability.binding
-          : undefined;
-      },
-      companion: () => companion,
-      query: (snapshot, query, signal) => currentProps.current.query(snapshot, query, signal),
-      locale: () => currentProps.current.locale,
-      quickFixes: (snapshot, diagnostic, signal) =>
-        currentProps.current.onQuickFixes?.(snapshot, diagnostic, signal) ??
-        Promise.resolve({ kind: "stale", epoch: binding.epoch }),
-      fileFor,
-      ensureModel,
-      completionSymbols: (model, position) => {
-        const file = fileFor(model);
-        const symbols = file && completionSession?.symbols(file, position);
-        if (!symbols) completionSession?.request();
-        return symbols || undefined;
-      },
-      isCurrent: (model, file, snapshot) =>
-        analysisSession.getCurrent() === snapshot &&
-        modelSnapshots.isCurrent(model, file, snapshot),
-      refreshCompletions: (model, position) => suggestions.current?.refresh(model, position),
-      canEdit: () => !currentProps.current.readOnly && !editor.current?.getRawOptions().readOnly,
-    });
-    features.current = languageFeatures;
-    languageFeatures.register();
-    const detachCompletion = completionSession?.subscribe(() => {
-      const snapshot = analysisSession.getCurrent();
-      if (snapshot?.epoch === binding.epoch)
-        completionSession.enrich(snapshot.analysis.index.symbols);
-      languageFeatures.refreshCompletion();
-    });
+    ownedModels.configureLanguages(staticLanguages.registrar, workspaceId, status);
     for (const [file, model] of models.current) bindModelRoute(model, file);
-    languageFeatures.update(analysisSession.getCurrent());
+    const off = completionSession?.subscribe(() => {
+      const snapshot = analysisSession.getCurrent();
+      if (snapshot) completionSession.enrich(snapshot.analysis.index.symbols);
+      for (const feature of features.current.values()) feature.refreshCompletion();
+    });
     return () => {
-      for (const route of modelRoutes.current.values()) route.dispose();
-      modelRoutes.current.clear();
-      detachCompletion?.();
-      languageFeatures.dispose();
-      features.current = undefined;
-      semanticRegistration?.dispose();
-      tokens?.dispose();
-      semanticTokens.current = undefined;
+      off?.();
     };
-  }, [status?.epoch, analysisSession, completionSession]);
+  }, [status?.epoch, workspaceId, analysisSession, completionSession]);
 
   useEffect(() => {
     const instance = editor.current;
@@ -801,12 +857,13 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
 
   useEffect(() => {
     suggestions.current?.setAutomaticSuggestions(editorOptions?.autoSuggestions ?? true);
-    editor.current?.updateOptions(
-      resolveEditorOptions(editorOptions, fontSize, wordWrap, reducedMotion),
-    );
+    editor.current?.updateOptions({
+      ...resolveEditorOptions(editorOptions, fontSize, wordWrap, reducedMotion),
+      maxTokenizationLineLength: 10000,
+    });
   }, [editorOptions, fontSize, wordWrap, reducedMotion]);
   useEffect(() => {
-    editor.current?.updateOptions({ ariaLabel, readOnly });
+    editor.current?.updateOptions({ ariaLabel, readOnly, maxTokenizationLineLength: 10000 });
   }, [ariaLabel, readOnly]);
   useEffect(() => {
     for (const model of models.current.values())
@@ -847,22 +904,21 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             modelSnapshots.accept(model, snapshot);
           }
         }
-        semanticTokens.current?.update(
-          snapshot.analysis.tokensByFile,
-          snapshot.analysis.index.sources,
-          modelSnapshots.versions(snapshot),
-          snapshot.epoch,
-        );
-      } else if (event === "reset")
-        semanticTokens.current?.update(
-          undefined,
-          undefined,
-          undefined,
-          currentProps.current.status?.epoch ?? 0,
-        );
-      else if (event === "failure") semanticTokens.current?.fail();
+        for (const tokens of semanticTokens.current.values())
+          tokens.update(
+            snapshot.analysis.tokensByFile,
+            snapshot.analysis.index.sources,
+            modelSnapshots.versions(snapshot),
+            snapshot.epoch,
+          );
+      } else if (event === "reset") {
+        for (const tokens of semanticTokens.current.values())
+          tokens.update(undefined, undefined, undefined, currentProps.current.status?.epoch ?? 0);
+      } else if (event === "failure") {
+        for (const tokens of semanticTokens.current.values()) tokens.fail();
+      }
       if (snapshot) completionSession?.enrich(snapshot.analysis.index.symbols);
-      features.current?.update(snapshot);
+      for (const feature of features.current.values()) feature.update(snapshot);
     };
     update(analysisSession.getCurrent(), "result");
     return analysisSession.subscribe(update);
@@ -902,4 +958,15 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
   }, [file, focusTarget]);
 
   return <div className="editor" ref={container} />;
+});
+
+export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(props, ref) {
+  const { snapshot } = useStaticLanguages();
+  return snapshot.settled ? (
+    <ReadyEditor {...props} ref={ref} />
+  ) : (
+    <div className="editor" role="status">
+      {copy[props.locale ?? "en"].staticLanguageLoading}
+    </div>
+  );
 });

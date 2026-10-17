@@ -280,6 +280,9 @@ importers:
 
   packages/plugin-protocol:
     dependencies:
+      '@eslint-community/regexpp':
+        specifier: 4.12.2
+        version: 4.12.2
       zod:
         specifier: ^4.6.5
         version: 4.6.5

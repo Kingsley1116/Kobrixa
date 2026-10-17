@@ -105,7 +105,7 @@ src/
 
 ## 插件（開發預覽）
 
-第一階段支援可信任的本機 JS／TS 與 Python 插件。第三方插件只在開發者模式載入；開發者模式預設關閉，需在「設定 → 插件」經過原生確認對話框才能開啟。面板透過原生資料夾選擇視窗連結插件資料夾、選擇 Python 直譯器、列出內建與開發插件及其載入錯誤、訊息與日誌，並提供執行與取消貢獻命令，以及重新載入、啟用、停用、解除連結開發插件的操作。詳見[可執行範例](../../plugins/samples/README.md)與 [Python SDK](../../sdks/python/README.md)。
+開發預覽支援可信任的本機 JS／TS、Python 與純靜態 JSON 插件。第三方插件只在開發者模式載入；開發者模式預設關閉，需在「設定 → 插件」經過原生確認對話框才能開啟。面板透過原生資料夾選擇視窗連結插件資料夾、選擇 Python 直譯器、列出內建與開發插件及其載入錯誤、訊息與日誌，並提供執行與取消貢獻命令，以及重新載入、啟用、停用、解除連結開發插件的操作。詳見[可執行範例](../../plugins/samples/README.md)與 [Python SDK](../../sdks/python/README.md)。
 
 公開 API 分成三層：JSON-RPC 2.0、Zod 定義與已提交的 JSON Schema，以及語言 SDK：
 
@@ -132,7 +132,9 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 `<userData>/plugins/state.json`（schema 第 2 版）保存開發者模式、連結的資料夾、選擇的 Python 直譯器、重新啟動後也保持停用的插件來源 key，以及安全模式鎖。檔案無法讀取時，第三方插件保持關閉，不會覆寫該檔案。
 
-`<userData>/plugins/session.json` 記錄是否有第三方插件程序執行過、視窗是否停止回應；它以同步方式寫入，正常結束時刪除。下次啟動時若檔案仍在且任一旗標成立，Kobrixa 會寫入安全模式鎖：第三方插件保持暫停，並顯示提示橫幅，直到使用者按「恢復插件」。視窗卡住過的話，即使之後正常結束也會保留 marker。安全模式中無法啟用、連結或重新載入開發插件，但仍可停用或解除連結。
+一般啟動時，若無法解析 `--plugin-dev-dir` 資料夾的實際路徑，或無法儲存停用來源 key 的遷移結果，所有第三方插件會保持暫停。記憶體中的復原旗標讓橫幅及插件設定持續顯示「恢復插件」，即使設定無法寫入也一樣。恢復時會先重試路徑解析與遷移，再離開安全模式，並保留個別來源的停用選擇。請修正資料夾或設定儲存問題後重試，或移除受影響資料夾的 `--plugin-dev-dir` 啟動參數後重新啟動。
+
+`<userData>/plugins/session.json` 記錄第三方插件程序是否執行過、是否交付 `thirdPartyStaticContributions`、視窗是否停止回應；它以同步方式寫入，正常結束時刪除。下次啟動時若檔案仍在且任一旗標成立，Kobrixa 會寫入安全模式鎖：第三方插件保持暫停，並顯示提示橫幅，直到使用者按「恢復插件」。視窗卡住過的話，即使之後正常結束也會保留 marker。安全模式中無法啟用、連結或重新載入開發插件，但仍可停用或解除連結。
 
 第一階段的方法如下：
 
@@ -149,7 +151,7 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
 
-插件 API **1.3.0** 支援編譯前端、後端與 `contributes.diagnosticHelp` 宣告。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
+插件 API **1.4.0** 支援靜態語言、編譯前端／後端與 `contributes.diagnosticHelp`；符合 host range 的 1.3.x manifests 仍接受。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
 
 宿主為每個語言／目標解析唯一、有效且已啟用的提供者。衝突的提供者全部以 `PLUGIN_E_PROVIDER_CONFLICT` 失效，不依載入順序取首筆；重新檢查提供者集合時排除停用者，清除已消失的衝突。IR 版本選前後端範圍交集的最大值。找不到提供者或發生衝突時，在開 worker 前回 `BUILD1001`；IR 不相容回 `BUILD1002`。
 
@@ -159,7 +161,7 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 main 依通過驗證的專案語言選取啟用中的 frontend 擁有者，backend 缺席或 IR 不相容不影響編輯器分析。以 `pluginId:language` 選取編譯期內建 worker factory 與 browser companion；每工作區保留獨立的分析／Quick Fix 和補全 worker。所有訊息及已接受結果都帶宿主發放的 binding epoch；提供者 generation、路由設定或任一 worker 重啟都讓兩條通道失效並要求完整同步，一般輸入只改文件 revision。
 
-worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建插件仍不可停用；靜態語言貢獻留待 2C，沒有第三方語言服務 RPC。
+worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建插件仍不可停用；靜態語言使用 strict v1 tokenizer／configuration JSON 與共用 protocol validator。Runtime 原子發布 revisioned catalog，由單一 renderer store／registrar 管理所有文件與 review models；builtin raw JSON 封裝於 main，不從 repository 讀取。Catalog revision 與 service epoch 分離。第三方交付前同步保存 static risk marker，保持 sticky 到正常結束；寫入失敗阻止該交付。純靜態插件不啟動程序或 handshake。作者格式、衝突解析、有界資源計量與復原見[靜態語言插件](plugin-static-languages.md)。沒有第三方語言服務 RPC。
 
 宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
 

@@ -4,20 +4,29 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import {
+  basicPlusSmokeCatalog,
+  createStaticLanguagesHarness,
+} from "./static-languages-harness.mjs";
 
 const preload = await readFile(new URL("./preload.cjs", import.meta.url), "utf8");
-function loadPreload(source = preload) {
+const staticHarness = createStaticLanguagesHarness(await basicPlusSmokeCatalog());
+function loadPreload(source = preload, platform = "win32") {
   let api;
   const calls = [];
   const ipcRenderer = new EventEmitter();
   const reply = { kind: "resync", epoch: 7 };
   ipcRenderer.invoke = async (...args) => {
     calls.push(args);
+    if (args[0] === "plugins:state") return staticHarness.state();
+    if (args[0] === "plugins:static-languages") return staticHarness.staticLanguages();
+    if (args[0] === "plugins:report-language-registration-failure")
+      return staticHarness.reportLanguageRegistrationFailure(args[1]);
     return reply;
   };
   runInNewContext(source, {
     exports: {},
-    process: { platform: "win32" },
+    process: { platform },
     require: () => ({
       contextBridge: {
         exposeInMainWorld(name, value) {
@@ -98,13 +107,63 @@ test("smoke preload contains the real preload's complete API key tree", async ()
   const compiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
+  for (const platform of ["win32", "darwin", "linux"]) {
+    const real = loadPreload(compiled, platform).api;
+    const smoke = loadPreload(preload, platform).api;
+    assertApiKeys(smoke, real);
+    assert.equal(Object.hasOwn(smoke, "windowChrome"), Object.hasOwn(real, "windowChrome"));
+  }
   const real = loadPreload(compiled).api;
   const smoke = loadPreload().api;
-  assertApiKeys(smoke, real);
   // Guard the comparison itself against the drift that prompted this test.
   delete smoke.language.onStatus;
   assert.throws(() => assertApiKeys(smoke, real), /kobrixa\.language\.onStatus/);
   const missingHelp = loadPreload().api;
   delete missingHelp.plugins.diagnosticHelp;
   assert.throws(() => assertApiKeys(missingHelp, real), /kobrixa\.plugins\.diagnosticHelp/);
+});
+
+for (const platform of ["win32", "darwin", "linux"]) {
+  test(`N1 exposes windowChrome only on Windows (${platform})`, () => {
+    const { api } = loadPreload(preload, platform);
+    assert.equal(Object.hasOwn(api, "windowChrome"), platform === "win32");
+  });
+}
+
+test("smoke preload forwards the frozen static-language IPC and disposes event listeners", async () => {
+  const { api, calls, ipcRenderer } = loadPreload();
+  const state = await api.plugins.state();
+  const catalog = await api.plugins.staticLanguages();
+  assert.equal(catalog.formatVersion, 1);
+  assert.equal(catalog.limitsVersion, 1);
+  assert.equal(catalog.revision, state.staticLanguagesRevision);
+  assert.equal(state.staticLanguageOwners[0].languageId, "bp");
+  assert.deepEqual(structuredClone(calls.slice(-2)), [
+    ["plugins:state"],
+    ["plugins:static-languages"],
+  ]);
+  const report = {
+    sourceKey: "builtin:kobrixa.basic-plus",
+    generation: 1,
+    languageId: "bp",
+    revision: catalog.revision,
+    reason: "monaco",
+    detail: "smoke report",
+  };
+  assert.deepEqual(await api.plugins.reportLanguageRegistrationFailure(report), {
+    accepted: false,
+    revision: catalog.revision,
+  });
+  assert.deepEqual(structuredClone(calls.at(-1)), [
+    "plugins:report-language-registration-failure",
+    report,
+  ]);
+  const received = [];
+  const off = api.plugins.onEvent((event) => received.push(event));
+  const event = { type: "state", state };
+  ipcRenderer.emit("plugins:event", {}, event);
+  off();
+  ipcRenderer.emit("plugins:event", {}, event);
+  assert.deepEqual(received, [event]);
+  assert.equal(ipcRenderer.listenerCount("plugins:event"), 0);
 });

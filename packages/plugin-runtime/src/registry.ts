@@ -1,5 +1,7 @@
+import { staticLanguageDeclarationProblems } from "@kobrixa/plugin-protocol";
+import { readPackagedJson, SourceReadBudget } from "./packaged-json-resource.js";
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import semver from "semver";
 import { z } from "zod";
@@ -12,7 +14,7 @@ import {
   type PluginManifest,
 } from "@kobrixa/plugin-protocol";
 import { markProviderConflicts } from "./compiler-resolution.js";
-import { readDiagnosticHelp, type LoadedDiagnosticHelp } from "./diagnostic-help.js";
+import type { LoadedDiagnosticHelp } from "./diagnostic-help.js";
 import { messageOf, type PluginErrorCode, type PluginProblem } from "./errors.js";
 
 export const MANIFEST_FILE = "kobrixa-plugin.json";
@@ -21,7 +23,8 @@ export const RESERVED_PLUGIN_IDS: ReadonlySet<string> = new Set(["kobrixa.core"]
 /** Bound on reading one development folder, so a hung disk cannot block startup or recovery. */
 export const SOURCE_READ_TIMEOUT_MS = 5_000;
 export type PluginSource =
-  { kind: "builtin"; manifest: unknown } | { kind: "development"; directory: string };
+  | { kind: "builtin"; manifest: unknown; resources: Readonly<Record<string, string>> }
+  | { kind: "development"; directory: string };
 export type DevelopmentSource = Extract<PluginSource, { kind: "development" }>;
 /** `builtin:<manifest id>` or `dev:` plus 16 hex digits; safe to accept from the renderer. */
 export const sourceKeySchema = z
@@ -35,6 +38,9 @@ export const developmentSourceKey = (directory: string): string =>
 
 /** One source as read on its own; resolvePlugins() decides its status within the whole set. */
 export interface ReadPlugin {
+  /** One metadata/resource attempt; never serialized or supplied by a plugin. */
+  resourceBudget?: SourceReadBudget;
+
   sourceKey: string;
   id: string;
   source: "builtin" | "development";
@@ -129,6 +135,23 @@ function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]
           `${event} does not refer to a command contributed by this plugin.`,
         ),
       );
+  const sourceRejected = problems.some((item) =>
+    [
+      "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
+      "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
+      "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+      "PLUGIN_E_RUNTIME_NOT_ALLOWED",
+    ].includes(item.code),
+  );
+  if (
+    !sourceRejected &&
+    (manifest.runtime.kind === "static" || manifest.contributes?.languages !== undefined)
+  )
+    problems.push(
+      ...staticLanguageDeclarationProblems(manifest).map((message) =>
+        problem("PLUGIN_E_MANIFEST", `${manifest.id}: ${message}`),
+      ),
+    );
   return problems;
 }
 
@@ -137,6 +160,24 @@ function checkManifest(
   source: ReadPlugin["source"],
   fallbackId: string,
 ): SourceRead {
+  if (source !== "builtin" && value && typeof value === "object" && "contributes" in value) {
+    const contributes = value.contributes;
+    if (
+      contributes &&
+      typeof contributes === "object" &&
+      Object.hasOwn(contributes, "languageServices")
+    )
+      return {
+        id: fallbackId,
+        source,
+        problems: [
+          problem(
+            "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
+            "Language services can only be contributed by built-in plugins in this version.",
+          ),
+        ],
+      };
+  }
   const parsed = pluginManifestSchema.safeParse(value);
   if (!parsed.success)
     return {
@@ -152,7 +193,10 @@ function checkManifest(
   };
 }
 
-async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
+async function readDevelopmentPlugin(
+  directory: string,
+  budget: SourceReadBudget,
+): Promise<SourceRead> {
   const fallback = path.basename(directory);
   const invalid = (message: string, code: PluginErrorCode = "PLUGIN_E_MANIFEST"): SourceRead => ({
     id: fallback,
@@ -164,18 +208,19 @@ async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
   let value: unknown;
   try {
     root = await realpath(directory);
-    const file = path.join(root, MANIFEST_FILE);
-    if ((await stat(file)).size > PLUGIN_LIMITS.manifestBytes)
-      return invalid(`${MANIFEST_FILE} is larger than 64 KiB.`);
-    value = JSON.parse((await readFile(file, "utf8")).replace(/^\uFEFF/, ""));
+    budget.check();
+    value = (await readPackagedJson(root, MANIFEST_FILE, PLUGIN_LIMITS.manifestBytes, budget))
+      .value;
   } catch (error) {
     return invalid(`Cannot read ${MANIFEST_FILE}: ${messageOf(error)}`);
   }
   const plugin = { ...checkManifest(value, "development", fallback), directory: root };
   const runtime = plugin.manifest?.runtime;
-  if (plugin.problems.length || !runtime || runtime.kind === "builtin") return plugin;
+  if (plugin.problems.length || !runtime || runtime.kind === "builtin" || runtime.kind === "static")
+    return plugin;
   try {
     const entry = await realpath(path.resolve(root, runtime.entry));
+    budget.check();
     const relative = path.relative(root, entry);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       return {
@@ -184,12 +229,7 @@ async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
           problem("PLUGIN_E_ENTRY", `${runtime.entry} resolves outside the plugin folder.`),
         ],
       };
-    const decl = plugin.manifest?.contributes?.diagnosticHelp;
-    if (!decl) return { ...plugin, entry };
-    const help = await readDiagnosticHelp(root, decl);
-    return help.ok
-      ? { ...plugin, entry, diagnosticHelp: help.help }
-      : { ...plugin, entry, helpProblem: help.problem };
+    return { ...plugin, entry };
   } catch {
     return {
       ...plugin,
@@ -198,50 +238,42 @@ async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
   }
 }
 
-/** Reads one source. Built-in manifests are bundled, so an invalid one is a build error. */
 export async function readSource(
   source: PluginSource,
   options: { safeMode: boolean; timeoutMs?: number },
 ): Promise<ReadPlugin> {
+  const resourceBudget = new SourceReadBudget(options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS);
   if (source.kind === "builtin") {
-    const plugin = checkManifest(source.manifest, "builtin", "builtin");
+    const plugin = await resourceBudget.run(async () =>
+      checkManifest(source.manifest, "builtin", "builtin"),
+    );
     if (plugin.problems.length)
       throw new Error(
         `Invalid built-in plugin manifest: ${plugin.problems.map((item) => item.message).join("; ")}`,
       );
-    return { ...plugin, sourceKey: `builtin:${plugin.id}` };
+    return { ...plugin, sourceKey: `builtin:${plugin.id}`, resourceBudget };
   }
   const directory = path.resolve(source.directory);
-  const sourceKey = developmentSourceKey(directory);
   const placeholder = {
-    sourceKey,
+    sourceKey: developmentSourceKey(directory),
     id: path.basename(directory),
     source: "development" as const,
     directory,
   };
-  // Recovery: safe mode never touches third-party folders, so a hung disk cannot block it.
   if (options.safeMode) return { ...placeholder, problems: [], unread: true };
-  const timeoutMs = options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<SourceRead>((resolve) => {
-    timer = setTimeout(
-      () =>
-        resolve({
-          ...placeholder,
-          problems: [
-            problem(
-              "PLUGIN_E_SOURCE_TIMEOUT",
-              `Reading ${MANIFEST_FILE} did not finish within ${timeoutMs} ms.`,
-            ),
-          ],
-        }),
-      timeoutMs,
-    );
-  });
   try {
-    return { ...(await Promise.race([readDevelopmentPlugin(directory), timedOut])), sourceKey };
-  } finally {
-    clearTimeout(timer);
+    const read = await resourceBudget.run(() => readDevelopmentPlugin(directory, resourceBudget));
+    return { ...read, sourceKey: placeholder.sourceKey, resourceBudget };
+  } catch {
+    return {
+      ...placeholder,
+      problems: [
+        problem(
+          "PLUGIN_E_SOURCE_TIMEOUT",
+          `Reading ${MANIFEST_FILE} did not finish within ${options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS} ms.`,
+        ),
+      ],
+    };
   }
 }
 

@@ -95,10 +95,26 @@ jobs:
           python-version: "3.12"
       - run: pnpm check:desktop
       - run: pnpm build:core
+      - name: Verify static language schemas and generated core ids
+        shell: bash
+        run: |
+          pnpm --filter @kobrixa/plugin-protocol schema
+          node tools/generate-static-language-core-ids.mjs --check
+          git diff --exit-code -- packages/plugin-protocol/schema/plugin-protocol.schema.json sdks/python/kobrixa/plugin-protocol.schema.json apps/desktop/src/renderer/editor/core-static-language-ids.json
       - name: Check collaboration service and real two-client sync
         if: runner.os == 'Linux'
         run: pnpm check:collab && pnpm test:collab:live
       - run: pnpm test:desktop
+      - name: Static language boundary ledger (P5)
+        run: pnpm test:static-languages:boundaries
+      - name: Static language IPC, Monaco and recovery smoke
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:static-languages:smoke
+          else
+            pnpm test:static-languages:smoke
+          fi
       - name: Plugin smoke (utilityProcess, Python, crash isolation)
         shell: bash
         run: |

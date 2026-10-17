@@ -44,7 +44,9 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 it("rejects a second-language service whose extensions differ from its frontend", async () => {
   const manifest = structuredClone(SECOND_MANIFEST);
   manifest.contributes!.languageServices![0]!.extensions = ["csx"];
-  await expect(readSource({ kind: "builtin", manifest }, { safeMode: false })).rejects.toThrow(
+  await expect(
+    readSource({ kind: "builtin", resources: {}, manifest }, { safeMode: false }),
+  ).rejects.toThrow(
     "Language services require one matching frontend with the same source extensions.",
   );
 });
@@ -53,7 +55,7 @@ it("reports both second-language owners as unavailable due to conflict", async (
   const other = { ...structuredClone(SECOND_MANIFEST), id: "test.other-case" };
   const reads = await Promise.all(
     [SECOND_MANIFEST, other].map((manifest) =>
-      readSource({ kind: "builtin", manifest }, { safeMode: false }),
+      readSource({ kind: "builtin", resources: {}, manifest }, { safeMode: false }),
     ),
   );
   expect(reads.every((read) => read.problems.length === 0)).toBe(true);
@@ -82,7 +84,7 @@ it("reports both second-language owners as unavailable due to conflict", async (
 
 it("isolates case-sensitive symbols, legends and overlapping diagnostic codes", async () => {
   const read = await readSource(
-    { kind: "builtin", manifest: SECOND_MANIFEST },
+    { kind: "builtin", resources: {}, manifest: SECOND_MANIFEST },
     { safeMode: false },
   );
   const plugins = resolvePlugins([read], { safeMode: false, disabled: new Set() });

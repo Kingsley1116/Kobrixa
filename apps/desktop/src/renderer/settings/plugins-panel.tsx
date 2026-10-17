@@ -10,7 +10,13 @@ import type {
   PythonChoiceId,
   StoredNotice,
 } from "../../shared/plugins.js";
-import { pluginCopy, problemText, pythonChoiceText, readableError } from "./plugin-copy.js";
+import {
+  problemDetailLines,
+  pluginCopy,
+  problemText,
+  pythonChoiceText,
+  readableError,
+} from "./plugin-copy.js";
 import { PluginLog } from "./plugin-log.js";
 
 export const localizedText = (text: LocalizedText, locale: Locale): string =>
@@ -141,18 +147,25 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
             plugin.version,
             plugin.source === "builtin" ? t.builtin : t.development,
             origin === "session" ? t.sessionSource : undefined,
-            plugin.runtime,
+            plugin.runtime === "static" ? t.staticRuntime : plugin.runtime,
             t.status[plugin.status],
-            plugin.running ? t.running : undefined,
+            plugin.runtime !== "static" && plugin.running ? t.running : undefined,
           ]
             .filter(Boolean)
             .join(" · ")}
         </p>
         {plugin.directory && <p className="settings-hint">{plugin.directory}</p>}
         {plugin.problems.map((problem, index) => (
-          <p className="settings-hint" key={index}>
-            {problemText(problem, locale)}
-          </p>
+          <div key={index} className="settings-hint" style={{ overflowWrap: "anywhere" }}>
+            <p>{problemText(problem, locale)}</p>
+            {problem.detail && (
+              <ul>
+                {problemDetailLines(problem, locale).map((line, detailIndex) => (
+                  <li key={detailIndex}>{line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         ))}
         {state.python.pendingReload.includes(key) && (
           <p className="settings-hint">{t.pendingReload}</p>
@@ -244,8 +257,14 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
       <p className="settings-hint">{t.trust}</p>
       {state.safeMode && (
         <div role="status">
-          <p className="settings-hint">{state.safeModeLock ? t.safeModeLocked : t.safeMode}</p>
-          {state.safeModeLock && (
+          <p className="settings-hint">
+            {state.sessionRecovery
+              ? t.sessionRecovery
+              : state.safeModeLock
+                ? t.safeModeLocked
+                : t.safeMode}
+          </p>
+          {(state.safeModeLock || state.sessionRecovery) && (
             <button
               disabled={busy("lock")}
               onClick={() => void perform("lock", () => window.kobrixa.plugins.clearSafeModeLock())}

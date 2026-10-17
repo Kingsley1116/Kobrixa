@@ -9,6 +9,8 @@ import {
   developmentSourceKey,
   messageOf,
   PluginManager,
+  PluginError,
+  type PluginProblem,
   readSource,
   type LaunchablePlugin,
   type PluginActionResult,
@@ -32,6 +34,11 @@ import type {
   StoredNotice,
 } from "../../shared/plugins.js";
 import { resolveDiagnosticHelp, type PluginHelpCatalogView } from "../../shared/diagnostic-help.js";
+import type {
+  StaticLanguagesCatalog,
+  ReportLanguageRegistrationFailureInput,
+  ReportLanguageRegistrationFailureResult,
+} from "../../shared/static-languages.js";
 import type { PluginDialogs } from "./dialogs.js";
 import { createDesktopLauncher } from "./launchers.js";
 import { PluginLogs, PluginNotices } from "./logs.js";
@@ -66,8 +73,12 @@ export type PluginManagerPort = Pick<
   PluginManager,
   | "state"
   | "diagnosticHelp"
+  | "staticLanguages"
+  | "staticLanguagesRevision"
+  | "reportLanguageRegistrationFailure"
   | "executeCommand"
   | "setEnabled"
+  | "migrateSourceDisable"
   | "addSource"
   | "removeSource"
   | "reloadSource"
@@ -85,18 +96,20 @@ export interface PluginControllerDependencies {
   dialogs: PluginDialogs;
   logs: PluginLogs;
   notices: PluginNotices;
-  marker: Pick<SessionMarkerFile, "update" | "finish">;
+  marker: Pick<SessionMarkerFile, "update" | "finish" | "markThirdPartyStaticContributions">;
   probe(command: PythonCommand): Promise<PythonProbe>;
   realpath(directory: string): Promise<string>;
   locale: PluginLocale;
   platform: NodeJS.Platform;
   session: {
-    /** Real paths from --plugin-dev-dir. */
+    /** Real paths from --plugin-dev-dir; unresolved until restoration in safe mode. */
     directories: readonly string[];
     /** --plugin-python, which overrides the saved choice for this session only. */
     python?: PythonCommand;
     /** --safe-mode, which lasts the whole session. */
     safeMode: boolean;
+    /** A startup resolution or migration failure that kept the session in recovery. */
+    problem?: PluginProblem;
   };
 }
 type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey?: string };
@@ -112,15 +125,22 @@ type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey
 export class PluginController {
   #revision = 0;
   #helpCatalog: PluginHelpCatalogView | undefined;
+  #staticRiskRecorded = false;
+  #staticSaveProblem: PluginProblem | undefined;
   #developer: boolean;
   #commandLine: boolean;
   #closing = false;
+  #changes: Promise<unknown> = Promise.resolve();
+  #restoring: Promise<PluginsResult> | undefined;
+  #sessionProblem: PluginProblem | undefined;
+  readonly #resolvedKeys = new Map<string, string>();
   readonly #inflight = new Map<string, Set<AbortController>>();
   #candidates = new Map<string, PythonCommand>();
   readonly #pendingReload = new Set<string>();
   readonly #listeners = new Set<(event: PluginsViewEvent) => void>();
 
   constructor(private readonly deps: PluginControllerDependencies) {
+    this.#sessionProblem = deps.session.problem;
     const saved = deps.settings.settings().developerMode;
     this.#developer = saved || deps.session.directories.length > 0;
     this.#commandLine = !saved && deps.session.directories.length > 0;
@@ -138,6 +158,104 @@ export class PluginController {
 
   state(): PluginsView {
     return this.#view(this.deps.manager.state());
+  }
+
+  staticLanguages(): StaticLanguagesCatalog {
+    const snapshot = this.deps.manager.state();
+    const permitted = this.#permitThirdPartyStatic(snapshot);
+    const catalog = this.deps.manager.staticLanguages();
+    if (catalog.revision !== snapshot.staticLanguagesRevision)
+      throw new Error("Static language catalog and owner snapshot revisions differ.");
+    if (permitted) return catalog;
+    const builtinKeys = new Set(
+      snapshot.plugins
+        .filter((plugin) => plugin.source === "builtin")
+        .map((plugin) => plugin.sourceKey),
+    );
+    const languages = catalog.languages.filter((language) => builtinKeys.has(language.sourceKey));
+    const ids = new Set(languages.map((language) => language.id));
+    const extensions = new Set(languages.flatMap((language) => language.extensions));
+    return {
+      ...catalog,
+      languages,
+      // A former ambiguous route remains null; filtering never elects a new winner.
+      extensionRoutes: Object.fromEntries(
+        Object.entries(catalog.extensionRoutes).filter(([extension, id]) =>
+          id === null ? extensions.has(extension) : ids.has(id),
+        ),
+      ),
+      conflicts: catalog.conflicts.filter((conflict) =>
+        conflict.sources.every((source) => builtinKeys.has(source.sourceKey)),
+      ),
+    };
+  }
+
+  reportLanguageRegistrationFailure(
+    input: ReportLanguageRegistrationFailureInput,
+  ): ReportLanguageRegistrationFailureResult {
+    const catalog = this.staticLanguages();
+    if (input.revision > catalog.revision) return { accepted: false, revision: catalog.revision };
+    const snapshot = this.deps.manager.state();
+    const owner = snapshot.staticLanguageOwners.find(
+      (candidate) =>
+        candidate.sourceKey === input.sourceKey &&
+        candidate.languageId === input.languageId &&
+        candidate.generation === input.generation,
+    );
+    const language = catalog.languages.find(
+      (candidate) =>
+        candidate.sourceKey === input.sourceKey &&
+        candidate.id === input.languageId &&
+        candidate.generation === input.generation,
+    );
+    const plugin = snapshot.plugins.find((candidate) => candidate.sourceKey === input.sourceKey);
+    // Process failure preserves static eligibility while the delivered catalog
+    // and complete owner identity remain
+    // current. running/manager.active do not authorize or withdraw contributions.
+    if (
+      !owner ||
+      !language ||
+      !plugin ||
+      (plugin.status !== "enabled" && plugin.status !== "failed") ||
+      owner.pluginId !== language.pluginId ||
+      plugin.id !== owner.pluginId
+    ) {
+      if (input.revision < catalog.revision) return { accepted: false, revision: catalog.revision };
+      throw new PluginError(
+        "PLUGIN_E_MANIFEST",
+        "Registration report does not match a current static language owner.",
+      );
+    }
+    // The manager owns atomic quarantine, host-authored structured problems, revision changes
+    // and retry only after reload/explicit enable. Never call reload in response here.
+    return this.deps.manager.reportLanguageRegistrationFailure(input);
+  }
+
+  #permitThirdPartyStatic(snapshot: PluginsSnapshot): boolean {
+    if (snapshot.safeMode) return false;
+    if (this.#staticSaveProblem) return false;
+    const thirdParty = snapshot.staticLanguageOwners.some(
+      (owner) =>
+        !snapshot.plugins.some(
+          (plugin) =>
+            plugin.sourceKey === owner.sourceKey &&
+            plugin.id === owner.pluginId &&
+            plugin.source === "builtin",
+        ),
+    );
+    if (!thirdParty || this.#staticRiskRecorded) return true;
+    try {
+      this.deps.marker.markThirdPartyStaticContributions();
+      this.#staticRiskRecorded = true;
+      return true;
+    } catch {
+      this.#staticSaveProblem = {
+        code: "PLUGIN_E_STATE_SAVE",
+        message:
+          "Third-party static languages were withheld because the recovery marker could not be saved. Restart Kobrixa after restoring writable settings storage.",
+      };
+      return false;
+    }
   }
 
   /** Clone the manager catalog only once per help revision, including for link lookups. */
@@ -227,12 +345,20 @@ export class PluginController {
   }
 
   async setEnabled(sourceKey: string, enabled: boolean): Promise<PluginsResult> {
+    return this.#enqueue(() => this.#setEnabled(this.#currentSourceKey(sourceKey), enabled));
+  }
+
+  async #setEnabled(sourceKey: string, enabled: boolean): Promise<PluginsResult> {
     const refused = this.#refuse({ developer: enabled });
     if (refused) return refused;
     return this.#result(await this.deps.manager.setEnabled(sourceKey, enabled));
   }
 
   async setDeveloperMode(enabled: boolean): Promise<PluginsResult> {
+    return this.#enqueue(() => this.#setDeveloperMode(enabled));
+  }
+
+  async #setDeveloperMode(enabled: boolean): Promise<PluginsResult> {
     const refused = this.#refuse({});
     if (refused) return refused;
     if (enabled === this.#developer) return this.#ok();
@@ -260,11 +386,11 @@ export class PluginController {
       // Turning off still applies now, like disabling a plugin.
       persisted = false;
     }
-    this.#developer = false;
-    this.#commandLine = false;
     for (const plugin of this.deps.manager.state().plugins)
       if (plugin.source === "development")
         await this.deps.manager.removeSource(plugin.sourceKey, { forget: false });
+    this.#developer = false;
+    this.#commandLine = false;
     this.#pendingReload.clear();
     this.#changed();
     return this.#ok(persisted ? {} : { persisted: false });
@@ -279,6 +405,7 @@ export class PluginController {
 
   /** Points a linked source whose folder moved or broke at another folder. */
   async relinkFolder(sourceKey: string): Promise<PluginsResult> {
+    sourceKey = this.#currentSourceKey(sourceKey);
     const refused = this.#refuse({ developer: true, outsideSafeMode: true });
     if (refused) return refused;
     if (!this.#linked().has(sourceKey))
@@ -290,6 +417,10 @@ export class PluginController {
   }
 
   async unlink(sourceKey: string): Promise<PluginsResult> {
+    return this.#enqueue(() => this.#unlink(this.#currentSourceKey(sourceKey)));
+  }
+
+  async #unlink(sourceKey: string): Promise<PluginsResult> {
     const refused = this.#refuse({ developer: true });
     if (refused) return refused;
     const directory = this.#linked().get(sourceKey);
@@ -325,6 +456,10 @@ export class PluginController {
   }
 
   async reload(sourceKey: string): Promise<PluginsResult> {
+    return this.#enqueue(() => this.#reload(this.#currentSourceKey(sourceKey)));
+  }
+
+  async #reload(sourceKey: string): Promise<PluginsResult> {
     const refused = this.#refuse({ developer: true, outsideSafeMode: true });
     if (refused) return refused;
     this.#pendingReload.delete(sourceKey);
@@ -345,6 +480,10 @@ export class PluginController {
   }
 
   async setPython(id: PythonChoiceId): Promise<PluginsResult> {
+    return this.#enqueue(() => this.#setPython(id));
+  }
+
+  async #setPython(id: PythonChoiceId): Promise<PluginsResult> {
     const refused = this.#refuse({ developer: true });
     if (refused) return refused;
     let command: PythonCommand | undefined;
@@ -379,7 +518,39 @@ export class PluginController {
   }
 
   /** "Restore plugins": removes the lock and, unless --safe-mode was given, leaves safe mode. */
-  async clearSafeModeLock(): Promise<PluginsResult> {
+  clearSafeModeLock(): Promise<PluginsResult> {
+    this.#restoring ??= this.#restore().finally(() => {
+      this.#restoring = undefined;
+    });
+    return this.#restoring;
+  }
+
+  async #restore(): Promise<PluginsResult> {
+    const prepared = await this.#enqueue(async () => {
+      const refused = this.#refuse({});
+      if (refused) return refused;
+      if (!this.deps.session.safeMode && this.deps.manager.state().safeMode)
+        return this.#resolveSessionDirectories();
+      return undefined;
+    });
+    if (prepared) return prepared;
+    const unlocked = await this.#enqueue(() => this.#clearSafeModeLock());
+    if (unlocked) return unlocked;
+    // User changes queued during resolution or the lock write must settle while sources
+    // are still inert. In particular, an alias disable is redirected before activation.
+    return this.#enqueue(async () => {
+      const refused = this.#refuse({});
+      if (refused) return refused;
+      if (!this.deps.session.safeMode) {
+        const left = await this.deps.manager.leaveSafeMode();
+        if (!left.ok) return left;
+      }
+      this.#changed();
+      return this.#ok();
+    });
+  }
+
+  async #clearSafeModeLock(): Promise<Failure | undefined> {
     const refused = this.#refuse({});
     if (refused) return refused;
     if (this.deps.settings.settings().safeModeLock) {
@@ -393,12 +564,50 @@ export class PluginController {
         return failure("PLUGIN_E_STATE_SAVE", messageOf(error));
       }
     }
-    if (!this.deps.session.safeMode) {
-      const left = await this.deps.manager.leaveSafeMode();
-      if (!left.ok) return left;
+    return undefined;
+  }
+
+  /** Resolve CLI aliases only on explicit restoration, before any third-party registration. */
+  async #resolveSessionDirectories(): Promise<Failure | undefined> {
+    const manager = this.deps.manager;
+    for (const previous of this.deps.session.directories) {
+      let directory: string;
+      try {
+        directory = await this.deps.realpath(previous);
+      } catch (error) {
+        const problem = failure(
+          "PLUGIN_E_MANIFEST",
+          `${previous} cannot be resolved: ${messageOf(error)}. Restore plugins again when the folder is available, or restart Kobrixa without --plugin-dev-dir for this folder.`,
+        );
+        this.#sessionProblem = { code: problem.code, message: problem.message };
+        this.#changed();
+        return problem;
+      }
+      const refused = this.#refuse({});
+      if (refused) return refused;
+      const oldKey = developmentSourceKey(previous);
+      const sourceKey = developmentSourceKey(directory);
+      if (sourceKey === oldKey) continue;
+      // The runtime owns all disables, including choices retained after developer mode
+      // was turned off and unsaved choices that do not appear in settings().
+      const migrated = await manager.migrateSourceDisable(oldKey, sourceKey);
+      if (!migrated.ok) return migrated;
+      if (manager.state().plugins.some((plugin) => plugin.sourceKey === oldKey)) {
+        // The manager is still in safe mode: both descriptors remain inert while their
+        // identities and disables are reconciled. Saved canonical disables apply on add.
+        const added = await manager.addSource({ kind: "development", directory });
+        if (!added.ok && added.code !== "PLUGIN_E_SOURCE_EXISTS") return added;
+        const removed = await manager.removeSource(oldKey, { forget: false });
+        if (!removed.ok) return removed;
+        this.#clear(oldKey);
+      }
+      this.#resolvedKeys.set(oldKey, sourceKey);
+      this.deps.session.directories = uniqueDirectories(
+        this.deps.session.directories.map((item) => (item === previous ? directory : item)),
+      );
     }
-    this.#changed();
-    return this.#ok();
+    this.#sessionProblem = undefined;
+    return undefined;
   }
 
   shutdown(deadlineMs?: number): Promise<void> {
@@ -407,13 +616,29 @@ export class PluginController {
   }
 
   async resume(): Promise<void> {
-    await this.deps.manager.resume();
-    this.#closing = false;
-    this.#changed();
+    await this.#enqueue(async () => {
+      await this.deps.manager.resume();
+      this.#closing = false;
+      this.#changed();
+    });
+  }
+
+  #enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const change = this.#changes.then(work);
+    this.#changes = change.catch(() => undefined);
+    return change;
+  }
+
+  #currentSourceKey(sourceKey: string): string {
+    while (this.#resolvedKeys.has(sourceKey)) sourceKey = this.#resolvedKeys.get(sourceKey)!;
+    return sourceKey;
   }
 
   markRendererUnresponsive(): void {
-    if (!this.deps.manager.state().plugins.some((plugin) => plugin.source === "development"))
+    if (
+      !this.#staticRiskRecorded &&
+      !this.deps.manager.state().plugins.some((plugin) => plugin.source === "development")
+    )
       return;
     this.deps.marker.update({ rendererUnresponsive: true });
   }
@@ -444,36 +669,40 @@ export class PluginController {
       problems: read.problems.map((problem) => problem.message),
     });
     if (!confirmed) return this.#ok({ outcome: "cancelled" });
-    // The dialog may have stayed open while Kobrixa started quitting or changed mode.
-    const refused = this.#refuse({ developer: true, outsideSafeMode: true });
-    if (refused) return refused;
-    try {
-      await this.deps.settings.update((current) => ({
-        ...current,
-        sources:
-          replacing === undefined
-            ? current.sources.some((source) => developmentSourceKey(source.directory) === sourceKey)
-              ? current.sources
-              : [...current.sources, { directory }]
-            : current.sources.map((source) =>
-                developmentSourceKey(source.directory) === replacing ? { directory } : source,
-              ),
-      }));
-    } catch (error) {
-      return failure("PLUGIN_E_STATE_SAVE", messageOf(error));
-    }
-    if (replacing !== undefined && replacing !== sourceKey) {
-      await this.deps.manager.removeSource(replacing);
-      this.#clear(replacing);
-    }
-    const result =
-      replacing === sourceKey
-        ? await this.deps.manager.reloadSource(sourceKey)
-        : await this.deps.manager.addSource({ kind: "development", directory });
-    this.#changed();
-    // A --plugin-dev-dir folder is already loaded; linking it only makes it permanent.
-    if (!result.ok && result.code !== "PLUGIN_E_SOURCE_EXISTS") return result;
-    return this.#ok({ sourceKey });
+    // Dialogs may overlap, but their resulting mutations share the lifecycle queue.
+    return this.#enqueue(async () => {
+      const refused = this.#refuse({ developer: true, outsideSafeMode: true });
+      if (refused) return refused;
+      try {
+        await this.deps.settings.update((current) => ({
+          ...current,
+          sources:
+            replacing === undefined
+              ? current.sources.some(
+                  (source) => developmentSourceKey(source.directory) === sourceKey,
+                )
+                ? current.sources
+                : [...current.sources, { directory }]
+              : current.sources.map((source) =>
+                  developmentSourceKey(source.directory) === replacing ? { directory } : source,
+                ),
+        }));
+      } catch (error) {
+        return failure("PLUGIN_E_STATE_SAVE", messageOf(error));
+      }
+      if (replacing !== undefined && replacing !== sourceKey) {
+        await this.deps.manager.removeSource(replacing);
+        this.#clear(replacing);
+      }
+      const result =
+        replacing === sourceKey
+          ? await this.deps.manager.reloadSource(sourceKey)
+          : await this.deps.manager.addSource({ kind: "development", directory });
+      this.#changed();
+      // A --plugin-dev-dir folder is already loaded; linking it only makes it permanent.
+      if (!result.ok && result.code !== "PLUGIN_E_SOURCE_EXISTS") return result;
+      return this.#ok({ sourceKey });
+    });
   }
 
   #refuse(needs: { developer?: boolean; outsideSafeMode?: boolean }): Failure | undefined {
@@ -531,11 +760,41 @@ export class PluginController {
   }
 
   #view(snapshot: PluginsSnapshot): PluginsView {
+    const permitted = this.#permitThirdPartyStatic(snapshot);
+    if (!permitted) {
+      const builtinKeys = new Set(
+        snapshot.plugins
+          .filter((plugin) => plugin.source === "builtin")
+          .map((plugin) => plugin.sourceKey),
+      );
+      const problem = this.#staticSaveProblem;
+      snapshot = {
+        ...snapshot,
+        staticLanguageOwners: snapshot.staticLanguageOwners.filter((owner) =>
+          builtinKeys.has(owner.sourceKey),
+        ),
+        ...(problem && !snapshot.stateProblem ? { stateProblem: problem } : {}),
+        plugins: snapshot.plugins.map((plugin) =>
+          problem && plugin.source === "development"
+            ? { ...plugin, problems: [...plugin.problems, problem] }
+            : plugin,
+        ),
+      };
+    }
     const settings = this.deps.settings.settings();
     const linked = this.#linked();
     const current = this.#currentPython();
+    let stateProblem = snapshot.stateProblem;
+    if (this.#sessionProblem)
+      stateProblem = stateProblem
+        ? { ...stateProblem, message: `${stateProblem.message}\n${this.#sessionProblem.message}` }
+        : this.#sessionProblem;
     return {
       ...snapshot,
+      ...(stateProblem ? { stateProblem } : {}),
+      // Keep Restore reachable through resolution and migration, until safe mode ends.
+      // Unlike a saved lock, this cannot be lost to the settings write that failed startup.
+      ...(snapshot.safeMode && this.deps.session.problem ? { sessionRecovery: true } : {}),
       // Both parts only increase, so the sum does too.
       revision: snapshot.revision + this.#revision,
       developer: {
@@ -615,31 +874,84 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   const marker = new SessionMarkerFile(options.userData, now);
   const unclean = marker.begin();
   const resolve = options.realpath ?? ((directory: string) => realpath(directory));
-  const sessionDirectories = await Promise.all(
-    options.commandLine.developmentDirectories.map((directory) =>
-      resolve(directory).catch(() => path.resolve(directory)),
-    ),
-  );
   const document = settings.settings();
-  const developer = document.developerMode || sessionDirectories.length > 0;
-  const directories = developer
-    ? uniqueDirectories([
-        ...document.sources.map((source) => source.directory),
-        ...sessionDirectories,
-      ])
-    : [];
-  const relevantUnclean = directories.length > 0 ? unclean : undefined;
-  if (relevantUnclean && !settings.settings().safeModeLock)
+  const requestedDirectories = options.commandLine.developmentDirectories.map((directory) =>
+    path.resolve(directory),
+  );
+  const developer = document.developerMode || requestedDirectories.length > 0;
+  const hasDevelopmentSources =
+    developer && (document.sources.length > 0 || requestedDirectories.length > 0);
+  const relevantUnclean =
+    hasDevelopmentSources || marker.previousThirdPartyStaticContributions ? unclean : undefined;
+  const lock = document.safeModeLock;
+  if (
+    relevantUnclean &&
+    (!lock || (relevantUnclean === "renderer-unresponsive" && lock.reason !== relevantUnclean))
+  )
     await settings
       .update((current) => ({
         ...current,
         safeModeLock: { since: now().toISOString(), reason: relevantUnclean },
       }))
       .catch(() => undefined);
-  const safeMode =
+  let safeMode =
     options.commandLine.safeMode ||
+    loaded.problem !== undefined ||
     relevantUnclean !== undefined ||
     settings.settings().safeModeLock !== undefined;
+  // path.resolve is lexical only. Safe mode must not even realpath a development folder.
+  let sessionDirectories = requestedDirectories;
+  let sessionProblem: PluginProblem | undefined;
+  if (!safeMode) {
+    const canonical: string[] = [];
+    for (const directory of requestedDirectories) {
+      try {
+        canonical.push(await resolve(directory));
+      } catch (error) {
+        sessionProblem = {
+          code: "PLUGIN_E_MANIFEST",
+          message: `${directory} cannot be resolved: ${messageOf(error)}. Restore plugins again when the folder is available, or restart Kobrixa without --plugin-dev-dir for this folder.`,
+        };
+        break;
+      }
+    }
+    if (!sessionProblem) {
+      const disabled = new Set(loaded.disabled);
+      // Compute from the original set so duplicate spellings do not undo a disable.
+      requestedDirectories.forEach((directory) => {
+        if (loaded.disabled.has(developmentSourceKey(directory)))
+          disabled.delete(developmentSourceKey(directory));
+      });
+      requestedDirectories.forEach((directory, index) => {
+        if (loaded.disabled.has(developmentSourceKey(directory)))
+          disabled.add(developmentSourceKey(canonical[index]!));
+      });
+      const changed =
+        disabled.size !== loaded.disabled.size ||
+        [...disabled].some((key) => !loaded.disabled.has(key));
+      try {
+        if (changed) {
+          await settings.save({ ...loaded, disabled });
+          loaded = { ...loaded, disabled };
+        }
+        sessionDirectories = uniqueDirectories(canonical);
+      } catch (error) {
+        sessionProblem = {
+          code: "PLUGIN_E_STATE_SAVE",
+          message: `Could not save resolved development-source disables: ${messageOf(error)}. Restore plugins again when settings can be saved, or restart Kobrixa without --plugin-dev-dir for these folders.`,
+        };
+      }
+    }
+    // Keep the original descriptors and disabled set on failure so Restore can retry the
+    // same migration. Never activate an unresolved alias that might have a canonical disable.
+    if (sessionProblem) safeMode = true;
+  }
+  const directories = developer
+    ? uniqueDirectories([
+        ...document.sources.map((source) => source.directory),
+        ...sessionDirectories,
+      ])
+    : [];
   const logs = new PluginLogs();
   const created: { controller?: PluginController } = {};
   const hooks = {
@@ -679,6 +991,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
         ? {}
         : { python: { executable: commandLinePython, args: [] } }),
       safeMode: options.commandLine.safeMode,
+      ...(sessionProblem ? { problem: sessionProblem } : {}),
     },
   });
   created.controller = controller;

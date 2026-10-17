@@ -1,58 +1,74 @@
-import {
-  bindingKey,
-  supportsFile,
-  type LanguageBinding,
-  type LanguageStatus,
-} from "../../shared/language-services.js";
+import { CORE_EXTENSION_ROUTES } from "./core-language-routes.js";
+import { bindingKey, supportsFile, type LanguageStatus } from "../../shared/language-services.js";
 import type { LanguageCompanion } from "./language-companion.js";
 import { BUILTIN_LANGUAGE_COMPANIONS } from "./builtin-language-companions.js";
-export interface ModelLanguageRoute {
-  monacoLanguage: string;
-  binding?: LanguageBinding;
-  companion?: LanguageCompanion;
-}
+import { resolveLexicalLanguage, type LexicalLanguageRoute } from "./static-language-routing.js";
+import {
+  sameModelLanguageRoute,
+  type AttachedModelLanguageRoute,
+  type ModelLanguageRoute,
+} from "./model-language-route.js";
+export type { ModelLanguageRoute } from "./model-language-route.js";
+
 export function routeLanguage(
   file: string,
   status: LanguageStatus | undefined,
   companions: Readonly<Record<string, LanguageCompanion>> = BUILTIN_LANGUAGE_COMPANIONS,
+  lexical?: LexicalLanguageRoute,
 ): ModelLanguageRoute {
-  const lexical = /\.json$/i.test(file)
-    ? "json"
-    : /\.(bp|bpi|bpm)$/i.test(file)
-      ? "basic-plus"
-      : "plaintext";
-  if (lexical === "json" || status?.availability.kind !== "available")
-    return { monacoLanguage: lexical };
-  const binding = status.availability.binding;
-  if (!supportsFile(binding, file)) return { monacoLanguage: lexical };
-  const companion = companions[bindingKey(binding)];
-  return {
-    monacoLanguage: companion?.monacoLanguage ?? lexical,
-    binding,
-    ...(companion ? { companion } : {}),
-  };
+  const binding =
+    status?.availability.kind === "available" && supportsFile(status.availability.binding, file)
+      ? status.availability.binding
+      : undefined;
+  const route =
+    lexical ??
+    resolveLexicalLanguage({
+      file,
+      ...(binding ? { binding } : {}),
+      activeOwners: [],
+      coreExtensionRoutes: CORE_EXTENSION_ROUTES,
+      catalog: {
+        formatVersion: 1,
+        limitsVersion: 1,
+        revision: 0,
+        languages: [],
+        extensionRoutes: {},
+        conflicts: [],
+      },
+    });
+  if (route.kind === "core" || !binding) return route;
+  const key = bindingKey(binding);
+  const companion = Object.hasOwn(companions, key) ? companions[key] : undefined;
+  return { ...route, binding, ...(companion ? { companion } : {}) };
 }
-interface AttachedRoute<T> {
-  model: T;
-  file: string;
-  epoch: number | undefined;
-  dispose(): void;
-}
+
 export function replaceModelRoute<T>(
-  previous: AttachedRoute<T> | undefined,
+  previous: AttachedModelLanguageRoute<T> | undefined,
   model: T,
   file: string,
-  status: LanguageStatus | undefined,
+  workspaceId: string | undefined,
+  route: ModelLanguageRoute,
   attach: (model: T, route: ModelLanguageRoute) => { dispose(): void },
-): AttachedRoute<T> {
-  const route = routeLanguage(file, status);
+): AttachedModelLanguageRoute<T> {
   if (
     previous?.model === model &&
     previous.file === file &&
-    previous.epoch === route.binding?.epoch
+    previous.workspaceId === workspaceId &&
+    sameModelLanguageRoute(previous.route, route)
   )
     return previous;
   previous?.dispose();
-  const attached = route.binding ? attach(model, route) : undefined;
-  return { model, file, epoch: route.binding?.epoch, dispose: () => attached?.dispose() };
+  const handle = route.binding ? attach(model, route) : undefined;
+  let disposed = false;
+  return {
+    model,
+    file,
+    workspaceId,
+    route,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      handle?.dispose();
+    },
+  };
 }

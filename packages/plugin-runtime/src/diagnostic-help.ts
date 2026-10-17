@@ -39,6 +39,7 @@ export async function readDiagnosticHelp(
     if (!(await deps.stat(file)).isFile()) return fail(decl.path, "is not a regular file.");
     const handle = await open(file, "r");
     try {
+      if (!(await handle.stat()).isFile()) return fail(decl.path, "is not a regular file.");
       // Read one byte past the limit so a file that grew after stat is still rejected.
       const buffer = Buffer.alloc(limit + 1);
       for (;;) {

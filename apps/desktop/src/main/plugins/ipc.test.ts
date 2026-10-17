@@ -2,14 +2,44 @@ import { expect, it, vi } from "vitest";
 import type { IpcHandle } from "../ipc.js";
 import { registerPluginIpc, type PluginIpcTarget } from "./ipc.js";
 
+import { emptyStaticLanguagesCatalog } from "@kobrixa/plugin-runtime";
+import type { ReportLanguageRegistrationFailureInput } from "../../shared/static-languages.js";
+import { registerIpc } from "../ipc.js";
+
+const electronHandlers = vi.hoisted(
+  () => new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
+);
+vi.mock("electron", () => ({
+  ipcMain: {
+    handle: (channel: string, action: (event: unknown, ...args: unknown[]) => unknown) =>
+      electronHandlers.set(channel, action),
+  },
+}));
+
 const key = "dev:0123456789abcdef";
 function setup() {
   const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
   const handle = ((channel, action) => handlers.set(channel, action as never)) as IpcHandle;
   const ok = async () => ({ ok: true }) as never;
   const plugins = {
-    state: vi.fn(),
+    state: vi.fn(() => ({
+      revision: 0,
+      diagnosticHelpRevision: 0,
+      staticLanguagesRevision: 7,
+      staticLanguageOwners: [],
+      safeMode: false,
+      developmentMode: false,
+      plugins: [],
+      developer: { enabled: false, commandLine: false, linkedCount: 0 },
+      origins: {},
+      python: { pendingReload: [] },
+      inflight: [],
+    })),
     diagnosticHelp: vi.fn(() => ({ revision: 0, plugins: {} })),
+    staticLanguages: vi.fn(() => emptyStaticLanguagesCatalog(7)),
+    reportLanguageRegistrationFailure: vi.fn<PluginIpcTarget["reportLanguageRegistrationFailure"]>(
+      () => ({ accepted: false, revision: 7 }),
+    ),
     notices: vi.fn(() => []),
     execute: vi.fn(async () => ({ ok: true as const })),
     cancel: vi.fn(),
@@ -37,6 +67,8 @@ it("registers every plugin channel and forwards events", () => {
     [
       "plugins:state",
       "plugins:diagnosticHelp",
+      "plugins:static-languages",
+      "plugins:report-language-registration-failure",
       "plugins:notices",
       "plugins:execute",
       "plugins:cancel",
@@ -101,4 +133,117 @@ it("forwards the diagnostic help catalog", () => {
   const { plugins, call } = setup();
   expect(call("plugins:diagnosticHelp")).toEqual({ revision: 0, plugins: {} });
   expect(plugins.diagnosticHelp).toHaveBeenCalledOnce();
+});
+
+const registrationFailure = (): ReportLanguageRegistrationFailureInput => ({
+  sourceKey: key,
+  generation: 2,
+  languageId: "toy",
+  revision: 7,
+  reason: "adapter",
+  detail: "The validated language could not be adapted.",
+});
+
+it("forwards the current static catalog and all five allowed report reasons", () => {
+  const { plugins, call } = setup();
+  expect(call("plugins:static-languages")).toEqual(emptyStaticLanguagesCatalog(7));
+  expect(plugins.staticLanguages).toHaveBeenCalledOnce();
+  for (const reason of [
+    "dto-version",
+    "validation",
+    "adapter",
+    "monaco",
+    "session-language-ids",
+  ] as const) {
+    const input = { ...registrationFailure(), reason };
+    expect(call("plugins:report-language-registration-failure", input)).toEqual({
+      accepted: false,
+      revision: 7,
+    });
+    expect(plugins.reportLanguageRegistrationFailure).toHaveBeenLastCalledWith(input);
+  }
+});
+
+it("rejects malformed reports, physical paths and extra fields before the controller", () => {
+  const { plugins, call } = setup();
+  for (const input of [
+    null,
+    [],
+    { ...registrationFailure(), sourceKey: "dev:../../etc" },
+    { ...registrationFailure(), sourceKey: "/tmp/plugin" },
+    { ...registrationFailure(), languageId: "TOY" },
+    { ...registrationFailure(), generation: -1 },
+    { ...registrationFailure(), generation: 1.5 },
+    { ...registrationFailure(), generation: Number.MAX_SAFE_INTEGER + 1 },
+    { ...registrationFailure(), revision: -1 },
+    { ...registrationFailure(), revision: Infinity },
+    { ...registrationFailure(), reason: "reload" },
+    { ...registrationFailure(), detail: { message: "bad" } },
+    { ...registrationFailure(), detail: "a".repeat(2049) },
+    { ...registrationFailure(), detail: "😀".repeat(2049) },
+    { ...registrationFailure(), detail: "/Users/me/plugin/language.json" },
+    { ...registrationFailure(), detail: "Failed at C:\\plugins\\language.json" },
+    { ...registrationFailure(), detail: "Failed at \\\\server\\plugin\\language.json" },
+    { ...registrationFailure(), detail: "Failed at file:///tmp/language.json" },
+    { ...registrationFailure(), resourcePath: "/tmp/language.json" },
+    { ...registrationFailure(), pluginId: "acme.forged" },
+  ])
+    expect(() => call("plugins:report-language-registration-failure", input)).toThrow();
+  expect(plugins.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+});
+
+it("counts report detail in decoded code points and accepts the exact boundary", () => {
+  const { plugins, call } = setup();
+  for (const detail of ["", "a".repeat(2048), "😀".repeat(2048)]) {
+    const input = { ...registrationFailure(), detail };
+    call("plugins:report-language-registration-failure", input);
+    expect(plugins.reportLanguageRegistrationFailure).toHaveBeenLastCalledWith(input);
+  }
+});
+
+it("uses the real trusted-sender wrapper for catalog and registration-report channels", () => {
+  const { plugins } = setup();
+  electronHandlers.clear();
+  const renderer = { id: 4, mainFrame: {} };
+  let available = true;
+  registerIpc(
+    () => (available ? (renderer as never) : undefined),
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    { run: (_channel: string, work: () => unknown) => work() } as never,
+    () => {},
+    () => {},
+    undefined,
+    [(handle) => registerPluginIpc(handle, plugins, () => {})],
+  );
+  const trusted = { sender: renderer, senderFrame: renderer.mainFrame };
+  for (const channel of [
+    "plugins:static-languages",
+    "plugins:report-language-registration-failure",
+  ]) {
+    const handler = electronHandlers.get(channel)!;
+    for (const event of [
+      { ...trusted, sender: { id: 99 } },
+      { ...trusted, senderFrame: {} },
+    ])
+      expect(() => handler(event, registrationFailure())).toThrow("untrusted");
+    available = false;
+    expect(() => handler(trusted, registrationFailure())).toThrow("untrusted");
+    available = true;
+  }
+  expect(plugins.staticLanguages).not.toHaveBeenCalled();
+  expect(plugins.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
+  expect(electronHandlers.get("plugins:static-languages")!(trusted)).toEqual(
+    emptyStaticLanguagesCatalog(7),
+  );
+  electronHandlers.get("plugins:report-language-registration-failure")!(
+    trusted,
+    registrationFailure(),
+  );
+  expect(plugins.reportLanguageRegistrationFailure).toHaveBeenCalledExactlyOnceWith(
+    registrationFailure(),
+  );
 });

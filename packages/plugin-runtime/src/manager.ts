@@ -1,3 +1,19 @@
+import { STATIC_LANGUAGE_LIMITS_V1 } from "@kobrixa/plugin-protocol";
+import { readDiagnosticHelp } from "./diagnostic-help.js";
+import {
+  buildStaticLanguageCatalog,
+  projectStaticLanguageCatalog,
+  staticLanguageKey,
+  type StaticCatalogBuild,
+} from "./static-language-catalog.js";
+import {
+  emptyStaticLanguagesCatalog,
+  type StaticLanguageOwner,
+  type StaticLanguagesCatalog,
+  type ReportLanguageRegistrationFailureInput,
+  type ReportLanguageRegistrationFailureResult,
+} from "./static-languages.js";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   DIAGNOSTIC_HELP_LIMITS,
@@ -14,6 +30,7 @@ import {
   type LanguageServiceResolution,
 } from "./compiler-resolution.js";
 import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from "./errors.js";
+import { staticLanguageLimitSuffix } from "./static-language-problem.js";
 import {
   developmentSourceKey,
   readSource,
@@ -60,7 +77,7 @@ export interface PluginSummary {
   source: "builtin" | "development";
   directory?: string;
   version?: string;
-  runtime?: "builtin" | "node" | "python";
+  runtime?: "builtin" | "node" | "python" | "static";
   displayName?: LocalizedText;
   status: "enabled" | "disabled" | "invalid" | "failed";
   disabledBy?: "user" | "safe-mode";
@@ -73,6 +90,8 @@ export interface PluginsSnapshot {
   revision: number;
   /** Revision of the currently published diagnostic help catalog. */
   diagnosticHelpRevision: number;
+  staticLanguagesRevision: number;
+  staticLanguageOwners: StaticLanguageOwner[];
   safeMode: boolean;
   developmentMode: boolean;
   /** The settings file was corrupt or unreadable; cleared by the next successful save. */
@@ -106,9 +125,12 @@ interface Entry {
   readonly source: PluginSource;
   read: ReadPlugin;
   plugin: RegisteredPlugin;
-  /** Increases on every reload; events from an older generation's supervisor are dropped. */
+  /** Execution/service generation; increases on reload or executable metadata change. */
   generation: number;
+  /** Published as the frozen static DTO's generation; also increases on registration retry. */
+  staticGeneration: number;
 }
+
 const commandIds = (plugin: RegisteredPlugin) =>
   (plugin.manifest?.contributes?.commands ?? []).map((command) => command.id);
 const unresolved = (read: ReadPlugin): RegisteredPlugin => ({
@@ -120,6 +142,21 @@ const readOptions = (options: PluginManagerOptions, safeMode: boolean) => ({
   safeMode,
   ...(options.sourceReadTimeoutMs === undefined ? {} : { timeoutMs: options.sourceReadTimeoutMs }),
 });
+function executionKey(read: ReadPlugin): string {
+  const manifest = read.manifest;
+  return JSON.stringify([
+    read.id,
+    read.entry,
+    manifest?.runtime,
+    manifest?.permissions,
+    manifest?.activationEvents,
+    manifest?.contributes?.commands,
+    manifest?.contributes?.frontends,
+    manifest?.contributes?.backends,
+    manifest?.contributes?.languageServices,
+  ]);
+}
+
 /** Converts schema v1 disables (manifest ids) once a development source with that id was read. */
 function convertLegacy(
   reads: Iterable<ReadPlugin>,
@@ -149,6 +186,21 @@ export class PluginManager {
   #supervisorsStopped: Promise<void> | undefined;
   #changes: Promise<unknown> = Promise.resolve();
   #revision = 0;
+  #staticOperation = 0;
+  #staticCatalog = emptyStaticLanguagesCatalog();
+  #staticKey = "";
+  #staticBuild: StaticCatalogBuild = {
+    catalog: emptyStaticLanguagesCatalog(),
+    problems: new Map(),
+    resourceProblems: new Map(),
+    idConflicts: [],
+    valid: [],
+    enabledKey: "[]",
+  };
+  readonly #registrationFailures = new Map<string, PluginProblem>();
+  /** Per-session high-water marks survive removal so renderer identities are never reused. */
+  readonly #staticGenerations = new Map<string, number>();
+
   #help: {
     revision: number;
     key: string;
@@ -167,18 +219,21 @@ export class PluginManager {
     } catch (error) {
       stored = { disabled: new Set(), legacyDisabledIds: new Set(), problem: messageOf(error) };
     }
+    const safeMode = options.safeMode || stored.problem !== undefined;
     const reads = await Promise.all(
-      options.sources.map((source) => readSource(source, readOptions(options, options.safeMode))),
+      options.sources.map((source) => readSource(source, readOptions(options, safeMode))),
     );
+
     const disabled = new Set(stored.disabled);
     const legacy = new Set(stored.legacyDisabledIds);
     const converted = convertLegacy(reads, disabled, legacy);
     const manager = new PluginManager(
-      options,
+      { ...options, safeMode },
       { disabled, legacy, problem: stored.problem },
       options.sources.map((source, index) => ({ source, read: reads[index]! })),
     );
     if (converted) await manager.#saveBestEffort();
+    await manager.#apply("cancelled", false);
     return manager;
   }
 
@@ -195,25 +250,162 @@ export class PluginManager {
       read,
       plugin: unresolved(read),
       generation: 0,
+      staticGeneration: this.#nextStaticGeneration(read.sourceKey),
     }));
+
     if (stored.problem !== undefined) {
       this.#stateProblem = { code: "PLUGIN_E_STATE_CORRUPT", message: stored.problem };
       // Fail closed: the unreadable file may have kept a problem plugin disabled.
       for (const { read } of this.#entries)
         if (read.source === "development") this.#disabled.add(read.sourceKey);
     }
-    this.#reconcile();
   }
 
   state(): PluginsSnapshot {
     return {
       revision: this.#revision,
       diagnosticHelpRevision: this.#help.revision,
+      staticLanguagesRevision: this.staticLanguagesRevision,
+      staticLanguageOwners: this.#staticCatalog.languages.map((language): StaticLanguageOwner => ({
+        sourceKey: language.sourceKey,
+        pluginId: language.pluginId,
+        generation: language.generation,
+        languageId: language.id,
+        extensions: [...language.extensions],
+      })),
+
       safeMode: this.#safeMode,
       developmentMode: this.#entries.some((entry) => entry.read.source === "development"),
       ...(this.#stateProblem ? { stateProblem: this.#stateProblem } : {}),
       plugins: this.#entries.map((entry) => this.#summary(entry)),
     };
+  }
+
+  get staticLanguagesRevision(): number {
+    return this.#staticCatalog.revision;
+  }
+
+  staticLanguages(): StaticLanguagesCatalog {
+    return structuredClone(this.#staticCatalog);
+  }
+
+  reportLanguageRegistrationFailure(
+    input: ReportLanguageRegistrationFailureInput,
+  ): ReportLanguageRegistrationFailureResult {
+    const ignored = () => ({ accepted: false, revision: this.staticLanguagesRevision });
+    if (this.#shutdown || input.revision > this.staticLanguagesRevision) return ignored();
+    if (
+      !["dto-version", "validation", "adapter", "monaco", "session-language-ids"].includes(
+        input.reason,
+      ) ||
+      typeof input.detail !== "string" ||
+      [...input.detail].length > 2048
+    )
+      return ignored();
+    const language = this.#staticCatalog.languages.find(
+      (item) =>
+        item.sourceKey === input.sourceKey &&
+        item.generation === input.generation &&
+        item.id === input.languageId,
+    );
+    if (!language) return ignored();
+    const key = staticLanguageKey(language.sourceKey, language.generation, language.id);
+    if (this.#registrationFailures.has(key)) return ignored();
+    const detail: NonNullable<PluginProblem["detail"]> = {
+      languageId: language.id,
+      ...(input.reason === "session-language-ids"
+        ? {
+            limit: "STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds",
+            allowed: STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds,
+            actual: STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds + 1,
+          }
+        : {}),
+    };
+    this.#registrationFailures.set(key, {
+      code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+      message: `${language.pluginId} / ${language.id}: renderer registration failed (${input.reason}): ${input.detail}${staticLanguageLimitSuffix(detail)}`,
+      detail,
+    });
+    // Invalidate pending work before synchronous revocation. A stale I/O pass cannot undo isolation.
+    this.#staticOperation += 1;
+    this.#publishStatic(this.#staticBuild);
+    this.#emitState();
+    return { accepted: true, revision: this.staticLanguagesRevision };
+  }
+
+  #nextStaticGeneration(sourceKey: string): number {
+    const generation = (this.#staticGenerations.get(sourceKey) ?? -1) + 1;
+    this.#staticGenerations.set(sourceKey, generation);
+    return generation;
+  }
+
+  #clearRegistrationFailures(sourceKey: string): void {
+    for (const key of this.#registrationFailures.keys())
+      if ((JSON.parse(key) as [string, number, string])[0] === sourceKey)
+        this.#registrationFailures.delete(key);
+  }
+
+  #retryStaticRegistration(entry: Entry): void {
+    const sourceKey = entry.read.sourceKey;
+    const failed = [...this.#registrationFailures.keys()].some(
+      (key) => (JSON.parse(key) as [string, number, string])[0] === sourceKey,
+    );
+    if (!failed) return; // An unchanged, successful explicit enable remains a no-op.
+    // R1: replace the renderer's quarantined identity before offering any resources again.
+    // Do not advance execution/service generation or detach an existing supervisor.
+    entry.staticGeneration = this.#nextStaticGeneration(sourceKey);
+    this.#clearRegistrationFailures(sourceKey);
+  }
+
+  #publishStatic(build: StaticCatalogBuild): void {
+    const keep = (sourceKey: string, generation: number) =>
+      this.#entries.some(
+        (entry) =>
+          entry.plugin.status === "enabled" &&
+          entry.plugin.sourceKey === sourceKey &&
+          entry.staticGeneration === generation,
+      );
+    const projected = projectStaticLanguageCatalog(build, keep, this.#registrationFailures);
+    const key = JSON.stringify([
+      this.#entries
+        .filter((entry) => entry.plugin.status === "enabled")
+        .map((entry) => [entry.read.sourceKey, entry.staticGeneration])
+        .sort(),
+      projected.catalog.languages.map((language) => [
+        language.sourceKey,
+        language.pluginId,
+        language.generation,
+        language.id,
+        language.aliases,
+        language.extensions,
+        language.resourceDigest,
+        language.resourceBytes,
+        language.expandedRules,
+      ]),
+      projected.catalog.extensionRoutes,
+      projected.catalog.conflicts,
+      [...projected.problems].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    ]);
+    this.#staticBuild = projected;
+    if (key === this.#staticKey) return;
+    this.#staticKey = key;
+    this.#staticCatalog = { ...projected.catalog, revision: this.#staticCatalog.revision + 1 };
+  }
+
+  #revokeStaticSource(sourceKey: string): void {
+    this.#staticOperation += 1;
+    this.#staticBuild = {
+      ...this.#staticBuild,
+      catalog: {
+        ...this.#staticBuild.catalog,
+        languages: this.#staticBuild.catalog.languages.filter(
+          (language) => language.sourceKey !== sourceKey,
+        ),
+      },
+      valid: this.#staticBuild.valid.filter((language) => language.sourceKey !== sourceKey),
+    };
+    this.#publishStatic(this.#staticBuild);
+    this.#emitState();
   }
 
   diagnosticHelp(): DiagnosticHelpCatalog {
@@ -258,23 +450,55 @@ export class PluginManager {
     return this.#enqueue(() => this.#setEnabled(sourceKey, enabled));
   }
 
+  /**
+   * Moves a host-resolved alias disable before safe-mode descriptors are replaced. The
+   * choice may outlive its descriptor (developer mode off), or exist only in memory after
+   * a failed disable save. Commit both keys in one save; failure leaves the migration retryable.
+   */
+  migrateSourceDisable(previous: string, canonical: string): Promise<PluginActionResult> {
+    return this.#enqueue(async () => {
+      const closed = this.#closed();
+      if (closed) return closed;
+      if (!this.#safeMode)
+        return failure("PLUGIN_E_SAFE_MODE", "Source identity migration requires safe mode.");
+      if (previous === canonical || !this.#disabled.has(previous))
+        return { ok: true, state: this.state() };
+      const next = new Set(this.#disabled);
+      next.delete(previous);
+      next.add(canonical);
+      try {
+        await this.#save(next);
+      } catch (error) {
+        return failure("PLUGIN_E_STATE_SAVE", messageOf(error));
+      }
+      this.#disabled = next;
+      await this.#apply("disabled");
+      return this.#closed() ?? { ok: true, state: this.state() };
+    });
+  }
+
   async #setEnabled(sourceKey: string, enabled: boolean): Promise<PluginActionResult> {
     const closed = this.#closed();
     if (closed) return closed;
     const entry = this.#entryOf(sourceKey);
     if (!entry || entry.plugin.status === "invalid")
       return failure("PLUGIN_E_UNKNOWN_PLUGIN", `No valid plugin has the source ${sourceKey}.`);
-    if (entry.read.source === "builtin")
+    if (entry.read.source === "builtin" && !enabled)
       return failure(
         "PLUGIN_E_BUILTIN_REQUIRED",
         `${entry.plugin.id} is part of Kobrixa and cannot be disabled in this version.`,
       );
-    if (enabled && this.#safeMode)
+    if (enabled && this.#safeMode && entry.source.kind === "development")
       return failure(
         "PLUGIN_E_SAFE_MODE",
         "Restore plugins first, or restart without --safe-mode.",
       );
-    if (this.#disabled.has(sourceKey) !== enabled) return { ok: true, state: this.state() };
+    if (this.#disabled.has(sourceKey) !== enabled) {
+      if (!enabled) return { ok: true, state: this.state() };
+      this.#retryStaticRegistration(entry);
+      await this.#apply("cancelled");
+      return this.#closed() ?? { ok: true, state: this.state() };
+    }
     const next = new Set(this.#disabled);
     if (enabled) next.delete(sourceKey);
     else next.add(sourceKey);
@@ -282,13 +506,21 @@ export class PluginManager {
     try {
       await this.#save(next);
     } catch (error) {
-      // Enabling must be saved first; a disable still applies now so a problem plugin can stop.
       if (enabled) return failure("PLUGIN_E_STATE_SAVE", messageOf(error));
       persisted = false;
     }
     this.#disabled = next;
+    // A failed enable save returns above without changing generation or quarantine.
+    if (enabled) this.#retryStaticRegistration(entry);
     await this.#apply("disabled");
-    return { ok: true, state: this.state(), ...(persisted ? {} : { persisted: false as const }) };
+    // A committed disable still succeeded if shutdown joined process retirement.
+    return (
+      (enabled ? this.#closed() : undefined) ?? {
+        ok: true,
+        state: this.state(),
+        ...(persisted ? {} : { persisted: false as const }),
+      }
+    );
   }
 
   /** Adds a development folder after startup. The folder is read before anything registers. */
@@ -330,19 +562,24 @@ export class PluginManager {
         "PLUGIN_E_SOURCE_EXISTS",
         `${path.resolve(source.directory)} is already loaded.`,
       );
-    const read = await readSource(source, readOptions(this.options, this.#safeMode));
-    const closedAfterRead = this.#closed();
-    if (closedAfterRead) return closedAfterRead;
-    this.#entries.push({ source, read, plugin: unresolved(read), generation: 0 });
-    if (convertLegacy([read], this.#disabled, this.#legacy)) await this.#saveBestEffort();
+    // A placeholder involves no I/O. #apply reads metadata once and then eligible resources.
+    const read = await readSource(source, { safeMode: true });
+    this.#entries.push({
+      source,
+      read,
+      plugin: unresolved(read),
+      generation: 0,
+      staticGeneration: this.#nextStaticGeneration(sourceKey),
+    });
     await this.#apply("cancelled");
-    return { ok: true, state: this.state() };
+    return this.#closed() ?? { ok: true, state: this.state() };
   }
 
   async #removeSource(sourceKey: string, forget: boolean): Promise<PluginActionResult> {
     const refused = this.#refuseChange(sourceKey, "removed");
     if (refused) return refused;
     this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);
+    this.#clearRegistrationFailures(sourceKey);
     if (forget && this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
     await this.#apply("cancelled");
     return { ok: true, state: this.state() };
@@ -357,7 +594,11 @@ export class PluginManager {
         "Restore plugins first, or restart without --safe-mode.",
       );
     const entry = this.#entryOf(sourceKey)!;
-    // Block new commands and cancel running ones before the folder is read again.
+    // Withdraw before waiting for a process or filesystem. Failed reloads cannot keep old rules.
+    this.#revokeStaticSource(sourceKey);
+    this.#clearRegistrationFailures(sourceKey);
+    // Prevent #apply's initial reconciliation from recreating old commands before metadata returns.
+    entry.read = { ...entry.read, unread: true };
     const supervisor = this.#supervisors.get(sourceKey);
     if (supervisor) {
       this.#supervisors.delete(sourceKey);
@@ -367,32 +608,20 @@ export class PluginManager {
       await this.#retire([supervisor], "cancelled");
     }
     entry.generation += 1;
-    const read = await readSource(entry.source, readOptions(this.options, this.#safeMode));
+    entry.staticGeneration = this.#nextStaticGeneration(sourceKey);
     const closed = this.#closed();
     if (closed) return closed;
-    entry.read = read;
-    if (convertLegacy([read], this.#disabled, this.#legacy)) await this.#saveBestEffort();
     await this.#apply("cancelled");
-    return { ok: true, state: this.state() };
+    return this.#closed() ?? { ok: true, state: this.state() };
   }
 
   async #leaveSafeMode(): Promise<PluginActionResult> {
     const closed = this.#closed();
     if (closed) return closed;
     if (!this.#safeMode) return { ok: true, state: this.state() };
-    const development = this.#entries.filter((entry) => entry.read.source === "development");
-    const reads = await Promise.all(
-      development.map((entry) => readSource(entry.source, readOptions(this.options, false))),
-    );
-    const closedAfterRead = this.#closed();
-    if (closedAfterRead) return closedAfterRead;
-    development.forEach((entry, index) => {
-      entry.read = reads[index]!;
-    });
     this.#safeMode = false;
-    if (convertLegacy(reads, this.#disabled, this.#legacy)) await this.#saveBestEffort();
     await this.#apply("disabled");
-    return { ok: true, state: this.state() };
+    return this.#closed() ?? { ok: true, state: this.state() };
   }
 
   #refuseChange(sourceKey: string, verb: "removed" | "reloaded"): Failure | undefined {
@@ -431,6 +660,7 @@ export class PluginManager {
    * and changes are refused.
    */
   shutdown(deadlineMs: number = PLUGIN_SHUTDOWN_DEADLINE_MS): Promise<void> {
+    this.#staticOperation += 1;
     this.#shutdown ??= (async () => {
       const supervisors = [...this.#supervisors.values(), ...this.#retiring];
       this.#supervisorsStopped = Promise.all(
@@ -490,11 +720,130 @@ export class PluginManager {
   }
 
   /** Reconciles, publishes the new statuses at once, then waits for retired processes to stop. */
-  async #apply(reason: StopReason): Promise<void> {
+  async #apply(reason: StopReason, refreshMetadata = true): Promise<void> {
+    if (this.#closed()) return;
+    const operation = ++this.#staticOperation;
+    const current = () => !this.#shutdown && operation === this.#staticOperation;
     const retired = this.#reconcile();
+    this.#publishStatic(this.#staticBuild);
     this.#emitState();
-    if (!retired.length) return;
     await this.#retire(retired, reason);
+    if (!current()) {
+      if (!this.#shutdown) await this.#apply(reason);
+      return;
+    }
+    if (refreshMetadata) {
+      const entries = [...this.#entries];
+      // Completed sources are paused while this join waits for slow metadata.
+      // Their same remaining budgets are resumed by the resource/help readers below.
+      const reads = await Promise.all(
+        entries.map((entry) => readSource(entry.source, readOptions(this.options, this.#safeMode))),
+      );
+      if (!current()) {
+        if (!this.#shutdown) await this.#apply(reason);
+        return;
+      }
+      const replaced: PluginSupervisor[] = [];
+      entries.forEach((entry, i) => {
+        const read = reads[i]!;
+        if (entry.read.manifest && executionKey(entry.read) !== executionKey(read)) {
+          const previousGeneration = entry.staticGeneration;
+          entry.generation += 1;
+          entry.staticGeneration = this.#nextStaticGeneration(entry.read.sourceKey);
+          // An unrelated lifecycle transaction may observe new executable metadata.
+          // Carry existing isolation forward; only explicit enable/reload clears it.
+          for (const [key, problem] of [...this.#registrationFailures]) {
+            const [sourceKey, generation, languageId] = JSON.parse(key) as [string, number, string];
+            if (sourceKey === entry.read.sourceKey && generation === previousGeneration) {
+              this.#registrationFailures.delete(key);
+              this.#registrationFailures.set(
+                staticLanguageKey(sourceKey, entry.staticGeneration, languageId),
+                problem,
+              );
+            }
+          }
+          const supervisor = this.#supervisors.get(entry.read.sourceKey);
+          if (supervisor) {
+            this.#supervisors.delete(entry.read.sourceKey);
+            replaced.push(supervisor);
+          }
+        }
+        if (
+          executionKey(entry.read) === executionKey(read) &&
+          JSON.stringify(entry.read.manifest?.contributes?.diagnosticHelp) ===
+            JSON.stringify(read.manifest?.contributes?.diagnosticHelp)
+        ) {
+          if (entry.read.diagnosticHelp) read.diagnosticHelp = entry.read.diagnosticHelp;
+          if (entry.read.helpProblem) read.helpProblem = entry.read.helpProblem;
+        }
+        entry.read = read;
+      });
+      if (convertLegacy(reads, this.#disabled, this.#legacy)) await this.#saveBestEffort();
+      replaced.push(...this.#reconcile());
+      this.#publishStatic(this.#staticBuild);
+      this.#emitState();
+      await this.#retire(replaced, reason);
+    }
+    if (!current()) {
+      if (!this.#shutdown) await this.#apply(reason);
+      return;
+    }
+    let build: StaticCatalogBuild;
+    try {
+      build = await buildStaticLanguageCatalog(
+        this.#entries.map((entry) => ({
+          source: entry.source,
+          plugin: entry.plugin,
+          generation: entry.staticGeneration,
+        })),
+        new Set(this.#registrationFailures.keys()),
+        current,
+      );
+    } catch (error) {
+      if (current()) throw error;
+      if (!this.#shutdown) await this.#apply(reason);
+      return;
+    }
+    // Help resumes the same source-local allowance after both queues; neither queue's
+    // unrelated waits consume it. Help bytes retain their independent byte budget.
+    for (const entry of [...this.#entries].sort((a, b) =>
+      a.read.sourceKey < b.read.sourceKey ? -1 : a.read.sourceKey > b.read.sourceKey ? 1 : 0,
+    )) {
+      if (!current()) break;
+      const decl = entry.read.manifest?.contributes?.diagnosticHelp;
+      if (entry.plugin.status !== "enabled" || entry.source.kind !== "development" || !decl)
+        continue;
+      try {
+        const budget = entry.read.resourceBudget;
+        if (!budget) throw new Error("No current source read budget.");
+        const help = await budget.run(() => readDiagnosticHelp(entry.read.directory!, decl));
+        if (!current()) break;
+        delete entry.read.diagnosticHelp;
+        delete entry.read.helpProblem;
+        if (help.ok) entry.read.diagnosticHelp = help.help;
+        else entry.read.helpProblem = help.problem;
+      } catch {
+        if (!current()) break;
+        delete entry.read.diagnosticHelp;
+        entry.read.helpProblem = {
+          code: "PLUGIN_E_DIAGNOSTIC_HELP",
+          message: `${entry.read.id} / ${decl.path}: source resource deadline exceeded.`,
+        };
+      }
+    }
+    if (!current()) {
+      if (!this.#shutdown) await this.#apply(reason);
+      return;
+    }
+    // Refresh RegisteredPlugin's help fields without registering or starting processes.
+    this.#entries.forEach((entry) => {
+      delete entry.plugin.diagnosticHelp;
+      delete entry.plugin.helpProblem;
+      if (entry.read.diagnosticHelp) entry.plugin.diagnosticHelp = entry.read.diagnosticHelp;
+      if (entry.read.helpProblem) entry.plugin.helpProblem = entry.read.helpProblem;
+    });
+    this.#rebuildHelp();
+    this.#publishStatic(build);
     this.#emitState();
   }
 
@@ -542,7 +891,10 @@ export class PluginManager {
           entry.generation,
           entry.plugin.id,
           JSON.stringify(entry.plugin.manifest?.displayName ?? null),
-          Boolean(entry.read.diagnosticHelp),
+          // Preserved help can be replaced without a generation or presence change.
+          createHash("sha256")
+            .update(JSON.stringify(entry.read.diagnosticHelp ?? null))
+            .digest("hex"),
         ].join("\t"),
       )
       .join("\n");
@@ -596,7 +948,13 @@ export class PluginManager {
   #register(entry: Entry): void {
     const { plugin } = entry;
     const manifest = plugin.manifest;
-    if (!manifest || manifest.runtime.kind === "builtin" || !plugin.entry || !plugin.directory)
+    if (
+      !manifest ||
+      manifest.runtime.kind === "builtin" ||
+      manifest.runtime.kind === "static" ||
+      !plugin.entry ||
+      !plugin.directory
+    )
       return;
     const { sourceKey } = plugin;
     const generation = entry.generation;
@@ -651,6 +1009,10 @@ export class PluginManager {
       running: supervisor?.state === "running",
       problems: [
         ...plugin.problems,
+        ...(plugin.status === "enabled"
+          ? structuredClone(this.#staticBuild.problems.get(plugin.sourceKey) ?? [])
+          : []),
+
         ...(plugin.status === "enabled" && plugin.helpProblem ? [plugin.helpProblem] : []),
         ...(this.#help.overBudget.has(plugin.sourceKey)
           ? [

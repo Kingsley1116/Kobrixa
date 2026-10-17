@@ -1,3 +1,7 @@
+import { useStaticLanguages } from "./editor/static-language-bootstrap.js";
+import { languageDisplayName } from "./i18n/copy.js";
+import type { editor as MonacoEditor } from "monaco-editor";
+
 import { createLanguageStatusStore } from "./editor/language-status-store.js";
 import { BUILTIN_LANGUAGE_COMPANIONS } from "./editor/builtin-language-companions.js";
 import { bindingKey } from "../shared/language-services.js";
@@ -159,6 +163,7 @@ type HistoryReview = {
 };
 
 export function App(): React.JSX.Element {
+  const { runtime: staticLanguages, snapshot: staticLanguageState } = useStaticLanguages();
   const [simulator, setSimulator] = useState<{
     workspaceId: string;
     projectName: string;
@@ -690,6 +695,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     restoration.current ??= (async () => {
       try {
+        await staticLanguages.ready;
         const saved = await window.kobrixa.workspace.restoreSession();
         setSessionIssues(saved.issues);
         for (const summary of saved.workspaces)
@@ -714,6 +720,11 @@ export function App(): React.JSX.Element {
     scheduleSessionSave();
   }, [activeFile, selectedTreePath, expandedTreePaths, projects]);
   const active = tabs.find((tab) => tab.file === activeFile);
+  const activeLexicalRoute = useSyncExternalStore(staticLanguages.registrar.subscribe, () => {
+    const model = active ? activeSession?.editor.models.get(active.file) : undefined;
+    return model ? staticLanguages.registrar.getRoute(model) : undefined;
+  });
+
   const activeConflict = active && activeSession?.files.conflicts.get(active.file);
   const dirty = tabs.some((tab) => tab.dirty);
   const auxiliaryModalOpen = useSyncExternalStore(subscribeModals, isModalOpen);
@@ -974,6 +985,20 @@ export function App(): React.JSX.Element {
   ]);
 
   const keyboard = useKeyboard(runCommand, modalOpen);
+  function bindSplitEditor(instance: MonacoEditor.IStandaloneCodeEditor): () => void {
+    const clamp = () => {
+      const options = instance.getRawOptions();
+      if (!("maxTokenizationLineLength" in options) || options.maxTokenizationLineLength !== 10000)
+        instance.updateOptions({ maxTokenizationLineLength: 10000 });
+    };
+    clamp();
+    const change = instance.onDidChangeConfiguration(clamp);
+    const off = keyboard.bindEditor(instance);
+    return () => {
+      change.dispose();
+      off();
+    };
+  }
   const titleWithShortcut = (label: string, command: AppCommand): string =>
     [label, keyboard.hint(command)].filter(Boolean).join(" · ");
 
@@ -1768,6 +1793,7 @@ export function App(): React.JSX.Element {
     selected: WorkspaceSummary,
     view?: WorkspaceView,
   ): Promise<ProjectSession> {
+    await staticLanguages.ready;
     const existing = sessions.get(selected.id);
     if (existing) return existing;
     const project = sessions.add(selected, view);
@@ -1974,6 +2000,7 @@ export function App(): React.JSX.Element {
     file: string,
     replaceTabs = false,
   ): Promise<boolean> {
+    await staticLanguages.ready;
     const target = `${current.id}\0${file}`;
     if (fileOpenRequest.current.target !== target) {
       fileOpenRequest.current.target = target;
@@ -2029,6 +2056,7 @@ export function App(): React.JSX.Element {
     workspaceId = workspaceStateRef.current?.id,
     reviewed?: WorkspaceFileSnapshot,
   ): Promise<boolean> {
+    await staticLanguages.ready;
     const project = sessions.get(workspaceId);
     if (!project || !workspaceId || !canMutateWorkspace(workspaceId)) return false;
     const sharedSync = collabFiles.for(workspaceId);
@@ -3307,6 +3335,24 @@ export function App(): React.JSX.Element {
             openSettings();
           }}
         />
+        {staticLanguageState.result?.kind === "plaintext" && (
+          <div className="file-change-banner" role="status" data-static-language-bootstrap="failed">
+            <span>{t.staticLanguageFailed}</span>
+            <button
+              onClick={() => {
+                setSettingsCategory((previous) => ({
+                  category: "plugins",
+                  request: previous.request + 1,
+                }));
+                setSettingsOpen(true);
+                setSettingsActive(true);
+              }}
+            >
+              {t.languageSettings}
+            </button>
+          </div>
+        )}
+
         {updates &&
           ["ready", "manual"].includes(updates.phase) &&
           dismissedUpdate !== `${updates.version}:${updates.phase}` && (
@@ -3817,6 +3863,7 @@ export function App(): React.JSX.Element {
                   <div className={`editor-panes ${splitFile && active ? "split" : ""}`}>
                     {active ? (
                       <Editor
+                        workspaceId={workspace.id}
                         status={languageStatus}
                         query={queryLanguageFeature}
                         helpCatalog={helpCatalog}
@@ -3869,7 +3916,7 @@ export function App(): React.JSX.Element {
                         wordWrap={settings.wordWrap}
                         reducedMotion={reducedMotion}
                         editorOptions={settings}
-                        onEditorReady={keyboard.bindEditor}
+                        onEditorReady={bindSplitEditor}
                         onBlur={(file) => requestFocusSave(file, workspace.id)}
                         onFile={setSplitFile}
                         onClose={() => setSplitFile(undefined)}
@@ -4408,6 +4455,14 @@ export function App(): React.JSX.Element {
       )}
       {fileReview && (
         <FileConflictDialog
+          workspaceId={fileReview.workspaceId}
+          {...(() => {
+            const status =
+              workspace?.id === fileReview.workspaceId
+                ? languageStatus
+                : sessions.get(fileReview.workspaceId)?.editor.getLanguageStatus();
+            return status ? { status } : {};
+          })()}
           locale={locale}
           resolvedTheme={resolvedTheme}
           file={fileReview.file}
@@ -4431,6 +4486,14 @@ export function App(): React.JSX.Element {
       )}
       {historyReview && (
         <LocalHistoryDialog
+          workspaceId={historyReview.workspaceId}
+          {...(() => {
+            const status =
+              workspace?.id === historyReview.workspaceId
+                ? languageStatus
+                : sessions.get(historyReview.workspaceId)?.editor.getLanguageStatus();
+            return status ? { status } : {};
+          })()}
           locale={locale}
           resolvedTheme={resolvedTheme}
           preferences={filePreferences.value}
@@ -4489,7 +4552,7 @@ export function App(): React.JSX.Element {
             <>
               <CursorPosition store={cursorStore} lineLabel={t.line} columnLabel={t.column} />
               <span>
-                {active.file.toLocaleLowerCase("en-US").endsWith(".json") ? "JSON" : t.basicPlus}
+                {activeLexicalRoute ? languageDisplayName(activeLexicalRoute, locale) : t.plainText}
               </span>
             </>
           )}

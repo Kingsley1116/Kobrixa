@@ -1,3 +1,8 @@
+import {
+  sameBinding,
+  modelLanguageSelector,
+  type ModelLanguageRoute,
+} from "./model-language-route.js";
 import * as monaco from "monaco-editor";
 import type { LanguageCapability } from "@kobrixa/plugin-protocol";
 import { supportsFile, type LanguageBinding } from "../../shared/language-services.js";
@@ -29,6 +34,7 @@ export function editorRange(range: SourceRange, source: string): monaco.Range {
   );
 }
 interface FeatureHost {
+  route(model: monaco.editor.ITextModel): ModelLanguageRoute | undefined;
   binding(): LanguageBinding | undefined;
   companion(): LanguageCompanion | undefined;
   query(
@@ -92,10 +98,12 @@ export class LanguageFeatures implements monaco.IDisposable {
     const binding = this.host.binding();
     if (
       this.disposed ||
+      !this.routed(model) ||
       !file ||
       !snapshot ||
       !binding ||
       snapshot.epoch !== binding.epoch ||
+      !sameBinding(snapshot.binding, binding) ||
       !supportsFile(binding, file) ||
       !this.host.isCurrent(model, file, snapshot)
     )
@@ -141,13 +149,18 @@ export class LanguageFeatures implements monaco.IDisposable {
       : undefined;
   }
   private routed(model: monaco.editor.ITextModel, capability?: LanguageCapability): boolean {
-    const binding = this.host.binding(),
-      file = this.host.fileFor(model);
+    const binding = this.host.binding();
+    const file = this.host.fileFor(model);
+    const route = this.host.route(model);
     return (
       !this.disposed &&
       !model.isDisposed() &&
       !!binding &&
       !!file &&
+      !!route &&
+      route.kind !== "core" &&
+      route.monacoLanguage === model.getLanguageId() &&
+      sameBinding(route.binding, binding) &&
       supportsFile(binding, file) &&
       (!capability || binding.capabilities.includes(capability))
     );
@@ -230,11 +243,11 @@ export class LanguageFeatures implements monaco.IDisposable {
       current.snapshot.epoch === binding.epoch
     );
   }
-  register(): void {
+  register(route: ModelLanguageRoute, model: monaco.editor.ITextModel): void {
     const binding = this.host.binding(),
       companion = this.host.companion();
-    if (!binding || !companion) return;
-    const selector = { language: companion.monacoLanguage, scheme: "kobrixa" };
+    if (!binding || !companion || !sameBinding(route.binding, binding)) return;
+    const selector = modelLanguageSelector(model, route);
     const add = (capability: LanguageCapability, register: () => monaco.IDisposable) => {
       if (binding.capabilities.includes(capability)) this.registrations.push(register());
     };

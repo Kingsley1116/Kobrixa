@@ -20,8 +20,8 @@ const value = (languageServices: unknown, frontends: unknown = [front]) => ({
   runtime: { kind: "builtin" },
   contributes: { frontends, languageServices },
 });
-it("exports API 1.3.0 and exactly twelve capabilities", () => {
-  expect(PLUGIN_API_VERSION).toBe("1.3.0");
+it("exports API 1.4.0 and exactly twelve capabilities", () => {
+  expect(PLUGIN_API_VERSION).toBe("1.4.0");
   expect(LANGUAGE_CAPABILITIES).toEqual([
     "analysis",
     "completion",
