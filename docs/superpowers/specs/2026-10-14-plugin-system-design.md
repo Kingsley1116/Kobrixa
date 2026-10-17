@@ -1,9 +1,47 @@
 # Kobrixa 插件系統設計
 
 日期：2026-10-14  
-狀態：Claude 與 Codex 的設計方向已收斂，尚未實作。本文是唯一的插件系統設計文件；manifest、API、SDK 與新增目錄仍須在實作計畫中細化。
+狀態：第一階段開發預覽與第二階段主要實作已交付；第二階段仍有待驗收項目，第三、四階段屬未來規劃。本文為主設計，細節由下列已交付的子專案規格補充。
 
 本文合併兩份提案，採用原 Codex 版作為主體，納入 Claude 第一輪五項修改建議及第二輪三項補強。逐項立場與理由保存在[協商紀錄](2026-10-14-plugin-system-negotiation.md)。設計共識不代表承諾發布日期或已完成相關功能。
+
+## 實作狀態（2026-10-17）
+
+第二階段已合併至 `0ba37ba`；本節依[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)區分已交付實作、待驗收項目與刻意延後的範圍，不表示全部驗收通過。現行插件 API 為 **1.4.0**，協定、公開 JSON Schema、JS／TS 與 Python SDK 已同步。
+
+| 已交付子專案                                                                     | 實作內容                                                                                                       |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [2A：插件化編譯鏈](2026-10-16-plugin-system-2a-build-chain-design.md)            | 依內建提供者選擇語言／目標、協商 IR、驗證與提交通用 `artifacts[]`，部署及模擬共用編譯流程。                    |
+| [2B-1：診斷來源與說明](2026-10-16-plugin-system-2b1-diagnostic-source-design.md) | 宿主加註來源、發布型別與驗證、同來源說明查詢、Quick Fix 身分比對，保留內建代碼與官方網址。                     |
+| [2B-2：語言服務](2026-10-16-plugin-system-2b2-language-services-design.md)       | 全部既有動態語言功能透過選定的內建提供者，具備綁定失效與不可用狀態。                                           |
+| [2C：靜態語言](2026-10-17-plugin-system-2c-static-languages-design.md)           | 有版本與資源上限的 tokenizer／configuration JSON、靜態 runtime、目錄註冊與撤銷、停用／安全模式／下次啟動復原。 |
+
+Basic Plus 的專案、frontend、service 與 Monaco 語言 ID 均為 `bp`，插件 ID 為 `kobrixa.basic-plus`；EV3 插件 ID 為 `kobrixa.ev3`，目標為 `ev3-native`，實際目錄為 `plugins/ev3/`。`tokenPostfix: ".basic-plus"` 保留。§10 的 `plugins/backend-ev3/` 是實作前建議名稱，已由 2A 定案為 `plugins/ev3/`；`frontends/basic-plus` 與 `packages/backend-ev3` 仍是可重用函式庫。
+
+[`Diagnostic`](../../../packages/compiler/src/contracts.ts) 保留函式庫相容的 `source?: string`；`PublishedDiagnostic` 要求來源，`PublishedCompileResult` 要求所有診斷皆為發布型別。宿主依可信提供者身分加註，不以診斷碼推斷來源。通用成品契約仍由後端回傳 slot／bytes、宿主驗證及產生路徑與 metadata。
+
+### 第二階段待驗收項目
+
+以下對應稽核的 S09、V01–V04；詳細證據與判定見[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。人工項目沿用 [2C task-8 的八組清單](../../../.superpowers/sdd/2026-10-17-plugin-system-2c-static-languages/task-8-report.md)與架構文件的語言服務驗收（[英文](../../en/architecture.md#language-service-acceptance)／[繁體中文](../../zh-TW/architecture.md#語言服務驗收)），較早的執行環境失敗不取代後續已記錄的自動化結果。
+
+- **S09：** 隔離的惡意正規表示式壓力測試正由平行工作加入靜態語言驗收 runner（`tests/desktop/static-languages-run.mjs`、`pnpm test:static-languages:smoke`）。須執行實際 Monaco 分詞，由父程序獨立監督，在期限屆滿時強制終止，再檢查復原；結果另行記錄，本節不宣稱已通過。資源上限及這項測試均不構成完整 ReDoS 防護。
+- **V01：** 兩種語系與主題的實際應用程式人工驗收，涵蓋 Basic Plus、可見／隱藏／分割／檢閱編輯器、靜態插件生命週期與復原控制、長行儲存／重開／Undo、衝突及語言服務隔離。
+- **V02：** 真正阻塞 renderer 後，人工確認下次啟動的復原介面可用，個別停用設定持續有效；僅模擬無回應 hook 不足以完成驗收。
+- **V03：** 在未掛載儲存庫的乾淨機器或容器中人工驗收已安裝的應用程式，包含主題、靜態插件生命週期及復原；在 checkout 旁複製 bundle 不等同此項證據。
+- **V04：** 完整桌面 smoke 保留既有例外：`tests/desktop/monitor-smoke.mjs:332` 的 `visibilityState === "hidden"` 失敗，已於 2C 前的 `247db48` 重現。須另行記錄因此略過的檢查，或於合適的桌面環境完成全程執行；完整套件不能記為通過。
+
+### 保留的排除範圍與限制
+
+以下取自稽核的「Intentionally deferred items and accepted limitations」；各子規格列出自己的清理與覆蓋率待辦，這些待辦與上列必要驗收分開追蹤。
+
+- **2A：** 外部 frontend／backend 與跨程序 build RPC、成品歷史／成品庫／GC、內建插件獨立停用控制仍延後。提交不是多檔案原子交易；殘留鎖的 compare／unlink 非原子操作，PID 檢查不保證網路共享磁碟正確性，設備上傳也非原子操作。
+- **2B-1：** 外部診斷產生者、HTML／圖片等說明資源、第三方說明發布到官網仍排除。發布檢查重複、混合來源測試斷言、registry 邊界案例與說明資源的驗證／讀取效率等細項仍待整理；不代表既有來源隔離失效。純靜態、無 entrypoint 的說明插件已由 2C 完成。
+- **2B-2：** 第三方語言服務／外部 RPC、僅停用服務的開關、新語言隱式推斷與更完整的簽名提示仍延後。相容 API、N2 專案載入錯誤合併成單列且雙語均顯示英文、N3 重複建立補全提供者及小幅補全／刷新成本仍列待辦。
+- **2C：** 完整 ReDoS 防護、不可信語法沙箱／可中斷 tokenizer、跨插件 grammar／service 配對、檔案關聯 UI 與 glob／完整檔名／首行／複合副檔名偵測、主題貢獻、marketplace／安裝器與新來源語言推斷仍排除。生命週期全量重讀、序列啟動的 N×5 秒延遲、偽造註冊回報的通用錯誤碼、同 generation 磁碟修改可能受較舊回報隔離至 Reload，以及首次失敗橫幅、重新連結競態與原生對話框占用佇列等效能／介面細項保留。
+- **第三階段（未來）：** 公開面板／設定／設備 API 與馬達測試遷移；既有硬體驗收不證明這些公開 API 已交付。
+- **第四階段（未來）：** 正式封裝與 runtime 管理、產生式 Python 綁定、相依解析／版本回退與一般第三方發布。WASM 與 marketplace 另立範圍。
+
+下文保留 2026-10-14 的設計基線與實作前背景，以說明遷移原因；當時的「現況」不代表 2026-10-17 的交付狀態，已交付契約以本節連結的子規格及雙語架構文件為準。
 
 ## 1. 目標與建議架構
 
@@ -42,7 +80,7 @@ flowchart TB
 
 ## 2. 與現有架構的銜接
 
-目前專案已經有適合插件化的邊界：
+**實作前背景（2026-10-14）：** 當時專案已有適合插件化的邊界：
 
 - [`LanguageFrontend`、`CompilerBackend`](../../../packages/compiler/src/contracts.ts) 定義編譯前端與後端介面。
 - [`BuildSession`](../../../packages/compiler/src/build-session.ts) 負責編譯協調、IR 驗證、取消與成品提交。
@@ -50,9 +88,9 @@ flowchart TB
 - [`DeviceTransport`、`DeviceSession`](../../../packages/device/src/contracts.ts) 提供設備操作契約。
 - 現有 [Electron 架構](../../zh-TW/architecture.md) 已分開 renderer、preload 與 main process。
 
-需要調整的主要耦合點：
+當時需要調整的主要耦合點如下；編譯與語言相關項目已由第二階段交付，面板與設備仍屬第三階段：
 
-| 現況                                        | 建議調整                                             |
+| 實作前現況                                  | 建議調整                                             |
 | ------------------------------------------- | ---------------------------------------------------- |
 | 專案 manifest 固定接受 `bp` 與 `ev3-native` | 改為依已註冊的語言與目標驗證，保留舊 manifest 相容性 |
 | 建置 worker 直接建立 Basic Plus 與 EV3 實作 | 從功能註冊表選擇對應提供者                           |
@@ -139,7 +177,7 @@ WASM 不加入第一至第三階段，也不作為第四階段發布的必要條
 
 ### 5.1 API 分組
 
-以下名稱與方法是新 API 草案，尚未實作。
+**實作前 API 草案（2026-10-14）：** 下表是當時規劃的分組，不表示每個分組的全部方法均已交付。命令／通知與第二階段的編譯、診斷說明、語言貢獻已有實作；其餘公開介面依上方實作狀態與後續階段判定。
 
 | API                   | 用途                                             |
 | --------------------- | ------------------------------------------------ |
@@ -180,7 +218,7 @@ WASM 不加入第一至第三階段，也不作為第四階段發布的必要條
 
 ### 5.1.2 診斷來源契約與相容遷移
 
-第二階段採用由宿主填入的 `source`，不採用 `<plugin-id>/` 診斷碼前綴。現有 [`Diagnostic`](../../../packages/compiler/src/contracts.ts) 尚無此欄位，需同步調整契約與消費端：
+第二階段採用由宿主填入的 `source`，不採用 `<plugin-id>/` 診斷碼前綴。**實作前背景（2026-10-14）：** 當時的 [`Diagnostic`](../../../packages/compiler/src/contracts.ts) 尚無此欄位，因此訂出下列契約與消費端遷移要求；現已由 2B-1／2B-2 實作：
 
 - 共享 `Diagnostic` 在相容遷移時增加 `source?: string`，讓不經 Electron 的既有編譯函式庫仍能回傳原格式；經插件宿主發布到 UI、建置結果或診斷服務的型別與 wire schema 則要求 `source` 必填。這個差異必須在型別與驗證器中明確表示，不能讓插件發布缺少來源的診斷。
 - 插件提交的診斷輸入不接受自行設定 `source`。宿主依已驗證的通道及註冊提供者填入來源；同程序的內建 adapter 由宿主註冊身分決定。核心自行產生的診斷使用保留來源 `kobrixa.core`，第三方不得註冊此身分。
@@ -189,7 +227,7 @@ WASM 不加入第一至第三階段，也不作為第四階段發布的必要條
 - 現有內建 `code`、`helpKey` 與官方說明網址保持不變。第三方說明只解析自己的封裝資源或受控連結，不透過舊有官方 URL 產生器偽裝為內建診斷。
 - 診斷的快取／去重、Monaco marker、說明面板及 Quick Fix 請求／相等比較／路由一併納入 `source`。Quick Fix 仍檢查已發布的診斷、session 與文件版本，不能只憑 UI 傳來的 `source` 或 `code` 選擇提供者。
 
-目前 [`quickFixRequestSchema`](../../../apps/desktop/src/main/language/quick-fix-request.ts) 限制內建代碼格式，[`sameDiagnostic`](../../../apps/desktop/src/shared/quick-fixes.ts) 也未比較來源；第二階段須一起調整，不能只增加一個未被使用的欄位。第一階段先在通道與註冊表保留可信提供者身分，不提前要求所有既有編譯函式庫改版。
+**實作前背景（2026-10-14）：** 當時的 [`quickFixRequestSchema`](../../../apps/desktop/src/main/language/quick-fix-request.ts) 限制內建代碼格式，[`sameDiagnostic`](../../../apps/desktop/src/shared/quick-fixes.ts) 也未比較來源；因此要求第二階段一併調整。第一階段先在通道與註冊表保留可信提供者身分，不要求所有既有編譯函式庫提前改版；第二階段現已完成來源比對與路由。
 
 ### 5.2 共通呼叫規則
 
@@ -348,6 +386,8 @@ Sensor Lab、馬達測試與協作功能共用設備仲介服務，由它處理�
 
 ## 10. 建議目錄
 
+**實作前目錄提案（2026-10-14）：** 下列目錄保留為歷史設計。第二階段實際 EV3 插件目錄為 `plugins/ev3/`，依 [2A 規格](2026-10-16-plugin-system-2a-build-chain-design.md)定案；設備與功能插件目錄仍屬後續規劃。
+
 ```text
 packages/plugin-protocol/     Zod 定義、產出的 JSON Schema、共用契約案例
 packages/plugin-runtime/      載入、生命週期、路由與資源回收
@@ -374,7 +414,7 @@ plugins/                     內建功能插件
 | 3：開放介面與設備 | 面板／設定擴充、設備提供者，搬移 Sensor Lab 等內建功能                                                                                     | 馬達測試全程只用公開宣告式 UI 與公開 API；功能可獨立啟停，設備鎖與協作控制權保持正確；第三方仍限開發模式  |
 | 4：完善正式發布   | 先完成打包提案，再做管理 runtime、正式 Python 套件（含由 schema 產生的型別綁定）、套件驗證、相依解析、版本回退、開發 CLI，逐步增加其他 SDK | 三個桌面平台可離線安裝與復原問題插件；通過後才向一般使用者開放可信第三方插件                              |
 
-第二階段不能只替換 `new BasicPlusFrontend()`。現有 `BuildSession` 的輸出處理也固定圍繞 `.rbf`，需要一起改為通用成品契約，由 EV3 後端宣告成品類型，宿主負責驗證與提交。既有 IR 驗證、取消及失敗清理行為應保留。
+**實作前背景（2026-10-14）：** 當時的 `BuildSession` 輸出處理固定圍繞 `.rbf`，因此第二階段不能只替換 `new BasicPlusFrontend()`，還須改為通用成品契約，由 EV3 後端宣告成品類型、宿主驗證與提交。2A 已完成此遷移，並保留 IR 驗證、取消與失敗清理流程及上述已接受的提交限制。
 
 測試重點包括 schema 產物一致性與語意一致性、跨語言協定互通、不相容版本、格式錯誤與過大訊息、插件當機、取消逾時、資源回收、過期文件修改，以及設備操作不得在重啟後自動重播。
 
@@ -384,12 +424,14 @@ plugins/                     內建功能插件
 - 兩個插件使用相同 `code`／`helpKey` 時，診斷、說明、快取及 Quick Fix 不串用；偽造 `source` 被拒絕；內建診斷碼和官方說明 URL 不變。
 - 馬達測試經公開 API 完成正常、錯誤、取消、停止與無控制權流程，且功能模組不存在私有 UI 掛載或私有 IPC 相依。
 
-第一個實作里程碑是一個 TS 插件、一個僅限開發模式的 Python 插件，以及插件化的 Basic Plus 編譯入口。Basic Plus 先做最小轉接並沿用既有 EV3 後端與建置行為；完整的通用成品契約在第二階段完成。用這三個案例驗證跨語言、最小 UI 接入和核心功能遷移，確認 API 足夠好用後，再擴大到整個 IDE。
+**原始里程碑（實作前規劃）：** 第一個實作里程碑是一個 TS 插件、一個僅限開發模式的 Python 插件，以及插件化的 Basic Plus 編譯入口。Basic Plus 先做最小轉接並沿用既有 EV3 後端與建置行為；完整的通用成品契約在第二階段完成。用這三個案例驗證跨語言、最小 UI 接入和核心功能遷移，確認 API 足夠好用後，再擴大到整個 IDE。
 
 ## 12. 文件與後續實作計畫
 
 設計提案統一放在 `docs/superpowers/specs/`，不在 `docs/en` 與 `docs/zh-TW` 留下單語版本的正式產品規格。開始實作、變更公開契約時，同步更新英／繁中 architecture、相關產品文件與 roadmap，並清楚標記規劃與已實作的能力。
 
-下一步另寫第一階段實作計畫，細化 schema、兩種 adapter、握手與取消、開發插件載入、Basic Plus 轉接及驗收案例。第一階段需保留宿主可信身分，以及載入任何貢獻之前的停用判斷；完整 tokenizer 限制與診斷 `source` 遷移在第二階段，馬達測試公開 API 驗收在第三階段。本文件只定案上述設計方向，不開始修改產品程式碼。
+**原始下一步（2026-10-14，實作前規劃）：** 另寫第一階段實作計畫，細化 schema、兩種 adapter、握手與取消、開發插件載入、Basic Plus 轉接及驗收案例。第一階段需保留宿主可信身分，以及載入任何貢獻之前的停用判斷；完整 tokenizer 限制與診斷 `source` 遷移在第二階段，馬達測試公開 API 驗收在第三階段。本文件只定案上述設計方向，不開始修改產品程式碼。
+
+目前後續工作為本文上方列出的第二階段收尾驗收；第三、四階段仍須各自規劃與驗收。
 
 合併已確定的三項取捨：第一階段同時驗證 TS 與 Python，但 Python 僅限開發模式；正式分發保留 Process／管理 runtime，並為相容的純運算插件保留 WASM 路線；一般使用者的第三方插件開放以第四階段完成驗收為條件。WASM 的實作時程及管理 runtime 的具體方案留給後續專項提案。

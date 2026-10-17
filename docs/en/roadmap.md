@@ -28,10 +28,23 @@ Exit: every criterion in the [product specification](../en/product.md) and [devi
 ## v1.x — hardening
 
 - Plugin system phase 1 (development preview): protocol, JS/TS and Python SDKs, command and notification API, settings panel, and the Basic Plus frontend registered as a built-in plugin. Third-party plugins load only in development mode. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
+- Plugin system stage 2 (implemented; acceptance pending): built-in frontend/backend selection, generic `artifacts[]`, diagnostic source/help, built-in language services and API 1.4.0 static languages. See [architecture and contracts](architecture.md) and [static language plugins](plugin-static-languages.md). External compiler and language-service RPC remain future work.
+- Plugin system stage 3 (future): public panel/settings/device APIs and migration of built-in features, including motor testing through public APIs.
+- Plugin system stage 4 (future): formal plugin packaging, managed runtimes, generated Python bindings, dependency resolution/version rollback and general third-party release after acceptance.
 - Expand `.bp` compatibility cases and EV3 API coverage.
 - Improve completion, formatting, performance, accessibility, localization, and recovery UX.
 - Add a headless Node.js `kobrixa` CLI over the same compiler and device packages.
 - Cloud collaboration (included): invite-code rooms for real-time co-editing, shared file trees, chat and single-holder EV3 control through the Kobrixa-operated service. See [cloud collaboration](../en/collaboration.md).
+
+### Plugin stage 2 acceptance
+
+Implementation is delivered; stage-2 acceptance is not yet complete. The [master specification](../superpowers/specs/2026-10-14-plugin-system-design.md#第二階段待驗收項目) tracks the remaining gates:
+
+- **S09:** the isolated hostile-regex stress test is being added in parallel to the static-language acceptance runner (`tests/desktop/static-languages-run.mjs`, `pnpm test:static-languages:smoke`). It must exercise actual Monaco tokenization with a parent-enforced termination deadline and recovery checks. Results must be recorded separately; this entry claims no outcome or universal ReDoS protection.
+- **V01:** manual application acceptance in both locales and themes, covering Basic Plus behavior, visible/hidden/split/review editors, static-plugin lifecycle and recovery controls, long-line save/reopen/Undo, conflicts and language-service isolation.
+- **V02:** manual acceptance of an actual blocked renderer, next-launch recovery UI and persistent individual disables. Simulating the unresponsive hook does not satisfy this gate.
+- **V03:** manual installed-app acceptance on a fresh machine/container without the repository mounted, including themes, static-plugin lifecycle and recovery.
+- **V04:** retain the existing full desktop smoke exception at `tests/desktop/monitor-smoke.mjs:332` (`visibilityState === "hidden"`), reproduced on pre-2C base `247db48`. Record checks skipped by that failure separately or obtain a complete run in a suitable desktop session; the full suite is not recorded as passing.
 
 Exit: compiler and device APIs are stable enough for independent CLI and desktop release cycles.
 

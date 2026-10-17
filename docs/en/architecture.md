@@ -225,27 +225,27 @@ The EV3 backend optimizes native output by default: it omits jumps to the next b
 
 All source functions are lowered for diagnostics before pruning, so errors in unused functions are still reported. Global declarations and runtime support storage retain their layout and initialization. Values needed for array cleanup remain live through the function epilogue, and background-thread loop yields are preserved. `new EV3Backend({ optimize: false })` disables all optimizations for diagnostic comparisons. Tools that invoke subcalls directly can use `retainFunctions: ["helper"]` to keep additional functions and their call/thread dependencies without disabling optimization; names are case-insensitive and unknown names are errors in either mode. Both modes leave the input IR unchanged; the `.ir.json` artifact describes frontend output, while `.lst` records only emitted functions and support objects, their current object IDs, and local-memory sizes. Object IDs may change when functions are pruned.
 
-The public build result is:
+The library and published build contracts are defined in `packages/compiler/src/contracts.ts`:
 
 ```ts
-interface CompileResult {
-  buildId: string;
-  target: string;
-  deploy?: "ev3";
-  runtimeDirectory?: string;
-  success: boolean;
-  diagnostics: Diagnostic[];
-  artifacts: BuildArtifact[];
+interface SourceRange {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
 }
 
 interface Diagnostic {
   code: string;
-  helpKey?: string;
+  helpKey?: string | undefined;
   severity: "error" | "warning" | "info";
   file: string;
-  range: { startLine: number; startColumn: number; endLine: number; endColumn: number };
+  range: SourceRange;
   message: string;
+  source?: string;
 }
+
+type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
 
 interface BuildArtifact {
   slot: string;
@@ -257,7 +257,23 @@ interface BuildArtifact {
   byteLength: number;
   remotePath?: string;
 }
+
+interface CompileResult {
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
+  runtimeDirectory?: string;
+  success: boolean;
+  diagnostics: Diagnostic[];
+  artifacts: BuildArtifact[];
+}
+
+type PublishedCompileResult = Omit<CompileResult, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
 ```
+
+`Diagnostic.source` is optional for standalone library callers. Providers must leave it unset; the host stamps each producer's diagnostics with its trusted plugin ID, uses `kobrixa.core` for core diagnostics, and rejects producer-supplied sources. Published diagnostics require a valid source. The desktop API aliases `Diagnostic` to `PublishedDiagnostic` and `CompileResult` to `PublishedCompileResult`; its publication guards and wire schemas enforce this boundary.
 
 Line and column numbers are one-based. A successful build has no error diagnostics, contains every required artifact and, when deployable, exactly one non-empty main. A successful non-deployable build remains successful; Run and Upload explain why it cannot deploy. Failed or cancelled results contain no artifacts. `BUILD1003` reports undeclared, duplicate, missing, unsafe, colliding or oversized artifacts.
 
@@ -271,9 +287,9 @@ Within one process, builds use FIFO queues keyed by `realpath(outputDir)`. Durin
 
 Deployment requires a supported `deploy` capability (`ev3` today), otherwise `BUILD1005`. Every selected file is read into memory and checked against its SHA-256 before any upload; missing or changed files report `BUILD1006`. Resources are sorted by remotePath and uploaded before the main, using those same verified bytes. Folder/runtimeDirectory, the device lock and skipping unchanged resources are preserved. Device transfers themselves are not atomic.
 
-The browser-safe `@kobrixa/compiler/diagnostic-help` subpath contains the shared English and Traditional Chinese diagnostic catalog; the original compiler entrypoint is unchanged. Producers set optional `helpKey` values when one code has distinct causes. Consumers fall back to the code's general entry for missing or unknown keys and retain the raw message for unknown codes. Tests compare production codes with the catalog and validate the examples and documentation links.
+The browser-safe `@kobrixa/compiler/diagnostic-help` subpath contains the shared English and Traditional Chinese diagnostic catalog; the original compiler entrypoint is unchanged. Producers set optional `helpKey` values when one code has distinct causes. Help lookup first uses `(source, code, helpKey)`, then falls back to `(source, code)` within the same source. Missing help preserves the raw message; a third-party `BP1015` cannot use Basic Plus help. Only known built-in sources use the shared built-in catalog and official URLs; third-party help remains local and uses its own controlled HTTPS links. Tests compare production codes with the catalog and validate the examples and documentation links.
 
-Quick Fix requests carry the workspace, accepted analysis session/revision/version, file, diagnostic and a cancellation ID. The language worker derives insertion candidates from parser tokens and block metadata, reparses an in-memory copy, and caches validated candidates per analysis version. Queries are bounded to 1,000,000 UTF-16 code units and at most two parses of that file; they never run full project analysis in the renderer. Cancellation marks a shared flag without cancelling another query or invalidating accepted analysis. Edits recheck the target model version, source snapshot and disk conflicts before one undo group is applied through the normal document/draft/save path. Rename continues to validate all project source files. A dedicated documentation IPC accepts catalog selectors only; the main process constructs official URLs.
+Diagnostic identity, caches, deduplication, Monaco markers and help panels include `source`. Quick Fix requests carry the workspace, binding epoch, accepted analysis session/revision/version, file, diagnostic identity (`source`, `code`, optional `helpKey` and range) and a cancellation ID. The host matches the published diagnostic against accepted analysis and the selected language binding before routing a fix; a UI-supplied source or code cannot select another provider. Registering diagnostic help does not enable Quick Fix. The language worker derives insertion candidates from parser tokens and block metadata, reparses an in-memory copy, and caches validated candidates per analysis version. Queries are bounded to 1,000,000 UTF-16 code units and at most two parses of that file; they never run full project analysis in the renderer. Cancellation marks a shared flag without cancelling another query or invalidating accepted analysis. Edits recheck the target model version, source snapshot and disk conflicts before one undo group is applied through the normal document/draft/save path. Rename continues to validate all project source files. A dedicated documentation IPC accepts catalog selectors only; the main process constructs official URLs.
 
 `runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program.
 

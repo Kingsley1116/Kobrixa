@@ -4,7 +4,7 @@
 
 All source languages compile through a frontend into validated `KobrixaIR`, then through the same EV3 backend into native `.rbf`. A frontend may not silently reinterpret an unsupported feature. It must emit a stable, actionable compile-time diagnostic.
 
-Basic Plus is the only implemented source frontend. The project manifest currently accepts `language: "bp"`; Python, TypeScript and C++ remain roadmap items. Desktop code signing authenticates the application distribution and does not change the languages accepted by the compiler or certify a program's hardware behavior.
+Basic Plus (`bp`) is the only shipped source frontend. Project manifest language and target IDs are generic validated strings resolved by registered, enabled providers; they are not a fixed list limited to `bp` and `ev3-native`. Compiler providers remain built-in-only, and implicit projects retain the `bp` / `ev3-native` defaults. Python, TypeScript and C++ frontends remain roadmap items. Desktop code signing authenticates the application distribution and does not change the languages accepted by the compiler or certify a program's hardware behavior.
 
 “As complete as practical” means broad source syntax acceptance where semantics can be represented on the EV3 VM. It does not mean that Kobrixa embeds the full CPython, JavaScript, Node.js, browser, C++, or operating-system runtime in `.rbf`.
 

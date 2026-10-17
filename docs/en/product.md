@@ -6,6 +6,8 @@ Kobrixa IDE gives students and makers a dependable, understandable path from EV3
 
 Kobrixa IDE implements Basic Plus editing and compilation, project management, USB/Wi-Fi transports, remote file management, Sensor Lab, motor testing and cloud collaboration.
 
+The plugin development preview includes stage-2 implementation: built-in compiler/backend selection, generic build artifacts, diagnostic source/help, built-in language services and API 1.4.0 static editor languages. Trusted third-party plugins remain limited to development mode; static languages add coloring and editor configuration, while Basic Plus remains the only shipped source frontend. See [plugin architecture](architecture.md#plugins-development-preview), [static language plugins](plugin-static-languages.md) and the [roadmap](roadmap.md) for current capabilities and pending acceptance.
+
 ## Primary users
 
 - A student learning text-based robotics after block programming.
