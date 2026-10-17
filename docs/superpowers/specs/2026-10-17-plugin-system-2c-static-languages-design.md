@@ -15,12 +15,16 @@
 
 保留的排除範圍與待辦：
 
-- 完整 ReDoS 防護、不可信 grammar sandbox／可中斷 tokenizer 引擎、第三方服務或跨插件 grammar／service 配對仍排除；這不免除 S09 隔離壓力測試與 V02 真實卡住後復原的必要驗收。
+- 完整 ReDoS 防護、不可信 grammar sandbox／可中斷 tokenizer 引擎、第三方服務或跨插件 grammar／service 配對仍排除；S09 隔離壓力驗收的通過範圍見下文，V02 真實卡住後復原的人工驗收仍待完成。
 - 檔案關聯 UI、glob／完整檔名／首行／複合副檔名偵測、主題貢獻、marketplace／安裝器及新來源語言隱式推斷仍排除。
 - 生命週期變更時全量重讀資源、序列啟動可能累積 N×5 秒的無回應資料夾延遲、偽造註冊回報使用通用錯誤碼、同 generation 的磁碟修改可能被較舊回報隔離至 Reload，保留為效能與邊界介面待辦。
 - 僅顯示首次失敗的載入橫幅、既有重新連結／解除連結對話框競態仍待整理；原生對話框持有 controller 佇列是已接受的操作限制。2B-2 的 N2 仍未處理。
 
-驗證依稽核與 [2C 進度紀錄](../../../.superpowers/sdd/2026-10-17-plugin-system-2c-static-languages/progress.md)。S09 正由平行工作加入靜態語言驗收 runner（`tests/desktop/static-languages-run.mjs`、`pnpm test:static-languages:smoke`），本節不宣稱結果。V01–V03 人工驗收仍待記錄，V04 的既有完整 smoke 例外保留；較早的執行環境限制已由後續成功的自動化紀錄部分取代，但不因此關閉這些不同的驗收項目。
+驗證依稽核與 [2C 進度紀錄](../../../.superpowers/sdd/2026-10-17-plugin-system-2c-static-languages/progress.md)，並補充以下 S09 執行結果。
+
+**S09：** 隔離的惡意分詞驗收已於 2026-10-17 在沙箱外的 macOS arm64（Darwin 24.6.0）通過，使用 `tests/desktop/static-languages-stress.mjs` 與 `tests/desktop/static-languages-run.mjs` 的 `hostile-tokenization`／`recover-hostile` 階段（`pnpm test:static-languages:smoke`）。[壓力測試日誌第 112–114 行](../../../.superpowers/sdd/stage-2-closeout/stress-smoke.log#L112-L114)記錄：renderer 進入正規表示式約 5 秒後，由父程序強制終止（`code: null`、`signal: SIGKILL`）；以 `unclean-exit` 原因成功復原；惡意插件已個別停用，且在 Restore 後仍未註冊；內建 Basic Plus 分詞正常；新增實際耗時 6.1 秒。5 秒內未觀察到 `unresponsive` 事件，依設計此事件並非必要條件。這項驗收與資源上限不證明任意規則安全，也不構成完整 ReDoS 防護。其他平台仍未驗證。
+
+V01–V03 人工驗收仍待完成。V04 保留為已記錄的環境例外：完整桌面 smoke 停在既有的 `tests/desktop/monitor-smoke.mjs:332` 逾時（`visibilityState === "hidden"`），亦已在 2C 前的基底 `247db48` 重現；不得將完整測試套件記為通過。較早的執行環境限制已由後續成功的自動化紀錄部分取代，但不因此關閉這些不同的驗收項目。
 
 下文保留本子專案核准時的設計基線；「實作前背景」與歷史版本範例用於解釋遷移原因，不代表目前仍未實作。原先交給後續子專案的工作，以上方交付狀態為準。
 

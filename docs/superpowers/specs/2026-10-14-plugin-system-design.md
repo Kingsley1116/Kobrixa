@@ -20,15 +20,16 @@ Basic Plus 的專案、frontend、service 與 Monaco 語言 ID 均為 `bp`，插
 
 [`Diagnostic`](../../../packages/compiler/src/contracts.ts) 保留函式庫相容的 `source?: string`；`PublishedDiagnostic` 要求來源，`PublishedCompileResult` 要求所有診斷皆為發布型別。宿主依可信提供者身分加註，不以診斷碼推斷來源。通用成品契約仍由後端回傳 slot／bytes、宿主驗證及產生路徑與 metadata。
 
+**S09：** 隔離的惡意分詞驗收已於 2026-10-17 在沙箱外的 macOS arm64（Darwin 24.6.0）通過，使用 `tests/desktop/static-languages-stress.mjs` 與 `tests/desktop/static-languages-run.mjs` 的 `hostile-tokenization`／`recover-hostile` 階段（`pnpm test:static-languages:smoke`）。[壓力測試日誌第 112–114 行](../../../.superpowers/sdd/stage-2-closeout/stress-smoke.log#L112-L114)記錄：renderer 進入正規表示式約 5 秒後，由父程序強制終止（`code: null`、`signal: SIGKILL`）；以 `unclean-exit` 原因成功復原；惡意插件已個別停用，且在 Restore 後仍未註冊；內建 Basic Plus 分詞正常；新增實際耗時 6.1 秒。5 秒內未觀察到 `unresponsive` 事件，依設計此事件並非必要條件。這項驗收與資源上限不證明任意規則安全，也不構成完整 ReDoS 防護。其他平台仍未驗證。
+
 ### 第二階段待驗收項目
 
-以下對應稽核的 S09、V01–V04；詳細證據與判定見[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。人工項目沿用 [2C task-8 的八組清單](../../../.superpowers/sdd/2026-10-17-plugin-system-2c-static-languages/task-8-report.md)與架構文件的語言服務驗收（[英文](../../en/architecture.md#language-service-acceptance)／[繁體中文](../../zh-TW/architecture.md#語言服務驗收)），較早的執行環境失敗不取代後續已記錄的自動化結果。
+以下對應稽核的 V01–V04；V01–V03 人工驗收仍待完成，V04 保留為已記錄的環境例外。詳細證據與判定見[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。人工項目沿用 [2C task-8 的八組清單](../../../.superpowers/sdd/2026-10-17-plugin-system-2c-static-languages/task-8-report.md)與架構文件的語言服務驗收（[英文](../../en/architecture.md#language-service-acceptance)／[繁體中文](../../zh-TW/architecture.md#語言服務驗收)），較早的執行環境失敗不取代後續已記錄的自動化結果。
 
-- **S09：** 隔離的惡意正規表示式壓力測試正由平行工作加入靜態語言驗收 runner（`tests/desktop/static-languages-run.mjs`、`pnpm test:static-languages:smoke`）。須執行實際 Monaco 分詞，由父程序獨立監督，在期限屆滿時強制終止，再檢查復原；結果另行記錄，本節不宣稱已通過。資源上限及這項測試均不構成完整 ReDoS 防護。
 - **V01：** 兩種語系與主題的實際應用程式人工驗收，涵蓋 Basic Plus、可見／隱藏／分割／檢閱編輯器、靜態插件生命週期與復原控制、長行儲存／重開／Undo、衝突及語言服務隔離。
 - **V02：** 真正阻塞 renderer 後，人工確認下次啟動的復原介面可用，個別停用設定持續有效；僅模擬無回應 hook 不足以完成驗收。
 - **V03：** 在未掛載儲存庫的乾淨機器或容器中人工驗收已安裝的應用程式，包含主題、靜態插件生命週期及復原；在 checkout 旁複製 bundle 不等同此項證據。
-- **V04：** 完整桌面 smoke 保留既有例外：`tests/desktop/monitor-smoke.mjs:332` 的 `visibilityState === "hidden"` 失敗，已於 2C 前的 `247db48` 重現。須另行記錄因此略過的檢查，或於合適的桌面環境完成全程執行；完整套件不能記為通過。
+- **V04：** 保留已記錄的環境例外：完整桌面 smoke 停在既有的 `tests/desktop/monitor-smoke.mjs:332` 逾時（`visibilityState === "hidden"`），亦已在 2C 前的基底 `247db48` 重現。須另行記錄因此略過的檢查，或在合適的桌面環境完成全程執行；不得將完整測試套件記為通過。
 
 ### 保留的排除範圍與限制
 

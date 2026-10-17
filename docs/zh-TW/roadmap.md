@@ -38,13 +38,13 @@ Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理
 
 ### 插件第二階段驗收
 
-實作已交付，第二階段驗收尚未全部完成。[主規格](../superpowers/specs/2026-10-14-plugin-system-design.md#第二階段待驗收項目)追蹤以下待驗收項目：
+實作已交付，第二階段驗收尚未全部完成。[主規格](../superpowers/specs/2026-10-14-plugin-system-design.md)記錄驗收結果與待驗收項目。V01–V03 人工驗收仍待完成，V04 保留為已記錄的環境例外：
 
-- **S09：** 隔離的惡意正規表示式壓力測試正由平行工作加入靜態語言驗收 runner（`tests/desktop/static-languages-run.mjs`、`pnpm test:static-languages:smoke`）。測試須執行實際 Monaco 分詞，由父程序監督並在期限屆滿時強制終止，再檢查復原。結果須另行記錄，此處不宣稱測試結果或完整 ReDoS 防護。
+- **S09：** 隔離的惡意分詞驗收已於 2026-10-17 在沙箱外的 macOS arm64（Darwin 24.6.0）通過，使用 `tests/desktop/static-languages-stress.mjs` 與 `tests/desktop/static-languages-run.mjs` 的 `hostile-tokenization`／`recover-hostile` 階段（`pnpm test:static-languages:smoke`）。[壓力測試日誌第 112–114 行](../../.superpowers/sdd/stage-2-closeout/stress-smoke.log#L112-L114)記錄：renderer 進入正規表示式約 5 秒後，由父程序強制終止（`code: null`、`signal: SIGKILL`）；以 `unclean-exit` 原因成功復原；惡意插件已個別停用，且在 Restore 後仍未註冊；內建 Basic Plus 分詞正常；新增實際耗時 6.1 秒。5 秒內未觀察到 `unresponsive` 事件，依設計此事件並非必要條件。這項驗收與資源上限不證明任意規則安全，也不構成完整 ReDoS 防護。其他平台仍未驗證。
 - **V01：** 在兩種語系與主題中人工驗收實際應用程式，涵蓋 Basic Plus 行為、可見／隱藏／分割／檢閱編輯器、靜態插件生命週期與復原控制、長行儲存／重開／Undo、衝突及語言服務隔離。
 - **V02：** 人工驗收真正阻塞的 renderer、下次啟動的復原介面，以及持續有效的個別停用設定。模擬無回應 hook 不符合此項要求。
 - **V03：** 在未掛載儲存庫的乾淨機器或容器中，人工驗收已安裝的應用程式，包含主題、靜態插件生命週期及復原。
-- **V04：** 保留完整桌面 smoke 的既有例外：`tests/desktop/monitor-smoke.mjs:332` 的 `visibilityState === "hidden"` 失敗，已在 2C 前的基底 `247db48` 重現。須另行記錄因此略過的檢查，或在合適的桌面環境完成全程執行；不得將完整測試套件記為通過。
+- **V04：** 保留已記錄的環境例外：完整桌面 smoke 停在既有的 `tests/desktop/monitor-smoke.mjs:332` 逾時（`visibilityState === "hidden"`），亦已在 2C 前的基底 `247db48` 重現。須另行記錄因此略過的檢查，或在合適的桌面環境完成全程執行；不得將完整測試套件記為通過。
 
 退出條件：編譯器和設備 API 足夠穩定，可讓 CLI 與桌面程式獨立發布。
 

@@ -38,13 +38,13 @@ Exit: every criterion in the [product specification](../en/product.md) and [devi
 
 ### Plugin stage 2 acceptance
 
-Implementation is delivered; stage-2 acceptance is not yet complete. The [master specification](../superpowers/specs/2026-10-14-plugin-system-design.md#第二階段待驗收項目) tracks the remaining gates:
+Implementation is delivered; stage-2 acceptance is not yet complete. The [master specification](../superpowers/specs/2026-10-14-plugin-system-design.md) records acceptance results and remaining gates. V01–V03 manual acceptance remains pending; V04 remains a recorded environmental exception:
 
-- **S09:** the isolated hostile-regex stress test is being added in parallel to the static-language acceptance runner (`tests/desktop/static-languages-run.mjs`, `pnpm test:static-languages:smoke`). It must exercise actual Monaco tokenization with a parent-enforced termination deadline and recovery checks. Results must be recorded separately; this entry claims no outcome or universal ReDoS protection.
+- **S09:** isolated hostile-tokenization acceptance passed outside the sandbox on 2026-10-17 on macOS arm64 (Darwin 24.6.0), using `tests/desktop/static-languages-stress.mjs` and the `hostile-tokenization` / `recover-hostile` phases in `tests/desktop/static-languages-run.mjs` (`pnpm test:static-languages:smoke`). The [stress log, lines 112–114](../../.superpowers/sdd/stage-2-closeout/stress-smoke.log#L112-L114), records parent-enforced termination about 5 s after the renderer entered the regex (`code: null`, `signal: SIGKILL`), recovery with reason `unclean-exit`, the hostile plugin individually disabled and still unregistered after Restore, working builtin Basic Plus tokenization, and 6.1 s of added wall time. The `unresponsive` event was not observed within the 5 s window and is optional by design. This acceptance and the resource limits do not prove arbitrary rules safe or provide complete ReDoS protection. Other platforms remain unverified.
 - **V01:** manual application acceptance in both locales and themes, covering Basic Plus behavior, visible/hidden/split/review editors, static-plugin lifecycle and recovery controls, long-line save/reopen/Undo, conflicts and language-service isolation.
 - **V02:** manual acceptance of an actual blocked renderer, next-launch recovery UI and persistent individual disables. Simulating the unresponsive hook does not satisfy this gate.
 - **V03:** manual installed-app acceptance on a fresh machine/container without the repository mounted, including themes, static-plugin lifecycle and recovery.
-- **V04:** retain the existing full desktop smoke exception at `tests/desktop/monitor-smoke.mjs:332` (`visibilityState === "hidden"`), reproduced on pre-2C base `247db48`. Record checks skipped by that failure separately or obtain a complete run in a suitable desktop session; the full suite is not recorded as passing.
+- **V04:** retain the recorded environmental exception: full desktop smoke stops at the pre-existing `tests/desktop/monitor-smoke.mjs:332` timeout (`visibilityState === "hidden"`), also reproduced on pre-2C base `247db48`. Record checks skipped by that failure separately or obtain a complete run in a suitable desktop session; the full suite is not recorded as passing.
 
 Exit: compiler and device APIs are stable enough for independent CLI and desktop release cycles.
 
