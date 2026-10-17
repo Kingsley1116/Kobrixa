@@ -800,7 +800,7 @@ T0 固定量測環境欄位：OS／architecture、CPU／RAM、filesystem、app a
 
 | ID     | 必要人工操作                                                                                                                                                                                                           |
 | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| B2-M01 | en／zh-TW、light／dark、320 px 側欄／125% scale，鍵盤遍歷 settings controls、help／error accessible names、套用／重設／衝突 draft 保留；無 feature process 也可理解 core 保存錯誤。                                    |
+| B2-M01 | en／zh-TW、light／dark、320 px 側欄／125% scale，鍵盤遍歷 settings controls、help／error accessible names、逐欄立即保存／重設／衝突 draft 保留；無 feature process 也可理解 core 保存錯誤。                            |
 | B2-M02 | 真實磁碟滿／不可寫目錄，settings 不假成功；record 舊版可讀，retryable payload 倒數消失後正確轉 checkpoint-only；明確 retry／discard 及正常 close blocker。                                                             |
 | B2-M03 | 已安裝 app 中 export save dialog：取消、替換既有檔、無權限、目的地變更、window destroyed；CSV 由 feature 產生，destination 不外洩。clipboard 實際貼上精確純文字。                                                      |
 | B2-M04 | 真實 plugin／renderer kill、強制退出與 cold safe mode；最後 committed checkpoint 可查、沒有重新錄製／連線；三 optional features 全關仍有 core recovery/export。                                                        |
