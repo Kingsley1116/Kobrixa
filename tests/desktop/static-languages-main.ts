@@ -211,7 +211,14 @@ void app.whenReady().then(async () => {
     assert.equal((await marker()).thirdPartyRunning, false);
     if (phase === "hang") plugins.markRendererUnresponsive();
     // Persist a per-source disable before dying: restoring the lock must not undo it.
-    await api.setEnabled(toy()!.sourceKey, false);
+    const sourceKey = toy()!.sourceKey;
+    const disabled = await api.setEnabled(sourceKey, false);
+    assert.equal(disabled.ok, true);
+    if (disabled.ok) assert.notEqual(disabled.persisted, false);
+    const saved = JSON.parse(
+      await readFile(path.join(app.getPath("userData"), "plugins/state.json"), "utf8"),
+    ) as { disabled: string[] };
+    assert.ok(saved.disabled.includes(sourceKey));
     await writeFile(path.join(directory, `${phase}-ready.json`), JSON.stringify({ launches }));
     process.kill(process.pid, "SIGKILL");
     return;

@@ -101,7 +101,7 @@ export interface PluginControllerDependencies {
   locale: PluginLocale;
   platform: NodeJS.Platform;
   session: {
-    /** Real paths from --plugin-dev-dir. */
+    /** Real paths from --plugin-dev-dir; unresolved until restoration in safe mode. */
     directories: readonly string[];
     /** --plugin-python, which overrides the saved choice for this session only. */
     python?: PythonCommand;
@@ -492,6 +492,10 @@ export class PluginController {
   async clearSafeModeLock(): Promise<PluginsResult> {
     const refused = this.#refuse({});
     if (refused) return refused;
+    if (!this.deps.session.safeMode && this.deps.manager.state().safeMode) {
+      const unresolved = await this.#resolveSessionDirectories();
+      if (unresolved) return unresolved;
+    }
     if (this.deps.settings.settings().safeModeLock) {
       try {
         await this.deps.settings.update((current) => {
@@ -509,6 +513,43 @@ export class PluginController {
     }
     this.#changed();
     return this.#ok();
+  }
+
+  /** Resolve CLI aliases only on explicit restoration, before any third-party registration. */
+  async #resolveSessionDirectories(): Promise<Failure | undefined> {
+    const manager = this.deps.manager;
+    for (const previous of this.deps.session.directories) {
+      const directory = await this.deps.realpath(previous).catch(() => previous);
+      const refused = this.#refuse({});
+      if (refused) return refused;
+      const oldKey = developmentSourceKey(previous);
+      const sourceKey = developmentSourceKey(directory);
+      if (sourceKey === oldKey) continue;
+      const old = manager.state().plugins.find((plugin) => plugin.sourceKey === oldKey);
+      if (old) {
+        // The manager is still in safe mode: both descriptors remain inert while their
+        // identities and disables are reconciled. Saved canonical disables apply on add.
+        const added = await manager.addSource({ kind: "development", directory });
+        if (!added.ok && added.code !== "PLUGIN_E_SOURCE_EXISTS") return added;
+        if (old.disabledBy === "user") {
+          // A user may also have disabled the unresolved placeholder during recovery.
+          const disabled = await manager.setEnabled(sourceKey, false);
+          if (!disabled.ok) return disabled;
+          if (
+            disabled.persisted === false ||
+            !this.deps.settings.settings().disabled.includes(sourceKey)
+          )
+            return failure("PLUGIN_E_STATE_SAVE", "Could not save the resolved source's disable.");
+        }
+        const removed = await manager.removeSource(oldKey);
+        if (!removed.ok) return removed;
+        this.#clear(oldKey);
+      }
+      this.deps.session.directories = uniqueDirectories(
+        this.deps.session.directories.map((item) => (item === previous ? directory : item)),
+      );
+    }
+    return undefined;
   }
 
   shutdown(deadlineMs?: number): Promise<void> {

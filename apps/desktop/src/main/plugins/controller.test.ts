@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -547,6 +548,116 @@ describe("startPlugins", () => {
     });
     expect((await saved()).safeModeLock.reason).toBe("renderer-unresponsive");
   });
+
+  it.each(
+    [
+      { reason: "unclean-exit", disable: "before-crash" },
+      { reason: "renderer-unresponsive", disable: "before-crash" },
+      { reason: "unclean-exit", disable: "in-safe-mode" },
+      { reason: "renderer-unresponsive", disable: "in-safe-mode" },
+    ].flatMap((scenario) => [
+      { ...scenario, spelling: "alias-only" },
+      { ...scenario, spelling: "alias-and-canonical" },
+    ]),
+  )(
+    "preserves an aliased session source disable across $reason ($disable, $spelling)",
+    async ({ reason, disable, spelling }) => {
+      const folder = path.join(root, "toy");
+      await cp(
+        new URL(
+          "../../../../../packages/plugin-protocol/test-fixtures/static-languages/toy/",
+          import.meta.url,
+        ),
+        folder,
+        { recursive: true },
+      );
+      const alias = path.join(root, "toy-alias");
+      await symlink(folder, alias, "dir");
+      const key = developmentSourceKey(folder);
+      const aliasKey = developmentSourceKey(alias);
+      expect(aliasKey).not.toBe(key);
+      // Also exercise deduplication when both spellings were supplied on the command line.
+      const commandLine = {
+        developmentDirectories: spelling === "alias-only" ? [alias] : [alias, folder, alias],
+        safeMode: false,
+      };
+      const launcher = vi.fn(async () => {
+        throw new Error("Static contributions must not launch a process.");
+      });
+      const options = { commandLine, builtins: BUILTIN_PLUGIN_SOURCES, launcher: () => launcher };
+      const first = await start(fakeDialogs(), options);
+      expect(first.staticLanguages().languages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "toy", sourceKey: key })]),
+      );
+      if (reason === "renderer-unresponsive") first.markRendererUnresponsive();
+      if (disable === "before-crash") {
+        const result = await first.setEnabled(key, false);
+        expect(result.ok).toBe(true);
+        expect(result).not.toHaveProperty("persisted", false);
+        expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+      }
+      expect(
+        JSON.parse(await readFile(path.join(userData, "plugins/session.json"), "utf8")),
+      ).toMatchObject({
+        thirdPartyStaticContributions: true,
+        thirdPartyRunning: false,
+        rendererUnresponsive: reason === "renderer-unresponsive",
+      });
+      // Do not finish the first session: the next controller reads its real persisted crash marker.
+      const resolve = vi.fn((directory: string) => realpath(directory));
+      const recovered = await start(fakeDialogs(), { ...options, realpath: resolve });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(recovered.state()).toMatchObject({ safeMode: true, safeModeLock: { reason } });
+      expect(
+        recovered
+          .staticLanguages()
+          .languages.every((language) => language.sourceKey.startsWith("builtin:")),
+      ).toBe(true);
+      if (disable === "in-safe-mode") {
+        expect(await recovered.setEnabled(aliasKey, false)).toMatchObject({ ok: true });
+        expect((await saved()).disabled).toEqual([aliasKey]);
+      }
+      const events: PluginsViewEvent[] = [];
+      const off = recovered.onEvent((event) => events.push(event));
+      expect(await recovered.clearSafeModeLock()).toMatchObject({ ok: true });
+      off();
+      expect(recovered.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        false,
+      );
+      expect(
+        recovered
+          .staticLanguages()
+          .languages.some((language) => language.sourceKey.startsWith("builtin:")),
+      ).toBe(true);
+      expect(
+        recovered.state().plugins.filter((plugin) => plugin.source === "development"),
+      ).toMatchObject([{ sourceKey: key, status: "disabled", disabledBy: "user" }]);
+      expect(
+        events
+          .filter((event) => event.type === "state")
+          .every((event) =>
+            event.state.staticLanguageOwners.every((owner) =>
+              owner.sourceKey.startsWith("builtin:"),
+            ),
+          ),
+      ).toBe(true);
+      expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+      expect((await saved()).safeModeLock).toBeUndefined();
+      expect(await recovered.setEnabled(key, true)).toMatchObject({ ok: true });
+      expect(recovered.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        true,
+      );
+      expect((await saved()).disabled).toEqual([]);
+      recovered.finishSession();
+      const restarted = await start(fakeDialogs(), options);
+      expect(restarted.state().safeMode).toBe(false);
+      expect(restarted.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        true,
+      );
+      expect(launcher).not.toHaveBeenCalled();
+      restarted.finishSession();
+    },
+  );
 
   it("locks safe mode after an unclean exit with third-party plugins running until restored", async () => {
     const folder = await pluginFolder("hello");
