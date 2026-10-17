@@ -1,6 +1,12 @@
+import type { LexicalLanguageRoute } from "../editor/static-language-routing.js";
+
 export type Locale = "en" | "zh-TW";
 export const copy = {
   en: {
+    plainText: "Plain Text",
+    staticLanguageFailed:
+      "Language highlighting could not be loaded. You can keep editing in plain text.",
+
     languageMissing: (language: string) =>
       `No language service is available for this project's language '${language}'.`,
     languageConflict: (language: string, plugins: string) =>
@@ -187,6 +193,9 @@ export const copy = {
     managingFiles: "Updating project files…",
   },
   "zh-TW": {
+    plainText: "純文字",
+    staticLanguageFailed: "無法載入語法上色，仍可繼續以純文字編輯。",
+
     languageMissing: (language: string) => `此專案的語言 ${language} 沒有可用的語言服務。`,
     languageConflict: (language: string, plugins: string) =>
       `語言 ${language} 的語言服務設定衝突：${plugins}。`,
@@ -372,3 +381,9 @@ export const copy = {
 } as const;
 
 export type Copy = (typeof copy)[Locale];
+
+export function languageDisplayName(route: LexicalLanguageRoute, locale: Locale): string {
+  if (route.kind === "plaintext") return copy[locale].plainText;
+  if (route.kind === "core" && route.monacoLanguage === "json") return "JSON";
+  return route.displayName;
+}

@@ -13,6 +13,8 @@ import { PluginRecoveryNotice } from "./plugin-recovery.js";
 import { LOG_POLL_MS } from "./plugin-log.js";
 import { SettingsPanel } from "./settings-panel.js";
 import { defaultSettings } from "./settings.js";
+import { readFileSync } from "node:fs";
+import { URL as NodeURL } from "node:url";
 
 vi.mock("../keybindings/shortcuts-panel.js", () => ({ ShortcutsPanel: () => null }));
 vi.mock("../updates/updates.js", () => ({ UpdatesPanel: () => null }));
@@ -850,3 +852,115 @@ describe("PluginRecoveryNotice", () => {
     expect(button("恢復插件").disabled).toBe(false);
   });
 });
+
+const toyManifest = JSON.parse(
+  readFileSync(
+    new NodeURL(
+      "../../../../../packages/plugin-protocol/test-fixtures/static-languages/toy/kobrixa-plugin.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as { id: string; runtime: { kind: "static" } };
+
+it.each(["en", "zh-TW"] as const)(
+  "shows enabled static contributions without a process in %s",
+  async (locale) => {
+    api.state.mockResolvedValueOnce({
+      ...snapshot,
+      plugins: [
+        snapshot.plugins[0]!,
+        {
+          ...snapshot.plugins[1]!,
+          id: toyManifest.id,
+          runtime: toyManifest.runtime.kind,
+          status: "enabled",
+          running: false,
+          commands: [],
+          problems: [],
+        },
+      ],
+    });
+    await render(locale);
+    expect(container.textContent).toContain(locale === "en" ? "Static contributions" : "靜態貢獻");
+    expect(container.textContent).toContain(locale === "en" ? "Enabled" : "已啟用");
+    expect(container.textContent).not.toContain(locale === "en" ? "Running" : "執行中");
+    const label = locale === "en" ? "Disable" : "停用";
+    const toggles = [...container.querySelectorAll("button")].filter(
+      (item) => item.textContent === label,
+    );
+    expect(toggles).toHaveLength(1);
+    await act(async () => toggles[0]!.click());
+    expect(api.setEnabled).toHaveBeenCalledWith(snapshot.plugins[1]!.sourceKey, false);
+    expect(api.execute).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(
+      locale === "en" ? "static regular expressions" : "靜態正規表示式",
+    );
+  },
+);
+it.each(["en", "zh-TW"] as const)(
+  "shows complete static resource, conflict and registration problems in %s",
+  async (locale) => {
+    api.state.mockResolvedValueOnce({
+      ...snapshot,
+      plugins: [
+        {
+          ...snapshot.plugins[1]!,
+          runtime: "static",
+          commands: [],
+          problems: [
+            {
+              code: "PLUGIN_E_STATIC_LANGUAGE",
+              message: "acme.toy resource rejected",
+              detail: {
+                languageId: "toy",
+                resourcePath: "language/tokenizer.json",
+                fieldPath: "states[0].rules[0].regex.pattern",
+                limit: "STATIC_LANGUAGE_LIMITS_V1.patternLength",
+                allowed: 2048,
+                actual: 2049,
+              },
+            },
+            {
+              code: "PLUGIN_E_STATIC_LANGUAGE_CONFLICT",
+              message: "acme.toy extension conflict",
+              detail: {
+                languageId: "toy",
+                conflictingSources: [
+                  { pluginId: "acme.toy", sourceKey: "dev:toy", languageId: "toy" },
+                  { pluginId: "acme.other", sourceKey: "dev:other", languageId: "other" },
+                ],
+              },
+            },
+            {
+              code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+              message: "acme.toy registration rejected",
+              detail: {
+                languageId: "toy",
+                limit: "STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds",
+                allowed: 256,
+                actual: 257,
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await render(locale);
+    for (const text of [
+      "language/tokenizer.json",
+      "states[0].rules[0].regex.pattern",
+      "2048",
+      "2049",
+      "acme.other",
+      "dev:other",
+      "256",
+      "257",
+    ])
+      expect(container.textContent).toContain(text);
+    expect(container.textContent).toContain(
+      locale === "en" ? "Restart Kobrixa" : "重新啟動 Kobrixa",
+    );
+    expect(container.textContent).not.toContain("[object Object]");
+  },
+);

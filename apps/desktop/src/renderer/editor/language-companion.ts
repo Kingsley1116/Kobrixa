@@ -8,7 +8,6 @@ export interface LanguageCompanion {
     position: Position,
     token: CancellationToken,
   ): Extract<LanguageFeatureResult, { kind: "signatureHelp" }>["value"] | undefined;
-  monacoLanguage: string;
   legend: SemanticLegend;
   triggerCharacters: string[];
   signatureTriggers: string[];

@@ -6,13 +6,28 @@ import * as monaco from "monaco-editor";
 import { LANGUAGE_CAPABILITIES } from "@kobrixa/plugin-protocol";
 import type { LanguageStatus } from "../../shared/language-services.js";
 import type { Diagnostic, WorkspaceSummary } from "../../shared/api.js";
+import { Editor, type EditorHandle } from "./editor.js";
+import { Documents } from "./documents.js";
+import { AnalysisSession } from "./analysis-session.js";
+import { basicPlusCompanion } from "./companions/basic-plus/companion.js";
+import type { LexicalLanguageRoute } from "./static-language-routing.js";
+import type {
+  StaticLanguageRegistrar,
+  StaticModelContext,
+  StaticModelRouteHooks,
+} from "./static-language-registration.js";
 
 const mocks = vi.hoisted(() => {
   let contentListener: () => void = () => undefined;
   const model = {
+    uri: {
+      scheme: "kobrixa",
+      path: "/model-1/main.bp",
+      toString: () => "kobrixa:/model-1/main.bp",
+    },
     getValue: vi.fn(() => "LCD.Clear()"),
     setValue: vi.fn(() => contentListener()),
-    getLanguageId: vi.fn(() => "basic-plus"),
+    getLanguageId: vi.fn(() => "bp"),
     isDisposed: vi.fn(() => false),
     getVersionId: vi.fn(() => 1),
     getAlternativeVersionId: vi.fn(() => 1),
@@ -106,11 +121,6 @@ vi.mock("monaco-editor", () => ({
 vi.mock("monaco-editor/editor/editor.worker?worker", () => ({ default: class {} }));
 vi.mock("monaco-editor/languages/features/json/json.worker?worker", () => ({ default: class {} }));
 
-import { Editor, type EditorHandle } from "./editor.js";
-import { Documents } from "./documents.js";
-import { AnalysisSession } from "./analysis-session.js";
-import { basicPlusCompanion } from "./companions/basic-plus/companion.js";
-
 let root: Root;
 let container: HTMLDivElement;
 const diagnostics: Diagnostic[] = [
@@ -149,6 +159,7 @@ const available = (epoch = 1): LanguageStatus => ({
   },
 });
 const props = {
+  workspaceId: "workspace-a",
   status: available(),
   query: vi.fn(async () => ({ kind: "stale" as const, epoch: 1 })),
   helpCatalog: undefined,
@@ -178,8 +189,12 @@ const props = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lexicalMock.tracks.clear();
+  lexicalMock.enabled = true;
+  lexicalMock.revision = 1;
+  lexicalMock.settled = true;
   mocks.registrations.length = 0;
-  mocks.model.getLanguageId.mockReturnValue("basic-plus");
+  mocks.model.getLanguageId.mockReturnValue("bp");
   props.documents = new Documents();
   props.documents.replace([{ file: "main.bp", content: "LCD.Clear()", saved: "LCD.Clear()" }]);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -237,9 +252,11 @@ it("applies diagnostics when a file is opened and still accepts external content
       }),
     ),
   );
-  // This fixture reuses one model for two paths; replacing its route clears its old markers first.
-  expect(mocks.setModelMarkers).toHaveBeenNthCalledWith(1, mocks.model, "kobrixa", []);
-  expect(mocks.setModelMarkers).toHaveBeenCalledTimes(3);
+  // This fixture reuses one model for two paths; the diagnostics effect owns both marker writes.
+  expect(mocks.setModelMarkers).toHaveBeenNthCalledWith(1, mocks.model, "kobrixa", [
+    expect.objectContaining({ code: diagnostics[0]!.code }),
+  ]);
+  expect(mocks.setModelMarkers).toHaveBeenCalledTimes(2);
   expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", []);
   props.onChange.mockClear();
   await act(async () => {
@@ -588,4 +605,134 @@ it("shows project-error live markers on kobrixa.json without a binding and clear
   } finally {
     detach();
   }
+});
+
+const lexicalMock = vi.hoisted(() => ({
+  revision: 1,
+  enabled: true,
+  settled: true,
+  listeners: new Set<() => void>(),
+  tracks: new Map<object, { context: () => StaticModelContext; hooks?: StaticModelRouteHooks }>(),
+}));
+function mockedRoute(context: StaticModelContext): LexicalLanguageRoute {
+  if (context.file.endsWith(".json"))
+    return {
+      kind: "core",
+      monacoLanguage: "json",
+      displayName: "JSON",
+      catalogRevision: lexicalMock.revision,
+    };
+  if (lexicalMock.enabled && /\.(bp|bpi|bpm)$/i.test(context.file))
+    return {
+      kind: "static",
+      monacoLanguage: "bp",
+      displayName: "Basic Plus",
+      catalogRevision: lexicalMock.revision,
+      staticOwner: {
+        pluginId: "kobrixa.basic-plus",
+        sourceKey: "builtin:kobrixa.basic-plus",
+        generation: lexicalMock.revision,
+        languageId: "bp",
+      },
+    };
+  return {
+    kind: "plaintext",
+    monacoLanguage: "plaintext",
+    displayName: "Plain Text",
+    catalogRevision: lexicalMock.revision,
+  };
+}
+const testRegistrar = {
+  resolve: mockedRoute,
+  trackModel: (
+    model: monaco.editor.ITextModel,
+    context: () => StaticModelContext,
+    hooks?: StaticModelRouteHooks,
+  ) => {
+    lexicalMock.tracks.set(model, { context, ...(hooks ? { hooks } : {}) });
+    return {
+      dispose: () => {
+        lexicalMock.tracks.delete(model);
+      },
+    };
+  },
+  refreshModels: () => {
+    for (const [object, { context, hooks }] of lexicalMock.tracks) {
+      const model = object as monaco.editor.ITextModel;
+      const next = mockedRoute(context());
+      if (model.getLanguageId() === next.monacoLanguage) continue;
+      hooks?.beforeChange(undefined, next);
+      monaco.editor.setModelLanguage(model, next.monacoLanguage);
+      hooks?.afterChange(next);
+    }
+  },
+} as unknown as StaticLanguageRegistrar;
+vi.mock("./static-language-bootstrap.js", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useStaticLanguages: () => {
+      const settled = useSyncExternalStore(
+        (listener) => {
+          lexicalMock.listeners.add(listener);
+          return () => {
+            lexicalMock.listeners.delete(listener);
+          };
+        },
+        () => lexicalMock.settled,
+      );
+      return { runtime: { registrar: testRegistrar }, snapshot: { settled } };
+    },
+  };
+});
+
+it("creates no model before bootstrap and clamps every standalone options write", async () => {
+  lexicalMock.settled = false;
+  await act(() => root.render(createElement(Editor, props)));
+  expect(monaco.editor.createModel).not.toHaveBeenCalled();
+  expect(mocks.create).not.toHaveBeenCalled();
+  await act(() => {
+    lexicalMock.settled = true;
+    for (const listener of lexicalMock.listeners) listener();
+  });
+  expect(monaco.editor.createModel).toHaveBeenCalledOnce();
+  expect(mocks.create).toHaveBeenCalledWith(
+    expect.any(HTMLElement),
+    expect.objectContaining({ maxTokenizationLineLength: 10000 }),
+  );
+  await act(() =>
+    root.render(createElement(Editor, { ...props, fontSize: 20, ariaLabel: "Updated" })),
+  );
+  for (const [options] of mocks.instance.updateOptions.mock.calls)
+    expect(options).toMatchObject({ maxTokenizationLineLength: 10000 });
+});
+
+it("revokes lexical coloring without resetting analysis or the document and recovers without typing", async () => {
+  const configure = vi.spyOn(props.analysisSession, "configure");
+  await act(() => root.render(createElement(Editor, props)));
+  const old = [...mocks.registrations];
+  const writes = mocks.model.setValue.mock.calls.length;
+  await act(() => {
+    lexicalMock.enabled = false;
+    lexicalMock.revision++;
+    testRegistrar.refreshModels();
+  });
+  expect(mocks.model.getLanguageId()).toBe("plaintext");
+  for (const handle of old) expect(handle.dispose).toHaveBeenCalledOnce();
+  expect(monaco.languages.registerDocumentSemanticTokensProvider).toHaveBeenCalledTimes(1);
+  expect(monaco.languages.registerHoverProvider).toHaveBeenLastCalledWith(
+    { language: "plaintext", scheme: "kobrixa", pattern: "/model-1/**" },
+    expect.any(Object),
+  );
+  expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
+  expect(mocks.model.dispose).not.toHaveBeenCalled();
+  expect(configure).not.toHaveBeenCalled();
+  await act(() => {
+    lexicalMock.enabled = true;
+    lexicalMock.revision++;
+    testRegistrar.refreshModels();
+  });
+  expect(mocks.model.getLanguageId()).toBe("bp");
+  expect(monaco.languages.registerDocumentSemanticTokensProvider).toHaveBeenCalledTimes(2);
+  expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
+  configure.mockRestore();
 });
