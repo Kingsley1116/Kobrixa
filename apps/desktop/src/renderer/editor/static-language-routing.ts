@@ -1,4 +1,4 @@
-import type { LanguageBinding } from "../../shared/language-services.js";
+import { supportsFile, type LanguageBinding } from "../../shared/language-services.js";
 import type { StaticLanguageOwner, StaticLanguagesCatalog } from "../../shared/static-languages.js";
 
 export type StaticRouteOwner = Pick<
@@ -22,12 +22,59 @@ export interface ResolveLexicalLanguageInput {
   coreExtensionRoutes: Readonly<Record<string, string>>;
 }
 
-/** T0 deliberately exposes no plugin routes. T4 supplies the ordered resolver. */
 export function resolveLexicalLanguage(input: ResolveLexicalLanguageInput): LexicalLanguageRoute {
-  return {
+  const { catalog, binding, activeOwners, coreExtensionRoutes } = input;
+  const name = input.file.replaceAll("\\", "/").split("/").at(-1) ?? "";
+  const dot = name.lastIndexOf(".");
+  const extension = dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+  const plain = (): LexicalLanguageRoute => ({
     monacoLanguage: "plaintext",
     displayName: "Plain Text",
     kind: "plaintext",
-    catalogRevision: input.catalog.revision,
+    catalogRevision: catalog.revision,
+  });
+  if (Object.hasOwn(coreExtensionRoutes, extension)) {
+    const id = coreExtensionRoutes[extension];
+    if (id)
+      return {
+        monacoLanguage: id,
+        displayName: id === "json" ? "JSON" : id,
+        kind: "core",
+        catalogRevision: catalog.revision,
+      };
+  }
+  const applicable = binding && supportsFile(binding, input.file);
+  const globalId = Object.hasOwn(catalog.extensionRoutes, extension)
+    ? catalog.extensionRoutes[extension]
+    : undefined;
+  const language = catalog.languages.find(
+    (candidate) =>
+      candidate.extensions.includes(extension) &&
+      (applicable
+        ? candidate.id === binding.language &&
+          candidate.pluginId === binding.pluginId &&
+          candidate.sourceKey === binding.sourceKey
+        : candidate.id === globalId) &&
+      activeOwners.some(
+        (owner) =>
+          owner.languageId === candidate.id &&
+          owner.pluginId === candidate.pluginId &&
+          owner.sourceKey === candidate.sourceKey &&
+          owner.generation === candidate.generation &&
+          owner.extensions.includes(extension),
+      ),
+  );
+  if (!language) return plain();
+  return {
+    monacoLanguage: language.id,
+    displayName: language.aliases[0] ?? language.id,
+    kind: "static",
+    catalogRevision: catalog.revision,
+    staticOwner: {
+      pluginId: language.pluginId,
+      sourceKey: language.sourceKey,
+      generation: language.generation,
+      languageId: language.id,
+    },
   };
 }
