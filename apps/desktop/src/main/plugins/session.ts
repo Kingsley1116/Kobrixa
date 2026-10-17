@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { PluginError } from "@kobrixa/plugin-runtime";
 import type { SafeModeLock } from "./state-store.js";
 
 const markerSchema = z.strictObject({
@@ -21,6 +22,7 @@ export class SessionMarkerFile {
   readonly file: string;
   #marker: SessionMarker | undefined;
   #finished = false;
+  #previousThirdPartyStaticContributions = false;
 
   constructor(
     userData: string,
@@ -29,9 +31,14 @@ export class SessionMarkerFile {
     this.file = path.join(userData, "plugins", "session.json");
   }
 
-  /** Reads what the previous session left behind, then starts this session's marker. */
+  get previousThirdPartyStaticContributions(): boolean {
+    return this.#previousThirdPartyStaticContributions;
+  }
+
   begin(): SafeModeLock["reason"] | undefined {
     const previous = this.#read();
+    this.#previousThirdPartyStaticContributions = previous?.thirdPartyStaticContributions ?? false;
+    this.#finished = false;
     this.#marker = {
       startedAt: this.now().toISOString(),
       thirdPartyRunning: false,
@@ -45,12 +52,27 @@ export class SessionMarkerFile {
     return undefined;
   }
 
-  /** T3 must persist true synchronously or throw before catalog delivery. */
   markThirdPartyStaticContributions(): void {
-    throw new Error("not implemented");
+    const marker = this.#marker;
+    if (!marker || this.#finished)
+      throw new PluginError(
+        "PLUGIN_E_STATE_SAVE",
+        "PLUGIN_E_STATE_SAVE: No live plugin recovery session.",
+      );
+    if (marker.thirdPartyStaticContributions) return;
+    const next = { ...marker, thirdPartyStaticContributions: true };
+    try {
+      this.#persist(next);
+    } catch {
+      throw new PluginError(
+        "PLUGIN_E_STATE_SAVE",
+        "PLUGIN_E_STATE_SAVE: Could not save the static-language recovery marker.",
+      );
+    }
+    // Only a completed synchronous write can acknowledge risk as recorded.
+    this.#marker = next;
   }
 
-  /** `rendererUnresponsive` is sticky for the rest of the session. */
   update(patch: { thirdPartyRunning?: boolean; rendererUnresponsive?: true }): void {
     const marker = this.#marker;
     if (!marker || this.#finished) return;
@@ -68,7 +90,6 @@ export class SessionMarkerFile {
     this.#write();
   }
 
-  /** A clean exit. The marker stays when the renderer hung, so the next start still recovers. */
   finish(): void {
     const marker = this.#marker;
     if (!marker || this.#finished) return;
@@ -85,7 +106,7 @@ export class SessionMarkerFile {
     try {
       rmSync(this.file, { force: true });
     } catch {
-      // The marker left behind no longer claims a running plugin, so it triggers nothing.
+      // A failed removal leaves the clean marker when its preceding write succeeded.
     }
   }
 
@@ -98,18 +119,28 @@ export class SessionMarkerFile {
   }
 
   #write(): void {
+    if (!this.#marker) return;
+    try {
+      this.#persist(this.#marker);
+    } catch {
+      // Existing process/health updates remain best effort. Static delivery uses the
+      // checked entry point above and cannot be authorized by this swallowing wrapper.
+    }
+  }
+
+  #persist(marker: SessionMarker): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
-      writeFileSync(temporary, JSON.stringify(this.#marker), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify(marker), { mode: 0o600 });
       renameSync(temporary, this.file);
-    } catch {
-      // Recovery is best effort: without a marker the next start simply cannot detect a crash.
+    } catch (error) {
       try {
         rmSync(temporary, { force: true });
       } catch {
-        /* Nothing left to clean up. */
+        // Preserve the original write failure.
       }
+      throw error;
     }
   }
 }
