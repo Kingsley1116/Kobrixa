@@ -124,6 +124,71 @@ const create = async (
 ) => PluginManager.create({ sources, store, safeMode, launcher, locale: "en", now: () => 1000 });
 
 describe("PluginManager", () => {
+  it.each([true, false])(
+    "migrates a disabled identity atomically with its alias present: %s",
+    async (present) => {
+      const alias = { kind: "development" as const, directory: path.join(root, "alias") };
+      const canonical = { kind: "development" as const, directory: path.join(root, "canonical") };
+      const unrelated = "dev:1111111111111111";
+      const store = memoryStore([keyOf(alias), unrelated], ["acme.legacy"]);
+      const manager = await create(present ? [alias] : [], store, true);
+      const save = vi.spyOn(store, "save").mockRejectedValueOnce(new Error("Disk unavailable."));
+      expect(await manager.migrateSourceDisable(keyOf(alias), keyOf(canonical))).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_STATE_SAVE",
+      });
+      expect([...(await store.load()).disabled]).toEqual([keyOf(alias), unrelated]);
+      if (present)
+        expect(manager.state().plugins[0]).toMatchObject({
+          sourceKey: keyOf(alias),
+          disabledBy: "user",
+        });
+      expect(await manager.migrateSourceDisable(keyOf(alias), keyOf(canonical))).toMatchObject({
+        ok: true,
+      });
+      expect(save).toHaveBeenCalledTimes(2);
+      expect([...(await store.load()).disabled].sort()).toEqual(
+        [keyOf(canonical), unrelated].sort(),
+      );
+      expect([...(await store.load()).legacyDisabledIds]).toEqual(["acme.legacy"]);
+      // Later ordinary saves must use the migrated set, not revive the alias.
+      if (present) await manager.removeSource(keyOf(alias), { forget: false });
+      await manager.addSource(canonical);
+      expect(manager.state().plugins).toMatchObject([
+        { sourceKey: keyOf(canonical), disabledBy: "user" },
+      ]);
+      await manager.removeSource(keyOf(canonical));
+      expect([...(await store.load()).disabled]).toEqual([unrelated]);
+    },
+  );
+
+  it("migrates a disable held only in memory after a failed user-disable save", async () => {
+    const source = await devPlugin("hello");
+    const target = developmentSourceKey(path.join(root, "canonical"));
+    const store = memoryStore();
+    const manager = await create([source], store, true);
+    vi.spyOn(store, "save").mockRejectedValueOnce(new Error("Disk unavailable."));
+    expect(await manager.setEnabled(keyOf(source), false)).toMatchObject({
+      ok: true,
+      persisted: false,
+    });
+    expect(await manager.migrateSourceDisable(keyOf(source), target)).toMatchObject({ ok: true });
+    expect([...(await store.load()).disabled]).toEqual([target]);
+  });
+
+  it("refuses disable migration outside safe mode", async () => {
+    const source = await devPlugin("hello");
+    const store = memoryStore([keyOf(source)]);
+    const manager = await create([source], store);
+    expect(
+      await manager.migrateSourceDisable(
+        keyOf(source),
+        developmentSourceKey(path.join(root, "canonical")),
+      ),
+    ).toMatchObject({ ok: false, code: "PLUGIN_E_SAFE_MODE" });
+    expect(store.saved).toEqual([]);
+  });
+
   it("keeps a built-in language-service plugin required", async () => {
     const manifest = {
       ...builtin.manifest,

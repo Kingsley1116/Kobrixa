@@ -697,6 +697,342 @@ describe("startPlugins", () => {
   });
 });
 
+describe("session source recovery regressions", () => {
+  function barrier() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  async function fixture(safeMode = false) {
+    const folder = path.join(root, "toy");
+    await cp(
+      new URL(
+        "../../../../../packages/plugin-protocol/test-fixtures/static-languages/toy/",
+        import.meta.url,
+      ),
+      folder,
+      { recursive: true },
+    );
+    const alias = path.join(root, "toy-alias");
+    await symlink(folder, alias, "dir");
+    const key = developmentSourceKey(folder);
+    const aliasKey = developmentSourceKey(alias);
+    await mkdir(path.join(userData, "plugins"), { recursive: true });
+    await writeFile(
+      path.join(userData, "plugins/state.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        developerMode: false,
+        sources: [],
+        disabled: [],
+        legacyDisabledIds: [],
+        ...(!safeMode
+          ? { safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" } }
+          : {}),
+      }),
+    );
+    const resolve = vi.fn((directory: string) => realpath(directory));
+    const launcher = vi.fn(async () => {
+      throw new Error("Static contributions must not launch a process.");
+    });
+    const options = {
+      commandLine: { developmentDirectories: [alias], safeMode },
+      builtins: BUILTIN_PLUGIN_SOURCES,
+      realpath: resolve,
+      launcher: () => launcher,
+    };
+    const controller = await start(fakeDialogs(), options);
+    expect(resolve).not.toHaveBeenCalled();
+    return { controller, folder, alias, key, aliasKey, options, resolve, launcher };
+  }
+
+  function observe(controller: PluginController) {
+    const states = [controller.state()];
+    controller.onEvent((event) => {
+      if (event.type === "state") states.push(event.state);
+    });
+    return () => {
+      for (const state of states)
+        expect(
+          state.staticLanguageOwners.every((owner) => owner.sourceKey.startsWith("builtin:")),
+        ).toBe(true);
+      expect(controller.staticLanguages().languages.map((language) => language.id)).not.toContain(
+        "toy",
+      );
+    };
+  }
+
+  async function blockStateWrites() {
+    const file = path.join(userData, "plugins/state.json");
+    const backup = `${file}.saved`;
+    await rename(file, backup);
+    await mkdir(file);
+    return async () => {
+      await rm(file, { recursive: true });
+      await rename(backup, file);
+    };
+  }
+
+  it("reports a missing folder, retains its alias and disable, and migrates on retry", async () => {
+    const { controller, folder, alias, aliasKey, key, resolve } = await fixture();
+    expect(await controller.setEnabled(aliasKey, false)).toMatchObject({ ok: true });
+    const assertNoToy = observe(controller);
+    await rename(folder, `${folder}-away`);
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_MANIFEST",
+      message: expect.stringContaining(alias),
+    });
+    expect(controller.state()).toMatchObject({ safeMode: true });
+    expect(await controller.reload(aliasKey)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect(controller.state().plugins).toContainEqual(
+      expect.objectContaining({ sourceKey: aliasKey, disabledBy: "user" }),
+    );
+    expect((await saved()).disabled).toEqual([aliasKey]);
+    await rename(`${folder}-away`, folder);
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(resolve).toHaveBeenCalledWith(alias);
+    expect((await saved()).disabled).toEqual([key]);
+    assertNoToy();
+  });
+
+  it("retries Restore after a failed migration save without losing or reviving a disable", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    const assertNoToy = observe(controller);
+    const repair = await blockStateWrites();
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_STATE_SAVE",
+    });
+    expect(controller.state().safeMode).toBe(true);
+    await repair();
+    expect((await saved()).disabled).toEqual([aliasKey]);
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+    expect((await saved()).safeModeLock).toBeUndefined();
+    assertNoToy();
+  });
+
+  it("leaves no stale alias after an alias-removal write failure and a later successful save", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    const remove = PluginManager.prototype.removeSource;
+    vi.spyOn(PluginManager.prototype, "removeSource").mockImplementationOnce(async function (
+      this: PluginManager,
+      sourceKey,
+      options,
+    ) {
+      const repair = await blockStateWrites();
+      try {
+        return await remove.call(this, sourceKey, options);
+      } finally {
+        await repair();
+      }
+    });
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+  });
+
+  it("Restore under CLI safe mode never resolves or loads a development folder", async () => {
+    const { controller, aliasKey, resolve, launcher } = await fixture(true);
+    await controller.setEnabled(aliasKey, false);
+    const assertNoToy = observe(controller);
+    expect(await controller.clearSafeModeLock()).toMatchObject({
+      ok: true,
+      state: { safeMode: true },
+    });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(launcher).not.toHaveBeenCalled();
+    expect(await controller.reload(aliasKey)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect((await saved()).disabled).toEqual([aliasKey]);
+    assertNoToy();
+  });
+
+  it.each(["cli", "developer-off"] as const)(
+    "migrates a %s session alias disable on the next normal startup",
+    async (condition) => {
+      const { controller, options, aliasKey, key, resolve } = await fixture(condition === "cli");
+      await controller.setEnabled(aliasKey, false);
+      if (condition === "developer-off") await controller.setDeveloperMode(false);
+      if (condition !== "cli")
+        expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+      controller.finishSession();
+      const restarted = await start(fakeDialogs(), {
+        ...options,
+        commandLine: { ...options.commandLine, safeMode: false },
+      });
+      expect(restarted.state().safeMode).toBe(false);
+      expect(restarted.state().plugins).toContainEqual(
+        expect.objectContaining({ sourceKey: key, status: "disabled", disabledBy: "user" }),
+      );
+      expect(restarted.staticLanguages().languages.map((language) => language.id)).not.toContain(
+        "toy",
+      );
+      expect(await saved()).toMatchObject({ sources: [], disabled: [key] });
+      expect(resolve).toHaveBeenCalled();
+      restarted.finishSession();
+    },
+  );
+
+  it("migrates a retained disable while developer mode is off before Restore", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    await controller.setDeveloperMode(false);
+    const assertNoToy = observe(controller);
+    expect(await controller.clearSafeModeLock()).toMatchObject({ ok: true });
+    expect(await saved()).toMatchObject({ developerMode: false, sources: [], disabled: [key] });
+    expect(await controller.setDeveloperMode(true)).toMatchObject({ ok: true });
+    expect(controller.state().plugins).toContainEqual(
+      expect.objectContaining({ sourceKey: key, disabledBy: "user" }),
+    );
+    assertNoToy();
+  });
+
+  it.each(["missing-folder", "save-failure"] as const)(
+    "keeps normal startup in recovery after %s and retries migration",
+    async (condition) => {
+      const { controller, options, folder, aliasKey, key, resolve } = await fixture(true);
+      await controller.setEnabled(aliasKey, false);
+      controller.finishSession();
+      let repair = async () => {};
+      if (condition === "missing-folder") {
+        await rename(folder, `${folder}-away`);
+        repair = async () => {
+          await rename(`${folder}-away`, folder);
+        };
+      } else
+        resolve.mockImplementationOnce(async (directory) => {
+          repair = await blockStateWrites();
+          return realpath(directory);
+        });
+      const restarted = await start(fakeDialogs(), {
+        ...options,
+        commandLine: { ...options.commandLine, safeMode: false },
+      });
+      const assertNoToy = observe(restarted);
+      expect(restarted.state()).toMatchObject({
+        safeMode: true,
+        stateProblem: {
+          code: condition === "missing-folder" ? "PLUGIN_E_MANIFEST" : "PLUGIN_E_STATE_SAVE",
+        },
+      });
+      expect(restarted.state().plugins).toContainEqual(
+        expect.objectContaining({ sourceKey: aliasKey, disabledBy: "user" }),
+      );
+      await repair();
+      expect((await saved()).disabled).toEqual([aliasKey]);
+      expect(await restarted.clearSafeModeLock()).toMatchObject({ ok: true });
+      expect((await saved()).disabled).toEqual([key]);
+      expect(restarted.state().stateProblem).toBeUndefined();
+      assertNoToy();
+    },
+  );
+
+  it.each(["disable", "developer-off", "restore"] as const)(
+    "serializes concurrent %s during descriptor replacement",
+    async (action) => {
+      const { controller, aliasKey, key } = await fixture();
+      if (action === "restore") await controller.setEnabled(aliasKey, false);
+      const assertNoToy = observe(controller);
+      const entered = barrier();
+      const release = barrier();
+      const add = PluginManager.prototype.addSource;
+      vi.spyOn(PluginManager.prototype, "addSource").mockImplementationOnce(async function (
+        this: PluginManager,
+        source,
+      ) {
+        entered.resolve();
+        await release.promise;
+        return add.call(this, source);
+      });
+      const restoring = controller.clearSafeModeLock();
+      await entered.promise;
+      const concurrent =
+        action === "disable"
+          ? controller.setEnabled(aliasKey, false)
+          : action === "developer-off"
+            ? controller.setDeveloperMode(false)
+            : controller.clearSafeModeLock();
+      // Give an unprotected mutation time to run while restoration is paused.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release.resolve();
+      const results = await Promise.all([restoring, concurrent]);
+      for (const result of results) expect(result).toMatchObject({ ok: true });
+      expect(controller.state().safeMode).toBe(false);
+      if (action === "developer-off") {
+        expect(controller.state().developer.enabled).toBe(false);
+        expect(controller.state().plugins.every((plugin) => plugin.source === "builtin")).toBe(
+          true,
+        );
+      } else expect((await saved()).disabled).toEqual([key]);
+      assertNoToy();
+    },
+  );
+
+  it("waits for a disable already in progress before starting restoration", async () => {
+    const { controller, aliasKey, key } = await fixture();
+    const assertNoToy = observe(controller);
+    const entered = barrier();
+    const release = barrier();
+    const setEnabled = PluginManager.prototype.setEnabled;
+    vi.spyOn(PluginManager.prototype, "setEnabled").mockImplementationOnce(async function (
+      this: PluginManager,
+      sourceKey,
+      enabled,
+    ) {
+      entered.resolve();
+      await release.promise;
+      return setEnabled.call(this, sourceKey, enabled);
+    });
+    const disabling = controller.setEnabled(aliasKey, false);
+    await entered.promise;
+    const restoring = controller.clearSafeModeLock();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release.resolve();
+    for (const result of await Promise.all([disabling, restoring]))
+      expect(result).toMatchObject({ ok: true });
+    expect((await saved()).disabled).toEqual([key]);
+    assertNoToy();
+  });
+
+  it("serializes developer mode being enabled during directory resolution", async () => {
+    const { controller, aliasKey, key, resolve, alias } = await fixture();
+    await controller.setEnabled(aliasKey, false);
+    await controller.setDeveloperMode(false);
+    const assertNoToy = observe(controller);
+    const entered = barrier();
+    const release = barrier();
+    resolve.mockImplementationOnce(async (directory) => {
+      entered.resolve();
+      await release.promise;
+      return realpath(directory);
+    });
+    const restoring = controller.clearSafeModeLock();
+    await entered.promise;
+    const enabling = controller.setDeveloperMode(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release.resolve();
+    for (const result of await Promise.all([restoring, enabling]))
+      expect(result).toMatchObject({ ok: true });
+    expect(resolve).toHaveBeenCalledWith(alias);
+    expect(
+      controller.state().plugins.filter((plugin) => plugin.source === "development"),
+    ).toMatchObject([{ sourceKey: key, disabledBy: "user" }]);
+    expect((await saved()).disabled).toEqual([key]);
+    assertNoToy();
+  });
+});
+
 describe("Python selection", () => {
   const probe = vi.fn(async (command: { executable: string }): Promise<PythonProbe> =>
     command.executable === "python"

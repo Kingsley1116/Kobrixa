@@ -450,6 +450,33 @@ export class PluginManager {
     return this.#enqueue(() => this.#setEnabled(sourceKey, enabled));
   }
 
+  /**
+   * Moves a host-resolved alias disable before safe-mode descriptors are replaced. The
+   * choice may outlive its descriptor (developer mode off), or exist only in memory after
+   * a failed disable save. Commit both keys in one save; failure leaves the migration retryable.
+   */
+  migrateSourceDisable(previous: string, canonical: string): Promise<PluginActionResult> {
+    return this.#enqueue(async () => {
+      const closed = this.#closed();
+      if (closed) return closed;
+      if (!this.#safeMode)
+        return failure("PLUGIN_E_SAFE_MODE", "Source identity migration requires safe mode.");
+      if (previous === canonical || !this.#disabled.has(previous))
+        return { ok: true, state: this.state() };
+      const next = new Set(this.#disabled);
+      next.delete(previous);
+      next.add(canonical);
+      try {
+        await this.#save(next);
+      } catch (error) {
+        return failure("PLUGIN_E_STATE_SAVE", messageOf(error));
+      }
+      this.#disabled = next;
+      await this.#apply("disabled");
+      return this.#closed() ?? { ok: true, state: this.state() };
+    });
+  }
+
   async #setEnabled(sourceKey: string, enabled: boolean): Promise<PluginActionResult> {
     const closed = this.#closed();
     if (closed) return closed;
