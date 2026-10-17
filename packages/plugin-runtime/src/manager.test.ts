@@ -624,9 +624,17 @@ describe("PluginManager", () => {
       message: "moved to state.json.corrupt-1",
     });
     expect(manager.state().plugins.map((plugin) => plugin.status)).toEqual(["enabled", "disabled"]);
+    expect(manager.state().safeMode).toBe(true);
+    expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect(await manager.leaveSafeMode()).toMatchObject({ ok: true });
+    // Corruption conservatively disabled every development source; leaving safe mode does not undo that choice.
+    expect(manager.state().plugins[1]?.status).toBe("disabled");
     expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({ ok: true });
     expect(manager.state().stateProblem).toBeUndefined();
-    expect(savedDisabled(store)).toEqual([[]]);
+    expect(savedDisabled(store).at(-1)).toEqual([]);
   });
   it("treats a store that cannot be read like a corrupt one", async () => {
     const hello = await devPlugin("hello");
