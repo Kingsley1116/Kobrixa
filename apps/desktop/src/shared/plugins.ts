@@ -68,6 +68,8 @@ export interface PluginsView extends PluginsSnapshot {
     linkedCount: number;
   };
   safeModeLock?: SafeModeLockView;
+  /** Startup session-source recovery, kept in memory even when settings cannot be saved. */
+  sessionRecovery?: boolean;
   /** Keyed by source key. */
   origins: Record<string, PluginOrigin>;
   python: PythonView;

@@ -898,18 +898,33 @@ describe("session source recovery regressions", () => {
     assertNoToy();
   });
 
-  it.each(["missing-folder", "save-failure"] as const)(
-    "keeps normal startup in recovery after %s and retries migration",
-    async (condition) => {
+  it.each([
+    { condition: "missing-folder", disabled: false },
+    { condition: "missing-folder", disabled: true },
+    { condition: "missing-folder-read-only", disabled: true },
+    { condition: "save-failure", disabled: true },
+  ] as const)(
+    "exposes recovery after $condition (disabled: $disabled) and retries migration",
+    async ({ condition, disabled }) => {
       const { controller, options, folder, aliasKey, key, resolve } = await fixture(true);
-      await controller.setEnabled(aliasKey, false);
+      if (disabled) await controller.setEnabled(aliasKey, false);
       controller.finishSession();
       let repair = async () => {};
-      if (condition === "missing-folder") {
+      if (condition !== "save-failure") {
         await rename(folder, `${folder}-away`);
         repair = async () => {
           await rename(`${folder}-away`, folder);
         };
+        if (condition === "missing-folder-read-only")
+          resolve.mockImplementationOnce(async () => {
+            const repairWrites = await blockStateWrites();
+            const repairFolder = repair;
+            repair = async () => {
+              await repairWrites();
+              await repairFolder();
+            };
+            throw new Error("Folder is unavailable and settings are read-only.");
+          });
       } else
         resolve.mockImplementationOnce(async (directory) => {
           repair = await blockStateWrites();
@@ -919,24 +934,78 @@ describe("session source recovery regressions", () => {
         ...options,
         commandLine: { ...options.commandLine, safeMode: false },
       });
-      const assertNoToy = observe(restarted);
+      const states = [restarted.state()];
+      restarted.onEvent((event) => {
+        if (event.type === "state") states.push(event.state);
+      });
       expect(restarted.state()).toMatchObject({
         safeMode: true,
+        sessionRecovery: true,
         stateProblem: {
-          code: condition === "missing-folder" ? "PLUGIN_E_MANIFEST" : "PLUGIN_E_STATE_SAVE",
+          code: condition === "save-failure" ? "PLUGIN_E_STATE_SAVE" : "PLUGIN_E_MANIFEST",
         },
       });
+      expect(restarted.state().safeModeLock).toBeUndefined();
+      expect(restarted.state().stateProblem?.message).toContain("--plugin-dev-dir");
       expect(restarted.state().plugins).toContainEqual(
-        expect.objectContaining({ sourceKey: aliasKey, disabledBy: "user" }),
+        expect.objectContaining({
+          sourceKey: aliasKey,
+          disabledBy: disabled ? "user" : "safe-mode",
+        }),
       );
+      expect(await restarted.clearSafeModeLock()).toMatchObject({ ok: false });
+      expect(restarted.state()).toMatchObject({ safeMode: true, sessionRecovery: true });
       await repair();
-      expect((await saved()).disabled).toEqual([aliasKey]);
-      expect(await restarted.clearSafeModeLock()).toMatchObject({ ok: true });
-      expect((await saved()).disabled).toEqual([key]);
+      expect((await saved()).disabled).toEqual(disabled ? [aliasKey] : []);
+      expect(await restarted.clearSafeModeLock()).toMatchObject({
+        ok: true,
+        state: { safeMode: false },
+      });
+      expect((await saved()).disabled).toEqual(disabled ? [key] : []);
+      expect(restarted.state().sessionRecovery).toBeUndefined();
       expect(restarted.state().stateProblem).toBeUndefined();
-      assertNoToy();
+      expect(restarted.state().plugins).toContainEqual(
+        expect.objectContaining({ sourceKey: key, status: disabled ? "disabled" : "enabled" }),
+      );
+      for (const state of states) {
+        if (state.safeMode) expect(state.sessionRecovery).toBe(true);
+        if (state.safeMode || disabled)
+          expect(
+            state.staticLanguageOwners.every((owner) => owner.sourceKey.startsWith("builtin:")),
+          ).toBe(true);
+      }
+      expect(restarted.staticLanguages().languages.some((language) => language.id === "toy")).toBe(
+        !disabled,
+      );
     },
   );
+
+  it("keeps the corrupt-state backup notice alongside a failed session-folder restore", async () => {
+    const { controller, options, folder, alias } = await fixture(true);
+    controller.finishSession();
+    await writeFile(path.join(userData, "plugins/state.json"), "{broken");
+    const restarted = await start(fakeDialogs(), {
+      ...options,
+      commandLine: { ...options.commandLine, safeMode: false },
+    });
+    const original = restarted.state().stateProblem!;
+    expect(original.code).toBe("PLUGIN_E_STATE_CORRUPT");
+    expect(original.message).toContain("state.json.corrupt-");
+    const states = [restarted.state()];
+    restarted.onEvent((event) => {
+      if (event.type === "state") states.push(event.state);
+    });
+    await rename(folder, `${folder}-away`);
+    expect(await restarted.clearSafeModeLock()).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_MANIFEST",
+    });
+    for (const state of [restarted.state(), states.at(-1)!]) {
+      expect(state.stateProblem?.code).toBe("PLUGIN_E_STATE_CORRUPT");
+      expect(state.stateProblem?.message).toContain(original.message);
+      expect(state.stateProblem?.message).toContain(`${alias} cannot be resolved`);
+    }
+  });
 
   it.each(["disable", "developer-off", "restore"] as const)(
     "serializes concurrent %s during descriptor replacement",

@@ -132,6 +132,8 @@ Advanced launch options apply to one session only and are never saved:
 
 `<userData>/plugins/state.json` (schema version 2) stores developer mode, the linked folders, the chosen Python interpreter, the source keys of plugins kept disabled after restart, and the safe-mode lock. A file that cannot be read keeps third-party plugins off instead of being overwritten.
 
+If a normal startup cannot resolve a `--plugin-dev-dir` folder or save the migration of its disabled source key, all third-party plugins stay paused. An in-memory recovery flag keeps **Restore plugins** visible in the banner and plugin settings even when settings cannot be written. Restore retries resolution and migration before leaving safe mode, preserving individually disabled sources. Fix the folder or settings storage and retry, or restart without `--plugin-dev-dir` for the affected folder.
+
 `<userData>/plugins/session.json` records whether a third-party plugin process ran, whether `thirdPartyStaticContributions` was delivered, and whether the window stopped responding; it is written synchronously and removed on a normal quit. If it is still present at the next start and any risk flag is set, Kobrixa writes a safe-mode lock: third-party plugins stay paused and the app shows a banner until the user selects **Restore plugins**. A hung window keeps the marker even after a normal quit. Development plugins cannot be enabled, linked or reloaded during safe mode; they can still be disabled or unlinked.
 
 The phase 1 methods are:

@@ -3,7 +3,7 @@ import type { Locale } from "../i18n/copy.js";
 import type { PluginsView } from "../../shared/plugins.js";
 import { pluginCopy, problemText, readableError } from "./plugin-copy.js";
 
-/** Shown at startup after an unclean exit locked safe mode; it does not claim a plugin caused it. */
+/** Offers recovery after an unclean exit or a session-source startup failure. */
 export function PluginRecoveryNotice({
   locale,
   onOpenSettings,
@@ -33,7 +33,7 @@ export function PluginRecoveryNotice({
       off();
     };
   }, []);
-  if (!state?.safeModeLock) return null;
+  if (!state?.safeModeLock && !state?.sessionRecovery) return null;
   const restore = async () => {
     setBusy(true);
     setError(undefined);
@@ -51,7 +51,7 @@ export function PluginRecoveryNotice({
   };
   return (
     <aside className="update-notice plugin-recovery" role="status">
-      <span>{t.safeModeLocked}</span>
+      <span>{state.sessionRecovery ? t.sessionRecovery : t.safeModeLocked}</span>
       {error && <span role="alert">{error}</span>}
       <button disabled={busy} onClick={() => void restore()}>
         {t.restore}

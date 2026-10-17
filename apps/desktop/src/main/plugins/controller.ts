@@ -577,7 +577,7 @@ export class PluginController {
       } catch (error) {
         const problem = failure(
           "PLUGIN_E_MANIFEST",
-          `${previous} cannot be resolved: ${messageOf(error)}. Restore plugins again when the folder is available.`,
+          `${previous} cannot be resolved: ${messageOf(error)}. Restore plugins again when the folder is available, or restart Kobrixa without --plugin-dev-dir for this folder.`,
         );
         this.#sessionProblem = { code: problem.code, message: problem.message };
         this.#changed();
@@ -784,9 +784,17 @@ export class PluginController {
     const settings = this.deps.settings.settings();
     const linked = this.#linked();
     const current = this.#currentPython();
+    let stateProblem = snapshot.stateProblem;
+    if (this.#sessionProblem)
+      stateProblem = stateProblem
+        ? { ...stateProblem, message: `${stateProblem.message}\n${this.#sessionProblem.message}` }
+        : this.#sessionProblem;
     return {
       ...snapshot,
-      ...(this.#sessionProblem ? { stateProblem: this.#sessionProblem } : {}),
+      ...(stateProblem ? { stateProblem } : {}),
+      // Keep Restore reachable through resolution and migration, until safe mode ends.
+      // Unlike a saved lock, this cannot be lost to the settings write that failed startup.
+      ...(snapshot.safeMode && this.deps.session.problem ? { sessionRecovery: true } : {}),
       // Both parts only increase, so the sum does too.
       revision: snapshot.revision + this.#revision,
       developer: {
@@ -902,7 +910,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
       } catch (error) {
         sessionProblem = {
           code: "PLUGIN_E_MANIFEST",
-          message: `${directory} cannot be resolved: ${messageOf(error)}. Restore plugins again when the folder is available.`,
+          message: `${directory} cannot be resolved: ${messageOf(error)}. Restore plugins again when the folder is available, or restart Kobrixa without --plugin-dev-dir for this folder.`,
         };
         break;
       }
@@ -930,7 +938,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
       } catch (error) {
         sessionProblem = {
           code: "PLUGIN_E_STATE_SAVE",
-          message: `Could not save resolved development-source disables: ${messageOf(error)}`,
+          message: `Could not save resolved development-source disables: ${messageOf(error)}. Restore plugins again when settings can be saved, or restart Kobrixa without --plugin-dev-dir for these folders.`,
         };
       }
     }

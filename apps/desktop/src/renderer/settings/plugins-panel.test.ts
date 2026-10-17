@@ -853,6 +853,38 @@ describe("PluginRecoveryNotice", () => {
   });
 });
 
+it.each(
+  (["en", "zh-TW"] as const).flatMap((locale) =>
+    (["panel", "banner"] as const).map((surface) => ({ locale, surface })),
+  ),
+)(
+  "restores session recovery without a lock from the $surface in $locale",
+  async ({ locale, surface }) => {
+    const t = pluginCopy[locale];
+    api.state.mockResolvedValueOnce({ ...snapshot, safeMode: true, sessionRecovery: true });
+    api.clearSafeModeLock
+      .mockResolvedValueOnce({ ok: false, code: "PLUGIN_E_STATE_SAVE", message: "disk full" })
+      .mockResolvedValueOnce({ ok: true, state: { ...snapshot, revision: 2 } });
+    if (surface === "panel") await render(locale);
+    else
+      await act(async () =>
+        root.render(createElement(PluginRecoveryNotice, { locale, onOpenSettings: vi.fn() })),
+      );
+    expect(container.textContent).toContain(t.sessionRecovery);
+    expect(container.textContent).not.toContain(t.safeMode);
+    expect(container.textContent).not.toContain(t.safeModeLocked);
+    expect(button(t.restore).disabled).toBe(false);
+    await act(async () => button(t.restore).click());
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("disk full");
+    expect(container.textContent).toContain(t.sessionRecovery);
+    expect(button(t.restore).disabled).toBe(false);
+    await act(async () => button(t.restore).click());
+    expect(api.clearSafeModeLock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain(t.sessionRecovery);
+    expect(button(t.restore)).toBeUndefined();
+  },
+);
+
 const toyManifest = JSON.parse(
   readFileSync(
     new NodeURL(

@@ -257,8 +257,14 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
       <p className="settings-hint">{t.trust}</p>
       {state.safeMode && (
         <div role="status">
-          <p className="settings-hint">{state.safeModeLock ? t.safeModeLocked : t.safeMode}</p>
-          {state.safeModeLock && (
+          <p className="settings-hint">
+            {state.sessionRecovery
+              ? t.sessionRecovery
+              : state.safeModeLock
+                ? t.safeModeLocked
+                : t.safeMode}
+          </p>
+          {(state.safeModeLock || state.sessionRecovery) && (
             <button
               disabled={busy("lock")}
               onClick={() => void perform("lock", () => window.kobrixa.plugins.clearSafeModeLock())}

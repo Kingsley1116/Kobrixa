@@ -23,6 +23,8 @@ export const pluginCopy = {
       "Safe mode: Kobrixa was started with --safe-mode, so third-party plugins are paused for this session. You can still disable or unlink a problem plugin.",
     safeModeLocked:
       "Kobrixa did not shut down normally last time, so third-party plugins are paused.",
+    sessionRecovery:
+      "Third-party plugins are paused because a development plugin folder could not be resolved or its settings could not be saved. Fix the problem and restore plugins, or restart Kobrixa without --plugin-dev-dir for the affected folder.",
     restore: "Restore plugins",
     openSettings: "Open plugin settings",
     notPersisted:
@@ -98,6 +100,8 @@ export const pluginCopy = {
     safeMode:
       "安全模式：因為以 --safe-mode 啟動，本次已暫停所有第三方插件。仍然可以停用或解除連結有問題的插件。",
     safeModeLocked: "Kobrixa 上次沒有正常結束，已暫停第三方插件。",
+    sessionRecovery:
+      "因為無法解析開發插件資料夾的實際路徑，或無法儲存其設定，已暫停第三方插件。修正問題後可恢復插件，或移除受影響資料夾的 --plugin-dev-dir 啟動參數後重新啟動 Kobrixa。",
     restore: "恢復插件",
     openSettings: "前往插件設定",
     notPersisted: "已套用到本次啟動，但設定未能保存，重新啟動後可能會還原。",
