@@ -7,6 +7,7 @@ import { LANGUAGE_CAPABILITIES } from "@kobrixa/plugin-protocol";
 import type { LanguageStatus } from "../../shared/language-services.js";
 import type { Diagnostic, WorkspaceSummary } from "../../shared/api.js";
 import { Editor, type EditorHandle } from "./editor.js";
+import { copy } from "../i18n/copy.js";
 import { Documents } from "./documents.js";
 import { AnalysisSession } from "./analysis-session.js";
 import { basicPlusCompanion } from "./companions/basic-plus/companion.js";
@@ -252,11 +253,12 @@ it("applies diagnostics when a file is opened and still accepts external content
       }),
     ),
   );
-  // This fixture reuses one model for two paths; the diagnostics effect owns both marker writes.
-  expect(mocks.setModelMarkers).toHaveBeenNthCalledWith(1, mocks.model, "kobrixa", [
+  // This fixture reuses one model for two paths; detach clears its old route's markers first.
+  expect(mocks.setModelMarkers).toHaveBeenNthCalledWith(1, mocks.model, "kobrixa", []);
+  expect(mocks.setModelMarkers).toHaveBeenNthCalledWith(2, mocks.model, "kobrixa", [
     expect.objectContaining({ code: diagnostics[0]!.code }),
   ]);
-  expect(mocks.setModelMarkers).toHaveBeenCalledTimes(2);
+  expect(mocks.setModelMarkers).toHaveBeenCalledTimes(3);
   expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", []);
   props.onChange.mockClear();
   await act(async () => {
@@ -399,6 +401,22 @@ it("detaches dynamic services on unavailability, restores them without edits, an
   expect(props.query).not.toHaveBeenCalled();
   expect(monaco.editor.setModelLanguage).toHaveBeenLastCalledWith(mocks.model, "json");
   expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);
+});
+
+it("clears service markers immediately when a rename detaches the model route", async () => {
+  const ref = createRef<EditorHandle>();
+  await act(() => root.render(createElement(Editor, { ...props, ref })));
+  expect(mocks.setModelMarkers).toHaveBeenLastCalledWith(mocks.model, "kobrixa", [
+    expect.objectContaining({ code: diagnostics[0]!.code }),
+  ]);
+  mocks.setModelMarkers.mockClear();
+
+  // No new diagnostics, file prop, locale, help catalog or service epoch is published.
+  await act(() => ref.current!.remapFiles({ "main.bp": "main.txt" }));
+
+  expect(mocks.setModelMarkers).toHaveBeenCalledExactlyOnceWith(mocks.model, "kobrixa", []);
+  expect(mocks.model.getLanguageId()).toBe("plaintext");
+  expect(mocks.model.dispose).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -705,6 +723,19 @@ it("creates no model before bootstrap and clamps every standalone options write"
   for (const [options] of mocks.instance.updateOptions.mock.calls)
     expect(options).toMatchObject({ maxTokenizationLineLength: 10000 });
 });
+
+it.each(["en", "zh-TW"] as const)(
+  "uses the %s loading copy before bootstrap settles",
+  async (locale) => {
+    lexicalMock.settled = false;
+    await act(() => root.render(createElement(Editor, { ...props, locale })));
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      copy[locale].staticLanguageLoading,
+    );
+    expect(monaco.editor.createModel).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  },
+);
 
 it("revokes lexical coloring without resetting analysis or the document and recovers without typing", async () => {
   const configure = vi.spyOn(props.analysisSession, "configure");

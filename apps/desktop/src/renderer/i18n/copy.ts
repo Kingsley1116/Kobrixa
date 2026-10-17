@@ -4,6 +4,7 @@ export type Locale = "en" | "zh-TW";
 export const copy = {
   en: {
     plainText: "Plain Text",
+    staticLanguageLoading: "Loading languages…",
     staticLanguageFailed:
       "Language highlighting could not be loaded. You can keep editing in plain text.",
 
@@ -194,6 +195,7 @@ export const copy = {
   },
   "zh-TW": {
     plainText: "純文字",
+    staticLanguageLoading: "正在載入語言…",
     staticLanguageFailed: "無法載入語法上色，仍可繼續以純文字編輯。",
 
     languageMissing: (language: string) => `此專案的語言 ${language} 沒有可用的語言服務。`,

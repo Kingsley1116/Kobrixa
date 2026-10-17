@@ -38,6 +38,7 @@ import type { Diagnostic } from "../../shared/api.js";
 import type { WorkspaceSearchFile } from "../../shared/workspace-search.js";
 import type { CollabSession } from "../collab/types.js";
 import { EditorCollab } from "../collab/editor-binding.js";
+import { copy } from "../i18n/copy.js";
 
 // Without worker factories Monaco falls back to running worker tasks on the UI
 // thread. Vite bundles these for both the dev server and the packaged file URL.
@@ -340,6 +341,7 @@ const ReadyEditor = forwardRef<EditorHandle, EditorProps>(function ReadyEditor(
             languageFeatures.dispose();
             features.current.delete(model);
             completionSession?.unbind(file, model);
+            monaco.editor.setModelMarkers(model, "kobrixa", []);
           },
         };
       },
@@ -962,7 +964,7 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(prop
     <ReadyEditor {...props} ref={ref} />
   ) : (
     <div className="editor" role="status">
-      {props.locale === "zh-TW" ? "正在載入語言…" : "Loading languages…"}
+      {copy[props.locale ?? "en"].staticLanguageLoading}
     </div>
   );
 });

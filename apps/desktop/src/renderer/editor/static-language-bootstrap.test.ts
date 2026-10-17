@@ -67,7 +67,10 @@ function ports() {
     },
   };
 }
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
 
 it("does not release document restoration before a consistent catalog is installed", async () => {
   const p = ports();
@@ -132,6 +135,105 @@ it.each(["reject", "failed", "inconsistent"] as const)(
     }
     expect(await result).toMatchObject({ kind: "plaintext", reason: "ipc" });
     expect(p.registrar.reconcile).toHaveBeenLastCalledWith(expect.objectContaining({ owners: [] }));
+  },
+);
+
+it.each([
+  "reconcile",
+  "getSnapshot",
+  "notified getSnapshot",
+  "fallback reconcile",
+  "subscriber",
+] as const)(
+  "settles the window barrier and releases later open/save operations when %s throws",
+  async (failure) => {
+    const p = ports();
+    const snapshot = p.store.getSnapshot();
+    const readySnapshot = {
+      ...snapshot,
+      phase: "ready" as const,
+      catalog: { ...snapshot.catalog, revision: 7 },
+    };
+    p.set(readySnapshot);
+    const error = new Error(`${failure} failed`);
+    if (failure === "getSnapshot" || failure === "notified getSnapshot") {
+      p.store.getSnapshot = vi.fn(() => {
+        throw error;
+      });
+      if (failure === "notified getSnapshot") {
+        vi.mocked(p.store.getSnapshot).mockReturnValueOnce(readySnapshot);
+        let changed!: () => void;
+        p.registrar.subscribe = (listener) => {
+          changed = listener;
+          return vi.fn();
+        };
+        vi.mocked(p.registrar.reconcile).mockImplementation(() => changed());
+      }
+    } else if (failure !== "subscriber") {
+      vi.mocked(p.registrar.reconcile).mockImplementation(() => {
+        throw error;
+      });
+    }
+    vi.mocked(createStaticLanguageStore).mockReturnValue(p.store);
+    vi.mocked(createStaticLanguageRegistrar).mockReturnValue(p.registrar);
+    let unload!: () => void;
+    vi.stubGlobal("window", {
+      kobrixa: { plugins: {} },
+      addEventListener: (_event: string, listener: () => void) => {
+        unload = listener;
+      },
+    });
+    try {
+      const runtime = windowStaticLanguages();
+      const updates: unknown[] = [];
+      runtime.subscribe(() => updates.push(runtime.getSnapshot()));
+      if (failure === "subscriber") {
+        runtime.subscribe(() => {
+          throw error;
+        });
+      }
+      const opened = vi.fn();
+      const saved = vi.fn();
+      async function openFile() {
+        await runtime.ready;
+        opened();
+      }
+      async function saveTab() {
+        await runtime.ready;
+        saved();
+      }
+      const opening = openFile();
+      // Attach a rejection handler before settling IPC so a failed assertion stays local.
+      const openingResult = Promise.allSettled([opening]);
+      expect(runtime.getSnapshot().settled).toBe(false);
+      expect(opened).not.toHaveBeenCalled();
+      if (failure === "fallback reconcile") p.pending.reject(new Error("IPC disconnected"));
+      else p.pending.resolve();
+
+      await expect(runtime.ready).resolves.toMatchObject({ kind: "plaintext", reason: "ipc" });
+      expect(runtime.getSnapshot()).toMatchObject({
+        settled: true,
+        result: { kind: "plaintext", reason: "ipc", message: error.message },
+      });
+      expect(updates).toContainEqual(runtime.getSnapshot()); // Existing failure banner state.
+      if (failure !== "subscriber") {
+        expect(p.registrar.reconcile).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            phase: "failed",
+            owners: [],
+            catalog: expect.objectContaining({ languages: [], extensionRoutes: {} }),
+          }),
+        );
+      }
+      expect(await openingResult).toEqual([{ status: "fulfilled", value: undefined }]);
+      await expect(openFile()).resolves.toBeUndefined();
+      await expect(saveTab()).resolves.toBeUndefined();
+      expect(opened).toHaveBeenCalledTimes(2);
+      expect(saved).toHaveBeenCalledOnce();
+    } finally {
+      unload();
+      vi.unstubAllGlobals();
+    }
   },
 );
 

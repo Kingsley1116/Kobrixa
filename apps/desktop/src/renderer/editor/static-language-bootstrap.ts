@@ -19,8 +19,17 @@ export type StaticLanguageBootstrapResult =
   | { kind: "ready"; revision: number }
   | { kind: "plaintext"; reason: "ipc" | "timeout"; message: string };
 
-function emptySnapshot(store: StaticLanguageStore, message: string): StaticLanguageStoreSnapshot {
-  const revision = store.getSnapshot().targetRevision;
+function bootstrapFailure(
+  error?: unknown,
+): Extract<StaticLanguageBootstrapResult, { kind: "plaintext" }> {
+  return {
+    kind: "plaintext",
+    reason: "ipc",
+    message: error instanceof Error ? error.message : "Static language catalog is unavailable.",
+  };
+}
+
+function emptySnapshot(revision: number, message: string): StaticLanguageStoreSnapshot {
   return {
     phase: "failed",
     targetRevision: revision,
@@ -55,22 +64,37 @@ export async function bootstrapStaticLanguages({
     );
   const outcome = await Promise.race([ipc, timeout]);
   clearTimeout(timer);
-  const snapshot = store.getSnapshot();
-  if (
-    outcome === "ready" &&
-    snapshot.phase === "ready" &&
-    snapshot.catalog.revision >= snapshot.targetRevision
-  ) {
-    registrar.reconcile(snapshot);
-    return { kind: "ready", revision: snapshot.catalog.revision };
+  let snapshot: StaticLanguageStoreSnapshot | undefined;
+  let fallback = bootstrapFailure();
+  try {
+    snapshot = store.getSnapshot();
+    if (
+      outcome === "ready" &&
+      snapshot.phase === "ready" &&
+      snapshot.catalog.revision >= snapshot.targetRevision
+    ) {
+      registrar.reconcile(snapshot);
+      return { kind: "ready", revision: snapshot.catalog.revision };
+    }
+    fallback =
+      outcome === "timeout"
+        ? {
+            kind: "plaintext",
+            reason: "timeout",
+            message: "Static language loading exceeded 5000 ms.",
+          }
+        : { ...fallback, message: snapshot.error ?? fallback.message };
+  } catch (error) {
+    fallback = bootstrapFailure(error);
   }
-  const reason = outcome === "timeout" ? "timeout" : "ipc";
-  const message =
-    reason === "timeout"
-      ? "Static language loading exceeded 5000 ms."
-      : (snapshot.error ?? "Static language catalog is unavailable.");
-  registrar.reconcile(emptySnapshot(store, message));
-  return { kind: "plaintext", reason, message };
+  try {
+    // Reuse the last snapshot; reading the store again may repeat the original failure.
+    registrar.reconcile(emptySnapshot(snapshot?.targetRevision ?? 0, fallback.message));
+  } catch (error) {
+    // Even failure to remove plugin routes must release the editing barrier.
+    fallback = bootstrapFailure(error);
+  }
+  return fallback;
 }
 
 export interface WindowStaticLanguageSnapshot {
@@ -103,23 +127,43 @@ export function windowStaticLanguages(): WindowStaticLanguages {
     for (const listener of listeners) listener();
   };
   const off = registrar.subscribe(() => {
-    const state = store.getSnapshot();
-    const recovered =
-      snapshot.settled && state.phase === "ready" && state.catalog.revision >= state.targetRevision;
-    snapshot = {
-      ...snapshot,
-      revision: snapshot.revision + 1,
-      ...(recovered
-        ? { result: { kind: "ready" as const, revision: state.catalog.revision } }
-        : {}),
-    };
+    try {
+      const state = store.getSnapshot();
+      const recovered =
+        snapshot.settled &&
+        state.phase === "ready" &&
+        state.catalog.revision >= state.targetRevision;
+      snapshot = {
+        ...snapshot,
+        revision: snapshot.revision + 1,
+        ...(recovered
+          ? { result: { kind: "ready" as const, revision: state.catalog.revision } }
+          : {}),
+      };
+    } catch (error) {
+      if (!snapshot.settled) throw error; // Let bootstrap install its plaintext fallback.
+      snapshot = { ...snapshot, revision: snapshot.revision + 1, result: bootstrapFailure(error) };
+    }
     notify();
   });
-  const ready = bootstrapStaticLanguages({ store, registrar }).then((result) => {
-    snapshot = { settled: true, result, revision: snapshot.revision + 1 };
-    notify();
-    return result;
-  });
+  const ready = bootstrapStaticLanguages({ store, registrar })
+    .then((result) => {
+      snapshot = { settled: true, result, revision: snapshot.revision + 1 };
+      notify();
+      return result;
+    })
+    .catch((error) => {
+      const result = bootstrapFailure(error);
+      snapshot = { settled: true, result, revision: snapshot.revision + 1 };
+      for (const listener of listeners) {
+        try {
+          listener();
+        } catch {
+          // A failing subscriber must not block editing or other failure-banner listeners.
+        }
+      }
+      return result;
+    });
   windowOwner = {
     store,
     registrar,
