@@ -39,8 +39,8 @@ function catalog(revision: number, languages = [language]): StaticLanguagesCatal
     conflicts: [],
   };
 }
-// Fixed outputs at the T2/T3 boundary; do not reimplement their admission/filter logic.
-// T2's 129 valid candidates leave 128 DTOs and both conflict sources. T3's marker
+// Fixed host outputs; do not reimplement catalog admission/filter logic.
+// 129 valid candidates leave 128 DTOs and both conflict sources. Session marker
 // failure leaves only builtin DTOs and removes the cross-source conflict detail.
 function authoritativeCatalog(
   kind: "budget-loser" | "marker-filtered" | "quarantined-claimant",

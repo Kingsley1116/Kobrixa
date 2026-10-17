@@ -20,13 +20,13 @@ import { legend, structuralChange } from "./companions/basic-plus/structure.js";
 
 const lexicalCalls = vi.hoisted(() => ({
   register: vi.fn(() => {
-    throw new Error("T6 must not register a language.");
+    throw new Error("Theme initialization must not register a language.");
   }),
   setMonarchTokensProvider: vi.fn(() => {
-    throw new Error("T6 must not install a tokenizer.");
+    throw new Error("Theme initialization must not install a tokenizer.");
   }),
   setLanguageConfiguration: vi.fn(() => {
-    throw new Error("T6 must not install configuration.");
+    throw new Error("Theme initialization must not install configuration.");
   }),
 }));
 vi.mock("monaco-editor", () => ({
@@ -280,11 +280,9 @@ it("keeps the Basic Plus root state after skipped long lines", async () => {
 });
 
 it("removes the handwritten production grammar and registration bridge", async () => {
-  const registration = await readFile(
-    new URL("./companions/basic-plus/registration.ts", import.meta.url),
-    "utf8",
-  );
-  expect(registration.trim()).toBe('export { basicPlusThemeRules } from "./theme.js";');
+  await expect(
+    readFile(new URL("./companions/basic-plus/registration.ts", import.meta.url), "utf8"),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("leaves the companion's dynamic behavior intact without a lexical id", () => {
@@ -306,7 +304,7 @@ it("leaves the companion's dynamic behavior intact without a lexical id", () => 
 
 it("restores renamed drafts across failed generations without registering a shell twice", async () => {
   // Boundary test: the persisted session is real; failed generations are supplied
-  // by a contract-level caller. Registrar/model reconciliation belongs to T4/T5.
+  // by a contract-level caller. Registrar/model reconciliation has dedicated tests.
   const workspaceId = "00000000-0000-4000-8000-000000000001";
   const location = { line: 2, column: 3, endLine: 2, endColumn: 6, scrollTop: 12, scrollLeft: 0 };
   const restored = workspaceSessionSchema.parse({
@@ -332,7 +330,7 @@ it("restores renamed drafts across failed generations without registering a shel
   expect(tab.dirty).toBe(true);
   const defineTheme = vi.fn();
   for (const generation of [1, 2, 3, 4]) {
-    // T6 initialization has no dependency on generation/catalog success. A caller
+    // Theme initialization has no dependency on generation/catalog success. A caller
     // may replay it after failed loads; it must never allocate another id shell.
     initializeEditorThemes({ defineTheme });
     expect(documents.getSnapshot()[0], `generation ${generation}`).toBe(tab);

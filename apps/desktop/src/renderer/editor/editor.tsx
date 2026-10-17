@@ -129,7 +129,9 @@ interface EditorProps {
 
 let modelSequence = 0;
 function modelUri(file: string): monaco.Uri {
-  return monaco.Uri.from({ scheme: "kobrixa", path: `/model-${++modelSequence}/${file}` });
+  // Keep the workspace-relative path intact. Monaco selectors ignore URI query
+  // and authority, so a unique scheme isolates each model's dynamic providers.
+  return monaco.Uri.from({ scheme: `kobrixa-model-${++modelSequence}`, path: `/${file}` });
 }
 
 function markerSeverity(severity: Diagnostic["severity"]): monaco.MarkerSeverity {

@@ -22,9 +22,9 @@ const mocks = vi.hoisted(() => {
   let contentListener: () => void = () => undefined;
   const model = {
     uri: {
-      scheme: "kobrixa",
-      path: "/model-1/main.bp",
-      toString: () => "kobrixa:/model-1/main.bp",
+      scheme: "kobrixa-model-1",
+      path: "/main.bp",
+      toString: () => "kobrixa-model-1:/main.bp",
     },
     getValue: vi.fn(() => "LCD.Clear()"),
     setValue: vi.fn(() => contentListener()),
@@ -207,6 +207,27 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+});
+
+it("preserves file paths when opening models and isolates repeated paths across editors", async () => {
+  await act(() => root.render(createElement(Editor, props)));
+  props.documents.replace([
+    ...props.documents.getSnapshot(),
+    { file: "second.bp", content: "LCD.Clear()", saved: "LCD.Clear()" },
+  ]);
+  await act(() =>
+    root.render(
+      createElement(Editor, { ...props, file: "second.bp", openFiles: ["main.bp", "second.bp"] }),
+    ),
+  );
+  const created = vi.mocked(monaco.editor.createModel).mock.calls;
+  expect(created.map(([, , uri]) => uri?.path)).toEqual(["/main.bp", "/second.bp"]);
+  expect(mocks.instance.setModel).toHaveBeenLastCalledWith(mocks.model);
+
+  await act(() => root.render(null));
+  await act(() => root.render(createElement(Editor, props)));
+  expect(created[2]?.[2]?.path).toBe("/main.bp");
+  expect(new Set(created.map(([, , uri]) => uri?.scheme)).size).toBe(3);
 });
 
 it("does not rewrite markers, content, or view state on Enter and Backspace rerenders", async () => {
@@ -751,7 +772,7 @@ it("revokes lexical coloring without resetting analysis or the document and reco
   for (const handle of old) expect(handle.dispose).toHaveBeenCalledOnce();
   expect(monaco.languages.registerDocumentSemanticTokensProvider).toHaveBeenCalledTimes(1);
   expect(monaco.languages.registerHoverProvider).toHaveBeenLastCalledWith(
-    { language: "plaintext", scheme: "kobrixa", pattern: "/model-1/**" },
+    { language: "plaintext", scheme: "kobrixa-model-1" },
     expect.any(Object),
   );
   expect(mocks.model.setValue).toHaveBeenCalledTimes(writes);

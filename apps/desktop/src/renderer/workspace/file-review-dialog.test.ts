@@ -294,7 +294,7 @@ const reviewRegistrar = {
   },
 } as unknown as StaticLanguageRegistrar;
 function publishRoute(revision: number, enabled: boolean) {
-  // T4's revision gate is a mocked contract here; its implementation is tested in T4/T8.
+  // The registrar revision gate is mocked here and covered by its own integration tests.
   if (revision < routing.revision) return;
   routing.revision = revision;
   routing.enabled = enabled;

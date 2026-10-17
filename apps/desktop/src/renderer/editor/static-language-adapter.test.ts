@@ -103,7 +103,7 @@ it("counts decoded code points and preserves literal macro characters", async ()
       );
     }
   }
-  // T1 owns the AST/code-point check. Assert its rejection propagates unchanged.
+  // The shared validator owns the AST/code-point check; its rejection propagates unchanged.
   for (const pattern of [String.raw`\$S1`, "$s2"]) {
     const bad = fixture();
     bad.tokenizer.states[0]!.rules = [{ regex: { pattern, flags: "" }, action: { token: "x" } }];

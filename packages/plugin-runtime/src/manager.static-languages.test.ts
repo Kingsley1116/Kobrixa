@@ -542,6 +542,63 @@ it.each(["initial", "enable", "reload", "metadata"] as const)(
   },
 );
 
+it("accepts sibling registration failures from one revision and records both problems", async () => {
+  const source = builtinToy();
+  const manifest = source.manifest as PluginManifest;
+  const declaration = manifest.contributes!.languages![0]!;
+  manifest.contributes!.languages = ["toy-a", "toy-b"].map((id) => ({
+    ...declaration,
+    id,
+    extensions: [id.replace("-", "")],
+  }));
+  const manager = await create([source]);
+  const catalog = manager.staticLanguages();
+  const reports = catalog.languages.map((language) => ({
+    sourceKey: language.sourceKey,
+    generation: language.generation,
+    languageId: language.id,
+    revision: catalog.revision,
+    reason: "dto-version" as const,
+    detail: "Unsupported catalog version.",
+  }));
+  expect(reports).toHaveLength(2);
+  expect(
+    reports.map((report) => manager.reportLanguageRegistrationFailure(report).accepted),
+  ).toEqual([true, true]);
+  expect(manager.staticLanguages().languages).toEqual([]);
+  expect(manager.state().plugins[0]!.problems).toEqual(
+    reports.map((report) =>
+      expect.objectContaining({
+        code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+        detail: { languageId: report.languageId },
+      }),
+    ),
+  );
+  const revision = manager.staticLanguagesRevision;
+  for (const report of reports)
+    expect(manager.reportLanguageRegistrationFailure(report)).toEqual({
+      accepted: false,
+      revision,
+    });
+});
+
+it("includes the session id budget in its host-authored registration message", async () => {
+  const manager = await create([builtinToy()]);
+  const catalog = manager.staticLanguages();
+  const language = catalog.languages[0]!;
+  manager.reportLanguageRegistrationFailure({
+    sourceKey: language.sourceKey,
+    generation: language.generation,
+    languageId: language.id,
+    revision: catalog.revision,
+    reason: "session-language-ids",
+    detail: "Restart required.",
+  });
+  expect(manager.state().plugins[0]!.problems[0]!.message).toBe(
+    "test.toy / toy: renderer registration failed (session-language-ids): Restart required. (actual 257, allowed 256)",
+  );
+});
+
 it.each([false, true])(
   "uses a fresh generation for explicit retry after failure (disable first: %s)",
   async (disableFirst) => {
@@ -557,14 +614,14 @@ it.each([false, true])(
       detail: "Provider rejected fixture.",
     };
     for (const bad of [
-      { ...report, revision: report.revision - 1 },
+      { ...report, revision: report.revision + 1 },
       { ...report, generation: report.generation + 1 },
       { ...report, sourceKey: "builtin:forged" },
       { ...report, languageId: "foreign" },
     ])
       expect(manager.reportLanguageRegistrationFailure(bad).accepted).toBe(false);
-    // Runtime-local consumer double for T4's permanent per-generation quarantine.
-    // Real registrar/Monaco integration remains T8-owned.
+    // Runtime-local consumer double for permanent per-generation quarantine.
+    // Real registrar/Monaco behavior is covered by the renderer integration tests.
     const identity = (item: typeof language) =>
       JSON.stringify([item.pluginId, item.sourceKey, item.generation, item.id]);
     const quarantined = new Set([identity(language)]);

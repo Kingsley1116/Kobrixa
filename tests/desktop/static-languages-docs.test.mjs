@@ -94,9 +94,20 @@ for (const [locale, contracts] of [
       /non-empty.*bracket table/i,
       /case-insensitive.*last filename segment/i,
       /each.*segment.*64 characters/i,
+      /all installed Monaco core language ids.*CORE_STATIC_LANGUAGE_IDS/i,
+      /symlinked `kobrixa-plugin\.json`.*outside.*plugin folder.*rejected/i,
     ],
   ],
-  ["zh-TW", [/非空.*括號表/, /最後.*檔名.*不分大小寫/, /每個.*路徑.*區段.*64.*字元/]],
+  [
+    "zh-TW",
+    [
+      /非空.*括號表/,
+      /最後.*檔名.*不分大小寫/,
+      /每個.*路徑.*區段.*64.*字元/,
+      /所有已安裝的 Monaco 核心語言 ids.*CORE_STATIC_LANGUAGE_IDS/,
+      /`kobrixa-plugin\.json`.*符號連結.*插件資料夾外.*拒絕/,
+    ],
+  ],
 ]) {
   test(`${locale} documents brackets, case folding and path segments`, async () => {
     const text = await readFile(

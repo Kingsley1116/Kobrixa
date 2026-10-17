@@ -34,6 +34,9 @@ import {
   type StartPluginsOptions,
 } from "./controller.js";
 import { PluginLogs, PluginNotices } from "./logs.js";
+import { BUILTIN_PLUGIN_SOURCES } from "./builtin.js";
+import { registerPluginIpc } from "./ipc.js";
+import type { IpcMainInvokeEvent } from "electron";
 import type { PluginStateDocument } from "./state-store.js";
 
 vi.mock("electron", () => ({ utilityProcess: {}, MessageChannelMain: class {} }));
@@ -102,6 +105,63 @@ const enabled = async (dialogs = fakeDialogs(), options: Partial<StartPluginsOpt
 };
 const saved = async () =>
   JSON.parse(await readFile(path.join(userData, "plugins/state.json"), "utf8"));
+
+it("accepts same-revision sibling failures through IPC and the real controller/runtime", async () => {
+  const sources = structuredClone(BUILTIN_PLUGIN_SOURCES);
+  const source = sources[0]!;
+  if (source.kind !== "builtin") throw new Error("Expected a builtin fixture");
+  const manifest = source.manifest as {
+    contributes: { languages: { id: string; extensions: string[] }[] };
+  };
+  manifest.contributes.languages.push({
+    ...manifest.contributes.languages[0]!,
+    id: "second",
+    extensions: ["second"],
+  });
+  const controller = await start(fakeDialogs(), { builtins: sources });
+  const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const off = registerPluginIpc(
+    (channel, action) => {
+      handlers.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+    },
+    controller,
+    () => {},
+  );
+  try {
+    const catalog = controller.staticLanguages();
+    expect(catalog.languages).toHaveLength(2);
+    const report = handlers.get("plugins:report-language-registration-failure")!;
+    const reports = catalog.languages.map((language) => ({
+      sourceKey: language.sourceKey,
+      generation: language.generation,
+      languageId: language.id,
+      revision: catalog.revision,
+      reason: "dto-version",
+      detail: "Unsupported catalog version.",
+    }));
+    expect(reports.map((input) => report({} as IpcMainInvokeEvent, input))).toEqual([
+      { accepted: true, revision: catalog.revision + 1 },
+      { accepted: true, revision: catalog.revision + 2 },
+    ]);
+    expect(controller.staticLanguages().languages).toEqual([]);
+    expect(controller.state().plugins[0]!.problems).toEqual(
+      reports.map((input) =>
+        expect.objectContaining({
+          code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+          detail: { languageId: input.languageId },
+        }),
+      ),
+    );
+    for (const input of reports)
+      expect(report({} as IpcMainInvokeEvent, input)).toEqual({
+        accepted: false,
+        revision: catalog.revision + 2,
+      });
+  } finally {
+    off();
+    await controller.shutdown();
+  }
+});
 
 describe("startPlugins", () => {
   it("starts with developer mode off and refuses developer actions before any dialog", async () => {
@@ -1182,10 +1242,6 @@ describe("PluginController with a fake manager", () => {
     ])
       expect(() => controller.reportLanguageRegistrationFailure(forged)).toThrow("owner");
     expect(manager.reportLanguageRegistrationFailure).not.toHaveBeenCalled();
-    expect(controller.reportLanguageRegistrationFailure(report(0))).toEqual({
-      accepted: false,
-      revision: 1,
-    });
     expect(controller.reportLanguageRegistrationFailure(report(2))).toEqual({
       accepted: false,
       revision: 1,
@@ -1194,11 +1250,11 @@ describe("PluginController with a fake manager", () => {
       publishCatalog(catalog(2, [bp]));
       return { accepted: true, revision: 2 };
     });
-    expect(controller.reportLanguageRegistrationFailure(report())).toEqual({
+    expect(controller.reportLanguageRegistrationFailure(report(0))).toEqual({
       accepted: true,
       revision: 2,
     });
-    expect(manager.reportLanguageRegistrationFailure).toHaveBeenCalledExactlyOnceWith(report());
+    expect(manager.reportLanguageRegistrationFailure).toHaveBeenCalledExactlyOnceWith(report(0));
     expect(controller.reportLanguageRegistrationFailure(report())).toEqual({
       accepted: false,
       revision: 2,
@@ -1251,7 +1307,7 @@ describe("PluginController with a fake manager", () => {
         message: `acme.toy / toy: renderer registration failed (monaco): ${report().detail}`,
         detail: { languageId: "toy" },
       };
-      // Simulate T2's single host transaction: quarantine this contribution, append
+      // Simulate a single host transaction: quarantine this contribution, append
       // its structured problem, advance the revision and publish complete owners.
       manager.reportLanguageRegistrationFailure.mockImplementation(() => {
         publishCatalog(
@@ -1403,7 +1459,7 @@ describe("PluginController with a fake manager", () => {
       expect(launcher).not.toHaveBeenCalled();
       expect(captured.creates).toHaveLength(1);
       expect(captured.creates[0]!.safeMode).toBe(true);
-      // The runtime receives inert source descriptors for the recovery UI. T2 owns
+      // The runtime receives inert source descriptors for the recovery UI and owns
       // proving that safeMode prevents manifest and resource reads of those descriptors.
       expect(captured.creates[0]!.sources).toEqual([{ kind: "development", directory }]);
       if (condition === "corrupt") expect(captured.persisted[0]!.problem).toBeDefined();

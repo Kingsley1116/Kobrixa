@@ -183,7 +183,7 @@ export function languageServiceDeclarationProblems(manifest: PluginManifest): st
   return problems;
 }
 
-/** Called only after source restrictions; T1 supplies cross-field/static-runtime semantics. */
+/** Called after source restrictions to check cross-field and static-runtime semantics. */
 export function staticLanguageDeclarationProblems(manifest: PluginManifest): string[] {
   const problems: string[] = [];
   const contributes = manifest.contributes;

@@ -64,7 +64,7 @@ it("retains frontend reservation after resource failure in either source order",
       }),
     );
     // The foreign /bp global route is retained, but there is no static record matching
-    // the selected owner. T4/T8 prove its applicable binding therefore falls to plaintext.
+    // the selected owner, so its applicable binding must fall back to plaintext.
     expect(result.catalog.languages.some((language) => language.pluginId === "test.owner")).toBe(
       false,
     );
@@ -173,6 +173,44 @@ it("preserves validator field/limit detail and contains resource failures", asyn
   });
   expect(result.catalog.languages).toEqual([]);
   expect(vi.mocked(staticLanguageDeclarationProblems)).toHaveBeenCalled();
+});
+
+it("formats validator limits with one language id, the plugin id and actual/allowed values", async () => {
+  const protocol = await vi.importActual<typeof Protocol>("@kobrixa/plugin-protocol");
+  vi.mocked(validateStaticLanguageResources).mockImplementationOnce(
+    protocol.validateStaticLanguageResources,
+  );
+  const source = builtinToy("acme.example", "overlong");
+  source.resources = {
+    ...source.resources,
+    "language/tokenizer.json": JSON.stringify({
+      ignoreCase: false,
+      states: [
+        {
+          name: "root",
+          rules: [
+            {
+              regex: { pattern: "a".repeat(L.patternLength + 1), flags: "" },
+              action: { token: "identifier" },
+            },
+          ],
+        },
+      ],
+    }),
+  };
+  const result = await build([source]);
+  expect(result.problems.get("builtin:acme.example")?.[0]?.message).toBe(
+    `acme.example / overlong / language/tokenizer.json / states[0].rules[0].regex.pattern: Too big: expected string to have <=2048 characters (actual ${L.patternLength + 1}, allowed ${L.patternLength})`,
+  );
+});
+
+it("includes raw resource byte limits in the problem message", async () => {
+  const source = builtinToy();
+  source.resources = { "language/tokenizer.json": " ".repeat(L.resourceFileBytes + 1) };
+  const result = await build([source]);
+  expect(result.problems.get("builtin:test.toy")?.[0]?.message).toBe(
+    `test.toy / toy / language/tokenizer.json: invalid or unreadable packaged JSON resource. (actual ${L.resourceFileBytes + 1}, allowed ${L.resourceFileBytes})`,
+  );
 });
 
 it("counts repeated resource references, rejects an over-budget language and continues", async () => {

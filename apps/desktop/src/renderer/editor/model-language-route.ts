@@ -3,7 +3,6 @@ import type { LanguageBinding } from "../../shared/language-services.js";
 import type { LanguageCompanion } from "./language-companion.js";
 import type { LexicalLanguageRoute } from "./static-language-routing.js";
 
-/** T5 makes language-routing.ts re-export this type when migrating its existing consumers. */
 export interface ModelLanguageRoute extends LexicalLanguageRoute {
   binding?: LanguageBinding;
   companion?: LanguageCompanion;
@@ -47,7 +46,7 @@ export function sameModelLanguageRoute(a: ModelLanguageRoute, b: ModelLanguageRo
 }
 
 export function modelLanguageSelector(model: editor.ITextModel, route: ModelLanguageRoute) {
-  const prefix = model.uri.path.split("/")[1];
-  if (!prefix || !/^model-[0-9]+$/.test(prefix)) throw new Error("Expected a host-owned model URI");
-  return { language: route.monacoLanguage, scheme: "kobrixa", pattern: `/${prefix}/**` };
+  const scheme = model.uri.scheme;
+  if (!/^kobrixa-model-[0-9]+$/.test(scheme)) throw new Error("Expected a host-owned model URI");
+  return { language: route.monacoLanguage, scheme };
 }

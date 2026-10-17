@@ -30,6 +30,7 @@ import {
   type LanguageServiceResolution,
 } from "./compiler-resolution.js";
 import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from "./errors.js";
+import { staticLanguageLimitSuffix } from "./static-language-problem.js";
 import {
   developmentSourceKey,
   readSource,
@@ -292,7 +293,7 @@ export class PluginManager {
     input: ReportLanguageRegistrationFailureInput,
   ): ReportLanguageRegistrationFailureResult {
     const ignored = () => ({ accepted: false, revision: this.staticLanguagesRevision });
-    if (this.#shutdown || input.revision !== this.staticLanguagesRevision) return ignored();
+    if (this.#shutdown || input.revision > this.staticLanguagesRevision) return ignored();
     if (
       !["dto-version", "validation", "adapter", "monaco", "session-language-ids"].includes(
         input.reason,
@@ -310,19 +311,20 @@ export class PluginManager {
     if (!language) return ignored();
     const key = staticLanguageKey(language.sourceKey, language.generation, language.id);
     if (this.#registrationFailures.has(key)) return ignored();
+    const detail: NonNullable<PluginProblem["detail"]> = {
+      languageId: language.id,
+      ...(input.reason === "session-language-ids"
+        ? {
+            limit: "STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds",
+            allowed: STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds,
+            actual: STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds + 1,
+          }
+        : {}),
+    };
     this.#registrationFailures.set(key, {
       code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
-      message: `${language.pluginId} / ${language.id}: renderer registration failed (${input.reason}): ${input.detail}`,
-      detail: {
-        languageId: language.id,
-        ...(input.reason === "session-language-ids"
-          ? {
-              limit: "STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds",
-              allowed: STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds,
-              actual: STATIC_LANGUAGE_LIMITS_V1.sessionLanguageIds + 1,
-            }
-          : {}),
-      },
+      message: `${language.pluginId} / ${language.id}: renderer registration failed (${input.reason}): ${input.detail}${staticLanguageLimitSuffix(detail)}`,
+      detail,
     });
     // Invalidate pending work before synchronous revocation. A stale I/O pass cannot undo isolation.
     this.#staticOperation += 1;

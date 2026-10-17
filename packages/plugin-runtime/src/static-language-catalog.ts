@@ -6,6 +6,7 @@ import {
   type StaticLanguageDecl,
 } from "@kobrixa/plugin-protocol";
 import type { PluginProblem } from "./errors.js";
+import { staticLanguageLimitSuffix } from "./static-language-problem.js";
 import type { PluginSource, RegisteredPlugin } from "./registry.js";
 import {
   PackagedResourceError,
@@ -248,7 +249,7 @@ export async function buildStaticLanguageCatalog(
         for (const problem of validation.problems)
           addProblem(resourceProblems, plugin.sourceKey, {
             code: "PLUGIN_E_STATIC_LANGUAGE",
-            message: `${plugin.id} / ${decl.id}: ${problem.message}`,
+            message: `${plugin.id} / ${problem.message}${staticLanguageLimitSuffix(problem.detail)}`,
             detail: { ...problem.detail, languageId: decl.id },
           });
         continue;
@@ -301,7 +302,7 @@ export async function buildStaticLanguageCatalog(
           : "invalid or unreadable packaged JSON resource";
       addProblem(resourceProblems, plugin.sourceKey, {
         code: "PLUGIN_E_STATIC_LANGUAGE",
-        message: `${plugin.id} / ${decl.id} / ${resourcePath}: ${reason}.`,
+        message: `${plugin.id} / ${decl.id} / ${resourcePath}: ${reason}.${staticLanguageLimitSuffix(detail)}`,
         detail,
       });
     }

@@ -224,7 +224,11 @@ export function createStaticLanguageRegistrar(
       tracked.route = next;
       tracked.contextKey = key;
       tracked.hooks = hooks;
-      hooks?.afterChange(next);
+      try {
+        hooks?.afterChange(next);
+      } finally {
+        for (const listener of listeners) listener();
+      }
     }
   };
   const refreshModels = (): void => {
@@ -392,13 +396,17 @@ export function createStaticLanguageRegistrar(
   const removing = monaco.editor.onWillDisposeModel((model) => {
     const tracked = models.get(model);
     if (tracked) {
-      tracked.hooks?.beforeChange(tracked.route, {
-        monacoLanguage: "plaintext",
-        displayName: "Plain Text",
-        kind: "plaintext",
-        catalogRevision: current.targetRevision,
-      });
-      models.delete(model);
+      try {
+        tracked.hooks?.beforeChange(tracked.route, {
+          monacoLanguage: "plaintext",
+          displayName: "Plain Text",
+          kind: "plaintext",
+          catalogRevision: current.targetRevision,
+        });
+      } finally {
+        models.delete(model);
+        for (const listener of listeners) listener();
+      }
     }
   });
   for (const model of monaco.editor.getModels()) if (!model.isDisposed()) ensure(model);

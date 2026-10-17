@@ -720,10 +720,9 @@ export function App(): React.JSX.Element {
     scheduleSessionSave();
   }, [activeFile, selectedTreePath, expandedTreePaths, projects]);
   const active = tabs.find((tab) => tab.file === activeFile);
-  const activeLexicalRoute = staticLanguages.registrar.resolve({
-    file: active?.file ?? "",
-    ...(workspace ? { workspaceId: workspace.id } : {}),
-    ...(languageBinding ? { binding: languageBinding } : {}),
+  const activeLexicalRoute = useSyncExternalStore(staticLanguages.registrar.subscribe, () => {
+    const model = active ? activeSession?.editor.models.get(active.file) : undefined;
+    return model ? staticLanguages.registrar.getRoute(model) : undefined;
   });
 
   const activeConflict = active && activeSession?.files.conflicts.get(active.file);
@@ -4552,7 +4551,9 @@ export function App(): React.JSX.Element {
           {active && !settingsActive && (
             <>
               <CursorPosition store={cursorStore} lineLabel={t.line} columnLabel={t.column} />
-              <span>{languageDisplayName(activeLexicalRoute, locale)}</span>
+              <span>
+                {activeLexicalRoute ? languageDisplayName(activeLexicalRoute, locale) : t.plainText}
+              </span>
             </>
           )}
           {execution.session && (

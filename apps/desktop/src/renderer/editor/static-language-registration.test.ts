@@ -347,6 +347,143 @@ it("rolls back a partial install and quarantines the generation across revisions
   h.registrar.dispose();
 });
 
+it("distinguishes reload withdrawal from quarantine while the fresh catalog is delayed", async () => {
+  let advertised = catalog(1, [language()]);
+  let heldCatalog: Promise<StaticLanguagesCatalog> | undefined;
+  let emit!: (event: PluginEvent) => void;
+  const store = createStaticLanguageStore({
+    state: async () => state(advertised),
+    staticLanguages: async () => heldCatalog ?? advertised,
+    onEvent(listener) {
+      emit = listener;
+      return () => {};
+    },
+  });
+  const h = harness(undefined, store);
+  const model = h.model();
+  const publish = async (value: StaticLanguagesCatalog) => {
+    advertised = value;
+    emit({ type: "state", state: state(value) });
+    await flush();
+  };
+  try {
+    await store.ready();
+    await publish(catalog(2, []));
+    await publish(catalog(3, [language()]));
+    expect(h.configuration).toHaveBeenCalledTimes(2);
+    h.configuration.mockImplementationOnce(() => {
+      throw new Error("Second-half registration failure");
+    });
+    const accepted = deferred<{ accepted: boolean; revision: number }>();
+    h.report.mockReturnValueOnce(accepted.promise);
+
+    // Reload withdraws generation 1 before offering generation 2. Both old smoke
+    // predicates pass here, even though configuration has not failed yet.
+    await publish(catalog(4, []));
+    const delayed = deferred<StaticLanguagesCatalog>();
+    heldCatalog = delayed.promise;
+    const reloaded = catalog(5, [language("toy", 2)]);
+    await publish(reloaded);
+    expect(h.registrar.resolve({ file: "main.toy" }).monacoLanguage).toBe("plaintext");
+    expect(store.getSnapshot().catalog.languages).toEqual([]);
+    expect(store.getSnapshot().phase).toBe("loading");
+    expect(h.report).not.toHaveBeenCalled();
+    const prematureAttempts = h.configuration.mock.calls.length;
+
+    // A refresh can deliver the new generation first. Its first attempt is not
+    // a quarantine retry: the old smoke would incorrectly compare 3 with 2.
+    heldCatalog = undefined;
+    await store.refresh();
+    expect(h.configuration).toHaveBeenCalledTimes(prematureAttempts + 1);
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        generation: 2,
+        languageId: "toy",
+        revision: 5,
+        reason: "monaco",
+      }),
+    );
+    expect(h.values.get(model)!.language).toBe("plaintext");
+    await store.refresh();
+    expect(h.configuration).toHaveBeenCalledTimes(3);
+
+    // Only the accepted failure and its ready catalog establish quarantine.
+    accepted.resolve({ accepted: true, revision: 6 });
+    await publish(catalog(6, []));
+    delayed.resolve(reloaded);
+    await flush();
+    const attempts = h.configuration.mock.calls.length;
+    await store.refresh();
+    await store.refresh();
+    expect(store.getSnapshot()).toMatchObject({ phase: "ready", targetRevision: 6 });
+    expect(h.configuration).toHaveBeenCalledTimes(attempts);
+    expect(h.report).toHaveBeenCalledOnce();
+
+    await publish(catalog(7, [language("toy", 3)]));
+    expect(h.configuration).toHaveBeenCalledTimes(attempts + 1);
+    expect(h.values.get(model)!.language).toBe("toy");
+    expect(h.register).toHaveBeenCalledOnce();
+  } finally {
+    h.registrar.dispose();
+    store.dispose();
+  }
+});
+
+it("reports every language in a catalog with an unsupported DTO version", async () => {
+  const h = harness();
+  const dto = catalog(1, [language("first"), language("second"), language("third")]);
+  Object.assign(dto, { limitsVersion: 2 });
+  h.publish(ready(dto));
+  await flush();
+  expect(
+    h.report.mock.calls.map(([report]) => [report.languageId, report.reason, report.revision]),
+  ).toEqual([
+    ["first", "dto-version", 1],
+    ["second", "dto-version", 1],
+    ["third", "dto-version", 1],
+  ]);
+  expect(h.registrar.getActiveOwners()).toEqual([]);
+  h.publish(ready(dto));
+  await flush();
+  expect(h.report).toHaveBeenCalledTimes(3);
+  h.registrar.dispose();
+});
+
+it("releases a tracked model even when its disposal hook throws", () => {
+  const h = harness(ready(catalog(1, [language()])));
+  const model = h.model();
+  const beforeChange = vi.fn();
+  const lease = h.registrar.trackModel(model, () => ({ file: "/hidden.toy" }), {
+    beforeChange,
+    afterChange() {},
+  });
+  beforeChange.mockImplementation(() => {
+    throw new Error("Disposal hook failed");
+  });
+  expect(() => h.remove(model)).toThrow("Disposal hook failed");
+  expect(h.registrar.getRoute(model)).toBeUndefined();
+  beforeChange.mockClear();
+  lease.dispose();
+  h.registrar.refreshModels();
+  h.registrar.dispose();
+  expect(beforeChange).not.toHaveBeenCalled();
+});
+
+it("publishes model route changes to status subscribers without a catalog change", () => {
+  const h = harness(ready(catalog(1, [language()])));
+  const model = h.model();
+  let file = "/hidden.toy";
+  const lease = h.registrar.trackModel(model, () => ({ file }));
+  const routes: (string | undefined)[] = [];
+  const off = h.registrar.subscribe(() => routes.push(h.registrar.getRoute(model)?.monacoLanguage));
+  file = "/renamed.txt";
+  h.registrar.refreshModels();
+  expect(routes).toEqual(["plaintext"]);
+  off();
+  lease.dispose();
+  h.registrar.dispose();
+});
+
 it.each(["dto-version", "validation", "adapter"] as const)(
   "reports %s without exposing a route",
   (reason) => {

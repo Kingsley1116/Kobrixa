@@ -13,13 +13,27 @@ vi.mock("monaco-editor", () => ({
   languages: { IndentAction: { None: 0, Indent: 1, IndentOutdent: 2, Outdent: 3 } },
 }));
 
-it.each(["monaco", "validation"] as const)(
-  "accepts a sanitized %s regex-compile failure through IPC and records its problem",
+it.each(["monaco", "validation", "dto-version"] as const)(
+  "accepts sanitized %s failures through IPC and records every problem",
   async (failure) => {
     const compilerPath = "monaco-editor/editor/standalone/common/monarch/monarchCompile.js";
     const { compile } = await import(compilerPath);
+    const sources = structuredClone(BUILTIN_PLUGIN_SOURCES);
+    if (failure === "dto-version") {
+      const source = sources[0]!;
+      if (source.kind !== "builtin") throw new Error("Expected a builtin fixture");
+      const manifest = source.manifest as {
+        contributes: { languages: { id: string; extensions: string[] }[] };
+      };
+      for (const id of ["second", "third"])
+        manifest.contributes.languages.push({
+          ...manifest.contributes.languages[0]!,
+          id,
+          extensions: [id],
+        });
+    }
     const manager = await PluginManager.create({
-      sources: BUILTIN_PLUGIN_SOURCES,
+      sources,
       store: {
         load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
         save: async () => {},
@@ -45,6 +59,7 @@ it.each(["monaco", "validation"] as const)(
       () => {},
     );
     const catalog = manager.staticLanguages();
+    if (failure === "dto-version") Object.assign(catalog, { limitsVersion: 2 });
     const value = catalog.languages[0]!;
     expect(() =>
       handlers.get("plugins:report-language-registration-failure")!({} as IpcMainInvokeEvent, {
@@ -121,18 +136,23 @@ it.each(["monaco", "validation"] as const)(
       },
     });
     try {
-      expect(await Promise.all(reports)).toEqual([expect.objectContaining({ accepted: true })]);
-      expect(details).toEqual([
-        `Static language registration failed (${failure === "monaco" ? "SyntaxError" : "StaticLanguageAdapterError"}).`,
-      ]);
-      expect(
-        manager.state().plugins.find((row) => row.id === "kobrixa.basic-plus")?.problems,
-      ).toContainEqual(
-        expect.objectContaining({
-          code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
-          detail: expect.objectContaining({ languageId: "bp" }),
-        }),
+      expect(await Promise.all(reports)).toEqual(
+        catalog.languages.map(() => expect.objectContaining({ accepted: true })),
       );
+      if (failure !== "dto-version")
+        expect(details).toEqual([
+          `Static language registration failed (${failure === "monaco" ? "SyntaxError" : "StaticLanguageAdapterError"}).`,
+        ]);
+      const problems = manager
+        .state()
+        .plugins.find((row) => row.id === "kobrixa.basic-plus")?.problems;
+      for (const language of catalog.languages)
+        expect(problems).toContainEqual(
+          expect.objectContaining({
+            code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+            detail: expect.objectContaining({ languageId: language.id }),
+          }),
+        );
       expect(manager.staticLanguages().languages).toEqual([]);
     } finally {
       registrar.dispose();

@@ -186,7 +186,7 @@ export class PluginController {
     input: ReportLanguageRegistrationFailureInput,
   ): ReportLanguageRegistrationFailureResult {
     const catalog = this.staticLanguages();
-    if (input.revision !== catalog.revision) return { accepted: false, revision: catalog.revision };
+    if (input.revision > catalog.revision) return { accepted: false, revision: catalog.revision };
     const snapshot = this.deps.manager.state();
     const owner = snapshot.staticLanguageOwners.find(
       (candidate) =>
@@ -201,8 +201,8 @@ export class PluginController {
         candidate.generation === input.generation,
     );
     const plugin = snapshot.plugins.find((candidate) => candidate.sourceKey === input.sourceKey);
-    // Process failure (packages/plugin-runtime/src/manager.ts:649) preserves static
-    // eligibility while the delivered catalog and complete owner identity remain
+    // Process failure preserves static eligibility while the delivered catalog
+    // and complete owner identity remain
     // current. running/manager.active do not authorize or withdraw contributions.
     if (
       !owner ||
@@ -211,12 +211,14 @@ export class PluginController {
       (plugin.status !== "enabled" && plugin.status !== "failed") ||
       owner.pluginId !== language.pluginId ||
       plugin.id !== owner.pluginId
-    )
+    ) {
+      if (input.revision < catalog.revision) return { accepted: false, revision: catalog.revision };
       throw new PluginError(
         "PLUGIN_E_MANIFEST",
         "Registration report does not match a current static language owner.",
       );
-    // T2 owns atomic quarantine, host-authored structured problems, revision changes
+    }
+    // The manager owns atomic quarantine, host-authored structured problems, revision changes
     // and retry only after reload/explicit enable. Never call reload in response here.
     return this.deps.manager.reportLanguageRegistrationFailure(input);
   }
