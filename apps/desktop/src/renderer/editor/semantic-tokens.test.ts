@@ -19,7 +19,7 @@ function model(text: string) {
       uri: { path: "/original.bp" },
       getVersionId: () => version,
       getValue: () => text,
-      getLanguageId: () => "basic-plus",
+      getLanguageId: () => "bp",
       getLineCount: () => text.split("\n").length,
       getLineMaxColumn: (line: number) => text.split("\n")[line - 1]!.length + 1,
       onDidChangeContent: (listener: () => void) => {
@@ -71,7 +71,7 @@ it("encodes UTF-16 deltas and modifiers and rejects overlapping/out-of-range tok
 });
 
 it("translates BOM ranges and ignores snapshots with obsolete document versions", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const source = model("name = 1\nname++");
   const bomToken = { ...token, range: { ...token.range, startColumn: 2, endColumn: 6 } };
   provider.bind(source.model, "main.bp");
@@ -94,7 +94,7 @@ it("translates BOM ranges and ignores snapshots with obsolete document versions"
 });
 
 it("reuses unchanged encoded tokens and verifies accepted versions without reading text", () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const source = model("name = 1");
   const read = vi.spyOn(source.model, "getValue");
   const columns = vi.spyOn(source.model, "getLineMaxColumn");
@@ -109,7 +109,7 @@ it("reuses unchanged encoded tokens and verifies accepted versions without readi
 });
 
 it("clears obsolete colors when the accepted result cannot load a source", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const source = model("name = 1");
   provider.bind(source.model, "main.bp");
   provider.update({ "main.bp": [token] }, undefined, undefined, 1);
@@ -119,7 +119,7 @@ it("clears obsolete colors when the accepted result cannot load a source", async
 });
 
 it("does not publish a snapshot when an inactive dependency differs", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const active = model("name = 1"),
     dependency = model("name = 2");
   provider.bind(active.model, "main.bp");
@@ -140,7 +140,7 @@ it("does not publish a snapshot when an inactive dependency differs", async () =
 });
 
 it("keeps untouched models and waits for fresh tokens without clearing the edited document", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const one = model("name = 1"),
     two = model("name = 2");
   provider.bind(one.model, "one.bp");
@@ -164,7 +164,7 @@ it("keeps untouched models and waits for fresh tokens without clearing the edite
 });
 
 it("rejects a pending request if its version changes, rather than returning newer offsets", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const source = model("name = 1");
   provider.bind(source.model, "main.bp");
   provider.update({ "main.bp": [token] }, undefined, undefined, 1);
@@ -179,7 +179,7 @@ it("rejects a pending request if its version changes, rather than returning newe
 });
 
 it("falls back only for edited documents after failure and cleans up pending requests", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const one = model("name = 1"),
     two = model("name = 2");
   provider.bind(one.model, "one.bp");
@@ -200,7 +200,7 @@ it("falls back only for edited documents after failure and cleans up pending req
 });
 
 it("uses explicit file bindings after rename and drops removed models and canceled requests", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 1);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1);
   const source = model("name = 1");
   provider.bind(source.model, "old.bp");
   provider.update({ "old.bp": [token] }, undefined, undefined, 1);
@@ -239,12 +239,31 @@ it("uses the selected legend rather than Basic Plus token ordinals", () => {
 });
 
 it("ignores an older epoch even when the model version still matches", async () => {
-  const provider = new LanguageSemanticTokens(semanticLegend, "basic-plus", 3);
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 3);
   const source = model("name = 1");
   provider.bind(source.model, "main.bp");
   provider.update({ "main.bp": [token] }, undefined, undefined, 3);
   const accepted = await read(provider, source.model);
   provider.update({ "main.bp": [] }, undefined, undefined, 1);
   expect(await read(provider, source.model)).toBe(accepted);
+  provider.dispose();
+});
+
+it("drops painted and pending tokens immediately when its route is revoked", async () => {
+  let current = true;
+  const provider = new LanguageSemanticTokens(semanticLegend, "bp", 1, () => current);
+  const source = model("name = 1");
+  const changed = vi.fn();
+  provider.onDidChange(changed);
+  provider.bind(source.model, "main.bp");
+  provider.update({ "main.bp": [token] }, undefined, undefined, 1);
+  expect(await read(provider, source.model)).toHaveLength(5);
+  source.edit();
+  const pending = expect(read(provider, source.model)).rejects.toThrow("busy");
+  current = false;
+  provider.unbind(source.model);
+  await pending;
+  expect(await read(provider, source.model)).toHaveLength(0);
+  expect(changed).toHaveBeenCalledTimes(2);
   provider.dispose();
 });

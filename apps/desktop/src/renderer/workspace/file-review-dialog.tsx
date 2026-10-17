@@ -1,3 +1,7 @@
+import type { LanguageStatus } from "../../shared/language-services.js";
+import type { StaticModelContext } from "../editor/static-language-registration.js";
+import { useStaticLanguages } from "../editor/static-language-bootstrap.js";
+
 import { useEffect, useId, useRef, useSyncExternalStore } from "react";
 import * as monaco from "monaco-editor";
 import type { LocalHistoryEntry } from "../../shared/workspace-files.js";
@@ -72,6 +76,9 @@ const copy = {
 } as const;
 
 interface CommonProps {
+  workspaceId?: string;
+  status?: LanguageStatus;
+
   locale: Locale;
   resolvedTheme: "dark" | "light";
   file: string;
@@ -101,37 +108,64 @@ export interface LocalHistoryDialogProps extends CommonProps {
 let reviewSequence = 0;
 
 /** Separate models avoid disturbing the live editor, its undo stack, or language services. */
-export function FileDiff({
-  file,
-  original,
-  modified,
-  originalLabel,
-  modifiedLabel,
-  resolvedTheme,
-}: {
+interface FileDiffProps {
   file: string;
   original: string;
   modified: string;
   originalLabel: string;
   modifiedLabel: string;
   resolvedTheme: "dark" | "light";
-}): React.JSX.Element {
+  workspaceId?: string;
+  status?: LanguageStatus;
+}
+export function FileDiff(props: FileDiffProps): React.JSX.Element {
+  const { snapshot } = useStaticLanguages();
+  return snapshot.settled ? (
+    <ReadyFileDiff {...props} />
+  ) : (
+    <div className="file-review-diff" aria-busy="true" />
+  );
+}
+function ReadyFileDiff({
+  file,
+  original,
+  modified,
+  originalLabel,
+  modifiedLabel,
+  resolvedTheme,
+  workspaceId,
+  status,
+}: FileDiffProps): React.JSX.Element {
+  const { runtime } = useStaticLanguages();
   const { values } = useSyncExternalStore(settingsStore.subscribe, settingsStore.getSnapshot);
   const container = useRef<HTMLDivElement>(null);
   const editor = useRef<monaco.editor.IStandaloneDiffEditor | undefined>(undefined);
   const models = useRef<monaco.editor.IDiffEditorModel | undefined>(undefined);
+  const binding =
+    status?.availability.kind === "available" ? status.availability.binding : undefined;
+  const context = useRef<StaticModelContext>({ file });
+  context.current = {
+    file,
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(binding ? { binding } : {}),
+  };
   useEffect(() => {
     if (!container.current) return;
     const sequence = ++reviewSequence;
-    const language = file.toLowerCase().endsWith(".json") ? "json" : "basic-plus";
-    const model = (side: string) =>
+    const language = runtime.registrar.resolve(context.current).monacoLanguage;
+    const makeModel = (side: string) =>
       monaco.editor.createModel(
         "",
         language,
         monaco.Uri.from({ scheme: "kobrixa-review", path: `/${sequence}/${side}/${file}` }),
       );
-    const pair = { original: model("original"), modified: model("modified") };
-    const instance = monaco.editor.createDiffEditor(container.current, {
+    const pair = { original: makeModel("original"), modified: makeModel("modified") };
+    const tracks = [pair.original, pair.modified].map((model) =>
+      runtime.registrar.trackModel(model, () => context.current),
+    );
+    // Monaco forwards global settings here, but omits them from its diff option types.
+    const options: monaco.editor.IStandaloneDiffEditorConstructionOptions &
+      monaco.editor.IGlobalEditorOptions = {
       automaticLayout: true,
       readOnly: true,
       domReadOnly: true,
@@ -149,7 +183,9 @@ export function FileDiff({
       renderIndicators: true,
       diffAlgorithm: "advanced",
       maxComputationTime: 2000,
-    });
+      maxTokenizationLineLength: 10000,
+    };
+    const instance = monaco.editor.createDiffEditor(container.current, options);
     restoreEditorHoverDelegate();
     models.current = pair;
     editor.current = instance;
@@ -157,26 +193,38 @@ export function FileDiff({
     return () => {
       editor.current = undefined;
       models.current = undefined;
+      for (const track of tracks) track.dispose();
       instance.dispose();
       restoreEditorHoverDelegate();
       pair.original.dispose();
       pair.modified.dispose();
     };
-  }, [file]);
+  }, []);
   useEffect(() => {
-    editor.current?.updateOptions({
+    runtime.registrar.refreshModels();
+  }, [file, workspaceId, status]);
+  useEffect(() => {
+    const options: monaco.editor.IDiffEditorOptions & monaco.editor.IGlobalEditorOptions = {
       fontSize: values.codeSize,
       lineHeight: Math.round((values.codeSize * 25) / 16),
-    });
-  }, [file, values.codeSize]);
+      maxTokenizationLineLength: 10000,
+    };
+    editor.current?.updateOptions(options);
+  }, [values.codeSize]);
   useEffect(() => {
-    models.current?.original.setValue(original);
-    models.current?.modified.setValue(modified);
-  }, [file, original, modified]);
+    const pair = models.current;
+    if (!pair) return;
+    if (pair.original.getValue() !== original) pair.original.setValue(original);
+    if (pair.modified.getValue() !== modified) pair.modified.setValue(modified);
+  }, [original, modified]);
   useEffect(() => {
     monaco.editor.setTheme(`kobrixa-${resolvedTheme}`);
-    editor.current?.getOriginalEditor().updateOptions({ ariaLabel: `${originalLabel}: ${file}` });
-    editor.current?.getModifiedEditor().updateOptions({ ariaLabel: `${modifiedLabel}: ${file}` });
+    editor.current
+      ?.getOriginalEditor()
+      .updateOptions({ ariaLabel: `${originalLabel}: ${file}`, maxTokenizationLineLength: 10000 });
+    editor.current
+      ?.getModifiedEditor()
+      .updateOptions({ ariaLabel: `${modifiedLabel}: ${file}`, maxTokenizationLineLength: 10000 });
   }, [file, resolvedTheme, originalLabel, modifiedLabel]);
   return (
     <div className="file-review-diff">
@@ -193,6 +241,8 @@ export function FileConflictDialog({
   locale,
   resolvedTheme,
   file,
+  workspaceId,
+  status,
   localContent,
   diskContent,
   busy,
@@ -222,6 +272,8 @@ export function FileConflictDialog({
     >
       <div className="file-review-content" aria-busy={busy}>
         <FileDiff
+          {...(workspaceId ? { workspaceId } : {})}
+          {...(status ? { status } : {})}
           file={file}
           resolvedTheme={resolvedTheme}
           original={diskContent ?? ""}
@@ -276,6 +328,8 @@ export function LocalHistoryDialog({
   locale,
   resolvedTheme,
   file,
+  workspaceId,
+  status,
   currentContent,
   entries,
   selectedId,
@@ -334,6 +388,8 @@ export function LocalHistoryDialog({
         </nav>
         {previewReady ? (
           <FileDiff
+            {...(workspaceId ? { workspaceId } : {})}
+            {...(status ? { status } : {})}
             file={file}
             resolvedTheme={resolvedTheme}
             original={selectedContent}

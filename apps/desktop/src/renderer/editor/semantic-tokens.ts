@@ -77,6 +77,7 @@ export class LanguageSemanticTokens
     private readonly legend: SemanticLegend,
     private readonly languageId: string,
     private readonly epoch: number,
+    private readonly isCurrentRoute: (model: editor.ITextModel) => boolean = () => true,
   ) {}
   private readonly models = new Map<editor.ITextModel, ModelTokens>();
   private readonly listeners = new Set<() => void>();
@@ -99,7 +100,8 @@ export class LanguageSemanticTokens
   ): languages.SemanticTokens | null | Promise<languages.SemanticTokens> {
     if (token.isCancellationRequested) return null;
     const state = this.models.get(model);
-    if (!state || model.getLanguageId() !== this.languageId) return { data: new Uint32Array() };
+    if (!state || !this.isCurrentRoute(model) || model.getLanguageId() !== this.languageId)
+      return { data: new Uint32Array() };
     if (state.version === model.getVersionId()) return { data: state.data };
     const version = model.getVersionId();
     return new Promise((resolve, reject) => {
@@ -153,6 +155,7 @@ export class LanguageSemanticTokens
     state.subscription.dispose();
     for (const request of state.requests) request.reject(busy());
     this.models.delete(model);
+    this.fire();
   }
   update(
     tokensByFile: PublishedAnalysis["tokensByFile"] | undefined,
