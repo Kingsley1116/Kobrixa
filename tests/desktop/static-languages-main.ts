@@ -9,10 +9,14 @@ import { registerIpc } from "../../apps/desktop/src/main/ipc.js";
 import { BUILTIN_PLUGIN_SOURCES } from "../../apps/desktop/src/main/plugins/builtin.js";
 import { startPlugins } from "../../apps/desktop/src/main/plugins/controller.js";
 import { registerPluginIpc } from "../../apps/desktop/src/main/plugins/ipc.js";
-import { SessionMarkerFile } from "../../apps/desktop/src/main/plugins/session.js";
+import {
+  SessionMarkerFile,
+  watchRendererHealth,
+} from "../../apps/desktop/src/main/plugins/session.js";
 import { installPluginQuitCleanup } from "../../apps/desktop/src/main/plugins/quit.js";
 import { resolveLexicalLanguage } from "../../apps/desktop/src/renderer/editor/static-language-routing.js";
 import { checkStaticLanguageLifecycle } from "./static-languages-acceptance.mjs";
+import { STRESS_EVENT_PREFIX } from "./static-languages-stress.mjs";
 
 const [directory, phase] = process.argv.slice(-2) as [string, string];
 const fail = (error: unknown) => {
@@ -29,12 +33,17 @@ void app.whenReady().then(async () => {
     builtin: PluginSource;
     binding: LanguageBinding;
   };
+  const stress = phase === "hostile-tokenization" || phase === "recover-hostile";
   const names =
-    phase === "conflicts" ? ["toy", "shared", "duplicate", "invalid", "hostile"] : ["toy"];
+    phase === "conflicts"
+      ? ["toy", "shared", "duplicate", "invalid", "hostile"]
+      : stress
+        ? ["toy", "hostile"]
+        : ["toy"];
   let launches = 0;
   const plugins = await startPlugins({
     userData: app.getPath("userData"),
-    builtins: phase === "browser" ? BUILTIN_PLUGIN_SOURCES : [input.builtin],
+    builtins: phase === "browser" || stress ? BUILTIN_PLUGIN_SOURCES : [input.builtin],
     commandLine: {
       developmentDirectories: names.map((name) => input.paths[name]!),
       safeMode: phase === "cli-safe",
@@ -65,6 +74,16 @@ void app.whenReady().then(async () => {
     },
   };
   const win = new BrowserWindow(windowOptions);
+  if (phase === "hostile-tokenization") {
+    // Exactly the product's health wiring; never synthesize an unresponsive event.
+    watchRendererHealth(win, () => plugins.markRendererUnresponsive());
+    win.on("unresponsive", () => {
+      console.log(STRESS_EVENT_PREFIX + JSON.stringify({ type: "unresponsive" }));
+    });
+    win.webContents.on("console-message", (event) => {
+      if (event.message.startsWith(STRESS_EVENT_PREFIX)) console.log(event.message);
+    });
+  }
   type RegisterArgs = Parameters<typeof registerIpc>;
   // Unused product-service fixtures let us install the actual trust wrapper.
   // No plugin, IPC, validator, catalog or renderer-language implementation is mocked.
@@ -88,7 +107,11 @@ void app.whenReady().then(async () => {
       },
     ],
   );
-  await win.loadURL(phase === "browser" ? rendererUrl : "about:blank");
+  const browserUrl = new URL(rendererUrl);
+  browserUrl.searchParams.set("phase", phase);
+  if (phase === "recover-hostile")
+    browserUrl.searchParams.set("hostileDirectory", input.paths.hostile!);
+  await win.loadURL(phase === "browser" || stress ? browserUrl.href : "about:blank");
   const call = <T>(method: string, ...args: unknown[]): Promise<T> =>
     win.webContents.executeJavaScript(
       `window.kobrixa.plugins[${JSON.stringify(method)}](...${JSON.stringify(args)})`,
@@ -139,12 +162,55 @@ void app.whenReady().then(async () => {
     JSON.parse(await readFile(markerFile, "utf8")) as {
       thirdPartyStaticContributions: boolean;
       thirdPartyRunning: boolean;
+      rendererUnresponsive: boolean;
     };
   const toy = () => plugins.state().plugins.find((row) => row.id === "acme.toy");
   const builtinId = input.binding.language;
 
   if (phase === "browser") {
     await win.webContents.executeJavaScript("window.staticAcceptance");
+  } else if (phase === "hostile-tokenization") {
+    const ready = (await win.webContents.executeJavaScript("window.staticAcceptance")) as object;
+    const before = await marker();
+    assert.equal(before.thirdPartyStaticContributions, true);
+    assert.equal(before.thirdPartyRunning, false);
+    assert.equal(launches, 0);
+    console.log(
+      STRESS_EVENT_PREFIX +
+        JSON.stringify({
+          ...ready,
+          type: "ready",
+          launches,
+          rendererPid: win.webContents.getOSProcessId(),
+        }),
+    );
+    // This promise should never settle. The separate Node parent owns the deadline.
+    await win.webContents.executeJavaScript("window.staticHostileTokenize()");
+    throw new Error("Hostile Monaco tokenization unexpectedly completed");
+  } else if (phase === "recover-hostile") {
+    const proof = JSON.parse(
+      await readFile(path.join(directory, "stress-result.json"), "utf8"),
+    ) as {
+      marker: { rendererUnresponsive: boolean };
+    };
+    const reason = proof.marker.rendererUnresponsive ? "renderer-unresponsive" : "unclean-exit";
+    assert.equal(plugins.state().safeMode, true);
+    assert.equal(plugins.state().safeModeLock?.reason, reason);
+    // Bootstrap only: the browser waits for this call before Disable and Restore.
+    await win.webContents.executeJavaScript("window.staticAcceptance");
+    const recovery = (await win.webContents.executeJavaScript("window.staticHostileRecover()")) as {
+      hostileSourceKey: string;
+    };
+    const saved = JSON.parse(
+      await readFile(path.join(app.getPath("userData"), "plugins/state.json"), "utf8"),
+    ) as { disabled: string[] };
+    assert.ok(saved.disabled.includes(recovery.hostileSourceKey));
+    assert.equal(plugins.state().safeMode, false);
+    assert.equal(plugins.state().safeModeLock, undefined);
+    await writeFile(
+      path.join(directory, "stress-recovery.json"),
+      JSON.stringify({ reason, ...recovery }),
+    );
   } else if (phase === "lifecycle") {
     await checkStaticLanguageLifecycle(api, "acme.toy", "toy");
     assert.equal((await marker()).thirdPartyStaticContributions, true);

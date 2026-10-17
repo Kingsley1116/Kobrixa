@@ -1,10 +1,26 @@
 # 診斷來源契約與插件診斷說明設計（第二階段 2B-1）
 
 日期：2026-10-16  
-狀態：Claude 與 Codex 討論後提出，使用者已逐段核准設計方向。尚未實作。
+狀態：Claude 與 Codex 討論後提出，使用者已逐段核准設計方向。主要實作已交付，第二階段驗收尚未全部完成；詳見下方實作狀態。
 
 - 上層設計：[插件系統設計](2026-10-14-plugin-system-design.md)（§5.1.1、§5.1.2、§11 第二階段）
 - 前一子專案：[2A 插件化編譯鏈](2026-10-16-plugin-system-2a-build-chain-design.md)
+
+## 實作狀態（2026-10-17）
+
+第二階段已合併至 `0ba37ba`。已交付子專案：[2A](2026-10-16-plugin-system-2a-build-chain-design.md)、[2B-1](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)、[2B-2](2026-10-16-plugin-system-2b2-language-services-design.md)、[2C](2026-10-17-plugin-system-2c-static-languages-design.md)。整體狀態與必要驗收見[主規格的待驗收清單](2026-10-14-plugin-system-design.md#第二階段待驗收項目)及[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。
+
+已交付宿主加註的診斷來源、發布型別與驗證、來源隔離的說明目錄／UI／Quick Fix 身分比對，以及受限的雙語純文字說明、範例與 HTTPS 連結；內建代碼、helpKey 與官方網址保留。函式庫 `Diagnostic.source` 可省略，`PublishedDiagnostic.source` 必填，桌面建置結果使用 `PublishedCompileResult`。現行 API 為 1.4.0；下文 1.2.0 是本能力加入時的版本。
+
+保留的排除範圍與待辦：
+
+- 外部診斷產生者、HTML／圖片等說明資源、第三方說明發布到官網仍排除。無 entrypoint 的純靜態說明插件已由 2C 完成；語言 worker 的暫時 Basic Plus adapter 已由 2B-2 的提供者路由取代。
+- 發布檢查重複及雙重檢查說明、真實建置／混合來源測試的斷言強度、命令 ownership 順序與重複／無效 builtin 的 registry 邊界測試，保留為有限的清理與覆蓋率待辦，不代表目前來源隔離失效。
+- 說明 URL／控制字元、邊界測試、revision／讀取效率、Reload 的連結索引、analyzer-error 測試結構與原規格的「世代號」用語仍待整理；samples README 已補明超出說明資源上限同樣回報 `PLUGIN_E_DIAGNOSTIC_HELP`。
+
+驗證依稽核與 [2B-1 進度紀錄](../../../.superpowers/sdd/2026-10-16-plugin-system-2b1-diagnostic-source/progress.md)，不將後續已修正的發布型別、偽造來源與目錄失效問題重新列為阻擋項目。
+
+下文保留本子專案核准時的設計基線；「實作前背景」與歷史版本範例用於解釋遷移原因，不代表目前仍未實作。原先交給後續子專案的工作，以上方交付狀態為準。
 
 ## 1. 背景、範圍與目標
 
@@ -17,7 +33,7 @@
 
 2B-2 依賴本文件建立的診斷身分做路由與快取失效，因此 2B-1 先做。
 
-現況的問題：
+**實作前背景（2026-10-16）：** 當時需要解決的問題如下：
 
 - 共享 [`Diagnostic`](../../../packages/compiler/src/contracts.ts) 沒有 `source`；建置、模擬、語言分析發布的診斷都無法分辨提供者。
 - 說明查詢 [`getDiagnosticHelp(code, helpKey)`](../../../packages/compiler/src/diagnostic-help.ts) 只以代碼為鍵；renderer 的 `diagnostic-details.tsx`、`diagnostic-presentation.ts` 直接查內建目錄。
@@ -45,7 +61,7 @@ type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
 const CORE_DIAGNOSTIC_SOURCE = "kobrixa.core";
 ```
 
-- 經宿主發布的路徑一律使用 `PublishedDiagnostic`：`CompileResult`、模擬準備結果、語言分析 patch（`language-sync.ts`）、建置與語言的 IPC wire schema。zod schema 要求 `source` 為合法插件 ID 或 `kobrixa.core`。
+- 經宿主發布的路徑一律使用 `PublishedDiagnostic`：`PublishedCompileResult`（桌面 API 中的 `CompileResult` 別名）、模擬準備結果、語言分析 patch（`language-sync.ts`）、建置與語言的 IPC wire schema。zod schema 要求 `source` 為合法插件 ID 或 `kobrixa.core`。
 - producer（前端／後端 adapter、語言分析器）回傳的診斷若自帶 `source`，視為契約違反：宿主丟棄該批結果，改發布一筆 `kobrixa.core` 的 **BUILD1007**（說明見 §8）。不默默移除欄位。
 - 型別驗證不等於身分驗證；身分只來自宿主持有的可信上下文（§3）。
 

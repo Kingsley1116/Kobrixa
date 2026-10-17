@@ -52,7 +52,9 @@ export function assertSmokeQuit(quit) {
   // Keep the manager's force-kill limit strict to catch a blocked manager timer.
   const forceKillLimitMs = quit.forceAtMs + 500;
   assert.ok(
-    Number.isFinite(quit.forceKillMs) && quit.forceKillMs >= 0 && quit.forceKillMs < forceKillLimitMs,
+    Number.isFinite(quit.forceKillMs) &&
+      quit.forceKillMs >= 0 &&
+      quit.forceKillMs < forceKillLimitMs,
     `Manager did not force-kill stubborn-ts before ${forceKillLimitMs} ms (${quit.forceKillMs})`,
   );
   // elapsedMs starts at before-quit, while forceAtMs is relative to shutdown().

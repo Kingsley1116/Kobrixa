@@ -28,10 +28,23 @@ Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理
 ## v1.x — 強化
 
 - 插件系統第一階段（開發預覽）：協定、JS／TS 與 Python SDK、命令與通知 API、設定面板，以及註冊為內建插件的 Basic Plus 前端。第三方插件僅限開發模式載入。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+- 插件系統第二階段（已實作，驗收待完成）：內建編譯前端／後端選擇、通用 `artifacts[]`、診斷來源與說明、內建語言服務及 API 1.4.0 靜態語言。詳見[架構與契約](architecture.md)及[靜態語言插件](plugin-static-languages.md)。外部編譯器與語言服務 RPC 仍屬後續工作。
+- 插件系統第三階段（未來規劃）：公開面板／設定／設備 API 與內建功能遷移，包含透過公開 API 完成馬達測試。
+- 插件系統第四階段（未來規劃）：正式插件封裝、受管理的執行環境、產生式 Python 型別綁定、相依解析與版本回退，通過驗收後才向一般使用者開放第三方插件。
 - 擴充 `.bp` 相容案例與 EV3 API 覆蓋。
 - 改進補全、格式化、效能、無障礙、本地化與復原體驗。
 - 在相同 compiler 與 device package 上加入 headless Node.js `kobrixa` CLI。
 - 雲端協作（已納入）：透過 Kobrixa 營運的服務，以邀請碼開啟房間，即時共同編輯、共享檔案樹、聊天，並由單一持有者控制 EV3。詳見[雲端協作](../zh-TW/collaboration.md)。
+
+### 插件第二階段驗收
+
+實作已交付，第二階段驗收尚未全部完成。[主規格](../superpowers/specs/2026-10-14-plugin-system-design.md)記錄驗收結果與待驗收項目。V01–V03 人工驗收仍待完成，V04 保留為已記錄的環境例外：
+
+- **S09：** 隔離的惡意分詞驗收已於 2026-10-17 在沙箱外的 macOS arm64（Darwin 24.6.0）通過，使用 `tests/desktop/static-languages-stress.mjs` 與 `tests/desktop/static-languages-run.mjs` 的 `hostile-tokenization`／`recover-hostile` 階段（`pnpm test:static-languages:smoke`）。[壓力測試日誌第 112–114 行](../../.superpowers/sdd/stage-2-closeout/stress-smoke.log#L112-L114)記錄：renderer 進入正規表示式約 5 秒後，由父程序強制終止（`code: null`、`signal: SIGKILL`）；以 `unclean-exit` 原因成功復原；惡意插件已個別停用，且在 Restore 後仍未註冊；內建 Basic Plus 分詞正常；新增實際耗時 6.1 秒。5 秒內未觀察到 `unresponsive` 事件，依設計此事件並非必要條件。這項驗收與資源上限不證明任意規則安全，也不構成完整 ReDoS 防護。其他平台仍未驗證。
+- **V01：** 在兩種語系與主題中人工驗收實際應用程式，涵蓋 Basic Plus 行為、可見／隱藏／分割／檢閱編輯器、靜態插件生命週期與復原控制、長行儲存／重開／Undo、衝突及語言服務隔離。
+- **V02：** 人工驗收真正阻塞的 renderer、下次啟動的復原介面，以及持續有效的個別停用設定。模擬無回應 hook 不符合此項要求。
+- **V03：** 在未掛載儲存庫的乾淨機器或容器中，人工驗收已安裝的應用程式，包含主題、靜態插件生命週期及復原。
+- **V04：** 保留已記錄的環境例外：完整桌面 smoke 停在既有的 `tests/desktop/monitor-smoke.mjs:332` 逾時（`visibilityState === "hidden"`），亦已在 2C 前的基底 `247db48` 重現。須另行記錄因此略過的檢查，或在合適的桌面環境完成全程執行；不得將完整測試套件記為通過。
 
 退出條件：編譯器和設備 API 足夠穩定，可讓 CLI 與桌面程式獨立發布。
 

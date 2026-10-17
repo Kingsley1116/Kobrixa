@@ -13,10 +13,18 @@ import type {
   ReportLanguageRegistrationFailureInput,
   StaticLanguagesCatalog,
 } from "../../apps/desktop/src/shared/static-languages.js";
+import {
+  HOSTILE_PATTERN,
+  HOSTILE_COMPILED_PATTERN,
+  HOSTILE_DOCUMENT,
+  STRESS_EVENT_PREFIX,
+} from "./static-languages-stress.mjs";
 
 declare global {
   interface Window {
-    staticAcceptance: Promise<void>;
+    staticAcceptance: Promise<unknown>;
+    staticHostileTokenize: () => never;
+    staticHostileRecover: () => Promise<unknown>;
   }
 }
 function assert(value: unknown, message: string): asserts value {
@@ -374,4 +382,171 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
     for (const element of elements) element.remove();
   }
 }
-window.staticAcceptance = runStaticLanguagesBrowserChecks();
+async function prepareHostileAcceptance(recover: boolean): Promise<unknown> {
+  const api = window.kobrixa.plugins;
+  const store = createStaticLanguageStore(api);
+  const registrar = createStaticLanguageRegistrar({
+    monaco,
+    store,
+    api,
+    coreExtensionRoutes: CORE_EXTENSION_ROUTES,
+  });
+  equal((await bootstrapStaticLanguages({ store, registrar })).kind, "ready", "Stress bootstrap");
+  // @ts-expect-error Monaco's pinned private JS module has no public declaration.
+  const { TokenizationRegistry } = await import("monaco-editor/editor/common/languages.js");
+  const model = monaco.editor.createModel(
+    recover ? HOSTILE_DOCUMENT : "",
+    "plaintext",
+    monaco.Uri.parse("file:///stress/document.hostile"),
+  );
+  const tracked = registrar.trackModel(model, () => ({ file: "document.hostile" }));
+  const host = container();
+  const editor = monaco.editor.create(host, { model, maxTokenizationLineLength: 10000 });
+  if (!recover) {
+    equal(model.getLanguageId(), "toy-hostile", "Validated hostile language registered and routed");
+    const language = (await api.staticLanguages()).languages.find(
+      (item) => item.id === "toy-hostile",
+    );
+    assert(
+      language && registrar.getActiveOwners().some((item) => item.languageId === language.id),
+      "Hostile registrar owner",
+    );
+    assert(
+      await TokenizationRegistry.getOrCreate(language.id),
+      "Real hostile Monarch tokenizer loaded",
+    );
+    window.staticHostileTokenize = () => {
+      const originalExec = RegExp.prototype.exec;
+      // Observe the actual native regex call reached through Monaco's model
+      // tokenization. Forward unchanged; no substitute loop or synthetic hang.
+      RegExp.prototype.exec = function (text: string): RegExpExecArray | null {
+        const hostile = this.source === HOSTILE_COMPILED_PATTERN && text === HOSTILE_DOCUMENT;
+        if (hostile)
+          console.log(
+            STRESS_EVENT_PREFIX +
+              JSON.stringify({
+                type: "regex-entered",
+                pattern: this.source,
+                codeUnits: text.length,
+                languageId: model.getLanguageId(),
+                documentUri: model.uri.toString(),
+              }),
+          );
+        const result = originalExec.call(this, text);
+        if (hostile) console.log(STRESS_EVENT_PREFIX + JSON.stringify({ type: "regex-returned" }));
+        return result;
+      };
+      try {
+        model.setValue(HOSTILE_DOCUMENT);
+        // Exercise the document's real synchronous tokenization, even in a hidden
+        // BrowserWindow where background rendering can be throttled.
+        (
+          model as typeof model & { tokenization: { forceTokenization(line: number): void } }
+        ).tokenization.forceTokenization(1);
+      } finally {
+        RegExp.prototype.exec = originalExec;
+      }
+      throw new Error("Hostile document tokenization returned instead of blocking");
+    };
+    return {
+      languageId: language.id,
+      pattern: HOSTILE_PATTERN,
+      codeUnits: HOSTILE_DOCUMENT.length,
+    };
+  }
+  window.staticHostileRecover = async () => {
+    const builtinWorks = async () => {
+      assert(
+        await TokenizationRegistry.getOrCreate("bp"),
+        "Builtin tokenizer available in recovery",
+      );
+      equal(
+        monaco.editor.tokenize("If True Then", "bp")[0]![0]!.type,
+        "keyword.control.basic-plus",
+        "Builtin Basic Plus actually tokenizes",
+      );
+    };
+    const hostileAbsent = () => {
+      equal(model.getLanguageId(), "plaintext", "Hostile document restored as plaintext");
+      assert(
+        !registrar.getActiveOwners().some((owner) => owner.languageId === "toy-hostile"),
+        "Hostile owner absent",
+      );
+      assert(
+        !monaco.languages.getLanguages().some((language) => language.id === "toy-hostile"),
+        "Hostile language never registered in recovery",
+      );
+      equal(model.getValue(), HOSTILE_DOCUMENT, "Recovered document content retained");
+    };
+    try {
+      const state = await api.state();
+      assert(state.safeMode && state.safeModeLock, "Recovery lock available through preload");
+      assert(
+        (await api.staticLanguages()).languages.every((language) =>
+          language.sourceKey.startsWith("builtin:"),
+        ),
+        "Recovery catalog is builtin-only",
+      );
+      hostileAbsent();
+      await builtinWorks();
+      // Safe mode deliberately does not read manifests: identify the displayed
+      // source directory, then use the same public actions as the settings UI.
+      const directory = new URL(location.href).searchParams.get("hostileDirectory");
+      const hostile = state.plugins.find((row) => row.directory === directory);
+      assert(
+        hostile?.disabledBy === "safe-mode",
+        "Hostile source individually available in recovery",
+      );
+      const disabled = await api.setEnabled(hostile.sourceKey, false);
+      assert(disabled.ok && disabled.persisted !== false, "Individual disable persisted");
+      assert((await api.clearSafeModeLock()).ok, "Restore plugins succeeds through preload");
+      await store.refresh();
+      await until(() => registrar.getActiveOwners().some((owner) => owner.languageId === "toy"));
+      const restored = await api.state();
+      assert(!restored.safeMode && !restored.safeModeLock, "Restore leaves safe mode");
+      const disabledHostile = restored.plugins.find((row) => row.id === "acme.hostile");
+      assert(
+        disabledHostile?.status === "disabled" && disabledHostile.disabledBy === "user",
+        "Only hostile plugin remains disabled",
+      );
+      const catalog = await api.staticLanguages();
+      assert(
+        !catalog.languages.some((language) => language.id === "toy-hostile"),
+        "Hostile absent after Restore",
+      );
+      assert(
+        catalog.languages.some((language) => language.id === "toy"),
+        "Unrelated third-party plugin restored",
+      );
+      hostileAbsent();
+      await builtinWorks();
+      editor.setPosition({ lineNumber: 1, column: 1 });
+      editor.trigger("stress-recovery", "type", { text: "editable " });
+      assert(model.getValue().startsWith("editable "), "Recovered document editable");
+      editor.trigger("stress-recovery", "undo", null);
+      equal(model.getValue(), HOSTILE_DOCUMENT, "Recovered document undo works");
+      return {
+        hostileSourceKey: disabledHostile.sourceKey,
+        builtinToken: "keyword.control.basic-plus",
+        hostileRegistered: false,
+        safeMode: false,
+        unrelatedRestored: true,
+        editable: true,
+      };
+    } finally {
+      editor.dispose();
+      tracked.dispose();
+      model.dispose();
+      registrar.dispose();
+      store.dispose();
+      host.remove();
+    }
+  };
+  return undefined;
+}
+
+const phase = new URL(location.href).searchParams.get("phase");
+window.staticAcceptance =
+  phase === "hostile-tokenization" || phase === "recover-hostile"
+    ? prepareHostileAcceptance(phase === "recover-hostile")
+    : runStaticLanguagesBrowserChecks();

@@ -225,27 +225,27 @@ EV3 後端預設優化原生輸出：省略跳到下一個區塊的跳躍、簡�
 
 裁剪前會對所有來源函式執行 lowering 診斷，因此未使用函式中的錯誤仍會回報。全域宣告與執行期支援儲存空間的配置及初始化規則維持不變。陣列清理需要的值會保留到函式結束，背景執行緒迴圈讓出 CPU 的指令也會保留。可使用 `new EV3Backend({ optimize: false })` 關閉全部優化，以便診斷與比較。直接呼叫子函式的工具可使用 `retainFunctions: ["helper"]` 保留額外函式及其呼叫／執行緒相依關係，同時維持優化啟用；名稱不分大小寫，兩種模式都會對未知名稱回報錯誤。兩種模式皆不修改輸入 IR；`.ir.json` 成品描述前端輸出，`.lst` 則只記錄實際產生的函式與支援物件、目前的物件 ID 及區域記憶體大小。函式裁剪後的物件 ID 可能改變。
 
-公共建置結果為：
+函式庫與發布用的建置契約定義於 `packages/compiler/src/contracts.ts`：
 
 ```ts
-interface CompileResult {
-  buildId: string;
-  target: string;
-  deploy?: "ev3";
-  runtimeDirectory?: string;
-  success: boolean;
-  diagnostics: Diagnostic[];
-  artifacts: BuildArtifact[];
+interface SourceRange {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
 }
 
 interface Diagnostic {
   code: string;
-  helpKey?: string;
+  helpKey?: string | undefined;
   severity: "error" | "warning" | "info";
   file: string;
-  range: { startLine: number; startColumn: number; endLine: number; endColumn: number };
+  range: SourceRange;
   message: string;
+  source?: string;
 }
+
+type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
 
 interface BuildArtifact {
   slot: string;
@@ -257,7 +257,23 @@ interface BuildArtifact {
   byteLength: number;
   remotePath?: string;
 }
+
+interface CompileResult {
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
+  runtimeDirectory?: string;
+  success: boolean;
+  diagnostics: Diagnostic[];
+  artifacts: BuildArtifact[];
+}
+
+type PublishedCompileResult = Omit<CompileResult, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
 ```
+
+獨立使用函式庫時，`Diagnostic.source` 可省略。提供者必須留空，由宿主依可信插件 ID 為各產生處的診斷加註來源；核心診斷使用 `kobrixa.core`，提供者自行設定來源會被拒絕。已發布診斷必須帶有合法來源。桌面 API 將 `Diagnostic` 設為 `PublishedDiagnostic` 的別名，將 `CompileResult` 設為 `PublishedCompileResult` 的別名，並以發布檢查與 wire schema 強制驗證這個邊界。
 
 公共結果的行、列從 1 起算。成功建置必須沒有 error 診斷、包含全部 required 成品；若可部署，還須有唯一且非空的主檔。成功但不可部署仍是建置成功，執行／上傳按鈕會說明原因。失敗或取消的成品清單一律為空。未宣告、重複、缺少必要成品、路徑不安全、名稱碰撞或超過上限，皆回 `BUILD1003`。
 
@@ -271,9 +287,9 @@ BuildSession 與模擬共用 `compileToMemory`：執行前端、檢查實際 IR 
 
 部署要求設備支援的 `deploy`（目前為 `ev3`），否則回 `BUILD1005`。先把全部待部署檔案讀進記憶體並驗 SHA-256，再開始任何上傳；檔案遺失或變更回 `BUILD1006`。資源依 remotePath 排序、主檔最後，傳送的就是驗過的同一批 bytes。Folder／runtimeDirectory、設備鎖與略過未變資源的行為保留；設備傳輸本身仍非原子操作。
 
-可在瀏覽器使用的 `@kobrixa/compiler/diagnostic-help` 子路徑提供繁體中文及英文共用診斷目錄，原有 compiler 入口保持不變。同一代碼有不同原因時，由產生處設定可選的 `helpKey`；缺少或未知的分類使用該代碼的通用解說，未知代碼保留原始訊息。測試會核對 production 代碼與目錄，並驗證範例及文件連結。
+可在瀏覽器使用的 `@kobrixa/compiler/diagnostic-help` 子路徑提供繁體中文及英文共用診斷目錄，原有 compiler 入口保持不變。同一代碼有不同原因時，由產生處設定可選的 `helpKey`；說明先查 `(source, code, helpKey)`，再退回同一來源的 `(source, code)`。找不到說明時保留原始訊息；第三方的 `BP1015` 不會使用 Basic Plus 的說明。只有已知的內建來源可使用共用內建目錄與官方網址，第三方說明保留在本機，使用自己的受控 HTTPS 連結。測試會核對 production 代碼與目錄，並驗證範例及文件連結。
 
-Quick Fix 請求包含工作區、已接受的分析 session／revision／version、檔案、診斷及取消識別碼。語言 worker 依 parser token 與區塊資訊產生插入候選，在記憶體副本重新解析後，按分析版本快取通過驗證的候選。查詢上限為 1,000,000 個 UTF-16 code unit，每次最多解析該檔兩次，不在 renderer 執行完整專案分析。取消會設定共享旗標，不影響其他查詢或已接受的分析。套用前會重新檢查目標 model 版本、來源快照與磁碟衝突，再以單一復原步驟沿用文件、草稿與儲存流程；rename 仍檢查全專案來源檔。文件開啟 IPC 只接受目錄選項，由 main process 組合官方網址。
+診斷身分、快取、去重、Monaco marker 與說明面板皆納入 `source`。Quick Fix 請求包含工作區、binding epoch、已接受的分析 session／revision／version、檔案、診斷身分（`source`、`code`、可選的 `helpKey` 與 range）及取消識別碼。宿主先比對已發布診斷、已接受的分析與選定的語言綁定，再路由修正；UI 傳入的來源或代碼不能改選其他提供者。註冊診斷說明不會啟用 Quick Fix。語言 worker 依 parser token 與區塊資訊產生插入候選，在記憶體副本重新解析後，按分析版本快取通過驗證的候選。查詢上限為 1,000,000 個 UTF-16 code unit，每次最多解析該檔兩次，不在 renderer 執行完整專案分析。取消會設定共享旗標，不影響其他查詢或已接受的分析。套用前會重新檢查目標 model 版本、來源快照與磁碟衝突，再以單一復原步驟沿用文件、草稿與儲存流程；rename 仍檢查全專案來源檔。文件開啟 IPC 只接受目錄選項，由 main process 組合官方網址。
 
 `runtimeDirectory` 記錄入口來源的 `Folder` 目的地。素材成品的 `remotePath` 為專案相對路徑，部署時保留程式預期的素材位置。
 

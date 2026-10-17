@@ -6,6 +6,8 @@ Kobrixa IDE 為學生與創客提供可靠、容易理解的流程，將 EV3 原
 
 Kobrixa IDE 已實作 Basic Plus 編輯與編譯、專案管理、USB／Wi-Fi transport、遠端檔案管理、Sensor Lab、馬達測試及雲端協作。
 
+插件開發預覽已納入第二階段實作：內建編譯前端／後端選擇、通用建置成品、診斷來源與說明、內建語言服務，以及 API 1.4.0 編輯器靜態語言。可信任的第三方插件仍限開發模式；靜態語言可新增上色與編輯器設定，Basic Plus 仍是唯一隨附的來源前端。目前能力與待驗收項目見[插件架構](architecture.md#插件開發預覽)、[靜態語言插件](plugin-static-languages.md)及[路線圖](roadmap.md)。
+
 ## 主要使用者
 
 - 從積木程式進階到文字程式的學生。

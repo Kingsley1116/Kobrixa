@@ -1,10 +1,26 @@
 # 插件化編譯鏈與通用成品契約設計（第二階段 2A）
 
 日期：2026-10-16  
-狀態：Claude 與 Codex 經三輪討論達成共識，使用者已核准設計方向與「outputDir 排他鎖」的取捨。尚未實作。
+狀態：Claude 與 Codex 經三輪討論達成共識，使用者已核准設計方向與「outputDir 排他鎖」的取捨。主要實作已交付，第二階段驗收尚未全部完成；詳見下方實作狀態。
 
 - 上層設計：[插件系統設計](2026-10-14-plugin-system-design.md)（§2、§5.3、§11 第二階段）
 - 待辦清單：[第二階段待辦](../plans/2026-10-15-plugin-system-phase-2-backlog.md)
+
+## 實作狀態（2026-10-17）
+
+第二階段已合併至 `0ba37ba`。已交付子專案：[2A](2026-10-16-plugin-system-2a-build-chain-design.md)、[2B-1](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)、[2B-2](2026-10-16-plugin-system-2b2-language-services-design.md)、[2C](2026-10-17-plugin-system-2c-static-languages-design.md)。整體狀態與必要驗收見[主規格的待驗收清單](2026-10-14-plugin-system-design.md#第二階段待驗收項目)及[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。
+
+已交付內建編譯前端／後端選擇、通用語言／目標 ID、IR 協商、通用 `artifacts[]` 驗證與提交，以及依 role／deploy 的部署與共用模擬流程。Basic Plus 語言為 `bp`，提供者為 `kobrixa.basic-plus`；EV3 提供者為 `kobrixa.ev3`，目標為 `ev3-native`，目錄為 `plugins/ev3/`。既有函式庫保留。下方 `CompileResult` 是函式庫型別；2B-1 另交付供桌面發布使用的 `PublishedCompileResult`。
+
+保留的排除範圍與取捨：
+
+- 外部 frontend／backend 與跨程序 build RPC（大型 IR、取消、版本協商）、成品歷史／成品庫／GC、內建插件獨立停用控制仍延後。
+- 提交不是多檔案原子交易；殘留鎖的 compare／unlink 非原子操作，PID 檢查不保證網路共享磁碟正確性；設備上傳亦非原子操作。
+- 原先分配給 2B／2C 的診斷來源、語言服務與 tokenizer 已由後續子專案交付，不再列為第二階段未實作功能。
+
+本工作樹沒有 2A progress ledger；驗證依收尾稽核引用的實作、測試及後續整合紀錄，不另宣稱新的執行結果。
+
+下文保留本子專案核准時的設計基線；「實作前背景」與歷史版本範例用於解釋遷移原因，不代表目前仍未實作。原先交給後續子專案的工作，以上方交付狀態為準。
 
 ## 1. 背景、範圍與目標
 
@@ -17,7 +33,7 @@
 | 2B     | 診斷 `source` 契約、`diagnosticHelp` 貢獻、語言分析／補全／Quick Fix 提供者 |
 | 2C     | 靜態語言貢獻（宣告式 tokenizer 與資源上限）                                 |
 
-現況的問題：
+**實作前背景（2026-10-16）：** 當時需要解決的問題如下：
 
 - `ProjectManifest.language` 寫死 `"bp"`、`target` 寫死 `"ev3-native"`（[contracts.ts](../../../packages/compiler/src/contracts.ts)）；`CompilerBackend` 回傳固定的 `rbf`／`listing` 欄位。
 - `BuildSession` 只會產出 `.rbf`／`.ir.json`／`.lst`，並逐檔 rename；`build.ts`、`build-path.ts` 用 `kind === "rbf"` 找部署主檔。
@@ -159,7 +175,7 @@ interface CompileResult {
   4. 第一次 rename 前最後一次檢查取消；之後依 **aux → deploy-asset → deploy-main** 的順序 rename 到最終位置。
   5. 釋放鎖、刪除 staging。
 - **取消邊界：** 第一次 rename 之前取消回 BUILD0001、outputDir 不變；開始 rename 之後一定做完。rename 中途 I/O 失敗回 BUILD9000、成品清單為空；磁碟上可能留下新舊混合的檔案，部署會在 §7 被擋下。
-- **程序內排隊：** `BuildService` 依 canonical outputDir（`realpath`）維護 FIFO，同一個 outputDir 的建置一次只跑一個（目前每次直接開 worker，沒有排隊）。
+- **程序內排隊：** `BuildService` 依 canonical outputDir（`realpath`）維護 FIFO，同一個 outputDir 的建置一次只跑一個（實作前每次直接開 worker，沒有排隊）。
 - **跨程序排他鎖（使用者決定採用）：** Kobrixa 沒有 `requestSingleInstanceLock`，兩個實例可能交錯提交，留下兩邊都回報成功卻不完整的成品組。只在步驟 3–4 持有 `outputDir/.kobrixa-build.lock`：
   - 以 `open(path, "wx")` 建立，內容 `{ pid, startedAt }`。
   - 已存在時讀取內容：pid 不存在（`process.kill(pid, 0)` 回 ESRCH）或內容無法解析且檔案超過 60 秒，視為殘留，刪除後重試一次。

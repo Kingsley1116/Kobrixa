@@ -1,14 +1,30 @@
 # 語言服務提供者設計（第二階段 2B-2）
 
 日期：2026-10-16  
-狀態：Claude 與 Codex 討論後提出，使用者已逐段核准設計方向。尚未實作。
+狀態：Claude 與 Codex 討論後提出，使用者已逐段核准設計方向。主要實作已交付，第二階段驗收尚未全部完成；詳見下方實作狀態。
 
 - 上層設計：[插件系統設計](2026-10-14-plugin-system-design.md)（§11 第二階段）
 - 前一子專案：[2A 插件化編譯鏈](2026-10-16-plugin-system-2a-build-chain-design.md)、[2B-1 診斷來源契約](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)
 
+## 實作狀態（2026-10-17）
+
+第二階段已合併至 `0ba37ba`。已交付子專案：[2A](2026-10-16-plugin-system-2a-build-chain-design.md)、[2B-1](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)、[2B-2](2026-10-16-plugin-system-2b2-language-services-design.md)、[2C](2026-10-17-plugin-system-2c-static-languages-design.md)。整體狀態與必要驗收見[主規格的待驗收清單](2026-10-14-plugin-system-design.md#第二階段待驗收項目)及[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。
+
+已交付全部十二項既有動態語言能力的內建提供者路由、可信語言綁定、worker／快取失效及服務不可用狀態。Basic Plus 保留 `bp`，`kobrixa.basic-plus` 同時擁有 frontend 與 service；2C 已接手靜態語言註冊與 renderer 詞法路由。現行 API 為 1.4.0；下文 1.3.0 是語言服務加入時的版本。
+
+保留的排除範圍與待辦：
+
+- 第三方語言服務／外部 RPC、僅停用語言服務的開關、新語言隱式推斷仍延後。簽名提示目前只顯示一個 signature；更完整的介面留待後續，修正標題仍要求英文、繁體中文可選。
+- Registry 的語意唯一性檢查與 JSON Schema／Python 的結構驗證分開；通過結構驗證不代表通過宿主語意驗證。
+- 未使用的 `analyze`／`diagnostics` 相容 API、N2 專案載入錯誤合併為單列且兩種語系均顯示英文、N3 重複建立補全提供者，以及分析待完成／不完整補全結果／額外刷新成本仍列待辦。2C 沒有處理 N2；原先交給 2C 的通用 renderer 詞法假設已完成遷移。
+
+驗證依稽核與 [2B-2 進度紀錄](../../../.superpowers/sdd/2026-10-16-plugin-system-2b2-language-services/progress.md)。既有補全效能門檻不變；已記錄的自動化結果不取代 V01 人工驗收或 V04 完整 smoke 例外。
+
+下文保留本子專案核准時的設計基線；「實作前背景」與歷史版本範例用於解釋遷移原因，不代表目前仍未實作。原先交給後續子專案的工作，以上方交付狀態為準。
+
 ## 1. 背景、範圍與目標
 
-2B-1 讓每個已發布診斷都帶有宿主加註的 `source`，但語言 worker、補全 worker 與 renderer 編輯器功能仍直接使用 `@kobrixa/basic-plus`：
+**實作前背景（2026-10-16）：** 2B-1 讓每個已發布診斷都帶有宿主加註的 `source`，但語言 worker、補全 worker 與 renderer 編輯器功能仍直接使用 `@kobrixa/basic-plus`：
 
 - [`language-worker.ts`](../../../apps/desktop/src/main/language/language-worker.ts) 直接建立 `BasicPlusProjectAnalyzer`，並以 2B-1 的相容 adapter 把分析加註為 `kobrixa.basic-plus`。
 - [`completion-worker.ts`](../../../apps/desktop/src/main/language/completion-worker.ts) 直接建立 `BasicPlusCompletionAnalyzer`。

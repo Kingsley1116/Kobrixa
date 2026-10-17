@@ -1,15 +1,36 @@
 # 靜態語言貢獻設計（第二階段 2C）
 
 日期：2026-10-17  
-狀態：正式設計；依研究提案與使用者決定定稿，尚未實作。
+狀態：正式設計；依研究提案與使用者決定定稿，主要實作已交付，第二階段驗收尚未全部完成；詳見下方實作狀態。
 
 - 上層設計：[插件系統設計](2026-10-14-plugin-system-design.md)（§5.1.1、§8.1）
 - 前一子專案：[2B-1 診斷來源契約](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)、[2B-2 語言服務提供者](2026-10-16-plugin-system-2b2-language-services-design.md)
 - 研究依據：[2C 設計提案](../../../.superpowers/sdd/2c-design/codex-design.md)
 
+## 實作狀態（2026-10-17）
+
+第二階段已合併至 `0ba37ba`。已交付子專案：[2A](2026-10-16-plugin-system-2a-build-chain-design.md)、[2B-1](2026-10-16-plugin-system-2b1-diagnostic-source-design.md)、[2B-2](2026-10-16-plugin-system-2b2-language-services-design.md)、[2C](2026-10-17-plugin-system-2c-static-languages-design.md)。整體狀態與必要驗收見[主規格的待驗收清單](2026-10-14-plugin-system-design.md#第二階段待驗收項目)及[收尾稽核](../../../.superpowers/sdd/stage-2-closeout/audit-report.md)。
+
+已交付 API 1.4.0 的靜態語言與 static runtime、共用且有資源上限的 JSON／regex 驗證、catalog 註冊與撤銷、所有 model 的詞法路由、長行上色限制、停用／安全模式與復原標記。純靜態診斷說明無須 entrypoint 或程序。Basic Plus 的專案／frontend／service／Monaco ID 均為 `bp`，插件為 `kobrixa.basic-plus`，`tokenPostfix: ".basic-plus"` 保留。
+
+保留的排除範圍與待辦：
+
+- 完整 ReDoS 防護、不可信 grammar sandbox／可中斷 tokenizer 引擎、第三方服務或跨插件 grammar／service 配對仍排除；S09 隔離壓力驗收的通過範圍見下文，V02 真實卡住後復原的人工驗收仍待完成。
+- 檔案關聯 UI、glob／完整檔名／首行／複合副檔名偵測、主題貢獻、marketplace／安裝器及新來源語言隱式推斷仍排除。
+- 生命週期變更時全量重讀資源、序列啟動可能累積 N×5 秒的無回應資料夾延遲、偽造註冊回報使用通用錯誤碼、同 generation 的磁碟修改可能被較舊回報隔離至 Reload，保留為效能與邊界介面待辦。
+- 僅顯示首次失敗的載入橫幅、既有重新連結／解除連結對話框競態仍待整理；原生對話框持有 controller 佇列是已接受的操作限制。2B-2 的 N2 仍未處理。
+
+驗證依稽核與 [2C 進度紀錄](../../../.superpowers/sdd/2026-10-17-plugin-system-2c-static-languages/progress.md)，並補充以下 S09 執行結果。
+
+**S09：** 隔離的惡意分詞驗收已於 2026-10-17 在沙箱外的 macOS arm64（Darwin 24.6.0）通過，使用 `tests/desktop/static-languages-stress.mjs` 與 `tests/desktop/static-languages-run.mjs` 的 `hostile-tokenization`／`recover-hostile` 階段（`pnpm test:static-languages:smoke`）。[壓力測試日誌第 112–114 行](../../../.superpowers/sdd/stage-2-closeout/stress-smoke.log#L112-L114)記錄：renderer 進入正規表示式約 5 秒後，由父程序強制終止（`code: null`、`signal: SIGKILL`）；以 `unclean-exit` 原因成功復原；惡意插件已個別停用，且在 Restore 後仍未註冊；內建 Basic Plus 分詞正常；新增實際耗時 6.1 秒。5 秒內未觀察到 `unresponsive` 事件，依設計此事件並非必要條件。這項驗收與資源上限不證明任意規則安全，也不構成完整 ReDoS 防護。其他平台仍未驗證。
+
+V01–V03 人工驗收仍待完成。V04 保留為已記錄的環境例外：完整桌面 smoke 停在既有的 `tests/desktop/monitor-smoke.mjs:332` 逾時（`visibilityState === "hidden"`），亦已在 2C 前的基底 `247db48` 重現；不得將完整測試套件記為通過。較早的執行環境限制已由後續成功的自動化紀錄部分取代，但不因此關閉這些不同的驗收項目。
+
+下文保留本子專案核准時的設計基線；「實作前背景」與歷史版本範例用於解釋遷移原因，不代表目前仍未實作。原先交給後續子專案的工作，以上方交付狀態為準。
+
 ## 1. 背景、範圍與目標
 
-2B-2 已將動態語言功能交給 `LanguageBinding` 選定的內建提供者，但 Basic Plus 的 Monarch tokenizer、語言設定與 Monaco 註冊仍留在 renderer companion。通用 renderer 仍以副檔名或「非 JSON」推定 Basic Plus，沒有靜態貢獻的完整停用、復原與資源驗證流程。
+**實作前背景（2026-10-17，2C 實作前）：** 2B-2 已將動態語言功能交給 `LanguageBinding` 選定的內建提供者，但 Basic Plus 的 Monarch tokenizer、語言設定與 Monaco 註冊仍留在 renderer companion。通用 renderer 仍以副檔名或「非 JSON」推定 Basic Plus，沒有靜態貢獻的完整停用、復原與資源驗證流程。
 
 **目標：** 以 `contributes.languages` 宣告詞法語言、顯示名稱、副檔名與兩份有版本的 JSON 資源。main process 驗證、決定 ownership 並發布 catalog；renderer 以單一管理器註冊 Monaco、追蹤所有 models 並處理撤銷。語法上色不啟動插件程序，資源失敗時保留純文字編輯，Basic Plus 的既有詞法與編輯行為保持相容。
 
@@ -423,7 +444,7 @@ safe mode 不讀第三方資料夾、不註冊第三方 static contribution；�
 1. `plugins/basic-plus/kobrixa-plugin.json` 改為 `apiVersion: "^1.4.0"` 並新增 §2 的 `bp` 宣告；在 `plugins/basic-plus/language/` 新增 `tokenizer.json`、`configuration.json`。
 2. Tokenizer 保持 1 個 `root` state、9 條 rules 的順序與語意：空白、單引號註解、完整字串、不完整字串、識別字／keywords cases、數字、運算子、`@`、分隔符號。保留 `ignoreCase: true`、`defaultToken: "invalid"`、`tokenPostfix: ".basic-plus"`，每條 flags 為 `i`。
 3. Cases 順序保持 types → booleans → wordOperators → control → keywords → default；wire list name 依 v1 小寫規則將 `wordOperators` 表示為 `word_operators`，不改其內容與優先次序。keyword list 以 parity test 對照 `BASIC_PLUS_KEYWORDS`。
-4. Configuration 搬入單引號 line comment、圓／方兩組 brackets、圓／方／雙引號三組 autoClosingPairs 與 surroundingPairs；雙引號保留 `notIn: ["string", "comment"]`。兩條 indentation regex 及 `i` flags 保持不變。現況沒有 `wordPattern`／`onEnterRules`，資源必須省略兩者，不能在遷移時增加選字或 Enter 行為。
+4. Configuration 搬入單引號 line comment、圓／方兩組 brackets、圓／方／雙引號三組 autoClosingPairs 與 surroundingPairs；雙引號保留 `notIn: ["string", "comment"]`。兩條 indentation regex 及 `i` flags 保持不變。實作前沒有 `wordPattern`／`onEnterRules`，資源必須省略兩者，不能在遷移時增加選字或 Enter 行為。
 5. Frontend formatter 可保留運算用途的 `BASIC_PLUS_INDENTATION_RULES`；parity test 必須比對 JSON 的 `.pattern`／`.flags` 與 formatter 的 `.source`／`.flags`，並對典型 block／dot identifier 行為比對。keyword list 同樣驗證內容與大小寫語意，避免無檢查的雙份來源。
 6. `main/plugins/builtin.ts` 使用 raw resource map，沿通用 reader／validator／catalog 提供；renderer 不直接 import JSON，也不再以 `BASIC_PLUS_INDENTATION_RULES` 註冊設定。
 7. 刪除 `basicPlusMonarch`、`registerBasicPlusLanguage()`、editor 的一次性 registration bridge 與對應 `registered` flags。將 `basicPlusThemeRules()` 移至 companion 的獨立 `theme.ts`，由 `editor-theme.ts` 初始化 `kobrixa-light`／`kobrixa-dark`；theme 初始化不依賴語言可用性，bridge 不能保留 tokenizer/configuration。

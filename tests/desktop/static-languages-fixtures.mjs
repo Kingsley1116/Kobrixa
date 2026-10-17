@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { HOSTILE_PATTERN } from "./static-languages-stress.mjs";
 
 const shared = new URL(
   "../../packages/plugin-protocol/test-fixtures/static-languages/",
@@ -90,7 +91,7 @@ export async function writeStaticLanguageFixtures(directory) {
     if (item.name === "invalid" || item.name === "hostile") {
       const tokenizer = JSON.parse(toyTokenizer);
       if (item.name === "invalid") delete tokenizer.states[0].rules[0].regex.flags;
-      else tokenizer.states[0].rules[0].regex.pattern = "(a+)+$";
+      else tokenizer.states[0].rules[0].regex.pattern = HOSTILE_PATTERN;
       await writeFile(
         path.join(destination, "language/tokenizer.json"),
         JSON.stringify(tokenizer, null, 2) + "\n",
