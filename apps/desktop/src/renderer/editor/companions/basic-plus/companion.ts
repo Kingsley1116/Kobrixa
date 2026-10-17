@@ -5,8 +5,11 @@ import { basicPlusCompletions } from "./completions.js";
 import { basicPlusRangeFormattingEdits } from "./formatting.js";
 import { legend, structuralChange } from "./structure.js";
 export { legend, structuralChange } from "./structure.js";
-export const basicPlusCompanion: LanguageCompanion = {
-  monacoLanguage: "basic-plus",
+
+// Compiles locally against both T0's old interface and T5's field-free interface.
+// No lexical field or cast is added to the runtime companion object.
+type BasicPlusDynamicCompanion = Omit<LanguageCompanion, "monacoLanguage">;
+export const basicPlusCompanion: BasicPlusDynamicCompanion = {
   legend,
   triggerCharacters: [".", "@"],
   signatureTriggers: ["(", ","],
