@@ -8,6 +8,10 @@ Basic Plus is the only implemented source frontend. The project manifest current
 
 “As complete as practical” means broad source syntax acceptance where semantics can be represented on the EV3 VM. It does not mean that Kobrixa embeds the full CPython, JavaScript, Node.js, browser, C++, or operating-system runtime in `.rbf`.
 
+## Static editor languages
+
+Trusted development plugins can add lexical coloring and editor configuration through API 1.4.0 static resources. This does not add a compiler or change the implicit `bp` / `ev3-native` project defaults. Unknown files remain Plain Text; JSON uses the core JSON route. Conflicts or unavailable grammars preserve editing and drafts. See [Static language plugins](plugin-static-languages.md) for the format, fixed limits, trust boundary and recovery workflow.
+
 ## Basic Plus (`.bp`) — v1
 
 The clean-room frontend targets behavioral compatibility with supported legacy programs, including:
