@@ -9,6 +9,8 @@ import {
   developmentSourceKey,
   messageOf,
   PluginManager,
+  PluginError,
+  type PluginProblem,
   readSource,
   type LaunchablePlugin,
   type PluginActionResult,
@@ -32,6 +34,11 @@ import type {
   StoredNotice,
 } from "../../shared/plugins.js";
 import { resolveDiagnosticHelp, type PluginHelpCatalogView } from "../../shared/diagnostic-help.js";
+import type {
+  StaticLanguagesCatalog,
+  ReportLanguageRegistrationFailureInput,
+  ReportLanguageRegistrationFailureResult,
+} from "../../shared/static-languages.js";
 import type { PluginDialogs } from "./dialogs.js";
 import { createDesktopLauncher } from "./launchers.js";
 import { PluginLogs, PluginNotices } from "./logs.js";
@@ -66,6 +73,9 @@ export type PluginManagerPort = Pick<
   PluginManager,
   | "state"
   | "diagnosticHelp"
+  | "staticLanguages"
+  | "staticLanguagesRevision"
+  | "reportLanguageRegistrationFailure"
   | "executeCommand"
   | "setEnabled"
   | "addSource"
@@ -85,7 +95,7 @@ export interface PluginControllerDependencies {
   dialogs: PluginDialogs;
   logs: PluginLogs;
   notices: PluginNotices;
-  marker: Pick<SessionMarkerFile, "update" | "finish">;
+  marker: Pick<SessionMarkerFile, "update" | "finish" | "markThirdPartyStaticContributions">;
   probe(command: PythonCommand): Promise<PythonProbe>;
   realpath(directory: string): Promise<string>;
   locale: PluginLocale;
@@ -112,6 +122,8 @@ type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey
 export class PluginController {
   #revision = 0;
   #helpCatalog: PluginHelpCatalogView | undefined;
+  #staticRiskRecorded = false;
+  #staticSaveProblem: PluginProblem | undefined;
   #developer: boolean;
   #commandLine: boolean;
   #closing = false;
@@ -138,6 +150,102 @@ export class PluginController {
 
   state(): PluginsView {
     return this.#view(this.deps.manager.state());
+  }
+
+  staticLanguages(): StaticLanguagesCatalog {
+    const snapshot = this.deps.manager.state();
+    const permitted = this.#permitThirdPartyStatic(snapshot);
+    const catalog = this.deps.manager.staticLanguages();
+    if (catalog.revision !== snapshot.staticLanguagesRevision)
+      throw new Error("Static language catalog and owner snapshot revisions differ.");
+    if (permitted) return catalog;
+    const builtinKeys = new Set(
+      snapshot.plugins
+        .filter((plugin) => plugin.source === "builtin")
+        .map((plugin) => plugin.sourceKey),
+    );
+    const languages = catalog.languages.filter((language) => builtinKeys.has(language.sourceKey));
+    const ids = new Set(languages.map((language) => language.id));
+    const extensions = new Set(languages.flatMap((language) => language.extensions));
+    return {
+      ...catalog,
+      languages,
+      // A former ambiguous route remains null; filtering never elects a new winner.
+      extensionRoutes: Object.fromEntries(
+        Object.entries(catalog.extensionRoutes).filter(([extension, id]) =>
+          id === null ? extensions.has(extension) : ids.has(id),
+        ),
+      ),
+      conflicts: catalog.conflicts.filter((conflict) =>
+        conflict.sources.every((source) => builtinKeys.has(source.sourceKey)),
+      ),
+    };
+  }
+
+  reportLanguageRegistrationFailure(
+    input: ReportLanguageRegistrationFailureInput,
+  ): ReportLanguageRegistrationFailureResult {
+    const catalog = this.staticLanguages();
+    if (input.revision !== catalog.revision) return { accepted: false, revision: catalog.revision };
+    const snapshot = this.deps.manager.state();
+    const owner = snapshot.staticLanguageOwners.find(
+      (candidate) =>
+        candidate.sourceKey === input.sourceKey &&
+        candidate.languageId === input.languageId &&
+        candidate.generation === input.generation,
+    );
+    const language = catalog.languages.find(
+      (candidate) =>
+        candidate.sourceKey === input.sourceKey &&
+        candidate.id === input.languageId &&
+        candidate.generation === input.generation,
+    );
+    const plugin = snapshot.plugins.find((candidate) => candidate.sourceKey === input.sourceKey);
+    // Process failure (packages/plugin-runtime/src/manager.ts:649) preserves static
+    // eligibility while the delivered catalog and complete owner identity remain
+    // current. running/manager.active do not authorize or withdraw contributions.
+    if (
+      !owner ||
+      !language ||
+      !plugin ||
+      (plugin.status !== "enabled" && plugin.status !== "failed") ||
+      owner.pluginId !== language.pluginId ||
+      plugin.id !== owner.pluginId
+    )
+      throw new PluginError(
+        "PLUGIN_E_MANIFEST",
+        "Registration report does not match a current static language owner.",
+      );
+    // T2 owns atomic quarantine, host-authored structured problems, revision changes
+    // and retry only after reload/explicit enable. Never call reload in response here.
+    return this.deps.manager.reportLanguageRegistrationFailure(input);
+  }
+
+  #permitThirdPartyStatic(snapshot: PluginsSnapshot): boolean {
+    if (snapshot.safeMode) return false;
+    if (this.#staticSaveProblem) return false;
+    const thirdParty = snapshot.staticLanguageOwners.some(
+      (owner) =>
+        !snapshot.plugins.some(
+          (plugin) =>
+            plugin.sourceKey === owner.sourceKey &&
+            plugin.id === owner.pluginId &&
+            plugin.source === "builtin",
+        ),
+    );
+    if (!thirdParty || this.#staticRiskRecorded) return true;
+    try {
+      this.deps.marker.markThirdPartyStaticContributions();
+      this.#staticRiskRecorded = true;
+      return true;
+    } catch {
+      this.#staticSaveProblem = {
+        code: "PLUGIN_E_STATE_SAVE",
+        message:
+          "Third-party static languages were withheld because the recovery marker could not be saved. Restart Kobrixa after restoring writable settings storage.",
+      };
+      return false;
+    }
   }
 
   /** Clone the manager catalog only once per help revision, including for link lookups. */
@@ -413,7 +521,10 @@ export class PluginController {
   }
 
   markRendererUnresponsive(): void {
-    if (!this.deps.manager.state().plugins.some((plugin) => plugin.source === "development"))
+    if (
+      !this.#staticRiskRecorded &&
+      !this.deps.manager.state().plugins.some((plugin) => plugin.source === "development")
+    )
       return;
     this.deps.marker.update({ rendererUnresponsive: true });
   }
@@ -531,6 +642,27 @@ export class PluginController {
   }
 
   #view(snapshot: PluginsSnapshot): PluginsView {
+    const permitted = this.#permitThirdPartyStatic(snapshot);
+    if (!permitted) {
+      const builtinKeys = new Set(
+        snapshot.plugins
+          .filter((plugin) => plugin.source === "builtin")
+          .map((plugin) => plugin.sourceKey),
+      );
+      const problem = this.#staticSaveProblem;
+      snapshot = {
+        ...snapshot,
+        staticLanguageOwners: snapshot.staticLanguageOwners.filter((owner) =>
+          builtinKeys.has(owner.sourceKey),
+        ),
+        ...(problem && !snapshot.stateProblem ? { stateProblem: problem } : {}),
+        plugins: snapshot.plugins.map((plugin) =>
+          problem && plugin.source === "development"
+            ? { ...plugin, problems: [...plugin.problems, problem] }
+            : plugin,
+        ),
+      };
+    }
     const settings = this.deps.settings.settings();
     const linked = this.#linked();
     const current = this.#currentPython();
@@ -615,21 +747,20 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   const marker = new SessionMarkerFile(options.userData, now);
   const unclean = marker.begin();
   const resolve = options.realpath ?? ((directory: string) => realpath(directory));
-  const sessionDirectories = await Promise.all(
-    options.commandLine.developmentDirectories.map((directory) =>
-      resolve(directory).catch(() => path.resolve(directory)),
-    ),
-  );
   const document = settings.settings();
-  const developer = document.developerMode || sessionDirectories.length > 0;
-  const directories = developer
-    ? uniqueDirectories([
-        ...document.sources.map((source) => source.directory),
-        ...sessionDirectories,
-      ])
-    : [];
-  const relevantUnclean = directories.length > 0 ? unclean : undefined;
-  if (relevantUnclean && !settings.settings().safeModeLock)
+  const requestedDirectories = options.commandLine.developmentDirectories.map((directory) =>
+    path.resolve(directory),
+  );
+  const developer = document.developerMode || requestedDirectories.length > 0;
+  const hasDevelopmentSources =
+    developer && (document.sources.length > 0 || requestedDirectories.length > 0);
+  const relevantUnclean =
+    hasDevelopmentSources || marker.previousThirdPartyStaticContributions ? unclean : undefined;
+  const lock = document.safeModeLock;
+  if (
+    relevantUnclean &&
+    (!lock || (relevantUnclean === "renderer-unresponsive" && lock.reason !== relevantUnclean))
+  )
     await settings
       .update((current) => ({
         ...current,
@@ -638,8 +769,21 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
       .catch(() => undefined);
   const safeMode =
     options.commandLine.safeMode ||
+    loaded.problem !== undefined ||
     relevantUnclean !== undefined ||
     settings.settings().safeModeLock !== undefined;
+  // path.resolve is lexical only. Safe mode must not even realpath a development folder.
+  const sessionDirectories = safeMode
+    ? requestedDirectories
+    : await Promise.all(
+        requestedDirectories.map((directory) => resolve(directory).catch(() => directory)),
+      );
+  const directories = developer
+    ? uniqueDirectories([
+        ...document.sources.map((source) => source.directory),
+        ...sessionDirectories,
+      ])
+    : [];
   const logs = new PluginLogs();
   const created: { controller?: PluginController } = {};
   const hooks = {
