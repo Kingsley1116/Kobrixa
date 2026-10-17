@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { staticLanguageText } from "./static-language-schemas.js";
 import { PLUGIN_LIMITS } from "./limits.js";
 import { diagnosticHelpDeclSchema } from "./diagnostic-help.js";
 import {
@@ -80,9 +81,8 @@ export type StaticLanguageResourceDecl = z.infer<typeof staticLanguageResourceDe
 export const staticLanguageDeclSchema = z.strictObject({
   id: compilerIdSchema,
   extensions: z.array(extensionSchema).min(1).max(16),
-  // Unicode regex quantifiers count code points; no Zod UTF-16 length check here.
   aliases: z
-    .array(z.string().regex(/^[^\p{Cc}\u2028\u2029]{1,80}$/u))
+    .array(staticLanguageText(1, 80, true))
     .min(1)
     .max(8)
     .optional(),
@@ -185,6 +185,46 @@ export function languageServiceDeclarationProblems(manifest: PluginManifest): st
 
 /** Called only after source restrictions; T1 supplies cross-field/static-runtime semantics. */
 export function staticLanguageDeclarationProblems(manifest: PluginManifest): string[] {
-  void manifest;
-  throw new Error("not implemented");
+  const problems: string[] = [];
+  const contributes = manifest.contributes;
+  const languages = contributes?.languages ?? [];
+  if (manifest.runtime.kind === "static") {
+    for (const key of ["activationEvents", "permissions"] as const)
+      if (Object.hasOwn(manifest, key)) problems.push(`Static runtime must not declare ${key}.`);
+    for (const key of ["commands", "frontends", "backends", "languageServices"] as const)
+      if (contributes && Object.hasOwn(contributes, key))
+        problems.push(`Static runtime must not declare contributes.${key}.`);
+    if (languages.length === 0 && !contributes?.diagnosticHelp)
+      problems.push("Static runtime requires languages or diagnosticHelp.");
+  }
+  const ids = new Set<string>();
+  const equal = (a: readonly string[], b: readonly string[]) => {
+    const left = new Set(a);
+    const right = new Set(b);
+    return left.size === right.size && [...left].every((value) => right.has(value));
+  };
+  for (const language of languages) {
+    if (ids.has(language.id)) problems.push(`Static language id ${language.id} is duplicated.`);
+    ids.add(language.id);
+    for (const [field, values] of [
+      ["extensions", language.extensions],
+      ["aliases", language.aliases ?? []],
+    ] as const)
+      if (new Set(values).size !== values.length)
+        problems.push(`Static language ${language.id} ${field} must be unique.`);
+    for (const frontend of contributes?.frontends ?? [])
+      if (
+        frontend.language === language.id &&
+        !equal(language.extensions, frontend.sourceExtensions)
+      )
+        problems.push(
+          `Static language ${language.id} extensions must match frontend sourceExtensions.`,
+        );
+    for (const service of contributes?.languageServices ?? [])
+      if (service.language === language.id && !equal(language.extensions, service.extensions))
+        problems.push(
+          `Static language ${language.id} extensions must match language service extensions.`,
+        );
+  }
+  return problems;
 }
