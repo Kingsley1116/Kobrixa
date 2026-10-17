@@ -60,6 +60,7 @@ export function SplitEditor({
       renderValidationDecorations: "on",
       overviewRulerBorder: false,
       ariaLabel: zh ? "分割編輯器" : "Split editor",
+      maxTokenizationLineLength: 10000,
     });
     instance.current = editor;
     const unbind = onEditorReady?.(editor);
@@ -76,6 +77,7 @@ export function SplitEditor({
     instance.current?.updateOptions({
       ...resolveEditorOptions(editorOptions, fontSize, wordWrap, reducedMotion),
       readOnly,
+      maxTokenizationLineLength: 10000,
     });
   }, [editorOptions, fontSize, wordWrap, reducedMotion, readOnly]);
   useEffect(() => {

@@ -1,37 +1,43 @@
-import { createHash } from "node:crypto";
-import { readStaticLanguageFixtures } from "./static-languages-fixtures.mjs";
+import { readFile } from "node:fs/promises";
+import { PluginManager } from "../../packages/plugin-runtime/dist/index.js";
 
 export async function basicPlusSmokeCatalog() {
-  const { basicPlusTokenizer, basicPlusConfiguration } = await readStaticLanguageFixtures();
-  return {
-    formatVersion: 1,
-    limitsVersion: 1,
-    revision: 1,
-    languages: [
+  const base = new URL("../../plugins/basic-plus/", import.meta.url);
+  const manager = await PluginManager.create({
+    sources: [
       {
-        sourceKey: "builtin:kobrixa.basic-plus",
-        pluginId: "kobrixa.basic-plus",
-        generation: 1,
-        id: "bp",
-        extensions: ["bp", "bpi", "bpm"],
-        aliases: ["Basic Plus", "Basic+"],
-        resourceDigest: createHash("sha256")
-          .update(basicPlusTokenizer)
-          .update("\0")
-          .update(basicPlusConfiguration)
-          .digest("hex"),
-        tokenizer: JSON.parse(basicPlusTokenizer),
-        configuration: JSON.parse(basicPlusConfiguration),
-        resourceBytes: {
-          tokenizer: Buffer.byteLength(basicPlusTokenizer),
-          configuration: Buffer.byteLength(basicPlusConfiguration),
+        kind: "builtin",
+        manifest: JSON.parse(await readFile(new URL("kobrixa-plugin.json", base), "utf8")),
+        resources: {
+          "language/tokenizer.json": await readFile(
+            new URL("language/tokenizer.json", base),
+            "utf8",
+          ),
+          "language/configuration.json": await readFile(
+            new URL("language/configuration.json", base),
+            "utf8",
+          ),
         },
-        expandedRules: 9,
       },
     ],
-    extensionRoutes: { bp: "bp", bpi: "bp", bpm: "bp" },
-    conflicts: [],
-  };
+    store: {
+      load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+      save: async () => {},
+    },
+    safeMode: false,
+    locale: "en",
+    launcher: async () => {
+      throw new Error("Unexpected static launch");
+    },
+  });
+  try {
+    const catalog = manager.staticLanguages();
+    if (!catalog.languages.some((language) => language.id === "bp"))
+      throw new Error("Missing Basic Plus catalog");
+    return catalog;
+  } finally {
+    await manager.shutdown();
+  }
 }
 
 export function createStaticLanguagesHarness(catalog) {

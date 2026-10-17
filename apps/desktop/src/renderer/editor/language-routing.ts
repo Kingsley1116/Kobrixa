@@ -1,3 +1,4 @@
+import { CORE_EXTENSION_ROUTES } from "./core-language-routes.js";
 import { bindingKey, supportsFile, type LanguageStatus } from "../../shared/language-services.js";
 import type { LanguageCompanion } from "./language-companion.js";
 import { BUILTIN_LANGUAGE_COMPANIONS } from "./builtin-language-companions.js";
@@ -25,7 +26,7 @@ export function routeLanguage(
       file,
       ...(binding ? { binding } : {}),
       activeOwners: [],
-      coreExtensionRoutes: { json: "json" },
+      coreExtensionRoutes: CORE_EXTENSION_ROUTES,
       catalog: {
         formatVersion: 1,
         limitsVersion: 1,

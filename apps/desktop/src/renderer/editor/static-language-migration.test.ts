@@ -1,7 +1,11 @@
+import { PluginManager } from "@kobrixa/plugin-runtime";
+import { validateStaticLanguageResources } from "@kobrixa/plugin-protocol";
+import { BUILTIN_PLUGIN_SOURCES } from "../../main/plugins/builtin.js";
+import { adaptStaticLanguage } from "./static-language-adapter.js";
+import type { ValidatedStaticLanguage } from "../../shared/static-languages.js";
 import { readFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import type { languages } from "monaco-editor";
-import type { StaticLanguageTokenizerV1 } from "@kobrixa/plugin-protocol";
 import { BASIC_PLUS_KEYWORDS, formatBasicPlus } from "@kobrixa/basic-plus/language";
 
 import type { LanguageCompanion } from "./language-companion.js";
@@ -25,37 +29,74 @@ const lexicalCalls = vi.hoisted(() => ({
     throw new Error("T6 must not install configuration.");
   }),
 }));
-vi.mock("monaco-editor", () => ({ languages: lexicalCalls }));
+vi.mock("monaco-editor", () => ({
+  languages: {
+    ...lexicalCalls,
+    IndentAction: { None: 0, Indent: 1, IndentOutdent: 2, Outdent: 3 },
+  },
+}));
 
 const repository = new URL("../../../../../", import.meta.url);
-const tokenizerFile = new URL("plugins/basic-plus/language/tokenizer.json", repository);
 
-// A test-only projection of the nine-rule fixture, never a public adapter API.
-function basicPlusFixtureDefinition(input: StaticLanguageTokenizerV1): languages.IMonarchLanguage {
-  expect(input.states.map((state) => state.name)).toEqual(["root"]);
-  expect(input.states[0]!.rules).toHaveLength(9);
-  const root: languages.IMonarchLanguageRule[] = input.states[0]!.rules.map((rule) => {
-    if (!("regex" in rule)) throw new Error("Unexpected include in Basic Plus fixture.");
-    const regex = new RegExp(rule.regex.pattern.replaceAll("@", "@@"), rule.regex.flags);
-    if ("cases" in rule.action) {
-      const cases: Record<string, string> = {};
-      for (const branch of rule.action.cases) {
-        expect(Object.keys(branch.action)).toEqual(["token"]);
-        const key = branch.when === "@default" ? "@default" : `@list_${branch.when.slice(1)}`;
-        cases[key] = branch.action.token;
-      }
-      return [regex, { cases }];
-    }
-    expect(Object.keys(rule.action)).toEqual(["token"]);
-    return [regex, rule.action.token];
+async function realBasicPlusDefinition(): Promise<languages.IMonarchLanguage> {
+  const manager = await PluginManager.create({
+    sources: BUILTIN_PLUGIN_SOURCES,
+    store: {
+      load: async () => ({ disabled: new Set<string>(), legacyDisabledIds: new Set<string>() }),
+      save: async () => {},
+    },
+    safeMode: false,
+    locale: "en",
+    launcher: async () => {
+      throw new Error("Static loading must not launch a plugin");
+    },
   });
-  return {
-    ignoreCase: input.ignoreCase,
-    defaultToken: input.defaultToken!,
-    tokenPostfix: input.tokenPostfix!,
-    ...Object.fromEntries(input.lists!.map((list) => [`list_${list.name}`, [...list.words]])),
-    tokenizer: { root },
-  };
+  try {
+    const value = manager.staticLanguages().languages.find((language) => language.id === "bp");
+    expect(value).toBeDefined();
+    if (!value) throw new Error("No host-produced Basic Plus DTO");
+    const validated = validateStaticLanguageResources({
+      languageId: value.id,
+      formatVersion: 1,
+      limitsVersion: 1,
+      tokenizer: value.tokenizer,
+      configuration: value.configuration,
+      resourceBytes: value.resourceBytes,
+    });
+    expect(validated).toMatchObject({ ok: true, rules: 9, regexes: 11, expandedRules: 9 });
+    const adapted = adaptStaticLanguage(value);
+    expect(adapted.configuration.brackets).toEqual([
+      ["(", ")"],
+      ["[", "]"],
+    ]);
+    expect(adapted.configuration.comments).toEqual({ lineComment: "'" });
+    expect(adapted.configuration.autoClosingPairs).toEqual([
+      { open: "(", close: ")" },
+      { open: "[", close: "]" },
+      { open: '"', close: '"', notIn: ["string", "comment"] },
+    ]);
+    expect(adapted.configuration.surroundingPairs).toEqual([
+      { open: "(", close: ")" },
+      { open: "[", close: "]" },
+      { open: '"', close: '"' },
+    ]);
+    for (const field of ["increaseIndentPattern", "decreaseIndentPattern"] as const) {
+      expect(adapted.configuration.indentationRules![field]).toBeInstanceOf(RegExp);
+      expect(adapted.configuration.indentationRules![field].source).toBe(
+        new RegExp(value.configuration.indentationRules![field].pattern).source,
+      );
+      expect(adapted.configuration.indentationRules![field].flags).toBe("i");
+    }
+    expect(adapted.configuration).not.toHaveProperty("wordPattern");
+    expect(adapted.configuration).not.toHaveProperty("onEnterRules");
+    for (const list of value.tokenizer.lists!) {
+      expect(adapted.tokenizer[`list_${list.name}`]).toEqual(list.words);
+      expect(adapted.tokenizer).not.toHaveProperty(list.name);
+    }
+    return adapted.tokenizer;
+  } finally {
+    await manager.shutdown();
+  }
 }
 
 const legacyDefinition: languages.IMonarchLanguage = {
@@ -165,9 +206,8 @@ function spans(tokenizer: ClassicTokenizer, text: string) {
 }
 
 it("preserves legacy token classes and UTF-16 ranges for all nine rules", async () => {
-  const wire = JSON.parse(await readFile(tokenizerFile, "utf8")) as StaticLanguageTokenizerV1;
   const old = await monarch("basic-plus", legacyDefinition);
-  const current = await monarch("bp", basicPlusFixtureDefinition(wire));
+  const current = await monarch("bp", await realBasicPlusDefinition());
   try {
     const samples = [
       " \t\r",
@@ -223,8 +263,7 @@ it("preserves legacy token classes and UTF-16 ranges for all nine rules", async 
 });
 
 it("keeps the Basic Plus root state after skipped long lines", async () => {
-  const wire = JSON.parse(await readFile(tokenizerFile, "utf8")) as StaticLanguageTokenizerV1;
-  const current = await monarch("bp", basicPlusFixtureDefinition(wire));
+  const current = await monarch("bp", await realBasicPlusDefinition());
   try {
     for (const length of [9999, 10000, 10001]) {
       const sample = `"${"x".repeat(length - 1)}\nIf True Then`;
@@ -249,7 +288,7 @@ it("removes the handwritten production grammar and registration bridge", async (
 });
 
 it("leaves the companion's dynamic behavior intact without a lexical id", () => {
-  const dynamic: Omit<LanguageCompanion, "monacoLanguage"> = basicPlusCompanion;
+  const dynamic: LanguageCompanion = basicPlusCompanion;
   expect(dynamic).not.toHaveProperty("monacoLanguage");
   expect(dynamic.legend).toBe(legend);
   expect(dynamic.completions).toBe(basicPlusCompletions);
@@ -308,4 +347,102 @@ it("restores renamed drafts across failed generations without registering a shel
   expect(manifest.contributes.languages[0].id).toBe("bp");
   expect(manifest.contributes.languages[0].extensions).toContain("bpi");
   for (const call of Object.values(lexicalCalls)) expect(call).not.toHaveBeenCalled();
+});
+
+it("validates real macro literals and the 4096 transformed-source boundary before Monaco", async () => {
+  const compilerPath = "monaco-editor/editor/standalone/common/monarch/monarchCompile.js";
+  const { compile } = (await import(compilerPath)) as {
+    compile(
+      id: string,
+      source: languages.IMonarchLanguage,
+    ): {
+      tokenizer: Record<string, { regex: RegExp }[]>;
+    };
+  };
+  function value(pattern: string): ValidatedStaticLanguage {
+    const tokenizer = {
+      ignoreCase: false,
+      states: [
+        {
+          name: "root",
+          rules: [{ regex: { pattern, flags: "" as const }, action: { token: "identifier" } }],
+        },
+      ],
+    };
+    return {
+      id: "integration-literal",
+      pluginId: "acme.literal",
+      sourceKey: "development:literal",
+      generation: 1,
+      extensions: ["literal"],
+      aliases: ["😀".repeat(80)],
+      resourceDigest: "test",
+      tokenizer,
+      configuration: {},
+      expandedRules: 1,
+      resourceBytes: { tokenizer: Buffer.byteLength(JSON.stringify(tokenizer)), configuration: 2 },
+    };
+  }
+  for (const pattern of [
+    "@",
+    "@@",
+    "@name",
+    String.raw`\@`,
+    String.raw`\$`,
+    "a(?=b)",
+    "@".repeat(2045) + "a",
+    "^" + "@".repeat(2045) + "a",
+    "/".repeat(2045) + "a",
+  ]) {
+    const dto = value(pattern);
+    const definition = adaptStaticLanguage(dto);
+    const rule = compile(dto.id, definition.tokenizer).tokenizer.root![0]!;
+    for (const input of ["@", "@@", "@name", "\\@", "$", "ab", "@".repeat(2045) + "a"])
+      expect(rule.regex.exec(input)?.[0]).toBe(new RegExp(`^(?:${pattern})`).exec(input)?.[0]);
+  }
+  const atLimit = "@".repeat(2045) + "a";
+  expect(Array.from(`^(?:${atLimit.replaceAll("@", "@@")})`)).toHaveLength(4096);
+  for (const pattern of [
+    "@".repeat(2046),
+    "/".repeat(2046),
+    "\n".repeat(2046),
+    String.raw`\$S1`,
+    "$s2",
+    "a*",
+    "(?<=a)b",
+    String.raw`(a)\1`,
+  ])
+    expect(() => adaptStaticLanguage(value(pattern)), pattern).toThrow();
+  const namedLists = value("[a-z]+");
+  const names = ["tokenizer", "brackets", "start", "unicode"];
+  namedLists.tokenizer.lists = names.map((name) => ({ name, words: [name] }));
+  namedLists.tokenizer.states[0]!.rules = [
+    {
+      regex: { pattern: "[a-z]+", flags: "" },
+      action: {
+        cases: [
+          ...names.map((name) => ({ when: `@${name}`, action: { token: "keyword" } })),
+          { when: "@default", action: { token: "identifier" } },
+        ],
+      },
+    },
+  ];
+  namedLists.resourceBytes.tokenizer = Buffer.byteLength(JSON.stringify(namedLists.tokenizer));
+  const lists = adaptStaticLanguage(namedLists).tokenizer;
+  for (const name of names) expect(lists[`list_${name}`]).toEqual([name]);
+  expect(lists.start).toBe("root");
+  expect(lists.tokenizer.root).toHaveLength(1);
+  expect(lists).not.toHaveProperty("unicode");
+  expect(() => compile(namedLists.id, lists)).not.toThrow();
+  const anchor = value(".");
+  anchor.configuration = {
+    indentationRules: {
+      increaseIndentPattern: { pattern: "^", flags: "" },
+      decreaseIndentPattern: { pattern: "^$", flags: "i" },
+    },
+  };
+  anchor.resourceBytes.configuration = Buffer.byteLength(JSON.stringify(anchor.configuration));
+  expect(
+    adaptStaticLanguage(anchor).configuration.indentationRules!.increaseIndentPattern.source,
+  ).toBe("^");
 });

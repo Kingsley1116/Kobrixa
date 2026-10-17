@@ -1,3 +1,4 @@
+import { CORE_LANGUAGE_IDS } from "./core-language-routes.js";
 import { supportsFile, type LanguageBinding } from "../../shared/language-services.js";
 import type { StaticLanguageOwner, StaticLanguagesCatalog } from "../../shared/static-languages.js";
 
@@ -35,7 +36,7 @@ export function resolveLexicalLanguage(input: ResolveLexicalLanguageInput): Lexi
   });
   if (Object.hasOwn(coreExtensionRoutes, extension)) {
     const id = coreExtensionRoutes[extension];
-    if (id)
+    if (id && CORE_LANGUAGE_IDS.has(id))
       return {
         monacoLanguage: id,
         displayName: id === "json" ? "JSON" : id,

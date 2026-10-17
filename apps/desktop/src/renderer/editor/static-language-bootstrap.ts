@@ -1,3 +1,4 @@
+import { CORE_EXTENSION_ROUTES } from "./core-language-routes.js";
 import type { StaticLanguageRegistrar } from "./static-language-registration.js";
 import type { StaticLanguageStore } from "./static-language-store.js";
 import * as monaco from "monaco-editor";
@@ -119,7 +120,7 @@ export function windowStaticLanguages(): WindowStaticLanguages {
     monaco,
     store,
     api: window.kobrixa.plugins,
-    coreExtensionRoutes: { json: "json" },
+    coreExtensionRoutes: CORE_EXTENSION_ROUTES,
   });
   const listeners = new Set<() => void>();
   let snapshot: WindowStaticLanguageSnapshot = { settled: false, revision: 0 };

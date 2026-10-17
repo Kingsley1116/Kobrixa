@@ -57,7 +57,7 @@
 {}
 ```
 
-版本放在資源宣告的 `version: 1`，JSON 本體不重複版本欄位。兩份資源都必填；空 configuration 使用 Monaco 預設，不接受 inline configuration。資源必須是封裝內相對 `.json` 路徑，最多 600 字元、七層目錄，不能使用 URL、絕對路徑、反斜線或 `..` segment；symlink 也不能越出連結的資料夾。
+版本放在資源宣告的 `version: 1`，JSON 本體不重複版本欄位。兩份資源都必填；空 configuration 使用 Monaco 預設，不接受 inline configuration。資源必須是封裝內相對 `.json` 路徑，最多 600 字元、七層目錄，不能使用 URL、絕對路徑、反斜線或 `..` segment；每個路徑目錄區段與檔名 stem 最多 64 個字元（`[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}`），`.json` 副檔名另計；symlink 也不能越出連結的資料夾。
 
 `runtime: {"kind":"static"}` 只接受 `kind`。不可宣告 `entry`、`activationEvents`、`permissions`、commands、frontends、backends、languageServices，空陣列也不合法。至少需要非空 languages 或有效 diagnosticHelp；資源失敗只拒絕該語言，不反過來使已合法的 runtime 失效。Node／Python 插件也能提供靜態資源；只讀語法不會啟動程序。
 
@@ -75,7 +75,7 @@
 
 所有 objects 都是 strict，未列欄位會被拒絕。state／list／rule／case arrays 保留順序。必須包含 `root`；名稱符合 `^[a-z][a-z0-9_]{0,31}$`。state 保留 `pop`、`popall`、`push`，list 保留 `default`、`eos`，map key 保留 `__proto__`、`constructor`、`prototype`。
 
-Tokenizer rule 是 `{regex, action}` 或本地 `include: "@state"`。Include 必須存在、無循環且符合展開上限，未被引用的 states 也驗證。Action 可為 literal `token` 搭配選填 `next`／`bracket`，或有序 `cases`；分支使用 `@list`、`@eos`，最後必須有且只有一個 `@default`。禁止巢狀 cases 與任意 guard。Transition 只接受現有 `@state`、`@pop`、`@popall`；合法 transition cycle 不等於 include cycle。`@brackets` 要求 tokenizer bracket table，不能另覆寫 `bracket`。
+Tokenizer rule 是 `{regex, action}` 或本地 `include: "@state"`。Include 必須存在、無循環且符合展開上限，未被引用的 states 也驗證。Action 可為 literal `token` 搭配選填 `next`／`bracket`，或有序 `cases`；分支使用 `@list`、`@eos`，最後必須有且只有一個 `@default`。禁止巢狀 cases 與任意 guard。Transition 只接受現有 `@state`、`@pop`、`@popall`；合法 transition cycle 不等於 include cycle。`@brackets` 要求非空的 tokenizer 括號表，不能另覆寫 `bracket`。
 
 每個 regex 必填 `pattern` 與 `flags`，flags 只能是 `""` 或 `"i"`。Tokenizer 的每筆 flags 必須等於 `ignoreCase ? "i" : ""`；configuration 各筆可獨立選擇。Pattern 是 ECMAScript regex source；正常書寫 literal `@`、`@@`、`@name`、`$`，adapter 會保護其字面語意。`$S`／`$s` 後接數字一律拒絕，即使 escaped 也不例外。拒絕 backreference、lookbehind、不支援語法及無法證明至少消耗一個 code unit 的 tokenizer rule；允許 lookahead。Configuration anchor 可經同一個依用途區分的 validator 接受零寬匹配。
 
@@ -106,7 +106,7 @@ Extensions 為 1–16 筆不重複值，每筆 1–16 個小寫英數字、無�
 
 ## Ownership、純文字與問題回報
 
-解析次序是核心 → 適用 selected binding 的同 owner static → 唯一 global extension → 純文字。核心 JSON／plaintext ids 與 `.json` 保留。Selected binding 的 owner 缺少語法時，不會借用另一插件。沒有適用 binding 時，不同語言共用 extension 使 global mapping ambiguous，不依載入順序選 winner；其他 extensions 與語言註冊仍保留。純靜態 id 重複時排除全部參與者。Alias 不決定 ownership。Frontend 語法失敗仍保留 logical id；同 owner 的 frontend／service／static extension 集合必須相等。
+副檔名比對使用最後一段檔名，不分大小寫。解析次序是核心 → 適用 selected binding 的同 owner static → 唯一 global extension → 純文字。核心 JSON／plaintext ids 與 `.json` 保留。Selected binding 的 owner 缺少語法時，不會借用另一插件。沒有適用 binding 時，不同語言共用 extension 使 global mapping ambiguous，不依載入順序選 winner；其他 extensions 與語言註冊仍保留。純靜態 id 重複時排除全部參與者。Alias 不決定 ownership。Frontend 語法失敗仍保留 logical id；同 owner 的 frontend／service／static extension 集合必須相等。
 
 停用、移除或失敗 reload 會把可見、隱藏與 review models 改為純文字，保留內容、undo、draft、cursor、view state；重新啟用後恢復符合條件的已開文件。Lexical revision 與 service epoch 分離；語法失敗不使健康的分析服務 unavailable。Fallback 清除 semantic coloring。Basic Plus Monaco id 為 `bp`，token postfix 保持 `.basic-plus`，keywords、comments、pairs、縮排與主題不變。內建不可停用，回 `PLUGIN_E_BUILTIN_REQUIRED`。
 

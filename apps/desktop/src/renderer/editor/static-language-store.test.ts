@@ -43,7 +43,7 @@ function catalog(revision: number, languages = [language]): StaticLanguagesCatal
 // T2's 129 valid candidates leave 128 DTOs and both conflict sources. T3's marker
 // failure leaves only builtin DTOs and removes the cross-source conflict detail.
 function authoritativeCatalog(
-  kind: "budget-loser" | "marker-filtered",
+  kind: "budget-loser" | "marker-filtered" | "quarantined-claimant",
   revision: number,
 ): StaticLanguagesCatalog {
   const languages = Array.from({ length: kind === "budget-loser" ? 128 : 2 }, (_, index) => ({
@@ -239,7 +239,7 @@ it("passes numeric unsupported versions to the registrar but rejects invalid rou
   h.store.dispose();
 });
 
-it.each(["budget-loser", "marker-filtered"] as const)(
+it.each(["budget-loser", "marker-filtered", "quarantined-claimant"] as const)(
   "accepts the %s catalog without electing its sole delivered claimant",
   async (kind) => {
     const h = setup();

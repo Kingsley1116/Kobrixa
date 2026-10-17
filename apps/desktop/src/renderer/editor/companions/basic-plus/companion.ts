@@ -8,8 +8,7 @@ export { legend, structuralChange } from "./structure.js";
 
 // Compiles locally against both T0's old interface and T5's field-free interface.
 // No lexical field or cast is added to the runtime companion object.
-type BasicPlusDynamicCompanion = Omit<LanguageCompanion, "monacoLanguage">;
-export const basicPlusCompanion: BasicPlusDynamicCompanion = {
+export const basicPlusCompanion: LanguageCompanion = {
   legend,
   triggerCharacters: [".", "@"],
   signatureTriggers: ["(", ","],

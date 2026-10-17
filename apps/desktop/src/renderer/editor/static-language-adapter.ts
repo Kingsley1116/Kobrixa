@@ -86,7 +86,9 @@ export function adaptStaticLanguage(
       tokenizer.tokenizer[state.name] = state.rules.map((rule) => {
         if ("include" in rule) return { include: rule.include };
         return {
-          regex: new RegExp(rule.regex.pattern.replaceAll("@", "@@"), rule.regex.flags),
+          // Match the validator's order: native .source, @ escaping, then
+          // Monarch strips ^ and adds ^(?:...) (checked there against 4,096).
+          regex: new RegExp(regex(rule.regex).source.replaceAll("@", "@@"), rule.regex.flags),
           action: action(rule.action),
         };
       });

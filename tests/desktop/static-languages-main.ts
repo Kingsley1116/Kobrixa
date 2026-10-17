@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow } from "electron";
 import type { PluginSource } from "@kobrixa/plugin-runtime";
 import type { PluginsApi } from "../../apps/desktop/src/shared/plugins.js";
 import type { LanguageBinding } from "../../apps/desktop/src/shared/language-services.js";
-import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
+import { registerIpc } from "../../apps/desktop/src/main/ipc.js";
+import { BUILTIN_PLUGIN_SOURCES } from "../../apps/desktop/src/main/plugins/builtin.js";
 import { startPlugins } from "../../apps/desktop/src/main/plugins/controller.js";
 import { registerPluginIpc } from "../../apps/desktop/src/main/plugins/ipc.js";
 import { SessionMarkerFile } from "../../apps/desktop/src/main/plugins/session.js";
@@ -33,7 +34,7 @@ void app.whenReady().then(async () => {
   let launches = 0;
   const plugins = await startPlugins({
     userData: app.getPath("userData"),
-    builtins: [input.builtin],
+    builtins: phase === "browser" ? BUILTIN_PLUGIN_SOURCES : [input.builtin],
     commandLine: {
       developmentDirectories: names.map((name) => input.paths[name]!),
       safeMode: phase === "cli-safe",
@@ -53,29 +54,86 @@ void app.whenReady().then(async () => {
   });
   installPluginQuitCleanup(app, plugins);
   app.on("quit", () => plugins.finishSession());
-  const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
-  const handle: IpcHandle = (channel, action) => {
-    handlers.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+  const rendererUrl = process.argv.at(-3)!;
+  const windowOptions = {
+    show: false,
+    webPreferences: {
+      preload: path.join(directory, "preload.cjs"),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
   };
-  const off = registerPluginIpc(handle, plugins, () => {});
-  app.on("will-quit", off);
-  const invoke = async (channel: string, ...args: unknown[]) => {
-    const action = handlers.get(channel);
-    assert.ok(action, `missing channel ${channel}`);
-    return action({} as IpcMainInvokeEvent, ...args);
-  };
-  const api = {
-    state: async () => plugins.state(),
-    staticLanguages: async () => invoke("plugins:static-languages"),
-    reportLanguageRegistrationFailure: async (value: unknown) =>
-      invoke("plugins:report-language-registration-failure", value),
-    setEnabled: async (key: string, enabled: boolean) =>
-      invoke("plugins:set-enabled", key, enabled),
-    reload: async (key: string) => invoke("plugins:reload", key),
-  } as Pick<
+  const win = new BrowserWindow(windowOptions);
+  type RegisterArgs = Parameters<typeof registerIpc>;
+  // Unused product-service fixtures let us install the actual trust wrapper.
+  // No plugin, IPC, validator, catalog or renderer-language implementation is mocked.
+  registerIpc(
+    () => win.webContents,
+    {} as RegisterArgs[1],
+    {} as RegisterArgs[2],
+    {} as RegisterArgs[3],
+    {} as RegisterArgs[4],
+    {} as RegisterArgs[5],
+    {} as RegisterArgs[6],
+    undefined,
+    undefined,
+    undefined,
+    [
+      (handle) => {
+        const unsubscribe = registerPluginIpc(handle, plugins, (event) => {
+          if (!win.isDestroyed()) win.webContents.send("plugins:event", event);
+        });
+        app.on("will-quit", unsubscribe);
+      },
+    ],
+  );
+  await win.loadURL(phase === "browser" ? rendererUrl : "about:blank");
+  const call = <T>(method: string, ...args: unknown[]): Promise<T> =>
+    win.webContents.executeJavaScript(
+      `window.kobrixa.plugins[${JSON.stringify(method)}](...${JSON.stringify(args)})`,
+    ) as Promise<T>;
+  const api: Pick<
     PluginsApi,
     "state" | "staticLanguages" | "reportLanguageRegistrationFailure" | "setEnabled" | "reload"
-  >;
+  > = {
+    state: () => call("state"),
+    staticLanguages: () => call("staticLanguages"),
+    reportLanguageRegistrationFailure: (report) =>
+      call("reportLanguageRegistrationFailure", report),
+    setEnabled: (key, enabled) => call("setEnabled", key, enabled),
+    reload: (key) => call("reload", key),
+  };
+  if (phase === "lifecycle") {
+    const stranger = new BrowserWindow(windowOptions);
+    try {
+      await stranger.loadURL("about:blank");
+      for (const method of ["staticLanguages", "reportLanguageRegistrationFailure"]) {
+        await assert.rejects(
+          stranger.webContents.executeJavaScript(`window.kobrixa.plugins.${method}({})`),
+          /untrusted sender/,
+        );
+      }
+    } finally {
+      stranger.destroy();
+    }
+    for (const detail of [
+      "/private/plugin/tokenizer.json",
+      "C:\\plugin\\tokenizer.json",
+      "x".repeat(2049),
+    ]) {
+      await assert.rejects(
+        api.reportLanguageRegistrationFailure({
+          sourceKey: "development:forged",
+          generation: 1,
+          languageId: "toy",
+          revision: 1,
+          reason: "monaco",
+          detail,
+        }),
+      );
+    }
+  }
   const markerFile = path.join(app.getPath("userData"), "plugins/session.json");
   const marker = async () =>
     JSON.parse(await readFile(markerFile, "utf8")) as {
@@ -85,7 +143,9 @@ void app.whenReady().then(async () => {
   const toy = () => plugins.state().plugins.find((row) => row.id === "acme.toy");
   const builtinId = input.binding.language;
 
-  if (phase === "lifecycle") {
+  if (phase === "browser") {
+    await win.webContents.executeJavaScript("window.staticAcceptance");
+  } else if (phase === "lifecycle") {
     await checkStaticLanguageLifecycle(api, "acme.toy", "toy");
     assert.equal((await marker()).thirdPartyStaticContributions, true);
     await api.setEnabled(toy()!.sourceKey, false);

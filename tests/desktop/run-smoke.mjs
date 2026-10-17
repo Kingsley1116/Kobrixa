@@ -1,3 +1,4 @@
+import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -111,6 +112,7 @@ try {
     platform: "node",
     format: "cjs",
     external: ["electron"],
+    plugins: [rawResourcePlugin()],
   });
   await server.listen();
   const address = server.httpServer.address();

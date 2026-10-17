@@ -50,3 +50,59 @@ for (const locale of ["en", "zh-TW"]) {
     );
   });
 }
+
+import {
+  pluginManifestSchema,
+  staticLanguageDeclarationProblems,
+  validateStaticLanguageResources,
+} from "../../packages/plugin-protocol/dist/index.js";
+
+for (const locale of ["en", "zh-TW"]) {
+  test(`${locale} examples pass the actual schema and resource validator`, async () => {
+    const text = await readFile(
+      new URL(`../../docs/${locale}/plugin-static-languages.md`, import.meta.url),
+      "utf8",
+    );
+    const blocks = [...text.matchAll(/```json\n([\s\S]*?)\n```/g)].map((match) => match[1]);
+    assert.equal(blocks.length, 3);
+    const manifest = pluginManifestSchema.parse(JSON.parse(blocks[0]));
+    assert.deepEqual(staticLanguageDeclarationProblems(manifest), []);
+    const declaration = manifest.contributes.languages[0];
+    const result = validateStaticLanguageResources({
+      languageId: declaration.id,
+      formatVersion: 1,
+      limitsVersion: 1,
+      tokenizer: JSON.parse(blocks[1]),
+      configuration: JSON.parse(blocks[2]),
+      resourceBytes: {
+        tokenizer: Buffer.byteLength(blocks[1]),
+        configuration: Buffer.byteLength(blocks[2]),
+      },
+      resourcePaths: {
+        tokenizer: declaration.tokenizer.path,
+        configuration: declaration.configuration.path,
+      },
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+  });
+}
+
+for (const [locale, contracts] of [
+  [
+    "en",
+    [
+      /non-empty.*bracket table/i,
+      /case-insensitive.*last filename segment/i,
+      /each.*segment.*64 characters/i,
+    ],
+  ],
+  ["zh-TW", [/非空.*括號表/, /最後.*檔名.*不分大小寫/, /每個.*路徑.*區段.*64.*字元/]],
+]) {
+  test(`${locale} documents brackets, case folding and path segments`, async () => {
+    const text = await readFile(
+      new URL(`../../docs/${locale}/plugin-static-languages.md`, import.meta.url),
+      "utf8",
+    );
+    for (const contract of contracts) assert.match(text, contract);
+  });
+}

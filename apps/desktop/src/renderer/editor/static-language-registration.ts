@@ -1,3 +1,4 @@
+import { CORE_LANGUAGE_IDS } from "./core-language-routes.js";
 import {
   STATIC_LANGUAGE_FORMAT_VERSION,
   STATIC_LANGUAGE_LIMITS_V1,
@@ -131,7 +132,7 @@ export function createStaticLanguageRegistrar(
   const active = new Map<string, InstalledLanguage>();
   const models = new Map<editor.ITextModel, TrackedModel>();
   const listeners = new Set<() => void>();
-  const coreIds = new Set(["plaintext", "json", ...Object.values(coreExtensionRoutes)]);
+  const coreIds = CORE_LANGUAGE_IDS;
   // Metadata-discovered conflicts cannot be cleared by another partial snapshot.
   // Only a complete catalog for the current target resets these provisional decisions.
   const pendingAmbiguities = new Set<string>();
@@ -206,20 +207,35 @@ export function createStaticLanguageRegistrar(
       context.binding?.epoch,
     ]);
     const hooks = lease?.hooks;
-    if (sameRoute(tracked.route, next) && tracked.contextKey === key && tracked.hooks === hooks)
+    if (
+      sameRoute(tracked.route, next) &&
+      tracked.contextKey === key &&
+      tracked.hooks === hooks &&
+      tracked.model.getLanguageId() === next.monacoLanguage
+    )
       return;
     // The old hook owns its dynamic attachments, even when the new lease has none.
-    tracked.hooks?.beforeChange(tracked.route, next);
-    if (!tracked.hooks && hooks) hooks.beforeChange(tracked.route, next);
-    if (tracked.model.getLanguageId() !== next.monacoLanguage)
-      monaco.editor.setModelLanguage(tracked.model, next.monacoLanguage);
-    tracked.route = next;
-    tracked.contextKey = key;
-    tracked.hooks = hooks;
-    hooks?.afterChange(next);
+    try {
+      tracked.hooks?.beforeChange(tracked.route, next);
+      if (!tracked.hooks && hooks) hooks.beforeChange(tracked.route, next);
+    } finally {
+      if (tracked.model.getLanguageId() !== next.monacoLanguage)
+        monaco.editor.setModelLanguage(tracked.model, next.monacoLanguage);
+      tracked.route = next;
+      tracked.contextKey = key;
+      tracked.hooks = hooks;
+      hooks?.afterChange(next);
+    }
   };
   const refreshModels = (): void => {
-    for (const tracked of models.values()) apply(tracked);
+    for (const tracked of models.values()) {
+      try {
+        apply(tracked);
+      } catch {
+        // A broken lease, hook or model must not retain revoked providers or
+        // prevent other models from reconciling. A later refresh can retry it.
+      }
+    }
   };
   const ensure = (model: editor.ITextModel): TrackedModel => {
     let tracked = models.get(model);
@@ -233,14 +249,16 @@ export function createStaticLanguageRegistrar(
   const fail = (
     language: ValidatedStaticLanguage,
     reason: ReportLanguageRegistrationFailureInput["reason"],
-    message: string,
+    error?: unknown,
   ): void => {
     const key = languageIdentity(language);
     if (history.quarantined.has(key)) return;
     history.quarantined.add(key);
-    const detail = Array.from(`${language.pluginId} / ${language.id}: ${message}`)
-      .slice(0, 2048)
-      .join("");
+    // Error messages can contain authored patterns or physical paths, which the
+    // IPC schema deliberately rejects. Only bounded, known error names cross it.
+    const names = ["Error", "SyntaxError", "TypeError", "RangeError", "StaticLanguageAdapterError"];
+    const name = error instanceof Error && names.includes(error.name) ? error.name : "Error";
+    const detail = `Static language registration failed (${name}).`;
     // Reporting failure never makes the local failed contribution eligible again.
     try {
       void api
@@ -277,7 +295,7 @@ export function createStaticLanguageRegistrar(
       fail(
         language,
         error instanceof StaticLanguageAdapterError ? error.reason : "validation",
-        error instanceof StaticLanguageAdapterError ? error.message : "Resource validation failed",
+        error,
       );
       return;
     }
@@ -306,10 +324,10 @@ export function createStaticLanguageRegistrar(
         definition.configuration,
       );
       active.set(language.id, { language, tokens, configuration });
-    } catch {
+    } catch (error) {
       release(tokens);
       release(configuration);
-      fail(language, "monaco", "Monaco could not install the tokenizer and configuration");
+      fail(language, "monaco", error);
     }
   };
   const reconcile = (snapshot: StaticLanguageStoreSnapshot): void => {
@@ -347,10 +365,13 @@ export function createStaticLanguageRegistrar(
       } else if (complete && candidate) installed.language = candidate;
     }
     // Withdraw eligibility, detach/clear and reroute ALL models, then dispose providers.
-    refreshModels();
-    for (const installed of removed) {
-      release(installed.tokens);
-      release(installed.configuration);
+    try {
+      refreshModels();
+    } finally {
+      for (const installed of removed) {
+        release(installed.tokens);
+        release(installed.configuration);
+      }
     }
     if (complete) {
       for (const language of snapshot.catalog.languages) {

@@ -122,3 +122,29 @@ it("charges failed I/O against the same remaining source allowance", async () =>
   await vi.advanceTimersByTimeAsync(1000);
   await expired;
 });
+
+it("boundary original file bytes for disk and builtin providers", async () => {
+  for (const size of [524287, 524288, 524289]) {
+    const raw = "\uFEFF{}" + " ".repeat(size - 5); // BOM 3 bytes, JSON object 2.
+    expect(Buffer.byteLength(raw)).toBe(size);
+    await writeFile(path.join(directory, "boundary.json"), raw);
+    if (size <= L.resourceFileBytes) {
+      expect((await read("boundary.json")).bytes).toBe(size);
+      expect(
+        readBuiltinJson({ "boundary.json": raw }, "boundary.json", L.resourceFileBytes).bytes,
+      ).toBe(size);
+    } else {
+      await expect(read("boundary.json")).rejects.toMatchObject({ actual: size });
+      expect(() =>
+        readBuiltinJson({ "boundary.json": raw }, "boundary.json", L.resourceFileBytes),
+      ).toThrow();
+    }
+  }
+  for (const raw of ["", " "]) {
+    await writeFile(path.join(directory, "empty.json"), raw);
+    await expect(read("empty.json")).rejects.toThrow();
+    expect(() =>
+      readBuiltinJson({ "empty.json": raw }, "empty.json", L.resourceFileBytes),
+    ).toThrow();
+  }
+});

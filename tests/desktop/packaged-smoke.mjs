@@ -12,165 +12,165 @@ import { checkPackagedStaticLanguages } from "./static-languages-packaged.mjs";
 // Exercise the shipped main/preload/renderer and dependency closure with an isolated profile.
 // No test update feed or test version is exposed in the production application.
 const profile = await mkdtemp(path.join(tmpdir(), "kobrixa-packaged-smoke-"));
-const version = await readVersion();
-const appDirectory = path.join(
-  repositoryRoot,
-  `apps/desktop/out/Kobrixa-${process.platform}-${process.arch}`,
-);
-const installedDirectory = path.join(profile, "installed");
-await cp(appDirectory, installedDirectory, { recursive: true, dereference: true });
-const staticFixtures = await writeStaticLanguageFixtures(path.join(profile, "static-fixtures"));
-const staticSourceKey = developmentSourceKey(await realpath(staticFixtures.toy));
-const executable = path.join(
-  installedDirectory,
-  process.platform === "darwin"
-    ? "Kobrixa.app/Contents/MacOS/kobrixa"
-    : process.platform === "win32"
-      ? "kobrixa.exe"
-      : "kobrixa",
-);
-await writeFile(
-  path.join(profile, "updates.json"),
-  JSON.stringify({ enabled: false, channel: "stable" }),
-);
-const projectIds = [1, 2, 3].map((n) => `00000000-0000-4000-8000-00000000000${n}`);
-const inputPaths = projectIds.map((_, i) => path.join(profile, `project-${i + 1}`));
-for (const inputPath of inputPaths) {
-  await mkdir(inputPath);
-  await writeFile(path.join(inputPath, "main.bp"), "LCD.Clear()\n");
-  await writeFile(path.join(inputPath, "sample.toy"), "value 1\n");
-  await writeFile(path.join(inputPath, "unknown.xyz"), "unknown text\n");
-  await writeFile(path.join(inputPath, "data.json"), '{"value":1}\n');
-}
-await writeFile(
-  path.join(profile, "workspace-session.json"),
-  JSON.stringify({
-    version: 1,
-    projects: projectIds.map((workspaceId, index) => ({
-      workspaceId,
-      inputPath: inputPaths[index],
-      files: ["main.bp"],
-      activeFile: "main.bp",
-      selectedTreePath: "main.bp",
-      expandedTreePaths: [""],
-      locations: {},
-    })),
-    activeWorkspaceId: projectIds[1],
-  }),
-);
-
-async function launch(check) {
-  const child = spawn(
-    executable,
-    [
-      `--user-data-dir=${profile}`,
-      "--remote-debugging-port=0",
-      `--plugin-dev-dir=${staticFixtures.toy}`,
-      ...(process.platform === "linux" ? ["--no-sandbox"] : []),
-    ],
-    { cwd: profile, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  let output = "",
-    exited = false;
-  child.stdout.on("data", (chunk) => {
-    output += chunk;
-  });
-  child.stderr.on("data", (chunk) => {
-    output += chunk;
-  });
-  const exit = new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      output += `\nApplication exited: code=${code}, signal=${signal}`;
-      exited = true;
-      resolve();
-    });
-  });
-  const sockets = [];
-  const deadline = Date.now() + 45_000;
-  async function until(read) {
-    while (Date.now() < deadline && !exited) {
-      const result = await read();
-      if (result) return result;
-      await pause(100);
-    }
-    throw new Error(`Packaged application did not become ready:\n${output}`);
-  }
-  async function connect(url) {
-    const socket = new WebSocket(url);
-    sockets.push(socket);
-    await new Promise((resolve, reject) => {
-      socket.addEventListener("open", resolve, { once: true });
-      socket.addEventListener("error", reject, { once: true });
-    });
-    let id = 0;
-    return (method, params = {}, waitForReply = true) =>
-      new Promise((resolve, reject) => {
-        const requestId = ++id;
-        if (!waitForReply) {
-          socket.send(JSON.stringify({ id: requestId, method, params }));
-          resolve();
-          return;
-        }
-        const timeout = setTimeout(() => {
-          socket.removeEventListener("message", receive);
-          reject(new Error(`CDP timeout: ${method}`));
-        }, 10_000);
-        function receive(event) {
-          const reply = JSON.parse(event.data);
-          if (reply.id !== requestId) return;
-          clearTimeout(timeout);
-          socket.removeEventListener("message", receive);
-          if (reply.error) reject(new Error(JSON.stringify(reply.error)));
-          else resolve(reply.result);
-        }
-        socket.addEventListener("message", receive);
-        socket.send(JSON.stringify({ id: requestId, method, params }));
-      });
-  }
-  try {
-    const endpoint = await until(() => output.match(/DevTools listening on (ws:\/\/\S+)/)?.[1]);
-    const origin = `http://${new URL(endpoint).host}`;
-    const target = await until(async () => {
-      const pages = await (await fetch(`${origin}/json/list`)).json();
-      return pages.find((page) => page.type === "page" && page.url.startsWith("file:"));
-    });
-    const send = await connect(target.webSocketDebuggerUrl);
-    const js = async (expression) => {
-      const result = await send("Runtime.evaluate", {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-      });
-      if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-      return result.result.value;
-    };
-    await until(() =>
-      js('Boolean(window.kobrixa?.updates && document.querySelector(".settings-trigger"))'),
-    );
-    await until(() =>
-      js(
-        'document.querySelectorAll(".project-tab").length === 3 && Boolean(document.querySelector(".monaco-editor textarea"))',
-      ),
-    );
-    await check(js, send, until);
-    const browser = await connect(endpoint);
-    // The browser can exit before delivering a response to this command.
-    await browser("Browser.close", {}, false);
-    await Promise.race([
-      exit,
-      pause(5000).then(() => {
-        if (!exited) throw new Error("Application did not quit");
-      }),
-    ]);
-  } finally {
-    for (const socket of sockets) socket.close();
-    if (!exited) child.kill();
-    await exit;
-  }
-}
-
 try {
+  const version = await readVersion();
+  const appDirectory = path.join(
+    repositoryRoot,
+    `apps/desktop/out/Kobrixa-${process.platform}-${process.arch}`,
+  );
+  const installedDirectory = path.join(profile, "installed");
+  await cp(appDirectory, installedDirectory, { recursive: true, verbatimSymlinks: true });
+  const staticFixtures = await writeStaticLanguageFixtures(path.join(profile, "static-fixtures"));
+  const staticSourceKey = developmentSourceKey(await realpath(staticFixtures.toy));
+  const executable = path.join(
+    installedDirectory,
+    process.platform === "darwin"
+      ? "Kobrixa.app/Contents/MacOS/kobrixa"
+      : process.platform === "win32"
+        ? "kobrixa.exe"
+        : "kobrixa",
+  );
+  await writeFile(
+    path.join(profile, "updates.json"),
+    JSON.stringify({ enabled: false, channel: "stable" }),
+  );
+  const projectIds = [1, 2, 3].map((n) => `00000000-0000-4000-8000-00000000000${n}`);
+  const inputPaths = projectIds.map((_, i) => path.join(profile, `project-${i + 1}`));
+  for (const inputPath of inputPaths) {
+    await mkdir(inputPath);
+    await writeFile(path.join(inputPath, "main.bp"), "LCD.Clear()\n");
+    await writeFile(path.join(inputPath, "sample.toy"), "value 1\n");
+    await writeFile(path.join(inputPath, "unknown.xyz"), "unknown text\n");
+    await writeFile(path.join(inputPath, "data.json"), '{"value":1}\n');
+  }
+  await writeFile(
+    path.join(profile, "workspace-session.json"),
+    JSON.stringify({
+      version: 1,
+      projects: projectIds.map((workspaceId, index) => ({
+        workspaceId,
+        inputPath: inputPaths[index],
+        files: ["main.bp"],
+        activeFile: "main.bp",
+        selectedTreePath: "main.bp",
+        expandedTreePaths: [""],
+        locations: {},
+      })),
+      activeWorkspaceId: projectIds[1],
+    }),
+  );
+
+  async function launch(check) {
+    const child = spawn(
+      executable,
+      [
+        `--user-data-dir=${profile}`,
+        "--remote-debugging-port=0",
+        `--plugin-dev-dir=${staticFixtures.toy}`,
+        ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+      ],
+      { cwd: profile, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let output = "",
+      exited = false;
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk;
+    });
+    const exit = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        output += `\nApplication exited: code=${code}, signal=${signal}`;
+        exited = true;
+        resolve();
+      });
+    });
+    const sockets = [];
+    const deadline = Date.now() + 45_000;
+    async function until(read) {
+      while (Date.now() < deadline && !exited) {
+        const result = await read();
+        if (result) return result;
+        await pause(100);
+      }
+      throw new Error(`Packaged application did not become ready:\n${output}`);
+    }
+    async function connect(url) {
+      const socket = new WebSocket(url);
+      sockets.push(socket);
+      await new Promise((resolve, reject) => {
+        socket.addEventListener("open", resolve, { once: true });
+        socket.addEventListener("error", reject, { once: true });
+      });
+      let id = 0;
+      return (method, params = {}, waitForReply = true) =>
+        new Promise((resolve, reject) => {
+          const requestId = ++id;
+          if (!waitForReply) {
+            socket.send(JSON.stringify({ id: requestId, method, params }));
+            resolve();
+            return;
+          }
+          const timeout = setTimeout(() => {
+            socket.removeEventListener("message", receive);
+            reject(new Error(`CDP timeout: ${method}`));
+          }, 10_000);
+          function receive(event) {
+            const reply = JSON.parse(event.data);
+            if (reply.id !== requestId) return;
+            clearTimeout(timeout);
+            socket.removeEventListener("message", receive);
+            if (reply.error) reject(new Error(JSON.stringify(reply.error)));
+            else resolve(reply.result);
+          }
+          socket.addEventListener("message", receive);
+          socket.send(JSON.stringify({ id: requestId, method, params }));
+        });
+    }
+    try {
+      const endpoint = await until(() => output.match(/DevTools listening on (ws:\/\/\S+)/)?.[1]);
+      const origin = `http://${new URL(endpoint).host}`;
+      const target = await until(async () => {
+        const pages = await (await fetch(`${origin}/json/list`)).json();
+        return pages.find((page) => page.type === "page" && page.url.startsWith("file:"));
+      });
+      const send = await connect(target.webSocketDebuggerUrl);
+      const js = async (expression) => {
+        const result = await send("Runtime.evaluate", {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        });
+        if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+        return result.result.value;
+      };
+      await until(() =>
+        js('Boolean(window.kobrixa?.updates && document.querySelector(".settings-trigger"))'),
+      );
+      await until(() =>
+        js(
+          'document.querySelectorAll(".project-tab").length === 3 && Boolean(document.querySelector(".monaco-editor textarea"))',
+        ),
+      );
+      await check(js, send, until);
+      const browser = await connect(endpoint);
+      // The browser can exit before delivering a response to this command.
+      await browser("Browser.close", {}, false);
+      await Promise.race([
+        exit,
+        pause(5000).then(() => {
+          if (!exited) throw new Error("Application did not quit");
+        }),
+      ]);
+    } finally {
+      for (const socket of sockets) socket.close();
+      if (!exited) child.kill();
+      await exit;
+    }
+  }
+
   await launch(async (js, send, until) => {
     await checkPackagedStaticLanguages({ js, send, until, profile, sourceKey: staticSourceKey });
     const restored = await js("window.kobrixa.workspace.restoreSession()");

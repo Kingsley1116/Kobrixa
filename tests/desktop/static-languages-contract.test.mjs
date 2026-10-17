@@ -72,12 +72,14 @@ test("smoke snapshot includes full owner identity, original byte sizes, and defe
   const catalog = await basicPlusSmokeCatalog();
   const harness = createStaticLanguagesHarness(catalog);
   const state = harness.state();
+  assert.ok(catalog.revision > 0);
+  assert.ok(Number.isSafeInteger(catalog.languages[0].generation));
   assert.equal(state.staticLanguagesRevision, catalog.revision);
   assert.deepEqual(state.staticLanguageOwners, [
     {
       sourceKey: "builtin:kobrixa.basic-plus",
       pluginId: "kobrixa.basic-plus",
-      generation: 1,
+      generation: catalog.languages[0].generation,
       languageId: "bp",
       extensions: ["bp", "bpi", "bpm"],
     },

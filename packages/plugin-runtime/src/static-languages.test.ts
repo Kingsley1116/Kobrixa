@@ -356,3 +356,113 @@ it("reads no grammar for plugins invalidated by compiler conflicts", async () =>
   expect(result.catalog.languages).toEqual([]);
   expect(validateStaticLanguageResources).not.toHaveBeenCalled();
 });
+
+it("boundary runtime plugin and global admission totals", async () => {
+  const padded = (raw: string, bytes: number) => {
+    expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(bytes);
+    return raw + " ".repeat(bytes - Buffer.byteLength(raw));
+  };
+  const sized = (i: number, bytes: number) => {
+    const source = builtinToy(`test.b${String(i).padStart(3, "0")}`, `b${i}`, [`b${i}`]);
+    source.resources = {
+      "language/tokenizer.json": padded(source.resources["language/tokenizer.json"]!, bytes - 2),
+      "language/configuration.json": "{}",
+    };
+    return source;
+  };
+  expect((await build([])).catalog.languages).toEqual([]);
+  for (const delta of [-1, 0, 1]) {
+    const total = L.resourceBytesPerPlugin + delta;
+    const first = sized(0, L.resourceFileBytes);
+    const second = sized(1, total - L.resourceFileBytes);
+    const manifest = first.manifest as PluginManifest;
+    const declaration = manifest.contributes!.languages![0]!;
+    manifest.contributes!.languages = [
+      { ...declaration, id: "a", extensions: ["a"] },
+      {
+        ...declaration,
+        id: "b",
+        extensions: ["b"],
+        tokenizer: { version: 1, path: "second.json" },
+      },
+    ];
+    first.resources = {
+      ...first.resources,
+      "second.json": second.resources["language/tokenizer.json"]!,
+    };
+    const result = await build([first]);
+    expect(result.catalog.languages).toHaveLength(delta <= 0 ? 2 : 1);
+    if (delta > 0)
+      expect(result.problems.get("builtin:test.b000")?.[0]?.detail).toMatchObject({
+        limit: "STATIC_LANGUAGE_LIMITS_V1.resourceBytesPerPlugin",
+        allowed: L.resourceBytesPerPlugin,
+        actual: total,
+      });
+    else
+      expect(
+        result.catalog.languages.reduce(
+          (sum, item) => sum + item.resourceBytes.tokenizer + item.resourceBytes.configuration,
+          0,
+        ),
+      ).toBe(total);
+
+    const sources = Array.from({ length: 16 }, (_, i) =>
+      sized(i, L.resourceFileBytes + (i === 15 ? delta : 0)),
+    );
+    const global = await build(sources.reverse());
+    expect(global.catalog.languages).toHaveLength(delta <= 0 ? 16 : 15);
+    if (delta > 0)
+      expect(global.problems.get("builtin:test.b015")?.[0]?.detail).toMatchObject({
+        limit: "STATIC_LANGUAGE_LIMITS_V1.resourceBytesTotal",
+        allowed: L.resourceBytesTotal,
+        actual: L.resourceBytesTotal + 1,
+      });
+    else
+      expect(
+        global.catalog.languages.reduce(
+          (sum, item) => sum + item.resourceBytes.tokenizer + item.resourceBytes.configuration,
+          0,
+        ),
+      ).toBe(L.resourceBytesTotal + delta);
+  }
+  for (const count of [0, 1, 127, 128, 129]) {
+    const result = await build(
+      Array.from({ length: count }, (_, i) =>
+        builtinToy(`test.i${String(i).padStart(3, "0")}`, `i${i}`, [`i${i}`]),
+      ),
+    );
+    expect(result.catalog.languages).toHaveLength(Math.min(count, 128));
+    if (count === 129)
+      expect(result.problems.get("builtin:test.i128")?.[0]?.detail).toMatchObject({
+        limit: "STATIC_LANGUAGE_LIMITS_V1.languagesTotal",
+        allowed: 128,
+        actual: 129,
+      });
+  }
+  try {
+    for (const total of [0, 1, 65535, 65536, 65537]) {
+      const counts: number[] = [];
+      for (let remaining = total; remaining > 0; remaining -= L.expandedRulesPerLanguage)
+        counts.push(Math.min(remaining, L.expandedRulesPerLanguage));
+      vi.mocked(validateStaticLanguageResources).mockImplementation((input) => {
+        const accepted = acceptFixture(input);
+        if (!accepted.ok) throw new Error("Expected fixture acceptance");
+        return { ...accepted, expandedRules: counts[Number(input.languageId.slice(1))]! };
+      });
+      const result = await build(
+        counts.map((_, i) => builtinToy(`test.r${i}`, `r${i}`, [`r${i}`])),
+      );
+      expect(result.catalog.languages.reduce((sum, item) => sum + item.expandedRules, 0)).toBe(
+        Math.min(total, 65536),
+      );
+      if (total === 65537)
+        expect(result.problems.get("builtin:test.r8")?.[0]?.detail).toMatchObject({
+          limit: "STATIC_LANGUAGE_LIMITS_V1.expandedRulesTotal",
+          allowed: 65536,
+          actual: 65537,
+        });
+    }
+  } finally {
+    vi.mocked(validateStaticLanguageResources).mockImplementation(acceptFixture);
+  }
+});

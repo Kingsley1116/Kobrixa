@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { bootstrapStaticLanguages } from "./static-language-bootstrap.js";
+import { CORE_LANGUAGE_IDS } from "./core-language-routes.js";
 import { beforeEach, expect, it, vi } from "vitest";
 import type * as PluginProtocol from "@kobrixa/plugin-protocol";
 import type { editor } from "monaco-editor";
@@ -92,7 +94,7 @@ function catalog(revision: number, languages: ValidatedStaticLanguage[]): Static
 // The same producer-shaped DTOs as the store tests, using real minimal resources.
 // Hidden candidates are not installed and are not required in owner metadata.
 function authoritativeCatalog(
-  kind: "budget-loser" | "marker-filtered",
+  kind: "budget-loser" | "marker-filtered" | "quarantined-claimant",
   revision: number,
 ): StaticLanguagesCatalog {
   const languages = Array.from({ length: kind === "budget-loser" ? 128 : 2 }, (_, index) => ({
@@ -404,7 +406,7 @@ it("keeps provisional ambiguity from complete owner metadata, including uninstal
   h.registrar.dispose();
 });
 
-it.each(["budget-loser", "marker-filtered"] as const)(
+it.each(["budget-loser", "marker-filtered", "quarantined-claimant"] as const)(
   "preserves %s ambiguity through pending, failed, and completed catalog fetches",
   async (kind) => {
     const first = authoritativeCatalog(kind, 1);
@@ -680,5 +682,132 @@ it("updates aliases and extension metadata without reinstalling unchanged resour
   h.publish(ready(catalog(3, [changed])));
   expect(h.registrar.resolve({ file: "/main.new" }).monacoLanguage).toBe("toy");
   expect(h.tokens).toHaveBeenCalledOnce();
+  h.registrar.dispose();
+});
+
+it.each(["context", "beforeChange", "afterChange", "setModelLanguage"] as const)(
+  "disposes revoked providers and reconciles other models when %s throws",
+  (failure) => {
+    const h = harness(ready(catalog(1, [language()])));
+    const broken = h.model("/broken.toy");
+    const healthy = h.model("/healthy.toy");
+    let throwing = false;
+    const maybeThrow = (stage: string) => {
+      if (throwing && stage === failure) throw new Error("Broken model attachment");
+    };
+    h.registrar.trackModel(
+      broken,
+      () => {
+        maybeThrow("context");
+        return { file: "/broken.toy" };
+      },
+      {
+        beforeChange() {
+          maybeThrow("beforeChange");
+        },
+        afterChange() {
+          maybeThrow("afterChange");
+        },
+      },
+    );
+    if (failure === "setModelLanguage")
+      h.setModelLanguage.mockImplementation((model, id) => {
+        if (model === broken) maybeThrow("setModelLanguage");
+        h.values.get(model)!.language = id;
+      });
+    throwing = true;
+    expect(() => h.publish(ready(catalog(2, [])))).not.toThrow();
+    expect(h.values.get(healthy)!.language).toBe("plaintext");
+    expect(h.registrar.getActiveOwners()).toEqual([]);
+    expect(h.tokenDisposals[0]).toHaveBeenCalledOnce();
+    expect(h.configurationDisposals[0]).toHaveBeenCalledOnce();
+    throwing = false;
+    h.registrar.refreshModels();
+    expect(h.values.get(broken)!.language).toBe("plaintext");
+    h.registrar.dispose();
+  },
+);
+
+it("reinstalls a changed resourceDigest under the same owner and generation", () => {
+  const initial = language();
+  const h = harness(ready(catalog(1, [initial])));
+  const model = h.model();
+  const changed = { ...initial, resourceDigest: "changed-bytes" };
+  h.publish(ready(catalog(2, [changed])));
+  expect(h.register).toHaveBeenCalledOnce();
+  expect(h.tokens).toHaveBeenCalledTimes(2);
+  expect(h.configuration).toHaveBeenCalledTimes(2);
+  expect(h.tokenDisposals[0]).toHaveBeenCalledOnce();
+  expect(h.configurationDisposals[0]).toHaveBeenCalledOnce();
+  expect(h.values.get(model)!.language).toBe("toy");
+  h.registrar.dispose();
+});
+
+it("protects every projected core id without claiming implicit core extensions", () => {
+  const h = harness();
+  let revision = 1;
+  for (const id of CORE_LANGUAGE_IDS) h.publish(ready(catalog(revision++, [language(id)])));
+  expect(h.register).not.toHaveBeenCalled();
+  expect(h.report).toHaveBeenCalledTimes(CORE_LANGUAGE_IDS.size);
+  expect(h.registrar.resolve({ file: "main.JSON" }).monacoLanguage).toBe("json");
+  for (const extension of ["py", "ts", "js"]) {
+    expect(h.registrar.resolve({ file: `main.${extension}` }).monacoLanguage).toBe("plaintext");
+  }
+  h.registrar.dispose();
+});
+
+it("installs a late equal-revision catalog after bootstrap timeout plaintext fallback", async () => {
+  vi.useFakeTimers();
+  const first = catalog(7, [language()]);
+  const reply = deferred<StaticLanguagesCatalog>();
+  const store = createStaticLanguageStore({
+    state: async () => state(first),
+    staticLanguages: () => reply.promise,
+    onEvent: () => () => {},
+  });
+  const h = harness(undefined, store);
+  try {
+    const model = h.model();
+    const boot = bootstrapStaticLanguages({ store, registrar: h.registrar });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await boot).toMatchObject({ kind: "plaintext", reason: "timeout" });
+    expect(h.registrar.getRoute(model)).toMatchObject({
+      catalogRevision: 7,
+      monacoLanguage: "plaintext",
+    });
+    reply.resolve(first);
+    await store.ready();
+    expect(store.getSnapshot()).toMatchObject({ phase: "ready", targetRevision: 7 });
+    expect(h.values.get(model)!.language).toBe("toy");
+    expect(h.register).toHaveBeenCalledOnce();
+  } finally {
+    h.registrar.dispose();
+    store.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("boundary session distinct ids at zero one 255 256 257", () => {
+  const h = harness();
+  expect(h.register).not.toHaveBeenCalled();
+  for (let index = 1; index <= 257; index++) {
+    h.publish(ready(catalog(index, [language(`boundary-${index}`)])));
+    if ([1, 255, 256, 257].includes(index)) {
+      expect(h.register).toHaveBeenCalledTimes(Math.min(index, 256));
+      expect(h.registrar.resolve({ file: "main.toy" }).monacoLanguage).toBe(
+        index <= 256 ? `boundary-${index}` : "plaintext",
+      );
+      if (index <= 256) expect(h.report).not.toHaveBeenCalled();
+    }
+  }
+  expect(h.report).toHaveBeenCalledTimes(1);
+  expect(h.report.mock.calls[0]![0]).toMatchObject({
+    languageId: "boundary-257",
+    reason: "session-language-ids",
+  });
+  h.publish(ready(catalog(258, [])));
+  h.publish(ready(catalog(259, [language("boundary-1", 2)])));
+  expect(h.registrar.resolve({ file: "main.toy" }).monacoLanguage).toBe("boundary-1");
+  expect(h.register).toHaveBeenCalledTimes(256);
   h.registrar.dispose();
 });
