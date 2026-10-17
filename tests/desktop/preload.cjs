@@ -10,7 +10,7 @@ const unsupportedPluginOperation = async () => {
 };
 contextBridge.exposeInMainWorld("kobrixa", {
   // The harness does not customize the native Windows title bar.
-  windowChrome: { setAppearance: async () => {} },
+  ...(process.platform === "win32" ? { windowChrome: { setAppearance: async () => {} } } : {}),
   collab: {
     serverUrl: call("collabServerUrl"),
     getPreferences: call("collabPreferences"),
@@ -62,17 +62,10 @@ contextBridge.exposeInMainWorld("kobrixa", {
     setPython: unsupportedPluginOperation,
     readLog: unsupportedPluginOperation,
     clearSafeModeLock: unsupportedPluginOperation,
-    state: async () => ({
-      revision: 0,
-      diagnosticHelpRevision: 0,
-      safeMode: false,
-      developmentMode: false,
-      plugins: [],
-      developer: { enabled: false, commandLine: false, linkedCount: 0 },
-      origins: {},
-      python: { pendingReload: [] },
-      inflight: [],
-    }),
+    state: () => ipcRenderer.invoke("plugins:state"),
+    staticLanguages: () => ipcRenderer.invoke("plugins:static-languages"),
+    reportLanguageRegistrationFailure: (input) =>
+      ipcRenderer.invoke("plugins:report-language-registration-failure", input),
     diagnosticHelp: async () => ({
       revision: 0,
       plugins: {
@@ -84,7 +77,11 @@ contextBridge.exposeInMainWorld("kobrixa", {
       },
     }),
     notices: async () => [],
-    onEvent: () => () => {},
+    onEvent: (listener) => {
+      const receive = (_event, event) => listener(event);
+      ipcRenderer.on("plugins:event", receive);
+      return () => ipcRenderer.removeListener("plugins:event", receive);
+    },
   },
   workspace: {
     getPreferences: call("filePreferences"),

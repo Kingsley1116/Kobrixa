@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { readVersion, repositoryRoot } from "../../tools/release/common.mjs";
+import { developmentSourceKey } from "../../packages/plugin-runtime/dist/index.js";
+import { writeStaticLanguageFixtures } from "./static-languages-fixtures.mjs";
+import { checkPackagedStaticLanguages } from "./static-languages-packaged.mjs";
 
 // Exercise the shipped main/preload/renderer and dependency closure with an isolated profile.
 // No test update feed or test version is exposed in the production application.
@@ -14,8 +17,12 @@ const appDirectory = path.join(
   repositoryRoot,
   `apps/desktop/out/Kobrixa-${process.platform}-${process.arch}`,
 );
+const installedDirectory = path.join(profile, "installed");
+await cp(appDirectory, installedDirectory, { recursive: true, dereference: true });
+const staticFixtures = await writeStaticLanguageFixtures(path.join(profile, "static-fixtures"));
+const staticSourceKey = developmentSourceKey(await realpath(staticFixtures.toy));
 const executable = path.join(
-  appDirectory,
+  installedDirectory,
   process.platform === "darwin"
     ? "Kobrixa.app/Contents/MacOS/kobrixa"
     : process.platform === "win32"
@@ -31,6 +38,9 @@ const inputPaths = projectIds.map((_, i) => path.join(profile, `project-${i + 1}
 for (const inputPath of inputPaths) {
   await mkdir(inputPath);
   await writeFile(path.join(inputPath, "main.bp"), "LCD.Clear()\n");
+  await writeFile(path.join(inputPath, "sample.toy"), "value 1\n");
+  await writeFile(path.join(inputPath, "unknown.xyz"), "unknown text\n");
+  await writeFile(path.join(inputPath, "data.json"), '{"value":1}\n');
 }
 await writeFile(
   path.join(profile, "workspace-session.json"),
@@ -55,9 +65,10 @@ async function launch(check) {
     [
       `--user-data-dir=${profile}`,
       "--remote-debugging-port=0",
+      `--plugin-dev-dir=${staticFixtures.toy}`,
       ...(process.platform === "linux" ? ["--no-sandbox"] : []),
     ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    { cwd: profile, stdio: ["ignore", "pipe", "pipe"] },
   );
   let output = "",
     exited = false;
@@ -142,7 +153,7 @@ async function launch(check) {
         'document.querySelectorAll(".project-tab").length === 3 && Boolean(document.querySelector(".monaco-editor textarea"))',
       ),
     );
-    await check(js, send);
+    await check(js, send, until);
     const browser = await connect(endpoint);
     // The browser can exit before delivering a response to this command.
     await browser("Browser.close", {}, false);
@@ -160,7 +171,8 @@ async function launch(check) {
 }
 
 try {
-  await launch(async (js, send) => {
+  await launch(async (js, send, until) => {
+    await checkPackagedStaticLanguages({ js, send, until, profile, sourceKey: staticSourceKey });
     const restored = await js("window.kobrixa.workspace.restoreSession()");
     const workspaceId = restored.activeWorkspaceId;
     assert.ok(workspaceId);
@@ -222,6 +234,7 @@ try {
     await realpath(inputPaths[1]),
   );
   assert.equal(await readFile(path.join(inputPaths[1], "main.bp"), "utf8"), "LCD.Clear()\n");
+  assert.equal(await readFile(path.join(inputPaths[1], "sample.toy"), "utf8"), "value 1\n");
   await launch(async (js) => {
     assert.deepEqual((await js("window.kobrixa.updates.getState()")).preferences, {
       enabled: false,
@@ -238,7 +251,28 @@ try {
       /shutdown.recovery/,
     );
     assert.equal(await js('document.querySelectorAll(".project-tab .dirty").length'), 1);
+    await js("document.querySelector('[data-tree-path=\"sample.toy\"]').click()");
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (
+        await js(
+          "Boolean(document.querySelector('.editor-stage .monaco-editor[data-mode-id=\"toy\"]'))",
+        )
+      )
+        break;
+      await pause(100);
+    }
+    assert.equal(
+      await js(
+        "Boolean(document.querySelector('.editor-stage .monaco-editor[data-mode-id=\"toy\"]'))",
+      ),
+      true,
+    );
+    assert.match(
+      await js('document.querySelector(".editor-stage .view-lines").textContent'),
+      /draft_value/,
+    );
   });
+  await assert.rejects(readFile(path.join(profile, "plugins/session.json")), { code: "ENOENT" });
   assert.deepEqual(JSON.parse(await readFile(path.join(profile, "updates.json"), "utf8")), {
     enabled: false,
     channel: "preview",

@@ -8,6 +8,10 @@ Basic Plus 是目前唯一已實作的來源前端，專案 manifest 只接受 `
 
 「盡可能完整」代表在語意能映射至 EV3 VM 時，廣泛接受原語言語法；不代表 Kobrixa 會在 `.rbf` 中嵌入完整 CPython、JavaScript、Node.js、瀏覽器、C++ 或作業系統 runtime。
 
+## 編輯器靜態語言
+
+可信任的開發插件可透過 API 1.4.0 靜態資源新增詞法上色與編輯器設定，不會新增編譯器或改變隱式專案的 `bp`／`ev3-native` 預設。未知檔案使用純文字，JSON 使用核心路由；衝突或語法不可用仍保留編輯與草稿。格式、固定限制、信任邊界及復原方式見[靜態語言插件](plugin-static-languages.md)。
+
 ## Basic Plus（`.bp`）— v1
 
 Clean-room 前端的目標是與支援的舊版程式行為相容，包括：

@@ -22,6 +22,10 @@ import { checkHighlighting } from "./highlighting-smoke.mjs";
 import { checkEditorPerformance } from "./performance-smoke.mjs";
 import { checkSharedComponents } from "./components-smoke.mjs";
 import { checkWorkbenchFeatures } from "./workbench-features-smoke.mjs";
+import {
+  basicPlusSmokeCatalog,
+  createStaticLanguagesHarness,
+} from "./static-languages-harness.mjs";
 const [url, temporary] = process.argv.slice(2);
 const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
@@ -214,6 +218,12 @@ function syncLanguageFiles(fixture) {
       diskContents.set(file, content);
     }
 }
+const staticHarness = createStaticLanguagesHarness(await basicPlusSmokeCatalog());
+ipcMain.handle("plugins:state", () => staticHarness.state());
+ipcMain.handle("plugins:static-languages", () => staticHarness.staticLanguages());
+ipcMain.handle("plugins:report-language-registration-failure", (_event, input) =>
+  staticHarness.reportLanguageRegistrationFailure(input),
+);
 ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "motorState") return motors.service.getState();
   if (name === "motorStart") return motors.start(args[0], _e.sender.id);
