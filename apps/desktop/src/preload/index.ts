@@ -56,6 +56,9 @@ const api: KobrixaApi = {
   plugins: {
     state: () => ipcRenderer.invoke("plugins:state"),
     diagnosticHelp: () => ipcRenderer.invoke("plugins:diagnosticHelp"),
+    staticLanguages: () => ipcRenderer.invoke("plugins:static-languages"),
+    reportLanguageRegistrationFailure: (input) =>
+      ipcRenderer.invoke("plugins:report-language-registration-failure", input),
     notices: () => ipcRenderer.invoke("plugins:notices"),
     execute: (commandId) => ipcRenderer.invoke("plugins:execute", commandId),
     cancel: (sourceKey) => ipcRenderer.invoke("plugins:cancel", sourceKey),

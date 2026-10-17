@@ -1,0 +1,19 @@
+{
+  "ignoreCase": false,
+  "states": [
+    {
+      "name": "root",
+      "rules": [
+        {
+          "regex": {
+            "pattern": ".",
+            "flags": ""
+          },
+          "action": {
+            "token": "identifier"
+          }
+        }
+      ]
+    }
+  ]
+}

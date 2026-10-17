@@ -26,6 +26,8 @@ const unhandledRejection = vi.fn();
 const snapshot: PluginsView = {
   revision: 1,
   diagnosticHelpRevision: 0,
+  staticLanguagesRevision: 0,
+  staticLanguageOwners: [],
   safeMode: false,
   developmentMode: true,
   developer: { enabled: true, commandLine: false, linkedCount: 1 },
@@ -81,6 +83,17 @@ const api = {
       ],
     },
   })),
+  staticLanguages: vi.fn<PluginsApi["staticLanguages"]>(async () => ({
+    formatVersion: 1,
+    limitsVersion: 1,
+    revision: 0,
+    languages: [],
+    extensionRoutes: {},
+    conflicts: [],
+  })),
+  reportLanguageRegistrationFailure: vi.fn<PluginsApi["reportLanguageRegistrationFailure"]>(
+    async () => ({ accepted: false, revision: 0 }),
+  ),
   notices: vi.fn<PluginsApi["notices"]>(async () => []),
   diagnosticHelp: vi.fn<PluginsApi["diagnosticHelp"]>(async () => ({ revision: 0, plugins: {} })),
   cancel: vi.fn<PluginsApi["cancel"]>(async () => {}),

@@ -7,6 +7,7 @@ import type { SafeModeLock } from "./state-store.js";
 const markerSchema = z.strictObject({
   startedAt: z.iso.datetime(),
   thirdPartyRunning: z.boolean(),
+  thirdPartyStaticContributions: z.boolean().default(false),
   rendererUnresponsive: z.boolean(),
 });
 export type SessionMarker = z.infer<typeof markerSchema>;
@@ -34,12 +35,19 @@ export class SessionMarkerFile {
     this.#marker = {
       startedAt: this.now().toISOString(),
       thirdPartyRunning: false,
+      thirdPartyStaticContributions: false,
       rendererUnresponsive: false,
     };
     this.#write();
     if (previous?.rendererUnresponsive) return "renderer-unresponsive";
-    if (previous?.thirdPartyRunning) return "unclean-exit";
+    if (previous?.thirdPartyRunning || previous?.thirdPartyStaticContributions)
+      return "unclean-exit";
     return undefined;
+  }
+
+  /** T3 must persist true synchronously or throw before catalog delivery. */
+  markThirdPartyStaticContributions(): void {
+    throw new Error("not implemented");
   }
 
   /** `rendererUnresponsive` is sticky for the rest of the session. */
@@ -65,7 +73,13 @@ export class SessionMarkerFile {
     const marker = this.#marker;
     if (!marker || this.#finished) return;
     this.#finished = true;
-    this.#marker = { ...marker, thirdPartyRunning: false };
+    this.#marker = {
+      ...marker,
+      thirdPartyRunning: false,
+      thirdPartyStaticContributions: marker.rendererUnresponsive
+        ? marker.thirdPartyStaticContributions
+        : false,
+    };
     this.#write();
     if (marker.rendererUnresponsive) return;
     try {

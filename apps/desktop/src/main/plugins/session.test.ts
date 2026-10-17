@@ -20,6 +20,7 @@ it("starts a marker and removes it on a clean exit", async () => {
   expect(await onDisk()).toEqual({
     startedAt: "2026-10-15T00:00:00.000Z",
     thirdPartyRunning: false,
+    thirdPartyStaticContributions: false,
     rendererUnresponsive: false,
   });
   session.update({ thirdPartyRunning: true });

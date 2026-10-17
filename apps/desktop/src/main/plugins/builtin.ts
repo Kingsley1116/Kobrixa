@@ -4,6 +4,6 @@ import ev3 from "../../../../../plugins/ev3/kobrixa-plugin.json" with { type: "j
 
 /** Built-in manifests are bundled and validated by the same registry as development plugins. */
 export const BUILTIN_PLUGIN_SOURCES: readonly PluginSource[] = [
-  { kind: "builtin", manifest: basicPlus },
-  { kind: "builtin", manifest: ev3 },
+  { kind: "builtin", resources: {}, manifest: basicPlus },
+  { kind: "builtin", resources: {}, manifest: ev3 },
 ];

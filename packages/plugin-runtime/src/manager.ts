@@ -1,3 +1,10 @@
+import {
+  emptyStaticLanguagesCatalog,
+  type StaticLanguageOwner,
+  type StaticLanguagesCatalog,
+  type ReportLanguageRegistrationFailureInput,
+  type ReportLanguageRegistrationFailureResult,
+} from "./static-languages.js";
 import path from "node:path";
 import {
   DIAGNOSTIC_HELP_LIMITS,
@@ -60,7 +67,7 @@ export interface PluginSummary {
   source: "builtin" | "development";
   directory?: string;
   version?: string;
-  runtime?: "builtin" | "node" | "python";
+  runtime?: "builtin" | "node" | "python" | "static";
   displayName?: LocalizedText;
   status: "enabled" | "disabled" | "invalid" | "failed";
   disabledBy?: "user" | "safe-mode";
@@ -73,6 +80,8 @@ export interface PluginsSnapshot {
   revision: number;
   /** Revision of the currently published diagnostic help catalog. */
   diagnosticHelpRevision: number;
+  staticLanguagesRevision: number;
+  staticLanguageOwners: StaticLanguageOwner[];
   safeMode: boolean;
   developmentMode: boolean;
   /** The settings file was corrupt or unreadable; cleared by the next successful save. */
@@ -209,11 +218,28 @@ export class PluginManager {
     return {
       revision: this.#revision,
       diagnosticHelpRevision: this.#help.revision,
+      staticLanguagesRevision: this.staticLanguagesRevision,
+      staticLanguageOwners: [],
       safeMode: this.#safeMode,
       developmentMode: this.#entries.some((entry) => entry.read.source === "development"),
       ...(this.#stateProblem ? { stateProblem: this.#stateProblem } : {}),
       plugins: this.#entries.map((entry) => this.#summary(entry)),
     };
+  }
+
+  get staticLanguagesRevision(): number {
+    return 0;
+  }
+
+  staticLanguages(): StaticLanguagesCatalog {
+    return emptyStaticLanguagesCatalog(this.staticLanguagesRevision);
+  }
+
+  reportLanguageRegistrationFailure(
+    input: ReportLanguageRegistrationFailureInput,
+  ): ReportLanguageRegistrationFailureResult {
+    void input;
+    return { accepted: false, revision: this.staticLanguagesRevision };
   }
 
   diagnosticHelp(): DiagnosticHelpCatalog {
@@ -596,7 +622,13 @@ export class PluginManager {
   #register(entry: Entry): void {
     const { plugin } = entry;
     const manifest = plugin.manifest;
-    if (!manifest || manifest.runtime.kind === "builtin" || !plugin.entry || !plugin.directory)
+    if (
+      !manifest ||
+      manifest.runtime.kind === "builtin" ||
+      manifest.runtime.kind === "static" ||
+      !plugin.entry ||
+      !plugin.directory
+    )
       return;
     const { sourceKey } = plugin;
     const generation = entry.generation;

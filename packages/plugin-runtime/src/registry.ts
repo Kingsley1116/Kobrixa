@@ -21,7 +21,8 @@ export const RESERVED_PLUGIN_IDS: ReadonlySet<string> = new Set(["kobrixa.core"]
 /** Bound on reading one development folder, so a hung disk cannot block startup or recovery. */
 export const SOURCE_READ_TIMEOUT_MS = 5_000;
 export type PluginSource =
-  { kind: "builtin"; manifest: unknown } | { kind: "development"; directory: string };
+  | { kind: "builtin"; manifest: unknown; resources: Readonly<Record<string, string>> }
+  | { kind: "development"; directory: string };
 export type DevelopmentSource = Extract<PluginSource, { kind: "development" }>;
 /** `builtin:<manifest id>` or `dev:` plus 16 hex digits; safe to accept from the renderer. */
 export const sourceKeySchema = z
@@ -173,7 +174,8 @@ async function readDevelopmentPlugin(directory: string): Promise<SourceRead> {
   }
   const plugin = { ...checkManifest(value, "development", fallback), directory: root };
   const runtime = plugin.manifest?.runtime;
-  if (plugin.problems.length || !runtime || runtime.kind === "builtin") return plugin;
+  if (plugin.problems.length || !runtime || runtime.kind === "builtin" || runtime.kind === "static")
+    return plugin;
   try {
     const entry = await realpath(path.resolve(root, runtime.entry));
     const relative = path.relative(root, entry);

@@ -9,3 +9,5 @@ export * from "./framing.js";
 export * from "./json-schema.js";
 export * from "./peer.js";
 export * from "./memory-channel.js";
+export * from "./static-language-limits.js";
+export * from "./static-languages.js";

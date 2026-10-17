@@ -14,7 +14,10 @@ const relativePath = z
   .min(1)
   .max(512)
   .regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$/);
+export const staticRuntimeSchema = z.strictObject({ kind: z.literal("static") });
+export type StaticRuntime = z.infer<typeof staticRuntimeSchema>;
 const runtimeSchema = z.discriminatedUnion("kind", [
+  staticRuntimeSchema,
   z.looseObject({ kind: z.literal("builtin") }),
   z.looseObject({ kind: z.literal("node"), entry: relativePath }),
   z.looseObject({ kind: z.literal("python"), entry: relativePath }),
@@ -69,6 +72,25 @@ export const languageServiceDeclSchema = z.strictObject({
 });
 export type LanguageServiceDecl = z.infer<typeof languageServiceDeclSchema>;
 
+export const staticLanguageResourceDeclSchema = z.strictObject({
+  version: z.literal(1),
+  path: diagnosticHelpDeclSchema.shape.path,
+});
+export type StaticLanguageResourceDecl = z.infer<typeof staticLanguageResourceDeclSchema>;
+export const staticLanguageDeclSchema = z.strictObject({
+  id: compilerIdSchema,
+  extensions: z.array(extensionSchema).min(1).max(16),
+  // Unicode regex quantifiers count code points; no Zod UTF-16 length check here.
+  aliases: z
+    .array(z.string().regex(/^[^\p{Cc}\u2028\u2029]{1,80}$/u))
+    .min(1)
+    .max(8)
+    .optional(),
+  tokenizer: staticLanguageResourceDeclSchema,
+  configuration: staticLanguageResourceDeclSchema,
+});
+export type StaticLanguageDecl = z.infer<typeof staticLanguageDeclSchema>;
+
 export type FrontendDecl = z.infer<typeof frontendDeclSchema>;
 export type BackendDecl = z.infer<typeof backendDeclSchema>;
 export type ArtifactDecl = z.infer<typeof artifactDeclSchema>;
@@ -103,6 +125,7 @@ export const pluginManifestSchema = z.looseObject({
       backends: z.array(backendDeclSchema).max(8).optional(),
       diagnosticHelp: diagnosticHelpDeclSchema.optional(),
       languageServices: z.array(languageServiceDeclSchema).max(8).optional(),
+      languages: z.array(staticLanguageDeclSchema).max(8).optional(),
     })
     .optional(),
 });
@@ -158,4 +181,10 @@ export function languageServiceDeclarationProblems(manifest: PluginManifest): st
       );
   }
   return problems;
+}
+
+/** Called only after source restrictions; T1 supplies cross-field/static-runtime semantics. */
+export function staticLanguageDeclarationProblems(manifest: PluginManifest): string[] {
+  void manifest;
+  throw new Error("not implemented");
 }

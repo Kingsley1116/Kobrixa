@@ -46,6 +46,7 @@ async function devPlugin(name: string) {
 }
 const builtin = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
     version: "1.0.0",
@@ -65,6 +66,7 @@ const builtin = {
 };
 const builtinBackend = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "test.back",
     version: "1.0.0",
@@ -133,7 +135,7 @@ describe("PluginManager", () => {
         ],
       },
     };
-    const manager = await create([{ kind: "builtin", manifest }]);
+    const manager = await create([{ kind: "builtin", resources: {}, manifest }]);
     try {
       expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
         ok: false,

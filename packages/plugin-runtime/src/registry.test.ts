@@ -29,6 +29,7 @@ async function plugin(name: string, value: unknown, entry = "main.py", prefix = 
 }
 const builtin = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
     version: "1.0.0",
@@ -71,6 +72,7 @@ describe("loadPlugins", () => {
       readSource(
         {
           kind: "builtin",
+          resources: {},
           manifest: {
             id: "test.language",
             version: "1.0.0",
@@ -307,6 +309,7 @@ describe("loadPlugins", () => {
       readSource(
         {
           kind: "builtin",
+          resources: {},
           manifest: manifest({ runtime: { kind: "builtin" }, activationEvents: [], contributes }),
         },
         { safeMode: false },
@@ -409,8 +412,8 @@ describe("loadPlugins", () => {
     expect(results[1]!.problems[0]!.code).toBe("PLUGIN_E_DUPLICATE_ID");
   });
   it("throws on an invalid built-in manifest", async () => {
-    await expect(loadPlugins([{ kind: "builtin", manifest: { id: "x" } }], none)).rejects.toThrow(
-      /built-in/i,
-    );
+    await expect(
+      loadPlugins([{ kind: "builtin", resources: {}, manifest: { id: "x" } }], none),
+    ).rejects.toThrow(/built-in/i);
   });
 });

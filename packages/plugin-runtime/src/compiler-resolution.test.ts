@@ -19,6 +19,7 @@ const front = {
 const back = { target: "test-vm", ir: { min: 2, max: 4 }, capabilities: {}, artifacts: [] };
 const source = (id: string, contributes: unknown): PluginSource => ({
   kind: "builtin",
+  resources: {},
   manifest: {
     id,
     version: "1.0.0",
@@ -249,6 +250,7 @@ it("keeps API 1.0 command plugins compatible", async () => {
   const item = await readSource(
     {
       kind: "builtin",
+      resources: {},
       manifest: {
         id: "test.old",
         version: "1.0.0",

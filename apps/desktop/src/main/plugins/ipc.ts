@@ -1,3 +1,4 @@
+import { emptyStaticLanguagesCatalog } from "@kobrixa/plugin-runtime";
 import { z } from "zod";
 import { namespacedIdSchema } from "@kobrixa/plugin-protocol";
 import { sourceKeySchema } from "@kobrixa/plugin-runtime";
@@ -40,6 +41,14 @@ export function registerPluginIpc(
   const key = (value: unknown) => sourceKeySchema.parse(value);
   handle("plugins:state", () => plugins.state());
   handle("plugins:diagnosticHelp", () => plugins.diagnosticHelp());
+  // T0 endpoints cannot publish resources or quarantine any source.
+  handle("plugins:static-languages", () =>
+    emptyStaticLanguagesCatalog(plugins.state().staticLanguagesRevision),
+  );
+  handle("plugins:report-language-registration-failure", () => ({
+    accepted: false,
+    revision: plugins.state().staticLanguagesRevision,
+  }));
   handle("plugins:notices", () => plugins.notices());
   handle("plugins:execute", (_event, commandId: unknown) =>
     plugins.execute(namespacedIdSchema.parse(commandId)),

@@ -609,6 +609,8 @@ describe("PluginController with a fake manager", () => {
   const snapshot: PluginsSnapshot = {
     revision: 4,
     diagnosticHelpRevision: 2,
+    staticLanguagesRevision: 0,
+    staticLanguageOwners: [],
     safeMode: false,
     developmentMode: true,
     plugins: [

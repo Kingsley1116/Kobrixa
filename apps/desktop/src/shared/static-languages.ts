@@ -1,0 +1,25 @@
+export type {
+  RegexData,
+  Pair,
+  TokenAction,
+  Action,
+  Rule,
+  StaticLanguageTokenizerV1,
+  StaticLanguageConfigurationV1,
+  StaticLanguageResourceBytes,
+  StaticLanguageResourceProblemDetail,
+  StaticLanguageValidationProblem,
+  ValidateStaticLanguageResourcesInput,
+  StaticLanguageValidationResult,
+} from "@kobrixa/plugin-protocol";
+export type {
+  StaticLanguageSourceIdentity,
+  StaticLanguageProblemDetail,
+  StaticLanguageOwner,
+  ValidatedStaticLanguage,
+  StaticLanguageConflict,
+  StaticLanguagesCatalog,
+  StaticLanguageRegistrationFailureReason,
+  ReportLanguageRegistrationFailureInput,
+  ReportLanguageRegistrationFailureResult,
+} from "@kobrixa/plugin-runtime";

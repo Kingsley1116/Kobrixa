@@ -1,0 +1,26 @@
+{
+  "id": "acme.toy",
+  "version": "1.0.0",
+  "apiVersion": "^1.4.0",
+  "displayName": "Toy static language",
+  "runtime": {
+    "kind": "static"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "toy",
+        "extensions": ["toy"],
+        "aliases": ["Toy"],
+        "tokenizer": {
+          "version": 1,
+          "path": "language/tokenizer.json"
+        },
+        "configuration": {
+          "version": 1,
+          "path": "language/configuration.json"
+        }
+      }
+    ]
+  }
+}
