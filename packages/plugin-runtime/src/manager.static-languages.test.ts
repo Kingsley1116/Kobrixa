@@ -396,6 +396,152 @@ it("revokes before reload I/O and never restores old resources after a failed re
   );
 });
 
+it.each(["reload", "enable"] as const)(
+  "keeps a quarantined extension claimant through revisions until explicit %s",
+  async (retry) => {
+    const a = await developmentToy(root, "a");
+    const b = await developmentToy(root, "b");
+    const manifests = ["a", "b"].map((name) => {
+      const manifest = structuredClone(toyManifest);
+      manifest.id = `acme.${name}`;
+      manifest.contributes!.languages![0]!.id = `toy-${name}`;
+      manifest.contributes!.languages![0]!.extensions = ["toy", `t${name}`];
+      return manifest;
+    });
+    await writeManifest(a.directory, manifests[0]!);
+    await writeManifest(b.directory, manifests[1]!);
+    const manager = await create([a, b]);
+    const first = manager.staticLanguages();
+    const language = first.languages.find((item) => item.id === "toy-a")!;
+    const conflict = {
+      kind: "extension",
+      key: "toy",
+      sources: first.languages.map((item) => ({
+        pluginId: item.pluginId,
+        sourceKey: item.sourceKey,
+        languageId: item.id,
+      })),
+    };
+    expect(first.extensionRoutes).toEqual({ toy: null, ta: "toy-a", tb: "toy-b" });
+    expect(first.conflicts).toEqual([conflict]);
+    expect(
+      manager.reportLanguageRegistrationFailure({
+        sourceKey: language.sourceKey,
+        generation: language.generation,
+        languageId: language.id,
+        revision: first.revision,
+        reason: "monaco",
+        detail: "Rejected fixture.",
+      }).accepted,
+    ).toBe(true);
+    const assertQuarantined = () => {
+      const catalog = manager.staticLanguages();
+      expect(catalog.languages.map((item) => item.id)).toEqual(["toy-b"]);
+      expect.soft(catalog.extensionRoutes).toEqual({ toy: null, tb: "toy-b" });
+      expect.soft(catalog.conflicts).toEqual([conflict]);
+      expect(manager.state().staticLanguageOwners.map((item) => item.languageId)).toEqual([
+        "toy-b",
+      ]);
+    };
+    assertQuarantined();
+    const isolatedRevision = manager.staticLanguagesRevision;
+    const validations = () =>
+      vi
+        .mocked(validateStaticLanguageResources)
+        .mock.calls.filter(([input]) => input.languageId === language.id).length;
+    const beforeRefresh = validations();
+    // An unrelated reload bumps the revision and rebuilds the catalog from metadata.
+    expect(await manager.reloadSource(developmentSourceKey(b.directory))).toMatchObject({
+      ok: true,
+    });
+    expect(manager.staticLanguagesRevision).toBeGreaterThan(isolatedRevision);
+    assertQuarantined();
+    expect(validations()).toBe(beforeRefresh);
+
+    const recovered =
+      retry === "reload"
+        ? await manager.reloadSource(language.sourceKey)
+        : await manager.setEnabled(language.sourceKey, true);
+    expect(recovered).toMatchObject({ ok: true });
+    const catalog = manager.staticLanguages();
+    expect(catalog.languages.find((item) => item.id === language.id)?.generation).toBeGreaterThan(
+      language.generation,
+    );
+    expect(catalog.extensionRoutes).toEqual({ toy: null, ta: "toy-a", tb: "toy-b" });
+    expect(catalog.conflicts).toEqual([conflict]);
+    expect(
+      manager.state().plugins.find((item) => item.sourceKey === language.sourceKey)?.problems,
+    ).not.toContainEqual(
+      expect.objectContaining({ code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION" }),
+    );
+    expect(await manager.setEnabled(developmentSourceKey(b.directory), false)).toMatchObject({
+      ok: true,
+    });
+    expect(manager.staticLanguages().extensionRoutes).toEqual({ toy: "toy-a", ta: "toy-a" });
+  },
+);
+
+it.each(["initial", "enable", "reload", "metadata"] as const)(
+  "clears quarantine and preserves the %s generation high-water mark across remove and re-add",
+  async (advance) => {
+    const source = await developmentToy(root);
+    const manager = await create([source]);
+    const sourceKey = developmentSourceKey(source.directory);
+    const reportFailure = () => {
+      const language = manager.staticLanguages().languages[0]!;
+      const report = {
+        sourceKey,
+        generation: language.generation,
+        languageId: language.id,
+        revision: manager.staticLanguagesRevision,
+        reason: "monaco" as const,
+        detail: "Rejected fixture.",
+      };
+      expect(manager.reportLanguageRegistrationFailure(report).accepted).toBe(true);
+      expect(manager.staticLanguages().languages).toEqual([]);
+      return report;
+    };
+    if (advance === "enable") {
+      reportFailure();
+      expect(await manager.setEnabled(sourceKey, true)).toMatchObject({ ok: true });
+    } else if (advance === "reload") {
+      expect(await manager.reloadSource(sourceKey)).toMatchObject({ ok: true });
+    } else if (advance === "metadata") {
+      const manifest = structuredClone(toyManifest);
+      manifest.id = "acme.updated";
+      await writeManifest(source.directory, manifest);
+      expect(await manager.setEnabled(sourceKey, true)).toMatchObject({ ok: true });
+    }
+    const report = reportFailure();
+    if (advance !== "initial") expect(report.generation).toBeGreaterThan(0);
+    expect(await manager.removeSource(sourceKey)).toMatchObject({ ok: true });
+    expect(manager.state().plugins).toEqual([]);
+    expect(await manager.addSource(source)).toMatchObject({ ok: true });
+    const recovered = manager.staticLanguages().languages[0];
+    expect(recovered).toMatchObject({ sourceKey, id: report.languageId });
+    expect(recovered!.generation).toBeGreaterThan(report.generation);
+    expect(manager.state().plugins[0]?.problems).not.toContainEqual(
+      expect.objectContaining({ code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION" }),
+    );
+    expect(
+      manager.reportLanguageRegistrationFailure({
+        ...report,
+        revision: manager.staticLanguagesRevision,
+      }).accepted,
+    ).toBe(false);
+    // Stale quarantine from any older generation would turn this enable into a retry.
+    const beforeEnable = manager.staticLanguages();
+    expect(await manager.setEnabled(sourceKey, true)).toMatchObject({ ok: true });
+    expect(manager.staticLanguages()).toEqual(beforeEnable);
+    // Successful sources also need fresh identities when the same folder returns.
+    expect(await manager.removeSource(sourceKey)).toMatchObject({ ok: true });
+    expect(await manager.addSource(source)).toMatchObject({ ok: true });
+    expect(manager.staticLanguages().languages[0]!.generation).toBeGreaterThan(
+      recovered!.generation,
+    );
+  },
+);
+
 it.each([false, true])(
   "uses a fresh generation for explicit retry after failure (disable first: %s)",
   async (disableFirst) => {

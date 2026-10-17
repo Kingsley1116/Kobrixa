@@ -197,6 +197,8 @@ export class PluginManager {
     enabledKey: "[]",
   };
   readonly #registrationFailures = new Map<string, PluginProblem>();
+  /** Per-session high-water marks survive removal so renderer identities are never reused. */
+  readonly #staticGenerations = new Map<string, number>();
 
   #help: {
     revision: number;
@@ -247,7 +249,7 @@ export class PluginManager {
       read,
       plugin: unresolved(read),
       generation: 0,
-      staticGeneration: 0,
+      staticGeneration: this.#nextStaticGeneration(read.sourceKey),
     }));
 
     if (stored.problem !== undefined) {
@@ -329,6 +331,12 @@ export class PluginManager {
     return { accepted: true, revision: this.staticLanguagesRevision };
   }
 
+  #nextStaticGeneration(sourceKey: string): number {
+    const generation = (this.#staticGenerations.get(sourceKey) ?? -1) + 1;
+    this.#staticGenerations.set(sourceKey, generation);
+    return generation;
+  }
+
   #clearRegistrationFailures(sourceKey: string): void {
     for (const key of this.#registrationFailures.keys())
       if ((JSON.parse(key) as [string, number, string])[0] === sourceKey)
@@ -343,7 +351,7 @@ export class PluginManager {
     if (!failed) return; // An unchanged, successful explicit enable remains a no-op.
     // R1: replace the renderer's quarantined identity before offering any resources again.
     // Do not advance execution/service generation or detach an existing supervisor.
-    entry.staticGeneration += 1;
+    entry.staticGeneration = this.#nextStaticGeneration(sourceKey);
     this.#clearRegistrationFailures(sourceKey);
   }
 
@@ -532,7 +540,7 @@ export class PluginManager {
       read,
       plugin: unresolved(read),
       generation: 0,
-      staticGeneration: 0,
+      staticGeneration: this.#nextStaticGeneration(sourceKey),
     });
     await this.#apply("cancelled");
     return this.#closed() ?? { ok: true, state: this.state() };
@@ -542,6 +550,7 @@ export class PluginManager {
     const refused = this.#refuseChange(sourceKey, "removed");
     if (refused) return refused;
     this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);
+    this.#clearRegistrationFailures(sourceKey);
     if (forget && this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
     await this.#apply("cancelled");
     return { ok: true, state: this.state() };
@@ -570,7 +579,7 @@ export class PluginManager {
       await this.#retire([supervisor], "cancelled");
     }
     entry.generation += 1;
-    entry.staticGeneration += 1;
+    entry.staticGeneration = this.#nextStaticGeneration(sourceKey);
     const closed = this.#closed();
     if (closed) return closed;
     await this.#apply("cancelled");
@@ -711,7 +720,7 @@ export class PluginManager {
         if (entry.read.manifest && executionKey(entry.read) !== executionKey(read)) {
           const previousGeneration = entry.staticGeneration;
           entry.generation += 1;
-          entry.staticGeneration += 1;
+          entry.staticGeneration = this.#nextStaticGeneration(entry.read.sourceKey);
           // An unrelated lifecycle transaction may observe new executable metadata.
           // Carry existing isolation forward; only explicit enable/reload clears it.
           for (const [key, problem] of [...this.#registrationFailures]) {

@@ -81,9 +81,8 @@ export function projectStaticLanguageCatalog(
 ): StaticCatalogBuild {
   const usable = (sourceKey: string, generation: number, id: string) =>
     keep(sourceKey, generation) && !quarantined.has(staticLanguageKey(sourceKey, generation, id));
-  const valid = build.valid.filter((item) =>
-    usable(item.sourceKey, item.generation, item.languageId),
-  );
+  // Quarantine revokes registration, not the claimant's role in extension ambiguity.
+  const valid = build.valid.filter((item) => keep(item.sourceKey, item.generation));
   const languages = build.catalog.languages.filter((item) =>
     usable(item.sourceKey, item.generation, item.id),
   );
@@ -205,11 +204,13 @@ export async function buildStaticLanguageCatalog(
     if (!current()) throw new Error("Superseded static language operation.");
     const { entry, declaration: decl } = job;
     const { plugin, generation, source } = entry;
-    if (
-      blocked.has(job) ||
-      quarantined.has(staticLanguageKey(plugin.sourceKey, generation, decl.id))
-    )
+    if (blocked.has(job)) continue;
+    if (quarantined.has(staticLanguageKey(plugin.sourceKey, generation, decl.id))) {
+      // This generation was already validated before the renderer rejected it.
+      // Preserve its claims across rebuilds without reading or retrying its resources.
+      valid.push({ ...identity(job), generation, extensions: [...decl.extensions] });
       continue;
+    }
     let resourcePath = decl.tokenizer.path;
     try {
       const budget = plugin.resourceBudget;
