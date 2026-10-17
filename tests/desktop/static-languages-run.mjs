@@ -22,6 +22,11 @@ const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-static-acceptance-"
 const server = await createServer({
   root: path.join(root, "apps/desktop"),
   configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+  // Prebundle both entries together so the late private import shares the
+  // registrar's TokenizationRegistry instead of creating a second singleton.
+  optimizeDeps: {
+    include: ["monaco-editor", "monaco-editor/editor/common/languages.js"],
+  },
   server: { host: "127.0.0.1", port: 0, watch: null, hmr: false },
 });
 let passed = false;

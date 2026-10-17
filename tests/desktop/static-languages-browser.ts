@@ -9,7 +9,10 @@ import {
 import { resolveLexicalLanguage } from "../../apps/desktop/src/renderer/editor/static-language-routing.js";
 import { initializeEditorThemes } from "../../apps/desktop/src/renderer/editor/editor-theme.js";
 import type { PluginsApi } from "../../apps/desktop/src/shared/plugins.js";
-import type { StaticLanguagesCatalog } from "../../apps/desktop/src/shared/static-languages.js";
+import type {
+  ReportLanguageRegistrationFailureInput,
+  StaticLanguagesCatalog,
+} from "../../apps/desktop/src/shared/static-languages.js";
 
 declare global {
   interface Window {
@@ -72,7 +75,10 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
   const counts = new Map<string, number>();
   let failToyConfiguration = false;
   let failToyTokenizer = false;
-  const reports: { accepted: boolean; detail: string }[] = [];
+  const reports: (ReportLanguageRegistrationFailureInput & {
+    accepted: boolean;
+    acceptedRevision: number;
+  })[] = [];
   let configurations = 0;
   const observedMonaco = {
     ...monaco,
@@ -114,7 +120,7 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
     api: {
       reportLanguageRegistrationFailure: async (report) => {
         const result = await api.reportLanguageRegistrationFailure(report);
-        reports.push({ accepted: result.accepted, detail: report.detail });
+        reports.push({ ...report, accepted: result.accepted, acceptedRevision: result.revision });
         return result;
       },
     },
@@ -196,12 +202,37 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
     editor.trigger("integration", "undo", null);
     equal(main.getValue(), "value 1\n", "Undo stack retained through disable/enable");
 
+    const beforeReload = store
+      .getSnapshot()
+      .catalog.languages.find((language) => language.id === "toy");
+    assert(beforeReload, "Missing toy before reload");
+    const beforeFailure = configurations;
     failToyConfiguration = true;
     assert((await api.reload(toy.sourceKey)).ok, "Reload failed");
-    await until(() => registrar.resolve({ file: "main.toy" }).monacoLanguage === "plaintext");
-    await until(
-      () => !store.getSnapshot().catalog.languages.some((language) => language.id === "toy"),
-    );
+    // Reload first withdraws the old generation. Plaintext/absence alone can mean
+    // the new generation's catalog is still in flight, before any failure occurred.
+    const failedReload = () =>
+      reports.find(
+        (report) =>
+          report.accepted &&
+          report.sourceKey === toy.sourceKey &&
+          report.languageId === toy.id &&
+          report.generation > beforeReload.generation &&
+          report.reason === "monaco",
+      );
+    await until(() => {
+      const report = failedReload();
+      const snapshot = store.getSnapshot();
+      return (
+        report !== undefined &&
+        snapshot.phase === "ready" &&
+        snapshot.catalog.revision === snapshot.targetRevision &&
+        snapshot.catalog.revision >= report.acceptedRevision &&
+        !snapshot.catalog.languages.some((language) => language.id === "toy") &&
+        models.every((model) => model.getLanguageId() === "plaintext")
+      );
+    });
+    equal(configurations, beforeFailure + 1, "Reload attempted its fresh generation once");
     const attempts = configurations;
     await store.refresh();
     await store.refresh();
@@ -212,7 +243,7 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
     equal(counts.get("toy"), 1, "Register one shell across failed generations");
     assert(
       (await api.staticLanguages()).languages.find((language) => language.id === "toy")!
-        .generation > toy.generation,
+        .generation > failedReload()!.generation,
       "Recovery must publish a fresh generation",
     );
 
@@ -265,6 +296,7 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
     equal(registrar.resolve({ file: "main.unknown" }).monacoLanguage, "plaintext", "Unknown route");
 
     // Pinned internal API: public editor.tokenize alone does not test tokenizeEncoded.
+    // The runner prebundles this with monaco-editor to share the registrar's registry.
     // @ts-expect-error Monaco's pinned private JS module has no public declaration.
     const { TokenizationRegistry } = await import("monaco-editor/editor/common/languages.js");
     const support = await TokenizationRegistry.getOrCreate("bp");
@@ -274,10 +306,19 @@ export async function runStaticLanguagesBrowserChecks(): Promise<void> {
     split.setModel(bp);
     monaco.editor.setModelLanguage(original, "bp");
     monaco.editor.setModelLanguage(modified, "bp");
-    const editors = [editor, split, diff.getOriginalEditor(), diff.getModifiedEditor()];
-    for (const pane of editors) {
+    // Diff panes are StandaloneCodeEditors; their parent StandaloneDiffEditor
+    // owns the configuration service and applies global tokenization options.
+    diff.updateOptions({ fontSize: 17, maxTokenizationLineLength: 10000 });
+    const editors = [
+      [editor, editor],
+      [split, split],
+      [diff.getOriginalEditor(), diff],
+      [diff.getModifiedEditor(), diff],
+    ] as const;
+    for (const [pane, configurationOwner] of editors) {
       pane.updateOptions({ fontSize: 17, maxTokenizationLineLength: 10000 });
-      const internal = pane as typeof pane & {
+      equal(pane.getOption(monaco.editor.EditorOption.fontSize), 17, "Pane options updated");
+      const internal = configurationOwner as typeof configurationOwner & {
         _configurationService: {
           getValue(key: string, overrides: { overrideIdentifier: string }): number;
         };
