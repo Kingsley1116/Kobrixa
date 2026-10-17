@@ -68,6 +68,7 @@ export async function checkHighlighting({ js, until, files, win, temporary }) {
     assert(json.every((type) => !type.endsWith("basic-plus")));
 
     const codeSize = await js("smoke.settingsStore.getSnapshot().values.codeSize");
+    const position = await js("ed.getPosition()");
     try {
       for (const length of [9999, 10000, 10001]) {
         const line = "If True Then".padEnd(length, " ");
@@ -95,13 +96,18 @@ export async function checkHighlighting({ js, until, files, win, temporary }) {
         );
         assert.equal(await js("ed.getValue()"), line + "\nEndIf");
       }
-      await js(`smoke.settingsStore.set('codeSize',${codeSize === 18 ? 19 : 18})`);
-      await until(
-        "ed._configurationService.getValue('editor.maxTokenizationLineLength',{overrideIdentifier:'bp'}) === 10000",
+      const updatedCodeSize = codeSize === 18 ? 19 : 18;
+      await js(`smoke.settingsStore.set('codeSize',${updatedCodeSize})`);
+      await until(`ed.getOption(smoke.monaco.editor.EditorOption.fontSize) === ${updatedCodeSize}`);
+      assert.equal(
+        await js(
+          "ed._configurationService.getValue('editor.maxTokenizationLineLength',{overrideIdentifier:'bp'})",
+        ),
+        10000,
       );
     } finally {
       await js(
-        `smoke.settingsStore.set('codeSize',${JSON.stringify(codeSize)});ed.setValue(${JSON.stringify(sample)})`,
+        `smoke.settingsStore.set('codeSize',${JSON.stringify(codeSize)});ed.setValue(${JSON.stringify(sample)});ed.setPosition(${JSON.stringify(position)})`,
       );
     }
     await until('highlightColor(3,15) === "rgb(121, 94, 38)"');
