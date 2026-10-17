@@ -158,17 +158,17 @@ T0 runs alone first and the controller commits it. T1–T7 then run in parallel,
 
 The table below reproduces §11.1 with desktop abbreviations expanded to full repository-relative paths. The two ownership additions are stated immediately after the table; they are necessary for this concrete scaffold and do not change the design contract.
 
-| 任務 | 唯一可寫檔案集                                                                                                                                                                                                                                                                                                                                                                                                                                 | 交付／依賴                                                                                                                                                                                                                 |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **T0 契約凍結**                  | 本 2C spec；contract fixture／必要最小 scaffold（逐檔記錄，完成即交接下列 owner）                                                                                                                                                                                                                                                                                                                                                              | 確認本文決策、函式簽章、exports 與 mock ownership；不保留與後續任務同時寫入的權限。                                                                                                                                        |
-| **T1 Protocol、validator、SDK**  | `packages/plugin-protocol/**`、`packages/plugin-sdk-js/**`、`sdks/python/**`、`pnpm-lock.yaml`                                                                                                                                                                                                                                                                                                                                                 | API 1.4.0、static runtime、schema／limits、browser-safe AST validator、SDK／conformance。需新增 regex parser 時由 T1 修改 protocol package 與 lockfile；不改 builtin manifest。其他任務的依賴需求交 T1 統一更新 lockfile。 |
-| **T2 Runtime**                   | `packages/plugin-runtime/**`                                                                                                                                                                                                                                                                                                                                                                                                                   | 分階段 registry、bounded reader、builtin resource source type、catalog／revision／ownership／conflicts、manager lifecycle、錯誤與 tests；自備 fixture，不寫產品 builtin 資源。依 T0 介面可先開發，整合依 T1。              |
-| **T3 Desktop main／IPC／復原**   | `apps/desktop/src/main/plugins/**`，**排除 `apps/desktop/src/main/plugins/builtin.ts`／`apps/desktop/src/main/plugins/builtin.test.ts`**；`apps/desktop/src/main/index.ts` 及其直接測試；`apps/desktop/src/preload/index.ts` 及其直接測試；`apps/desktop/src/shared/plugins.ts`、新增 `apps/desktop/src/shared/static-languages.ts` 及直接測試；新增唯一 ownership：`apps/desktop/src/main/workspace/compiler-chain.test.ts`、`apps/desktop/src/main/language/language-provider.integration.test.ts` | Catalog/report IPC、可信 sender、session marker、safe-mode 順序、preload/shared API 與 mocks。先 mock T2 manager；不改 `tests/desktop/preload.cjs`。                                                                       |
-| **T4 Renderer 靜態基礎**         | 新增 `apps/desktop/src/renderer/editor/static-language-store.ts`、`apps/desktop/src/renderer/editor/static-language-registration.ts`、`apps/desktop/src/renderer/editor/static-language-adapter.ts`、`apps/desktop/src/renderer/editor/static-language-routing.ts` 與四者各自 `.test.ts`                                                                                                                                                                                                                                                                           | Store、adapter、disposables、純 lexical resolver、model tracking。依 T0 介面與 mock API 開發；整合依 T1 validator／T3 IPC。不改 `apps/desktop/src/renderer/editor/editor.tsx`／`apps/desktop/src/renderer/app.tsx` 或 migration tests。                                               |
-| **T5 Renderer 整合／UI**         | `apps/desktop/src/renderer/app.tsx` 及其測試；既有 `apps/desktop/src/renderer/editor/{editor.tsx,language-routing.ts,language-companion.ts,language-features.ts,semantic-tokens.ts,editor-models.ts}` 及各自既有測試；`apps/desktop/src/renderer/workspace/file-review-dialog.tsx` 及測試；`apps/desktop/src/renderer/settings/{plugin-copy.ts,plugins-panel.tsx}` 及測試；`apps/desktop/src/renderer/i18n/**`；N2 若觸及則 `apps/desktop/src/renderer/editor/language-status.tsx`／`apps/desktop/src/renderer/editor/language-status.test.ts`；新增 `apps/desktop/src/renderer/editor/model-language-route.ts`、`apps/desktop/src/renderer/editor/static-language-bootstrap.ts` 及各自直接 `.test.ts` | Bootstrap、所有 consumer／selectors／labels、長行設定、model 路由、UI fixtures；依 T4 API 與 T6 theme 函式。不改 companion 實作或 main；N2 僅按 §9.3 納入。                                                                |
-| **T6 Basic Plus 資源／主題拆分** | `plugins/basic-plus/**`；`apps/desktop/src/main/plugins/builtin.ts`／`apps/desktop/src/main/plugins/builtin.test.ts`；`apps/desktop/src/renderer/editor/companions/basic-plus/{registration.ts,companion.ts}`；新增 `apps/desktop/src/renderer/editor/companions/basic-plus/theme.ts`、`apps/desktop/src/renderer/editor/editor-theme.ts`、`apps/desktop/src/renderer/editor/static-language-migration.test.ts`，以及 theme 模組直接測試                                                                                                                          | JSON 資源、raw bundling、移除舊 registration／companion lexical id、theme bridge、parity。依 T0 fixture 製作，經 T1 validator 驗證，依 T2 source type 整合，向 T5 交付 theme 初始化函式。                                  |
-| **T7 跨層驗收／作者文件**        | 新增 `tests/desktop/static-languages-*`、`tests/desktop/fixtures/static-languages/**`；`tests/desktop/preload.cjs`、`tests/desktop/smoke-main.mjs`、`tests/desktop/smoke-harness.test.mjs`；需擴充的 `tests/desktop/*plugins*smoke*`、`tests/desktop/packaged-smoke.mjs`、`tests/desktop/highlighting-smoke.mjs`、`tests/desktop/indentation-smoke.mjs`、`tests/desktop/language-features-smoke.mjs`、`tests/desktop/completion-performance-smoke.mjs`；`docs/en/plugin*`、`docs/zh-TW/plugin*`、兩語系 `docs/en/language-support.md`／`docs/zh-TW/language-support.md`／`docs/en/architecture.md`／`docs/zh-TW/architecture.md` | Static-only integration、safe mode／recovery／packaging、作者資料格式與信任說明、N1 guard。先依契約寫 fixtures，正式端到端驗收依 T3/T5/T6；不改其他任務的 unit tests 或正式 spec。                                         |
-| **T8 整合**                      | 根 `package.json`、CI scripts／workflow 的檢查接線；T1–T7 停止寫入並交接後才接手必要跨層修正                                                                                                                                                                                                                                                                                                                                                   | 串接 exports／測試入口、完整驗收、hardcoding/import 掃描、封裝確認；優先把缺陷退回原 owner。進入最終整合前不得與仍在執行的任務同寫檔案。                                                                                   |
+| 任務                             | 唯一可寫檔案集                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | 交付／依賴                                                                                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **T0 契約凍結**                  | 本 2C spec；contract fixture／必要最小 scaffold（逐檔記錄，完成即交接下列 owner）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 確認本文決策、函式簽章、exports 與 mock ownership；不保留與後續任務同時寫入的權限。                                                                                                                                                     |
+| **T1 Protocol、validator、SDK**  | `packages/plugin-protocol/**`、`packages/plugin-sdk-js/**`、`sdks/python/**`、`pnpm-lock.yaml`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | API 1.4.0、static runtime、schema／limits、browser-safe AST validator、SDK／conformance。需新增 regex parser 時由 T1 修改 protocol package 與 lockfile；不改 builtin manifest。其他任務的依賴需求交 T1 統一更新 lockfile。              |
+| **T2 Runtime**                   | `packages/plugin-runtime/**`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 分階段 registry、bounded reader、builtin resource source type、catalog／revision／ownership／conflicts、manager lifecycle、錯誤與 tests；自備 fixture，不寫產品 builtin 資源。依 T0 介面可先開發，整合依 T1。                           |
+| **T3 Desktop main／IPC／復原**   | `apps/desktop/src/main/plugins/**`，**排除 `apps/desktop/src/main/plugins/builtin.ts`／`apps/desktop/src/main/plugins/builtin.test.ts`**；`apps/desktop/src/main/index.ts` 及其直接測試；`apps/desktop/src/preload/index.ts` 及其直接測試；`apps/desktop/src/shared/plugins.ts`、新增 `apps/desktop/src/shared/static-languages.ts` 及直接測試；新增唯一 ownership：`apps/desktop/src/main/workspace/compiler-chain.test.ts`、`apps/desktop/src/main/language/language-provider.integration.test.ts`                                                                                                                                                                                                   | Catalog/report IPC、可信 sender、session marker、safe-mode 順序、preload/shared API 與 mocks。先 mock T2 manager；不改 `tests/desktop/preload.cjs`。                                                                                    |
+| **T4 Renderer 靜態基礎**         | 新增 `apps/desktop/src/renderer/editor/static-language-store.ts`、`apps/desktop/src/renderer/editor/static-language-registration.ts`、`apps/desktop/src/renderer/editor/static-language-adapter.ts`、`apps/desktop/src/renderer/editor/static-language-routing.ts` 與四者各自 `.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                               | Store、adapter、disposables、純 lexical resolver、model tracking。依 T0 介面與 mock API 開發；整合依 T1 validator／T3 IPC。不改 `apps/desktop/src/renderer/editor/editor.tsx`／`apps/desktop/src/renderer/app.tsx` 或 migration tests。 |
+| **T5 Renderer 整合／UI**         | `apps/desktop/src/renderer/app.tsx` 及其測試；既有 `apps/desktop/src/renderer/editor/{editor.tsx,language-routing.ts,language-companion.ts,language-features.ts,semantic-tokens.ts,editor-models.ts}` 及各自既有測試；`apps/desktop/src/renderer/workspace/file-review-dialog.tsx` 及測試；`apps/desktop/src/renderer/settings/{plugin-copy.ts,plugins-panel.tsx}` 及測試；`apps/desktop/src/renderer/i18n/**`；N2 若觸及則 `apps/desktop/src/renderer/editor/language-status.tsx`／`apps/desktop/src/renderer/editor/language-status.test.ts`；新增 `apps/desktop/src/renderer/editor/model-language-route.ts`、`apps/desktop/src/renderer/editor/static-language-bootstrap.ts` 及各自直接 `.test.ts` | Bootstrap、所有 consumer／selectors／labels、長行設定、model 路由、UI fixtures；依 T4 API 與 T6 theme 函式。不改 companion 實作或 main；N2 僅按 §9.3 納入。                                                                             |
+| **T6 Basic Plus 資源／主題拆分** | `plugins/basic-plus/**`；`apps/desktop/src/main/plugins/builtin.ts`／`apps/desktop/src/main/plugins/builtin.test.ts`；`apps/desktop/src/renderer/editor/companions/basic-plus/{registration.ts,companion.ts}`；新增 `apps/desktop/src/renderer/editor/companions/basic-plus/theme.ts`、`apps/desktop/src/renderer/editor/editor-theme.ts`、`apps/desktop/src/renderer/editor/static-language-migration.test.ts`，以及 theme 模組直接測試                                                                                                                                                                                                                                                               | JSON 資源、raw bundling、移除舊 registration／companion lexical id、theme bridge、parity。依 T0 fixture 製作，經 T1 validator 驗證，依 T2 source type 整合，向 T5 交付 theme 初始化函式。                                               |
+| **T7 跨層驗收／作者文件**        | 新增 `tests/desktop/static-languages-*`、`tests/desktop/fixtures/static-languages/**`；`tests/desktop/preload.cjs`、`tests/desktop/smoke-main.mjs`、`tests/desktop/smoke-harness.test.mjs`；需擴充的 `tests/desktop/*plugins*smoke*`、`tests/desktop/packaged-smoke.mjs`、`tests/desktop/highlighting-smoke.mjs`、`tests/desktop/indentation-smoke.mjs`、`tests/desktop/language-features-smoke.mjs`、`tests/desktop/completion-performance-smoke.mjs`；`docs/en/plugin*`、`docs/zh-TW/plugin*`、兩語系 `docs/en/language-support.md`／`docs/zh-TW/language-support.md`／`docs/en/architecture.md`／`docs/zh-TW/architecture.md`                                                                       | Static-only integration、safe mode／recovery／packaging、作者資料格式與信任說明、N1 guard。先依契約寫 fixtures，正式端到端驗收依 T3/T5/T6；不改其他任務的 unit tests 或正式 spec。                                                      |
+| **T8 整合**                      | 根 `package.json`、CI scripts／workflow 的檢查接線；T1–T7 停止寫入並交接後才接手必要跨層修正                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 串接 exports／測試入口、完整驗收、hardcoding/import 掃描、封裝確認；優先把缺陷退回原 owner。進入最終整合前不得與仍在執行的任務同寫檔案。                                                                                                |
 
 Ownership adjustments to §11.1, reflected in the table above:
 
@@ -612,7 +612,7 @@ Apply this exact patch from the repository root:
 @@ -69,6 +72,25 @@
  });
  export type LanguageServiceDecl = z.infer<typeof languageServiceDeclSchema>;
- 
+
 +export const staticLanguageResourceDeclSchema = z.strictObject({
 +  version: z.literal(1),
 +  path: diagnosticHelpDeclSchema.shape.path,
@@ -858,7 +858,7 @@ Apply this exact patch from the repository root:
 +    void input;
 +    return { accepted: false, revision: this.staticLanguagesRevision };
    }
- 
+
    diagnosticHelp(): DiagnosticHelpCatalog {
 @@ -596,7 +622,13 @@
    #register(entry: Entry): void {
@@ -988,7 +988,7 @@ Apply this exact patch from the repository root:
 --- a/apps/desktop/src/main/plugins/builtin.ts
 +++ b/apps/desktop/src/main/plugins/builtin.ts
 @@ -4,6 +4,6 @@
- 
+
  /** Built-in manifests are bundled and validated by the same registry as development plugins. */
  export const BUILTIN_PLUGIN_SOURCES: readonly PluginSource[] = [
 -  { kind: "builtin", manifest: basicPlus },
@@ -1029,7 +1029,7 @@ Apply this exact patch from the repository root:
    );
    expect(reads.every((read) => read.problems.length === 0)).toBe(true);
 @@ -82,7 +84,7 @@
- 
+
  it("isolates case-sensitive symbols, legends and overlapping diagnostic codes", async () => {
    const read = await readSource(
 -    { kind: "builtin", manifest: SECOND_MANIFEST },
@@ -1168,7 +1168,7 @@ Apply this exact patch from the repository root:
 +  markThirdPartyStaticContributions(): void {
 +    throw new Error("not implemented");
    }
- 
+
    /** `rendererUnresponsive` is sticky for the rest of the session. */
 @@ -65,7 +73,13 @@
      const marker = this.#marker;
@@ -1964,94 +1964,95 @@ Expected: no whitespace errors; one T0 commit containing exactly the files liste
 
 **Ownership hand-off:** Every created file and every compatibility edit is listed below. “Create” means the file did not exist before T0. All entries lie inside the adjusted write sets above; shared fixtures stay read-only to all tasks except T1.
 
-| File | T0 action | Owner after T0 |
-| --- | --- | --- |
-| `packages/plugin-protocol/src/static-language-limits.ts` | Create | T1 |
-| `packages/plugin-protocol/src/static-languages.ts` | Create | T1 |
-| `packages/plugin-runtime/src/static-languages.ts` | Create | T2 |
-| `apps/desktop/src/shared/static-languages.ts` | Create | T3 |
-| `apps/desktop/src/renderer/editor/static-language-routing.ts` | Create | T4 |
-| `apps/desktop/src/renderer/editor/static-language-store.ts` | Create | T4 |
-| `apps/desktop/src/renderer/editor/static-language-adapter.ts` | Create | T4 |
-| `apps/desktop/src/renderer/editor/static-language-registration.ts` | Create | T4 |
-| `apps/desktop/src/renderer/editor/model-language-route.ts` | Create | T5 |
-| `apps/desktop/src/renderer/editor/static-language-bootstrap.ts` | Create | T5 |
-| `apps/desktop/src/renderer/editor/editor-theme.ts` | Create | T6 |
-| `packages/plugin-protocol/test-fixtures/static-languages/minimal/tokenizer.json` | Create | T1 |
-| `packages/plugin-protocol/test-fixtures/static-languages/minimal/configuration.json` | Create | T1 |
-| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/tokenizer.json` | Create | T1 |
-| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/configuration.json` | Create | T1 |
-| `packages/plugin-protocol/test-fixtures/static-languages/toy/kobrixa-plugin.json` | Create | T1 |
-| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/tokenizer.json` | Create | T1 |
-| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/configuration.json` | Create | T1 |
-| `packages/plugin-protocol/src/static-language-contract.test.ts` | Create | T1 |
-| `packages/plugin-runtime/src/static-language-contract.test.ts` | Create | T2 |
-| `apps/desktop/src/shared/static-languages.test.ts` | Create | T3 |
-| `packages/plugin-protocol/src/manifest.ts` | Modify | T1 |
-| `packages/plugin-protocol/src/limits.ts` | Modify | T1 |
-| `packages/plugin-protocol/src/index.ts` | Modify | T1 |
-| `packages/plugin-runtime/src/errors.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/registry.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/manager.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/index.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/language-service-conformance.test.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/manager.test.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/registry.test.ts` | Modify | T2 |
-| `packages/plugin-runtime/src/compiler-resolution.test.ts` | Modify | T2 |
-| `apps/desktop/src/main/plugins/builtin.ts` | Modify | T6 |
-| `apps/desktop/src/main/workspace/compiler-chain.test.ts` | Modify | T3 |
-| `apps/desktop/src/main/language/language-provider.integration.test.ts` | Modify | T3 |
-| `apps/desktop/src/shared/plugins.ts` | Modify | T3 |
-| `apps/desktop/src/preload/index.ts` | Modify | T3 |
-| `apps/desktop/src/main/plugins/ipc.ts` | Modify | T3 |
-| `apps/desktop/src/main/plugins/session.ts` | Modify | T3 |
-| `apps/desktop/src/main/plugins/session.test.ts` | Modify | T3 |
-| `apps/desktop/src/main/plugins/controller.test.ts` | Modify | T3 |
-| `apps/desktop/src/renderer/settings/plugins-panel.test.ts` | Modify | T5 |
+| File                                                                                      | T0 action | Owner after T0 |
+| ----------------------------------------------------------------------------------------- | --------- | -------------- |
+| `packages/plugin-protocol/src/static-language-limits.ts`                                  | Create    | T1             |
+| `packages/plugin-protocol/src/static-languages.ts`                                        | Create    | T1             |
+| `packages/plugin-runtime/src/static-languages.ts`                                         | Create    | T2             |
+| `apps/desktop/src/shared/static-languages.ts`                                             | Create    | T3             |
+| `apps/desktop/src/renderer/editor/static-language-routing.ts`                             | Create    | T4             |
+| `apps/desktop/src/renderer/editor/static-language-store.ts`                               | Create    | T4             |
+| `apps/desktop/src/renderer/editor/static-language-adapter.ts`                             | Create    | T4             |
+| `apps/desktop/src/renderer/editor/static-language-registration.ts`                        | Create    | T4             |
+| `apps/desktop/src/renderer/editor/model-language-route.ts`                                | Create    | T5             |
+| `apps/desktop/src/renderer/editor/static-language-bootstrap.ts`                           | Create    | T5             |
+| `apps/desktop/src/renderer/editor/editor-theme.ts`                                        | Create    | T6             |
+| `packages/plugin-protocol/test-fixtures/static-languages/minimal/tokenizer.json`          | Create    | T1             |
+| `packages/plugin-protocol/test-fixtures/static-languages/minimal/configuration.json`      | Create    | T1             |
+| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/tokenizer.json`       | Create    | T1             |
+| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/configuration.json`   | Create    | T1             |
+| `packages/plugin-protocol/test-fixtures/static-languages/toy/kobrixa-plugin.json`         | Create    | T1             |
+| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/tokenizer.json`     | Create    | T1             |
+| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/configuration.json` | Create    | T1             |
+| `packages/plugin-protocol/src/static-language-contract.test.ts`                           | Create    | T1             |
+| `packages/plugin-runtime/src/static-language-contract.test.ts`                            | Create    | T2             |
+| `apps/desktop/src/shared/static-languages.test.ts`                                        | Create    | T3             |
+| `packages/plugin-protocol/src/manifest.ts`                                                | Modify    | T1             |
+| `packages/plugin-protocol/src/limits.ts`                                                  | Modify    | T1             |
+| `packages/plugin-protocol/src/index.ts`                                                   | Modify    | T1             |
+| `packages/plugin-runtime/src/errors.ts`                                                   | Modify    | T2             |
+| `packages/plugin-runtime/src/registry.ts`                                                 | Modify    | T2             |
+| `packages/plugin-runtime/src/manager.ts`                                                  | Modify    | T2             |
+| `packages/plugin-runtime/src/index.ts`                                                    | Modify    | T2             |
+| `packages/plugin-runtime/src/language-service-conformance.test.ts`                        | Modify    | T2             |
+| `packages/plugin-runtime/src/manager.test.ts`                                             | Modify    | T2             |
+| `packages/plugin-runtime/src/registry.test.ts`                                            | Modify    | T2             |
+| `packages/plugin-runtime/src/compiler-resolution.test.ts`                                 | Modify    | T2             |
+| `apps/desktop/src/main/plugins/builtin.ts`                                                | Modify    | T6             |
+| `apps/desktop/src/main/workspace/compiler-chain.test.ts`                                  | Modify    | T3             |
+| `apps/desktop/src/main/language/language-provider.integration.test.ts`                    | Modify    | T3             |
+| `apps/desktop/src/shared/plugins.ts`                                                      | Modify    | T3             |
+| `apps/desktop/src/preload/index.ts`                                                       | Modify    | T3             |
+| `apps/desktop/src/main/plugins/ipc.ts`                                                    | Modify    | T3             |
+| `apps/desktop/src/main/plugins/session.ts`                                                | Modify    | T3             |
+| `apps/desktop/src/main/plugins/session.test.ts`                                           | Modify    | T3             |
+| `apps/desktop/src/main/plugins/controller.test.ts`                                        | Modify    | T3             |
+| `apps/desktop/src/renderer/settings/plugins-panel.test.ts`                                | Modify    | T5             |
 
 ## Interfaces Summary
 
 This is the frozen cross-task surface. All paths below are full repository-relative paths. Named input/output types have complete definitions in the corresponding T0 files; no consumer invents a second DTO. Only type imports from runtime are allowed in desktop shared/renderer code.
 
-| Owner / file | Exact public names and signatures |
-| --- | --- |
-| T1 — `packages/plugin-protocol/src/manifest.ts` | `staticRuntimeSchema`; `StaticRuntime = { kind: "static" }`; `staticLanguageResourceDeclSchema`; `StaticLanguageResourceDecl = { version: 1; path: string }`; `staticLanguageDeclSchema`; `StaticLanguageDecl = { id: string; extensions: string[]; aliases?: string[]; tokenizer: StaticLanguageResourceDecl; configuration: StaticLanguageResourceDecl }`; `PluginManifest.runtime` includes static and `PluginManifest.contributes?.languages?: StaticLanguageDecl[]`; `staticLanguageDeclarationProblems(manifest: PluginManifest): string[]`. |
-| T1 — `packages/plugin-protocol/src/static-language-limits.ts` | `STATIC_LANGUAGE_FORMAT_VERSION: 1`; immutable `STATIC_LANGUAGE_LIMITS_V1` with every exact §4 number and readonly `regexFlags: readonly ["", "i"]`; no author overrides. |
-| T1 — `packages/plugin-protocol/src/static-languages.ts` | `RegexData`, `Pair`, `TokenAction`, `Action`, `Rule`, `StaticLanguageTokenizerV1`, `StaticLanguageConfigurationV1`, `StaticLanguageResourceBytes`, `StaticLanguageResourceProblemDetail`, `StaticLanguageValidationProblem`, `ValidateStaticLanguageResourcesInput`, `StaticLanguageValidationResult`; `validateStaticLanguageResources(input: ValidateStaticLanguageResourcesInput): StaticLanguageValidationResult`. Input carries numeric format/limits versions, unknown parsed resources, original byte counts, and optional relative manifest paths; success contains typed resources, byte counts, expanded-rule/raw-rule/regex counts; failure contains `{ message, detail }[]`. |
-| T1 — `packages/plugin-protocol/src/index.ts` | Re-exports the manifest, limits and static-resource modules through `@kobrixa/plugin-protocol`. `packages/plugin-protocol/src/limits.ts` exports `PLUGIN_API_VERSION = "1.4.0"`. |
-| T2 — `packages/plugin-runtime/src/static-languages.ts` | `StaticLanguageSourceIdentity = { pluginId: string; sourceKey: string; languageId: string }`; `StaticLanguageOwner` adds `generation: number; extensions: string[]`; `ValidatedStaticLanguage` carries `sourceKey`, `pluginId`, `generation`, `id`, `extensions`, normalized `aliases`, `resourceDigest`, typed `tokenizer`/`configuration`, original `resourceBytes`, and `expandedRules`. |
-| T2 — `packages/plugin-runtime/src/static-languages.ts` | `StaticLanguageConflict = { kind: "reserved-id" \| "reserved-extension" \| "frontend-owner" \| "id" \| "extension"; key: string; sources: StaticLanguageSourceIdentity[] }`; `StaticLanguagesCatalog = { formatVersion: 1; limitsVersion: 1; revision: number; languages: ValidatedStaticLanguage[]; extensionRoutes: Record<string, string \| null>; conflicts: StaticLanguageConflict[] }`; `emptyStaticLanguagesCatalog(revision?: number): StaticLanguagesCatalog`. Missing extension key means no mapping, null means ambiguous; lookup uses own properties. |
-| T2 — `packages/plugin-runtime/src/errors.ts` and `packages/plugin-runtime/src/static-languages.ts` | `PluginProblem.detail?: StaticLanguageProblemDetail`, where `StaticLanguageProblemDetail = StaticLanguageResourceProblemDetail & { conflictingSources?: StaticLanguageSourceIdentity[] }`; new codes are `PLUGIN_E_STATIC_LANGUAGE`, `PLUGIN_E_STATIC_LANGUAGE_CONFLICT`, `PLUGIN_E_STATIC_LANGUAGE_REGISTRATION`; all new-code instances require `detail.languageId` at construction. |
-| T2 — `packages/plugin-runtime/src/registry.ts` | `PluginSource = { kind: "builtin"; manifest: unknown; resources: Readonly<Record<string, string>> } \| { kind: "development"; directory: string }`. Required raw resource map; exact relative keys; empty map for a builtin with no resource declarations. |
-| T2 — `packages/plugin-runtime/src/manager.ts` | `PluginManager.staticLanguages(): StaticLanguagesCatalog`; `get staticLanguagesRevision(): number`; `reportLanguageRegistrationFailure(input: ReportLanguageRegistrationFailureInput): ReportLanguageRegistrationFailureResult`; required `PluginsSnapshot.staticLanguagesRevision: number` and `PluginsSnapshot.staticLanguageOwners: StaticLanguageOwner[]`; `PluginSummary.runtime` includes `"static"`. State events carry the complete owners list even for extension-ambiguous languages. |
-| T2 — `packages/plugin-runtime/src/static-languages.ts` and `packages/plugin-runtime/src/index.ts` | `ReportLanguageRegistrationFailureInput = { sourceKey: string; generation: number; languageId: string; revision: number; reason: StaticLanguageRegistrationFailureReason; detail: string }`; reasons are `"dto-version" \| "validation" \| "adapter" \| "monaco" \| "session-language-ids"`; `ReportLanguageRegistrationFailureResult = { accepted: boolean; revision: number }`. Runtime index re-exports this module through `@kobrixa/plugin-runtime`. |
-| T3 — `apps/desktop/src/shared/static-languages.ts` | Type-only re-exports of the protocol resource/validator types and runtime owner/catalog/problem/report types. No runtime values, loaders or duplicate DTOs. |
-| T3 — `apps/desktop/src/shared/plugins.ts` and `apps/desktop/src/preload/index.ts` | `PluginsApi.staticLanguages(): Promise<StaticLanguagesCatalog>` over `plugins:static-languages`; `PluginsApi.reportLanguageRegistrationFailure(input: ReportLanguageRegistrationFailureInput): Promise<ReportLanguageRegistrationFailureResult>` over `plugins:report-language-registration-failure`; existing `onEvent(listener: (event: PluginEvent) => void): () => void` over `plugins:event`, with `PluginEvent = { type: "state"; state: PluginsView } \| { type: "notice"; notice: StoredNotice }`. |
-| T3 — `apps/desktop/src/main/plugins/ipc.ts` | Both T0 handlers use existing trusted `IpcHandle` registration. They return only an empty catalog / `{ accepted: false, revision }`; T3 supplies controller delivery and report validation. |
-| T3 — `apps/desktop/src/main/plugins/session.ts` | `SessionMarker.thirdPartyStaticContributions: boolean`; old-file input defaults to false, new session starts false; `SessionMarkerFile.markThirdPartyStaticContributions(): void` must synchronously write sticky true or throw before delivery. |
-| T4 — `apps/desktop/src/renderer/editor/static-language-store.ts` | `StaticLanguageStoreSnapshot = { phase: "loading" \| "ready" \| "failed"; targetRevision: number; owners: readonly StaticLanguageOwner[]; catalog: StaticLanguagesCatalog; error?: string }`; `StaticLanguageStoreApi = Pick<PluginsApi, "state" \| "staticLanguages" \| "onEvent">`; `createStaticLanguageStore(api: StaticLanguageStoreApi): StaticLanguageStore`. Store methods: `getSnapshot(): StaticLanguageStoreSnapshot`, `subscribe(listener: () => void): () => void`, `ready(): Promise<void>`, `refresh(): Promise<void>`, `dispose(): void`. |
-| T4 — `apps/desktop/src/renderer/editor/static-language-adapter.ts` | `MonacoStaticLanguageDefinition = { tokenizer: languages.IMonarchLanguage; configuration: languages.LanguageConfiguration }`; `adaptStaticLanguage(language: ValidatedStaticLanguage): MonacoStaticLanguageDefinition`. |
-| T4 — `apps/desktop/src/renderer/editor/static-language-routing.ts` | `StaticRouteOwner = Pick<StaticLanguageOwner, "pluginId" \| "sourceKey" \| "generation" \| "languageId">`; `LexicalLanguageRoute = { monacoLanguage: string; displayName: string; kind: "core" \| "static" \| "plaintext"; catalogRevision: number; staticOwner?: StaticRouteOwner }`; `ResolveLexicalLanguageInput = { file: string; binding?: LanguageBinding; catalog: StaticLanguagesCatalog; activeOwners: readonly StaticLanguageOwner[]; coreExtensionRoutes: Readonly<Record<string, string>> }`; `resolveLexicalLanguage(input: ResolveLexicalLanguageInput): LexicalLanguageRoute`. |
-| T4 — `apps/desktop/src/renderer/editor/static-language-registration.ts` | `createStaticLanguageRegistrar(input: CreateStaticLanguageRegistrarInput): StaticLanguageRegistrar`, where input has `monaco: MonacoStaticLanguageApi`, `store: StaticLanguageStore`, `api: Pick<PluginsApi, "reportLanguageRegistrationFailure">`, and `coreExtensionRoutes: Readonly<Record<string, string>>`. |
-| T4 — `apps/desktop/src/renderer/editor/static-language-registration.ts` | `MonacoStaticLanguageApi.languages.register(language: { id: string }): void`; `setMonarchTokensProvider(id: string, tokenizer: languages.IMonarchLanguage): IDisposable`; `setLanguageConfiguration(id: string, configuration: languages.LanguageConfiguration): IDisposable`; `.editor.getModels(): editor.ITextModel[]`; `onDidCreateModel(listener: (model: editor.ITextModel) => void): IDisposable`; `onWillDisposeModel(listener: (model: editor.ITextModel) => void): IDisposable`; `setModelLanguage(model: editor.ITextModel, languageId: string): void`. |
-| T4 — `apps/desktop/src/renderer/editor/static-language-registration.ts` | `StaticModelContext = { file: string; workspaceId?: string; binding?: LanguageBinding }`; `StaticModelRouteHooks.beforeChange(previous: LexicalLanguageRoute \| undefined, next: LexicalLanguageRoute): void`, `.afterChange(route: LexicalLanguageRoute): void`; registrar methods `reconcile(snapshot: StaticLanguageStoreSnapshot): void`, `trackModel(model: editor.ITextModel, context: () => StaticModelContext, hooks?: StaticModelRouteHooks): IDisposable`, `refreshModels(): void`, `resolve(context: StaticModelContext): LexicalLanguageRoute`, `getRoute(model: editor.ITextModel): LexicalLanguageRoute \| undefined`, `getActiveOwners(): readonly StaticLanguageOwner[]`, `subscribe(listener: () => void): () => void`, `dispose(): void`. |
-| T5 — `apps/desktop/src/renderer/editor/model-language-route.ts` | `ModelLanguageRoute extends LexicalLanguageRoute` with `binding?: LanguageBinding; companion?: LanguageCompanion`; `AttachedModelLanguageRoute<T> = { model: T; file: string; workspaceId: string \| undefined; route: ModelLanguageRoute; dispose(): void }`. T5 makes existing `language-routing.ts` re-export this type and migrates all route comparisons/consumers under its write set. |
-| T5 — `apps/desktop/src/renderer/editor/static-language-bootstrap.ts` | `StaticLanguageBootstrapInput = { store: StaticLanguageStore; registrar: StaticLanguageRegistrar; timeoutMs?: number }`; `StaticLanguageBootstrapResult = { kind: "ready"; revision: number } \| { kind: "plaintext"; reason: "ipc" \| "timeout"; message: string }`; `bootstrapStaticLanguages(input: StaticLanguageBootstrapInput): Promise<StaticLanguageBootstrapResult>`. Default timeout 5,000 ms; T5 wires the single barrier into `app.tsx` and every document model entry point. |
-| T6 — `apps/desktop/src/renderer/editor/editor-theme.ts` | `EditorThemeApi.defineTheme(name: string, data: editor.IStandaloneThemeData): void`; `initializeEditorThemes(api: EditorThemeApi): void`. Call with `monaco.editor`; theme setup never registers a grammar. |
+| Owner / file                                                                                       | Exact public names and signatures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1 — `packages/plugin-protocol/src/manifest.ts`                                                    | `staticRuntimeSchema`; `StaticRuntime = { kind: "static" }`; `staticLanguageResourceDeclSchema`; `StaticLanguageResourceDecl = { version: 1; path: string }`; `staticLanguageDeclSchema`; `StaticLanguageDecl = { id: string; extensions: string[]; aliases?: string[]; tokenizer: StaticLanguageResourceDecl; configuration: StaticLanguageResourceDecl }`; `PluginManifest.runtime` includes static and `PluginManifest.contributes?.languages?: StaticLanguageDecl[]`; `staticLanguageDeclarationProblems(manifest: PluginManifest): string[]`.                                                                                                                                                                                                          |
+| T1 — `packages/plugin-protocol/src/static-language-limits.ts`                                      | `STATIC_LANGUAGE_FORMAT_VERSION: 1`; immutable `STATIC_LANGUAGE_LIMITS_V1` with every exact §4 number and readonly `regexFlags: readonly ["", "i"]`; no author overrides.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| T1 — `packages/plugin-protocol/src/static-languages.ts`                                            | `RegexData`, `Pair`, `TokenAction`, `Action`, `Rule`, `StaticLanguageTokenizerV1`, `StaticLanguageConfigurationV1`, `StaticLanguageResourceBytes`, `StaticLanguageResourceProblemDetail`, `StaticLanguageValidationProblem`, `ValidateStaticLanguageResourcesInput`, `StaticLanguageValidationResult`; `validateStaticLanguageResources(input: ValidateStaticLanguageResourcesInput): StaticLanguageValidationResult`. Input carries numeric format/limits versions, unknown parsed resources, original byte counts, and optional relative manifest paths; success contains typed resources, byte counts, expanded-rule/raw-rule/regex counts; failure contains `{ message, detail }[]`.                                                                    |
+| T1 — `packages/plugin-protocol/src/index.ts`                                                       | Re-exports the manifest, limits and static-resource modules through `@kobrixa/plugin-protocol`. `packages/plugin-protocol/src/limits.ts` exports `PLUGIN_API_VERSION = "1.4.0"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| T2 — `packages/plugin-runtime/src/static-languages.ts`                                             | `StaticLanguageSourceIdentity = { pluginId: string; sourceKey: string; languageId: string }`; `StaticLanguageOwner` adds `generation: number; extensions: string[]`; `ValidatedStaticLanguage` carries `sourceKey`, `pluginId`, `generation`, `id`, `extensions`, normalized `aliases`, `resourceDigest`, typed `tokenizer`/`configuration`, original `resourceBytes`, and `expandedRules`.                                                                                                                                                                                                                                                                                                                                                                 |
+| T2 — `packages/plugin-runtime/src/static-languages.ts`                                             | `StaticLanguageConflict = { kind: "reserved-id" \| "reserved-extension" \| "frontend-owner" \| "id" \| "extension"; key: string; sources: StaticLanguageSourceIdentity[] }`; `StaticLanguagesCatalog = { formatVersion: 1; limitsVersion: 1; revision: number; languages: ValidatedStaticLanguage[]; extensionRoutes: Record<string, string \| null>; conflicts: StaticLanguageConflict[] }`; `emptyStaticLanguagesCatalog(revision?: number): StaticLanguagesCatalog`. Missing extension key means no mapping, null means ambiguous; lookup uses own properties.                                                                                                                                                                                           |
+| T2 — `packages/plugin-runtime/src/errors.ts` and `packages/plugin-runtime/src/static-languages.ts` | `PluginProblem.detail?: StaticLanguageProblemDetail`, where `StaticLanguageProblemDetail = StaticLanguageResourceProblemDetail & { conflictingSources?: StaticLanguageSourceIdentity[] }`; new codes are `PLUGIN_E_STATIC_LANGUAGE`, `PLUGIN_E_STATIC_LANGUAGE_CONFLICT`, `PLUGIN_E_STATIC_LANGUAGE_REGISTRATION`; all new-code instances require `detail.languageId` at construction.                                                                                                                                                                                                                                                                                                                                                                      |
+| T2 — `packages/plugin-runtime/src/registry.ts`                                                     | `PluginSource = { kind: "builtin"; manifest: unknown; resources: Readonly<Record<string, string>> } \| { kind: "development"; directory: string }`. Required raw resource map; exact relative keys; empty map for a builtin with no resource declarations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| T2 — `packages/plugin-runtime/src/manager.ts`                                                      | `PluginManager.staticLanguages(): StaticLanguagesCatalog`; `get staticLanguagesRevision(): number`; `reportLanguageRegistrationFailure(input: ReportLanguageRegistrationFailureInput): ReportLanguageRegistrationFailureResult`; required `PluginsSnapshot.staticLanguagesRevision: number` and `PluginsSnapshot.staticLanguageOwners: StaticLanguageOwner[]`; `PluginSummary.runtime` includes `"static"`. State events carry the complete owners list even for extension-ambiguous languages.                                                                                                                                                                                                                                                             |
+| T2 — `packages/plugin-runtime/src/static-languages.ts` and `packages/plugin-runtime/src/index.ts`  | `ReportLanguageRegistrationFailureInput = { sourceKey: string; generation: number; languageId: string; revision: number; reason: StaticLanguageRegistrationFailureReason; detail: string }`; reasons are `"dto-version" \| "validation" \| "adapter" \| "monaco" \| "session-language-ids"`; `ReportLanguageRegistrationFailureResult = { accepted: boolean; revision: number }`. Runtime index re-exports this module through `@kobrixa/plugin-runtime`.                                                                                                                                                                                                                                                                                                   |
+| T3 — `apps/desktop/src/shared/static-languages.ts`                                                 | Type-only re-exports of the protocol resource/validator types and runtime owner/catalog/problem/report types. No runtime values, loaders or duplicate DTOs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| T3 — `apps/desktop/src/shared/plugins.ts` and `apps/desktop/src/preload/index.ts`                  | `PluginsApi.staticLanguages(): Promise<StaticLanguagesCatalog>` over `plugins:static-languages`; `PluginsApi.reportLanguageRegistrationFailure(input: ReportLanguageRegistrationFailureInput): Promise<ReportLanguageRegistrationFailureResult>` over `plugins:report-language-registration-failure`; existing `onEvent(listener: (event: PluginEvent) => void): () => void` over `plugins:event`, with `PluginEvent = { type: "state"; state: PluginsView } \| { type: "notice"; notice: StoredNotice }`.                                                                                                                                                                                                                                                  |
+| T3 — `apps/desktop/src/main/plugins/ipc.ts`                                                        | Both T0 handlers use existing trusted `IpcHandle` registration. They return only an empty catalog / `{ accepted: false, revision }`; T3 supplies controller delivery and report validation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| T3 — `apps/desktop/src/main/plugins/session.ts`                                                    | `SessionMarker.thirdPartyStaticContributions: boolean`; old-file input defaults to false, new session starts false; `SessionMarkerFile.markThirdPartyStaticContributions(): void` must synchronously write sticky true or throw before delivery.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| T4 — `apps/desktop/src/renderer/editor/static-language-store.ts`                                   | `StaticLanguageStoreSnapshot = { phase: "loading" \| "ready" \| "failed"; targetRevision: number; owners: readonly StaticLanguageOwner[]; catalog: StaticLanguagesCatalog; error?: string }`; `StaticLanguageStoreApi = Pick<PluginsApi, "state" \| "staticLanguages" \| "onEvent">`; `createStaticLanguageStore(api: StaticLanguageStoreApi): StaticLanguageStore`. Store methods: `getSnapshot(): StaticLanguageStoreSnapshot`, `subscribe(listener: () => void): () => void`, `ready(): Promise<void>`, `refresh(): Promise<void>`, `dispose(): void`.                                                                                                                                                                                                   |
+| T4 — `apps/desktop/src/renderer/editor/static-language-adapter.ts`                                 | `MonacoStaticLanguageDefinition = { tokenizer: languages.IMonarchLanguage; configuration: languages.LanguageConfiguration }`; `adaptStaticLanguage(language: ValidatedStaticLanguage): MonacoStaticLanguageDefinition`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| T4 — `apps/desktop/src/renderer/editor/static-language-routing.ts`                                 | `StaticRouteOwner = Pick<StaticLanguageOwner, "pluginId" \| "sourceKey" \| "generation" \| "languageId">`; `LexicalLanguageRoute = { monacoLanguage: string; displayName: string; kind: "core" \| "static" \| "plaintext"; catalogRevision: number; staticOwner?: StaticRouteOwner }`; `ResolveLexicalLanguageInput = { file: string; binding?: LanguageBinding; catalog: StaticLanguagesCatalog; activeOwners: readonly StaticLanguageOwner[]; coreExtensionRoutes: Readonly<Record<string, string>> }`; `resolveLexicalLanguage(input: ResolveLexicalLanguageInput): LexicalLanguageRoute`.                                                                                                                                                               |
+| T4 — `apps/desktop/src/renderer/editor/static-language-registration.ts`                            | `createStaticLanguageRegistrar(input: CreateStaticLanguageRegistrarInput): StaticLanguageRegistrar`, where input has `monaco: MonacoStaticLanguageApi`, `store: StaticLanguageStore`, `api: Pick<PluginsApi, "reportLanguageRegistrationFailure">`, and `coreExtensionRoutes: Readonly<Record<string, string>>`.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| T4 — `apps/desktop/src/renderer/editor/static-language-registration.ts`                            | `MonacoStaticLanguageApi.languages.register(language: { id: string }): void`; `setMonarchTokensProvider(id: string, tokenizer: languages.IMonarchLanguage): IDisposable`; `setLanguageConfiguration(id: string, configuration: languages.LanguageConfiguration): IDisposable`; `.editor.getModels(): editor.ITextModel[]`; `onDidCreateModel(listener: (model: editor.ITextModel) => void): IDisposable`; `onWillDisposeModel(listener: (model: editor.ITextModel) => void): IDisposable`; `setModelLanguage(model: editor.ITextModel, languageId: string): void`.                                                                                                                                                                                          |
+| T4 — `apps/desktop/src/renderer/editor/static-language-registration.ts`                            | `StaticModelContext = { file: string; workspaceId?: string; binding?: LanguageBinding }`; `StaticModelRouteHooks.beforeChange(previous: LexicalLanguageRoute \| undefined, next: LexicalLanguageRoute): void`, `.afterChange(route: LexicalLanguageRoute): void`; registrar methods `reconcile(snapshot: StaticLanguageStoreSnapshot): void`, `trackModel(model: editor.ITextModel, context: () => StaticModelContext, hooks?: StaticModelRouteHooks): IDisposable`, `refreshModels(): void`, `resolve(context: StaticModelContext): LexicalLanguageRoute`, `getRoute(model: editor.ITextModel): LexicalLanguageRoute \| undefined`, `getActiveOwners(): readonly StaticLanguageOwner[]`, `subscribe(listener: () => void): () => void`, `dispose(): void`. |
+| T5 — `apps/desktop/src/renderer/editor/model-language-route.ts`                                    | `ModelLanguageRoute extends LexicalLanguageRoute` with `binding?: LanguageBinding; companion?: LanguageCompanion`; `AttachedModelLanguageRoute<T> = { model: T; file: string; workspaceId: string \| undefined; route: ModelLanguageRoute; dispose(): void }`. T5 makes existing `language-routing.ts` re-export this type and migrates all route comparisons/consumers under its write set.                                                                                                                                                                                                                                                                                                                                                                |
+| T5 — `apps/desktop/src/renderer/editor/static-language-bootstrap.ts`                               | `StaticLanguageBootstrapInput = { store: StaticLanguageStore; registrar: StaticLanguageRegistrar; timeoutMs?: number }`; `StaticLanguageBootstrapResult = { kind: "ready"; revision: number } \| { kind: "plaintext"; reason: "ipc" \| "timeout"; message: string }`; `bootstrapStaticLanguages(input: StaticLanguageBootstrapInput): Promise<StaticLanguageBootstrapResult>`. Default timeout 5,000 ms; T5 wires the single barrier into `app.tsx` and every document model entry point.                                                                                                                                                                                                                                                                   |
+| T6 — `apps/desktop/src/renderer/editor/editor-theme.ts`                                            | `EditorThemeApi.defineTheme(name: string, data: editor.IStandaloneThemeData): void`; `initializeEditorThemes(api: EditorThemeApi): void`. Call with `monaco.editor`; theme setup never registers a grammar.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 Fixture paths, all owned by T1 after T0 and readable by every parallel task:
 
-| Exact path | Contract |
-| --- | --- |
-| `packages/plugin-protocol/test-fixtures/static-languages/minimal/tokenizer.json` | One case-sensitive root regex `.` consuming at least one UTF-16 code unit, identifier token; valid minimal grammar. |
-| `packages/plugin-protocol/test-fixtures/static-languages/minimal/configuration.json` | `{}`; Monaco default configuration is valid. |
-| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/tokenizer.json` | All nine original rules, full keyword lists, original cases order, every regex flag `i`, `.basic-plus` token postfix. |
-| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/configuration.json` | Original comment, bracket/closing/surrounding pairs and the two unchanged indentation regex sources/flags; no wordPattern/onEnterRules. |
-| `packages/plugin-protocol/test-fixtures/static-languages/toy/kobrixa-plugin.json` | `acme.toy`, API `^1.4.0`, strict static runtime, `toy` language/extension, relative version-1 resource declarations, no executable entry. |
-| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/tokenizer.json` | Case-sensitive whitespace/identifier/number rules for a third-party static-only plugin. |
-| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/configuration.json` | `{}`; fixture root can be copied directly to a development plugin directory. |
+| Exact path                                                                                | Contract                                                                                                                                  |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/plugin-protocol/test-fixtures/static-languages/minimal/tokenizer.json`          | One case-sensitive root regex `.` consuming at least one UTF-16 code unit, identifier token; valid minimal grammar.                       |
+| `packages/plugin-protocol/test-fixtures/static-languages/minimal/configuration.json`      | `{}`; Monaco default configuration is valid.                                                                                              |
+| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/tokenizer.json`       | All nine original rules, full keyword lists, original cases order, every regex flag `i`, `.basic-plus` token postfix.                     |
+| `packages/plugin-protocol/test-fixtures/static-languages/basic-plus/configuration.json`   | Original comment, bracket/closing/surrounding pairs and the two unchanged indentation regex sources/flags; no wordPattern/onEnterRules.   |
+| `packages/plugin-protocol/test-fixtures/static-languages/toy/kobrixa-plugin.json`         | `acme.toy`, API `^1.4.0`, strict static runtime, `toy` language/extension, relative version-1 resource declarations, no executable entry. |
+| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/tokenizer.json`     | Case-sensitive whitespace/identifier/number rules for a third-party static-only plugin.                                                   |
+| `packages/plugin-protocol/test-fixtures/static-languages/toy/language/configuration.json` | `{}`; fixture root can be copied directly to a development plugin directory.                                                              |
 
 Contract test paths are `packages/plugin-protocol/src/static-language-contract.test.ts` (T1), `packages/plugin-runtime/src/static-language-contract.test.ts` (T2), and `apps/desktop/src/shared/static-languages.test.ts` (T3). They verify the frozen surface independently of production implementations. The five Review Focus lines are mandatory test assignments for their named later tasks; those tasks add the named behavioral tests in their own TDD steps, not in another owner's worktree.
+
 ### Task 1: Protocol、純 validator 與 SDK 1.4.0
 
 **Files:**
@@ -4513,6 +4514,7 @@ git commit -m "feat(plugin-protocol): publish static language schema and SDK API
 
 - T0 未命名公開 resource schema 的 TypeScript exports。本 task 在自己的 protocol write set 定義並 re-export `staticLanguageTokenizerV1Schema`、`staticLanguageConfigurationV1Schema`；`$defs` 使用 spec 已指定的 `static-language-tokenizer-v1`、`static-language-configuration-v1`。不更動任何 T0 validator/type/fixture 名稱。
 - T0 alias scaffold 使用 Python `re` 不支援的 `\p{Cc}`。1.1 以等價 C0/C1 ranges 加上 Unicode line-separator 排除與 code-point bounds 完成同一 `staticLanguageDeclSchema`，無 schema keyword 或 Python engine 擴充需求。
+
 ### Task 2: Runtime static-language loading, ownership, catalog and lifecycle
 
 **Files:**
@@ -4718,7 +4720,12 @@ it("charges metadata and every resource once, pauses between jobs and permanentl
   await tokenizer;
   await vi.advanceTimersByTimeAsync(6000);
   let finish!: (value: number) => void;
-  const configuration = budget.run(() => new Promise<number>((resolve) => { finish = resolve; }));
+  const configuration = budget.run(
+    () =>
+      new Promise<number>((resolve) => {
+        finish = resolve;
+      }),
+  );
   const rejected = expect(configuration).rejects.toThrow("deadline");
   await vi.advanceTimersByTimeAsync(999);
   expect(() => budget.check()).not.toThrow();
@@ -4733,9 +4740,12 @@ it("charges metadata and every resource once, pauses between jobs and permanentl
 it("charges failed I/O against the same remaining source allowance", async () => {
   vi.useFakeTimers();
   const budget = new SourceReadBudget(5000, () => Date.now());
-  const failed = budget.run(() => new Promise<never>((_resolve, reject) => {
-    setTimeout(() => reject(new Error("unreadable")), 4000);
-  }));
+  const failed = budget.run(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("unreadable")), 4000);
+      }),
+  );
   const rejected = expect(failed).rejects.toThrow("unreadable");
   await vi.advanceTimersByTimeAsync(4000);
   await rejected;
@@ -4745,7 +4755,6 @@ it("charges failed I/O against the same remaining source allowance", async () =>
   await vi.advanceTimersByTimeAsync(1000);
   await expired;
 });
-
 ```
 
 - [ ] **Step 2: Run the reader tests, expect FAIL**
@@ -4767,7 +4776,10 @@ export class SourceReadBudget {
   #remainingMs: number;
   #startedAt: number | undefined;
   #expired = false;
-  constructor(timeoutMs = 5000, private readonly now: () => number = () => performance.now()) {
+  constructor(
+    timeoutMs = 5000,
+    private readonly now: () => number = () => performance.now(),
+  ) {
     this.#remainingMs = timeoutMs;
   }
   check(): void {
@@ -4795,10 +4807,12 @@ export class SourceReadBudget {
           reject(new Error("Source I/O deadline exceeded."));
         }, this.#remainingMs);
       });
-      const pending = Promise.resolve().then(work).then((value) => {
-        this.check();
-        return value;
-      });
+      const pending = Promise.resolve()
+        .then(work)
+        .then((value) => {
+          this.check();
+          return value;
+        });
       return await Promise.race([pending, timeout]);
     } finally {
       this.#remainingMs = Math.max(0, this.#remainingMs - (this.now() - this.#startedAt));
@@ -5667,11 +5681,12 @@ export async function buildStaticLanguageCatalog(
     try {
       const budget = plugin.resourceBudget;
       if (!budget) throw new Error("No current source read budget.");
-      const read = (file: string) => budget.run(async () => {
-        if (source.kind === "builtin")
-          return readBuiltinJson(source.resources, file, L.resourceFileBytes);
-        return readPackagedJson(plugin.directory!, file, L.resourceFileBytes, budget);
-      });
+      const read = (file: string) =>
+        budget.run(async () => {
+          if (source.kind === "builtin")
+            return readBuiltinJson(source.resources, file, L.resourceFileBytes);
+          return readPackagedJson(plugin.directory!, file, L.resourceFileBytes, budget);
+        });
       const tokenizer = await read(decl.tokenizer.path);
       resourcePath = decl.configuration.path;
       const configuration = await read(decl.configuration.path);
@@ -5867,123 +5882,148 @@ afterEach(async () => {
 
 const deferred = () => {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 };
 
 for (const phase of ["startup", "refresh"] as const)
   for (const stage of ["metadata", "resource"] as const)
-    it.each([false, true])(`isolates slow ${stage} during ${phase} in either source order (reverse: %s)`, async (reverse) => {
-      // Pick the slow development source by sorted sourceKey so its resources
-      // precede the healthy development source in the deterministic resource queue.
-      const folders = await Promise.all([developmentToy(root, "a"), developmentToy(root, "b")]);
-      folders.sort((a, b) => developmentSourceKey(a.directory).localeCompare(developmentSourceKey(b.directory)));
-      const slow = folders[0]!;
-      const healthy = folders[1]!;
-      const slowKey = developmentSourceKey(slow.directory);
-      const healthyKey = developmentSourceKey(healthy.directory);
-      const slowManifest = structuredClone(toyManifest);
-      slowManifest.id = "acme.slow";
-      const declaration = slowManifest.contributes!.languages![0]!;
-      slowManifest.contributes!.languages = ["a-ready", "b-slow", "c-unread"].map((id) => ({
-        ...declaration, id, extensions: [id.replaceAll("-", "")],
-        configuration: { version: 1, path: id === "b-slow" ? "slow.json" : declaration.configuration.path },
-      }));
-      await writeManifest(slow.directory, slowManifest);
-      await writeFile(path.join(slow.directory, "slow.json"), "{}");
-      const healthyManifest = structuredClone(toyManifest);
-      healthyManifest.id = "acme.healthy";
-      healthyManifest.contributes!.languages![0]!.id = "healthy-dev";
-      healthyManifest.contributes!.languages![0]!.extensions = ["healthydev"];
-      await writeManifest(healthy.directory, healthyManifest);
-      const bundled = builtinToy("test.healthy", "healthy-builtin", ["healthybuiltin"]);
-      const sources = reverse ? [healthy, bundled, slow] : [slow, bundled, healthy];
-      const blockedPath = path.join(await realpath(slow.directory), stage === "metadata" ? "kobrixa-plugin.json" : "slow.json");
-      let manager = phase === "refresh" ? await create(sources) : undefined;
-      const actualOpen = vi.mocked(open).getMockImplementation()!;
-      const actualReadSource = vi.mocked(readSource).getMockImplementation()!;
-      const held = deferred();
-      const entered = deferred();
-      const healthyMetadata = deferred();
-      const lateClosed = deferred();
-      const completed = new Set<string>();
-      let blocked = false;
-      let elapsed = 0;
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
-      vi.mocked(readSource).mockImplementation(async (...args) => {
-        const read = await actualReadSource(...args);
-        if (read.sourceKey === healthyKey || read.sourceKey === "builtin:test.healthy") {
-          completed.add(read.sourceKey);
-          if (completed.size === 2) healthyMetadata.resolve();
-        }
-        return read;
-      });
-      vi.mocked(open).mockImplementation(async (...args) => {
-        const handle = await actualOpen(...args);
-        if (!blocked && String(args[0]) === blockedPath) {
-          blocked = true;
-          const close = handle.close.bind(handle);
-          handle.close = async () => { await close(); lateClosed.resolve(); };
-          entered.resolve();
-          await held.promise;
-        }
-        return handle;
-      });
-      const operation = manager
-        ? manager.setEnabled(healthyKey, true)
-        : create(sources).then((created) => { manager = created; });
-      let settled = false;
-      void operation.then(() => { settled = true; });
-      try {
-        await Promise.all([entered.promise, healthyMetadata.promise]);
-        elapsed += 4999;
-        await vi.advanceTimersByTimeAsync(4999);
-        expect(settled).toBe(false);
-        elapsed += 1;
-        await vi.advanceTimersByTimeAsync(1);
-        await operation;
-        const catalog = manager!.staticLanguages();
-        expect(catalog.languages.map((item) => item.id).sort()).toEqual(
-          stage === "metadata"
-            ? ["healthy-builtin", "healthy-dev"]
-            : ["a-ready", "healthy-builtin", "healthy-dev"],
+    it.each([false, true])(
+      `isolates slow ${stage} during ${phase} in either source order (reverse: %s)`,
+      async (reverse) => {
+        // Pick the slow development source by sorted sourceKey so its resources
+        // precede the healthy development source in the deterministic resource queue.
+        const folders = await Promise.all([developmentToy(root, "a"), developmentToy(root, "b")]);
+        folders.sort((a, b) =>
+          developmentSourceKey(a.directory).localeCompare(developmentSourceKey(b.directory)),
         );
-        const rows = manager!.state().plugins;
-        for (const key of [healthyKey, "builtin:test.healthy"]) {
-          expect(rows.find((row) => row.sourceKey === key)).toMatchObject({ status: "enabled", problems: [] });
+        const slow = folders[0]!;
+        const healthy = folders[1]!;
+        const slowKey = developmentSourceKey(slow.directory);
+        const healthyKey = developmentSourceKey(healthy.directory);
+        const slowManifest = structuredClone(toyManifest);
+        slowManifest.id = "acme.slow";
+        const declaration = slowManifest.contributes!.languages![0]!;
+        slowManifest.contributes!.languages = ["a-ready", "b-slow", "c-unread"].map((id) => ({
+          ...declaration,
+          id,
+          extensions: [id.replaceAll("-", "")],
+          configuration: {
+            version: 1,
+            path: id === "b-slow" ? "slow.json" : declaration.configuration.path,
+          },
+        }));
+        await writeManifest(slow.directory, slowManifest);
+        await writeFile(path.join(slow.directory, "slow.json"), "{}");
+        const healthyManifest = structuredClone(toyManifest);
+        healthyManifest.id = "acme.healthy";
+        healthyManifest.contributes!.languages![0]!.id = "healthy-dev";
+        healthyManifest.contributes!.languages![0]!.extensions = ["healthydev"];
+        await writeManifest(healthy.directory, healthyManifest);
+        const bundled = builtinToy("test.healthy", "healthy-builtin", ["healthybuiltin"]);
+        const sources = reverse ? [healthy, bundled, slow] : [slow, bundled, healthy];
+        const blockedPath = path.join(
+          await realpath(slow.directory),
+          stage === "metadata" ? "kobrixa-plugin.json" : "slow.json",
+        );
+        let manager = phase === "refresh" ? await create(sources) : undefined;
+        const actualOpen = vi.mocked(open).getMockImplementation()!;
+        const actualReadSource = vi.mocked(readSource).getMockImplementation()!;
+        const held = deferred();
+        const entered = deferred();
+        const healthyMetadata = deferred();
+        const lateClosed = deferred();
+        const completed = new Set<string>();
+        let blocked = false;
+        let elapsed = 0;
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const clock = vi.spyOn(performance, "now").mockImplementation(() => elapsed);
+        vi.mocked(readSource).mockImplementation(async (...args) => {
+          const read = await actualReadSource(...args);
+          if (read.sourceKey === healthyKey || read.sourceKey === "builtin:test.healthy") {
+            completed.add(read.sourceKey);
+            if (completed.size === 2) healthyMetadata.resolve();
+          }
+          return read;
+        });
+        vi.mocked(open).mockImplementation(async (...args) => {
+          const handle = await actualOpen(...args);
+          if (!blocked && String(args[0]) === blockedPath) {
+            blocked = true;
+            const close = handle.close.bind(handle);
+            handle.close = async () => {
+              await close();
+              lateClosed.resolve();
+            };
+            entered.resolve();
+            await held.promise;
+          }
+          return handle;
+        });
+        const operation = manager
+          ? manager.setEnabled(healthyKey, true)
+          : create(sources).then((created) => {
+              manager = created;
+            });
+        let settled = false;
+        void operation.then(() => {
+          settled = true;
+        });
+        try {
+          await Promise.all([entered.promise, healthyMetadata.promise]);
+          elapsed += 4999;
+          await vi.advanceTimersByTimeAsync(4999);
+          expect(settled).toBe(false);
+          elapsed += 1;
+          await vi.advanceTimersByTimeAsync(1);
+          await operation;
+          const catalog = manager!.staticLanguages();
+          expect(catalog.languages.map((item) => item.id).sort()).toEqual(
+            stage === "metadata"
+              ? ["healthy-builtin", "healthy-dev"]
+              : ["a-ready", "healthy-builtin", "healthy-dev"],
+          );
+          const rows = manager!.state().plugins;
+          for (const key of [healthyKey, "builtin:test.healthy"]) {
+            expect(rows.find((row) => row.sourceKey === key)).toMatchObject({
+              status: "enabled",
+              problems: [],
+            });
+          }
+          const failed = rows.find((row) => row.sourceKey === slowKey)!;
+          if (stage === "metadata") {
+            expect(failed.status).toBe("invalid");
+            expect(failed.problems.map((item) => item.code)).toEqual(["PLUGIN_E_SOURCE_TIMEOUT"]);
+          } else {
+            expect(failed.status).toBe("enabled");
+            expect(failed.problems.map((item) => [item.code, item.detail?.languageId])).toEqual([
+              ["PLUGIN_E_STATIC_LANGUAGE", "b-slow"],
+              ["PLUGIN_E_STATIC_LANGUAGE", "c-unread"],
+            ]);
+            expect(failed.problems.every((item) => item.message.includes("deadline"))).toBe(true);
+          }
+          const snapshot = manager!.state();
+          const validations = vi.mocked(validateStaticLanguageResources).mock.calls.length;
+          held.resolve();
+          await lateClosed.promise;
+          await Promise.resolve();
+          expect(manager!.staticLanguages()).toEqual(catalog);
+          expect(manager!.state()).toEqual(snapshot);
+          expect(validateStaticLanguageResources).toHaveBeenCalledTimes(validations);
+          expect(launcher).not.toHaveBeenCalled();
+        } finally {
+          held.resolve();
+          await operation;
+          if (blocked) await lateClosed.promise;
+          vi.mocked(open).mockImplementation(actualOpen);
+          vi.mocked(readSource).mockImplementation(actualReadSource);
+          clock.mockRestore();
+          vi.useRealTimers();
         }
-        const failed = rows.find((row) => row.sourceKey === slowKey)!;
-        if (stage === "metadata") {
-          expect(failed.status).toBe("invalid");
-          expect(failed.problems.map((item) => item.code)).toEqual(["PLUGIN_E_SOURCE_TIMEOUT"]);
-        } else {
-          expect(failed.status).toBe("enabled");
-          expect(failed.problems.map((item) => [item.code, item.detail?.languageId])).toEqual([
-            ["PLUGIN_E_STATIC_LANGUAGE", "b-slow"],
-            ["PLUGIN_E_STATIC_LANGUAGE", "c-unread"],
-          ]);
-          expect(failed.problems.every((item) => item.message.includes("deadline"))).toBe(true);
-        }
-        const snapshot = manager!.state();
-        const validations = vi.mocked(validateStaticLanguageResources).mock.calls.length;
-        held.resolve();
-        await lateClosed.promise;
-        await Promise.resolve();
-        expect(manager!.staticLanguages()).toEqual(catalog);
-        expect(manager!.state()).toEqual(snapshot);
-        expect(validateStaticLanguageResources).toHaveBeenCalledTimes(validations);
-        expect(launcher).not.toHaveBeenCalled();
-      } finally {
-        held.resolve();
-        await operation;
-        if (blocked) await lateClosed.promise;
-        vi.mocked(open).mockImplementation(actualOpen);
-        vi.mocked(readSource).mockImplementation(actualReadSource);
-        clock.mockRestore();
-        vi.useRealTimers();
-      }
-    });
+      },
+    );
 
 it("loads static, node and python lexical contributions without launch or handshake", async () => {
   for (const kind of ["static", "node", "python"] as const) {
@@ -6166,91 +6206,104 @@ it("revokes before reload I/O and never restores old resources after a failed re
   );
 });
 
-it.each([false, true])("uses a fresh generation for explicit retry after failure (disable first: %s)", async (disableFirst) => {
-  const source = await developmentToy(root);
-  const manager = await create([source]);
-  const language = manager.staticLanguages().languages[0]!;
-  const report = {
-    sourceKey: language.sourceKey,
-    generation: language.generation,
-    languageId: language.id,
-    revision: manager.staticLanguagesRevision,
-    reason: "monaco" as const,
-    detail: "Provider rejected fixture.",
-  };
-  for (const bad of [
-    { ...report, revision: report.revision - 1 },
-    { ...report, generation: report.generation + 1 },
-    { ...report, sourceKey: "builtin:forged" },
-    { ...report, languageId: "foreign" },
-  ])
-    expect(manager.reportLanguageRegistrationFailure(bad).accepted).toBe(false);
-  // Runtime-local consumer double for T4's permanent per-generation quarantine.
-  // Real registrar/Monaco integration remains T8-owned.
-  const identity = (item: typeof language) => JSON.stringify([
-    item.pluginId, item.sourceKey, item.generation, item.id,
-  ]);
-  const quarantined = new Set([identity(language)]);
-  const register = vi.fn();
-  const offer = (item: typeof language) => {
-    if (quarantined.has(identity(item))) return false;
-    register(item);
-    return true;
-  };
-  expect(manager.reportLanguageRegistrationFailure(report).accepted).toBe(true);
-  const isolated = manager.staticLanguagesRevision;
-  expect(manager.staticLanguages().languages).toEqual([]);
-  expect(
-    manager.reportLanguageRegistrationFailure({ ...report, revision: isolated }).accepted,
-  ).toBe(false);
-  expect(offer(language)).toBe(false);
-  await Promise.resolve();
-  expect(manager.staticLanguagesRevision).toBe(isolated);
-  expect(register).not.toHaveBeenCalled();
-  const other = await developmentToy(root, "other");
-  const manifest = structuredClone(toyManifest);
-  manifest.id = "acme.other";
-  manifest.contributes!.languages![0]!.id = "other";
-  manifest.contributes!.languages![0]!.extensions = ["other"];
-  await writeManifest(other.directory, manifest);
-  await manager.addSource(other);
-  expect(manager.staticLanguages().languages.map((item) => item.id)).toEqual(["other"]);
-  expect(
-    manager.state().plugins.find((item) => item.sourceKey === language.sourceKey)?.problems,
-  ).toContainEqual(
-    expect.objectContaining({
-      code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
-      detail: { languageId: "toy" },
-    }),
-  );
-  if (disableFirst) {
-    expect(await manager.setEnabled(language.sourceKey, false)).toMatchObject({ ok: true });
-    expect(manager.state().plugins.find((item) => item.sourceKey === language.sourceKey)?.status).toBe("disabled");
-  }
-  expect(await manager.setEnabled(language.sourceKey, true)).toMatchObject({ ok: true });
-  const recovered = manager.staticLanguages().languages.find((item) => item.id === language.id)!;
-  expect(recovered.generation).toBeGreaterThan(language.generation);
-  expect(manager.state().staticLanguageOwners).toContainEqual(expect.objectContaining({
-    sourceKey: language.sourceKey, languageId: language.id, generation: recovered.generation,
-  }));
-  expect(offer(recovered)).toBe(true);
-  expect(register).toHaveBeenCalledTimes(1);
-  // Reject the old identity even if the reporter supplies the latest revision.
-  expect(manager.reportLanguageRegistrationFailure({
-    ...report, revision: manager.staticLanguagesRevision,
-  }).accepted).toBe(false);
-  expect(
-    manager
-      .staticLanguages()
-      .languages.map((item) => item.id)
-      .sort(),
-  ).toEqual(["other", "toy"]);
-  expect(manager.reportLanguageRegistrationFailure(report).accepted).toBe(false);
-  const revision = manager.staticLanguagesRevision;
-  await manager.setEnabled(language.sourceKey, true);
-  expect(manager.staticLanguagesRevision).toBe(revision);
-  expect(manager.staticLanguages().languages.find((item) => item.id === language.id)?.generation).toBe(recovered.generation);
-});
+it.each([false, true])(
+  "uses a fresh generation for explicit retry after failure (disable first: %s)",
+  async (disableFirst) => {
+    const source = await developmentToy(root);
+    const manager = await create([source]);
+    const language = manager.staticLanguages().languages[0]!;
+    const report = {
+      sourceKey: language.sourceKey,
+      generation: language.generation,
+      languageId: language.id,
+      revision: manager.staticLanguagesRevision,
+      reason: "monaco" as const,
+      detail: "Provider rejected fixture.",
+    };
+    for (const bad of [
+      { ...report, revision: report.revision - 1 },
+      { ...report, generation: report.generation + 1 },
+      { ...report, sourceKey: "builtin:forged" },
+      { ...report, languageId: "foreign" },
+    ])
+      expect(manager.reportLanguageRegistrationFailure(bad).accepted).toBe(false);
+    // Runtime-local consumer double for T4's permanent per-generation quarantine.
+    // Real registrar/Monaco integration remains T8-owned.
+    const identity = (item: typeof language) =>
+      JSON.stringify([item.pluginId, item.sourceKey, item.generation, item.id]);
+    const quarantined = new Set([identity(language)]);
+    const register = vi.fn();
+    const offer = (item: typeof language) => {
+      if (quarantined.has(identity(item))) return false;
+      register(item);
+      return true;
+    };
+    expect(manager.reportLanguageRegistrationFailure(report).accepted).toBe(true);
+    const isolated = manager.staticLanguagesRevision;
+    expect(manager.staticLanguages().languages).toEqual([]);
+    expect(
+      manager.reportLanguageRegistrationFailure({ ...report, revision: isolated }).accepted,
+    ).toBe(false);
+    expect(offer(language)).toBe(false);
+    await Promise.resolve();
+    expect(manager.staticLanguagesRevision).toBe(isolated);
+    expect(register).not.toHaveBeenCalled();
+    const other = await developmentToy(root, "other");
+    const manifest = structuredClone(toyManifest);
+    manifest.id = "acme.other";
+    manifest.contributes!.languages![0]!.id = "other";
+    manifest.contributes!.languages![0]!.extensions = ["other"];
+    await writeManifest(other.directory, manifest);
+    await manager.addSource(other);
+    expect(manager.staticLanguages().languages.map((item) => item.id)).toEqual(["other"]);
+    expect(
+      manager.state().plugins.find((item) => item.sourceKey === language.sourceKey)?.problems,
+    ).toContainEqual(
+      expect.objectContaining({
+        code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
+        detail: { languageId: "toy" },
+      }),
+    );
+    if (disableFirst) {
+      expect(await manager.setEnabled(language.sourceKey, false)).toMatchObject({ ok: true });
+      expect(
+        manager.state().plugins.find((item) => item.sourceKey === language.sourceKey)?.status,
+      ).toBe("disabled");
+    }
+    expect(await manager.setEnabled(language.sourceKey, true)).toMatchObject({ ok: true });
+    const recovered = manager.staticLanguages().languages.find((item) => item.id === language.id)!;
+    expect(recovered.generation).toBeGreaterThan(language.generation);
+    expect(manager.state().staticLanguageOwners).toContainEqual(
+      expect.objectContaining({
+        sourceKey: language.sourceKey,
+        languageId: language.id,
+        generation: recovered.generation,
+      }),
+    );
+    expect(offer(recovered)).toBe(true);
+    expect(register).toHaveBeenCalledTimes(1);
+    // Reject the old identity even if the reporter supplies the latest revision.
+    expect(
+      manager.reportLanguageRegistrationFailure({
+        ...report,
+        revision: manager.staticLanguagesRevision,
+      }).accepted,
+    ).toBe(false);
+    expect(
+      manager
+        .staticLanguages()
+        .languages.map((item) => item.id)
+        .sort(),
+    ).toEqual(["other", "toy"]);
+    expect(manager.reportLanguageRegistrationFailure(report).accepted).toBe(false);
+    const revision = manager.staticLanguagesRevision;
+    await manager.setEnabled(language.sourceKey, true);
+    expect(manager.staticLanguagesRevision).toBe(revision);
+    expect(
+      manager.staticLanguages().languages.find((item) => item.id === language.id)?.generation,
+    ).toBe(recovered.generation);
+  },
+);
 
 it("keeps frontend services valid when static registration fails and builtins remain required", async () => {
   const source = builtinToy("test.owner", "toy", ["toy"]);
@@ -6301,21 +6354,29 @@ it("preserves disabled state and quarantine when the enable save fails", async (
   const persisted = store();
   const manager = await create([source], { store: persisted });
   const language = manager.staticLanguages().languages[0]!;
-  expect(manager.reportLanguageRegistrationFailure({
-    sourceKey: language.sourceKey,
-    generation: language.generation,
-    languageId: language.id,
-    revision: manager.staticLanguagesRevision,
-    reason: "monaco",
-    detail: "Rejected fixture.",
-  }).accepted).toBe(true);
+  expect(
+    manager.reportLanguageRegistrationFailure({
+      sourceKey: language.sourceKey,
+      generation: language.generation,
+      languageId: language.id,
+      revision: manager.staticLanguagesRevision,
+      reason: "monaco",
+      detail: "Rejected fixture.",
+    }).accepted,
+  ).toBe(true);
   // A failed disable save still takes effect in this session.
   vi.mocked(persisted.save).mockRejectedValueOnce(new Error("disk full"));
-  expect(await manager.setEnabled(language.sourceKey, false)).toMatchObject({ ok: true, persisted: false });
+  expect(await manager.setEnabled(language.sourceKey, false)).toMatchObject({
+    ok: true,
+    persisted: false,
+  });
   const disabled = manager.state();
   const catalog = manager.staticLanguages();
   vi.mocked(persisted.save).mockRejectedValueOnce(new Error("disk full"));
-  expect(await manager.setEnabled(language.sourceKey, true)).toMatchObject({ ok: false, code: "PLUGIN_E_STATE_SAVE" });
+  expect(await manager.setEnabled(language.sourceKey, true)).toMatchObject({
+    ok: false,
+    code: "PLUGIN_E_STATE_SAVE",
+  });
   expect(manager.state()).toEqual(disabled);
   expect(manager.staticLanguages()).toEqual(catalog);
   expect(await manager.setEnabled(language.sourceKey, true)).toMatchObject({ ok: true });
@@ -6328,17 +6389,30 @@ it("reload after a registration failure always publishes a fresh generation", as
   const manager = await create([source]);
   const language = manager.staticLanguages().languages[0]!;
   const report = {
-    sourceKey: language.sourceKey, generation: language.generation, languageId: language.id,
-    revision: manager.staticLanguagesRevision, reason: "adapter" as const, detail: "Rejected fixture.",
+    sourceKey: language.sourceKey,
+    generation: language.generation,
+    languageId: language.id,
+    revision: manager.staticLanguagesRevision,
+    reason: "adapter" as const,
+    detail: "Rejected fixture.",
   };
   expect(manager.reportLanguageRegistrationFailure(report).accepted).toBe(true);
   expect(await manager.reloadSource(language.sourceKey)).toMatchObject({ ok: true });
   const recovered = manager.staticLanguages().languages[0]!;
   expect(recovered.generation).toBeGreaterThan(language.generation);
-  expect(manager.reportLanguageRegistrationFailure({ ...report, revision: manager.staticLanguagesRevision }).accepted).toBe(false);
-  expect(manager.reportLanguageRegistrationFailure({
-    ...report, generation: recovered.generation, revision: manager.staticLanguagesRevision,
-  }).accepted).toBe(true);
+  expect(
+    manager.reportLanguageRegistrationFailure({
+      ...report,
+      revision: manager.staticLanguagesRevision,
+    }).accepted,
+  ).toBe(false);
+  expect(
+    manager.reportLanguageRegistrationFailure({
+      ...report,
+      generation: recovered.generation,
+      revision: manager.staticLanguagesRevision,
+    }).accepted,
+  ).toBe(true);
 });
 
 it("keeps static resources on a process crash and withdraws them on an actual disable", async () => {
@@ -7150,6 +7224,7 @@ git commit -m "test(plugin-runtime): pin static catalog races deadlines and budg
 
 - T0 does not freeze an explicit installed core-id list. T2 defines and exports `CORE_STATIC_LANGUAGE_IDS` in its own `packages/plugin-runtime/src/static-languages.ts`, from the inspected Monaco 0.57.0 entry point. T8 must check actual renderer registrations and its core routes; no renderer file is assigned to T2.
 - T0 freezes the public source/manager DTOs but not internal two-phase I/O, budget, catalog assembly or projection interfaces. This task defines `SourceReadBudget`, `PackagedJson`, `PackagedResourceError`, `readPackagedJson`, `readBuiltinJson`, `ReadPlugin.resourceBudget`, `StaticCatalogEntry`, `StaticCatalogBuild`, `buildStaticLanguageCatalog`, `projectStaticLanguageCatalog`, and `staticLanguageKey` entirely inside `packages/plugin-runtime/**`. None changes a frozen T3/T6 consumer signature.
+
 ### Task 3: Desktop main, catalog IPC and static-language recovery
 
 **Files:**
@@ -7809,11 +7884,13 @@ it.each(["node", "python"] as const)(
     manager.reportLanguageRegistrationFailure.mockImplementation(() => {
       publishCatalog(
         catalog(2, [bp]),
-        manager.state().plugins.map((plugin) =>
-          plugin.sourceKey === key
-            ? { ...plugin, problems: [...plugin.problems, registrationProblem] }
-            : plugin,
-        ),
+        manager
+          .state()
+          .plugins.map((plugin) =>
+            plugin.sourceKey === key
+              ? { ...plugin, problems: [...plugin.problems, registrationProblem] }
+              : plugin,
+          ),
       );
       return { accepted: true, revision: 2 };
     });
@@ -8771,6 +8848,7 @@ git commit -m "docs(desktop): explain static language risks in plugin dialogs"
 
 - T0's `begin(): SafeModeLock["reason"] | undefined` loses whether an unclean exit involved an exposed static contribution. T3 defines `SessionMarkerFile.previousThirdPartyStaticContributions: boolean` as a read-only getter in its own `session.ts` and consumes it only in its own `startPlugins`; this keeps recovery sticky after the final source is removed while preserving the existing process-only/no-source behavior. No other task needs a new import or signature.
 - T0 does not define marker-failure recovery within a still-running session. T3 resolves it locally with a session-long delivery-failure latch: publish a consistent builtin-only projection at the manager's unchanged revision, expose `PLUGIN_E_STATE_SAVE`, and require restart after storage is repaired. This avoids changing catalog contents under one revision and leaves all frozen DTOs and cross-task APIs unchanged.
+
 ### Task 4: Renderer static-language store, adapter, resolver, and registration lifecycle
 
 **Files:**
@@ -11218,6 +11296,7 @@ git commit -m "feat(desktop): reconcile static registrations and live model rout
 
 - T0 does not define a typed adapter failure discriminator. This task defines `StaticLanguageAdapterError` with `reason: "validation" | "adapter"` inside `static-language-adapter.ts`, consumed only by its sibling registrar; every T0 signature and the five IPC reasons remain unchanged.
 - T0 has no renderer-visible explicit-enable attempt token. This task defines session quarantine locally by `(pluginId, sourceKey, generation, languageId)` and never clears it merely because a new revision or temporary catalog removal arrives. T2/T8 must ensure an explicit enable after failure publishes a fresh `generation` (as reload does), or freeze an additional retry signal before integration; otherwise an enable of the same generation is indistinguishable from the forbidden report/revision retry loop. Do not invent a new IPC field or modify T2/T3 files in this task.
+
 ### Task 5: Renderer 整合／UI
 
 **Files:**
@@ -13381,6 +13460,7 @@ git commit -m "feat(plugins): show static language state and gate renderer resto
 - **T0 未凍結 window owner、retained context、provider selector 和 label 的本地 glue。** 已在 T5 write set 的 `static-language-bootstrap.ts`、`model-language-route.ts`、`editor-models.ts`、`i18n/copy.ts` 完整定義；T0 的 bootstrap/result、route/interfaces、T4 factory 和 T6 theme 函式名稱／簽章都不變。`LanguageFeatures.register(route, model)` 是 T5-only 呼叫面；不要求其他 worker 編輯其檔案。
 - **Split options ownership 缺口。** 實際 `apps/desktop/src/renderer/editor/split-editor.tsx` 也有 `monaco.editor.create` 與 `updateOptions`，但 §11.1／part0 都未分配給 T5。T5 在自己擁有的 `app.tsx` 加 pre-model callback clamp；controller 必須在各 task 停止寫入後交 T8 修改 split 檔及其直接測試，才能滿足全部 options construction 的精確要求。T5 不越界修改。
 - **獨立 whole-desktop type check 與 companion 欄位移除的缺口。** T0 仍保留 T6 的 `companions/basic-plus/companion.ts:8-10` typed object 及 `apps/desktop/src/renderer/editor/completion-session.test.ts:37` 的 `monacoLanguage`，後者不在任何已列 T5 ownership；刪 T5 interface 後產生 excess-property errors。T6 負責前者；controller 必須將後者在 T8 唯一接手，移除該 fixture 欄位並執行上面的全 desktop check。本計畫的 T0-only gates 是 mocked Vitest + scoped prettier/ESLint，沒有虛報全 desktop typecheck 可獨立通過。
+
 ### Task 6: Basic Plus resources, raw bundling, and independent editor themes
 
 **Files:**
@@ -14601,6 +14681,7 @@ git commit -m "refactor(editor): initialize themes independently of static langu
 **Contract gaps**
 
 - T0 preserves required `LanguageCompanion.monacoLanguage` and `editor.tsx`'s `registerBasicPlusLanguage` import while T6 must remove both provider exports and T5 must remove their consumers. T6 defines the local `BasicPlusDynamicCompanion = Omit<LanguageCompanion, "monacoLanguage">` inside its owned `companion.ts`; no cast or fake runtime field hides the migration. This makes owned-module tests usable on T0, but the complete T0 desktop typecheck remains incompatible at the stale composition table and editor import until T5 merges. T8 must verify those two removals; T6 must not modify their files. No public signature or fixture name is missing or renamed.
+
 ### Task 7: Static-language acceptance harnesses, recovery fixtures, and author documentation
 
 **Files:**
@@ -16366,6 +16447,7 @@ The executor reports local gate results and stops writing before T8 merges. The 
 
 - T0 contains no builtin frontend/service fixture for selected-binding disambiguation. T7 defines `builtin` and the complete `LanguageBinding` in `tests/desktop/static-languages-fixtures.mjs` using the frozen `PluginSource.resources` shape and toy resource bytes. The fixture is host-created, never a development manifest claiming builtin identity; its real runtime/resolver check runs in T8. No new product factory/companion is introduced.
 - T0 contains no smoke catalog provider, marker-failure injection helper, or installed-app assertion entry. T7 defines these entirely in its new `tests/desktop/static-languages-*` files, using the frozen IPC channels and `SessionMarkerFile.markThirdPartyStaticContributions` hook. These are test-local contracts; no production signature or shared fixture changes are needed.
+
 ## Controller Rulings (cross-task)
 
 - R1: After a static language registration failure, an explicit enable of the plugin (and any reload) MUST publish a fresh `generation` for that source. T2 owns this in `packages/plugin-runtime/**`; its implementer must add a test that disable → enable after a reported failure yields a higher generation. T4's quarantine key `(pluginId, sourceKey, generation, languageId)` relies on it. No new IPC retry field.
@@ -17552,24 +17634,24 @@ This gate is mandatory before acceptance. T1 owns the structural corpus and pure
 
 For a range `m..N`, part1's shared corpus executes distinct `0`, `max(0,m-1)`, `m`, `max(1,m)`, `N-1`, `N`, `N+1` samples (duplicates removed). Array entries are distinct wherever uniqueness is meaningful. Empty optional collections and omitted fields remain separately legal; empty static contributions remain semantically invalid without diagnostic help. A schema pass proves structure; reference/uniqueness/aggregate semantics use the public validator tests.
 
-| Effective §2–§4 bound | Executable cases / exceptions | Owner and exact test file(s) |
-| --- | --- | --- |
-| Languages 0..8; static runtime requires ≥1 contribution; resource version exactly 1 | `languages`, `resourceVersion`; static empty/help-only and version 0/1/2 cases | T1 `packages/plugin-protocol/src/static-language-manifest.test.ts`, `conformance.test.ts` |
-| Language id 1..32; extensions 1..16 items, text 1..16; aliases optional or 1..8 items, text 1..80 code points | `id`, `extensions`, `extensionText`, `aliases`, `aliasText`; astral alias strings, omitted aliases and semantic uniqueness | T1 same files |
-| Resource path 0..7 directories, directory segment/stem 1..64, effective length 6..524; declared cap 600 | `pathDepth`, `directorySegment`, `fileStem`, `pathLength` for both resources. 523/524 pass, 525 fails. 599/600/601 all fail the grammar; `json-schema.test.ts` still asserts `maxLength:600`. No impossible 600-character positive fixture. `.json` adds 5 beyond the stem's 64. | T1 same files plus `json-schema.test.ts` |
-| States 1..64; state/list names 1..32; include/next/when references 2..33 | `states`, `stateName`, `listName`, `include`, `next`, `when`; missing root, reserved/duplicate names and missing references are semantic tests | T1 `conformance.test.ts`, `static-languages.test.ts` |
-| Literal token 0..80 at default/action/bracket positions; postfix 2..80 | `defaultToken`, `actionToken`, `bracketToken`, `tokenPostfix`; empty token is legal, `@brackets` requires ≥1 bracket entry | T1 same files |
-| Lists 0..32, words 0..4096 total, word text 1..64; cases 1..32 | `lists`, `words`, `wordText`, `cases`; split-list 4095/4096/4097 and distinct-list cases 0/1/31/32/33 ending in one default through public validator | T1 same files |
-| Pair tables each 0..32; open/close/comment atoms 1..16 | `tokenizerBrackets`, `configurationBrackets`, `autoClosingPairs`, `surroundingPairs`, `pairOpen`, `pairClose`, `lineComment`. All pair positions reuse `pairSchema`; controls and astral text tested. | T1 `conformance.test.ts`, `static-language-schemas.test.ts` |
-| `notIn` 0..3 unique enum values; onEnter 0..32; append 0..256; remove integer 0..256 | `notIn`, `onEnterRules`, `appendText`, `removeText`, plus remove -1/0.5. Four distinct legal `notIn` values are impossible: the fourth sample repeats a legal value; semantic duplicate rejection is tested separately at count 2. | T1 same files plus `static-languages.test.ts` |
-| Raw patterns 1..2048 code points; compiled source ≤4096; tokenizer minimum consumption 1 | `tokenizerPattern`, `configurationPattern`; raw 0/1/2047/2048/2049; normalized tokenizer and configuration 4095/4096/4097; zero/one-consumption AST tests | T1 `conformance.test.ts`, `static-language-regex.test.ts`; T8 `static-language-migration.test.ts` uses real adapter/Monaco |
-| Flags exactly `""` or `"i"`; tokenizer must match ignoreCase | Both allowed values, mismatches and prohibited/repeated flags; no numeric lower/upper interval | T1 schema/regex tests; T8 migration/browser checks |
-| Raw rules 0..1024 across states including includes; regex occurrences 0..1024 across tokenizer + configuration | `boundary semantic totals and byte counters`: 0/1/1023/1024/1025, plus original include-count and all 4 indentation + 3 onEnter + wordPattern tests | T1 `static-languages.test.ts` |
-| Expanded rules 0..8192 per language; include depth 0..16 edges | 0/1/8191/8192/8193 with ≤64 states and ≤1024 raw entries; 0/1/15/16/17 edges, DAG/cycles and saturated exponential counts | T1 `static-language-graph.test.ts` |
-| File bytes ≤524288, language bytes ≤786432 | Both byte counters 0/1/524287/524288/524289; sum 0/786431/786432/786433. Pure API allows nonnegative counters; reader rejects empty/non-JSON bytes, so no fabricated positive empty JSON resource. Real BOM-inclusive reader tests below. | T1 `static-languages.test.ts`; T2 `packaged-json-resource.test.ts` |
-| Plugin bytes ≤1048576; total bytes ≤8388608; admitted ids ≤128; expanded total ≤65536 | Empty catalog plus N-1/N/N+1 below, repeated-path accounting retained. Every language stays within file/per-language limits; global bytes use 16 sources, expanded totals use 8 or 9 languages. | T2 `static-languages.test.ts` |
-| Session ids ≤256, including revoked shells | 0/1/255/256/257 below; old id can return at cap without new register; count distinct ids, not plugins or current catalog entries | T4 `static-language-registration.test.ts` |
-| Tokenization line length ≥10000 UTF-16 units skips | 9999/10000/10001, classic/encoded, final create/update configuration and astral text; actual main/split/review consumers retained | T8 `static-languages-browser.ts`, migration/split tests; T5 editor/review tests and §8.8 |
+| Effective §2–§4 bound                                                                                          | Executable cases / exceptions                                                                                                                                                                                                                                                    | Owner and exact test file(s)                                                                                               |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Languages 0..8; static runtime requires ≥1 contribution; resource version exactly 1                            | `languages`, `resourceVersion`; static empty/help-only and version 0/1/2 cases                                                                                                                                                                                                   | T1 `packages/plugin-protocol/src/static-language-manifest.test.ts`, `conformance.test.ts`                                  |
+| Language id 1..32; extensions 1..16 items, text 1..16; aliases optional or 1..8 items, text 1..80 code points  | `id`, `extensions`, `extensionText`, `aliases`, `aliasText`; astral alias strings, omitted aliases and semantic uniqueness                                                                                                                                                       | T1 same files                                                                                                              |
+| Resource path 0..7 directories, directory segment/stem 1..64, effective length 6..524; declared cap 600        | `pathDepth`, `directorySegment`, `fileStem`, `pathLength` for both resources. 523/524 pass, 525 fails. 599/600/601 all fail the grammar; `json-schema.test.ts` still asserts `maxLength:600`. No impossible 600-character positive fixture. `.json` adds 5 beyond the stem's 64. | T1 same files plus `json-schema.test.ts`                                                                                   |
+| States 1..64; state/list names 1..32; include/next/when references 2..33                                       | `states`, `stateName`, `listName`, `include`, `next`, `when`; missing root, reserved/duplicate names and missing references are semantic tests                                                                                                                                   | T1 `conformance.test.ts`, `static-languages.test.ts`                                                                       |
+| Literal token 0..80 at default/action/bracket positions; postfix 2..80                                         | `defaultToken`, `actionToken`, `bracketToken`, `tokenPostfix`; empty token is legal, `@brackets` requires ≥1 bracket entry                                                                                                                                                       | T1 same files                                                                                                              |
+| Lists 0..32, words 0..4096 total, word text 1..64; cases 1..32                                                 | `lists`, `words`, `wordText`, `cases`; split-list 4095/4096/4097 and distinct-list cases 0/1/31/32/33 ending in one default through public validator                                                                                                                             | T1 same files                                                                                                              |
+| Pair tables each 0..32; open/close/comment atoms 1..16                                                         | `tokenizerBrackets`, `configurationBrackets`, `autoClosingPairs`, `surroundingPairs`, `pairOpen`, `pairClose`, `lineComment`. All pair positions reuse `pairSchema`; controls and astral text tested.                                                                            | T1 `conformance.test.ts`, `static-language-schemas.test.ts`                                                                |
+| `notIn` 0..3 unique enum values; onEnter 0..32; append 0..256; remove integer 0..256                           | `notIn`, `onEnterRules`, `appendText`, `removeText`, plus remove -1/0.5. Four distinct legal `notIn` values are impossible: the fourth sample repeats a legal value; semantic duplicate rejection is tested separately at count 2.                                               | T1 same files plus `static-languages.test.ts`                                                                              |
+| Raw patterns 1..2048 code points; compiled source ≤4096; tokenizer minimum consumption 1                       | `tokenizerPattern`, `configurationPattern`; raw 0/1/2047/2048/2049; normalized tokenizer and configuration 4095/4096/4097; zero/one-consumption AST tests                                                                                                                        | T1 `conformance.test.ts`, `static-language-regex.test.ts`; T8 `static-language-migration.test.ts` uses real adapter/Monaco |
+| Flags exactly `""` or `"i"`; tokenizer must match ignoreCase                                                   | Both allowed values, mismatches and prohibited/repeated flags; no numeric lower/upper interval                                                                                                                                                                                   | T1 schema/regex tests; T8 migration/browser checks                                                                         |
+| Raw rules 0..1024 across states including includes; regex occurrences 0..1024 across tokenizer + configuration | `boundary semantic totals and byte counters`: 0/1/1023/1024/1025, plus original include-count and all 4 indentation + 3 onEnter + wordPattern tests                                                                                                                              | T1 `static-languages.test.ts`                                                                                              |
+| Expanded rules 0..8192 per language; include depth 0..16 edges                                                 | 0/1/8191/8192/8193 with ≤64 states and ≤1024 raw entries; 0/1/15/16/17 edges, DAG/cycles and saturated exponential counts                                                                                                                                                        | T1 `static-language-graph.test.ts`                                                                                         |
+| File bytes ≤524288, language bytes ≤786432                                                                     | Both byte counters 0/1/524287/524288/524289; sum 0/786431/786432/786433. Pure API allows nonnegative counters; reader rejects empty/non-JSON bytes, so no fabricated positive empty JSON resource. Real BOM-inclusive reader tests below.                                        | T1 `static-languages.test.ts`; T2 `packaged-json-resource.test.ts`                                                         |
+| Plugin bytes ≤1048576; total bytes ≤8388608; admitted ids ≤128; expanded total ≤65536                          | Empty catalog plus N-1/N/N+1 below, repeated-path accounting retained. Every language stays within file/per-language limits; global bytes use 16 sources, expanded totals use 8 or 9 languages.                                                                                  | T2 `static-languages.test.ts`                                                                                              |
+| Session ids ≤256, including revoked shells                                                                     | 0/1/255/256/257 below; old id can return at cap without new register; count distinct ids, not plugins or current catalog entries                                                                                                                                                 | T4 `static-language-registration.test.ts`                                                                                  |
+| Tokenization line length ≥10000 UTF-16 units skips                                                             | 9999/10000/10001, classic/encoded, final create/update configuration and astral text; actual main/split/review consumers retained                                                                                                                                                | T8 `static-languages-browser.ts`, migration/split tests; T5 editor/review tests and §8.8                                   |
 
 Every shared `boundary ...` case is in `packages/plugin-protocol/conformance/cases.json`: Zod executes it in `conformance.test.ts`, Python executes the same value against the exported schema in `sdks/python/tests/test_conformance.py`. The inventory assertion prevents omission of any structural family/sample. Upper-only aggregates have a legal empty/zero case, not a negative collection or byte allocation. Existing API compatibility, strictness, control rejection and semantic tests remain required alongside this numeric ledger.
 
