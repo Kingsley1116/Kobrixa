@@ -6,7 +6,7 @@
 
 **Tech Stack:** TypeScript strict/noUncheckedIndexedAccess/exactOptionalPropertyTypes; repository Node 24+, Electron 44, Zod 4, draft-2020-12 JSON Schema, Vitest, Python 3.10+, pnpm. No dependency installation in T0/T1/T2.
 
-**Binding specs:** `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md` and `docs/superpowers/specs/2026-10-17-plugin-system-3b2-settings-storage-design.md`; sibling ports come from the 3A and 3B-1 specs. `.superpowers/sdd/stage-3-plans/skeleton.md` controls task IDs, spelling, values, and ownership. This fragment owns 3B2-T0, 3B2-T1, and 3B2-T2. All commands below are future implementation instructions, not a claim that they ran while drafting.
+**Binding specs:** `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md` and `docs/superpowers/specs/2026-10-17-plugin-system-3b2-settings-storage-design.md`; sibling ports come from the 3A and 3B-1 specs. `.superpowers/sdd/stage-3-plans/skeleton.md` controls task IDs, spelling, values, and ownership. All commands below are future implementation instructions, not a claim that they ran while drafting.
 
 ## Global Constraints
 
@@ -298,7 +298,7 @@ T0 固定量測環境欄位：OS／architecture、CPU／RAM、filesystem、app a
 | Lifecycle codes                          | `PLUGIN_E_DISABLED`、`PLUGIN_E_SAFE_MODE`、`PLUGIN_E_SHUTTING_DOWN` 無需 detail；若已有 publish，返回原 receipt／unknown，不將已提交寫入重新分類成未執行。                                                                                                         |
 
 
-The five Review Focus lines are supplied by P12 and assembled here before Parallel Execution. T2 directly owns B2-RF1 and the engine/quota/streaming portion of B2-RF5; the named atomic-store tests below pin these obligations. B2 §10 has descriptive rows, not numbered IDs: this plan cites each row by its original failure description and cites §12.1 groups 1–8 without inventing replacements.
+The five Review Focus lines below govern T9 and X-T1 acceptance. T2 directly owns B2-RF1 and the engine/quota/streaming portion of B2-RF5; the named atomic-store tests below pin these obligations. B2 §10 has descriptive rows, not numbered IDs: this plan cites each row by its original failure description and cites §12.1 groups 1–8 without inventing replacements.
 
 ## Review Focus
 
@@ -628,10 +628,40 @@ Create `packages/plugin-runtime/src/persistence-participant.test.ts`:
 
 ```ts
 import { expectTypeOf, it } from "vitest";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { ResourceOwner, DrainRequest, Handle, PersistenceResult } from "@kobrixa/plugin-protocol";
 import type { DeviceDrainGrant, ReservationEnded } from "./device-resources.js";
 import type { DrainReason } from "@kobrixa/plugin-protocol";
-import type { PersistenceOwner, PersistenceParticipant, DrainOffer } from "./persistence-participant.js";
+import type { PersistenceOwner, PersistenceParticipant, DrainOffer, DrainDispatcher } from "./persistence-participant.js";
+import type * as Root from "./index.js";
+import type * as Forms from "./settings-form-port.js";
+import type * as Lifecycle from "./ui-lifecycle.js";
+import type * as UiHost from "./ui-host-ports.js";
+import type * as Events from "./ui-subscriptions.js";
+it("exports the complete frozen form, lifecycle and diagnostics contracts", () => {
+  expectTypeOf<Root.SettingsFormBinding>().toEqualTypeOf<Forms.SettingsFormBinding>();
+  expectTypeOf<Root.SettingsFormPort>().toEqualTypeOf<Forms.SettingsFormPort>();
+  expectTypeOf<Root.BoundSettingsService>().toEqualTypeOf<Forms.BoundSettingsService>();
+  expectTypeOf<Root.ContributedSettingsForm>().toEqualTypeOf<Forms.ContributedSettingsForm>();
+  expectTypeOf<Root.SettingsFieldMap>().toEqualTypeOf<Forms.SettingsFieldMap>();
+  expectTypeOf<Root.Stage3RuntimePorts>().toEqualTypeOf<Lifecycle.Stage3RuntimePorts>();
+  expectTypeOf<Root.Stage3HostAttachment>().toEqualTypeOf<Lifecycle.Stage3HostAttachment>();
+  expectTypeOf<Root.Stage3ChannelContext>().toEqualTypeOf<Lifecycle.Stage3ChannelContext>();
+  expectTypeOf<Root.Stage3ChannelBinding>().toEqualTypeOf<Lifecycle.Stage3ChannelBinding>();
+  expectTypeOf<Root.UiRuntimeAttachment>().toEqualTypeOf<Lifecycle.UiRuntimeAttachment>();
+  expectTypeOf<Root.OwnerRetirement>().toEqualTypeOf<Lifecycle.OwnerRetirement>();
+  expectTypeOf<Root.PluginUiBridge>().toEqualTypeOf<UiHost.PluginUiBridge>();
+  expectTypeOf<Root.UiCatalogPort>().toEqualTypeOf<UiHost.UiCatalogPort>();
+  expectTypeOf<Root.UiBridgeEvent>().toEqualTypeOf<UiHost.UiBridgeEvent>();
+  expectTypeOf<Root.FoundationDiagnostics>().toEqualTypeOf<UiHost.FoundationDiagnostics>();
+  expectTypeOf<Root.FoundationCounters>().toEqualTypeOf<UiHost.FoundationCounters>();
+  expectTypeOf<Root.FoundationDiagnosticEvent>().toEqualTypeOf<UiHost.FoundationDiagnosticEvent>();
+  expectTypeOf<Root.UiEventLedgerPort>().toEqualTypeOf<Events.UiEventLedgerPort>();
+});
+it("pins the explicit 1.7 drain result projection", () => {
+  expectTypeOf<DrainDispatcher>().toEqualTypeOf<(
+    owner: PersistenceOwner, request: DrainRequest, signal: AbortSignal,
+  ) => Promise<PersistenceResult<{status:"submitted"|"checkpoint-only";writes:Handle[]}>>>();
+});
 it("passes the original grant in argument four and never accepts null", () => {
   expectTypeOf<PersistenceOwner>().toEqualTypeOf<ResourceOwner>();
   expectTypeOf<PersistenceParticipant["freeze"]>().toEqualTypeOf<(
@@ -659,6 +689,15 @@ import type { Handle, RecordId, RecordRevision } from "@kobrixa/plugin-protocol"
 import type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 import type { PersistenceEnginePort, PersistenceReadPort, PublicationTicket } from "./engine-port.js";
 import type { PersistenceFsPort, StoreFd, StorePath } from "./filesystem.js";
+import type * as RuntimeRoot from "@kobrixa/plugin-runtime";
+import type * as FrozenForms from "../../../../../../packages/plugin-runtime/src/settings-form-port.js";
+it("consumes the built runtime form types through its package root", () => {
+  expectTypeOf<RuntimeRoot.SettingsFormBinding>().toEqualTypeOf<FrozenForms.SettingsFormBinding>();
+  expectTypeOf<RuntimeRoot.SettingsFormPort>().toEqualTypeOf<FrozenForms.SettingsFormPort>();
+  expectTypeOf<RuntimeRoot.BoundSettingsService>().toEqualTypeOf<FrozenForms.BoundSettingsService>();
+  expectTypeOf<RuntimeRoot.ContributedSettingsForm>().toEqualTypeOf<FrozenForms.ContributedSettingsForm>();
+  expectTypeOf<RuntimeRoot.SettingsFieldMap>().toEqualTypeOf<FrozenForms.SettingsFieldMap>();
+});
 it("pins byte I/O, immutable publication tickets and generation-bound read pins", () => {
   expectTypeOf<PersistenceFsPort["open"]>().toEqualTypeOf<(p: StorePath, mode: "read" | "create-exclusive") => Promise<StoreFd>>();
   expectTypeOf<PersistenceEnginePort["fence"]>().toEqualTypeOf<(owner: PersistenceOwner, deadline: number) => readonly Handle[]>();
@@ -1008,7 +1047,7 @@ export interface PersistenceParticipant {
 `packages/plugin-runtime/src/settings-form-port.ts`:
 
 ```ts
-import type { UiOwner, Sha256, SettingsResourceV1, SettingsSnapshot, PluginErrorCode, PersistenceFailureDetail } from "@kobrixa/plugin-protocol";
+import type { UiOwner, Sha256, SettingsResourceV1, SettingsSnapshot, PluginErrorCode, PersistenceFailureDetail, SettingsRequestMap, SettingKey, LocalId, SettingsScalar } from "@kobrixa/plugin-protocol";
 import type { CoreWindowScope } from "./core-actions.js";
 export type SettingsFormBinding = {
   owner: UiOwner;
@@ -1027,6 +1066,26 @@ export interface SettingsFormPort {
     error: { code: PluginErrorCode; message: string; detail?: PersistenceFailureDetail },
   ): void;
   dispose(binding: SettingsFormBinding): void;
+}
+export interface BoundSettingsService {
+  open(input:{sourceKey:string; scope:CoreWindowScope; resourceDigest:Sha256}): Promise<{
+    binding:SettingsFormBinding; resource:SettingsResourceV1; snapshot:SettingsSnapshot;
+  }>;
+  read(binding:SettingsFormBinding): Promise<SettingsRequestMap["settings/read"]["result"]>;
+  update(binding:SettingsFormBinding, params:SettingsRequestMap["settings/update"]["params"]): Promise<SettingsRequestMap["settings/update"]["result"]>;
+  reset(binding:SettingsFormBinding, params:SettingsRequestMap["settings/reset"]["params"]): Promise<SettingsRequestMap["settings/reset"]["result"]>;
+  watch(binding:SettingsFormBinding, changed:()=>void): () => void;
+  dispose(binding:SettingsFormBinding): void;
+}
+export interface ContributedSettingsForm extends SettingsFormPort {
+  retry(binding:SettingsFormBinding, key:SettingKey): Promise<void>;
+  reload(binding:SettingsFormBinding): Promise<void>;
+}
+export interface SettingsFieldMap {
+  field(key:SettingKey): LocalId;
+  key(field:LocalId): SettingKey;
+  option(key:SettingKey, value:SettingsScalar): LocalId;
+  value(key:SettingKey, option:LocalId): SettingsScalar;
 }
 ```
 
@@ -1279,11 +1338,21 @@ export type { PersistenceActionRequestMap } from "./persistence-actions.js";
 ```
 
 ```ts
+export type * from "./persistence-participant.js";
 export type {
-  PersistenceOwner, DrainOffer, DrainDispatcher, DrainReport,
-  PersistenceRecoverySnapshot, PersistenceParticipant,
-} from "./persistence-participant.js";
-export type { SettingsFormBinding, SettingsFormPort } from "./settings-form-port.js";
+  SettingsFormBinding, SettingsFormPort, BoundSettingsService,
+  ContributedSettingsForm, SettingsFieldMap,
+} from "./settings-form-port.js";
+export type * from "./device-resources.js";
+export type * from "./profile-writer-lock.js";
+export type * from "./core-actions.js";
+export type * from "./builtin-launch.js";
+export type * from "./ui-lifecycle.js";
+export type * from "./ui-subscriptions.js";
+export type {
+  PluginUiBridge, UiCatalogPort, UiBridgeEvent, FoundationDiagnostics,
+  FoundationCounters, FoundationDiagnosticEvent,
+} from "./ui-host-ports.js";
 ```
 
 
@@ -1590,7 +1659,7 @@ interface FoundationFixture {
 }
 ```
 
-Retain P12's 15 case assertions but import these types/constants from T7's producer, not vice versa. Measurements come from actual faults/traces/counters/artifact hashes; constant evidence is allowed only for verifier unit tests. T7 develops against F then resumes after D170/K170 have stopped for a named exact-file producer handoff (`plugin-persistence-main.ts` and `plugin-persistence-run.mjs`) before P170 acceptance. Record producer bundle hash/commit in B2 acceptance. After T7 stops, X-T1 consumes it; defects return to T7 in another stopped-owner receipt, never an implicit X-T1 write grant. P170 real run and X-T1 all 15 cases, real worker kills/reopen, SDK traffic, installed artifact and cleanup; manual/hardware rows remain pending when unrun.
+Retain X-T1's 15 case assertions but import these types/constants from T7's producer, not vice versa. Measurements come from actual faults/traces/counters/artifact hashes; constant evidence is allowed only for verifier unit tests. T7 develops against F then resumes after D170/K170 have stopped for a named exact-file producer handoff (`plugin-persistence-main.ts` and `plugin-persistence-run.mjs`) before P170 acceptance. Record producer bundle hash/commit in B2 acceptance. After T7 stops, X-T1 consumes it; defects return to T7 in another stopped-owner receipt, never an implicit X-T1 write grant. P170 real run and X-T1 all 15 cases, real worker kills/reopen, SDK traffic, installed artifact and cleanup; manual/hardware rows remain pending when unrun.
 
 #### Frozen AM-31 — SDK exports, invocation factory and fixture representation
 
@@ -4015,6 +4084,8 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/persistence/contract.test.ts
 ```
 
+A/B1 preflights wait for this final H-R assembly and the protocol/runtime dist rebuild above before checking desktop package-root consumers.
+
 Expected: PASS for compilation and contracts. Existing API/version/registry assertions remain 1.4.0. This does not claim a functioning persistence service. No schema generator runs in T0.
 
 - [ ] **Step 6: Record ownership, then have the controller commit F**
@@ -4045,6 +4116,7 @@ with p.open("a") as f:
  f.write("F is the following verified contract commit; the controller records its actual SHA in the receipt-only follow-up commit before cutting worktrees. No implementation begins earlier.\n\n| Path | Successor |\n|---|---|\n")
  for owner, paths in rows.items():
   for path in paths: f.write(f"| `{path}` | {owner} |\n")
+ f.write("\nH-R assembled packages/plugin-runtime/src/index.ts once after all three T0 portions: device-resources.ts, profile-writer-lock.ts, core-actions.ts, builtin-launch.ts, ui-lifecycle.ts, ui-subscriptions.ts, ui-host-ports.ts, persistence-participant.ts and settings-form-port.ts. These are type-only exports; no constructors or 1.7 wire registrations were published.\n")
  f.write("\nT0 rights relinquished. Fixtures transfer T1 → T8 only after T1 stops. P150 → P160 → P170 publication order is unchanged. No performance, Electron, hardware, or manual result is claimed.\n")
 PYRECEIPT
 ```
@@ -5871,7 +5943,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 - Create: `apps/desktop/src/main/plugins/persistence/quota.test.ts`
 - Create: `apps/desktop/src/main/plugins/persistence/recovery-scan.ts`
 - Create: `apps/desktop/src/main/plugins/persistence/recovery-scan.test.ts`
-- Create: `apps/desktop/src/main/plugins/persistence/worker.ts`
+- Modify (F scaffold; baseline N; retain the frozen F declarations): `apps/desktop/src/main/plugins/persistence/worker.ts`
 - Create: `apps/desktop/src/main/plugins/persistence/worker.test.ts`
 - Modify: `apps/desktop/src/main/plugins/persistence/contract.test.ts`
 - Test: `apps/desktop/src/main/plugins/persistence/filesystem.test.ts`
@@ -7981,7 +8053,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git diff --check
 ```
 
-Expected: PASS for the F-based branch and all owned tests. Full desktop/lint/schema/SDK publication checks are shared integration gates in skeleton §6 and the final verification section supplied by P12. Do not rerun unrelated broad suites after unchanged results. If an unmerged shared prerequisite prevents the desktop check, record the actual error and prerequisite SHA; do not fabricate substitute production modules.
+Expected: PASS for the F-based branch and all owned tests. Full desktop/lint/schema/SDK publication checks are shared integration gates in skeleton §6 and the final verification section owned by X-T1. Do not rerun unrelated broad suites after unchanged results. If an unmerged shared prerequisite prevents the desktop check, record the actual error and prerequisite SHA; do not fabricate substitute production modules.
 
 Controller runs outside sandbox for the following **later** evidence, after T7/H-K/H-D install their assigned files: actual Electron host kill/restart, package worker launch/exit, Windows same-volume replacement and junction/reparse cases, Linux/macOS directory sync policy, SSD 30-sample latency/RSS, and storage-pressure plus device safety-stop dispatch. Those gates remain pending here. Exact numerical acceptance remains the Global Constraints table: 50×8 MiB, two additional reservations, four I/O jobs, main synchronous segment ≤16 ms, extra main/worker RSS ≤32/64 MiB, warm list p95≤200 ms, commit/flush≤10 s, stop-dispatch added p95≤50 ms. Report OS/architecture, CPU/RAM/filesystem, artifact/commit, Node/Electron, actual fixture bytes/count, warm/cold, 30 samples p50/p95/max, separate main/worker RSS and measurement method.
 
@@ -8003,11 +8075,11 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 
 **Files**
 
-- Create: `apps/desktop/src/main/plugins/persistence/settings-service.ts`
+- Modify (F scaffold; baseline N; retain the frozen F declarations): `apps/desktop/src/main/plugins/persistence/settings-service.ts`
 - Create/Test: `apps/desktop/src/main/plugins/persistence/settings-service.test.ts`
 - Create: `apps/desktop/src/renderer/settings/contributed-settings-store.ts`
 - Create/Test: `apps/desktop/src/renderer/settings/contributed-settings-store.test.ts`
-- Create: `apps/desktop/src/renderer/settings/contributed-settings-form.tsx`
+- Modify (F scaffold; baseline N; retain the frozen F declarations): `apps/desktop/src/renderer/settings/contributed-settings-form.tsx`
 - Create/Test: `apps/desktop/src/renderer/settings/contributed-settings-form.test.ts`
 - Modify (T0 scaffold; baseline N): `packages/plugin-runtime/src/settings-form-port.ts`
 
@@ -8251,7 +8323,7 @@ Expected failure: missing `settings-service.js`; after a T0 stub, missing `creat
 
 - [ ] **Step 3: Implement the settings service**
 
-Create `apps/desktop/src/main/plugins/persistence/settings-service.ts`:
+Modify `apps/desktop/src/main/plugins/persistence/settings-service.ts` (F scaffold; baseline N), retaining the frozen F declarations:
 
 ```ts
 import { createHash, randomUUID } from "node:crypto";
@@ -8474,9 +8546,9 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 
 Expected: all service tests pass with constructor doubles. Commit is a future **controller runs outside sandbox** step; this plan-writing session does not commit.
 
-- [ ] **Step 4a: Freeze the bound form boundary and use the admitted core namespace**
+- [ ] **Step 4a: Implement the frozen bound form boundary using the admitted core namespace**
 
-Add these declarations to the owned `packages/plugin-runtime/src/settings-form-port.ts`; import their referenced types from the canonical protocol/runtime modules. Re-export `ContributedSettingsForm` and `SettingsFieldMap` type-only from contributed-settings-form.tsx. No renderer principal is accepted.
+Retain the declarations frozen by 3B2-T0 Step 3 in `packages/plugin-runtime/src/settings-form-port.ts`. The following block is an equality reference, not a second declaration or a new interface. Implement the service and form against it; T3 does not edit index.ts. Re-export `ContributedSettingsForm` and `SettingsFieldMap` type-only from contributed-settings-form.tsx. No renderer principal is accepted.
 
 ```ts
 
@@ -8890,7 +8962,7 @@ export function createContributedSettingsStore(initial: SettingsSnapshot, io: Se
 }
 ```
 
-Create `apps/desktop/src/renderer/settings/contributed-settings-form.tsx`:
+Modify `apps/desktop/src/renderer/settings/contributed-settings-form.tsx` (F scaffold; baseline N), retaining the frozen F declarations:
 
 ```tsx
 import type { SettingsResourceV1, SettingsScalar, SettingKey, LocalId } from "@kobrixa/plugin-protocol";
@@ -9738,7 +9810,7 @@ Expected: all record and port tests pass against doubles. Commit is **controller
 - Create/Test: `apps/desktop/src/main/plugins/persistence/actions.test.ts`
 - Create: `apps/desktop/src/main/plugins/persistence/lifecycle.ts`
 - Create/Test: `apps/desktop/src/main/plugins/persistence/lifecycle.test.ts`
-- Create: `apps/desktop/src/main/plugins/persistence/recovery-port.ts`
+- Modify (F scaffold; baseline N; retain the frozen F declarations): `apps/desktop/src/main/plugins/persistence/recovery-port.ts`
 - Create/Test: `apps/desktop/src/main/plugins/persistence/recovery-port.test.ts`
 - Modify (T0 scaffold; baseline N): `packages/plugin-runtime/src/persistence-participant.ts`
 - Modify/Test (T0 scaffold; baseline N): `packages/plugin-runtime/src/persistence-participant.test.ts`
@@ -9765,7 +9837,7 @@ Preconditions: F includes B2 module-local schemas and all type-only exports; W1 
 
 - [ ] **Step 1: Pin the runtime types and participant delegation**
 
-Replace `packages/plugin-runtime/src/persistence-participant.test.ts` with these canonical F assertions and the fourth-argument assertion:
+Append these assertions to `packages/plugin-runtime/src/persistence-participant.test.ts`, merging imports and preserving all F assertions, including the package-root and DrainDispatcher equalities:
 
 ```ts
 import { expectTypeOf, it } from "vitest";
@@ -9795,7 +9867,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 Replace `packages/plugin-runtime/src/persistence-participant.ts` with the complete canonical declarations (type-only imports, no runtime dependency on desktop):
 
 ```ts
-import type { BusinessResult, Counter, DrainReason, DrainRequest, Handle,
+import type { PersistenceResult, Counter, DrainReason, DrainRequest, Handle,
   PersistenceFailureDetail, RecordId, RecordRevision, ResourceOwner, Timestamp } from "@kobrixa/plugin-protocol";
 import type { DeviceDrainGrant, ReservationEnded } from "./device-resources.js";
 import type { CoreActionReference } from "./core-actions.js";
@@ -9810,7 +9882,7 @@ export type DrainOffer = Readonly<{
   acceptedTickets: readonly Handle[];
 }>;
 export type DrainDispatcher = (owner: PersistenceOwner, request: DrainRequest, signal: AbortSignal) =>
-  Promise<BusinessResult<{ status: "submitted" | "checkpoint-only"; writes: Handle[] }, PersistenceFailureDetail>>;
+  Promise<PersistenceResult<{ status: "submitted" | "checkpoint-only"; writes: Handle[] }>>;
 export type DrainReport = {
   state: "saved" | "retryable" | "checkpoint-only" | "uncertain";
   blocker: boolean;
@@ -10618,7 +10690,6 @@ Create `apps/desktop/src/main/plugins/persistence/recovery-port.test.ts`:
 import { expect, it, vi } from "vitest";
 import type { DrainReport } from "@kobrixa/plugin-runtime";
 import { createPersistenceRecovery } from "./recovery-port.js";
-import { createFoundationFixture } from "../../../../../../../tests/desktop/plugin-persistence-main.js";
 import type { PersistenceBackend, StoredRecovery } from "./engine-port.js";
 function recoveryBackendDouble(): PersistenceBackend {
   const rows = new Map<string, StoredRecovery>();
@@ -10672,15 +10743,7 @@ it("B2-RF4/U16: core actions must match the item and cannot reuse feature proofs
   await expect(recovery.discard(id, action)).rejects.toThrow();
   expect(retry).not.toHaveBeenCalled(); expect(discard).not.toHaveBeenCalled();
 });
-it("P170: core recovery survives optional disable and restart", async () => {
-  const fixture = await createFoundationFixture();
-  try {
-    const evidence = await fixture.runCase("all-optional-off");
-    expect(evidence.events.length).toBeGreaterThan(0);
-    expect(fixture.composition.workerCount).toBe(1);
-    expect(typeof fixture.composition.host.recovery.export).toBe("function");
-  } finally { await fixture.close(); }
-});
+
 
 ```
 
@@ -10690,7 +10753,7 @@ Run RED:
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/persistence/recovery-port.test.ts
 ```
 
-Create `apps/desktop/src/main/plugins/persistence/recovery-port.ts`:
+Modify `apps/desktop/src/main/plugins/persistence/recovery-port.ts` (F scaffold; baseline N), retaining the frozen F declarations:
 
 ```ts
 import { randomUUID } from "node:crypto";
@@ -10889,34 +10952,11 @@ Run GREEN for this implementation before starting the next slice:
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/persistence/recovery-port.test.ts
 ```
 
-Expected: isolated retention and fresh core authorization tests pass in W1; the optional-process/restart row passes only with T7’s actual worker producer at P170. The final task commit below includes this slice.
+Expected: isolated retention and fresh core authorization tests pass in W1. T7 Step 5 executes the separate optional-process/restart row in Electron at P170. The final task commit below includes this slice.
 
 - [ ] **Step 7: Test explicit composition, admission budgets and worker ownership**
 
-Create `apps/desktop/src/main/plugins/persistence/host-port.test.ts`. Consume the read-only T7 `createFoundationFixture` producer at P170; it uses the actual worker, primary profile, action ledger and host. Do not define a second production fixture or injectable service factory. Add this real composition test:
-
-```ts
-import { expect, it } from "vitest";
-import { createFoundationFixture } from "../../../../../../../tests/desktop/plugin-persistence-main.js";
-it("P170: one profile, worker and reservation listener bind real settings and recovery", async () => {
-  const fixture = await createFoundationFixture();
-  try {
-    const c = fixture.composition;
-    expect(c.persistenceProfile).toBe(c.profile);
-    expect(c.journalProfile).toBe(c.profile);
-    expect(c.workerCount).toBe(1);
-    expect(c.reservationListenerCount).toBe(1);
-    expect(typeof c.host.settings.open).toBe("function");
-    expect(typeof c.host.recovery.export).toBe("function");
-    c.profile.assertHeld();
-    const off = c.host.recovery.subscribe(() => {});
-    expect(c.host.recovery.snapshot()).toEqual(c.host.participant.recoverySnapshot());
-    off();
-    await Promise.all([c.host.dispose(), c.host.dispose()]);
-    c.profile.assertHeld();
-  } finally { await fixture.close(); }
-});
-```
+Create `apps/desktop/src/main/plugins/persistence/host-port.test.ts` using typed backend/source/event/import doubles only. The real shared-lock/worker/listener test belongs to 3B2-T7 Step 5, `runFoundationEvidence`, executed in Electron by `tests/desktop/plugin-persistence-run.mjs`. Do not import the producer into Vitest.
 
 Retain unit coverage for permission ordering and queue limits using backend doubles only: construct actual host services with `composition:{backend,sources,events,dispatchDrain,imports}`. For permission ordering set `hasPermission` false and spies on source reads, engine reserve and strict parameter validation; assert none runs after the permission error. For queue limits pause the backend append promise for two admitted 256-KiB chunks; the third serialized chunk exceeds the 1-MiB source queue budget before decoding and returns resource-limit. Release the two promises, await both requests, and dispose. Do not replace `services.records.request` with a fake service.
 
@@ -10928,7 +10968,7 @@ Run RED then GREEN after Step 8:
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/persistence/host-port.test.ts
 ```
 
-Expected RED: missing bound service/recovery or composition behavior. Expected GREEN at P170: actual worker and host tests pass; W1 unit-only results do not satisfy this gate.
+Expected RED: missing bound service/recovery or composition behavior. Expected GREEN here: the typed-double host tests pass in W1. T7 Step 5 separately runs actual worker/host composition in Electron at P170.
 
 - [ ] **Step 8: Implement the exact host factory and bounded router**
 
@@ -11110,28 +11150,9 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 
 Expected: focused tests pass against the explicit doubles and canonical runtime types. The commit is **controller runs outside sandbox**. The full production gate remains T9/X-T1 with real A/B1/T2 ports. Real filesystem kill/reopen, destination identity races, callback cancellation across MessagePort/stdio, installed worker construction and native dialogs cannot be inferred from these unit results.
 
-- [ ] **Step 9a: Run the amended ports against the actual T2 worker at P170**
+- [ ] **Step 9a: Hand real evidence requirements to the sole Electron producer**
 
-Add these assertions to the owned host-port.test.ts. Hand the required additive evidence keys to T7’s sole producer; T7 populates each from actual worker traces, disk hashes, catalog/ledger counters and restart state. No constant truth values or local service doubles may supply these P170 results. P10 does not edit the producer.
-
-```ts
-it.each([
-  ["all-optional-off", ["p10.noProcessSettings", "p10.durableRecoveryRestored", "p10.committedExportHash", "p10.sealedExportHash"]],
-  ["sealed-ttl", ["p10.originalExpiryPreserved", "p10.expiredPinRejected", "p10.checkpointOnlyNoInventedBytes"]],
-  ["unknown-publication", ["p10.exportOriginalJobReconciled", "p10.noRepublish", "p10.destinationIdentityPreserved"]],
-  ["action-replay", ["p10.freshCoreAction", "p10.cancelNoWrite", "p10.lateDialogReleased", "p10.identitySwapRejected"]],
-  ["storage-ui-pressure", ["p10.namespaceIncludesSettingsImport", "p10.targetExcludesSettings", "p10.afterBarrierExcluded"]],
-  ["import-restart", ["p10.atomicImportReceipt", "p10.barrierRestored", "p10.originalBytesUnchanged"]],
-] as const)("P170 real evidence: %s", async (name, checks) => {
-  const fixture = await createFoundationFixture();
-  try {
-    const evidence = await fixture.runCase(name);
-    for (const check of checks) expect(evidence.checks[check], check).toBe(true);
-    expect(fixture.composition.workerCount).toBe(1);
-    expect(fixture.composition.reservationListenerCount).toBe(1);
-  } finally { await fixture.close(); }
-});
-```
+3B2-T7 Step 5 in this plan owns `tests/desktop/plugin-persistence-main.ts` and `runFoundationEvidence`, including the moved core-recovery and shared-lock/worker/listener assertions and the additional case-scoped checks. It runs through `tests/desktop/plugin-persistence-run.mjs` before report serialization. T5's Vitest files import no producer and use only typed local doubles. Node report tests read its output and never launch Electron by importing a test module.
 
 For barrier tests pause actual admitted settings/import tickets, synchronously capture namespace and target barriers before releasing the worker, then admit another ticket. Namespace flush must wait for the first two, target flush must exclude them, and the later admission cannot enter either captured sequence. Crash the worker with an unresolved ticket and assert unknown, never saved. Reopen corrupt/unknown-format recovery in blocked read-only mode, preserve original bytes, and verify original TTL after restart.
 
@@ -11146,7 +11167,7 @@ Expected: all amended real-worker evidence checks pass at P170. Missing evidence
 
 - [ ] **Step 10: Hand off acceptance cases without taking the integration write set**
 
-The controller records exact commits and paths in the existing freeze/acceptance receipts. T7/T9/X-T1 must run actual implementations for B2 §10 and §12.1 groups 1–6 and 8; P11 owns import group 7. The mandatory cross-plan cases are:
+The controller records exact commits and paths in the existing freeze/acceptance receipts. T7/T9/X-T1 must run actual implementations for B2 §10 and §12.1 groups 1–6 and 8; T6 owns import group 7. The mandatory cross-plan cases are:
 
 | Coverage | Required real-path assertion |
 | --- | --- |
@@ -11629,7 +11650,6 @@ Create:
 
 - `tests/desktop/plugin-persistence-interop.test.mjs`
 - `tests/desktop/plugin-persistence-harness.mjs`
-- `tests/desktop/plugin-persistence-main.ts`
 - `tests/desktop/plugin-persistence-kill.test.mjs`
 - `tests/desktop/plugin-persistence-load.test.mjs`
 - `tests/desktop/plugin-persistence-import.test.mjs`
@@ -11644,7 +11664,11 @@ Create:
 - `docs/zh-TW/plugin-settings-storage.md`
 - `docs/superpowers/plans/2026-10-17-plugin-system-3b2-acceptance.md`
 
-Modify: none. The acceptance ledger transfers to T9 only after this writer stops.
+Modify (F scaffold; baseline N; retain FoundationFixture, CaseEvidence and all frozen F declarations):
+
+- `tests/desktop/plugin-persistence-main.ts`
+
+The acceptance ledger transfers to T9 only after this writer stops.
 
 Test:
 
@@ -12324,6 +12348,63 @@ export const FOUNDATION_CASES = [
 ] as const satisfies readonly FoundationCase[];
 ```
 
+Add the following acceptance executor in the same producer. `runPersistenceAcceptance` obtains its `foundation` results by calling `await runFoundationEvidence()` before writing the report; it does not execute a second case loop. These assertions run in the Electron process while object identity is still available. The separate terminal fixture checks idempotent disposal without destroying a fixture needed by later cases.
+
+```ts
+import assert from "node:assert/strict";
+const ADDITIONAL_FOUNDATION_CHECKS = {
+  "all-optional-off": ["noProcessSettings", "durableRecoveryRestored", "committedExportHash", "sealedExportHash"],
+  "sealed-ttl": ["originalExpiryPreserved", "expiredPinRejected", "checkpointOnlyNoInventedBytes"],
+  "unknown-publication": ["exportOriginalJobReconciled", "noRepublish", "destinationIdentityPreserved"],
+  "action-replay": ["freshCoreAction", "cancelNoWrite", "lateDialogReleased", "identitySwapRejected"],
+  "storage-ui-pressure": ["namespaceIncludesSettingsImport", "targetExcludesSettings", "afterBarrierExcluded"],
+  "import-restart": ["atomicImportReceipt", "barrierRestored", "originalBytesUnchanged"],
+} satisfies Partial<Record<FoundationCase, readonly string[]>>;
+function assertRealComposition(fixture: FoundationFixture): void {
+  const c = fixture.composition;
+  assert.equal(c.persistenceProfile, c.profile);
+  assert.equal(c.journalProfile, c.profile);
+  assert.equal(c.workerCount, 1);
+  assert.equal(c.reservationListenerCount, 1);
+  assert.equal(typeof c.host.settings.open, "function");
+  assert.equal(typeof c.host.recovery.export, "function");
+  c.profile.assertHeld();
+  const off = c.host.recovery.subscribe(() => {});
+  try { assert.deepEqual(c.host.recovery.snapshot(), c.host.participant.recoverySnapshot()); }
+  finally { off(); }
+}
+export async function runFoundationEvidence(): Promise<Partial<Record<FoundationCase, CaseEvidence>>> {
+  const foundation: Partial<Record<FoundationCase, CaseEvidence>> = {};
+  const additional: Partial<Record<FoundationCase, readonly string[]>> = ADDITIONAL_FOUNDATION_CHECKS;
+  for (const name of FOUNDATION_CASES) {
+    const fixture = await createFoundationFixture();
+    try {
+      assertRealComposition(fixture);
+      const evidence = await fixture.runCase(name);
+      for (const key of additional[name] ?? []) {
+        assert.ok(Object.hasOwn(evidence.checks, key), `${name}: missing ${key}`);
+        assert.equal(evidence.checks[key], true, `${name}.${key}`);
+      }
+      if (name === "all-optional-off") {
+        assert.ok(evidence.events.length > 0, "missing recovery/restart observations");
+        assert.equal(typeof fixture.composition.host.recovery.export, "function");
+      }
+      assertRealComposition(fixture);
+      foundation[name] = evidence;
+    } finally { await fixture.close(); }
+  }
+  const disposal = await createFoundationFixture();
+  try {
+    assertRealComposition(disposal);
+    await Promise.all([disposal.composition.host.dispose(), disposal.composition.host.dispose()]);
+    disposal.composition.profile.assertHeld();
+  } finally { await disposal.close(); }
+  return foundation;
+}
+```
+
+Derive the additional booleans from actual worker traces, disk hashes and restart state. `committedExportHash` and `sealedExportHash` compare observed exported bytes with the respective source hashes. Run the data-only admitted settings subtrial separately from cold safe mode, which must retain zero optional schema reads. Barrier evidence pauses real settings/import tickets, captures namespace/target barriers before release, and proves later tickets are excluded; unknown outcomes never count as saved.
+
 `createFoundationFixture` returns the actual shared instances in `composition`: `profile`, `journalProfile` and `persistenceProfile` reference that same lock, `reservationListenerCount` and `workerCount` come from observed live instances, `host` is the created PersistenceHost and `stage3` is the manager's attached port bundle. Copy neither hosts nor locks into alternative wrappers. Implement a closed `Record<FoundationCase,()=>Promise<CaseEvidence>>` dispatch table in the producer. Each function performs the indicated live action and derives its checks/events/samples from observed results; assertions remain in X-T1. Use no table of expected evidence or imports from X-T1.
 
 | Case | Live execution and evidence source |
@@ -12393,6 +12474,8 @@ Create `docs/en/plugin-settings-storage.md` with this content:
 ```md
 # Plugin settings and records
 
+Executable foundation samples are the [JavaScript consumer](../../tests/desktop/fixtures/plugin-persistence/consumer.ts) and [Python consumer](../../tests/desktop/fixtures/plugin-persistence/consumer.py). T7 runs both through their public SDK transports: read settings, perform a revision-checked CAS, observe watch invalidation and re-read; write/seal/commit a record, export with a fresh user action, and register a cooperative drain callback. Follow the settings CAS/watch and storage/export/drain contracts in [this settings guide](plugin-settings-storage.md). The interop report must record both consumers executing; Python SKIP fails the gate. Product-specific mapping samples remain pending in 3D/3E.
+
 Plugin API 1.7.0 adds typed settings, bounded records, explicit export/copy, and cooperative drain. A settings resource declares version 1 and a packaged JSON path. Settings schemaVersion and record schemaVersion are application data versions; they are separate from Plugin API and UI resource versions.
 
 Declare only the permissions you need: settings.read, settings.write, storage.read, storage.write, storage.export, and ui.clipboard. The host binds requests to your source and execution. IDs and handles do not authorize another source. Settings and records are not an encrypted secret store, and process isolation is not an OS sandbox.
@@ -12420,6 +12503,8 @@ Create `docs/zh-TW/plugin-settings-storage.md` with this content:
 
 ```md
 # 插件設定與資料紀錄
+
+可執行的基礎範例為 [JavaScript consumer](../../tests/desktop/fixtures/plugin-persistence/consumer.ts) 與 [Python consumer](../../tests/desktop/fixtures/plugin-persistence/consumer.py)。T7 透過兩種公開 SDK transport 執行：讀取設定、依 revision 執行 CAS、收到 watch invalidation 後重新讀取；寫入／seal／commit record、以新的使用者 action 匯出，並註冊協作式 drain callback。設定 CAS／watch 與 storage／export／drain 契約詳見[本設定指南](plugin-settings-storage.md)。interop report 必須記錄兩個 consumer 的實際執行，Python SKIP 不算通過。產品專用 mapping 範例仍由 3D／3E 完成。
 
 Plugin API 1.7.0 提供型別化設定、有上限的 records、明確使用者觸發的匯出／複製，以及協作式 drain。設定宣告使用 version 1 與封裝內的 JSON path。settings 與 record 的 schemaVersion 是資料版本，和 Plugin API、UI resource version 分開。
 
@@ -12462,6 +12547,15 @@ Status: PENDING. This document records gates, not measured results. Synthetic un
 | B2-RF5 | 50×8 MiB import kill/restart at all six item/receipt/marker boundaries, three repeats | Pending |
 | Public interop | Actual JS MessagePort and Python stdio, official router, no private fixture service | Pending |
 | Load | Thirty samples, required environment fields, p50/p95/max, main/worker RSS separately | Pending |
+
+
+| Umbrella item | Foundation cases | Evidence | Disposition |
+| --- | --- | --- | --- |
+| S3-09 | contention, import-restart, unknown-publication, storage-ui-pressure | [T7 producer](../../../tests/desktop/plugin-persistence-main.ts), [X-T1 oracle](../../../tests/desktop/stage-3-foundations-main.ts); retained report/hash recorded at execution | foundation evidence only; not closed |
+| S3-10 | healthy-release, suspend-wake, renderer-loss, all-optional-off, installed | [T7 producer](../../../tests/desktop/plugin-persistence-main.ts), [X-T1 oracle](../../../tests/desktop/stage-3-foundations-main.ts); retained report/hash recorded at execution | foundation evidence only; not closed |
+| S3-11 | retirement, registration-end, disconnect-retry, installed | [T7 producer](../../../tests/desktop/plugin-persistence-main.ts), [X-T1 oracle](../../../tests/desktop/stage-3-foundations-main.ts); retained report/hash recorded at execution | foundation evidence only; not closed |
+
+These rows link executable evidence sources, not completed measurements. At execution attach the actual retained report, candidate/artifact hashes and per-case results. Remaining work includes real product settings consumers and migrations, all three optional features, the full lifecycle/close/update matrix, installed OS/architecture runs, manual gates and hardware closeout. A passing synthetic case does not close an umbrella checklist item. Product-specific mapping samples remain pending for 3D/3E.
 
 | Manual gate | Required work | Status |
 | --- | --- | --- |
@@ -13646,18 +13740,29 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(protocol): publish settings and storage API 1.7.0"
 ```
 
-Hand the actual P170 commit SHA and schema hashes to T9's controller. User merges remain `--no-ff`; do not edit the runtime/desktop/renderer/packaging hotspots from this task. The final aggregate verification commands and X-T1 receipt remain P12's sections.
+Hand the actual P170 commit SHA and schema hashes to T9's controller. User merges remain `--no-ff`; do not edit the runtime/desktop/renderer/packaging hotspots from this task. The final aggregate verification commands and X-T1 receipt belong to T9 and X-T1.
 
 ### Task 3B2-T9: Attach the 1.7.0 persistence foundation and record P170
 
 **Files**
 
-Create (the report transfers from the stopped 3B2-T7 writer; do not overwrite its evidence):
+Modify (stopped T7 handoff; preserve its recorded evidence):
 
 - `docs/superpowers/plans/2026-10-17-plugin-system-3b2-acceptance.md`
 
 Modify, exclusively by the persistent role named here:
 
+- R170: `packages/plugin-runtime/src/manager.ts`
+- R170/Test: `packages/plugin-runtime/src/manager.test.ts`
+- R170: `packages/plugin-runtime/src/supervisor.ts`
+- R170/Test: `packages/plugin-runtime/src/supervisor.test.ts`
+- R170: `packages/plugin-runtime/src/index.ts` (explicit delivered host exports only)
+- D170: `apps/desktop/src/main/plugins/ipc.ts`
+- D170/Test: `apps/desktop/src/main/plugins/ipc.test.ts`
+- D170/Test: `apps/desktop/src/main/index.test.ts`
+- V170: `apps/desktop/src/renderer/app.tsx`
+- V170/Test: `apps/desktop/src/renderer/app.test.ts`
+- H-I/Test: `tests/desktop/smoke-harness.test.mjs`
 - D170: `apps/desktop/src/main/plugins/controller.ts`
 - D170/Test: `apps/desktop/src/main/plugins/controller.test.ts`
 - D170: `apps/desktop/src/main/index.ts`
@@ -13680,17 +13785,12 @@ Modify, exclusively by the persistent role named here:
 - K170/Test: `apps/desktop/src/main/packaging.test.ts`
 - H-I: `tests/desktop/preload.cjs`
 
-Test (read-only regression targets):
-
-- `apps/desktop/src/main/index.test.ts`
-- `tests/desktop/smoke-harness.test.mjs`
-
 Create, exclusively by V170:
 
 - `apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts`
 - Test: `apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts`
 
-R170 is the existing H-R owner's attachment review and runtime verification. `PluginManagerOptions.stage3` and its lifecycle implementation already exist at P160. The desktop supplies the actual participant through that option; this task does not replace manager retirement with another implementation. A necessary runtime correction goes back to H-R with an exact-file handoff, not into the D170 patch.
+R170 implements the retained original-peer dispatcher in `packages/plugin-runtime/src/manager.ts` and `supervisor.ts`, with tests in their corresponding `.test.ts` files. These four paths plus the explicit value-export edit in `packages/plugin-runtime/src/index.ts` belong exclusively to H-R. D170 additionally owns `apps/desktop/src/main/plugins/ipc.ts` and `ipc.test.ts`; V170 additionally owns `apps/desktop/src/renderer/app.tsx` and `app.test.ts`. `main/index.test.ts` and `tests/desktop/smoke-harness.test.mjs` are modified under D170 and H-I respectively when adding the assertions below. No renderer plugin-ui component is modified.
 
 All B2 backend files, B1 coordinator/action/catalog/form implementations, public protocol assembly, SDK implementations, old Lab stores and feature sources are read-only dependencies. No worker-specific Vite config is added: that path is not in H-K. K170 uses the existing `vite.main.config.ts` for both host and worker entries.
 
@@ -13847,7 +13947,7 @@ AM-18 and AM-23–32 complete the frozen attachment contracts. D170/K170 finish 
 Append these imports and tests to `apps/desktop/src/main/plugins/controller.test.ts`. Keep the existing Electron mock, temporary-profile setup and controller tests. Import `composePersistence170` alongside `startPlugins`. The proxy throws on every unexpected domain call; it is a test adapter and cannot produce persistence success.
 
 ```ts
-import type { Stage3RuntimePorts } from "@kobrixa/plugin-runtime";
+import type { Stage3RuntimePorts, Stage3HostAttachment, UiRuntimeAttachment } from "@kobrixa/plugin-runtime";
 import * as persistenceFactory from "./persistence/host-port.js";
 import { composePersistence170 } from "./controller.js";
 
@@ -13859,6 +13959,17 @@ function unusedPort170<T extends object>(name: string): T {
       throw new Error(`Unexpected ${name}.${String(key)}`);
     },
   });
+}
+
+function fakeStage3Host(): Stage3HostAttachment {
+  return {
+    hostEpoch: "10000000-0000-4000-8000-000000000001",
+    principal() { throw new Error("No principal in resource-free forwarding test"); },
+    hasPermission: () => false,
+    requirements: () => [],
+    bindChannel() { throw new Error("No channel in resource-free forwarding test"); },
+    retireResources: async () => {},
+  };
 }
 
 function compositionInput170() {
@@ -13958,11 +14069,29 @@ it("startPlugins forwards the actual stage3 bundle without copying its participa
     locale: "en",
   });
   const createManager = vi.spyOn(PluginManager, "create").mockResolvedValue(manager);
+  const stage3Host = fakeStage3Host();
+  const runtime = unusedPort170<UiRuntimeAttachment>("runtime");
+  vi.spyOn(manager, "stage3Runtime").mockReturnValue(runtime);
+  const onStage3Runtime = vi.fn();
   await start(fakeDialogs(), {
     commandLine: { developmentDirectories: [], safeMode: true },
-    stage3: attached.stage3,
+    stage3: attached.stage3, stage3Host, onStage3Runtime,
   });
   expect(createManager.mock.calls.at(-1)![0].stage3).toBe(attached.stage3);
+  expect(createManager.mock.calls.at(-1)![0].stage3Host).toBe(stage3Host);
+  expect(onStage3Runtime).toHaveBeenCalledExactlyOnceWith(runtime, manager);
+});
+it("rejects either half of the D150 stage3 pair before constructing a manager", async () => {
+  const {ports} = compositionInput170();
+  const stage3: Stage3RuntimePorts = {...ports,persistence:unusedPort170("participant")};
+  const create = vi.spyOn(PluginManager, "create");
+  await expect(start(fakeDialogs(), {
+    commandLine:{developmentDirectories:[],safeMode:true}, stage3,
+  })).rejects.toThrow("stage3 and stage3Host must be supplied together");
+  await expect(start(fakeDialogs(), {
+    commandLine:{developmentDirectories:[],safeMode:true}, stage3Host:fakeStage3Host(),
+  })).rejects.toThrow("stage3 and stage3Host must be supplied together");
+  expect(create).not.toHaveBeenCalled();
 });
 ```
 
@@ -13972,14 +14101,14 @@ Run:
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test -- src/main/plugins/controller.test.ts
 ```
 
-Expected failure: missing `composePersistence170` export. The forwarding test may already pass at P160; retain it as the R170 identity regression. An unavailable prerequisite import is a blocked prerequisite, not the intended red assertion.
+Expected failure: missing `composePersistence170` export. The paired forwarding test may already pass at P160; retain it as the R170 identity regression and keep partial-pair rejection in its separate test. An unavailable prerequisite import is a blocked prerequisite, not the intended red assertion.
 
 - [ ] **Step 2: Implement the factory attachment and preserve the existing runtime hooks.**
 
 Add to `controller.ts`, combining with existing imports:
 
 ```ts
-import type { Stage3RuntimePorts } from "@kobrixa/plugin-runtime";
+import type { Stage3RuntimePorts, Stage3HostAttachment, UiRuntimeAttachment } from "@kobrixa/plugin-runtime";
 import { createPersistenceHost, type PersistenceHost } from "./persistence/host-port.js";
 
 export async function composePersistence170(
@@ -14005,13 +14134,14 @@ export async function composePersistence170(
 }
 ```
 
-P160 already adds `stage3?: PluginManagerOptions["stage3"]` to `StartPluginsOptions`. Verify its exact forwarding expression in `PluginManager.create` is:
+D150 introduced the all-or-none `stage3` / `stage3Host` pair in `StartPluginsOptions`. Preserve its validation and both forwarding expressions in `PluginManager.create`:
 
 ```ts
 ...(options.stage3 === undefined ? {} : { stage3: options.stage3 }),
+...(options.stage3Host === undefined ? {} : { stage3Host: options.stage3Host }),
 ```
 
-If P160 lacks that expression, D170 adds it in the existing object literal; do not replace the rest of `startPlugins`, its safe-mode-before-directory-read ordering, or its session marker. This optional property is for legacy/resource-free runtime callers; the production P170 desktop call must always pass the constructed bundle.
+The BM-18 `onStage3Runtime` callback already runs inside `startPlugins` immediately after manager construction, before activation/admission, with `manager.stage3Runtime(), manager`. Preserve that callback and its failure cleanup. `composeDesktopMain` owns it; PluginController exposes no manager. Do not change safe-mode-before-directory-read ordering, session markers or other D160 startup options.
 
 R170 reviews that manager uses the existing B1 lifecycle path: device `retire(owner, reason)` followed synchronously by `persistence.freeze(owner, drainReason, deadline, grant)` using the identical non-null grant object. If `retire().drain` is null, omit the fourth argument instead of passing null. No `await`, spread clone or timeout reset between these calls. Device reason `crashed` does not invent a new protocol DrainReason: the already-frozen B1 mapping/ownerLost path applies. Healthy `released`/`disconnected`/`suspended`/provider endings go through `endReservation`, not owner retirement. R170 does not add device, Electron or worker construction to runtime.
 
@@ -14024,16 +14154,513 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Expected: the attachment tests pass; runtime's same-turn/grant-identity/retirement tests stay green. This is branch-local wiring evidence, not real disk drain evidence.
 
-- [ ] **Step 3: Commit the reviewed R170/D170 composition slice.**
+- [ ] **Step 2a: Implement R170 retained-peer dispatch before admitting persistence.**
 
-Controller implementation commands, not instructions for the plan writer to execute:
+In `supervisor.ts`, add the following local exported implementation (direct-module test import only). The manager retains the same object used by the supervisor; it is not a second process registry. `remainingMs` is converted once per token, then clamped on every repeat. This preserves the original deadline even if a caller reuses a token with a larger budget during the 120-second outcome window. The trusted T5 offer registry rejects expired tokens before dispatch, including after runtime tombstone expiry; the runtime map follows that same 64/source retention bound. An unregistered SDK supplies the existing numeric methodNotFound; no callback bit is added to initialize.
 
-```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): attach the real stage 3 persistence participant"
+```ts
+import type { DrainDispatcher, PersistenceOwner } from "./persistence-participant.js";
+import type { DrainRequest } from "@kobrixa/plugin-protocol";
+
+const persistencePeers170=new Map<RpcPeer,RetainedPersistenceChannel>();
+export function persistenceChannelApiVersion(peer:RpcPeer):string|undefined{
+  return persistencePeers170.get(peer)?.negotiatedVersion;
+}
+export class RetainedPersistenceChannel {
+  private collected:()=>void=()=>{};
+  private apiVersion: string | undefined;
+  private exited = false;
+  private lost = false;
+  private settled = false;
+  private loss: Promise<void> | undefined;
+  private readonly deadlines = new Map<string, number>();
+  constructor(
+    readonly owner: PersistenceOwner,
+    readonly peer: RpcPeer,
+    private readonly now: () => number,
+    private readonly ownerLost: () => Promise<void>,
+  ) {
+    if(persistencePeers170.has(peer))throw new Error("Peer already retained");
+    persistencePeers170.set(peer,this);
+  }
+  get negotiatedVersion():string|undefined{return this.apiVersion;}
+  onCollect(callback:()=>void):void{this.collected=callback;this.collect();}
+  private collect():void{
+    if(!this.releasable)return;
+    persistencePeers170.delete(this.peer);this.deadlines.clear();this.collected();
+  }
+  negotiated(apiVersion: string): void { this.apiVersion = apiVersion; }
+  disposition(): void { this.settled = true; this.collect(); }
+  async confirmedExit(): Promise<void> { this.exited = true;await this.closed();this.collect(); }
+  closed(): Promise<void> {
+    this.lost = true;
+    return this.loss ??= Promise.resolve().then(this.ownerLost);
+  }
+  get releasable(): boolean { return this.exited && this.settled; }
+  dispatch: DrainDispatcher = async (owner, request, signal) => {
+    if (persistenceChannelKey(owner) !== persistenceChannelKey(this.owner))
+      throw new RpcError(RPC_ERRORS.permissionDenied, "Original owner required");
+    const api = this.apiVersion?.split(".").map(Number);
+    if (!api || api[0] !== 1 || api[1]! < 7)
+      throw new RpcError(RPC_ERRORS.methodNotFound, "Persistence is not negotiated");
+    if (this.lost || this.peer.closed) {
+      await this.closed();
+      throw new RpcError(RPC_ERRORS.connectionClosed, "Original peer is closed");
+    }
+    signal.throwIfAborted();
+    for(const [token,deadline] of this.deadlines)if(this.now()>=deadline+120000)this.deadlines.delete(token);
+    const proposed = this.now() + Math.min(10000, request.remainingMs);
+    const deadline = Math.min(this.deadlines.get(request.token) ?? proposed, proposed);
+    if (!this.deadlines.has(request.token) && this.deadlines.size >= 64)
+      throw new RpcError(RPC_ERRORS.permissionDenied, "Drain token budget exhausted");
+    this.deadlines.set(request.token, deadline);
+    const remaining = deadline - this.now();
+    if (remaining <= 0) throw new RpcError(RPC_ERRORS.timeout, "Original drain deadline elapsed");
+    try {
+      const reply = await this.peer.request("storage/drain", {
+        ...request, remainingMs: Math.min(request.remainingMs, Math.floor(remaining)),
+      }, { signal, timeoutMs: remaining });
+      signal.throwIfAborted();
+      if (this.lost || this.peer.closed || this.now() >= deadline)
+        throw new RpcError(RPC_ERRORS.connectionClosed, "Original drain no longer live");
+      return reply;
+    } catch (error) {
+      if (this.peer.closed) await this.closed();
+      // In particular, methodNotFound is not a saved result. T5 reconciles
+      // host-owned tickets/checkpoints through its existing dispatch-failure path.
+      throw error;
+    }
+  };
+}
+export function persistenceChannelKey(owner: PersistenceOwner): string {
+  return JSON.stringify([owner.sourceKey, owner.pluginId, owner.generation,
+    owner.hostEpoch, owner.processEpoch]);
+}
 ```
 
-Record R170's reviewed runtime commit and `changed paths: none` when existing hooks already satisfy the tests. Do not manufacture a runtime edit to obtain a new SHA.
+In `manager.ts`, use this implementation for the retained channel portion of the existing R150 cleanup registry:
+
+```ts
+import { RetainedPersistenceChannel, persistenceChannelKey } from "./supervisor.js";
+import { RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
+import type { DrainDispatcher, PersistenceOwner } from "./persistence-participant.js";
+
+export class RetainedPersistenceChannels {
+  private readonly rows = new Map<string, RetainedPersistenceChannel>();
+  retain(row: RetainedPersistenceChannel): void {
+    const key = persistenceChannelKey(row.owner);
+    const old = this.rows.get(key);
+    if (old && old !== row) throw new Error("Original channel cannot be replaced");
+    this.rows.set(key, row);row.onCollect(()=>this.collect(row));
+  }
+  collect(row: RetainedPersistenceChannel): void {
+    const key = persistenceChannelKey(row.owner);
+    if (row.releasable && this.rows.get(key) === row) this.rows.delete(key);
+  }
+  dispatch: DrainDispatcher = (owner, request, signal) => {
+    const row = this.rows.get(persistenceChannelKey(owner));
+    if (!row) return Promise.reject(new RpcError(RPC_ERRORS.connectionClosed, "No retained original peer"));
+    return row.dispatch(owner, request, signal);
+  };
+}
+```
+
+Add `private readonly persistenceChannels = new RetainedPersistenceChannels()` and the following method inside `PluginManager`. Import `Stage3ChannelContext`/`Stage3ChannelBinding` from ui-lifecycle.ts. In `#register`, replace only the R160 `bindChannel` option with `bindChannel: context => this.#bindPersistenceChannel170(supervisor, context)`; preserve every other option. The closure is invoked on start, after the supervisor constructor returns.
+
+```ts
+#bindPersistenceChannel170(supervisor:PluginSupervisor,context:Stage3ChannelContext):Stage3ChannelBinding{
+  const host=this.options.stage3Host;
+  if(!host)throw new Error("stage3Host required");
+  const row=new RetainedPersistenceChannel(context.owner,context.peer,()=>performance.now(),
+    ()=>host.retireResources(context.owner,"crashed"));
+  this.persistenceChannels.retain(row);
+  supervisor.retainPersistenceChannel170(row);
+  return host.bindChannel(context);
+}
+```
+
+Replace only `stage3Runtime().dispatchDrain`'s unpublished stub with `this.persistenceChannels.dispatch`. In supervisor.ts add this field/method to `PluginSupervisor`; no new SupervisorOptions or initialize fields are introduced:
+
+```ts
+#persistenceChannel170:RetainedPersistenceChannel|undefined;
+retainPersistenceChannel170(row:RetainedPersistenceChannel):void{
+  if(this.#persistenceChannel170 && this.#persistenceChannel170.peer===row.peer)
+    throw new Error("Channel retained twice");
+  this.#persistenceChannel170=row;
+}
+```
+
+Immediately after the existing AM-14 `bindChannel(context)` call and before sending initialize, capture `const persistenceChannel = this.#persistenceChannel170`. Use that captured variable for this complete real-exit hook (replace the existing `child.onExit` registration, do not install a second resource-retirement handler):
+
+```ts
+child.onExit(exit=>{
+  this.#exited(child,peer,exit);
+  if(persistenceChannel)void persistenceChannel.confirmedExit().catch(()=>{});
+});
+```
+
+Immediately after initialize validation, execute `persistenceChannel?.negotiated(result.apiVersion)`. Replace the existing retained-row disposal promise continuation with:
+
+```ts
+const originalPersistenceChannel=this.#persistenceChannel170;
+const disposition=this.#options.retireResources?.(owner,reason)??Promise.resolve();
+void disposition.then(()=>originalPersistenceChannel?.disposition(),()=>{});
+```
+
+Here `owner`/`reason` are the existing retirement method's captured original arguments, not a sourceKey lookup. Preserve and return `disposition` in that method so the existing coordinator still owns the first retirement and process teardown. Unknown/failed disposition does not mark completion. A channel-close/transport-failure branch calls `void originalPersistenceChannel?.closed().catch(()=>{})` and retains the row; force-kill timeout never calls `confirmedExit`. Actual crash uses the existing cached coordinator `ownerLost` path and executes no `freeze` or plugin callback. A late callback only touches its captured original object.
+
+Add the explicit value export `export { persistenceChannelApiVersion } from "./supervisor.js";` to runtime index.ts under R170. This read-only host metadata lookup returns the original peer's validated initialize version and is not a public RPC. Include index.ts in R170's commit/receipt. D170 imports it from runtime and calls `apiVersion: () => persistenceChannelApiVersion(context.peer)` when attaching the routes; this avoids inventing a version member on Stage3ChannelContext or using the current package version. The two indexes contain the same retained row object and are removed only after disposition and confirmed exit.
+
+D170 also needs the admitted static settings inventory, without activating a source. Add this method to the same H-R manager.ts slice; it reuses R160's admitted catalog metadata and reads no files. Include `"persistenceCatalogSources"` in PluginManagerPort and forward it from PluginController with the identical return type. No renderer method is added:
+
+```ts
+persistenceCatalogSources():readonly (UiCatalogSource & {settings:{version:1;path:string}|null})[]{
+  return this.uiCatalogSources().map(source=>{
+    const entry=this.#entries.find(entry=>entry.plugin.sourceKey===source.owner.sourceKey);
+    return {...source,settings:entry?.plugin.manifest?.contributes?.settings??null};
+  });
+}
+```
+
+In runtime index.ts explicitly export the already-implemented `readPackagedJson`, `readBuiltinJson` and `SourceReadBudget` from packaged-json-resource.ts as well. This is an H-R barrel edit only; the reader is read-only. D170's class forwarding method is:
+
+```ts
+persistenceCatalogSources():ReturnType<PluginManager["persistenceCatalogSources"]>{
+  return this.deps.manager.persistenceCatalogSources();
+}
+```
+
+Append to `manager.test.ts`, merging existing protocol imports:
+
+```ts
+import { RetainedPersistenceChannels } from "./manager.js";
+import { RetainedPersistenceChannel } from "./supervisor.js";
+import { RpcPeer, RpcError, RPC_ERRORS, createMemoryChannelPair,
+  type ResourceOwner, type DrainRequest } from "@kobrixa/plugin-protocol";
+
+const drainOwner170: ResourceOwner = { sourceKey: "builtin:test.storage", pluginId: "test.storage",
+  generation: 1, hostEpoch: "00000000-0000-4000-8000-000000000001",
+  processEpoch: "00000000-0000-4000-8000-000000000002" };
+const drainRequest170: DrainRequest = { token: "00000000-0000-4000-8000-000000000003",
+  reason: "disable", remainingMs: 10000, checkpoints: [], writes: [] };
+function retained170(owner = drainOwner170, api = "1.7.0") {
+  const [a,b] = createMemoryChannelPair();
+  const host = new RpcPeer(a), child = new RpcPeer(b);
+  const lost = vi.fn(async () => {}); let clock = 0;
+  const row = new RetainedPersistenceChannel(owner, host, () => clock, lost);
+  row.negotiated(api);
+  return { row, host, child, lost, setTime: (value: number) => { clock = value; },
+    close: () => { host.close(); child.close(); } };
+}
+it("drains the retained original peer across replacement and ignores late exit for the new row", async () => {
+  const old = retained170(), next = retained170({ ...drainOwner170, generation: 2,
+    processEpoch: "00000000-0000-4000-8000-000000000004" });
+  const rows = new RetainedPersistenceChannels(); rows.retain(old.row); rows.retain(next.row);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const newCallback = vi.fn(async () => ({ ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] } }));
+  old.child.handle("storage/drain", async () => { await gate; return {
+    ok: true, value: { status: "submitted", writes: [] } }; });
+  next.child.handle("storage/drain", newCallback);
+  try {
+    const pending = rows.dispatch(old.row.owner, drainRequest170, new AbortController().signal);
+    await Promise.resolve(); release();
+    expect(await pending).toMatchObject({ ok: true, value: { status: "submitted" } });
+    expect(newCallback).not.toHaveBeenCalled();
+    old.row.disposition(); rows.collect(old.row);
+    expect(old.row.releasable).toBe(false);
+    await old.row.confirmedExit(); rows.collect(old.row);
+    await expect(rows.dispatch(old.row.owner, drainRequest170, new AbortController().signal)).rejects.toThrow();
+    expect(await rows.dispatch(next.row.owner, drainRequest170, new AbortController().signal)).toMatchObject({ok:true});
+    expect(newCallback).toHaveBeenCalledOnce(); expect(old.lost).toHaveBeenCalledOnce();
+  } finally { old.close(); next.close(); }
+});
+it.each(["sourceKey", "pluginId", "generation", "hostEpoch", "processEpoch"] as const)(
+  "indexes every owner field: %s", async key => {
+    const f = retained170(), rows = new RetainedPersistenceChannels(); rows.retain(f.row);
+    const forged = { ...drainOwner170, [key]: key === "generation" ? 2 : "foreign" };
+    const send = vi.spyOn(f.host, "request");
+    try { await expect(rows.dispatch(forged, drainRequest170, new AbortController().signal)).rejects.toThrow();
+      expect(send).not.toHaveBeenCalled(); } finally { f.close(); }
+  });
+it("sends nothing to 1.6 and propagates unregistered 1.7 methodNotFound without a callback", async () => {
+  for (const api of ["1.6.0", "1.7.0"]) {
+    const f = retained170(drainOwner170, api), send = vi.spyOn(f.host, "request");
+    try {
+      await expect(f.row.dispatch(drainOwner170, drainRequest170, new AbortController().signal))
+        .rejects.toMatchObject({code:RPC_ERRORS.methodNotFound});
+      expect(send).toHaveBeenCalledTimes(api === "1.6.0" ? 0 : 1);
+    } finally { f.close(); }
+  }
+});
+it("keeps the first token deadline and rejects aborted and closed original peers", async () => {
+  const f = retained170();
+  f.child.handle("storage/drain", () => ({ok:true,value:{status:"checkpoint-only",writes:[]}}));
+  try {
+    await f.row.dispatch(drainOwner170, {...drainRequest170,remainingMs:10},new AbortController().signal);
+    f.setTime(10);
+    await expect(f.row.dispatch(drainOwner170,drainRequest170,new AbortController().signal))
+      .rejects.toMatchObject({code:RPC_ERRORS.timeout});
+    const abort = new AbortController(); abort.abort();
+    await expect(f.row.dispatch(drainOwner170,drainRequest170,abort.signal)).rejects.toThrow();
+    await f.row.closed(); await f.row.closed();
+    expect(f.lost).toHaveBeenCalledOnce(); expect(f.row.releasable).toBe(false);
+  } finally { f.close(); }
+});
+```
+
+Append to `supervisor.test.ts` (directly import `RetainedPersistenceChannel` and the protocol peer helpers):
+
+```ts
+it("retains a closed channel until disposition AND actual exit, rejecting a late drain reply", async () => {
+  const [a,b] = createMemoryChannelPair(); const peer = new RpcPeer(a), child = new RpcPeer(b);
+  const owner = {sourceKey:"builtin:test.storage",pluginId:"test.storage",generation:1,
+    hostEpoch:"00000000-0000-4000-8000-000000000001",processEpoch:"00000000-0000-4000-8000-000000000002"};
+  const lost = vi.fn(async () => {});
+  const row = new RetainedPersistenceChannel(owner, peer, () => 0, lost); row.negotiated("1.7.0");
+  let release!: () => void; let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  child.handle("storage/drain", async () => { entered(); await gate;
+    return {ok:true,value:{status:"submitted",writes:[]}}; });
+  try {
+    const pending = row.dispatch(owner, {token:"00000000-0000-4000-8000-000000000003",
+      reason:"disable",remainingMs:10000,checkpoints:[],writes:[]},new AbortController().signal);
+    const rejection = expect(pending).rejects.toMatchObject({code:RPC_ERRORS.connectionClosed});
+    await started; await row.closed(); row.disposition();
+    expect(row.releasable).toBe(false); release(); await rejection;
+    await row.confirmedExit(); expect(row.releasable).toBe(true); expect(lost).toHaveBeenCalledOnce();
+  } finally { peer.close(); child.close(); }
+});
+```
+
+Append this abort/deadline race to supervisor.test.ts, using the same original-peer class. A pending callback never causes another process to be selected:
+
+```ts
+it.each(["abort","deadline"] as const)("pending original drain respects %s without restarting",async mode=>{
+  vi.useFakeTimers();const [a,b]=createMemoryChannelPair();const peer=new RpcPeer(a),child=new RpcPeer(b);
+  const owner={sourceKey:"builtin:test.storage",pluginId:"test.storage",generation:1,
+    hostEpoch:"00000000-0000-4000-8000-000000000001",processEpoch:"00000000-0000-4000-8000-000000000002"};
+  const row=new RetainedPersistenceChannel(owner,peer,()=>performance.now(),async()=>{});row.negotiated("1.7.0");
+  const callback=vi.fn(async(_params:import("@kobrixa/plugin-protocol").DrainRequest,context:import("@kobrixa/plugin-protocol").RequestContext)=>{await new Promise<void>(resolve=>context.signal.addEventListener("abort",()=>resolve(),{once:true}));
+    return {ok:true as const,value:{status:"checkpoint-only" as const,writes:[]}};});
+  child.handle("storage/drain",callback);const control=new AbortController();
+  try{
+    const pending=row.dispatch(owner,{token:"00000000-0000-4000-8000-000000000003",reason:"disable",remainingMs:10,checkpoints:[],writes:[]},control.signal);
+    const rejected=expect(pending).rejects.toBeDefined();await vi.advanceTimersByTimeAsync(0);
+    if(mode==="abort")control.abort();else await vi.advanceTimersByTimeAsync(10);
+    await rejected;expect(callback).toHaveBeenCalledOnce();
+  }finally{peer.close();child.close();row.disposition();await row.confirmedExit();vi.useRealTimers();}
+});
+```
+
+- [ ] **Step 2b: Bind every P170 inbound route on the original channel.**
+
+Add the following to `controller.ts`. Call it once inside the existing `stage3Host.bindChannel(context)` after A creates `attachment`; add its disposer to that binding's existing disposal list. Pass the original peer's negotiated version captured in its initialized phase, never the current package version. The `admitted` callback uses the original runtime owner; the host remains the final permission/publication gate. Reuse the existing attachment and common ack/unsubscribe routes unchanged.
+
+```ts
+import { RPC_ERRORS, RpcError, type SettingsRequestMap, type StorageRequestMap,
+  type PersistenceActionRequestMap } from "@kobrixa/plugin-protocol";
+import { sameResourceOwner, type Stage3ChannelContext } from "@kobrixa/plugin-runtime";
+import type { DeviceChannelAttachment } from "@kobrixa/plugin-runtime";
+
+type InboundPersistence170 = Exclude<keyof PersistenceRequestMap, "storage/drain">;
+export const persistenceRoutes170 = [
+  "settings/read", "settings/update", "settings/reset", "settings/watch",
+  "settings/readMigration", "settings/migrate", "storage/beginWrite", "storage/writeChunk",
+  "storage/sealWrite", "storage/commitWrite", "storage/writeStatus", "storage/abortWrite",
+  "storage/stat", "storage/list", "storage/openRead", "storage/readChunk", "storage/closeRead",
+  "storage/delete", "storage/flush", "storage/quota", "storage/registerCheckpoint",
+  "storage/abandonCheckpoint", "storage/exportBegin", "storage/exportChunk",
+  "storage/exportCommit", "storage/exportStatus", "storage/exportCancel", "ui/copyText",
+] as const satisfies readonly InboundPersistence170[];
+type MissingRoute170 = Exclude<InboundPersistence170, typeof persistenceRoutes170[number]>;
+const completeRoutes170: Record<MissingRoute170, never> = {};
+void completeRoutes170;
+
+export function bindPersistenceRoutes170(input: {
+  context: Stage3ChannelContext; host: PersistenceHost; attachment: DeviceChannelAttachment;
+  apiVersion(): string | undefined; admitted(): boolean;
+}): () => void {
+  let disposed = false;
+  const principal = () => {
+    const api = input.apiVersion()?.split(".").map(Number);
+    if (!api || api[0] !== 1 || api[1]! < 7)
+      throw new RpcError(RPC_ERRORS.methodNotFound, "Persistence is not negotiated");
+    const p = input.context.principal();
+    if (disposed || input.context.peer.closed || !input.admitted() || p.kind !== "plugin" ||
+        !sameResourceOwner(p.owner, input.context.owner))
+      throw new RpcError(RPC_ERRORS.permissionDenied, "Original admitted owner required");
+    return p;
+  };
+  function bind<M extends Exclude<InboundPersistence170,"settings/watch">>(method: M): void {
+    input.context.peer.handle(method, (params, request) =>
+      input.host.request(principal(), method, params, request.signal));
+  }
+  for (const method of persistenceRoutes170) if (method !== "settings/watch") bind(method);
+  input.context.peer.handle("settings/watch", async (params, request) => {
+    const p = principal();
+    const result = await input.host.request(p, "settings/watch", params, request.signal);
+    if (result.ok) {
+      const id = result.value.subscriptionId;
+      request.afterReply(() => {
+        try { principal(); input.attachment.negotiated("settings",1); input.attachment.activate(id); }
+        catch { input.attachment.abandon(id); }
+      }, () => input.attachment.abandon(id));
+    }
+    return result;
+  });
+  input.context.peer.handle("storage/drain", () => {
+    throw new RpcError(RPC_ERRORS.methodNotFound, "storage/drain is host to plugin only");
+  });
+  return () => { disposed = true; };
+}
+```
+
+Replace D160's local `bindDesktopChannel` with this complete extension; it still creates exactly one A attachment and retains the UI phases unchanged:
+
+```ts
+import { persistenceChannelApiVersion } from "@kobrixa/plugin-runtime";
+function bindDesktopChannel(context:Stage3ChannelContext,broker:DeviceBrokerPort,
+  input:Omit<Parameters<typeof createUiChannelBinding>[1],"attachment">,
+  persistence:PersistenceHost):Stage3ChannelBinding{
+  let attachment:DeviceChannelAttachment|undefined;
+  const routedBroker=new Proxy(broker,{get(target,key,receiver){
+    if(key==="attachChannel")return(args:Parameters<DeviceBrokerPort["attachChannel"]>[0])=>{
+      if(attachment)throw new Error("Second channel attachment");attachment=target.attachChannel(args);return attachment;
+    };
+    return Reflect.get(target,key,receiver);
+  }});
+  const offDevice=attachDeviceRpc({peer:context.peer,principal:context.principal,broker:routedBroker});
+  if(!attachment){offDevice();throw new Error("Missing original channel attachment");}
+  try{
+    const ui=createUiChannelBinding(context,{...input,attachment});
+    const offPersistence=bindPersistenceRoutes170({context,host:persistence,attachment,
+      apiVersion:()=>persistenceChannelApiVersion(context.peer),admitted:()=>input.runtime.current(context.owner)});
+    let disposed=false;
+    return {initialized:signal=>ui.initialized(signal),ready:signal=>ui.ready(signal),
+      dispose(){if(disposed)return;disposed=true;offPersistence();ui.dispose();offDevice();}};
+  }catch(error){offDevice();throw error;}
+}
+```
+
+Append these route tests to `controller.test.ts`. The typed samples enumerate the entire route union; additions to the public maps fail compilation unless covered. A domain failure is deliberate: it tests forwarding/result validation without pretending that this unit fixture performed disk writes.
+
+```ts
+import { bindPersistenceRoutes170, persistenceRoutes170 } from "./controller.js";
+import { RpcPeer, RPC_ERRORS, createMemoryChannelPair } from "@kobrixa/plugin-protocol";
+const h170 = "00000000-0000-4000-8000-000000000001";
+const revision170 = "r_" + "1".repeat(32);
+const samples170 = {
+  "settings/read":{schemaVersion:1}, "settings/update":{schemaVersion:1,expectedRevision:null,changes:[{key:"a.b",value:1}]},
+  "settings/reset":{schemaVersion:1,expectedRevision:null,keys:["a.b"]}, "settings/watch":{schemaVersion:1},
+  "settings/readMigration":{}, "settings/migrate":{fromSchemaVersion:1,schemaVersion:2,expectedRevision:revision170,values:[]},
+  "storage/beginWrite":{label:"Test",kind:"test",schemaVersion:1,mediaType:"application/json",byteLength:2,sha256:"a".repeat(64),target:{mode:"create"}},
+  "storage/writeChunk":{write:h170,offset:0,data:"e30="}, "storage/sealWrite":{write:h170},
+  "storage/commitWrite":{write:h170}, "storage/writeStatus":{write:h170}, "storage/abortWrite":{write:h170},
+  "storage/stat":{id:h170}, "storage/list":{limit:1},
+  "storage/openRead":{id:h170,expectedRevision:revision170,schemaVersion:1},
+  "storage/readChunk":{read:h170,offset:0,maxBytes:1}, "storage/closeRead":{read:h170},
+  "storage/delete":{id:h170,expectedRevision:revision170}, "storage/flush":{}, "storage/quota":{},
+  "storage/registerCheckpoint":{id:h170,expectedRevision:revision170}, "storage/abandonCheckpoint":{checkpoint:h170},
+  "storage/exportBegin":{actionRef:h170,suggestedName:"test.json",mediaType:"application/json",byteLength:2,sha256:"a".repeat(64)},
+  "storage/exportChunk":{export:h170,offset:0,data:"e30="}, "storage/exportCommit":{export:h170},
+  "storage/exportStatus":{export:h170}, "storage/exportCancel":{export:h170}, "ui/copyText":{actionRef:h170,text:"test"},
+} satisfies { [M in typeof persistenceRoutes170[number]]: PersistenceRequestMap[M]["params"] };
+function routes170() {
+  const [a,b] = createMemoryChannelPair(); const peer = new RpcPeer(a), client = new RpcPeer(b);
+  const owner = {sourceKey:"builtin:test.storage",pluginId:"test.storage",generation:1,hostEpoch:h170,processEpoch:h170};
+  let api = "1.7.0", current = true;
+  let principalOwner = owner;
+  const principal = vi.fn(() => ({kind:"plugin" as const,owner:principalOwner,authorityContext:null}));
+  const calls: Array<{method:string;params:unknown;signal:AbortSignal}> = [];
+  const host: PersistenceHost = {
+    settings:unusedPort170("settings"),recovery:unusedPort170("recovery"),participant:unusedPort170("participant"),
+    request: async (_principal,method,params,signal) => {
+      calls.push({method,params,signal});
+      return {ok:false,error:{code:"PLUGIN_E_DISABLED",message:"Fixture domain gate"}};
+    }, dispose:async () => {},
+  };
+  const attachment = {owner,negotiated:vi.fn(),activate:vi.fn(),abandon:vi.fn(),dispose:vi.fn()};
+  const dispose = bindPersistenceRoutes170({context:{peer,owner,principal,requirements:[]},host,attachment,
+    apiVersion:()=>api,admitted:()=>current});
+  return {peer,client,host,calls,principal,attachment,dispose,
+    api:(value:string)=>{api=value;}, stale:()=>{current=false;}, forge:()=>{principalOwner={...owner,generation:2};},
+    close:()=>{dispose();peer.close();client.close();}};
+}
+it.each(persistenceRoutes170)("routes %s through RpcPeer with a fresh principal", async method => {
+  const f = routes170();
+  try {
+    await expect(f.client.request(method,samples170[method])).resolves.toMatchObject({ok:false});
+    expect(f.calls).toHaveLength(1); expect(f.calls[0]).toMatchObject({method,params:samples170[method]});
+    expect(f.calls[0]!.signal).toBeInstanceOf(AbortSignal); expect(f.principal).toHaveBeenCalledOnce();
+    f.api("1.6.0");
+    await expect(f.client.request(method,samples170[method])).rejects.toMatchObject({code:RPC_ERRORS.methodNotFound});
+    expect(f.calls).toHaveLength(1);
+  } finally { f.close(); }
+});
+it.each(["stale","forge"] as const)("rejects %s owner without calling the domain host", async change => {
+  const f=routes170(); f[change]();
+  try { await expect(f.client.request("settings/read",{schemaVersion:1})).rejects.toMatchObject({code:RPC_ERRORS.permissionDenied});
+    expect(f.calls).toHaveLength(0); } finally {f.close();}
+});
+it("rejects malformed wire params and reverse drain with numeric errors", async () => {
+  const f=routes170();
+  try {
+    await expect(f.client.request("storage/drain",{token:h170,reason:"disable",remainingMs:10,checkpoints:[],writes:[]}))
+      .rejects.toMatchObject({code:RPC_ERRORS.methodNotFound});
+    // Raw wire bypasses caller-side validation, proving the host rejects it too.
+    const [raw,hostRaw]=createMemoryChannelPair(); const receiver=new RpcPeer(hostRaw);
+    const handler=vi.fn(); receiver.handle("settings/read",handler);
+    const response=new Promise<string>(resolve=>raw.onMessage(resolve));
+    raw.send(JSON.stringify({jsonrpc:"2.0",id:17,method:"settings/read",params:{schemaVersion:"bad",owner:{}}}));
+    expect(JSON.parse(await response).error.code).toBe(RPC_ERRORS.invalidParams);
+    expect(handler).not.toHaveBeenCalled(); receiver.close(); expect(f.calls).toHaveLength(0);
+  } finally {f.close();}
+});
+```
+
+For watch publication, append this isolated real-peer test; both cancellation and successful send run the same adapter:
+
+```ts
+it.each([false,true])("settings/watch uses afterReply; cancelled=%s", async cancelled => {
+  const f=routes170(); let finish!: () => void; let entered!: () => void;
+  const gate=new Promise<void>(resolve=>{finish=resolve;});
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const watch = {ok:true as const,value:{subscriptionId:h170,sequence:0 as const,
+    snapshot:{schemaVersion:1,revision:null,values:[]}}};
+  vi.spyOn(f.host,"request").mockImplementation(async () => {entered();await gate;return watch;});
+  const abort=new AbortController();
+  try {
+    const pending=f.client.request("settings/watch",{schemaVersion:1},{signal:abort.signal});
+    const observed=cancelled ? expect(pending).rejects.toBeDefined() : expect(pending).resolves.toEqual(watch);
+    await started; expect(f.attachment.activate).not.toHaveBeenCalled();
+    if(cancelled) abort.abort(); finish(); await observed;
+    await new Promise(resolve=>setTimeout(resolve,0));
+    expect(f.attachment.activate).toHaveBeenCalledTimes(cancelled?0:1);
+    expect(f.attachment.abandon).toHaveBeenCalledTimes(cancelled?1:0);
+  } finally {f.close();}
+});
+```
+
+- [ ] **Step 3: Run and commit R170 and D170 separately.**
+
+Run before implementation: the new helper imports fail. After implementation require all tests and both package checks to pass; unregistered 1.7 must remain a dispatch failure, never a saved receipt. These are future implementation commands only:
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/plugin-runtime test -- src/manager.test.ts src/supervisor.test.ts src/ui-lifecycle.test.ts
+pnpm --filter @kobrixa/plugin-runtime check
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/controller.test.ts
+pnpm check:desktop
+git add packages/plugin-runtime/src/manager.ts packages/plugin-runtime/src/manager.test.ts packages/plugin-runtime/src/supervisor.ts packages/plugin-runtime/src/supervisor.test.ts packages/plugin-runtime/src/index.ts
+git commit -m "feat(plugin-runtime): drain retained original persistence peers"
+git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts
+git commit -m "feat(desktop): route negotiated persistence requests on original channels"
+```
+
+R170's stopped receipt lists those five H-R paths and its SHA. D170's receipt lists controller.ts/test and its separate SHA. No empty R170 receipt is permitted. T7 subsequently verifies the actual supervisor/coordinator/worker path; these unit tests do not replace the cross-process evidence.
 
 - [ ] **Step 4: Write failing tests for the allowlisted, one-use renderer import snapshot.**
 
@@ -14115,6 +14742,90 @@ describe("V170 legacy preference snapshot", () => {
   it("bounds UTF-8 bytes and refuses oversized snapshots", () => {
     expect(() => collectLegacyPreferences(challenge, { getItem: () => "界".repeat(22_000) })).toThrow();
   });
+});
+```
+
+Add the following composition regression to controller.test.ts, reusing the complete `compositionInput()` fixture delivered by 3A-T8 and retained by 3B1-T5 Step 24. That fixture creates the actual held profile and foundation; its `cleanup()` owns that profile. Here only the worker/host domain factories are controlled, so no Electron evidence producer is imported into Vitest. T7 separately runs the same composition with actual worker/host factories.
+
+```ts
+import * as worker170 from "./persistence/worker.js";
+import * as filesystem170 from "./persistence/filesystem.js";
+import { resourceFreePersistence150 } from "@kobrixa/plugin-runtime";
+it("P170 constructs one worker and host before admission, keeps the original listener, and disposes once",async()=>{
+  const f=await compositionInput();
+  const profile=f.input.foundationOptions.profile;
+  const backend:import("./persistence/engine-port.js").PersistenceBackend={
+    engine:unusedPort170("engine"),reads:unusedPort170("reads"),evidence:unusedPort170("evidence"),
+    imports:unusedPort170("imports"),output:unusedPort170("output"),destinations:unusedPort170("destinations"),
+    sources:unusedPort170("sources"),dispose:vi.fn(async()=>{profile.assertHeld();})};
+  const root=Object.freeze({}) as import("./persistence/filesystem.js").StoreRoot;
+  const open=vi.spyOn(filesystem170,"openStoreRoot").mockResolvedValue(root);
+  const worker=vi.spyOn(worker170,"startPersistenceWorker").mockResolvedValue({backend,recovery:"ready"});
+  const participant=resourceFreePersistence150();
+  const host:PersistenceHost={participant,settings:unusedPort170("settings"),
+    recovery:{snapshot:()=>({revision:0,items:[]}),subscribe:()=>()=>{},
+      export:async()=>{throw new Error("No export in composition fixture");}},
+    request:async()=>({ok:false,error:{code:"PLUGIN_E_DISABLED",message:"No source"}}),
+    dispose:vi.fn(async()=>{profile.assertHeld();await backend.dispose();})};
+  const createHost=vi.spyOn(persistenceFactory,"createPersistenceHost").mockImplementation(async input=>{
+    expect(input.profile).toBe(profile);expect(input.composition.backend).toBe(backend);
+    await expect(input.composition.dispatchDrain({sourceKey:"builtin:test.storage",pluginId:"test.storage",generation:1,
+      hostEpoch:profile.hostEpoch,processEpoch:h170},{token:h170,reason:"disable",remainingMs:10,checkpoints:[],writes:[]},
+      new AbortController().signal)).rejects.toThrow("Runtime attachment not ready");
+    return host;
+  });
+  let listenerCount=0;
+  const original=f.factory.getMockImplementation()!;
+  f.factory.mockImplementation(async options=>{
+    const foundation=await original(options);
+    const onEnded=foundation.broker.reservations.onEnded.bind(foundation.broker.reservations);
+    vi.spyOn(foundation.broker.reservations,"onEnded").mockImplementation(listener=>{listenerCount++;return onEnded(listener);});
+    return foundation;
+  });
+  try{
+    const composition=await composeDesktopMain(f.input);
+    expect(worker).toHaveBeenCalledExactlyOnceWith({profile,root,workerEntry:expect.any(String),now:f.input.foundationOptions.now});
+    expect(createHost).toHaveBeenCalledOnce();expect(listenerCount).toBe(1);
+    expect(composition.stage3.persistence).toBe(participant);
+    expect(composition.stage3.device).toBe(composition.foundation.broker.resources);
+    expect(createHost.mock.calls[0]![0].reservations).toBe(composition.foundation.broker.reservations);
+    expect(composition.plugins.persistence170?.settings).toBe(host.settings);
+    await composition.dispose();await composition.dispose();
+    expect(host.dispose).toHaveBeenCalledOnce();expect(backend.dispose).toHaveBeenCalledOnce();
+  }finally{createHost.mockRestore();worker.mockRestore();open.mockRestore();await f.cleanup();}
+});
+it("importing controller starts no worker or native dialog",async()=>{
+  const worker=vi.spyOn(worker170,"startPersistenceWorker");
+  const open=vi.spyOn(filesystem170,"openStoreRoot");
+  try{await import("./controller.js");expect(worker).not.toHaveBeenCalled();expect(open).not.toHaveBeenCalled();}
+  finally{worker.mockRestore();open.mockRestore();}
+});
+```
+
+Add the action projection test to controller.test.ts; it proves feature and core tokens remain distinct, consumed native correlations cannot replay, and expired/retired actions never reach clipboard/dialog:
+
+```ts
+import { createPersistenceClaims170 } from "./controller.js";
+import { createCoreActionLedger } from "./core-recovery.js";
+it("only already-claimed core or feature actions become one native correlation",()=>{
+  let clock=0,live=true;const scope={hostEpoch:h170,workbenchInstance:h170};
+  const owner={sourceKey:"builtin:test.storage",pluginId:"test.storage",generation:1,hostEpoch:h170,processEpoch:h170};
+  const core=createCoreActionLedger({now:()=>clock,current:()=>live});
+  let used=false;
+  const feature:UserPersistenceActionPort={claim:()=>{
+    if(used)return {ok:false,error:{code:"PLUGIN_E_PERMISSION_DENIED",message:"Consumed"}};
+    used=true;return {ok:true,value:{action:"00000000-0000-4000-8000-000000000005"}};
+  }};
+  const claims=createPersistenceClaims170({feature,core,scope:()=>scope,currentScope:()=>live,currentOwner:()=>live,now:()=>clock});
+  const target={kind:"persistence-export" as const,recovery:h170};const action=core.mint(scope,target);
+  expect(claims.lookup(action.actionToken)).toBeNull();expect(claims.core.claim(action,target)).toBe(true);
+  const correlation=claims.lookup(action.actionToken);expect(correlation).toMatchObject({scope,purpose:"storage.export"});
+  expect(claims.lookup(action.actionToken)).toBeNull();expect(claims.core.claim(action,target)).toBe(false);
+  expect(claims.feature.claim({owner,actionRef:h170},"ui.clipboard")).toMatchObject({ok:true});
+  live=false;expect(claims.lookup("00000000-0000-4000-8000-000000000005")).toBeNull();
+  live=true;const second=core.mint(scope,target);expect(claims.core.claim(second,target)).toBe(true);
+  clock=120000;expect(claims.lookup(second.actionToken)).toBeNull();
+  core.complete(action);core.complete(second);
 });
 ```
 
@@ -14403,73 +15114,486 @@ useEffect(() => {
 
 The settings shell receives `legacyDescriptorId` only from an admitted main-owned descriptor; foundations expose it only in the synthetic fixture and leave it undefined in product settings. React remount/StrictMode duplicate delivery is harmless because main admits one in-flight snapshot and consumes the nonce once after durable acceptance. A failed snapshot stays pending in T6; reopening Settings explicitly retries/reconciles the same challenge. A new renderer lifetime requires a fresh host-issued scope/nonce and a complete resnapshot. Do not auto-reset the old `SettingsStore`, delete its localStorage keys or introduce actual device/Lab mappings. This bridge attaches the generic synthetic import mechanism only.
 
-For contributed settings, D170 exposes the exact `PluginsApi.settings` type from AM-28:
+- [ ] **Step 8a: Implement the bound settings bridge and dedicated trusted IPC.**
+
+In `shared/plugin-persistence.ts`, import `BoundSettingsService` and `SettingsFormBinding` type-only from runtime and `Sha256` from protocol; retain all existing import/recovery DTOs. Export the exact renderer facet, and use it for `PluginsApi.settings` in `shared/plugins.ts`:
 
 ```ts
-type SettingsApi170 = Omit<BoundSettingsService, "open"> & {
+export type SettingsApi170 = Omit<BoundSettingsService, "open"> & {
   open(input: { sourceKey: string; resourceDigest: Sha256 }): ReturnType<BoundSettingsService["open"]>;
 };
+export type { SettingsFormBinding } from "@kobrixa/plugin-runtime";
 ```
 
-Implement dedicated open/read/update/reset/watch/dispose IPC handlers, binding each to the trusted invoking scope and checking ownership of every form binding before dispatch to `host.settings`. Open inserts `scope`; renderer cannot supply it. Watch cleanup is tied to the validated binding and sender lifetime. Resolve source/digest through the admitted static catalog; `sources.coreOwner` supplies main-only namespace ownership without activating an optional process. No plugin principal is constructed by renderer.
-
-At the existing V160 settings-controls mount retain one form instance and install the explicit controls adapter. Import `createContributedSettingsForm` and `createSettingsFieldMap` from B2-T3's `contributed-settings-form.tsx`, and `attachSettingsControls` from B1-T7's `plugin-ui/host-ports.ts`. The browser adapter below deliberately drops the host-only open scope; main independently inserts the actual sender scope:
+Add this complete implementation to `main/plugins/ipc.ts`, combining imports. Ownership compares all six binding fields, not object identity or only the source key. Each open replaces the previous form even when its asynchronous result has not arrived. The bridge accepts no renderer scope.
 
 ```ts
-const api = window.kobrixa.plugins.settings;
-const service: BoundSettingsService = {
-  ...api,
-  open: ({ sourceKey, resourceDigest }) => api.open({ sourceKey, resourceDigest }),
-};
-const form = createContributedSettingsForm(controls, service);
-const detach = attachSettingsControls(controls, {
-  retry: form.retry.bind(form), reload: form.reload.bind(form),
-  fieldMap: createSettingsFieldMap,
+import type { BoundSettingsService, CoreWindowScope, SettingsFormBinding } from "@kobrixa/plugin-runtime";
+import type { PluginsApi } from "../../shared/plugins.js";
+import { settingsRequestSchemas } from "@kobrixa/plugin-protocol";
+
+export const settingsBinding170 = z.strictObject({
+  owner: z.strictObject({sourceKey:sourceKeySchema,pluginId:namespacedIdSchema,
+    uiResourceGeneration:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)}),
+  scope:z.strictObject({hostEpoch:z.uuid(),workbenchInstance:z.uuid()}),
+  resourceDigest:z.string().regex(/^[a-f0-9]{64}$/),
 });
-let disposed = false;
-let binding: SettingsFormBinding | undefined;
-let unwatch: (() => void) | undefined;
-void api.open({ sourceKey, resourceDigest }).then((opened) => {
-  if (disposed) { api.dispose(opened.binding); return; }
-  binding = opened.binding;
-  form.open(opened.binding, opened.resource, opened.snapshot);
-  unwatch = api.watch(opened.binding, () => {
-    void api.read(opened.binding).then((result) => {
-      if (disposed || binding !== opened.binding) return;
-      if (result.ok) form.replaceSnapshot(opened.binding, result.value);
-      else form.showFailure(opened.binding, result.error);
-    });
+const sameScope170 = (a:CoreWindowScope,b:CoreWindowScope) =>
+  a.hostEpoch===b.hostEpoch && a.workbenchInstance===b.workbenchInstance;
+const sameSettings170 = (a:SettingsFormBinding,b:SettingsFormBinding) =>
+  sameScope170(a.scope,b.scope) && a.owner.sourceKey===b.owner.sourceKey &&
+  a.owner.pluginId===b.owner.pluginId && a.owner.uiResourceGeneration===b.owner.uiResourceGeneration &&
+  a.resourceDigest===b.resourceDigest;
+export function bindSettingsBridge(service:BoundSettingsService,scope:()=>CoreWindowScope):PluginsApi["settings"] {
+  let generation=0;
+  let openingTail:Promise<void>=Promise.resolve();
+  let issued:SettingsFormBinding|undefined;
+  const watches=new Set<()=>void>();
+  const clear=()=>{
+    ++generation;
+    for(const off of watches) off(); watches.clear();
+    const old=issued; issued=undefined;
+    if(old) service.dispose(old);
+  };
+  const check=(binding:SettingsFormBinding)=>{
+    const current=scope();
+    if(issued && !sameScope170(issued.scope,current)) clear();
+    if(!issued || !sameSettings170(issued,binding) || !sameScope170(binding.scope,current))
+      throw new Error("Stale settings binding");
+    return issued;
+  };
+  return {
+    async open(input){
+      clear(); const opening=generation; const admitted=structuredClone(scope());
+      const previous=openingTail;
+      let release!:()=>void;openingTail=new Promise<void>(resolve=>{release=resolve;});
+      await previous;
+      if(opening!==generation || !sameScope170(admitted,scope())){release();throw new Error("Stale settings open");}
+      let opened:Awaited<ReturnType<BoundSettingsService["open"]>>;
+      try{opened=await service.open({...input,scope:admitted});}catch(error){release();throw error;}
+      release();
+      if(opening!==generation || !sameScope170(admitted,scope()) ||
+          !sameScope170(opened.binding.scope,admitted) || opened.binding.owner.sourceKey!==input.sourceKey ||
+          opened.binding.resourceDigest!==input.resourceDigest){
+        service.dispose(opened.binding); throw new Error("Stale settings open");
+      }
+      issued=structuredClone(opened.binding); return opened;
+    },
+    async read(binding){const original=check(binding),epoch=generation; const result=await service.read(original); check(original); if(epoch!==generation)throw new Error("Stale settings read");return result;},
+    async update(binding,params){const original=check(binding),epoch=generation; const result=await service.update(original,params);check(original);if(epoch!==generation)throw new Error("Stale settings update");return result;},
+    async reset(binding,params){const original=check(binding),epoch=generation; const result=await service.reset(original,params);check(original);if(epoch!==generation)throw new Error("Stale settings reset");return result;},
+    watch(binding,changed){
+      const original=check(binding); let active=true; let offService=()=>{};
+      const off=()=>{if(!active)return;active=false;offService();watches.delete(off);};
+      watches.add(off);
+      offService=service.watch(original,()=>{
+        if(!active)return;
+        try{check(original);}catch{off();return;}
+        changed();
+      });
+      if(!active)offService();
+      return off;
+    },
+    dispose(binding){check(binding);clear();},
+  };
+}
+
+export function registerSettingsIpc170(input:{
+  handle:IpcHandle; service:BoundSettingsService; scope:()=>CoreWindowScope;
+  publish:(scope:CoreWindowScope,channel:string,payload:unknown)=>void;
+}):()=>void {
+  const bridge=bindSettingsBridge(input.service,input.scope);
+  let binding:SettingsFormBinding|undefined;
+  let off:()=>void=()=>{};
+  let closed=false;let watching=0;let openGeneration=0;
+  const openSchema=z.strictObject({sourceKey:sourceKeySchema,resourceDigest:z.string().regex(/^[a-f0-9]{64}$/)});
+  const watchSchema=z.strictObject({binding:settingsBinding170,watch:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)});
+  const active=()=>{if(closed)throw new Error("Settings window retired");};
+  input.handle("plugins:settings:open",async(_event,value:unknown)=>{
+    active();const generation=++openGeneration;off();off=()=>{};binding=undefined;
+    const opened=await bridge.open(openSchema.parse(value));
+    if(closed){bridge.dispose(opened.binding);throw new Error("Settings window retired");}
+    if(generation!==openGeneration)throw new Error("Stale settings open");
+    binding=opened.binding;return opened;
   });
+  input.handle("plugins:settings:read",(_event,value:unknown)=>{active();return bridge.read(settingsBinding170.parse(value));});
+  input.handle("plugins:settings:update",(_event,value:unknown,params:unknown)=>{active();
+    return bridge.update(settingsBinding170.parse(value),settingsRequestSchemas["settings/update"].params.parse(params));});
+  input.handle("plugins:settings:reset",(_event,value:unknown,params:unknown)=>{active();
+    return bridge.reset(settingsBinding170.parse(value),settingsRequestSchemas["settings/reset"].params.parse(params));});
+  input.handle("plugins:settings:watch",(_event,value:unknown)=>{
+    active();const request=watchSchema.parse(value);off();watching=request.watch;
+    off=bridge.watch(request.binding,()=>input.publish(request.binding.scope,"plugins:settings:changed",request));
+  });
+  input.handle("plugins:settings:unwatch",(_event,value:unknown)=>{
+    active();const request=watchSchema.parse(value);
+    // Validate ownership even for removal; a foreign window cannot remove a watch.
+    if(!binding || !sameSettings170(binding,request.binding) || !sameScope170(binding.scope,input.scope()))
+      throw new Error("Stale settings binding");
+    if(request.watch===watching){off();off=()=>{};watching=0;}
+  });
+  input.handle("plugins:settings:dispose",(_event,value:unknown)=>{
+    active();const candidate=settingsBinding170.parse(value);bridge.dispose(candidate);++openGeneration;
+    off();off=()=>{};binding=undefined;
+  });
+  return ()=>{if(closed)return;closed=true;++openGeneration;off();off=()=>{};
+    if(binding){try{bridge.dispose(binding);}catch{/* Already retired by the scope guard. */}binding=undefined;}};
+}
+```
+
+In `main/ipc.ts`, register `registerSettingsIpc170` with the existing trusted main-frame `handle`, `persistence170.host.settings`, and the same main-owned workbench `scope` getter. The `publish` callback compares both scope fields against the current renderer scope before `webContents.send`; install the returned disposer in the existing navigation/destroyed cleanup before advancing that scope. Do not create a generic request IPC, accept a sender ID, or register IPC in the worker. The existing trusted wrapper rejects subframes/foreign webContents before these parsers execute.
+
+Both `preload/index.ts` and `tests/desktop/preload.cjs` use this identical body (remove only TypeScript annotations in CJS). It exposes synchronous disposer functions while subscription establishment is asynchronous; a read after watch acknowledgement closes the open→subscribe invalidation gap. Transport failure triggers a read, whose error remains visible in the mount.
+
+```ts
+function createSettingsPreload170(): PluginsApi["settings"] {
+  let nextWatch=0;
+  return {
+    open:input=>ipcRenderer.invoke("plugins:settings:open",input),
+    read:binding=>ipcRenderer.invoke("plugins:settings:read",binding),
+    update:(binding,params)=>ipcRenderer.invoke("plugins:settings:update",binding,params),
+    reset:(binding,params)=>ipcRenderer.invoke("plugins:settings:reset",binding,params),
+    watch(binding,changed){
+      const watch=++nextWatch; let active=true;
+      const receive=(_event:Electron.IpcRendererEvent,value:{watch:number})=>{if(active && value.watch===watch)changed();};
+      ipcRenderer.on("plugins:settings:changed",receive);
+      void ipcRenderer.invoke("plugins:settings:watch",{binding,watch}).then(()=>{
+        if(active)changed();
+      },()=>{if(active)changed();});
+      return ()=>{if(!active)return;active=false;ipcRenderer.removeListener("plugins:settings:changed",receive);
+        void ipcRenderer.invoke("plugins:settings:unwatch",{binding,watch}).catch(()=>{});};
+    },
+    dispose(binding){void ipcRenderer.invoke("plugins:settings:dispose",binding).catch(()=>{});},
+  };
+}
+// Add inside the existing plugins object in each preload:
+// settings: createSettingsPreload170(),
+```
+
+Append complete bridge tests to `main/plugins/ipc.test.ts`. These tests isolate the sender/binding boundary; T3's real service and form suites remain mandatory for CAS, typed values and storage behavior.
+
+```ts
+import { bindSettingsBridge } from "./ipc.js";
+import type { BoundSettingsService, SettingsFormBinding } from "@kobrixa/plugin-runtime";
+function settingsBridgeFixture170(){
+  let scope={hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"};
+  const binding:SettingsFormBinding={owner:{sourceKey:"builtin:test.settings",pluginId:"test.settings",uiResourceGeneration:1},
+    scope:{...scope},resourceDigest:"a".repeat(64)};
+  const snapshot={schemaVersion:1,revision:null,values:[{key:"device.choice",value:1}]};
+  const resource={schemaVersion:1,title:{en:"Settings"},fields:[{key:"device.choice",label:{en:"Choice"},
+    type:"enum" as const,default:1,options:[{value:1,label:{en:"Number"}},{value:"1",label:{en:"String"}}]}]};
+  let notify=()=>{};const off=vi.fn();
+  const service:BoundSettingsService={
+    open:vi.fn(async()=>({binding,resource,snapshot})),read:vi.fn(async()=>({ok:true,value:snapshot})),
+    update:vi.fn(async()=>({ok:false,error:{code:"PLUGIN_E_SETTINGS_CONFLICT",message:"Conflict"}})),
+    reset:vi.fn(async()=>({ok:false,error:{code:"PLUGIN_E_SETTINGS_CONFLICT",message:"Conflict"}})),
+    watch:vi.fn((_binding,listener)=>{notify=listener;return off;}),dispose:vi.fn(),
+  };
+  const api=bindSettingsBridge(service,()=>scope);
+  return {binding,service,api,off,notify:()=>notify(),open:()=>api.open({sourceKey:binding.owner.sourceKey,resourceDigest:binding.resourceDigest}),
+    replaceWindow:()=>{scope={...scope,workbenchInstance:"00000000-0000-4000-8000-000000000003"};}};
+}
+it("opens data-only settings once and retains scalar types and dotted keys",async()=>{
+  const f=settingsBridgeFixture170();const opened=await f.open();
+  expect(opened.resource.fields[0]).toMatchObject({key:"device.choice",options:[{value:1},{value:"1"}]});
+  expect(f.service.open).toHaveBeenCalledExactlyOnceWith({sourceKey:f.binding.owner.sourceKey,
+    resourceDigest:f.binding.resourceDigest,scope:f.binding.scope});
+  await expect(f.api.update(f.binding,{schemaVersion:1,expectedRevision:null,changes:[{key:"device.choice",value:"1"}]}))
+    .resolves.toMatchObject({ok:false,error:{code:"PLUGIN_E_SETTINGS_CONFLICT"}});
+  expect(f.service.update).toHaveBeenCalledWith(f.binding,{schemaVersion:1,expectedRevision:null,changes:[{key:"device.choice",value:"1"}]});
+  f.api.dispose(f.binding);
 });
-const dispose = () => {
-  disposed = true;
-  unwatch?.();
-  if (binding !== undefined) { form.dispose(binding); api.dispose(binding); }
-  binding = undefined;
-  detach();
-};
+it("rejects every changed binding field and stops watches on window change",async()=>{
+  const f=settingsBridgeFixture170();await f.open();
+  const changed=vi.fn();f.api.watch(f.binding,changed);
+  const variants:SettingsFormBinding[]=[
+    {...f.binding,resourceDigest:"b".repeat(64)},
+    {...f.binding,owner:{...f.binding.owner,sourceKey:"builtin:other"}},
+    {...f.binding,owner:{...f.binding.owner,pluginId:"test.other"}},
+    {...f.binding,owner:{...f.binding.owner,uiResourceGeneration:2}},
+    {...f.binding,scope:{...f.binding.scope,hostEpoch:"00000000-0000-4000-8000-000000000004"}},
+    {...f.binding,scope:{...f.binding.scope,workbenchInstance:"00000000-0000-4000-8000-000000000004"}},
+  ];
+  for(const binding of variants){
+    await expect(f.api.read(binding)).rejects.toThrow("Stale");
+    await expect(f.api.update(binding,{schemaVersion:1,expectedRevision:null,changes:[]})).rejects.toThrow("Stale");
+    await expect(f.api.reset(binding,{schemaVersion:1,expectedRevision:null,keys:[]})).rejects.toThrow("Stale");
+    expect(()=>f.api.watch(binding,changed)).toThrow("Stale");expect(()=>f.api.dispose(binding)).toThrow("Stale");
+  }
+  f.notify();expect(changed).toHaveBeenCalledOnce();f.replaceWindow();f.notify();
+  expect(changed).toHaveBeenCalledOnce();expect(f.off).toHaveBeenCalledOnce();expect(f.service.dispose).toHaveBeenCalledOnce();
+});
+it("disposes a late open from the old generation without replacing the new form",async()=>{
+  const f=settingsBridgeFixture170();let release!:(value:Awaited<ReturnType<BoundSettingsService["open"]>>)=>void;
+  const original=await f.service.open({sourceKey:f.binding.owner.sourceKey,resourceDigest:f.binding.resourceDigest,scope:f.binding.scope});
+  vi.mocked(f.service.open).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  const old=f.open();const rejected=expect(old).rejects.toThrow("Stale");await Promise.resolve();
+  const newer=f.open();release({...original,binding:{...original.binding,resourceDigest:"b".repeat(64)}});
+  await rejected;const current=await newer;await expect(f.api.read(current.binding)).resolves.toMatchObject({ok:true});
+  expect(f.service.dispose).toHaveBeenCalledOnce();f.api.dispose(current.binding);
+});
+it("disposes a late open after navigation and ignores a late read",async()=>{
+  const f=settingsBridgeFixture170();await f.open();let release!:(value:Awaited<ReturnType<BoundSettingsService["read"]>>)=>void;
+  vi.mocked(f.service.read).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  const read=f.api.read(f.binding);const rejected=expect(read).rejects.toThrow("Stale");f.replaceWindow();
+  release({ok:true,value:{schemaVersion:1,revision:null,values:[]}});await rejected;
+  expect(f.service.dispose).toHaveBeenCalledOnce();
+});
 ```
 
-Use this mount in the shell's existing asynchronous resource-load error boundary; an open/read transport rejection remains a visible load error with explicit reload, never defaults. Snapshot replacement uses T3's draft-preserving reconciliation; explicit reload remains exclusively the control action. Return `dispose` from the mount effect and call it on form switch/unmount, including when open is still pending. The single workbench form limit remains.
+Append this typed IPC handler test to main/plugins/ipc.test.ts. It registers the actual dedicated handlers; main/ipc.test.ts's existing trusted-frame tests remain the sender boundary regression. The test runner does not expose a production request tunnel:
 
-Add `legacyDescriptorId?: string` to the settings shell props and supply `"synthetic.preferences"` only in its synthetic integration test; assert `challenge` receives that exact descriptor. Before wiring, add settings-panel tests using T3's real controls adapter and the worker-backed service (not a success-returning IPC fake): no-process initial snapshot; stale digest refusal; two views CAS one winner; watch invalidation preserves loser draft; explicit retry/reload; number `1` distinct from string `"1"`; literal dotted keys; form switch/watch disposal and late read. Run the focused commands below red then green, and repeat these operations in T7's actual `storage-ui-pressure` case. No Apply button or UI v1 enum widening.
+```ts
+import { registerSettingsIpc170, registerPersistenceRecoveryIpc170 } from "./ipc.js";
+import type { IpcHandle } from "../ipc.js";
+import type { IpcMainInvokeEvent } from "electron";
+function ipcHandlers170(){
+  const handlers=new Map<string,(event:IpcMainInvokeEvent,...args:unknown[])=>unknown>();
+  const handle:IpcHandle=<T extends unknown[],R>(name:string,action:(event:IpcMainInvokeEvent,...args:T)=>R)=>{
+    handlers.set(name,(event,...args)=>action(event,...args as T));
+  };
+  const invoke=async(name:string,...args:unknown[])=>{
+    const action=handlers.get(name);if(!action)throw new Error("Missing dedicated handler");
+    return action({} as IpcMainInvokeEvent,...args);
+  };
+  return {handle,invoke,handlers};
+}
+it("dedicated settings IPC validates inputs and an old unwatch cannot cancel the replacement",async()=>{
+  const f=settingsBridgeFixture170(),ipc=ipcHandlers170(),publish=vi.fn();
+  const dispose=registerSettingsIpc170({handle:ipc.handle,service:f.service,scope:()=>f.binding.scope,publish});
+  try{
+    await ipc.invoke("plugins:settings:open",{sourceKey:f.binding.owner.sourceKey,resourceDigest:f.binding.resourceDigest});
+    await ipc.invoke("plugins:settings:watch",{binding:f.binding,watch:1});
+    await ipc.invoke("plugins:settings:watch",{binding:f.binding,watch:2});
+    await ipc.invoke("plugins:settings:unwatch",{binding:f.binding,watch:1});f.notify();
+    expect(publish).toHaveBeenCalledWith(f.binding.scope,"plugins:settings:changed",{binding:f.binding,watch:2});
+    expect(f.off).toHaveBeenCalledTimes(1);
+    await expect(ipc.invoke("plugins:settings:update",f.binding,{schemaVersion:1,expectedRevision:null,changes:[],scope:f.binding.scope})).rejects.toThrow();
+    expect(f.service.update).not.toHaveBeenCalled();
+    expect([...ipc.handlers.keys()].sort()).toEqual(["plugins:settings:dispose","plugins:settings:open","plugins:settings:read","plugins:settings:reset","plugins:settings:unwatch","plugins:settings:update","plugins:settings:watch"]);
+    await ipc.invoke("plugins:settings:dispose",f.binding);expect(f.service.dispose).toHaveBeenCalledOnce();
+  }finally{dispose();}
+});
+it("recovery IPC rejects replaced windows and removes both subscriptions exactly once",async()=>{
+  const ipc=ipcHandlers170();let scope={hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"};
+  const offOpen=vi.fn(),offChanged=vi.fn();let open:(value:{itemId:string})=>void=()=>{};
+  const bridge:PluginsApi["persistenceRecovery"]={snapshot:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
+    act:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),onOpen:listener=>{open=listener;return offOpen;},onChanged:()=>offChanged};
+  const publish=vi.fn();const dispose=registerPersistenceRecoveryIpc170({handle:ipc.handle,bridge,scope:()=>scope,publish});
+  await ipc.invoke("plugins:persistence-recovery:subscribe");
+  const itemId="00000000-0000-4000-8000-000000000003";open({itemId});expect(publish).toHaveBeenCalledOnce();
+  scope={...scope,workbenchInstance:"00000000-0000-4000-8000-000000000004"};open({itemId});
+  expect(publish).toHaveBeenCalledOnce();await expect(ipc.invoke("plugins:persistence-recovery:snapshot",{itemId})).rejects.toThrow("Stale");
+  expect(bridge.snapshot).not.toHaveBeenCalled();dispose();dispose();
+  expect(offOpen).toHaveBeenCalledOnce();expect(offChanged).toHaveBeenCalledOnce();
+});
+```
 
-Run:
+- [ ] **Step 8b: Mount the complete form locally and mount core persistence detail.**
+
+Add these imports and the local component to `settings-panel.tsx`; keep the sole `submitLegacyPreferences` effect from Step 8 unchanged. The mount owns one B1 settings-controls instance; `scope` is its display lifetime, never authorization. Add `contributedSettings?: {sourceKey:string;resourceDigest:Sha256;scope:CoreWindowScope}` to SettingsPanelProps and destructure it in SettingsPanel. The admitted settings selection supplies that existing source/digest/scope metadata. Insert `{active && contributedSettings && <ContributedSettingsMount {...contributedSettings} locale={locale} />}` in the panel's settings content. With no selection, no form opens. The synthetic fixture supplies its admitted data-only contribution; product descriptors are not invented.
+
+```tsx
+import type { BoundSettingsService, CoreWindowScope, SettingsFormBinding } from "@kobrixa/plugin-runtime";
+import type { Sha256 } from "@kobrixa/plugin-protocol";
+import { attachSettingsControls, type SettingsControlsPort } from "../plugin-ui/host-ports.js";
+import { createContributedSettingsForm, createSettingsFieldMap } from "./contributed-settings-form.js";
+import { SettingsControls, SettingsControlsView } from "../plugin-ui/forms.js";
+import { pluginUiCopy } from "./plugin-copy.js";
+
+export function mountContributedSettings170(input:{
+  api:PluginsApi["settings"];sourceKey:string;resourceDigest:Sha256;controls:SettingsControlsPort;
+  failure:(error:unknown)=>void;
+}):()=>void {
+  const service:BoundSettingsService={...input.api,
+    open:({sourceKey,resourceDigest})=>input.api.open({sourceKey,resourceDigest})};
+  const form=createContributedSettingsForm(input.controls,service);
+  const detach=attachSettingsControls(input.controls,{retry:form.retry.bind(form),reload:form.reload.bind(form),fieldMap:createSettingsFieldMap});
+  let alive=true;let readGeneration=0;let binding:SettingsFormBinding|undefined;let off=()=>{};
+  void input.api.open({sourceKey:input.sourceKey,resourceDigest:input.resourceDigest}).then(opened=>{
+    if(!alive){input.api.dispose(opened.binding);return;}
+    binding=opened.binding;form.open(binding,opened.resource,opened.snapshot);
+    const read=()=>{
+      const generation=++readGeneration;
+      void input.api.read(opened.binding).then(result=>{
+        if(!alive || generation!==readGeneration)return;
+        if(result.ok)form.replaceSnapshot(opened.binding,result.value);else form.showFailure(opened.binding,result.error);
+      },error=>{if(alive && generation===readGeneration)input.failure(error);});
+    };
+    off=input.api.watch(binding,read);read();
+  }).catch(error=>{if(alive)input.failure(error);});
+  return ()=>{
+    if(!alive)return;alive=false;++readGeneration;off();detach();
+    if(binding){form.dispose(binding);input.api.dispose(binding);binding=undefined;}
+  };
+}
+export function ContributedSettingsMount(props:{
+  sourceKey:string;resourceDigest:Sha256;scope:CoreWindowScope;locale:"en"|"zh-TW";
+}){
+  const [controls]=useState(()=>new SettingsControls());
+  const [error,setError]=useState<string|null>(null);const [reload,setReload]=useState(0);
+  useEffect(()=>{
+    setError(null);
+    return mountContributedSettings170({api:window.kobrixa.plugins.settings,controls,...props,
+      failure:()=>setError(pluginUiCopy[props.locale].unavailable)});
+  },[props.sourceKey,props.resourceDigest,props.scope.hostEpoch,props.scope.workbenchInstance,controls,reload,props.locale]);
+  return <>{error && <div role="alert">{error}<button onClick={()=>setReload(value=>value+1)}>{pluginUiCopy[props.locale].reload}</button></div>}
+    <SettingsControlsView controls={controls} locale={props.locale} labels={pluginUiCopy[props.locale]} /></>;
+}
+```
+
+Import `PluginsApi` type-only from `../../shared/plugins.js` and merge `useEffect/useState` with the existing React import. Use the settings shell's existing localized load-error/reload copy in the JSX; this local component adds no Apply control and does not reset drafts on invalidation. T3's `replaceSnapshot` retains dirty fields; only explicit retry/reload changes the pending draft.
+
+In `app.tsx`, add the import and mount immediately beside the existing unconditional `CoreRecoveryView`, with the same `uiLabels`. Do not put it inside optional tools/feature-enabled conditions:
+
+```tsx
+import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
+// Adjacent to the existing CoreRecoveryView in App's JSX:
+<CorePersistenceRecovery port={window.kobrixa.plugins.persistenceRecovery} labels={uiLabels} />
+```
+
+Append to `settings-panel.test.ts`; the controls fixture below implements the real frozen control port and the mount uses the actual B2 form factory (no factory mock). Import the mount from settings-panel, `SettingsControlsPort` from plugin-ui/host-ports and `SettingsDraftState` from runtime, merging existing imports.
+
+```ts
+function mountedSettings170(){
+  const binding={owner:{sourceKey:"builtin:test.settings",pluginId:"test.settings",uiResourceGeneration:1},
+    scope:{hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"},resourceDigest:"a".repeat(64)};
+  const resource={schemaVersion:1,title:{en:"Settings"},fields:[{key:"device.choice",label:{en:"Choice"},type:"enum" as const,default:1,
+    options:[{value:1,label:{en:"Number"}},{value:"1",label:{en:"String"}}]}]};
+  const snapshot={schemaVersion:1,revision:null,values:[{key:"device.choice",value:1}]};
+  const changed=new Set<()=>void>();const failure=vi.fn();
+  const api:PluginsApi["settings"]={open:vi.fn(async()=>({binding,resource,snapshot})),
+    read:vi.fn(async()=>({ok:true,value:snapshot})),
+    update:vi.fn(async()=>({ok:false,error:{code:"PLUGIN_E_SETTINGS_CONFLICT",message:"Conflict"}})),
+    reset:vi.fn(async()=>({ok:false,error:{code:"PLUGIN_E_SETTINGS_CONFLICT",message:"Conflict"}})),
+    watch:vi.fn((_binding,listener)=>{changed.add(listener);return()=>changed.delete(listener);}),dispose:vi.fn()};
+  const controls:SettingsControlsPort={render:vi.fn(),onChange:vi.fn(()=>()=>{}),dispose:vi.fn()};
+  return {binding,resource,snapshot,api,controls,changed,failure,
+    mount:()=>mountContributedSettings170({api,controls,failure,sourceKey:binding.owner.sourceKey,resourceDigest:binding.resourceDigest})};
+}
+it("mount opens once, reads after watch, and removes watch/form/binding on cleanup",async()=>{
+  const f=mountedSettings170();const dispose=f.mount();await Promise.resolve();await Promise.resolve();
+  expect(f.api.open).toHaveBeenCalledOnce();expect(f.changed.size).toBe(1);expect(f.api.read).toHaveBeenCalledOnce();
+  for(const changed of f.changed)changed();await Promise.resolve();
+  expect(f.api.read).toHaveBeenCalledTimes(2);dispose();dispose();
+  expect(f.changed.size).toBe(0);expect(f.controls.dispose).toHaveBeenCalled();expect(f.api.dispose).toHaveBeenCalledOnce();
+});
+it("late open is disposed and late reads cannot redraw a retired form",async()=>{
+  const f=mountedSettings170();let release!:(value:Awaited<ReturnType<typeof f.api.open>>)=>void;
+  vi.mocked(f.api.open).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+  const dispose=f.mount();dispose();release({binding:f.binding,resource:f.resource,snapshot:f.snapshot});
+  await Promise.resolve();expect(f.api.dispose).toHaveBeenCalledOnce();expect(f.api.watch).not.toHaveBeenCalled();
+  const g=mountedSettings170();let read!:(value:Awaited<ReturnType<typeof g.api.read>>)=>void;
+  vi.mocked(g.api.read).mockImplementation(()=>new Promise(resolve=>{read=resolve;}));
+  const close=g.mount();await Promise.resolve();close();const calls=vi.mocked(g.controls.render).mock.calls.length;
+  read({ok:true,value:{...g.snapshot,values:[{key:"device.choice",value:"1"}]}});await Promise.resolve();
+  expect(g.controls.render).toHaveBeenCalledTimes(calls);
+});
+it("stale digest rejection is visible without mounting controls or activating a process",async()=>{
+  const f=mountedSettings170();vi.mocked(f.api.open).mockRejectedValue(new Error("Stale digest"));
+  const dispose=f.mount();await Promise.resolve();await Promise.resolve();
+  expect(f.failure).toHaveBeenCalledOnce();expect(f.controls.render).not.toHaveBeenCalled();dispose();
+});
+```
+
+Append the following real-controls/CAS regression to settings-panel.test.ts as well. It drives the actual B1 controls and B2 form/store through the mounted bridge; the in-memory service models two revisions and deliberately rejects the first mutation instead of returning unconditional success:
+
+```ts
+import { SettingsControls } from "../plugin-ui/forms.js";
+import type { SettingsSnapshot } from "@kobrixa/plugin-protocol";
+it("mounted typed choice keeps the conflicting dotted-key draft until explicit retry or reload",async()=>{
+  const f=mountedSettings170();const controls=new SettingsControls();
+  let saved:SettingsSnapshot={...f.snapshot,revision:"r_"+"1".repeat(32)};
+  let conflict=true;
+  vi.mocked(f.api.open).mockResolvedValue({binding:f.binding,resource:f.resource,snapshot:saved});
+  vi.mocked(f.api.read).mockImplementation(async()=>({ok:true,value:structuredClone(saved)}));
+  vi.mocked(f.api.update).mockImplementation(async(_binding,params)=>{
+    if(conflict || params.expectedRevision!==saved.revision)return {ok:false,error:{code:"PLUGIN_E_SETTINGS_CONFLICT",message:"Conflict"}};
+    saved={schemaVersion:1,revision:"r_"+"3".repeat(32),values:params.changes};
+    return {ok:true,value:{snapshot:saved,receipt:{revision:saved.revision!,commitId:"00000000-0000-4000-8000-000000000009",durability:"file-and-directory-sync"}}};
+  });
+  const dispose=mountContributedSettings170({api:f.api,controls,failure:f.failure,
+    sourceKey:f.binding.owner.sourceKey,resourceDigest:f.binding.resourceDigest});
+  try{
+    await vi.waitFor(()=>expect(controls.getSnapshot()).not.toBeNull());
+    controls.commit("device.choice","change","1");
+    await vi.waitFor(()=>expect(controls.getSnapshot()!.state.errors.length).toBeGreaterThan(0));
+    saved={...saved,revision:"r_"+"2".repeat(32)};for(const changed of f.changed)changed();
+    await vi.waitFor(()=>expect(controls.getSnapshot()!.state.baseline.revision).toBe(saved.revision));
+    expect(controls.getSnapshot()!.state.draft).toEqual([{key:"device.choice",value:"1"}]);
+    expect(f.api.update).toHaveBeenCalledTimes(1);conflict=false;await controls.retry("device.choice");
+    await vi.waitFor(()=>expect(saved.values).toEqual([{key:"device.choice",value:"1"}]));
+    expect(f.api.update).toHaveBeenLastCalledWith(f.binding,expect.objectContaining({expectedRevision:"r_"+"2".repeat(32),changes:[{key:"device.choice",value:"1"}]}));
+    saved={...saved,revision:"r_"+"4".repeat(32),values:[{key:"device.choice",value:1}]};
+    await controls.reload();expect(controls.getSnapshot()!.state.draft).toEqual([{key:"device.choice",value:1}]);
+  }finally{dispose();controls.destroy();}
+});
+```
+
+Append to `app.test.ts` the actual detail mount test, using B1's existing labels and jsdom root helper; no optional process/catalog fixture is needed:
+
+```tsx
+import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
+import { pluginUiCopy } from "./settings/plugin-copy.js";
+it("mounts persistence detail with all optional features off",async()=>{
+  let open:(input:{itemId:string})=>void=()=>{};
+  const off=vi.fn();const port:PluginsApi["persistenceRecovery"]={
+    snapshot:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
+    act:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
+    onOpen:vi.fn(listener=>{open=listener;return off;}),onChanged:vi.fn(()=>off)};
+  const element=document.createElement("div");const detailRoot=createRoot(element);
+  await act(async()=>detailRoot.render(createElement(CorePersistenceRecovery,{port,labels:pluginUiCopy.en})));
+  await act(async()=>open({itemId:"00000000-0000-4000-8000-000000000001"}));
+  expect(port.snapshot).toHaveBeenCalledWith({itemId:"00000000-0000-4000-8000-000000000001"});
+  await act(async()=>detailRoot.unmount());expect(off).toHaveBeenCalled();
+});
+```
+
+Run all these tests plus the already complete T3 tests for CAS conflicts, explicit retry/reload, numeric/string choices and literal dotted keys. The Step 8 preference integration test must still observe one submission. Run real/smoke preload parity under H-I; do not execute worker/Electron fixtures inside Vitest.
 
 ```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test -- src/renderer/settings/legacy-preferences-bridge.test.ts src/renderer/settings/settings-panel.test.ts src/renderer/settings/contributed-settings-form.test.ts
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/ipc.test.ts src/main/ipc.test.ts src/preload/index.test.ts src/renderer/settings/settings-panel.test.ts src/renderer/settings/contributed-settings-form.test.ts src/renderer/settings/legacy-preferences-bridge.test.ts src/renderer/app.test.ts
+node --test tests/desktop/smoke-harness.test.mjs
+pnpm check:desktop
 ```
 
-Expected: existing settings behavior and the new bridge tests pass. B2-RF2 remains pinned by the delivered form test: literal dotted key; numeric `1` versus string `"1"` enum; stale revision while dirty; original draft survives; explicit retry; no Apply button; no v1 LocalId widening. DOM, keyboard, 16-field pagination and paint timing require the actual browser harness, **controller runs outside sandbox**.
+Expected red: missing bridge/mount exports. Expected green: trusted sender rejection precedes domain calls; six binding fields checked; one open; disposed late opens; no late redraw; no process activation; typed enums/dotted keys and dirty draft conflict tests pass; all-optional-off detail opens; real and smoke preload expose identical nested settings/recovery facets.
 
-- [ ] **Step 9: Commit the bounded renderer/main import bridge.**
+- [ ] **Step 9: Commit D170, V170 and H-I settings/import attachments separately.**
 
 ```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/ipc.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/shared/plugins.ts apps/desktop/src/shared/plugin-persistence.ts apps/desktop/src/shared/plugin-persistence.test.ts apps/desktop/src/preload/index.ts apps/desktop/src/preload/index.test.ts apps/desktop/src/renderer/settings/settings-panel.tsx apps/desktop/src/renderer/settings/settings-panel.test.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts tests/desktop/preload.cjs
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): add bounded nonce-bound legacy preference snapshots"
+git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/plugins/ipc.ts apps/desktop/src/main/plugins/ipc.test.ts apps/desktop/src/main/ipc.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/shared/plugins.ts apps/desktop/src/shared/plugin-persistence.ts apps/desktop/src/shared/plugin-persistence.test.ts apps/desktop/src/preload/index.ts apps/desktop/src/preload/index.test.ts
+git commit -m "feat(desktop): bind contributed settings to trusted workbench IPC"
+git add apps/desktop/src/renderer/settings/settings-panel.tsx apps/desktop/src/renderer/settings/settings-panel.test.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts apps/desktop/src/renderer/app.tsx apps/desktop/src/renderer/app.test.ts
+git commit -m "feat(desktop): mount contributed settings and core persistence detail"
+git add tests/desktop/preload.cjs tests/desktop/smoke-harness.test.mjs
+git commit -m "test(desktop): mirror persistence bridges in smoke preload"
 ```
 
-Do not include another owner's pending form or importer changes. The coordinator remains the sole durable nonce authority.
+Before H-I's commit, append this regression to tests/desktop/smoke-harness.test.mjs, retaining all existing preload execution tests. Import readFileSync from node:fs and assert from node:assert/strict with the existing test import. This parity check complements the real preload invocation tests:
+
+```js
+test("P170 real and smoke preloads expose the same dedicated persistence channels",()=>{
+  const real=readFileSync(new URL("../../apps/desktop/src/preload/index.ts",import.meta.url),"utf8");
+  const smoke=readFileSync(new URL("./preload.cjs",import.meta.url),"utf8");
+  for(const channel of ["plugins:settings:open","plugins:settings:read","plugins:settings:update",
+    "plugins:settings:reset","plugins:settings:watch","plugins:settings:unwatch","plugins:settings:dispose",
+    "plugins:persistence-recovery:snapshot","plugins:persistence-recovery:act",
+    "plugins:persistence-recovery:subscribe","plugins:persistence-recovery:unsubscribe",
+    "plugins:persistence-recovery:open","plugins:persistence-recovery:changed"]){
+    assert.ok(real.includes(channel),`real preload missing ${channel}`);
+    assert.ok(smoke.includes(channel),`smoke preload missing ${channel}`);
+  }
+  for(const source of [real,smoke]){
+    assert.match(source,/settings:\s*createSettingsPreload170\(\)/);
+    assert.match(source,/persistenceRecovery:\s*createPersistenceRecoveryPreload170\(\)/);
+    assert.ok(!source.includes("plugins:persistence:request"));
+  }
+});
+```
+
+Each stopped receipt lists its exact staged paths, SHA and passing commands. No B1 plugin-ui source edits or second preference trigger are included.
 
 - [ ] **Step 10: Write failing K170 worker packaging tests.**
 
@@ -14491,11 +15615,31 @@ it("K170 resolves the worker only within the selected development or installed a
     .toBe(path.join("/installed/resources", "app.asar.unpacked", ".vite", "build", "persistence-worker.cjs"));
 });
 
-it("K170 preserves the previous native/source unpack glob while adding the worker", () => {
+it("K170 rejects relative selected roots but ignores the unselected root", () => {
+  expect(() => persistenceWorkerPath({packaged:true,resourcesPath:"relative",buildRoot:"/unused"}))
+    .toThrow("absolute");
+  expect(() => persistenceWorkerPath({packaged:false,resourcesPath:"/unused",buildRoot:"relative"}))
+    .toThrow("absolute");
+  expect(persistenceWorkerPath({packaged:false,resourcesPath:"ignored",buildRoot:"/build"}))
+    .toBe(path.join("/build", "persistence-worker.cjs"));
+  expect(persistenceWorkerPath({packaged:true,resourcesPath:"/installed/resources",buildRoot:"ignored"}))
+    .toBe(path.join("/installed/resources", "app.asar.unpacked", ".vite", "build", "persistence-worker.cjs"));
+});
+
+it("K170 preserves native/plugin patterns and applies the worker glob once", () => {
+  const worker = "**/.vite/build/persistence-worker.cjs";
+  for (const existing of ["", "**/*.node", "{**/*.node,**/plugin-bundles/**}", worker,
+    `{**/*.node,${worker}}`]) {
+    const once = withPersistenceWorkerUnpack(existing);
+    expect(withPersistenceWorkerUnpack(once)).toBe(once);
+    expect(once.split(worker)).toHaveLength(2);
+    if (existing.includes("**/*.node")) expect(once).toContain("**/*.node");
+    if (existing.includes("**/plugin-bundles/**")) expect(once).toContain("**/plugin-bundles/**");
+  }
   expect(withPersistenceWorkerUnpack("**/*.node"))
-    .toBe("{**/*.node,.vite/build/persistence-worker.cjs}");
-  expect(withPersistenceWorkerUnpack("{**/*.node,.vite/build/fixture.cjs}"))
-    .toBe("{{**/*.node,.vite/build/fixture.cjs},.vite/build/persistence-worker.cjs}");
+    .toBe("{**/*.node,**/.vite/build/persistence-worker.cjs}");
+  expect(withPersistenceWorkerUnpack("{**/*.node,**/plugin-bundles/**}"))
+    .toBe("{**/*.node,**/plugin-bundles/**,**/.vite/build/persistence-worker.cjs}");
 });
 
 it("K170 registers one worker entry and uses the existing main build config", async () => {
@@ -14528,14 +15672,32 @@ export function persistenceWorkerPath(input: {
   resourcesPath: string;
   buildRoot: string;
 }): string {
+  const root = input.packaged ? input.resourcesPath : input.buildRoot;
+  if (!path.isAbsolute(root)) throw new Error("Persistence worker root must be absolute");
   return input.packaged
-    ? path.join(input.resourcesPath, "app.asar.unpacked", ".vite", "build", "persistence-worker.cjs")
-    : path.join(input.buildRoot, "persistence-worker.cjs");
+    ? path.join(root, "app.asar.unpacked", ".vite", "build", "persistence-worker.cjs")
+    : path.join(root, "persistence-worker.cjs");
 }
 
 export function withPersistenceWorkerUnpack(existing: string): string {
-  return `{${existing},.vite/build/persistence-worker.cjs}`;
+  const worker = "**/.vite/build/persistence-worker.cjs";
+  const body = existing.startsWith("{") && existing.endsWith("}") ? existing.slice(1, -1) : existing;
+  // Split only outer alternatives; nested native/plugin brace groups remain intact.
+  const patterns: string[] = [];
+  let depth = 0, start = 0;
+  for (let index = 0; index < body.length; index++) {
+    if (body[index] === "{") depth++;
+    if (body[index] === "}") depth--;
+    if (body[index] === "," && depth === 0) {
+      patterns.push(body.slice(start, index)); start = index + 1;
+    }
+  }
+  if (body.length) patterns.push(body.slice(start));
+  if (patterns.includes(worker)) return existing;
+  patterns.push(worker);
+  return patterns.length === 1 ? worker : `{${patterns.join(",")}}`;
 }
+
 ```
 
 Extend the existing import from `./packaging.js` in `forge.config.ts` with `PERSISTENCE_WORKER_ENTRY` and `withPersistenceWorkerUnpack`. Wrap the P160 `asar.unpack` string expression in `withPersistenceWorkerUnpack` applied to that same string; do not replace K160's existing optional-source/native unpack patterns. In the VitePlugin `build` array insert exactly one entry:
@@ -14562,7 +15724,10 @@ export default defineConfig(({ forgeConfigSelf }) => {
       sourcemap: true,
       rollupOptions: {
         external: ["node-hid", "electron-updater"],
-        output: { entryFileNames: worker ? "persistence-worker.cjs" : "main.cjs" },
+        output: {
+          entryFileNames: worker ? "persistence-worker.cjs" : "main.cjs",
+          footer: worker ? "exports.runPersistenceWorker({mappers:new Map()});" : "",
+        },
       },
     },
   };
@@ -14579,6 +15744,63 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Expected: host and worker are separate CJS artifacts, worker starts from `app.asar.unpacked` from an arbitrary working directory, no external Node/PATH/checkout fallback, one worker for the held profile, and shutdown leaves no worker process/thread. Missing worker must be an explicit startup/recovery error, never an in-process store fallback.
 
+Append this installed-artifact test to the same packaging test file. It starts the actual packaged worker using the private AM-23 boot protocol from an unrelated cwd; it never builds or copies a checkout worker. The ordinary source-only run reports this platform gate as skipped until an installed artifact is supplied; that skip cannot close K170. Run the explicit installed command below with the selected artifact before recording PASS.
+
+```ts
+import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+const installedResources = process.env.PERSISTENCE_INSTALLED_RESOURCES;
+it.skipIf(!installedResources)("K170 launches the installed worker from arbitrary cwd", async () => {
+  if (!installedResources) throw new Error("installed resources required");
+  const entry = persistenceWorkerPath({packaged:true,resourcesPath:installedResources,buildRoot:"unused"});
+  const cwd = await mkdtemp(path.join(tmpdir(), "installed-worker-cwd-"));
+  const script = `
+    const {Worker} = require("node:worker_threads");
+    const {mkdirSync} = require("node:fs");
+    const path = require("node:path");
+    const root = path.join(process.cwd(), "store");
+    mkdirSync(root);
+    const held = new SharedArrayBuffer(16 + 1024 * 16);
+    Atomics.store(new Int32Array(held), 0, 1);
+    const worker = new Worker(process.argv[1], {workerData:{}});
+    const timer = setTimeout(() => {worker.terminate().then(() => process.exit(2));}, 10000);
+    worker.once("error", error => {console.error(error); clearTimeout(timer); process.exitCode = 1;});
+    worker.once("message", async message => {
+      if (message.version !== 1 || message.kind !== "ready" || message.recovery !== "ready") {
+        clearTimeout(timer); await worker.terminate(); process.exitCode = 3; return;
+      }
+      Atomics.store(new Int32Array(held), 0, 0);
+      await worker.terminate();
+      clearTimeout(timer);
+      process.stdout.write("installed-worker-ready-and-exited");
+    });
+    worker.postMessage({version:1,kind:"boot",hostEpoch:"10000000-0000-4000-8000-000000000001",root,held});
+  `;
+  try {
+    const child = spawn(process.execPath, ["-e", script, entry], {cwd, stdio:["ignore","pipe","pipe"]});
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    const exit = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject); child.once("exit", resolve);
+    });
+    expect(stderr).toBe("");
+    expect(exit).toBe(0);
+    expect(stdout).toBe("installed-worker-ready-and-exited");
+  } finally { await rm(cwd, {recursive:true,force:true}); }
+}, 15000);
+```
+
+```bash
+: "${PERSISTENCE_INSTALLED_RESOURCES:?Set the absolute resources directory of the installed artifact}"
+export PERSISTENCE_INSTALLED_RESOURCES
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/packaging.test.ts
+```
+
+Expected: relative-root/idempotence tests and actual installed-worker launch pass, with zero skipped installed tests. T7's `installed` case additionally runs the full installed Electron application with no external Node, second-instance arbitration and normal-close/update cleanup; this private transport probe alone does not close that gate.
+
 - [ ] **Step 12: Commit the K170 registration slice.**
 
 ```bash
@@ -14586,57 +15808,305 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "build(desktop): register the packaged persistence worker"
 ```
 
+The K170 stopped-owner receipt records exactly `apps/desktop/packaging.ts`, `apps/desktop/src/main/packaging.test.ts`, `apps/desktop/forge.config.ts` and `apps/desktop/vite.main.config.ts`, the commit SHA, selected installed artifact and command/exit evidence. K160 publishes none of these worker values; the initial missing-export red is expected.
+
 - [ ] **Step 13: Complete D170 startup, lifecycle and recovery acceptance at the frozen seam.**
 
-Use the amended factory in the existing P160 main composition. Import `openStoreRoot` from `persistence/filesystem.ts`, `startPersistenceWorker` from `persistence/worker.ts`, `persistenceWorkerPath` from `packaging.ts`, the import factories from T6, and composition types from T5. All bindings below come from the existing main catalog/registry, broker, action ledger and R170 runtime attachment, not external composition injection:
+Extend the existing `composeDesktopMain(input:DesktopMainCompositionInput)` body in controller.ts; keep its signature and D160 UI/intent/native cleanup body. The following declarations replace the old resource-free participant construction, after `createFoundation(input.foundationOptions)` and the D160 UI registry/action construction, and before the existing coordinator and `startPlugins` call. Merge imports for `openStoreRoot`, `startPersistenceWorker`, the K170 path resolver, the T6 factories and the defining port types. No code belongs at module top except helper declarations.
+
+The named existing D160 locals are `foundation`, `catalog`, `states`, `subscriptions`, `ui`, `intent`, `actions` and `stage3Host`: `ui` is the `createUiLifetimePort` result, while `catalog` is the `UiCatalog` instance. Use them directly, preserving their identities. `actions` is D160's sole `UserPersistenceActions` instance. Rename no public option and create no second ledger. Declare the following concrete source adapter in controller.ts:
 
 ```ts
-profileLock.assertHeld();
-const root = await openStoreRoot({ userData: app.getPath("userData"), profile: profileLock });
-const workerEntry = persistenceWorkerPath({
-  packaged: app.isPackaged, resourcesPath: process.resourcesPath, buildRoot: __dirname,
-});
-const { backend, recovery } = await startPersistenceWorker({
-  profile: profileLock, root, workerEntry, now: monotonicNow,
-});
-const barrier = createLegacyWriterBarrier({ backend, writers: legacyWriters, importOwner });
-await barrier.restore();
-const imports = createLegacyImportCoordinator({
-  backend, sources: backend.sources, barrier, descriptors: legacyDescriptors,
-  currentScope, currentSource, importOwner,
-});
-const composition: PersistenceCompositionInput = {
-  backend, sources: persistenceSources, events: broker.events,
-  dispatchDrain: (...args) => runtimeAttachment.dispatchDrain(...args),
-  imports,
+import { createHash } from "node:crypto";
+import { settingsValidationText, validateSettingsResource, type SettingsResourceV1,
+  type Sha256, type ResourceOwner, type UiOwner } from "@kobrixa/plugin-protocol";
+import type { PersistenceSourcePort } from "./persistence/host-port.js";
+
+type PersistenceSourceRow170={
+  owner:UiOwner; settings:{resourceDigest:Sha256;
+    resource:SettingsResourceV1;validationDigest:Sha256}|null;
 };
-const persistence170 = await composePersistence170({
-  profile: profileLock, composition, reservations: broker.reservations,
-  actions: userPersistenceActions, actionAdapter: persistenceActions,
-  coreActions, now: monotonicNow, hasPermission,
-}, { device: broker.resources, ui: uiCatalog });
+export function createPersistenceSources170(input:{
+  currentScope:(scope:CoreWindowScope)=>boolean;
+  currentRuntime:(owner:ResourceOwner)=>boolean;
+  beforeDelivery:(sourceKey:string)=>void;
+}){
+  const rows=new Map<string,PersistenceSourceRow170>();
+  const namespaces=new Map<string,ResourceOwner>();
+  const key=(owner:ResourceOwner)=>JSON.stringify([owner.sourceKey,owner.pluginId,owner.generation,owner.hostEpoch,owner.processEpoch]);
+  const port:PersistenceSourcePort={
+    current(owner){return input.currentRuntime(owner) || [...namespaces.values()].some(value=>
+      key(value)===key(owner) && rows.has(value.sourceKey) && input.currentScope({hostEpoch:value.hostEpoch,workbenchInstance:value.processEpoch}));},
+    async settings({sourceKey,resourceDigest}){
+      const row=rows.get(sourceKey);if(!row?.settings || row.settings.resourceDigest!==resourceDigest)return null;
+      input.beforeDelivery(sourceKey);
+      return {owner:structuredClone(row.owner),resource:structuredClone(row.settings.resource),validationDigest:row.settings.validationDigest};
+    },
+    coreOwner({sourceKey,scope}){
+      const row=rows.get(sourceKey);if(!row || !input.currentScope(scope))return null;
+      const id=JSON.stringify([sourceKey,scope.hostEpoch,scope.workbenchInstance]);
+      const owner:ResourceOwner={sourceKey,pluginId:row.owner.pluginId,generation:row.owner.uiResourceGeneration,
+        hostEpoch:scope.hostEpoch,processEpoch:scope.workbenchInstance};
+      namespaces.set(id,owner);return structuredClone(owner);
+    },
+  };
+  return {port,
+    admit(input:{owner:UiOwner;eligible:boolean;document?:{value:unknown;bytes:number;digest:string}}){
+      if(!input.eligible){rows.delete(input.owner.sourceKey);return;}
+      let settings:PersistenceSourceRow170["settings"]=null;
+      if(input.document!==undefined){
+        const resource=validateSettingsResource(input.document.value,input.document.bytes);
+        const resourceDigest=input.document.digest;
+        const validationDigest=createHash("sha256").update(settingsValidationText(resource)).digest("hex");
+        settings={resourceDigest,resource,validationDigest};
+      }
+      rows.set(input.owner.sourceKey,{owner:structuredClone(input.owner),settings});
+      for(const [id,owner] of namespaces)if(owner.sourceKey===input.owner.sourceKey)namespaces.delete(id);
+    },
+    revoke(sourceKey:string){rows.delete(sourceKey);for(const [id,owner] of namespaces)if(owner.sourceKey===sourceKey)namespaces.delete(id);},
+    retireScope(scope:CoreWindowScope){for(const [id,owner] of namespaces)
+      if(owner.hostEpoch===scope.hostEpoch && owner.processEpoch===scope.workbenchInstance)namespaces.delete(id);},
+    reconcileSources(sources:readonly {owner:ResourceOwner;eligible:boolean}[]){
+      const admitted=new Map(sources.filter(source=>source.eligible).map(source=>[source.owner.sourceKey,source.owner]));
+      for(const [key,row] of rows){const owner=admitted.get(key);
+        if(owner && owner.pluginId===row.owner.pluginId && owner.generation===row.owner.uiResourceGeneration)continue;
+        rows.delete(key);for(const [id,namespace] of namespaces)if(namespace.sourceKey===key)namespaces.delete(id);
+      }
+    },
+    currentSource:(sourceKey:string)=>rows.has(sourceKey),
+  };
+}
 ```
 
-The forwarding closure preserves the exact `DrainDispatcher` argument tuple. R170 supplies `PluginManager.stage3Runtime()` before admission and retains original peer/generation during bounded drain. No fresh channel or mutation replay. `persistenceSources: PersistenceSourcePort` is the D170 adapter over the admitted static catalog/registry: `current(owner)` checks current resource ownership, `settings({sourceKey,resourceDigest})` returns only the admitted `UiOwner`, validated `SettingsResourceV1` and matching validation digest, `coreOwner({sourceKey,scope})` binds the admitted source/workbench/host epoch independently of process activation. Safe-mode gating precedes all optional resource reads. Neither renderer nor manifest identity creates these owners.
+Call `admit` from D160's existing admitted static settings-resource read completion, with its actual `UiOwner`, eligibility and bounded `PackagedJson` result. The source policy check precedes that read; disabled/safe-mode sources call `revoke` without reading. Keep D160's checked `beforeDelivery` marker on every return. This local projection neither reads optional files in safe mode nor activates a process. Apply `revoke` synchronously with catalog retirement before publishing a generation change; `retireScope` runs in the existing workbench cleanup. For an admitted source without declared settings call `admit({owner,eligible:true})`, omitting the document; `settings()` returns null while `coreOwner()` still supplies the admitted storage namespace. Do not manufacture a schema or advertise a settings contribution. No renderer supplies these rows.
 
-`legacyWriters` and `legacyDescriptors` are empty for product foundations; only the T7 synthetic composition registers synthetic controls/mappers. Restore barriers before writer admission. The worker resolver selects allowlisted mapper IDs and fixed roots, retains mapped payload pins and appends at most 256 KiB to the admitted ticket; no functions, root paths or 8 MiB payload cross main transport. Use backend.imports atomic receipt tags and backend.evidence auxiliary/recovery reads, never a second filesystem store. Host construction owns backend disposal on failure; failures before construction dispose backend in main's startup cleanup. After successful construction only host owns backend disposal.
-
-Ready/recovery is awaited before exposing services. When `recovery === "blocked"`, expose read-only core recovery, keep ordinary persistence mutations fenced and do not substitute writable defaults. Preserve startup error propagation, one original held lock and idempotent teardown. No StorePath casts, second lock, WeakMap or external composition loader.
-
-Pass `persistence170.stage3` to the existing coordinator construction. Replace the baseline `startPlugins` invocation with the complete call below, retaining any additional P160 options under D170 review:
+Merge these explicit P170 imports in controller.ts with its D160 imports; import each symbol once:
 
 ```ts
-const plugins = await startPlugins({
-  userData: app.getPath("userData"),
-  builtins: BUILTIN_PLUGIN_SOURCES,
-  commandLine: pluginSettings,
-  dialogs: electronPluginDialogs(() => mainWindow, pluginLanguage),
-  locale: pluginLanguage,
-  stage3: persistence170.stage3,
-});
+import { app, dialog, clipboard } from "electron";
+import { readPackagedJson, readBuiltinJson, SourceReadBudget,
+  type BoundSettingsService, type DrainDispatcher, type CoreWindowScope } from "@kobrixa/plugin-runtime";
+import { openStoreRoot } from "./persistence/filesystem.js";
+import { startPersistenceWorker } from "./persistence/worker.js";
+import { persistenceWorkerPath } from "../../../packaging.js";
+import { createLegacyWriterBarrier, type LegacyWriterPort, type LegacyImportDescriptor,
+  type LegacyImportHostPort } from "./persistence/import-sources.js";
+import { createLegacyImportCoordinator } from "./persistence/import-coordinator.js";
+import { createPersistenceRecoveryBridge170 } from "./core-recovery.js";
 ```
 
-Add `composePersistence170` to the existing controller import. Do not introduce another listener: B1's existing listener is installed once before the public request router/checkpoint admission becomes reachable. The real factory receives the same `broker.reservations` object that the coordinator listens to.
+Replace the D160 composeDesktopMain body with the complete P170 extension below. It retains all D160 runtime forwarding, UI execution, events, provider callback, source refresh and teardown. Import the helper implementations from this task's defining modules, `app/dialog/clipboard` from Electron, `readPackagedJson/readBuiltinJson/SourceReadBudget` from runtime, `LegacyWriterPort/LegacyImportDescriptor/LegacyImportHostPort` from import-sources.ts, `createLegacyImportCoordinator` from import-coordinator.ts and `createLegacyWriterBarrier` from import-sources.ts. Retain the existing D160 imports for the body. No code executes at module import.
+
+```ts
+export async function composeDesktopMain(input: DesktopMainCompositionInput): Promise<DesktopMainComposition> {
+  const { profile, now, coreActions } = input.foundationOptions;
+  profile.assertHeld();
+  const foundation = await input.createFoundation(input.foundationOptions);
+  const broker = foundation.broker;
+  let runtimeAttachment: UiRuntimeAttachment | undefined;
+  let plugins: PluginController | undefined;
+  const runtime = (): UiRuntimeAttachment => {
+    if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached."); return runtimeAttachment;
+  };
+  // The forwarding port is inert until the callback assigns the actual manager attachment.
+  const runtimePort: UiRuntimeAttachment = {
+    activateInitialized: (source, signal) => runtime().activateInitialized(source, signal),
+    ready: (owner, signal) => runtime().ready(owner, signal), current: owner => runtime().current(owner),
+    owners: () => runtime().owners(), context: (owner, scope) => input.currentScope(scope) ? runtime().context(owner, scope) : null,
+    commands: source => runtime().commands(source), invoke: (owner, invocation, signal) => runtime().invoke(owner, invocation, signal),
+    dispatchDrain: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+  };
+  const events = new UiBridgeEvents(() => currentStatusBindings(states, input.scope())
+    .map(({ binding, revision }) => ({ type: "state" as const, binding, revision })));
+  const intent = new UiIntent(broker.intent, now, events.publish);
+  const actions = new UserPersistenceActions(now, (owner, scope, uiResourceGeneration) =>
+    input.currentScope(scope) && runtime().current(owner) && catalog.isCurrent({
+      sourceKey: owner.sourceKey, pluginId: owner.pluginId, uiResourceGeneration }));
+  const { catalog, states, subscriptions } = createUiRegistry({ hostEpoch: profile.hostEpoch, broker, now,
+    beforeDelivery(sourceKey) {
+      if (!plugins) throw new Error("Plugin controller not attached.");
+      plugins.markThirdPartyUiContributions(sourceKey);
+    },
+    revokeIntent(owner, binding) {
+      if (binding) intent.forget(binding);
+      else for (const current of states.instances(owner)) intent.forget(current);
+    },
+  });
+  const ui=createUiLifetimePort({catalog,states,subscriptions,revoke:(_owner,binding)=>intent.forget(binding)});
+  const monotonicNow=now;
+  const wallNow=()=>Date.now();
+  const sourceProjection=createPersistenceSources170({currentScope:input.currentScope,
+    currentRuntime:owner=>runtimeAttachment?.current(owner)??false,
+    beforeDelivery:sourceKey=>{if(!plugins)throw new Error("Controller not attached");plugins.markThirdPartyUiContributions(sourceKey);}});
+  const persistenceSources=sourceProjection.port;
+  const currentScope=input.currentScope;
+  const currentSource=sourceProjection.currentSource;
+  const importOwner=(sourceKey:string):ResourceOwner=>{
+    const owner=persistenceSources.coreOwner({sourceKey,scope:input.scope()});
+    if(!owner)throw new Error("Import source not admitted");return owner;
+  };
+  const legacyWriters:readonly LegacyWriterPort[]=[];
+  const legacyDescriptors:readonly LegacyImportDescriptor[]=[];
+  const dispatchDrain:DrainDispatcher=(owner,request,signal)=>{
+    if(!runtimeAttachment)return Promise.reject(new Error("Runtime attachment not ready"));
+    return runtimeAttachment.dispatchDrain(owner,request,signal);
+  };
+  const worker=await(async()=>{
+    try{
+      profile.assertHeld();const root=await openStoreRoot({userData:input.plugins.userData,profile});
+      const workerEntry=persistenceWorkerPath({packaged:app.isPackaged,resourcesPath:process.resourcesPath,buildRoot:__dirname});
+      return await startPersistenceWorker({profile,root,workerEntry,now:monotonicNow});
+    }catch(error){subscriptions.dispose();intent.dispose();await foundation.dispose();throw error;}
+  })();
+  const {backend,recovery}=worker;
+  const claims=createPersistenceClaims170({feature:actions,core:coreActions,scope:input.scope,currentScope,
+    now:monotonicNow,currentOwner:owner=>persistenceSources.current(owner)});
+  const persistenceActions=createNativePersistenceActions170({claims:claims.lookup,backend,currentScope,now:monotonicNow,
+    choose:async suggestedName=>{const result=await dialog.showSaveDialog({defaultPath:suggestedName});
+      return result.canceled||!result.filePath?null:result.filePath;},copy:text=>clipboard.writeText(text)});
+  let hostConstructionStarted=false;
+  let imports:LegacyImportHostPort;
+  let persistence170:Awaited<ReturnType<typeof composePersistence170>>;
+  try{
+    const barrier=createLegacyWriterBarrier({backend,writers:legacyWriters,importOwner});await barrier.restore();
+    imports=createLegacyImportCoordinator({backend,sources:backend.sources,barrier,descriptors:legacyDescriptors,
+      currentScope,currentSource,importOwner});
+    const composition:PersistenceCompositionInput={backend,sources:persistenceSources,events:broker.events,dispatchDrain,imports};
+    hostConstructionStarted=true;
+    persistence170=await composePersistence170({profile,composition,reservations:broker.reservations,
+      actions:claims.feature,actionAdapter:persistenceActions,coreActions:claims.core,now:monotonicNow,
+      hasPermission:input.foundationOptions.hasPermission},{device:broker.resources,ui});
+  }catch(error){if(!hostConstructionStarted)await backend.dispose();subscriptions.dispose();intent.dispose();await foundation.dispose();throw error;}
+  const stage3=persistence170.stage3;
+  const detail=createPersistenceRecoveryBridge170({host:persistence170.host,actions:coreActions,scope:input.scope,currentScope});
+  // Display clock only; backend retains original monotonic/TTL evidence.
+  const recoveryStartedAt=wallNow();
+  void recoveryStartedAt;
+  // A blocked worker remains readable through core recovery; backend fences mutations.
+  if(recovery!=="ready" && recovery!=="blocked")throw new Error("Invalid worker recovery state");
+  const lifecycle = new LifecycleCoordinator({ ports: stage3, resources: broker.resources,
+    sessions: broker.sessions, reservations: broker.reservations, persistence: stage3.persistence,
+    now, alive: owner => runtime().current(owner), owners: () => runtime().owners(),
+    dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+    shutdown: async () => { if (plugins) await plugins.shutdown(); },
+    legacyFlush: input.legacyFlush, report: input.report });
+  const coordinator = new ShutdownCoordinator(lifecycle);
+  let navigateRecovery = () => { throw new Error("Recovery navigation is not attached."); };
+  const execution: UiExecutionAdapter = createUiExecutionAdapter({ catalog, states, runtime: runtimePort, scope: input.scope,
+    async core(resolved, nodeId): Promise<Result<CommandValue>> {
+      const node = resolved.resource.kind === "panel" ? resolved.resource.nodes.find(value => value.id === nodeId) : undefined;
+      if (!node || node.type !== "action" || node.action.kind !== "core" || !runtime().current(resolved.owner))
+        return resourceFailure("stale");
+      const action = node.action;
+      if (action.action === "openRecovery") { navigateRecovery(); return { ok: true, value: { output: {}, fieldErrors: [] } }; }
+      if (action.action === "openPanel") {
+        let cursor: string | undefined;
+        do {
+          const page = await catalog.catalog(cursor ? { cursor } : {}); if (!page.ok) return page;
+          const entry = page.value.entries.find(value => value.sourceKey === resolved.owner.sourceKey && value.id === action.panelId);
+          if (entry) {
+            const result = await execution.open({ sourceKey: entry.sourceKey, id: entry.id, uiResourceGeneration: entry.uiResourceGeneration });
+            return result.ok ? { ok: true, value: { output: {}, fieldErrors: [] } } : result;
+          }
+          cursor = page.value.nextCursor ?? undefined;
+        } while (cursor);
+        return resourceFailure("stale");
+      }
+      if (action.action === "stop") {
+        const operationId = handleSchema.parse(resolved.state.data[action.operation.key]);
+        const result = await broker.request(input.principal(resolved.owner), "devices/motion/stop", { operationId }, new AbortController().signal);
+        return result.ok ? { ok: true, value: { output: {}, fieldErrors: [] } } : result;
+      }
+      const sessionId = handleSchema.parse(resolved.state.data[action.session.key]);
+      const scope = input.scope(); if (!input.currentScope(scope)) return resourceFailure("stale");
+      const token = coreActions.mint(scope, { kind: "device-disconnect", sessionId });
+      try { await lifecycle.disconnect(sessionId, token); return { ok: true, value: { output: {}, fieldErrors: [] } }; }
+      finally { coreActions.complete(token); }
+    },
+  });
+  const bridge = createPluginUiBridge({ catalog, execution, intent, actions, events, scope: input.scope });
+  const offCatalog = catalog.onEvent(events.publish);
+  const offState = states.onEvent((_owner, event) => {
+    if (event.kind === "ui.revoked") {
+      intent.forget(event.data.binding); events.publish({ type: "revoked", binding: event.data.binding, reason: event.data.reason });
+    } else if (event.kind === "ui.state") events.publish({ type: "state", binding: event.data.binding, revision: event.data.revision });
+    else if (event.kind === "ui.visibility" && !event.data.visible) intent.revoke(event.data.binding, "hidden");
+    else if (event.kind === "ui.form") intent.cancelHold(event.data.binding);
+  });
+  const stage3Host: Stage3HostAttachment = {
+    hostEpoch: profile.hostEpoch, principal: input.principal,
+    hasPermission: (owner, permission) => input.foundationOptions.hasPermission(input.principal(owner), permission),
+    requirements: owner => input.foundationOptions.requirements(owner),
+    bindChannel: context => bindDesktopChannel(context, broker, { catalog, states, subscriptions, runtime: runtimePort },persistence170.host),
+    retireResources: (owner, reason) => lifecycle.retire(owner, reason),
+  };
+  let offSources: (() => void) | undefined;
+  let refresh = Promise.resolve();
+  let inventory = "";
+  const refreshCatalog = () => {
+    refresh = refresh.catch(input.report).then(async () => {
+      if(!plugins)throw new Error("Controller not attached");
+      const sources=plugins.persistenceCatalogSources();const key=JSON.stringify(sources);
+      sourceProjection.reconcileSources(sources);
+      if(key===inventory)return;
+      const loaded:Array<{owner:UiOwner;eligible:boolean;document?:{value:unknown;bytes:number;digest:string}}>=[];
+      for(const source of sources){
+        const owner:UiOwner={sourceKey:source.owner.sourceKey,pluginId:source.owner.pluginId,uiResourceGeneration:source.owner.generation};
+        if(!source.eligible){sourceProjection.revoke(owner.sourceKey);continue;}
+        if(!source.settings){loaded.push({owner,eligible:true});continue;}
+        if(source.settings.version!==1)throw new Error("Unsupported settings resource version");
+        const document=source.resources.kind==="builtin"
+          ?readBuiltinJson(source.resources.files,source.settings.path,65536)
+          :await readPackagedJson(source.resources.root,source.settings.path,65536,new SourceReadBudget(5000,monotonicNow));
+        loaded.push({owner,eligible:true,document});
+      }
+      if(JSON.stringify(plugins.persistenceCatalogSources())!==key)return;
+      for(const source of loaded)sourceProjection.admit(source);
+      await catalog.replace(sources);inventory=key;
+    });
+    void refresh.catch(input.report); return refresh;
+  };
+  const disposeUi = () => { offSources?.(); offState(); offCatalog(); execution.dispose(); intent.dispose();
+    actions.revokeWindow(input.scope()); subscriptions.dispose(); };
+  try {
+    plugins = await startPlugins({ ...input.plugins, stage3, stage3Host,
+      onStage3Runtime(attachment, providers) {
+        if (runtimeAttachment) throw new Error("Runtime already attached.");
+        runtimeAttachment = attachment;
+        foundation.attachProvider(providers);
+        offSources=providers.onEvent(event=>{if(event.type==="state" && plugins){
+          sourceProjection.reconcileSources(plugins.persistenceCatalogSources());
+          void refreshCatalog();
+        }});
+      },
+    });
+    if (!runtimeAttachment) throw new Error("Missing runtime attachment.");
+    await refreshCatalog();
+    plugins.attachPersistence170({settings:persistence170.host.settings,detail,imports,scope:input.scope});
+    let disposed = false;
+    const composition: DesktopMainComposition = { foundation, plugins, stage3, stage3Host,
+      async dispose() {
+        if (disposed) return;
+        await lifecycle.close("close"); await refresh.catch(input.report);
+        disposeUi();detail.dispose();sourceProjection.retireScope(input.scope());
+        await persistence170.host.dispose();await foundation.dispose();lifecycle.dispose();disposed=true;
+      },
+    };
+    lifecycles.set(composition, lifecycle);
+    desktopUis.set(composition, { bridge, catalog, states, subscriptions, intent, actions, coordinator,
+      setRecoveryNavigation(navigate) { navigateRecovery = navigate; } });
+    return composition;
+  } catch (error) {
+    disposeUi();
+    try { if(plugins)await plugins.shutdown();await lifecycle.close("close");detail.dispose();
+      await persistence170.host.dispose();await foundation.dispose();lifecycle.dispose(); }
+    catch (cleanup) { input.report(cleanup); throw cleanup; }
+    throw error;
+  }
+}
+```
+
+`stage3Host` is still the one D150/D160 object and both startup options are supplied. The runtime assignment also preserves D160's source-event subscription before provider admission. Only persistence changes in the stage3 bundle. Native close must reach the existing complete disposition gate before host disposal; unknown outcomes keep that gate blocked. Product legacy writer/descriptor arrays are empty. T7's synthetic source composition populates its own typed registrations under its owned harness; there is no product mapping or environment-controlled composition loader.
 
 The required construction order is: Electron single-instance gate → one held profile lock → journal recovery → broker → one persistence worker and recovery scan → actual host/participant → existing coordinator/listener → runtime/source/router/settings admission → workbench. Optional features remain suppressed in safe mode; generic core recovery works without optional schemas, processes, subscriptions or mappings. Dispose host/worker only after the existing complete disposition gate; do not release the lock while an unknown write/journal ticket remains unresolved.
 
@@ -14658,47 +16128,444 @@ The budget is `max(10, 15 + 5) + 4 = 24` seconds with a 25-second outer safety n
 
 Core status retains the exact `CoreRecoveryItem.actions[].kind` enum `stop | reconcile | clear-resolved | retry-save | manage`. B2 recovery's `retry | export | discard` descriptors stay in its trusted detail view. D170 implements `PluginsApi.persistenceRecovery: PersistenceRecoveryBridge` from AM-18 in shared/plugin-persistence.ts and both preloads. Keep `plugins.recovery: CoreRecoveryPort` unchanged. A trusted `manage` action sends `onOpen({itemId})` to the validated original workbench while `CoreRecoveryPort.act` still returns `CoreRecoverySnapshot`. Mount B1-T7's generic detail via V170; subscribe/unsubscribe on its existing lifetime.
 
-The shared bridge declaration is exactly:
+Add this private main-only attachment to `PluginController` in controller.ts. It exposes no manager and is not part of PluginsApi; `registerIpc`'s existing modules callback consumes it after composeDesktopMain returns:
 
 ```ts
-interface PersistenceRecoveryBridge {
-  snapshot(input: { itemId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
-  act(input: { itemId: Handle; optionId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
-  onOpen(listener: (input: { itemId: Handle }) => void): () => void;
-  onChanged(listener: () => void): () => void;
+// Module-local type in controller.ts:
+type DesktopPersistenceAttachment170={settings:BoundSettingsService;
+  detail:ReturnType<typeof createPersistenceRecoveryBridge170>;imports:LegacyImportHostPort;scope:()=>CoreWindowScope};
+// Members inside PluginController:
+#persistence170:DesktopPersistenceAttachment170|undefined;
+attachPersistence170(value:DesktopPersistenceAttachment170):void{
+  if(this.#persistence170)throw new Error("Persistence already attached");this.#persistence170=value;
+}
+get persistence170():DesktopPersistenceAttachment170|undefined{return this.#persistence170;}
+```
+
+- [ ] **Step 13a: Implement the shared recovery DTO and trusted option bridge.**
+
+Complete `shared/plugin-persistence.ts` with these imports/declaration; `shared/plugins.ts` imports its `PersistenceRecoveryBridge` type and adds exactly `persistenceRecovery: PersistenceRecoveryBridge`. Retain `recovery:CoreRecoveryPort` unchanged.
+
+```ts
+import type { Handle, PersistenceResult } from "@kobrixa/plugin-protocol";
+import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export interface PersistenceRecoveryBridge {
+  snapshot(input:{itemId:Handle}):Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
+  act(input:{itemId:Handle;optionId:Handle}):Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
+  onOpen(listener:(input:{itemId:Handle})=>void):()=>void;
+  onChanged(listener:()=>void):()=>void;
 }
 ```
 
-For detail `snapshot({itemId})`, main resolves the core item to the persistence recovery ID and authorized scope; no renderer namespace is accepted. For `act({itemId,optionId})`, look up the host-issued option in the current item/revision/generation/scope, mint the matching fresh core ledger action, dispatch `host.participant.retry(recoveryId, action)`, `host.participant.discard(recoveryId, action)` or `host.recovery.export({recovery: recoveryId, action})`, and refresh the detail snapshot. Invalid/stale options fail before minting. Neither onOpen nor snapshot nor an option ID grants export authority.
-
-In the existing `PersistenceActionAdapter.chooseDestination` closure resolve the claimed core actionToken or feature action to its scope/deadline, await the native save dialog, revalidate scope/action/deadline, and register only a noncancelled destination:
+Add the following complete projection to `core-recovery.ts`. It owns bounded ephemeral option IDs, not durable recovery evidence. Durable recovery remains T5's single store. The item-to-recovery mapping is constructed from the host snapshot and the main scope, never from renderer namespace fields. Changes rotate option IDs, while an old revision/window/generation cannot mint an action. The source generation here is the host recovery snapshot revision; the host's durable item is authoritative even when its optional source no longer exists.
 
 ```ts
-const destination = await backend.destinations.register({
-  action: actionToken, scope, nativePath: selectedPath, deadlineMonotonicMs,
+import type { PersistenceRecoveryBridge } from "../../shared/plugin-persistence.js";
+import type { PersistenceHost } from "./persistence/host-port.js";
+import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+
+export function createPersistenceRecoveryBridge170(input:{
+  host:PersistenceHost;actions:CoreActionLedger;scope:()=>CoreWindowScope;
+  currentScope:(scope:CoreWindowScope)=>boolean;
+}){
+  type Row={itemId:string;recoveryId:string;scope:CoreWindowScope;revision:number;
+    item:PersistenceRecoverySnapshot["items"][number];manage:string;
+    options:Map<string,"retry"|"export"|"discard">};
+  let revision=-1;let scope="";const rows=new Map<string,Row>();
+  const opens=new Set<(value:{itemId:string})=>void>();const changes=new Set<()=>void>();
+  const refresh=()=>{
+    const snapshot=input.host.recovery.snapshot();const current=input.scope();const next=scopeKey(current);
+    if(revision===snapshot.revision && scope===next)return;
+    const previous=scope===next?new Map([...rows.values()].map(row=>[row.recoveryId,row.itemId])):new Map<string,string>();
+    rows.clear();revision=snapshot.revision;scope=next;
+    if(!input.currentScope(current))return;
+    for(const item of snapshot.items){
+      const itemId=previous.get(item.id)??randomUUID();const options=new Map<string,"retry"|"export"|"discard">();
+      for(const action of item.actions)options.set(randomUUID(),action.kind);
+      rows.set(itemId,{itemId,recoveryId:item.id,scope:structuredClone(current),revision,
+        item:structuredClone(item),manage:randomUUID(),options});
+    }
+  };
+  const resolve=(itemId:string)=>{
+    refresh();const row=rows.get(itemId);
+    return row && row.revision===revision && input.currentScope(row.scope) && scopeKey(row.scope)===scopeKey(input.scope()) ? row : null;
+  };
+  const detail=(row:Row):PersistenceRecoverySnapshot=>({revision,items:[{...structuredClone(row.item),
+    actions:[...row.options].map(([id,kind])=>({id,kind}))}]});
+  const failure=()=>({ok:false as const,error:{code:"PLUGIN_E_STALE_RESOURCE" as const,message:"Recovery selection is no longer current."}});
+  const bridge:PersistenceRecoveryBridge={
+    async snapshot({itemId}){const row=resolve(itemId);return row?{ok:true,value:detail(row)}:failure();},
+    async act({itemId,optionId}){
+      const row=resolve(itemId);const kind=row?.options.get(optionId);
+      if(!row || !kind)return failure();
+      // Consume before any await, including mint failure; repeated click never replays.
+      row.options.delete(optionId);
+      const target:CoreActionTarget={kind:kind==="retry"?"persistence-retry":kind==="discard"?"persistence-discard":"persistence-export",recovery:row.recoveryId};
+      let action:CoreActionReference;
+      try{action=input.actions.mint(row.scope,target);}catch{return failure();}
+      try{
+        if(kind==="retry")await input.host.participant.retry(row.recoveryId,action);
+        else if(kind==="discard")await input.host.participant.discard(row.recoveryId,action);
+        else {const result=await input.host.recovery.export({recovery:row.recoveryId,action});if(!result.ok)return result;}
+        refresh();
+        // Find only the original durable recovery; an empty list means it resolved.
+        const next=[...rows.values()].find(value=>value.recoveryId===row.recoveryId);
+        return {ok:true,value:next?detail(next):{revision,items:[]}};
+      }catch{return failure();}finally{input.actions.complete(action);for(const changed of changes)changed();}
+    },
+    onOpen(listener){opens.add(listener);return()=>{opens.delete(listener);};},
+    onChanged(listener){changes.add(listener);return()=>{changes.delete(listener);};},
+  };
+  const off=input.host.recovery.subscribe(()=>{refresh();for(const changed of changes)changed();});
+  return {bridge,
+    entries():readonly RecoveryEntry[]{
+      refresh();return [...rows.values()].map(row=>({
+        item:{id:row.itemId,sourceKey:row.item.sourceKey,kind:"storage",state:row.item.state==="saved"?"resolved":"save-failed",
+          title:{en:"Saved data recovery"},detail:{en:"Review retained data and available recovery actions."},
+          actions:[{id:row.manage,kind:"manage"}]},
+        options:new Map([[row.manage,{target:{kind:"persistence-retry" as const,recovery:row.recoveryId},execute:async()=>{}}]]),
+      }));
+    },
+    openDetail(value:{itemId:string},original:CoreWindowScope):void{
+      const row=resolve(value.itemId);
+      if(!row || scopeKey(original)!==scopeKey(row.scope))throw new Error("Stale recovery window");
+      for(const listener of opens)listener({itemId:row.itemId});
+    },
+    dispose(){off();rows.clear();opens.clear();changes.clear();},
+  };
+}
+```
+
+The complete composition constructs `detail` once. Extend the existing CoreRecovery class in core-recovery.ts with these members, then replace the two `this.input.entries()` calls in `snapshot` and `act` with `this.entries170()`. This preserves device/process entries and uses one existing core snapshot revision and listener set:
+
+```ts
+#persistenceDetail170:ReturnType<typeof createPersistenceRecoveryBridge170>|undefined;
+private entries170():readonly RecoveryEntry[]{
+  return [...this.input.entries(),...(this.#persistenceDetail170?.entries()??[])];
+}
+attachPersistence170(detail:ReturnType<typeof createPersistenceRecoveryBridge170>):()=>void{
+  if(this.#persistenceDetail170)throw new Error("Core persistence detail already attached");
+  this.#persistenceDetail170=detail;
+  const off=detail.bridge.onChanged(()=>this.changed());this.changed();
+  let active=true;
+  return()=>{if(!active)return;active=false;off();
+    if(this.#persistenceDetail170===detail)this.#persistenceDetail170=undefined;this.changed();};
+}
+```
+
+Replace only the manage branch in `CoreRecovery.act` with this complete branch. It follows the existing current item/action lookup and still returns CoreRecoverySnapshot; it does not mint export authority or widen the action enum:
+
+```ts
+if(entry.item.actions.find(item=>item.id===input.actionId)?.kind==="manage"){
+  try{
+    const detail=this.#persistenceDetail170;
+    if(detail?.entries().some(value=>value.item.id===entry.item.id))
+      detail.openDetail({itemId:entry.item.id},this.input.scope());
+    else this.input.openDetail({itemId:entry.item.id},this.input.scope());
+    return this.snapshot({});
+  }catch{return stale();}
+}
+```
+
+In `main/plugins/ipc.ts`, add dedicated handlers; the trusted `handle` is the same main-frame wrapper as settings and device IPC. Registration captures the original workbench and rejects replacement before calling the projection. Unsubscribe and window cleanup remove both listeners.
+
+```ts
+import type { PersistenceRecoveryBridge } from "../../shared/plugin-persistence.js";
+export function registerPersistenceRecoveryIpc170(input:{handle:IpcHandle;bridge:PersistenceRecoveryBridge;
+  scope:()=>CoreWindowScope;publish:(scope:CoreWindowScope,channel:string,value:unknown)=>void;
+}):()=>void{
+  const original=structuredClone(input.scope());let disposed=false;
+  const valid=()=>!disposed && sameScope170(original,input.scope());
+  const requireScope=()=>{if(!valid())throw new Error("Stale recovery window");};
+  const snapshot=z.strictObject({itemId:z.uuid()});const action=snapshot.extend({optionId:z.uuid()});
+  let offOpen=()=>{};let offChanged=()=>{};
+  const unsubscribe=()=>{offOpen();offChanged();offOpen=()=>{};offChanged=()=>{};};
+  input.handle("plugins:persistence-recovery:snapshot",(_event,value:unknown)=>{requireScope();return input.bridge.snapshot(snapshot.parse(value));});
+  input.handle("plugins:persistence-recovery:act",(_event,value:unknown)=>{requireScope();return input.bridge.act(action.parse(value));});
+  input.handle("plugins:persistence-recovery:subscribe",()=>{
+    requireScope();unsubscribe();
+    offOpen=input.bridge.onOpen(value=>{if(valid())input.publish(original,"plugins:persistence-recovery:open",value);});
+    offChanged=input.bridge.onChanged(()=>{if(valid())input.publish(original,"plugins:persistence-recovery:changed",null);});
+  });
+  input.handle("plugins:persistence-recovery:unsubscribe",()=>{requireScope();unsubscribe();});
+  return()=>{if(disposed)return;disposed=true;unsubscribe();};
+}
+```
+
+In `main/ipc.ts`, import the two dedicated registration helpers from plugins/ipc.ts, `CoreRecovery` type-only from plugins/core-recovery.ts, and PluginController type-only from plugins/controller.ts. Add this complete per-window registrar:
+
+```ts
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+export function registerPersistenceWindow170(input:{
+  handle:IpcHandle;facets:NonNullable<PluginController["persistence170"]>;
+  coreRecovery:CoreRecovery;renderer:()=>Electron.WebContents|undefined;
+}):()=>void{
+  const original=input.renderer();if(!original)throw new Error("No workbench renderer");
+  const scope=input.facets.scope;
+  const publish=(expected:CoreWindowScope,channel:string,value:unknown)=>{
+    const current=input.renderer();const now=scope();
+    if(current!==original || original.isDestroyed() || expected.hostEpoch!==now.hostEpoch ||
+        expected.workbenchInstance!==now.workbenchInstance)return;
+    original.send(channel,value);
+  };
+  const offCore=input.coreRecovery.attachPersistence170(input.facets.detail);
+  const offSettings=registerSettingsIpc170({handle:input.handle,service:input.facets.settings,scope,publish});
+  const offRecovery=registerPersistenceRecoveryIpc170({handle:input.handle,bridge:input.facets.detail.bridge,scope,publish});
+  let disposed=false;
+  const dispose=()=>{
+    if(disposed)return;disposed=true;offSettings();offRecovery();offCore();
+    input.facets.imports.retirePreferences(scope());
+    original.removeListener("destroyed",dispose);original.removeListener("render-process-gone",dispose);
+    original.removeListener("did-start-navigation",navigation);
+  };
+  const navigation=(_event:Electron.Event,_url:string,_inPlace:boolean,mainFrame:boolean)=>{if(mainFrame)dispose();};
+  original.once("destroyed",dispose);original.once("render-process-gone",dispose);original.on("did-start-navigation",navigation);
+  return dispose;
+}
+```
+
+In main/index.ts, inside the existing registerIpc `modules` callback which already registers plugin/UI/core handlers, insert the following after those registrations. `trustedRenderer` is the same getter passed as registerIpc's first argument; bind that existing expression to this named local before the call if it is currently inline. `coreRecovery` is the existing D160 CoreRecovery instance. Keep the returned disposer in that callback's existing native window cleanup list and invoke it before workbench scope replacement:
+
+```ts
+const facets=plugins.persistence170;
+if(!facets)throw new Error("P170 persistence not attached");
+const disposePersistenceWindow=registerPersistenceWindow170({handle,facets,coreRecovery,renderer:trustedRenderer});
+```
+
+No extra root KobrixaApi property, main request tunnel or new DesktopMainComposition field is needed. A recreated native window reruns the existing IPC module setup with its fresh scope and removes prior ipcMain handlers under the existing registration cleanup. Settings and detail handlers refuse the retired scope immediately, even before a late callback returns.
+ Both real and smoke preloads use this complete implementation (CJS omits type annotations). Listener registration precedes subscription; the shared listener count prevents one facet from unsubscribing the other:
+
+```ts
+function createPersistenceRecoveryPreload170():PersistenceRecoveryBridge{
+  let listeners=0;
+  function listen<T>(channel:string,callback:(value:T)=>void):()=>void{
+    let active=true;const receive=(_event:Electron.IpcRendererEvent,value:T)=>{if(active)callback(value);};
+    ipcRenderer.on(channel,receive);
+    if(listeners++===0)void ipcRenderer.invoke("plugins:persistence-recovery:subscribe").catch(()=>{});
+    return()=>{if(!active)return;active=false;ipcRenderer.removeListener(channel,receive);
+      if(--listeners===0)void ipcRenderer.invoke("plugins:persistence-recovery:unsubscribe").catch(()=>{});};
+  }
+  return {
+    snapshot:input=>ipcRenderer.invoke("plugins:persistence-recovery:snapshot",input),
+    act:input=>ipcRenderer.invoke("plugins:persistence-recovery:act",input),
+    onOpen:listener=>listen("plugins:persistence-recovery:open",listener),
+    onChanged:listener=>listen("plugins:persistence-recovery:changed",listener),
+  };
+}
+// Inside the plugins object in both preloads:
+// persistenceRecovery: createPersistenceRecoveryPreload170(),
+```
+
+- [ ] **Step 13b: Resolve already-claimed actions before native destination selection.**
+
+Add these complete local helpers to controller.ts. The claim projection wraps the existing ledgers rather than minting a second token. It holds only active native correlations; `take` consumes that correlation before opening the dialog. Core export uses its original `actionToken`, while feature export uses the already-claimed feature reference. Neither is returned to renderer by this adapter.
+
+```ts
+import type { CoreActionReference, CoreActionTarget, CoreActionValidationPort,
+  UserPersistenceActionPort } from "@kobrixa/plugin-runtime";
+import type { PersistenceBackend } from "./persistence/engine-port.js";
+import type { PersistenceActionAdapter } from "./persistence/actions.js";
+
+type NativeClaim170={scope:CoreWindowScope;deadline:number;purpose:"storage.export"|"ui.clipboard";current:()=>boolean};
+export function createPersistenceClaims170(input:{feature:UserPersistenceActionPort;core:CoreActionValidationPort;
+  scope:()=>CoreWindowScope;currentScope:(scope:CoreWindowScope)=>boolean;
+  currentOwner:(owner:ResourceOwner)=>boolean;now:()=>number;
+}){
+  const claims=new Map<string,NativeClaim170>();
+  const sweep=()=>{for(const [id,claim] of claims)if(claim.deadline<=input.now() || !claim.current())claims.delete(id);};
+  const remember=(id:string,scope:CoreWindowScope,purpose:NativeClaim170["purpose"],current:()=>boolean)=>{
+    sweep();claims.set(id,{scope:structuredClone(scope),purpose,deadline:input.now()+(purpose==="storage.export"?120000:5000),current});
+  };
+  const feature:UserPersistenceActionPort={claim(context,purpose){
+    const result=input.feature.claim(context,purpose);
+    if(result.ok){const scope=structuredClone(input.scope());remember(result.value.action,scope,purpose,
+      ()=>input.currentScope(scope) && input.currentOwner(context.owner));}
+    return result;
+  }};
+  const core:CoreActionValidationPort={
+    claim(action,target){
+      const accepted=input.core.claim(action,target);
+      if(accepted && target.kind==="persistence-export")remember(action.actionToken,action.scope,"storage.export",
+        ()=>input.currentScope(action.scope) && input.core.isClaimed(action,target));
+      return accepted;
+    },
+    isClaimed:(action,target)=>input.core.isClaimed(action,target),
+    complete(action){claims.delete(action.actionToken);input.core.complete(action);},
+  };
+  return {feature,core,
+    lookup(id:string):NativeClaim170|null{sweep();const value=claims.get(id);claims.delete(id);return value??null;},
+  };
+}
+export function createNativePersistenceActions170(input:{
+  claims:(action:string)=>NativeClaim170|null;backend:Pick<PersistenceBackend,"destinations">;
+  currentScope:(scope:CoreWindowScope)=>boolean;now:()=>number;
+  choose:(suggestedName:string)=>Promise<string|null>;copy:(text:string)=>void;
+}):PersistenceActionAdapter{
+  return {
+    async chooseDestination(action,suggestedName,signal){
+      const claim=input.claims(action);
+      const current=()=>!!claim && claim.purpose==="storage.export" && !signal.aborted &&
+        input.now()<claim.deadline && claim.current() && input.currentScope(claim.scope);
+      if(!claim || !current())return null;
+      const nativePath=await input.choose(suggestedName);
+      if(!nativePath || !current())return null;
+      const destination=await input.backend.destinations.register({action,scope:claim.scope,nativePath,
+        deadlineMonotonicMs:claim.deadline});
+      if(!current()){await input.backend.destinations.release(destination);return null;}
+      return destination;
+    },
+    async copyText(action,text){
+      const claim=input.claims(action);
+      if(!claim || claim.purpose!=="ui.clipboard" || input.now()>=claim.deadline ||
+          !claim.current() || !input.currentScope(claim.scope))throw new Error("Stale clipboard action");
+      input.copy(text);
+    },
+  };
+}
+```
+
+The export correlation captures the 120-second T5 export budget once at claim (clipboard uses five seconds) and never extends the T5 job/TTL; T5 passes its abort signal and applies the earlier original job deadline too. Registry release after known publication belongs to T5, and unknown destination evidence stays pinned to the original job. The destination registry, not this dialog adapter, validates parent/leaf identity and rejects a changed destination at commit. Never expose `nativePath`, a token or the opaque destination over renderer IPC. Do not hold device ownership while awaiting the native dialog.
+
+- [ ] **Step 13c: Add executable recovery, native-action and bridge tests.**
+
+Append to `core-recovery.test.ts`, merging imports. All domain doubles are typed; they test authority/routing only and do not claim a durable publication occurred.
+
+```ts
+import { createPersistenceRecoveryBridge170 } from "./core-recovery.js";
+import type { PersistenceHost } from "./persistence/host-port.js";
+import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+function unusedRecoveryPort170<T extends object>(name:string):T{
+  return new Proxy(Object.create(null) as T,{get(_target,key){throw new Error(`Unexpected ${name}.${String(key)}`);}});
+}
+function detailFixture170(){
+  const scope={hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"};
+  let live=true;let revision=1;const changed=new Set<()=>void>();
+  const report={state:"checkpoint-only" as const,blocker:false,pendingSettings:false,records:[],errors:[]};
+  const snapshot=():PersistenceRecoverySnapshot=>({revision,items:[{id:"00000000-0000-4000-8000-000000000003",
+    sourceKey:"builtin:test.storage",pluginId:"test.storage",recordId:null,committedRevision:null,state:"retryable",
+    payload:"complete-staging",actions:[{id:"00000000-0000-4000-8000-000000000004",kind:"export"}]}]});
+  const host:PersistenceHost={settings:unusedRecoveryPort170("settings"),request:async()=>({ok:false,error:{code:"PLUGIN_E_DISABLED",message:"Disabled"}}),
+    participant:{endReservation:()=>null,freeze:()=>{throw new Error("No freeze");},drain:async()=>report,
+      ownerLost:async()=>report,recoverySnapshot:snapshot,retry:vi.fn(async()=>report),discard:vi.fn(async()=>report)},
+    recovery:{snapshot,subscribe:listener=>{changed.add(listener);return()=>changed.delete(listener);},
+      export:vi.fn(async()=>({ok:true,value:{disposition:"committed"}}))},dispose:async()=>{}};
+  const actions=createCoreActionLedger({now:()=>0,current:()=>live});const mint=vi.spyOn(actions,"mint");
+  const detail=createPersistenceRecoveryBridge170({host,actions,scope:()=>scope,currentScope:()=>live});
+  return {scope,host,detail,mint,actions,replace:()=>{live=false;},change:()=>{++revision;for(const listener of changed)listener();}};
+}
+it("manage preserves the core result and opens only the original window without minting",async()=>{
+  const f=detailFixture170();const opened=vi.fn();f.detail.bridge.onOpen(opened);
+  const core=new CoreRecovery({scope:()=>f.scope,entries:()=>[],actions:f.actions,now:()=>0,openDetail:()=>{throw new Error("Unexpected device detail");}});
+  const detach=core.attachPersistence170(f.detail);
+  const entry=f.detail.entries()[0]!;
+  const result=await core.act({itemId:entry.item.id,actionId:entry.item.actions[0]!.id});
+  expect(result).toMatchObject({ok:true,value:{hostEpoch:f.scope.hostEpoch,items:[{kind:"storage",actions:[{kind:"manage"}]}],nextCursor:null}});
+  expect(opened).toHaveBeenCalledExactlyOnceWith({itemId:entry.item.id});expect(f.mint).not.toHaveBeenCalled();
+  f.replace();expect(()=>f.detail.openDetail({itemId:entry.item.id},f.scope)).toThrow();
+  expect(opened).toHaveBeenCalledOnce();detach();f.detail.dispose();
+});
+it("looks up scoped options before minting and rejects replay and stale revisions",async()=>{
+  const f=detailFixture170();let entry=f.detail.entries()[0]!;
+  let snapshot=await f.detail.bridge.snapshot({itemId:entry.item.id});if(!snapshot.ok)throw new Error("snapshot");
+  const option=snapshot.value.items[0]!.actions[0]!.id;
+  expect(await f.detail.bridge.act({itemId:entry.item.id,optionId:option})).toMatchObject({ok:true});
+  expect(f.mint).toHaveBeenCalledTimes(1);expect(f.host.recovery.export).toHaveBeenCalledTimes(1);
+  expect(await f.detail.bridge.act({itemId:entry.item.id,optionId:option})).toMatchObject({ok:false});
+  f.change();expect(await f.detail.bridge.act({itemId:entry.item.id,optionId:option})).toMatchObject({ok:false});
+  entry=f.detail.entries()[0]!;snapshot=await f.detail.bridge.snapshot({itemId:entry.item.id});if(!snapshot.ok)throw new Error("snapshot");
+  f.replace();expect(await f.detail.bridge.act({itemId:entry.item.id,optionId:snapshot.value.items[0]!.actions[0]!.id})).toMatchObject({ok:false});
+  expect(f.mint).toHaveBeenCalledTimes(1);f.detail.dispose();
 });
 ```
 
-Only this registry receives the native path. T5 streams through backend.output with bounded offsets/hash/length, atomic replace and identity revalidation. Release the destination after a known outcome or expiry cleanup; retain unknown outcome evidence for reconciliation of the original job. Never cast a native string to ExportDestination or convert a core token to a feature actionRef.
+The local `unusedRecoveryPort170` above throws on every access and cannot produce a success. Append to `controller.test.ts`:
 
-Add core-recovery/preload tests for original act return shape and unchanged action enum, manage navigation to only the original window, stale option/replay, cancellation/late native dialog and path-free DTOs. T7 real `all-optional-off`, `action-replay` and `unknown-publication` cases must export committed or complete sealed payload with zero optional registrations/processes, reject checkpoint-only invented payload, survive unknown publication/restart, and preserve the destination on cancel. AM-26 recoveryPage/loadRecovery restore original TTL and pins; no reset on restart.
-
-```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test -- src/main/plugins/core-recovery.test.ts src/main/ipc.test.ts src/preload/index.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; node --test tests/desktop/plugin-persistence-import.test.mjs tests/desktop/plugin-persistence-kill.test.mjs
+```ts
+import { createNativePersistenceActions170, createPersistenceSources170 } from "./controller.js";
+it.each(["cancel","late","retired","aborted"] as const)("native destination %s writes nothing",async kind=>{
+  let clock=0,live=true;const control=new AbortController();
+  const scope={hostEpoch:h170,workbenchInstance:h170};
+  const register=vi.fn(async()=>{throw new Error("Must not register");});const release=vi.fn(async()=>{});
+  const adapter=createNativePersistenceActions170({claims:()=>({scope,deadline:10,purpose:"storage.export",current:()=>live}),
+    backend:{destinations:{register,release}},now:()=>clock,currentScope:()=>live,copy:vi.fn(),
+    choose:async()=>{if(kind==="late")clock=10;if(kind==="retired")live=false;if(kind==="aborted")control.abort();
+      return kind==="cancel"?null:"/private/destination";}});
+  expect(await adapter.chooseDestination(h170,"file.json",control.signal)).toBeNull();expect(register).not.toHaveBeenCalled();
+});
+it("late registry return releases its opaque destination without returning a native path",async()=>{
+  const scope={hostEpoch:h170,workbenchInstance:h170};let clock=0;
+  const destination=Object.freeze({}) as import("./persistence/actions.js").ExportDestination;
+  const release=vi.fn(async()=>{});const register=vi.fn(async()=>{clock=10;return destination;});
+  const adapter=createNativePersistenceActions170({claims:()=>({scope,deadline:10,purpose:"storage.export",current:()=>true}),
+    backend:{destinations:{register,release}},now:()=>clock,currentScope:()=>true,copy:vi.fn(),choose:async()=>"/private/destination"});
+  expect(await adapter.chooseDestination(h170,"file.json",new AbortController().signal)).toBeNull();
+  expect(release).toHaveBeenCalledExactlyOnceWith(destination);
+});
+it("data-only source namespace never activates runtime and revoked catalog data cannot be read",async()=>{
+  const currentRuntime=vi.fn(()=>false),beforeDelivery=vi.fn();
+  const sources=createPersistenceSources170({currentScope:()=>true,currentRuntime,beforeDelivery});
+  const raw=JSON.stringify({schemaVersion:1,title:{en:"Settings"},fields:[{key:"enabled",label:{en:"Enabled"},type:"boolean",default:false}]});
+  sources.admit({owner:{sourceKey:"builtin:test.settings",pluginId:"test.settings",uiResourceGeneration:1},eligible:true,document:{value:JSON.parse(raw),bytes:Buffer.byteLength(raw),digest:"a".repeat(64)}});
+  const owner=sources.port.coreOwner({sourceKey:"builtin:test.settings",scope:{hostEpoch:h170,workbenchInstance:h170}});
+  expect(owner).not.toBeNull();expect(currentRuntime).not.toHaveBeenCalled();
+  sources.revoke("builtin:test.settings");expect(sources.port.coreOwner({sourceKey:"builtin:test.settings",scope:{hostEpoch:h170,workbenchInstance:h170}})).toBeNull();
+  expect(await sources.port.settings({sourceKey:"builtin:test.settings",resourceDigest:"a".repeat(64)})).toBeNull();
+  expect(beforeDelivery).not.toHaveBeenCalled();
+});
 ```
 
-Expected: first run exposes missing attachments; after wiring the actual backend preserves sender, durable evidence and destination invariants.
+Append to `shared/plugin-persistence.test.ts`:
 
-After the resolved attachment passes the existing startup/coordinator regressions, commit its exact main-composition path:
-
-```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test -- src/main/index.test.ts src/main/plugins/shutdown-coordinator.test.ts src/main/plugins/controller.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add apps/desktop/src/main/index.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): compose persistence before stage 3 admission"
+```ts
+import type { PluginsApi } from "./plugins.js";
+import type { PersistenceRecoveryBridge } from "./plugin-persistence.js";
+it("preserves the exact nested recovery DTO and core action vocabulary",()=>{
+  expectTypeOf<PluginsApi["persistenceRecovery"]>().toEqualTypeOf<PersistenceRecoveryBridge>();
+  expectTypeOf<import("@kobrixa/plugin-runtime").CoreRecoveryItem["actions"][number]["kind"]>()
+    .toEqualTypeOf<"stop"|"reconcile"|"clear-resolved"|"retry-save"|"manage">();
+  expectTypeOf<PluginsApi["recovery"]["act"]>().toEqualTypeOf<import("@kobrixa/plugin-runtime").CoreRecoveryPort["act"]>();
+});
 ```
 
-Expected: the existing single-instance, one-listener, shared-disposition and old-Lab guard tests pass. Record the AM-18/23–29 attachment paths in each persistent owner receipt and return domain defects to their stopped owner.
+Append to `preload/index.test.ts`, using its existing `api` and Electron IPC mocks:
+
+```ts
+it("forwards recovery identifiers only and shares one event subscription",async()=>{
+  const itemId="00000000-0000-4000-8000-000000000001",optionId="00000000-0000-4000-8000-000000000002";
+  await api.plugins.persistenceRecovery.snapshot({itemId});await api.plugins.persistenceRecovery.act({itemId,optionId});
+  expect(electron.invoke).toHaveBeenCalledWith("plugins:persistence-recovery:snapshot",{itemId});
+  expect(electron.invoke).toHaveBeenCalledWith("plugins:persistence-recovery:act",{itemId,optionId});
+  const offOpen=api.plugins.persistenceRecovery.onOpen(vi.fn());const offChanged=api.plugins.persistenceRecovery.onChanged(vi.fn());
+  expect(electron.invoke.mock.calls.filter(([name])=>name==="plugins:persistence-recovery:subscribe")).toHaveLength(1);
+  offOpen();expect(electron.invoke.mock.calls.filter(([name])=>name==="plugins:persistence-recovery:unsubscribe")).toHaveLength(0);
+  offChanged();offChanged();expect(electron.invoke.mock.calls.filter(([name])=>name==="plugins:persistence-recovery:unsubscribe")).toHaveLength(1);
+  expect(api.plugins.persistenceRecovery).not.toHaveProperty("mint");expect(api.plugins.persistenceRecovery).not.toHaveProperty("chooseDestination");
+});
+```
+
+Run the existing real destination identity/unknown-publication tests too; the native adapter unit tests do not substitute for actual worker destination replacement checks. T7's real `all-optional-off`, `action-replay`, `unknown-publication`, `installed` and `import-restart` cases remain mandatory before P170 acceptance.
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/controller.test.ts src/main/plugins/core-recovery.test.ts src/main/plugins/ipc.test.ts src/main/ipc.test.ts src/main/index.test.ts src/main/plugins/shutdown-coordinator.test.ts src/shared/plugin-persistence.test.ts src/preload/index.test.ts src/main/plugins/persistence/actions.test.ts
+pnpm check:desktop
+node --test tests/desktop/smoke-harness.test.mjs tests/desktop/plugin-persistence-import.test.mjs tests/desktop/plugin-persistence-kill.test.mjs
+node tests/desktop/plugin-persistence-run.mjs
+```
+
+Expected red: absent adapters/bridge channels. Expected green: existing startup/paired-forwarding/single-listener/legacy Lab regressions pass; no export authority on manage; one scoped option mint; replay/stale rejection; cancellation/late dialog registers nothing; late registry return releases; changed destination preserves original bytes; no paths in DTOs; unknown outcomes reconcile original jobs without republish. Electron/native runs are controller execution gates, not claimed results of drafting.
+
+- [ ] **Step 13d: Commit all changed attachment paths under their owners.**
+
+```bash
+git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/index.ts apps/desktop/src/main/index.test.ts apps/desktop/src/main/plugins/core-recovery.ts apps/desktop/src/main/plugins/core-recovery.test.ts apps/desktop/src/main/plugins/ipc.ts apps/desktop/src/main/plugins/ipc.test.ts apps/desktop/src/main/ipc.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/shared/plugins.ts apps/desktop/src/shared/plugin-persistence.ts apps/desktop/src/shared/plugin-persistence.test.ts apps/desktop/src/preload/index.ts apps/desktop/src/preload/index.test.ts
+git commit -m "feat(desktop): compose trusted persistence recovery and native export"
+git add tests/desktop/preload.cjs tests/desktop/smoke-harness.test.mjs
+git commit -m "test(desktop): expose trusted persistence recovery in smoke preload"
+```
+
+Record each actual changed D170/H-I path and SHA; V170's app/settings paths are recorded in Step 9's separate receipt. Do not stage read-only domain files. Preserve one primary lock, worker, event ledger and coordinator listener, and retain the unknown-outcome blocker until disposition permits host disposal and profile release.
 
 - [ ] **Step 14: Run the actual B2 suites and review the complete negative matrix.**
 
@@ -15379,14 +17246,38 @@ Do not count a sequence that never reaches its injected fault point. Record inje
 
 - [ ] **Step 5: Wire the assertion suite into existing scripts and run it green.**
 
-In `package.json`, append exactly ` && node --test tests/desktop/stage-3-foundations.test.mjs` once to the current P170 `test:desktop` and `test:ci` strings. Preserve all A/B1/B2 hooks already added by H-I. Against the source baseline read for this plan, the full two values are:
+In `package.json`, append ` && node --test tests/desktop/stage-3-foundations.test.mjs` exactly once to each current `test:desktop` and `test:ci` string. Run this idempotent patch with its preservation checks; it keeps every existing A/B1/B2 segment and changes no dependencies or lockfile:
 
-```json
-"test:ci": "vitest run && pnpm test:bytecode && pnpm test:release && pnpm test:static-languages && node --test tests/desktop/stage-3-foundations.test.mjs",
-"test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk && pnpm test:static-languages && node --test tests/desktop/stage-3-foundations.test.mjs"
+```bash
+node --input-type=module <<'JS'
+import assert from "node:assert/strict";
+import { readFile, writeFile } from "node:fs/promises";
+const file = "package.json";
+const text = await readFile(file, "utf8");
+const root = JSON.parse(text);
+const command = "node --test tests/desktop/stage-3-foundations.test.mjs";
+function append(current) {
+  assert.equal(typeof current, "string");
+  const parts = current.split(" && ");
+  const count = parts.filter(part => part === command).length;
+  assert.ok(count <= 1, "duplicate existing foundation hook");
+  return count === 1 ? current : `${current} && ${command}`;
+}
+for (const name of ["test:ci", "test:desktop"]) {
+  const before = root.scripts[name];
+  const after = append(before);
+  assert.equal(append(after), after, "second application changes script");
+  assert.equal(after.split(" && ").filter(part => part === command).length, 1);
+  assert.deepEqual(after.split(" && ").slice(0, before.split(" && ").length),
+    before.split(" && "), "an existing script segment changed");
+  root.scripts[name] = after;
+}
+const indent = text.match(/\n([ \t]+)"/)?.[1] ?? "  ";
+await writeFile(file, JSON.stringify(root, null, indent) + "\n");
+JS
 ```
 
-These are object members, not a replacement package file. No dependencies change and no lockfile/install step is needed. Existing `tools/ci/changes.mjs` already classifies `tests/` and `apps/desktop/` as desktop and shared `package.json` as both; keep that classification. Read current P170 CI scripts before editing, because earlier H-I batches have also extended these strings.
+Expected: all assertions pass on both the first and second invocation; the second invocation produces no additional diff. H-I stages only package.json and its owned foundation test/launcher files. Existing `tools/ci/changes.mjs` classifies `tests/` and `apps/desktop/` as desktop and shared `package.json` as both; preserve that classification.
 
 Run:
 
@@ -15410,6 +17301,8 @@ Append the following complete section to `docs/en/architecture.md` after the plu
 
 ```md
 ### Stage 3 foundation contracts
+
+The [settings guide](plugin-settings-storage.md) documents the executable [JS](../../tests/desktop/fixtures/plugin-persistence/consumer.ts) and [Python](../../tests/desktop/fixtures/plugin-persistence/consumer.py) foundation samples. T7 executes both; product mapping samples remain 3D/3E work.
 
 The foundation batches publish device APIs at 1.5.0, declarative UI at 1.6.0,
 and settings/storage at 1.7.0. Earlier compatible consumers retain their
@@ -15438,6 +17331,8 @@ Append the corresponding complete section to `docs/zh-TW/architecture.md`, repla
 
 ```md
 ### 第三階段基礎契約
+
+[設定指南](plugin-settings-storage.md) 說明可執行的 [JS](../../tests/desktop/fixtures/plugin-persistence/consumer.ts)／[Python](../../tests/desktop/fixtures/plugin-persistence/consumer.py) 基礎範例。T7 執行兩者；產品 mapping 範例仍由 3D／3E 完成。
 
 基礎批次依序發布設備 API 1.5.0、宣告式 UI 1.6.0、設定／儲存 1.7.0。
 相容的舊版使用者保留 initialize 與 command 契約。桌面程式以同一 broker、
@@ -15544,6 +17439,15 @@ stage-2 V01–V04.
 Every timing row records OS/architecture, CPU/RAM, filesystem, Node/Electron,
 commit/artifact, fixture bytes/records/limits, warm/cold, sample count,
 p50/p95/max and memory method. Attach raw measurements; do not loosen budgets.
+
+
+| Umbrella item | Foundation cases | Evidence | Disposition |
+| --- | --- | --- | --- |
+| S3-09 | contention, import-restart, unknown-publication, storage-ui-pressure | [T7 producer](../../../tests/desktop/plugin-persistence-main.ts), [X-T1 oracle](../../../tests/desktop/stage-3-foundations-main.ts); retained report/hash recorded at execution | foundation evidence only; not closed |
+| S3-10 | healthy-release, suspend-wake, renderer-loss, all-optional-off, installed | [T7 producer](../../../tests/desktop/plugin-persistence-main.ts), [X-T1 oracle](../../../tests/desktop/stage-3-foundations-main.ts); retained report/hash recorded at execution | foundation evidence only; not closed |
+| S3-11 | retirement, registration-end, disconnect-retry, installed | [T7 producer](../../../tests/desktop/plugin-persistence-main.ts), [X-T1 oracle](../../../tests/desktop/stage-3-foundations-main.ts); retained report/hash recorded at execution | foundation evidence only; not closed |
+
+These rows link executable evidence sources, not completed measurements. At execution attach the actual retained report, candidate/artifact hashes and per-case results. Remaining work includes real product settings consumers and migrations, all three optional features, the full lifecycle/close/update matrix, installed OS/architecture runs, manual gates and hardware closeout. A passing synthetic case does not close an umbrella checklist item. Product-specific mapping samples remain pending for 3D/3E.
 
 ## Remaining blockers and resolutions
 
@@ -15692,7 +17596,7 @@ Electron-running package/desktop/plugin/static-language/installed commands, brow
 
 ## Final writer/controller review
 
-- [ ] Task IDs remain `3B2-T9` and `X-T1`; P12 adds no implementation wave or owner.
+- [ ] Task IDs remain `3B2-T9` and `X-T1`; X-T1 adds no implementation wave or owner.
 - [ ] R170/D170/V170/K170 run under their persistent owners; exact H-I paths are listed.
 - [ ] F → P150 → P160 → P170 uses actual receipts and user merges; no schema-side cherry-pick.
 - [ ] One lock, one worker and one coordinator listener; no new B2 listener or legacy Lab save bypass.

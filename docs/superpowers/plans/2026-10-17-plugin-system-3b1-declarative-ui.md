@@ -360,14 +360,14 @@ Ownership is a persistent role, not a new person per plan. A role may move its w
 
 | Role                       | Plan/task owner and serialized execution                                                                                                                                              | Exclusive shared files                                                                                                                                                                                                                                                                                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Protocol integrator        | Dedicated task **3A-T1**, continued as **3B1-T1**, then **3B2-T8**                                                                                                                    | H-P below: protocol shared schema/exports/registries/conformance and both SDK contexts. B2-T1 only supplies isolated new modules.                                                                                                                                                                                                                             |
-| Runtime owner              | **3B1-T3**; slice **R150** applied in 3A-T10 before P150 acceptance, then R160 in B1, then R170 in B2-T9                                                                              | H-R: manager/registry/supervisor/errors/index and their tests. R150 installs provider own-property rejection, errors import/re-export, channel owner/generation, device participant hooks and the provider-only optional source disable/safe-mode policy; no UI wire publication. R170 installs the actual persistence participant via existing frozen hooks. |
-| Desktop integration owner  | **3A-T8 → 3B1-T5 → 3B2-T9**                                                                                                                                                           | H-D: main composition/IPC/preload/shared bridges, quit/update/window guards. B2 hands over factories; it never independently edits H-D.                                                                                                                                                                                                                       |
-| Packaging owner            | **3B1-T4**; slice **K150** supplies the EV3 factory allowlist/provider-only source registration in 3A-T10, K160 adds generic shipped-process packaging                                | H-K. No product motor/Lab/device UI source is fabricated. Missing future feature entries remain explicitly undelivered.                                                                                                                                                                                                                                       |
+| Protocol integrator        | Dedicated task **3A-T1**, continued as **3B1-T1**, then **3B2-T8**                                                                                                                    | H-P below: protocol shared schema/exports/registries/conformance and both SDK contexts, including business-result/events and common SDK event adapters; AM-15 orders P150 → P160 → P170 stopped-owner handoffs. B2-T1 only supplies isolated new modules.                                                                                                                                                                                                                             |
+| Runtime owner              | **3B1-T3**; slice **R150** applied in 3A-T10 before P150 acceptance, then R160 in B1, then R170 in B2-T9                                                                              | H-R: manager/registry/supervisor/errors/index and their tests. R150 installs provider own-property rejection, errors import/re-export, channel owner/generation, device participant hooks and the provider-only optional source disable/safe-mode policy; no UI wire publication. AM-14 freezes channel phases and original-peer routing; AM-13 adds required-policy fixture paths. R170 implements original-peer storage/drain dispatch in B2-T9; D170 installs the inbound persistence routes (BM-19). |
+| Desktop integration owner  | **3A-T8 (D150, including early B1-T5 ledger/controller) → 3B1-T5 (D160) → 3B2-T9 (D170)**                                                                                                                                                           | H-D: main composition/IPC/preload/shared bridges, controller/state/session and core action ledger, quit/update/window guards; AM-11/13 name the early slice and compatibility tests. B2 hands over factories; it never independently edits H-D.                                                                                                                                                                                                                       |
+| Packaging owner            | **3B1-T4**; slice **K150** supplies the EV3 factory allowlist/provider-only source registration in 3A-T10, K160 adds generic shipped-process packaging; K170 alone adds worker paths/build/unpack in B2-T9 (BM-15)                                | H-K. No product motor/Lab/device UI source is fabricated. Missing future feature entries remain explicitly undelivered.                                                                                                                                                                                                                                       |
 | Renderer integration owner | **3B1-T8**; slice **V150** applies legacy broker/battery/file/execution bridge changes in 3A-T10, V160 mounts generic UI, V170 connects contributed settings/import/recovery in B2-T9 | H-V. App composition, settings shell and all i18n stay with this writer.                                                                                                                                                                                                                                                                                      |
 | Shared integration owner   | **3A-T10 → 3B1-T10 → 3B2-T9 → X-T1**                                                                                                                                                  | H-I: package manifests, lockfile, root/CI test wiring, shared smoke harness and shared bilingual docs. Receives dependency/test needs; no other task runs install or edits these files.                                                                                                                                                                       |
 
-R150/K150/V150 are implemented against the frozen contracts on isolated branches based on the 3A baseline, merged by the user into 3A for its integration gate, then reach B1/B2 only through stage-3. Their owners do not start R160/K160/V160 on the same files until P150 is synchronized. Independent B1 catalog/renderer modules and B2 backends may continue meanwhile. The 3A integration checklist explicitly requires these slices; this removes the circular dependency that would result from waiting for the entire 1.6.0 plan to attach a 1.5.0 device participant.
+D150/R150/K150/V150 are implemented against the frozen contracts on isolated branches based on the 3A baseline, merged by the user into 3A for its integration gate, then reach B1/B2 only through stage-3. These slices are one co-integrated set: A-T10 schedules R150/K150/V150 while A-T8 completes D150 on scoped tests; only the final P150 gate requires all T1–T9 and all four slices. Their owners do not start D160/R160/K160/V160 on the same files until P150 is synchronized. Independent B1 catalog/renderer modules and B2 backends may continue meanwhile. The 3A integration checklist explicitly requires these slices; this removes the circular dependency that would result from waiting for the entire 1.6.0 plan to attach a 1.5.0 device participant.
 
 Hotspot direct tests/mocks follow the same owner. H-P/R/D/K/V/I are exact finite path sets listed below, not directory-wide permission. Integration may edit another task's file only after that task has stopped and the handoff receipt names that exact path. Prefer returning defects to the original owner. No blanket final-integration write grant.
 
@@ -447,6 +447,9 @@ AM-15: these baseline-N common modules are handed over with H-P after A-T1 stops
 - E `packages/plugin-runtime/src/test-process.ts`
 - E `packages/plugin-runtime/src/test-python.ts`
 
+- E `packages/plugin-runtime/src/compiler-resolution.test.ts`
+- E `packages/plugin-runtime/src/language-service-conformance.test.ts`
+
 ### H-D — finite hotspot set
 
 - E `apps/desktop/src/main/index.ts`
@@ -471,6 +474,23 @@ AM-15: these baseline-N common modules are handed over with H-P after A-T1 stops
 - N `apps/desktop/src/shared/plugin-ui.test.ts`
 - N `apps/desktop/src/shared/plugin-persistence.ts`
 - N `apps/desktop/src/shared/plugin-persistence.test.ts`
+
+- E `apps/desktop/src/main/plugins/controller.ts`
+- E `apps/desktop/src/main/plugins/controller.test.ts`
+- E `apps/desktop/src/main/plugins/state-store.ts`
+- E `apps/desktop/src/main/plugins/state-store.test.ts`
+- E `apps/desktop/src/main/plugins/session.ts`
+- E `apps/desktop/src/main/plugins/session.test.ts`
+- E `apps/desktop/src/main/plugins/ipc.ts`
+- E `apps/desktop/src/main/plugins/ipc.test.ts`
+- N `apps/desktop/src/main/plugins/core-recovery.ts`
+- N `apps/desktop/src/main/plugins/core-recovery.test.ts`
+- N `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts`
+- N `apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts`
+- E `apps/desktop/src/main/workspace/compiler-chain.test.ts`
+- E `apps/desktop/src/main/language/language-provider.integration.test.ts`
+
+AM-11/13 and BM-06/18: D150 owns the early controller/core-action and mandatory-policy compatibility slice; its lifecycle-coordinator pair transfers with H-D so D160 extends the same coordinator, and controller.ts/test owns the side-effect-free composition entry; D160/D170 resume only after the prior slice stops.
 
 ### H-K — finite hotspot set
 
@@ -629,10 +649,23 @@ Create `packages/plugin-runtime/src/ui-contract.test.ts`:
 import { expect, expectTypeOf, it } from "vitest";
 import { unavailableUiCatalog, type PluginUiBridge } from "./ui-host-ports.js";
 import type { DeviceIntentPort, DeviceDrainGrant } from "./device-resources.js";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { ResourceOwner, Handle } from "@kobrixa/plugin-protocol";
+import type { CoreActionTarget } from "./core-actions.js";
+import type { CoreActionTarget as RootCoreActionTarget, UiEventLedgerPort as RootUiEventLedgerPort,
+  Stage3HostAttachment as RootStage3HostAttachment, FoundationDiagnostics as RootFoundationDiagnostics } from "@kobrixa/plugin-runtime";
+import type { UiEventLedgerPort } from "./ui-subscriptions.js";
+import type { Stage3HostAttachment } from "./ui-lifecycle.js";
+import type { FoundationDiagnostics } from "./ui-host-ports.js";
 import type { PersistenceParticipant, DrainOffer } from "./persistence-participant.js";
 import type { DrainReason } from "@kobrixa/plugin-protocol";
 it("pins shared intent and optional fourth drain argument without wiring I/O", async () => {
+  expectTypeOf<RootCoreActionTarget>().toEqualTypeOf<CoreActionTarget>();
+  expectTypeOf<RootUiEventLedgerPort>().toEqualTypeOf<UiEventLedgerPort>();
+  expectTypeOf<RootStage3HostAttachment>().toEqualTypeOf<Stage3HostAttachment>();
+  expectTypeOf<RootFoundationDiagnostics>().toEqualTypeOf<FoundationDiagnostics>();
+  expectTypeOf<Extract<CoreActionTarget, {kind: "device-current-stop"}>>().toEqualTypeOf<
+    {kind: "device-current-stop"; sessionId: Handle}
+  >();
   expectTypeOf<DeviceIntentPort["pulsePanel"]>().toEqualTypeOf<(scope: string, trustedSequence: number) => void>();
   expectTypeOf<PersistenceParticipant["freeze"]>().toEqualTypeOf<
     (owner: ResourceOwner, reason: DrainReason, deadline: number, deviceDrain?: DeviceDrainGrant) => DrainOffer
@@ -1005,6 +1038,15 @@ import type {
   UiStateSnapshot, CommandValue, LocalId, UiScalar as Scalar, UiRevokeReason,
   Result, PanelResourceV1, StatusResourceV1, UiValidationContext,
 } from "@kobrixa/plugin-protocol";
+export type FoundationDiagnosticEvent = {kind: "apply" | "revoke" | "stop-dispatch";
+  owner: ResourceOwner; binding?: UiBinding; time: number};
+export type FoundationCounters = Readonly<{owners:number; bindings:number; subscriptions:number;
+  queuedEvents:number; queuedBytes:number; timers:number; pendingInvocations:number;
+  actionTokens:number; resourceReaders:number; workerJobs:number}>;
+export interface FoundationDiagnostics {
+  snapshot(): FoundationCounters;
+  onEvent(listener: (event: FoundationDiagnosticEvent) => void): () => void;
+}
 export type UiBridgeEvent =
   | { type: "catalog"; hostEpoch: Handle; revision: Counter; owners: UiOwner[] }
   | { type: "state"; binding: UiBinding; revision: Counter }
@@ -1154,6 +1196,7 @@ export type CoreActionTarget =
     }
   | { kind: "device-clear"; entryIds: Handle[] }
   | { kind: "device-disconnect"; sessionId: Handle }
+  | { kind: "device-current-stop"; sessionId: Handle }
   | { kind: "persistence-retry" | "persistence-discard" | "persistence-export"; recovery: Handle };
 export interface CoreActionValidationPort {
   claim(action: CoreActionReference, target: CoreActionTarget): boolean;
@@ -1203,9 +1246,41 @@ export type Stage3BuiltinSource = {
 Create `packages/plugin-runtime/src/ui-lifecycle.ts`:
 
 ```ts
-import type { DeviceResourceParticipant } from "./device-resources.js";
-import type { PersistenceParticipant } from "./persistence-participant.js";
+import type { DeviceResourceParticipant, DeviceRequirement, Principal, AuthorityBinding } from "./device-resources.js";
+import type { PersistenceParticipant, DrainDispatcher } from "./persistence-participant.js";
+import type { CoreWindowScope } from "./core-actions.js";
+import type { RpcPeer, DrainReason, ResourceOwner, Handle, Permission, ContextCommandDeclaration, CommandInvocation, CommandValue, Result } from "@kobrixa/plugin-protocol";
 import type { UiCatalogPort } from "./ui-host-ports.js";
+export type OwnerRetirement = Exclude<DrainReason, "reservation-ended"> | "crashed";
+export interface Stage3ChannelContext {
+  peer: RpcPeer;
+  owner: ResourceOwner;
+  principal(): Principal;
+  requirements: readonly DeviceRequirement[];
+}
+export interface Stage3ChannelBinding {
+  initialized(signal: AbortSignal): Promise<void>;
+  ready(signal: AbortSignal): Promise<void>;
+  dispose(): void;
+}
+export interface Stage3HostAttachment {
+  hostEpoch: Handle;
+  principal(owner: ResourceOwner): Principal;
+  hasPermission(owner: ResourceOwner, permission: Permission): boolean;
+  requirements(owner: ResourceOwner): readonly DeviceRequirement[] | null;
+  bindChannel(context: Stage3ChannelContext): Stage3ChannelBinding;
+  retireResources(owner: ResourceOwner, reason: OwnerRetirement): Promise<void>;
+}
+export interface UiRuntimeAttachment {
+  activateInitialized(sourceKey: string, signal: AbortSignal): Promise<Stage3ChannelContext>;
+  ready(owner: ResourceOwner, signal: AbortSignal): Promise<void>;
+  current(owner: ResourceOwner): boolean;
+  owners(): readonly ResourceOwner[];
+  context(owner: ResourceOwner, scope: CoreWindowScope): AuthorityBinding;
+  commands(sourceKey: string): readonly ContextCommandDeclaration[];
+  invoke(owner: ResourceOwner, invocation: CommandInvocation, signal: AbortSignal): Promise<Result<CommandValue>>;
+  dispatchDrain: DrainDispatcher;
+}
 export interface Stage3RuntimePorts {
   device: DeviceResourceParticipant;
   persistence: PersistenceParticipant;
@@ -1274,6 +1349,64 @@ No runtime imports or barrel registration are added here. `declare const uiReque
 
 Add the four amended T0 write paths: `apps/desktop/src/main/plugins/core-recovery.ts`, `packages/plugin-runtime/src/ui-subscriptions.ts`, `packages/plugin-protocol/src/ui-validation.ts`, `apps/desktop/src/shared/plugin-persistence.ts`. Seed declarations only, then hand them to their skeleton owners. H-R alone applies existing manager/supervisor option declarations. H-P alone edits existing SDK/context and common type files. Freeze the following exact contracts and timing as part of this same F receipt; no second local freeze and no future wire publication.
 
+Create `apps/desktop/src/main/plugins/core-recovery.ts` with the AM-11 declaration scaffold:
+
+```ts
+import type { CoreActionValidationPort, CoreWindowScope, CoreActionTarget, CoreActionReference } from "@kobrixa/plugin-runtime";
+export interface CoreActionLedger extends CoreActionValidationPort {
+  mint(scope: CoreWindowScope, target: CoreActionTarget): CoreActionReference;
+  retire(scope: CoreWindowScope): void;
+}
+export declare function createCoreActionLedger(input: {
+  now: () => number; current: (scope: CoreWindowScope) => boolean;
+}): CoreActionLedger;
+```
+
+Create `packages/plugin-runtime/src/ui-subscriptions.ts`:
+
+```ts
+import type { ResourceOwner, Handle, Counter, Result, UiEvent, UiSubscriptionSnapshot } from "@kobrixa/plugin-protocol";
+export interface UiEventLedgerPort {
+  create(owner: ResourceOwner): Result<{subscriptionId: Handle; sequence: 0}>;
+  owns(owner: ResourceOwner, subscriptionId: Handle): boolean;
+  publish(owner: ResourceOwner, subscriptionId: Handle, event: UiEvent,
+    delivery: "control" | "telemetry"): Result<{accepted: true}>;
+  resync(owner: ResourceOwner, subscriptionId: Handle): Result<{accepted: true}>;
+  snapshot(owner: ResourceOwner, subscriptionId: Handle,
+    read: () => Result<UiSubscriptionSnapshot>): Result<{sequence: Counter; snapshot: UiSubscriptionSnapshot}>;
+  unsubscribe(owner: ResourceOwner, subscriptionId: Handle): Result<{removed: boolean}>;
+  closeAfterControl(owner: ResourceOwner, subscriptionId: Handle): void;
+  onRemoved(listener: (subscriptionId: Handle) => void): () => void;
+}
+```
+
+Create `packages/plugin-protocol/src/ui-validation.ts`:
+
+```ts
+import type { PanelResourceV1, StatusResourceV1 } from "./ui-resource.js";
+import type { ContextCommandDeclaration, PanelDeclaration, Result } from "./ui-types.js";
+export type UiValidationContext = {
+  pluginId: string; commands: readonly ContextCommandDeclaration[]; panels: readonly PanelDeclaration[];
+};
+export declare function validateUiResource(value: unknown, context: UiValidationContext,
+  rawBytes: number): Result<PanelResourceV1 | StatusResourceV1>;
+```
+
+Create `apps/desktop/src/shared/plugin-persistence.ts`:
+
+```ts
+import type { Handle, PersistenceResult } from "@kobrixa/plugin-protocol";
+import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export interface PersistenceRecoveryBridge {
+  snapshot(input: { itemId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
+  act(input: { itemId: Handle; optionId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
+  onOpen(listener: (input: { itemId: Handle }) => void): () => void;
+  onChanged(listener: () => void): () => void;
+}
+```
+
+A-T8/D150 modifies the seeded shared file and preserves this type-only bridge and its zero-runtime-export assertion. No P170 runtime is mounted at F/P160. B2-T0 Step 3/H-R performs the single final type-only index assembly after all these defining modules exist; rebuild protocol/runtime dist before package-root consumer checks. Record the index path/commit in the final F receipt.
+
 ### AM-14 — Runtime phases and initial UI binding
 
 Resolves **P04.N5, P06.N1 and channel/owner callbacks in P03.N2**. B1-T3 defines in `ui-lifecycle.ts` (F), implements R150/R160/R170 in H-R, preserving the exact three members of `Stage3RuntimePorts`:
@@ -1318,9 +1451,9 @@ interface UiRuntimeAttachment {
 // retireResources?: (owner: ResourceOwner, reason: OwnerRetirement) => Promise<void>;
 ```
 
-`DeviceRequirement`'s defining module is runtime `device-resources.ts`; broker-port re-exports it type-only (AM-02). Supervisor options are all-or-none for stage-3 sources. Manager allocates generation/processEpoch before launch and supplies the same owner throughout; hostEpoch comes from the primary profile, never a supervisor-local default. Principal permissions/requirements come from the admitted registry generation and trusted workbench binding; absent authority is unbound, never local. `retireResources` synchronously retires device/UI and freezes persistence before its first await, sharing the existing disposition promise/cache.
+`DeviceRequirement`'s defining module is runtime `device-resources.ts`; broker-port re-exports it type-only (AM-02). Supervisor options are all-or-none for stage-3 sources. Manager allocates generation/processEpoch before launch and supplies the same owner throughout; hostEpoch comes from the primary profile, never a supervisor-local default. Principal permissions/requirements come from the admitted registry generation and trusted workbench binding; absent authority is unbound, never local. `retireResources` delegates to the BM-06 coordinator/helper, which synchronously retires device/UI and freezes persistence before its first await, sharing one disposition promise/cache.
 
-`bindChannel` installs routes before initialize completes. After initialize reply, supervisor publishes `activateInitialized`'s owner/peer barrier and calls `initialized`; UI negotiation/query handlers are now callable. T2 `UiStateRegistry.open` waits only for this barrier, creates/registers the initial binding and releases the initial-binding latch. Then host accepts `ui/ready`; `ready` completes the shared original deadline. Ready is never awaited recursively by the callback creating that binding. For no-UI sources the latch is immediately complete. R150 phases are no-op for UI, with only device routes; R160 installs the real UI callbacks. R170 attaches `dispatchDrain` to the retained original peer until disposition completes; no new generation may answer for it.
+`bindChannel` installs routes before initialize completes. After initialize reply, supervisor publishes `activateInitialized`'s owner/peer barrier and calls `initialized`; UI negotiation/query handlers are now callable. T2 `UiStateRegistry.open` waits only for this barrier, creates/registers the initial binding and releases the initial-binding latch. Then host sends/validates `ui/ready` to the plugin; `ready` completes the shared original deadline (BM-12). Ready is never awaited recursively by the callback creating that binding. For no-UI sources, and UI sources with no pending open at initialize (command/onPanel launch), the latch is immediately complete; otherwise T2 resolves initialBindingsReady for the captured opening reservations on success, cancellation or failure (BM-12). R150 phases are no-op for UI, with only device routes; R160 installs the real UI callbacks. R170 attaches `dispatchDrain` to the retained original peer until disposition completes; no new generation may answer for it.
 
 Tests in supervisor/manager/ui-state/ui-lifecycle: lazy first-open from idle, plugin queries initial instances before ready, duplicate opens share one activation, ready-before-initialize rejected, deadline not reset, stale generation at each barrier, crash in initialize/ready, shutdown retains original peer, no optional launch in safe mode.
 
@@ -1552,6 +1685,11 @@ Successors:
 - protocol ui-resource/ui-types/ui-methods/ui-limits/ui-contract and the three UI fixture JSON files: 3B1-T1.
 - runtime ui-host-ports and ui-contract: 3B1-T2.
 - runtime ui-lifecycle/core-actions: 3B1-T3.
+- runtime ui-subscriptions: 3B1-T2.
+- protocol ui-validation: 3B1-T1.
+- desktop main/plugins/core-recovery: 3A-T8/D150, then 3B1-T5/D160.
+- desktop shared/plugin-persistence: 3A-T8/D150, then 3B2-T9/D170; preserve the F type-only bridge.
+- runtime index.ts: B2-T0/H-R final assembly after all defining modules, before F checks.
 - runtime builtin-launch: 3B1-T4.
 - renderer plugin-ui/host-ports: 3B1-T7; renderer contract.test.ts: 3B1-T6.
 - this receipt: shared integration owner after F.
@@ -1599,7 +1737,67 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(plugins): freeze stage 3 UI and lifecycle contracts"
 ```
 
+### Applicable Amendment B binding resolutions
+
+The following copied skeleton resolutions govern the corrected F declarations, delivery contracts, consumers, serialized seams and receipts. Runtime composition and lifecycle instructions must also satisfy skeleton BM-06/12/18 before implementation acceptance.
+
+### BM-01 — One complete F type export and scaffold receipt
+
+Resolves **A#1, A#7, B1#1, B1#5, B1#10, B2#4**. Keep the existing ordered T0: H-R assembles `packages/plugin-runtime/src/index.ts` once in **B2-T0 Step 3**, after all three portions create their modules, before any F desktop/typecheck gate. Do not add an A-T0 index writer or evaluate an incomplete freeze. Add type-only exports for device-resources, profile-writer-lock, core-actions, builtin-launch, ui-lifecycle and ui-subscriptions, plus explicit ui-host-ports and settings-form-port exports below and existing persistence-participant exports. This is type assembly only; no future wire publication or constructor import.
+
+B1-T0 must write actual exported AM-14 declarations in ui-lifecycle.ts, AM-22 diagnostics in ui-host-ports.ts, AM-16 UiEventLedgerPort in ui-subscriptions.ts, AM-19 UiValidationContext and `declare function validateUiResource` in protocol/ui-validation.ts, and AM-18 PersistenceRecoveryBridge in desktop/shared/plugin-persistence.ts. Put the existing AM-09 `{kind:"device-current-stop";sessionId:Handle}` in core-actions.ts at F with an Extract equality assertion. B2-T0 writes all AM-28 BoundSettingsService, ContributedSettingsForm and SettingsFieldMap declarations before exporting them alongside SettingsFormBinding/SettingsFormPort. Scaffolds retain their exact defining-module imports and export keywords; amendment quotations alone are not file instructions.
+
+H-R's F explicit ui-host-ports type exports are `PluginUiBridge`, `UiCatalogPort`, `UiBridgeEvent`, `FoundationDiagnostics`, `FoundationCounters`, `FoundationDiagnosticEvent`; lifecycle exports include Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding, UiRuntimeAttachment and OwnerRetirement. Record all defining modules and the single index owner in the F receipt. A/B1 preflights wait for the final assembly, rebuild package dist, then check package-root consumer imports.
+
+At R150 retain the type exports and add explicit value exports only for delivered lifecycle helpers (BM-06, resourceFreePersistence150, unavailableUi150). At **B1-T3 R160**, export `UiCatalog` from ui-catalog, `UiStateRegistry` and `currentStatusBindings` from ui-state, `UiSubscriptions` from ui-subscriptions, and `sameUiBinding`/`sameResourceOwner` from ui-host-ports; export `UiCatalogSource`/`UiCatalogDependencies` type-only. Keep existing valid lifecycle values explicit; never wildcard-export modules with competing diagnosticsFor functions. Each diagnosticsFor remains a direct-module test import. T5 consumes this barrel; it never patches it. Pin F type equality and P160 downstream imports with compile checks and include index.ts in the respective H-R commits.
+
+### BM-08 — Exact writers for cross-task tests and diagnostics
+
+Resolves **A#6, B1#9, B1#15**. Physically place the H-I script/CI boundary test in A-T9 Step 5 before its stop receipt; A-T10 Step 17 only runs it and edits H-I scripts/CI. The existing A prose already says T9 owns this edit; the fix removes misleading placement, not an authorization to edit T9 from T10. B1-T5 Step 23 writes diagnostics registration only in ui-bridge.ts; B1-T3 Step 11 exclusively owns ui-lifecycle.ts diagnostics. Refresh every copied role/finite-path table from this skeleton, including D150, mandatory-policy fixtures and the BM-06 coordinator handoff. No implicit directory-wide write grant.
+
+### BM-10 — Preserve seeded files and test history
+
+Resolves **A#11, B1#8, B1#18, B2#10**. Successors label F-created files `Modify (F scaffold; baseline N)` and replace declaration scaffolds while preserving exported names/types. A: fake-provider, recovery-port, resource-participant, legacy-device, legacy-files, and D150 shared/plugin-persistence. B1: ui-validation, ui-subscriptions; D160 main/index.test and main/ipc.test append to D150 cases; shared/plugin-ui.ts/test are D150-created, not F. B2: worker, settings-service, contributed-settings-form, recovery-port and plugin-persistence-main preserve their F contracts. B2-T9's acceptance report is `Modify (stopped T7 handoff)`, not an F-created report. Apply the correction to both Files lists and implementation headings/commit lists.
+
+### BM-11 — Exact UI open barrier and execution owner
+
+Resolves **B1#2**. Keep T2 `OpenInput.activateInitialized:UiRuntimeAttachment["activateInitialized"]`, optional signal and `Promise<Result<UiStateSnapshot>>` result. T5 passes activateInitialized and signal exactly, with no BusinessResult wrapper around Stage3ChannelContext. T2 adds host-only `executionOwner(binding:UiBinding):ResourceOwner|null`, reading the authoritative live row with full binding/current-resource checks and returning a copy. T5 obtains owner from that method after success, including deduplicated opens, rechecks runtime.current and scope, records metadata and only then awaits runtime.ready. No public result/UiBinding widening. A ui-bridge test uses real UiStateRegistry to cover first/repeated/concurrent open, cancellation and generation replacement.
+
+### BM-13 — Consumer fixtures use the existing context-command API
+
+Resolves **B1#4**. T9 uses T1's exact JS `registerContext(id, argumentsSchema, handler):void` and Python `context_command(id, arguments)` decorator. Both activate and hold declare the same speed/mode ValueSpec map as the fixture manifest and return raw CommandValue `{output,fieldErrors:[]}`, not BusinessResult. JS ContextCommandContext already contains arguments/context/signal; use those fields (renaming the local parameter to ctx is optional). Preserve cancellation, throw, hold and ready telemetry behavior and prove real JS/Python U05–U07/U10 requests and output validation. Do not change the SDK to accommodate incorrect fixtures.
+
+### BM-14 — B2-T9 is the sole D170/V170 composition
+
+Resolves **B1#6, B2#2, B2#3, B2#9**. Remove B1-T5 Steps 25–26 and B1-T8 Step 10 implementation/tests/commits; retain type/invariant references to this item and B2-T9. B2-T9 owns all executable P170 composition under existing D/V roles. Keep composePersistence170(input, ports) in controller.ts with its existing signature. Compose in composeDesktopMain (BM-18), with `let runtimeAttachment:UiRuntimeAttachment|undefined` and a typed dispatch closure that rejects before assignment; assign from the actual manager.stage3Runtime() through the BM-18 onStage3Runtime callback inside startPlugins. PluginController has no public manager property; do not use plugins.manager or cast it. Preserve all D160 options and always pass the all-or-none `stage3`/`stage3Host` pair, introduced at D150. Only stage3.persistence changes; preserve device/UI and host attachment identity. Assign the runtime before exposing any admission path.
+
+B2-T9 includes complete bindSettingsBridge(service, scope) code/tests in main/plugins/ipc.ts, the exact AM-18 recovery bridge in shared/plugin-persistence.ts, main handlers and both preload implementations, and trusted core-recovery manage/act/native-destination code/tests. Main derives scope on every call, validates binding/options/current revision before minting, and keeps CoreRecoveryPort.act's core snapshot result. Use backend.destinations.register only after native dialog return and fresh action/scope/deadline validation; native paths never enter DTOs. No core-to-feature action-token conversion.
+
+V170 defines ContributedSettingsMount locally in H-V settings-panel.tsx using B2's form factory. Open once per source/digest/scope, attach controls, watch→read→replaceSnapshot, ignore late reads after a generation switch, and dispose watch/form/binding exactly once. Mount the already-exported B1-T7 CorePersistenceRecovery in app.tsx; do not edit plugin-ui component files. Keep only B2's settings-panel preference trigger and `submitLegacyPreferences(api, storage:()=>Pick<Storage,"getItem">, descriptorId):Promise<"accepted"|"pending"|"reconciled">`; delete B1's alternative argument order/bootstrap trigger. Product descriptor/writer arrays remain empty; fixtures supply synthetic descriptors only.
+
+Each binding in the final startup code must be declared locally or passed in the typed composition input: profile, authority, journal, coreActions, broker/foundation, uiCatalog, userPersistenceActions, persistenceActions, permission/source/scope lookups, importOwner and clocks. `persistenceSources` implements AM-27 using admitted catalog rows; never cast uiCatalog to it. Distinguish monotonicNow from wallNow. Tests verify one lock/worker/listener, identity forwarding, startup before/after runtime assignment, safe-mode zero optional reads, watch/draft conflicts, manage/detail with all optional off, stale sender/option, dialog cancel/late return and disposal. Commit every touched D/V/H-I path under its owner, not main/index.ts alone.
+
+### BM-15 — K170 worker exports are published once
+
+Resolves **B1#7**. B1-T4 Step 10 retains only the K160 resolved-outDir fixture implementation/tests and a signature pointer to B2-T9. K170 alone implements PERSISTENCE_WORKER_ENTRY, persistenceWorkerPath and withPersistenceWorkerUnpack in packaging.ts during B2-T9 Steps 10–12, including Forge/Vite registration. Use the stronger existing B1 behavior: selected root must be absolute; packaged/unpackaged paths are AM-23's exact paths; unpack pattern is `**/.vite/build/persistence-worker.cjs`, merges existing native/plugin patterns and is idempotent. Move the corresponding tests to B2, update its expected globs and include relative-root, duplicate application and installed artifact launch. K160 must not implement or assert missing future values. Add K160's fixture commit and K170's exact path receipt.
+
+### BM-16 — Observable common ledger counters
+
+Resolves **B1#11**. F CommonEventLedgerPort in runtime/device-resources.ts adds `diagnostics():Readonly<{subscriptions:number;queuedEvents:number;queuedBytes:number}>`. A-T2 EventLedger already has the implementation shape; publish it through broker.events without casts or a second ledger. D160 constructs UiStateRegistry with `eventCounters:()=>broker.events.diagnostics()`. T2 is the sole AM-22 reporter of all host ledger counts, including terminal-awaiting-ACK subscriptions/encoded bytes across domains; no other diagnostics instance sums them again. Test nonzero queued bytes while terminal control awaits ACK, drop after ACK/timeout/disposal, and mixed-domain no double count. No RPC/preload export or observational sweep/mutation.
+
+### BM-17 — Checked marker before every resource delivery
+
+Resolves **B1#12**. B1-T2 UiCatalogDependencies adds `beforeDelivery?:(sourceKey:string)=>void`; resource() invokes it immediately before every successful return, including cached resources, after current-source/digest validation. On throw return the existing UI read failure and no resource/validationContext/rawBytes. D160 supplies markThirdPartyUiContributions from the existing controller for all production catalog construction. Adapter.open need not mark twice; resource() is the canonical delivery gate. Test resource fetched directly over PluginUiBridge before open, throwing marker, cached delivery, builtin exemption and no process launch. No new permission/error/wire member.
+
+### BM-22 — Executable ordering, complete commits and no drafting residue
+
+Resolves **A#13, A#15, B1#14, B1#16, B1#17, B2#11, B2#12**. Move A-T2 Step 10A immediately after 10 and before 11; keep dependent 11A/11B after 11. Remove A-T10's P03 reference. Move B1-T1 Step 12's heading to its actual body after 11a. Mark D160's ordinary optional-toggle case as retained PASS from D150; only new marker cases start red. B1-T3 Step 10 stages manager.ts/test as well as supervisor/lifecycle/index, Step 11 commits diagnostics/tests, and B1-T4 Step 10 commits its K160 fixture changes. Every stopped-owner receipt lists exact changed paths included in that slice's commit, never another writer's pending changes.
+
+Replace B2 P10/P11/P12 and fragment-ownership language with B2-T5/T6/T7/T9/X-T1 according to the actual owner. For X-T1 scripts, remove literal baseline test:ci/test:desktop values; append ` && node --test tests/desktop/stage-3-foundations.test.mjs` exactly once to each current string, with assertions preserving every prior A/B1/B2 segment. These are instructions for future implementation commits; this amendment pass performs no commit.
+
 ## Interfaces Summary
+
+AM-09 host-only `CoreActionTarget` includes `{kind:"device-current-stop";sessionId:Handle}`. It adds no plugin method, wire action kind or renderer token field.
 
 ### 4B1. Declarative UI contracts (I-B1)
 
@@ -2061,6 +2259,7 @@ type CoreActionTarget =
     }
   | { kind: "device-clear"; entryIds: Handle[] }
   | { kind: "device-disconnect"; sessionId: Handle }
+  | { kind: "device-current-stop"; sessionId: Handle }
   | { kind: "persistence-retry" | "persistence-discard" | "persistence-export"; recovery: Handle };
 interface CoreActionValidationPort {
   claim(action: CoreActionReference, target: CoreActionTarget): boolean;
@@ -2388,7 +2587,8 @@ The persistence filesystem implementation is owned by B2-T2. Only the imported l
 **Files**
 
 - Modify the T0 files: `packages/plugin-protocol/src/ui-resource.ts`, `packages/plugin-protocol/src/ui-types.ts`, `packages/plugin-protocol/src/ui-methods.ts`, `packages/plugin-protocol/src/ui-limits.ts`, `packages/plugin-protocol/src/ui-contract.test.ts`.
-- Create: `packages/plugin-protocol/src/ui-validation.ts`, `packages/plugin-sdk-js/src/ui.ts`, `packages/plugin-sdk-js/src/commands.ts`, `sdks/python/kobrixa/_ui.py`, `sdks/python/kobrixa/_commands.py`.
+- Modify (F scaffold; baseline N): `packages/plugin-protocol/src/ui-validation.ts`.
+- Create: `packages/plugin-sdk-js/src/ui.ts`, `packages/plugin-sdk-js/src/commands.ts`, `sdks/python/kobrixa/_ui.py`, `sdks/python/kobrixa/_commands.py`.
 - Test (create): `packages/plugin-protocol/src/ui-resource.test.ts`, `packages/plugin-protocol/src/ui-types.test.ts`, `packages/plugin-protocol/src/ui-methods.test.ts`, `packages/plugin-protocol/src/ui-limits.test.ts`, `packages/plugin-protocol/src/ui-validation.test.ts`, `packages/plugin-sdk-js/src/ui.test.ts`, `packages/plugin-sdk-js/src/commands.test.ts`, `sdks/python/tests/test_ui.py`, `sdks/python/tests/test_commands.py`.
 - Modify fixtures: `packages/plugin-protocol/test-fixtures/declarative-ui-v1/valid.json`, `packages/plugin-protocol/test-fixtures/declarative-ui-v1/invalid.json`, `packages/plugin-protocol/test-fixtures/declarative-ui-v1/maximum.json`.
 - H-P, acquired only after the reviewed P150 handoff: `packages/plugin-protocol/src/manifest.ts`, `packages/plugin-protocol/src/methods.ts`, `packages/plugin-protocol/src/common.ts`, `packages/plugin-protocol/src/limits.ts`, `packages/plugin-protocol/src/rpc.ts`, `packages/plugin-protocol/src/errors.ts`, `packages/plugin-protocol/src/peer.ts`, `packages/plugin-protocol/src/index.ts`, `packages/plugin-protocol/src/json-schema.ts`, `packages/plugin-protocol/src/manifest.test.ts`, `packages/plugin-protocol/src/rpc.test.ts`, `packages/plugin-protocol/src/peer.test.ts`, `packages/plugin-protocol/src/json-schema.test.ts`, `packages/plugin-protocol/src/conformance.test.ts`, `packages/plugin-protocol/src/compiler-manifest.test.ts`, `packages/plugin-protocol/src/diagnostic-help.test.ts`, `packages/plugin-protocol/src/language-services.test.ts`, `packages/plugin-protocol/src/static-language-contract.test.ts`, `packages/plugin-protocol/scripts/export-schema.mjs`, `packages/plugin-protocol/schema/plugin-protocol.schema.json`, `packages/plugin-protocol/schema/keywords.json`, `packages/plugin-protocol/conformance/cases.json`, `packages/plugin-sdk-js/src/index.ts`, `packages/plugin-sdk-js/src/index.test.ts`, `sdks/python/kobrixa/_plugin.py`, `sdks/python/kobrixa/_schema.py`, `sdks/python/kobrixa/__init__.py`, `sdks/python/kobrixa/plugin-protocol.schema.json`, `sdks/python/tests/test_plugin.py`, `sdks/python/tests/test_conformance.py`, `sdks/python/tests/test_static_languages.py`.
@@ -2697,7 +2897,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 - [ ] **Step 4: Implement one pure semantic validator and condition evaluator.**
 
-Create `packages/plugin-protocol/src/ui-validation.ts` with the following complete code. No filesystem, process, DOM or permission calls belong here. Resource failures contain schema paths, never offending values or absolute packaged paths.
+Modify `packages/plugin-protocol/src/ui-validation.ts` (F scaffold; preserve frozen declarations and defining-module imports) with the following complete code. No filesystem, process, DOM or permission calls belong here. Resource failures contain schema paths, never offending values or absolute packaged paths.
 
 ```ts
 import { uiResourceV1Schema, valueSpecSchema, type PanelResourceV1, type StatusResourceV1, type Scalar,
@@ -4648,8 +4848,6 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; cmp packages/plugin-protocol/schema/plugin-protocol.schema.json sdks/python/kobrixa/plugin-protocol.schema.json
 ```
 
-- [ ] **Step 12: Attach negotiation/ready/context-command hooks while retaining P150 behavior.**
-
 - [ ] **Step 11a: Implement invocation-local context factories and preserve P170 timing.**
 
 Add to JS `index.ts`:
@@ -4693,6 +4891,8 @@ PYTHONPATH=sdks/python python3 -m unittest discover -s sdks/python/tests -p 'tes
 ```
 
 Expected: PASS with overlapping invocations isolated, original legacy execute result null, no P170 accessors.
+
+- [ ] **Step 12: Attach negotiation/ready/context-command hooks while retaining P150 behavior.**
 
 In JS `index.ts`, import `ContextCommands`/`ContextCommandHandler` from commands.ts, `UiClient` from ui.ts, `UiEventClientPort` type-only from events.ts, and `ValueSpec`/`uiFailure` from protocol. Add `ready?(context: PluginContext): void | Promise<void>` to `PluginDefinition`. Extend `PluginContext.commands` with the exact method below; keep legacy `register` unchanged:
 
@@ -4962,7 +5162,8 @@ Record the actual P160 commit SHA and release H-P to B2-T8 only after controller
 **Files**
 
 - Modify: `packages/plugin-runtime/src/ui-host-ports.ts`, `packages/plugin-runtime/src/ui-contract.test.ts`.
-- Create: `packages/plugin-runtime/src/ui-catalog.ts`, `packages/plugin-runtime/src/ui-state.ts`, `packages/plugin-runtime/src/ui-subscriptions.ts`.
+- Create: `packages/plugin-runtime/src/ui-catalog.ts`, `packages/plugin-runtime/src/ui-state.ts`.
+- Modify (F scaffold; baseline N): `packages/plugin-runtime/src/ui-subscriptions.ts`.
 - Test (create): `packages/plugin-runtime/src/ui-host-ports.test.ts`, `packages/plugin-runtime/src/ui-catalog.test.ts`, `packages/plugin-runtime/src/ui-state.test.ts`, `packages/plugin-runtime/src/ui-subscriptions.test.ts`.
 
 Do not edit manager, registry, supervisor, package exports, desktop files, protocol files or the existing packaged reader. H-R/T3 owns attachment. W1 work uses frozen validation and source fixtures; the real P160 gate uses T1 validators and T3 owner routing.
@@ -5159,6 +5360,7 @@ type Resource = PanelResourceV1 | StatusResourceV1;
 type Entry = { descriptor: UiCatalogEntry; resource?: Resource };
 type Source = { input: UiCatalogSource; owner: UiOwner; token: object; entries: Entry[] };
 export type UiCatalogDependencies = {
+  beforeDelivery?: (sourceKey: string) => void;
   now?: () => number;
   read?: (source: UiCatalogSource, path: string, limit: number, budget: SourceReadBudget) => Promise<PackagedJson>;
   validate?: (value: unknown, context: UiValidationContext, bytes: number) => Result<Resource>;
@@ -5176,12 +5378,14 @@ export class UiCatalog implements UiCatalogPort {
   readonly #now: () => number;
   readonly #read: NonNullable<UiCatalogDependencies["read"]>;
   readonly #validate: NonNullable<UiCatalogDependencies["validate"]>;
+  readonly #beforeDelivery: UiCatalogDependencies["beforeDelivery"];
   constructor(readonly hostEpoch: Handle, deps: UiCatalogDependencies = {}) {
     this.#now = deps.now ?? (() => performance.now());
     this.#read = deps.read ?? (async (source, path, limit, budget) => source.resources.kind === "builtin"
       ? readBuiltinJson(source.resources.files, path, limit)
       : readPackagedJson(source.resources.root, path, limit, budget));
     this.#validate = deps.validate ?? validateUiResource;
+    this.#beforeDelivery = deps.beforeDelivery;
   }
   #changed(): void {
     if (this.#revision === Number.MAX_SAFE_INTEGER) throw new Error("UI catalog revision exhausted.");
@@ -5192,6 +5396,12 @@ export class UiCatalog implements UiCatalogPort {
   }
   onEvent(listener: (event: UiBridgeEvent) => void): () => void {
     this.#listeners.add(listener); return () => { this.#listeners.delete(listener); };
+  }
+  declaresUi(owner: ResourceOwner): boolean {
+    const source = this.#sources.get(owner.sourceKey)?.input;
+    return !!source?.eligible && source.owner.pluginId === owner.pluginId &&
+      source.owner.hostEpoch === owner.hostEpoch &&
+      (source.panels.length > 0 || source.status.length > 0 || source.commands.length > 0);
   }
   isCurrent(owner: UiOwner): boolean {
     const current = this.#sources.get(owner.sourceKey);
@@ -5301,6 +5511,7 @@ export class UiCatalog implements UiCatalogPort {
     if (!source || !entry || source.owner.uiResourceGeneration !== input.uiResourceGeneration ||
       entry.descriptor.resourceDigest !== input.resourceDigest) return resourceFailure("stale");
     if (!entry.resource || entry.descriptor.availability !== "available") return uiFailure("renderer");
+    try { this.#beforeDelivery?.(input.sourceKey); } catch { return uiFailure("read"); }
     return { ok: true, value: { owner: structuredClone(source.owner), id: input.id, version: 1, resource: structuredClone(entry.resource),
       validationContext: { pluginId: source.owner.pluginId, commands: structuredClone(source.input.commands), panels: structuredClone(source.input.panels) },
       rawBytes: entry.descriptor.resourceBytes } };
@@ -5462,7 +5673,7 @@ type OpenInput = { owner: UiOwner; id: string; scope: CoreWindowScope; resource:
 type Live = { owner: ResourceOwner; uiOwner: UiOwner; scope: CoreWindowScope; resource: Resource; state: UiStateSnapshot;
   times: number[]; pending: number };
 type Reservation = { owner: UiOwner; id: string; scope: CoreWindowScope; kind: Resource["kind"];
-  token: object; promise: Promise<Result<UiStateSnapshot>> };
+  token: object; promise: Promise<Result<UiStateSnapshot>>; cancel(): void };
 const identity = (owner: UiOwner, id: string, scope: CoreWindowScope) => JSON.stringify([scope.hostEpoch, scope.workbenchInstance, owner.sourceKey, id]);
 export class UiStateRegistry {
   readonly #live = new Map<string, Live>();
@@ -5491,6 +5702,35 @@ export class UiStateRegistry {
     const live = this.#live.get(binding.panelInstance);
     return live && sameResourceOwner(owner, live.owner) && sameUiBinding(binding, live.state.binding) && this.deps.current(live.uiOwner) ? live : undefined;
   }
+  initialBindingsReady(owner: ResourceOwner, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const captured = [...this.#opening.values()].filter(opening =>
+      opening.owner.sourceKey === owner.sourceKey && opening.owner.pluginId === owner.pluginId &&
+      opening.scope.hostEpoch === owner.hostEpoch);
+    if (!captured.length) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        for (const opening of captured) opening.cancel();
+        signal.removeEventListener("abort", abort); reject(signal.reason);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) { abort(); return; }
+      void Promise.all(captured.map(opening => opening.promise)).then(() => {
+        signal.removeEventListener("abort", abort);
+        if (signal.aborted) reject(signal.reason); else resolve();
+      });
+    });
+  }
+  cancelInitialBindings(owner: ResourceOwner): void {
+    for (const opening of [...this.#opening.values()]) if (
+      opening.owner.sourceKey === owner.sourceKey && opening.owner.pluginId === owner.pluginId &&
+      opening.scope.hostEpoch === owner.hostEpoch) opening.cancel();
+  }
+  executionOwner(binding: UiBinding): ResourceOwner | null {
+    const live = this.#live.get(binding.panelInstance);
+    return live && sameUiBinding(binding, live.state.binding) && this.deps.current(live.uiOwner)
+      ? structuredClone(live.owner) : null;
+  }
   instances(owner: ResourceOwner): UiBinding[] {
     return [...this.#live.values()].filter((live) => sameResourceOwner(owner, live.owner) && this.deps.current(live.uiOwner))
       .map((live) => structuredClone(live.state.binding));
@@ -5508,6 +5748,7 @@ export class UiStateRegistry {
     for (const owner of owners.values()) this.#emit(owner, { kind: "ui.environment", data: { locale, theme } });
   }
   async open(input: OpenInput): Promise<Result<UiStateSnapshot>> {
+    if (input.signal?.aborted) return resourceFailure("stale");
     if (!this.deps.current(input.owner) || !input.id.startsWith(`${input.owner.pluginId}.`)) return resourceFailure("stale");
     const key = identity(input.owner, input.id, input.scope);
     for (const live of this.#live.values()) if (identity(live.uiOwner, live.state.binding.contributionId, live.scope) === key)
@@ -5523,10 +5764,14 @@ export class UiStateRegistry {
     if (sourceCount >= sourceLimit || hostCount >= hostLimit) return resourceFailure("quota", sourceCount >= sourceLimit ? sourceLimit : hostLimit);
     let resolve!: (result: Result<UiStateSnapshot>) => void;
     const token = {};
+    const abort = () => resolve(resourceFailure("stale"));
     const promise = new Promise<Result<UiStateSnapshot>>((r) => { resolve = (result) => {
+      input.signal?.removeEventListener("abort", abort);
       if (this.#opening.get(key)?.token === token) this.#opening.delete(key); r(result);
     }; });
-    this.#opening.set(key, { owner: structuredClone(input.owner), id: input.id, scope: input.scope, kind, token, promise });
+    this.#opening.set(key, { owner: structuredClone(input.owner), id: input.id, scope: input.scope, kind, token, promise, cancel: abort });
+    input.signal?.addEventListener("abort", abort, { once: true });
+    if (input.signal?.aborted) abort();
     // Reservation is installed before calling any activation code, including synchronous callbacks.
     void Promise.resolve().then(() => input.activateInitialized(input.owner.sourceKey, input.signal ?? new AbortController().signal)).then((channel) => {
       if (this.#opening.get(key)?.token !== token || !this.deps.current(input.owner)) return resolve(resourceFailure("stale"));
@@ -5606,12 +5851,13 @@ export class UiStateRegistry {
     this.#remove(live, "closed"); return { ok: true, value: { closed: true } };
   }
   retireResource(owner: UiOwner, reason: UiRevokeReason): void {
-    for (const [key, opening] of this.#opening) if (opening.owner.sourceKey === owner.sourceKey &&
-      opening.owner.pluginId === owner.pluginId && opening.owner.uiResourceGeneration === owner.uiResourceGeneration) this.#opening.delete(key);
+    for (const opening of [...this.#opening.values()]) if (opening.owner.sourceKey === owner.sourceKey &&
+      opening.owner.pluginId === owner.pluginId && opening.owner.uiResourceGeneration === owner.uiResourceGeneration) opening.cancel();
     for (const live of [...this.#live.values()]) if (live.uiOwner.sourceKey === owner.sourceKey &&
       live.uiOwner.pluginId === owner.pluginId && live.uiOwner.uiResourceGeneration === owner.uiResourceGeneration) this.#remove(live, reason);
   }
   retireExecution(owner: ResourceOwner, reason: UiRevokeReason): void {
+    this.cancelInitialBindings(owner);
     for (const live of [...this.#live.values()]) if (sameResourceOwner(owner, live.owner)) this.#remove(live, reason);
   }
 }
@@ -5795,7 +6041,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 - [ ] **Step 6: Implement the UI projection over the shared event ledger.**
 
-Create `packages/plugin-runtime/src/ui-subscriptions.ts`. `UiEventLedgerPort` is the required projection frozen by AM-16. Its production adapter delegates to A's existing ledger; this module contains no sequence counter, ack handler, event queue or tombstone cache.
+Modify `packages/plugin-runtime/src/ui-subscriptions.ts` (F scaffold; preserve frozen declarations and defining-module imports). `UiEventLedgerPort` is the required projection frozen by AM-16. Its production adapter delegates to A's existing ledger; this module contains no sequence counter, ack handler, event queue or tombstone cache.
 
 ```ts
 import { RpcError, RPC_ERRORS, uiRequestSchemas, uiBytes, resourceFailure, uiFailure,
@@ -5909,22 +6155,62 @@ Run (expected PASS for the local projection contract):
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime exec vitest run src/ui-subscriptions.test.ts
 ```
 
-- [ ] **Step 6b: Attach inactive subscriptions through the existing channel continuation.**
+- [ ] **Step 6b: Verify the captured initial-binding latch.**
 
-T2 consumes A-T2's `uiEventLedgerPort(broker.events)` in desktop composition, with a type-only import of `UiEventLedgerPort` on the broker side. T3/T5 own the route attachment; supply this exact handler body to their existing channel registration (do not edit their files from T2):
+D160 owns the full original-channel adapter in T5 Step 19. T2 owns only this state latch; it does not register routes. Append to ui-state.test.ts, using its existing `owner`, `uiOwner`, `resource` and `initializedChannel` fixtures. Define the test-local scope below:
 
 ```ts
-peer.handle("ui/subscribe", (params, context) => {
-  const result = subscriptions.subscribe(channel.owner, params);
-  if (result.ok) {
-    const id = result.value.subscriptionId;
-    context.afterReply(() => attachment.activate(id), () => attachment.abandon(id));
-  }
-  return result;
+it("captures pending opens without awaiting ready or later opens", async () => {
+  const states = new UiStateRegistry({ current: () => true });
+  let release!: (value: Stage3ChannelContext) => void;
+  const initialized = new Promise<Stage3ChannelContext>(resolve => { release = resolve; });
+  const opening = states.open({ owner: uiOwner, id: "test.ui.panel", scope, resource: resource(),
+    activateInitialized: () => initialized });
+  let done = false;
+  const latch = states.initialBindingsReady(owner, new AbortController().signal).then(() => { done = true; });
+  await Promise.resolve(); expect(done).toBe(false);
+  const later = new AbortController();
+  const laterOpen = states.open({ owner: uiOwner, id: "test.ui.other", scope, resource: resource(),
+    signal: later.signal, activateInitialized: () => new Promise(() => {}) });
+  const channel = initializedChannel(); release(channel);
+  expect((await opening).ok).toBe(true); await latch; expect(done).toBe(true);
+  later.abort(); expect((await laterOpen).ok).toBe(false); channel.peer.close();
+});
+it.each(["failure", "cancel", "replace"] as const)("releases captured reservations on %s", async mode => {
+  const states = new UiStateRegistry({ current: () => true });
+  const controller = new AbortController();
+  let fail!: (error: Error) => void;
+  const open = states.open({ owner: uiOwner, id: "test.ui.panel", scope, resource: resource(), signal: controller.signal,
+    activateInitialized: () => new Promise((_resolve, reject) => { fail = reject; }) });
+  const latch = states.initialBindingsReady(owner, new AbortController().signal);
+  await Promise.resolve();
+  if (mode === "failure") fail(new Error("launch failed"));
+  else if (mode === "cancel") controller.abort();
+  else states.retireResource(uiOwner, "resource-replaced");
+  expect((await open).ok).toBe(false); await latch;
+});
+it("command/onPanel launch with no open resolves in the next microtask", async () => {
+  const states = new UiStateRegistry({ current: () => true });
+  await states.initialBindingsReady(owner, new AbortController().signal);
+  expect(states.instances(owner)).toEqual([]);
+});
+it("aborted initialization cancels captured opens and rejects its waiter", async () => {
+  const states = new UiStateRegistry({ current: () => true });
+  const open = states.open({ owner: uiOwner, id: "test.ui.panel", scope, resource: resource(),
+    activateInitialized: () => new Promise(() => {}) });
+  const signal = new AbortController(); const latch = states.initialBindingsReady(owner, signal.signal);
+  signal.abort(new Error("original deadline"));
+  await expect(latch).rejects.toThrow("original deadline"); expect((await open).ok).toBe(false);
 });
 ```
 
-Here `channel` is the original `Stage3ChannelContext` and `attachment` is the existing `DeviceChannelAttachment`, already bound once by the A router. Successful UI negotiation calls `attachment.negotiated("ui", 1)`. No new ack/unsubscribe handler, ledger or transport is created. `create` remains inactive and captures state/listeners atomically; only successful serialization and synchronous send activate it. Cancellation, invalid result, close or send failure abandon it. Run the actual peer send-failure/cancellation/synchronous-reply tests and the host router tests with both devices and UI enabled; require zero pre-reply notifications and zero abandoned subscriptions.
+Run before implementation (new latch tests RED), then after Step 4 (PASS):
+
+```sh
+pnpm --filter @kobrixa/plugin-runtime exec vitest run src/ui-state.test.ts src/ui-subscriptions.test.ts
+```
+
+Stage these changes in T2 Step 8's existing commit. No ready call, timer or RPC handler belongs in the latch.
 
 - [ ] **Step 6a: Verify initialized admission, status replay and disjoint diagnostics.**
 
@@ -5970,7 +6256,7 @@ it("replays only live status revisions in the main-derived workbench scope", asy
 
 R160 passes `runtime.activateInitialized.bind(runtime)` to `open`; `Stage3ChannelBinding.initialized` awaits the initial open and resolves its initial-binding latch before `ready` proceeds. No state constructor or open callback waits on `runtime.ready`. T3 owns the real manager/supervisor composition: run its lazy idle first-open test with actual R160 and a plugin whose ready callback calls `ui/instances` and `ui/state`, and require the initial binding before the original deadline. Duplicate opens share activation; crash/stale-generation rejects the original open. No-UI sources complete the latch immediately.
 
-D160 registers its bridge listener and calls `currentStatusBindings` synchronously in the same turn, replaying catalog plus every current status revision. T6 subscribes before fetching catalog and reconciles generation/revision so late catalog responses cannot erase newer status. Add remount and stale-response cases to T5/T6's existing owner tests. T3 supplies T2's `eventCounters` from the single A ledger diagnostics; do not count the UI callback map a second time. Count terminal-awaiting-ACK rows and encoded retained payload bytes until removal; T2 owns no polling timers. The optional counter injection is only for isolated unit construction; P160 composition must provide it.
+D160 registers its bridge listener and calls `currentStatusBindings` synchronously in the same turn, replaying catalog plus every current status revision. T6 subscribes before fetching catalog and reconciles generation/revision so late catalog responses cannot erase newer status. Add remount and stale-response cases to T5/T6's existing owner tests. D160 supplies `eventCounters: () => broker.events.diagnostics()` from F/P150's CommonEventLedgerPort accessor; do not count the UI callback map a second time. Count terminal-awaiting-ACK rows and encoded retained payload bytes until removal; T2 owns no polling timers. The optional counter injection is only for isolated unit construction; P160 composition must provide it.
 
 Append to `ui-catalog.test.ts` using its existing `source()`/reader fixture setup and the same available entry used by the resource-read tests. Assert the returned fields in that existing test:
 
@@ -6057,9 +6343,11 @@ Test, without changing their ownership or replacing their existing cases:
 - `packages/plugin-runtime/src/process.test.ts`
 - `packages/plugin-runtime/src/manager.static-languages.test.ts`
 - `packages/plugin-runtime/src/registry.timeout.test.ts`
+- `packages/plugin-runtime/src/compiler-resolution.test.ts`
+- `packages/plugin-runtime/src/language-service-conformance.test.ts`
 - `packages/plugin-runtime/src/python.interop.test.ts`
 
-The entire H-R write set remains assigned to this role, including `errors.ts`, `process.ts`, `test-process.ts`, and `test-python.ts`. Those files need no second R150 implementation here. Do not edit protocol, SDK, T2 catalog/state modules, or persistence implementations. A baseline-new file already seeded by F is modified, not recreated under a different name.
+The stopped R160 receipt includes `compiler-resolution.test.ts` and `language-service-conformance.test.ts` compatibility checks, and every changed path/commit from the finite H-R table. The entire H-R write set remains assigned to this role, including `errors.ts`, `process.ts`, `test-process.ts`, and `test-python.ts`. Those files need no second R150 implementation here. Do not edit protocol, SDK, T2 catalog/state modules, or persistence implementations. A baseline-new file already seeded by F is modified, not recreated under a different name.
 
 **Interfaces**
 
@@ -6096,7 +6384,7 @@ export interface Stage3RuntimePorts {
 export type PluginSource = Stage3BuiltinSource | { kind: "development"; directory: string };
 ```
 
-Retain these F declarations in `ui-lifecycle.ts`; R150 has already implemented identity/channel ownership and R160 adds the UI phases. Import `RpcPeer`, `Principal`, `Permission`, `Handle`, `AuthorityBinding`, `ContextCommandDeclaration`, `CommandInvocation`, `CommandValue` and UI `Result` from protocol, `CoreWindowScope` from `core-actions.ts`, and `DeviceRequirement` from `device-resources.ts`. Do not redeclare these types in desktop.
+Retain these F declarations in `ui-lifecycle.ts`; R150 has already implemented identity/channel ownership and R160 adds the UI phases. Import `RpcPeer`, `Permission`, `Handle`, `ContextCommandDeclaration`, `CommandInvocation`, `CommandValue` and UI `Result` from protocol, `CoreWindowScope` from `core-actions.ts`, and `DeviceRequirement`, `Principal`, `AuthorityBinding` from `device-resources.ts`. Do not redeclare these types in desktop.
 
 ```ts
 export type OwnerRetirement = Exclude<DrainReason, "reservation-ended"> | "crashed";
@@ -6161,294 +6449,49 @@ interface PersistenceParticipant {
 }
 ```
 
-The methods below are runtime-private implementation helpers, not replacement wire interfaces. Preserve P150's `retireStage3Owner`, `resourceFreePersistence150`, and `unavailableUi150` exports: its manager imports them and its regression tests exercise them. ResourceOwner creation, channel binding, provider own-property rejection, shared error exports, provider-only optional policy, and device hooks are **R150, already delivered by P150**. Apply R160 only after the user has merged A into stage-3 and synchronized this branch. Do not cherry-pick competing R150 patches. R170 later attaches the real participant to the same bundle; it does not replace this lifecycle algorithm. B1-T1 owns protocol 1.6.0 publication.
+The methods below are runtime-private implementation helpers, not replacement wire interfaces. Preserve P150's `retireStage3Owner`, `resourceFreePersistence150`, and `unavailableUi150` exports: the desktop coordinator calls the helper through Stage3HostAttachment and the regression tests exercise that live path. ResourceOwner creation, channel binding, provider own-property rejection, shared error exports, provider-only optional policy, and device hooks are **R150, already delivered by P150**. Apply R160 only after the user has merged A into stage-3 and synchronized this branch. Do not cherry-pick competing R150 patches. R170 later attaches the real participant to the same bundle; it does not replace this lifecycle algorithm. B1-T1 owns protocol 1.6.0 publication.
 
-- [ ] **Step 1: Write the retirement tests before changing the lifecycle implementation.**
+- [ ] **Step 1: Preserve the wired R150 retirement contract and test the UI participant.**
 
-Retain P150's `F17`/`F19` cases and append this complete `describe` block to `packages/plugin-runtime/src/ui-lifecycle.test.ts`, consolidating the shared Vitest/type imports. The outer lexical block below prevents fixture-name collisions with P150. Change the inherited F17 assertions to exactly `expect(order).toEqual(["retire", "freeze", "ui"])` and `expect(freeze).toHaveBeenCalledWith(owner, "disable", 10_100)`: the fourth argument is absent, and UI publication follows the synchronous freeze. The complete new test fixture/code is:
+Consume `docs/superpowers/plans/2026-10-17-plugin-system-3a-device-broker.md`, Task 3A-T10 R150, `retireStage3Owner(ports, owner, reason, now, dispatch, deadlineMonotonicMs?)`. Keep its implementation and F17/F19 tests unchanged: the cache is inserted before synchronous fencing, keyed by ports plus all five owner fields. The supervisor calls only `host.retireResources`; the real desktop attachment delegates to the single D150 LifecycleCoordinator. Runtime unit tests use typed Stage3HostAttachment doubles; desktop integration below supplies the real coordinator. No runtime callback calls manager.stop.
+
+Append to ui-lifecycle.test.ts (merge imports):
 
 ```ts
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
-import type { DeviceDisposition, DeviceDrainGrant } from "./device-resources.js";
-import type { DrainOffer, DrainReport } from "./persistence-participant.js";
-import { UiLifecycle, createUiLifetimePort, ownerKey, type Stage3RuntimePorts } from "./ui-lifecycle.js";
-
-{
-afterEach(() => vi.useRealTimers());
-const owner: ResourceOwner = {
-  sourceKey: "builtin:kobrixa.fixture", pluginId: "kobrixa.fixture", generation: 1,
-  hostEpoch: "host", processEpoch: "process",
-};
-const saved: DrainReport = {
-  state: "saved", blocker: false, pendingSettings: false, records: [], errors: [],
-};
-const stopped: DeviceDisposition = {
-  stopConfirmed: true, journalCommitted: true, faultIds: [],
-};
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
-}
-function harness(grant: DeviceDrainGrant | null = null) {
-  const trace: string[] = [];
-  const device = deferred<DeviceDisposition>();
-  const storage = deferred<DrainReport>();
-  const ports: Stage3RuntimePorts = {
-    device: {
-      retire: vi.fn(() => { trace.push("retire"); return { drain: grant, settled: device.promise }; }),
-      retireProvider: vi.fn(async () => stopped),
-      beginShutdown: vi.fn(async () => stopped),
-    },
-    persistence: {
-      endReservation: vi.fn(() => null),
-      freeze: vi.fn((value, reason, deadline): DrainOffer => {
-        trace.push("freeze");
-        return { owner: value, reason, deadlineMonotonicMs: deadline, token: "token",
-          checkpoints: [], writes: [], acceptedTickets: [] };
-      }),
-      drain: vi.fn(async () => { trace.push("drain"); return storage.promise; }),
-      ownerLost: vi.fn(async () => { trace.push("lost"); return storage.promise; }),
-      recoverySnapshot: () => ({ revision: 0, items: [] }),
-      retry: vi.fn(async () => saved), discard: vi.fn(async () => saved),
-    },
-    ui: {
-      catalog: vi.fn(), resource: vi.fn(),
-      retire: vi.fn(() => { trace.push("ui-retired"); }), onEvent: () => () => {},
-    },
+import { expect, it, vi } from "vitest";
+import { createUiLifetimePort } from "./ui-lifecycle.js";
+import type { ResourceOwner, UiBinding } from "@kobrixa/plugin-protocol";
+it("U12 retires UI state, intent and subscriptions exactly once through the host participant", () => {
+  const owner: ResourceOwner = { sourceKey: "dev:test", pluginId: "test.ui", generation: 1,
+    hostEpoch: "host", processEpoch: "process" };
+  const binding: UiBinding = { contributionId: "test.ui.panel", panelInstance: "panel", kind: "panel",
+    uiResourceGeneration: 1, generation: 1, hostEpoch: "host", processEpoch: "process" };
+  const order: string[] = [];
+  const input: Parameters<typeof createUiLifetimePort>[0] = {
+    catalog: { catalog: vi.fn(), resource: vi.fn(), onEvent: () => () => {},
+      retire: () => { order.push("catalog"); } },
+    states: { instances: () => [binding], retireExecution: vi.fn(() => { order.push("state"); }) },
+    subscriptions: { retire: vi.fn(() => { order.push("subscriptions"); }) },
+    revoke: (o, b) => { expect(o).toBe(owner); expect(b).toBe(binding); order.push("intent"); },
   };
-  const dispatch = vi.fn();
-  const teardown = vi.fn(async () => { trace.push("teardown"); });
-  const lifecycle = new UiLifecycle({ ports, now: () => performance.now(), dispatch, teardown });
-  return { trace, device, storage, ports, dispatch, teardown, lifecycle };
-}
-
-describe("R160 retirement (U12, B1-RF4)", () => {
-  it("retires then freezes in one turn with the identical fourth-argument grant", async () => {
-    const grant: DeviceDrainGrant = {
-      owner, reservationId: "reservation", lastSequence: 7, expiresMonotonicMs: 9_000,
-    };
-    const h = harness(grant);
-    const result = h.lifecycle.retire(owner, "disable", 10_000);
-    expect(h.trace).toEqual(["retire", "freeze", "ui-retired"]);
-    expect(h.ports.persistence.freeze).toHaveBeenCalledWith(owner, "disable", 9_000, grant);
-    expect(vi.mocked(h.ports.persistence.freeze).mock.calls[0]![3]).toBe(grant);
-    expect(h.teardown).not.toHaveBeenCalled();
-    h.storage.resolve(saved);
-    await Promise.resolve();
-    expect(h.teardown).not.toHaveBeenCalled();
-    h.device.resolve(stopped);
-    expect(await result).toMatchObject({ blocker: false, processStopped: true });
-    expect(h.trace.indexOf("drain")).toBeGreaterThan(h.trace.indexOf("freeze"));
-    expect(h.trace.at(-1)).toBe("teardown");
-    expect(h.ports.device.retireProvider).not.toHaveBeenCalled();
-  });
-  it("omits a null grant rather than passing undefined or null as argument four", async () => {
-    const h = harness();
-    const result = h.lifecycle.retire(owner, "reload", 10_000);
-    expect(vi.mocked(h.ports.persistence.freeze).mock.calls[0]).toHaveLength(3);
-    h.device.resolve(stopped); h.storage.resolve(saved); await result;
-  });
-  it.each([
-    ["disable", "disabled", "disable"], ["reload", "reload", "reload"],
-    ["remove", "disabled", "remove"], ["renderer-crash", "renderer-lost", "renderer-crash"],
-    ["window-destroyed", "renderer-lost", "window-destroyed"],
-    ["shutdown", "shutdown", "shutdown"], ["update", "shutdown", "update"],
-    ["safe-mode", "safe-mode", "safe-mode"],
-  ] as const)("maps %s without extending sibling enums", async (reason, device, storage) => {
-    const h = harness(); const result = h.lifecycle.retire(owner, reason, 10_000);
-    expect(h.ports.device.retire).toHaveBeenCalledWith(owner, device);
-    expect(h.ports.persistence.freeze).toHaveBeenCalledWith(owner, storage, 10_000);
-    h.device.resolve(stopped); h.storage.resolve(saved); await result;
-  });
-  it("crash uses ownerLost, never a fabricated callback or provider teardown", async () => {
-    const h = harness(); const result = h.lifecycle.retire(owner, "crashed", 10_000);
-    expect(h.ports.persistence.freeze).not.toHaveBeenCalled();
-    h.device.resolve(stopped); h.storage.resolve({ ...saved, state: "checkpoint-only", blocker: true });
-    expect(await result).toMatchObject({ blocker: true });
-    expect(h.ports.persistence.ownerLost).toHaveBeenCalledWith(owner);
-    expect(h.ports.persistence.drain).not.toHaveBeenCalled();
-    expect(h.dispatch).not.toHaveBeenCalled();
-    expect(h.ports.device.retireProvider).not.toHaveBeenCalled();
-  });
-  it("coalesces disable and shutdown without a second grant, window, or callback", async () => {
-    const h = harness();
-    const first = h.lifecycle.retire(owner, "disable", 10_000);
-    const second = h.lifecycle.retire(owner, "shutdown", 19_000);
-    expect(first).toBe(second);
-    expect(h.ports.device.retire).toHaveBeenCalledTimes(1);
-    expect(h.ports.persistence.freeze).toHaveBeenCalledTimes(1);
-    h.device.resolve(stopped); h.storage.resolve(saved); await first;
-    expect(h.ports.persistence.drain).toHaveBeenCalledTimes(1);
-    expect(h.teardown).toHaveBeenCalledTimes(1);
-  });
-  it.each([
-    { ...stopped, stopConfirmed: false, faultIds: ["fault"] },
-    { ...stopped, journalCommitted: false, faultIds: ["fault"] },
-  ])("does not let saved storage erase a device blocker", async (disposition) => {
-    const h = harness(); const result = h.lifecycle.retire(owner, "shutdown", 10_000);
-    h.device.resolve(disposition); h.storage.resolve(saved);
-    expect(await result).toMatchObject({ blocker: true, device: disposition });
-  });
-  it("keeps unknown journal and storage outcomes through the 20+4 second boundary", async () => {
-    vi.useFakeTimers(); const h = harness();
-    const result = h.lifecycle.retire(owner, "shutdown", performance.now() + 10_000);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.teardown).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(10_000);
-    const report = await result;
-    expect(report.blocker).toBe(true);
-    expect(report.storage.state).toBe("uncertain");
-    expect(report.device.journalCommitted).toBe(false);
-    expect(h.teardown).toHaveBeenCalledTimes(1);
-  });
-  it("revokes state and shared subscriptions as well as catalog ownership", () => {
-    const h = harness(); const order: string[] = [];
-    const binding = { contributionId: "kobrixa.fixture.panel", panelInstance: "panel", kind: "panel" as const,
-      uiResourceGeneration: 1, generation: owner.generation, hostEpoch: owner.hostEpoch, processEpoch: owner.processEpoch };
-    h.ports.ui.retire = vi.fn(() => { order.push("catalog"); });
-    const states = { instances: vi.fn(() => [binding]), retireExecution: vi.fn(() => { order.push("state"); }) };
-    const subscriptions = { retire: vi.fn(() => { order.push("subscriptions"); }) };
-    const port = createUiLifetimePort({ catalog: h.ports.ui, states, subscriptions,
-      revoke: (_owner, value) => { expect(value).toBe(binding); order.push("intent"); } });
-    port.retire(owner);
-    expect(order).toEqual(["intent", "state", "subscriptions", "catalog"]);
-    expect(states.retireExecution).toHaveBeenCalledWith(owner, "generation-retired");
-    expect(subscriptions.retire).toHaveBeenCalledWith(owner);
-  });
-  it("keys all five owner fields and retains failure until explicit recovery", async () => {
-    const h = harness(); const result = h.lifecycle.retire(owner, "disable", 10_000);
-    h.device.resolve(stopped); h.storage.resolve({ ...saved, blocker: true, state: "retryable" });
-    await result;
-    expect(h.lifecycle.reports()).toHaveLength(1);
-    expect(ownerKey({ ...owner, processEpoch: "other" })).not.toBe(ownerKey(owner));
-    expect((await h.lifecycle.retire(owner, "shutdown", 20_000)).blocker).toBe(true);
-    h.lifecycle.reconcile(owner, stopped, saved);
-    expect((await h.lifecycle.retire(owner, "shutdown", 20_000)).blocker).toBe(false);
-    expect(h.ports.device.retire).toHaveBeenCalledTimes(1);
-    expect(h.ports.persistence.drain).toHaveBeenCalledTimes(1);
-    expect(ownerKey({ ...owner, hostEpoch: "other" })).not.toBe(ownerKey(owner));
-    expect((await h.lifecycle.retire(owner, "shutdown", 99_000)).blocker).toBe(false);
-  });
+  createUiLifetimePort(input).retire(owner);
+  expect(order).toEqual(["intent", "state", "subscriptions", "catalog"]);
+  expect(input.states.retireExecution).toHaveBeenCalledExactlyOnceWith(owner, "generation-retired");
+  expect(input.subscriptions.retire).toHaveBeenCalledExactlyOnceWith(owner);
 });
-}
 ```
 
-- [ ] **Step 2: Run the new lifecycle tests and confirm the intended red result.**
+- [ ] **Step 2: Run the added UI test red; retain F17/F19 green.**
 
 ```sh
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime test src/ui-lifecycle.test.ts
+pnpm --filter @kobrixa/plugin-runtime exec vitest run src/ui-lifecycle.test.ts
 ```
 
-Expected: missing `UiLifecycle`/`ownerKey` exports; do not accept a dependency-install failure as the red test.
+Expected: only the new createUiLifetimePort test fails before implementation; delivered retirement tests remain PASS.
 
-- [ ] **Step 3: Implement the retirement gate, keeping storage algorithms in B2.**
+- [ ] **Step 3: Add the UI participant, consuming R150 retirement unchanged.**
 
-Extend `packages/plugin-runtime/src/ui-lifecycle.ts` with the following retirement implementation, retaining the F attachment declarations and the delivered R150 phase/identity implementation. Preserve the exact `Stage3RuntimePorts` declaration. The compatibility helper and `UiLifecycle` share one disposition cache, so existing supervisor callbacks and the desktop coordinator cannot freeze/drain an owner twice:
-
-```ts
-import { randomUUID } from "node:crypto";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
-import type {
-  DeviceResourceParticipant, DeviceDisposition, RetirementReason,
-} from "./device-resources.js";
-import type {
-  PersistenceParticipant, DrainOffer, DrainDispatcher, DrainReport, DrainReason,
-} from "./persistence-participant.js";
-import type { UiCatalogPort } from "./ui-host-ports.js";
-
-export interface Stage3RuntimePorts {
-  device: DeviceResourceParticipant;
-  persistence: PersistenceParticipant;
-  ui: UiCatalogPort;
-}
-export type OwnerRetirement = Exclude<DrainReason, "reservation-ended"> | "crashed";
-export type RetirementReport = {
-  owner: ResourceOwner;
-  device: DeviceDisposition;
-  storage: DrainReport;
-  processStopped: boolean;
-  blocker: boolean;
-};
-export function ownerKey(owner: ResourceOwner): string {
-  return JSON.stringify([owner.sourceKey, owner.pluginId, owner.generation,
-    owner.hostEpoch, owner.processEpoch]);
-}
-const deviceReason: Record<OwnerRetirement, RetirementReason> = {
-  disable: "disabled", reload: "reload", remove: "disabled", crashed: "crashed",
-  "renderer-crash": "renderer-lost", "window-destroyed": "renderer-lost",
-  shutdown: "shutdown", update: "shutdown", "safe-mode": "safe-mode",
-};
-export const unknownDevice = (): DeviceDisposition => ({
-  stopConfirmed: false, journalCommitted: false, faultIds: [],
-});
-export const unknownStorage = (): DrainReport => ({
-  state: "uncertain", blocker: true, pendingSettings: true, records: [],
-  errors: [{ code: "PLUGIN_E_TIMEOUT", message: "Cleanup outcome is not confirmed." }],
-});
-export async function withinDisposition<T>(
-  work: Promise<T>, deadline: number, now: () => number, unknown: () => T,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work.catch(() => unknown()),
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(unknown()), Math.max(0, deadline - now()));
-      }),
-    ]);
-  } finally { clearTimeout(timer); }
-}
-export class UiLifecycle {
-  readonly #runs = new Map<string, Promise<RetirementReport>>();
-  readonly #reports = new Map<string, RetirementReport>();
-  constructor(private readonly input: {
-    ports: Stage3RuntimePorts;
-    now(): number;
-    dispatch: DrainDispatcher;
-    teardown(owner: ResourceOwner): Promise<void>;
-  }) {}
-  reports(): RetirementReport[] { return structuredClone([...this.#reports.values()]); }
-  retire(owner: ResourceOwner, reason: OwnerRetirement, deadline: number): Promise<RetirementReport> {
-    const key = ownerKey(owner);
-    const existing = this.#runs.get(key);
-    if (existing) return existing;
-    const { ports, now } = this.input;
-    const dispositions = retireStage3Owner(ports, owner, reason, now, this.input.dispatch, deadline);
-    const run = dispositions.then(async ({ device: physical, persistence: storage }): Promise<RetirementReport> => {
-      const processStopped = await withinDisposition(
-        Promise.resolve().then(() => this.input.teardown(owner)).then(() => true), now() + 4_000, now, () => false,
-      );
-      const report: RetirementReport = {
-        owner, device: physical, storage, processStopped,
-        blocker: !physical.stopConfirmed || !physical.journalCommitted || storage.blocker || !processStopped,
-      };
-      this.#reports.set(key, report);
-      const completed = [...this.#reports].filter(([, item]) => !item.blocker);
-      for (const [oldKey] of completed.slice(0, Math.max(0, completed.length - 128))) {
-        this.#reports.delete(oldKey); this.#runs.delete(oldKey);
-      }
-      return report;
-    });
-    this.#runs.set(key, run);
-    return run;
-  }
-  /** Only after explicit core reconciliation; never on a timer or merely because UI closed. */
-  reconcile(owner: ResourceOwner, device: DeviceDisposition, storage: DrainReport, processStopped?: boolean): void {
-    const key = ownerKey(owner);
-    const previous = this.#reports.get(key);
-    if (!previous) return;
-    const stopped = processStopped ?? previous.processStopped;
-    const report: RetirementReport = { ...previous, device, storage, processStopped: stopped,
-      blocker: !device.stopConfirmed || !device.journalCommitted || storage.blocker || !stopped };
-    this.#reports.set(key, report); this.#runs.set(key, Promise.resolve(report));
-    retirementCache(this.input.ports).set(key, Promise.resolve({ device, persistence: storage }));
-  }
-}
-```
-
-The UI participant must retire T2 execution state and subscriptions, as well as catalog entries. Add these type-only imports and the complete factory to `ui-lifecycle.ts`:
+Retain the F declarations and existing R150 implementation. Add this factory to ui-lifecycle.ts; it owns UI revocation only, never drain or process teardown.
 
 ```ts
 import type { UiBinding } from "@kobrixa/plugin-protocol";
@@ -6474,113 +6517,44 @@ export function createUiLifetimePort(input: {
 }
 ```
 
-Keep P150's `unavailableUi150` and `resourceFreePersistence150` compatibility implementations unchanged for the P150 regression batch. D160 uses the real UI attachment and permits the resource-free persistence participant only for positively resource-free sources. Update the existing `retireStage3Owner` implementation below in place, rather than introducing a second retirement path. `retireStage3Owner` returns dispositions only; the supervisor's existing `stop()` then performs process teardown. `UiLifecycle` awaits the same receipt before asking the manager to stop the original owner, avoiding a cycle through `retireResources`.
+Preserve all F type exports and R150 helpers in `packages/plugin-runtime/src/index.ts`. Add these explicit T2 exports in this T3 commit:
 
 ```ts
-type RuntimeRetirement = OwnerRetirement | RetirementReason | "removed";
-type RetirementDisposition = { device: DeviceDisposition; persistence: DrainReport };
-const retirementResults = new WeakMap<Stage3RuntimePorts, Map<string, Promise<RetirementDisposition>>>();
-function retirementCache(ports: Stage3RuntimePorts): Map<string, Promise<RetirementDisposition>> {
-  let cache = retirementResults.get(ports);
-  if (!cache) { cache = new Map(); retirementResults.set(ports, cache); }
-  return cache;
-}
-const noDrainRpc150: DrainDispatcher = async () => {
-  throw new Error("Public storage/drain is unavailable before API 1.7.0.");
-};
-function normalizeRetirement(reason: RuntimeRetirement): OwnerRetirement {
-  if (reason === "disabled") return "disable";
-  if (reason === "removed") return "remove";
-  if (reason === "renderer-lost") return "renderer-crash";
-  return reason;
-}
-export function retireStage3Owner(
-  ports: Stage3RuntimePorts, owner: ResourceOwner, reason: RuntimeRetirement, now: () => number,
-  dispatch: DrainDispatcher = noDrainRpc150, deadline = now() + 10_000,
-): Promise<RetirementDisposition> {
-  const cache = retirementCache(ports); const key = ownerKey(owner);
-  const previous = cache.get(key); if (previous) return previous;
-  const normalized = normalizeRetirement(reason); const started = now();
-  // The original grant object crosses this synchronous fence unchanged.
-  const device = ports.device.retire(owner, deviceReason[normalized]);
-  const storageDeadline = Math.min(deadline, started + 10_000, device.drain?.expiresMonotonicMs ?? Infinity);
-  const offer = normalized === "crashed" ? undefined : device.drain === null
-    ? ports.persistence.freeze(owner, normalized, storageDeadline)
-    : ports.persistence.freeze(owner, normalized, storageDeadline, device.drain);
-  ports.ui.retire(owner);
-  const run = Promise.resolve().then(async (): Promise<RetirementDisposition> => {
-    const storageWork = offer ? ports.persistence.drain(offer, dispatch) : ports.persistence.ownerLost(owner);
-    const [physical, persistence] = await Promise.all([
-      withinDisposition(device.settled, started + 20_000, now, unknownDevice),
-      withinDisposition(storageWork, storageDeadline, now, unknownStorage),
-    ]);
-    return { device: physical, persistence };
-  });
-  cache.set(key, run);
-  // UiLifecycle/coordinator retain actual recovery evidence; clean receipts are bounded.
-  void run.then((report) => {
-    if (report.device.stopConfirmed && report.device.journalCommitted && !report.persistence.blocker) {
-      const current = cleanRetirements.get(ports) ?? [];
-      current.push(key); cleanRetirements.set(ports, current);
-      while (current.length > 128) cache.delete(current.shift()!);
-    }
-  }, () => undefined);
-  return run;
-}
-const cleanRetirements = new WeakMap<Stage3RuntimePorts, string[]>();
-export function unavailableUi150(): UiCatalogPort {
-  const unavailable = { ok: false as const, error: { code: "PLUGIN_E_DISABLED" as const,
-    message: "Declarative UI is unavailable before the UI attachment is installed." } };
-  return { catalog: async () => unavailable, resource: async () => unavailable,
-    retire: () => {}, onEvent: () => () => {} };
-}
-export function resourceFreePersistence150(): PersistenceParticipant {
-  const offers = new WeakSet<DrainOffer>();
-  const empty = (): DrainReport => ({ state: "saved", blocker: false, pendingSettings: false, records: [], errors: [] });
-  return {
-    endReservation: () => null,
-    freeze: (owner, reason, deadlineMonotonicMs) => {
-      const offer: DrainOffer = Object.freeze({ owner, reason, deadlineMonotonicMs, token: randomUUID(),
-        checkpoints: [], writes: [], acceptedTickets: [] });
-      offers.add(offer); return offer;
-    },
-    drain: async (offer) => {
-      if (!offers.has(offer) || offer.checkpoints.length || offer.writes.length || offer.acceptedTickets.length)
-        throw new Error("Resource-free persistence cannot save admitted storage work.");
-      return empty();
-    },
-    ownerLost: async () => empty(), recoverySnapshot: () => ({ revision: 0, items: [] }),
-    retry: async () => { throw new Error("No resource-free persistence recovery exists."); },
-    discard: async () => { throw new Error("No resource-free persistence recovery exists."); },
-  };
-}
+export { UiCatalog } from "./ui-catalog.js";
+export type { UiCatalogDependencies } from "./ui-catalog.js";
+export type { UiCatalogSource } from "./ui-host-ports.js";
+export { UiStateRegistry, currentStatusBindings } from "./ui-state.js";
+export { UiSubscriptions } from "./ui-subscriptions.js";
+export { sameUiBinding, sameResourceOwner } from "./ui-host-ports.js";
 ```
 
-Export this module from `packages/plugin-runtime/src/index.ts`:
+Export the delivered lifecycle helpers explicitly:
 
 ```ts
 export {
-  UiLifecycle, ChannelActivation, ownerKey, createUiLifetimePort, retireStage3Owner,
-  retireBeforePublish, resourceFreePersistence150, unavailableUi150,
-  unknownDevice, unknownStorage, withinDisposition,
+  ChannelActivation, createUiLifetimePort, retireStage3Owner, registerActivationDeadline, remainingActivationMs,
+  resourceFreePersistence150, unavailableUi150,
 } from "./ui-lifecycle.js";
 export type {
   Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding,
-  UiRuntimeAttachment, OwnerRetirement, RetirementReport,
+  UiRuntimeAttachment, OwnerRetirement, RetirementDisposition,
 } from "./ui-lifecycle.js";
 ```
 
+Remove obsolete `UiLifecycle`, `retireBeforePublish`, `ownerKey`, `unknownDevice`, `unknownStorage`, `withinDisposition` and `RetirementReport` barrel exports if left by an earlier draft. RetirementReport now belongs to desktop lifecycle-coordinator.ts; retain all F host types and the R150 RetirementDisposition type. Never wildcard-export diagnosticsFor.
+
 Retirement reports are host-only. Do not put `DrainReport`, grants, tokens, file paths, or process handles into `PluginSummary` or initialize. The coordinator in T5 owns the bounded pending-session index and recovery projection. The manager removes settled terminal generations only after the coordinator no longer holds their recovery evidence; unresolved records stay visible and reject replacement namespace writes through the participant's existing fence.
 
-- [ ] **Step 4: Run the lifecycle suite, then checkpoint this slice.**
+- [ ] **Step 4: Verify and checkpoint the R160 host exports.**
 
 ```sh
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime test src/ui-lifecycle.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add packages/plugin-runtime/src/ui-lifecycle.ts packages/plugin-runtime/src/ui-lifecycle.test.ts packages/plugin-runtime/src/index.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(plugin-runtime): gate retirement on device and persistence dispositions"
+pnpm --filter @kobrixa/plugin-runtime exec vitest run src/ui-lifecycle.test.ts
+pnpm --filter @kobrixa/plugin-runtime build
+git add packages/plugin-runtime/src/ui-lifecycle.ts packages/plugin-runtime/src/ui-lifecycle.test.ts packages/plugin-runtime/src/index.ts
+git commit -m "feat(plugin-runtime): gate retirement on device and persistence dispositions"
 ```
 
-Expected: every retirement mapping passes; grants are identical objects, null is omitted, and no healthy non-retirement event enters this class. These are implementation-time commits; the plan writer does not execute them.
+Expected: F17/F19 and UI revocation PASS; runtime rebuild exposes the named T2 constructors. These are implementation-time steps, not commands for the plan fixer.
 
 - [ ] **Step 5: Add source-policy and failure-window regression tests.**
 
@@ -6903,18 +6877,7 @@ if (this.#stopping) {
 
 The original process reference stays retained until the actual `onExit`. No new process replaces it and no synthetic exit counts as OS proof. Keep P150's synchronous resource retirement in `#exited`; a real exit releases the fence after its disposition. A late resolution of an abandoned launcher still invokes `late.forceKill()`; T4's launcher retains and kills the late utility child independently of the supervisor's start promise.
 
-The manager's R150 ownership hooks must attach `UiLifecycle` before state publication. Add this complete helper to `ui-lifecycle.ts` and use it for the existing disable/reload/remove/renderer-loss hook; the authoritative R150 cleanup registry supplies `owner`, and `publish` advances the current row only after the synchronous fence:
-
-```ts
-export function retireBeforePublish(input: {
-  lifecycle: UiLifecycle; owner: ResourceOwner; reason: OwnerRetirement; now(): number;
-  publish(): void; report(value: RetirementReport): void;
-}): Promise<RetirementReport> {
-  const retirement = input.lifecycle.retire(input.owner, input.reason, input.now() + 10_000);
-  input.publish();
-  return retirement.then((value) => { input.report(value); return value; });
-}
-```
+The manager retains R150's synchronous `host.retireResources(owner, reason)` call before publishing retirement. Do not add a second helper/cache here. The supervisor awaits that original disposition promise before its existing shutdown/kill/actual-exit path; a rejected disposition remains visible as a blocker. Desktop reconciliation observes the actual original supervisor exit, never recursively calls stop from retireResources.
 
 Keep old owners/channels in the existing R150 cleanup registry until dispositions and real exit arrive. Expose that registry through `PluginManager.stage3Runtime(): UiRuntimeAttachment`; `owners`, `current`, `context`, `commands`, `invoke`, `activateInitialized`, `ready` and `dispatchDrain` use this same registry. Preserve the admitted generation requirements resolver (`null` for retired/unknown, frozen `[]` for no requirements), primary-profile host epoch and pre-launch `channelOwner`. Consumer exit calls `device.retire`, never `retireProvider`.
 
@@ -7058,6 +7021,25 @@ Expected red: `ChannelActivation` is not implemented. Existing R150 identity/req
 
 - [ ] **Step 10: Install the frozen phased attachment in the existing owner registry.**
 
+Before constructing ChannelActivation, the supervisor registers the signal with its original initialize deadline using these host-only helpers in ui-lifecycle.ts. Call `registerActivationDeadline(signal, originalDeadlineMonotonicMs, now)` immediately after creating the existing handshake signal, before initialize; call the returned disposer in the existing startup finally block after readiness/failure. `originalDeadlineMonotonicMs` is captured before initialize as `now() + initializeTimeoutMs`, never at negotiate/ready. Export these two named helpers in T3's index.ts commit; neither allocates a timer.
+
+```ts
+const activationDeadlines = new WeakMap<AbortSignal, { deadline: number; now(): number }>();
+export function registerActivationDeadline(signal: AbortSignal, deadline: number, now: () => number): () => void {
+  if (activationDeadlines.has(signal)) throw new Error("Activation deadline already registered.");
+  activationDeadlines.set(signal, { deadline, now });
+  return () => { activationDeadlines.delete(signal); };
+}
+export function remainingActivationMs(signal: AbortSignal): number {
+  signal.throwIfAborted();
+  const entry = activationDeadlines.get(signal);
+  if (!entry) throw new Error("Missing supervisor activation deadline.");
+  const remaining = entry.deadline - entry.now();
+  if (remaining <= 0) throw new Error("Activation deadline expired.");
+  return remaining;
+}
+```
+
 Add this internal phase helper in `ui-lifecycle.ts`; it does not add members to `Stage3RuntimePorts` or alter initialize. It wraps each `Stage3ChannelBinding` returned by the real host:
 
 ```ts
@@ -7134,6 +7116,37 @@ D160's `Stage3ChannelBinding.initialized(signal)` negotiates v1 over this alread
 
 Append manager/supervisor cases using their existing memory-process harness: two concurrent lazy `open` calls launch once and return the same binding; plugin's ready handler can query initial instances; ready-before-initialize fails; initialize/ready crashes retire one owner; replacing generation at each barrier rejects the old open; safe mode produces zero optional launches. T2 owns the matching `ui-state.test.ts` first-open/latch case; consume its passing receipt without editing its file. At R170 `dispatchDrain` looks up the retained row by complete offer owner, sends on its original peer with the grant-scoped path, and holds that row until disposition and real exit. A replacement peer must never answer the original request. Add manager coverage that replaces the current row while a drain is pending and verifies only the retained peer receives it.
 
+T3 adds this host-only inventory method to PluginManager and stages it in Step 10's manager commit. It reads admitted registry entries; its catalog identity never supplies an execution owner. Import UiCatalogSource type-only from ui-host-ports.ts:
+
+```ts
+uiCatalogSources(): readonly UiCatalogSource[] {
+  const hostEpoch = this.options.stage3Host?.hostEpoch;
+  if (!hostEpoch) return [];
+  return this.#entries.flatMap(({ source, plugin, generation }) => {
+    const manifest = plugin.manifest;
+    if (plugin.status !== "enabled" || !manifest) return [];
+    const resources: UiCatalogSource["resources"] = source.kind === "builtin"
+      ? { kind: "builtin", files: source.resources }
+      : { kind: "packaged", root: source.directory };
+    return [{ owner: { sourceKey: plugin.sourceKey, pluginId: plugin.id, generation,
+      hostEpoch, processEpoch: hostEpoch }, eligible: true, resources,
+      commands: (manifest.contributes?.commands ?? []).filter(command => command.invocation === "context-v1"),
+      panels: manifest.contributes?.panels ?? [], status: manifest.contributes?.status ?? [] }];
+  });
+}
+```
+
+In the existing manager stage3Runtime attachment, replace R150's inert context callback with this complete R160 callback. `channel` is the same retained-row lookup already used by current/ready; no metadata owner is accepted. The trusted main principal resolver binds the current workbench; scope validation remains in D160 before invocation:
+
+```ts
+context: (owner, scope) => {
+  if (!channel(owner) || scope.hostEpoch !== owner.hostEpoch) return null;
+  const principal = this.options.stage3Host!.principal(owner);
+  return principal.kind === "plugin" && sameResourceOwner(principal.owner, owner)
+    ? principal.authorityContext : null;
+},
+```
+
 Add this complete method to `PluginSupervisor`, with `CommandInvocation`, `CommandValue`, and `Result` type imports from protocol:
 
 ```ts
@@ -7154,7 +7167,7 @@ Keep `executeCommand` and `command/execute` untouched: legacy returns `null` and
 ```sh
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime test src/ui-lifecycle.test.ts src/supervisor.test.ts src/manager.test.ts
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime check
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add packages/plugin-runtime/src/ui-lifecycle.ts packages/plugin-runtime/src/ui-lifecycle.test.ts packages/plugin-runtime/src/supervisor.ts packages/plugin-runtime/src/supervisor.test.ts packages/plugin-runtime/src/index.ts
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add packages/plugin-runtime/src/ui-lifecycle.ts packages/plugin-runtime/src/ui-lifecycle.test.ts packages/plugin-runtime/src/supervisor.ts packages/plugin-runtime/src/supervisor.test.ts packages/plugin-runtime/src/manager.ts packages/plugin-runtime/src/manager.test.ts packages/plugin-runtime/src/index.ts
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(plugin-runtime): negotiate UI readiness within one handshake deadline"
 ```
 
@@ -7172,6 +7185,13 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 ```
 
 Expected: all phase and existing compatibility tests pass; retirement keeps the original peer, and diagnostics return zero owners/timers after real cleanup.
+
+```sh
+git add packages/plugin-runtime/src/ui-lifecycle.ts packages/plugin-runtime/src/ui-lifecycle.test.ts packages/plugin-runtime/src/manager.ts packages/plugin-runtime/src/manager.test.ts
+git commit -m "feat(plugin-runtime): expose read-only owner and deadline diagnostics"
+```
+
+Record these exact paths and the passing scoped checks in the R160 stopped receipt. The Step 10 commit already contains index.ts; this diagnostics-only step does not change its exports.
 
 ### Task 3B1-T4: K160 — validated shipped process artifacts and installed launch
 
@@ -7940,7 +7960,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 
 Expected: all scoped cases pass without Electron. **Controller runs outside sandbox:** T9's actual Forge/installed fixture gate launches the packaged executable offline from an arbitrary cwd with PATH Node and checkout unavailable, inventories ASAR/unpacked hashes, audits SDK/protocol inclusion and native exclusions, and confirms no child PIDs remain five seconds after normal close. Source-map/config assertions alone do not close U14. The three final product entries remain staged obligations for 3C/3D/3E.
 
-- [ ] **Step 10: Test resolved fixture output and freeze the K170 worker resolver.**
+- [ ] **Step 10: Test and commit resolved fixture output.**
 
 Append to `plugin-resource-index.test.ts` using its existing temporary-directory cleanup. Import `build` from `vite`, `builtinPluginConfig` and `validateBuiltinLeaf`. The T9 fixture must be received before this test runs; missing content is a gate failure, not an alternate generated fixture:
 
@@ -7964,28 +7984,7 @@ it("uses the CLI outDir for bundle, manifest, index and resources", async () => 
 
 Add `fileURLToPath` from `node:url` and `realpath` to the existing fs imports. Default output remains `apps/desktop/.vite/build/plugins/acceptance-builtin`. T9's installed test consumes the temporary override directly and verifies resources/hashes/ASAR unpack without checkout or cwd fallback. Production `BUILTIN_PLUGIN_SOURCES` remains unchanged.
 
-Freeze the following K170 exports in `apps/desktop/packaging.ts` for P12. This owner implements the worker build/unpack registration during B2-T9 after D160/K160 stop; B2 backend writers do not edit packaging:
-
-```ts
-export const PERSISTENCE_WORKER_ENTRY = "src/main/plugins/persistence/worker.ts";
-export function persistenceWorkerPath(input: {
-  packaged: boolean; resourcesPath: string; buildRoot: string;
-}): string {
-  const root = input.packaged ? input.resourcesPath : input.buildRoot;
-  if (!path.isAbsolute(root)) throw new Error("Persistence worker root must be absolute.");
-  return input.packaged
-    ? path.join(root, "app.asar.unpacked/.vite/build/persistence-worker.cjs")
-    : path.join(root, "persistence-worker.cjs");
-}
-export function withPersistenceWorkerUnpack(existing: string): string {
-  const worker = "**/.vite/build/persistence-worker.cjs";
-  if (existing === worker || existing.includes(worker)) return existing;
-  const patterns = existing.startsWith("{") && existing.endsWith("}") ? existing.slice(1, -1) : existing;
-  return `{${patterns},${worker}}`;
-}
-```
-
-Append path tests in `packaging.test.ts`: packaged `/resources` resolves `/resources/app.asar.unpacked/.vite/build/persistence-worker.cjs`; unpackaged `/build` resolves `/build/persistence-worker.cjs`; relative root throws; applying unpack twice is idempotent and preserves native/plugin rules. P170 verifies the actual built worker entry is present and launches from an arbitrary cwd.
+K170's `PERSISTENCE_WORKER_ENTRY`, `persistenceWorkerPath(input:{packaged:boolean;resourcesPath:string;buildRoot:string}):string` and `withPersistenceWorkerUnpack(existing:string):string` are implemented only in `docs/superpowers/plans/2026-10-17-plugin-system-3b2-settings-storage.md`, **Task 3B2-T9 Steps 10–12**, under skeleton BM-15/AM-23. That step owns absolute-root validation, exact packaged/unpackaged paths, idempotent `**/.vite/build/persistence-worker.cjs` merging and installed worker launch tests. K160 neither implements nor tests future worker values.
 
 ```sh
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugin-resource-index.test.ts src/main/packaging.test.ts
@@ -7993,7 +7992,14 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm check:desktop
 ```
 
-Expected: override output passes the same index validator; production registration remains empty; K170 path signatures match AM-23 exactly.
+Expected: override output passes the same index validator; production registration remains empty.
+
+```sh
+git add apps/desktop/vite.plugin.config.ts apps/desktop/vite.plugin-fixture.config.ts apps/desktop/plugin-resource-index.ts apps/desktop/src/main/plugin-resource-index.test.ts
+git commit -m "fix(plugins): honor resolved fixture output directories"
+```
+
+The K160 stopped receipt records this commit and exactly these config/indexer/test paths. K170 remains B2-T9's later receipt.
 
 ### Task 3B1-T5: D160 — trusted UI actions, one reservation-ended path, and close blockers
 
@@ -8009,14 +8015,18 @@ Create:
 - `apps/desktop/src/main/plugins/shutdown-coordinator.test.ts`
 - `apps/desktop/src/main/plugins/user-persistence-actions.ts`
 - `apps/desktop/src/main/plugins/user-persistence-actions.test.ts`
-- `apps/desktop/src/main/index.test.ts`
-- `apps/desktop/src/main/ipc.test.ts`
+- Modify (append to D150 file; retain cases): `apps/desktop/src/main/index.test.ts`
+- Modify (append to D150 file; retain cases): `apps/desktop/src/main/ipc.test.ts`
 
 Modify (D150 modules continue only after its stopped-owner receipt):
 
 - `apps/desktop/src/main/plugins/core-recovery.ts`
 - `apps/desktop/src/main/plugins/core-recovery.test.ts`
 
+- `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts` (Modify; exact D150 stopped handoff)
+- `apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts` (Modify; retain F17/F19)
+- `apps/desktop/src/main/workspace/compiler-chain.test.ts` (retained compatibility)
+- `apps/desktop/src/main/language/language-provider.integration.test.ts` (retained compatibility)
 - `apps/desktop/src/main/plugins/controller.ts`
 - `apps/desktop/src/main/plugins/controller.test.ts`
 - `apps/desktop/src/main/plugins/state-store.ts`
@@ -8041,8 +8051,8 @@ Modify (D150 modules continue only after its stopped-owner receipt):
 - `apps/desktop/src/preload/index.test.ts`
 - `apps/desktop/src/shared/api.ts`
 - `apps/desktop/src/shared/plugins.ts`
-- `apps/desktop/src/shared/plugin-ui.ts` (F seed)
-- `apps/desktop/src/shared/plugin-ui.test.ts` (F seed)
+- `apps/desktop/src/shared/plugin-ui.ts` (Modify; D150-created, retain existing cases)
+- `apps/desktop/src/shared/plugin-ui.test.ts` (Modify; D150-created, retain existing cases)
 
 Test: all `.test.ts` paths listed above. H-D also reserves `apps/desktop/src/shared/plugin-persistence.ts` and `apps/desktop/src/shared/plugin-persistence.test.ts` for this role's D170 attachment; D160 does not publish their 1.7 bridge. **Every `apps/desktop/src/main/plugins/persistence/**` file is read-only.** The A lifecycle coordinator and broker internals are also read-only; use their ports, not competing edits.
 
@@ -8434,320 +8444,312 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): fence UI motion with expiring main-issued challenges"
 ```
 
-- [ ] **Step 5: Write the reservation and close-coordination tests (U12/U17, B1-RF4).**
+- [ ] **Step 5: Extend the authoritative D150 tests (F17/F19/U12).**
 
-Create `apps/desktop/src/main/plugins/shutdown-coordinator.test.ts`:
+Receive `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts` and its test from A-T8's stopped D150 receipt. Retain every existing fixture/case. Append these tests using that file's actual `fixture`, `owner`, `saved`, `clean`, `ended`, `action` and `id` values. They exercise the real R150 helper, not a replacement retirement double:
 
 ```ts
-import { afterEach, expect, it, vi } from "vitest";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
-import type {
-  CoreActionReference, DeviceDisposition, DrainOffer, DrainReport, PersistenceParticipant,
-  ReservationBindingPort, ReservationEnded, DeviceSessionControlPort, RetirementReport,
-} from "@kobrixa/plugin-runtime";
-import { ShutdownCoordinator } from "./shutdown-coordinator.js";
+it("U12 reconciliation preserves pending promises and the original deadline", async () => {
+  const f = fixture();
+  const first = f.coordinator.retire(owner, "disable", 8_000);
+  expect(f.coordinator.reconcile(owner, clean, saved)).toBe(false);
+  expect(f.coordinator.retire({ ...owner }, "shutdown", 50_000)).toBe(first);
+  expect(f.persistence.freeze.mock.calls[0]![2]).toBe(8_000);
+  f.storage.resolve({ ...saved, state: "retryable", blocker: true }); f.device.resolve(clean);
+  await first; // Disposition is observed; its report still blocks close.
+  expect(f.coordinator.reconcile(owner, clean, saved)).toBe(true);
+  expect(f.coordinator.retire(owner, "shutdown", 99_000)).toBe(first);
+  expect(f.coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
+  await f.coordinator.close("close");
+  expect(f.coordinator.reports()[0]).toMatchObject({ blocker: false, processStopped: true });
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.resources.retire).toHaveBeenCalledOnce();
+  expect(f.input.reservations.onEnded).toHaveBeenCalledOnce();
+});
+it("U12 clear waits for the actual supervisor shutdown receipt", async () => {
+  const f = fixture(); let exit!: () => void;
+  f.shutdown.mockImplementation(() => new Promise<void>(resolve => { exit = resolve; }));
+  const work = f.coordinator.retire(owner, "disable");
+  f.device.resolve(clean); f.storage.resolve(saved); await work;
+  const closing = f.coordinator.close("close");
+  for (let i = 0; i < 20 && !exit; i++) await Promise.resolve();
+  expect(f.shutdown).toHaveBeenCalledOnce();
+  expect(f.coordinator.reports()[0]!.processStopped).toBe(false);
+  f.coordinator.allowCloseRetry();
+  expect(f.coordinator.close("update")).toBe(closing);
+  exit(); await closing;
+  expect(f.coordinator.reports()[0]!.blocker).toBe(false);
+});
+it("U12 reservation recovery updates settled evidence without redispatch", async () => {
+  const f = fixture(); f.emit();
+  const failed = { ...saved, recovery: id(44), state: "retryable" as const, blocker: true };
+  f.storage.resolve(failed); f.device.resolve(clean);
+  await f.coordinator.pendingSession(id(3));
+  f.coordinator.reconcileRecovery(id(44), saved);
+  expect(await f.coordinator.pendingSession(id(3))).toEqual([saved]);
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.resources.retire).not.toHaveBeenCalled();
+});
+it("U12 crashed original owner uses ownerLost with no replacement dispatch", async () => {
+  const f = fixture(); f.alive.mockReturnValue(false);
+  const work = f.coordinator.retire(owner, "disable");
+  f.storage.resolve(saved); f.device.resolve(clean); await work;
+  expect(f.persistence.ownerLost).toHaveBeenCalledExactlyOnceWith(owner);
+  expect(f.persistence.drain).not.toHaveBeenCalled();
+  expect(f.persistence.freeze).not.toHaveBeenCalled();
+});
+```
 
-afterEach(() => vi.useRealTimers());
-const owner: ResourceOwner = { sourceKey: "builtin:acme.fixture", pluginId: "acme.fixture",
-  generation: 1, hostEpoch: "host", processEpoch: "process" };
-const saved: DrainReport = { state: "saved", blocker: false, pendingSettings: false, records: [], errors: [] };
-const stopped: DeviceDisposition = { stopConfirmed: true, journalCommitted: true, faultIds: [] };
-const action: CoreActionReference = { actionToken: "core-token", scope: { hostEpoch: "host", workbenchInstance: "window" } };
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve };
-}
-function fixture() {
-  let listener: ((event: ReservationEnded) => void) | undefined;
-  const off = vi.fn();
-  const reservations: ReservationBindingPort = {
-    validate: () => null, onEnded: vi.fn((callback) => { listener = callback; return off; }),
-  };
-  const event: ReservationEnded = { owner, reservationId: "reservation", sessionId: "session", providerGeneration: 1,
-    reason: "released", lastSequence: 12, endedMonotonicMs: 0,
-    drain: { owner, reservationId: "reservation", lastSequence: 12, expiresMonotonicMs: 10_000 } };
-  const storage = deferred<DrainReport>(); const device = deferred<DeviceDisposition>();
-  const persistence: PersistenceParticipant = {
-    endReservation: vi.fn((value, deadline): DrainOffer => ({ owner: value.owner, reason: "reservation-ended",
-      deadlineMonotonicMs: deadline, token: "final-token", checkpoints: [], writes: [], acceptedTickets: [] })),
-    freeze: vi.fn(), drain: vi.fn(() => storage.promise), ownerLost: vi.fn(() => storage.promise),
-    recoverySnapshot: () => ({ revision: 0, items: [] }), retry: vi.fn(async () => saved), discard: vi.fn(async () => saved),
-  };
-  const sessions: DeviceSessionControlPort = {
-    quiesce: vi.fn((sessionId) => { listener?.(event); return { sessionId, ended: [event], settled: device.promise }; }),
-    disconnect: vi.fn(async (sessionId) => ({ ok: true as const, value: { sessionId, disconnected: true as const } })),
-    resume: vi.fn(),
-  };
-  const retire = vi.fn(async (): Promise<RetirementReport> => ({ owner, device: stopped, storage: saved,
-    processStopped: true, blocker: false }));
-  const publish = vi.fn(); const legacy = vi.fn(async () => {});
-  const coordinator = new ShutdownCoordinator({ reservations, persistence, sessions, now: () => performance.now(),
-    healthy: () => true, dispatch: vi.fn(), retire, owners: () => [owner],
-    beginShutdown: vi.fn(async () => stopped), legacy, publish });
-  return { coordinator, event, persistence, sessions, retire, reservations, off, storage, device, publish, legacy,
-    emit: (value: ReservationEnded = event) => listener?.(value) };
-}
-it("installs exactly one listener before callers can register a checkpoint", () => {
-  const h = fixture(); expect(h.reservations.onEnded).toHaveBeenCalledTimes(1);
-  h.coordinator.dispose(); expect(h.off).toHaveBeenCalledTimes(1);
-});
-it("synchronously records end evidence, dispatches later, and deduplicates quiesce's returned end", async () => {
-  const h = fixture(); h.emit();
-  expect(h.persistence.endReservation).toHaveBeenCalledWith(h.event, 10_000);
-  expect(h.persistence.drain).not.toHaveBeenCalled();
-  const disconnect = h.coordinator.disconnect("session", action);
-  await Promise.resolve(); expect(h.persistence.endReservation).toHaveBeenCalledTimes(1);
-  expect(h.persistence.drain).toHaveBeenCalledTimes(1);
-  expect(h.sessions.disconnect).not.toHaveBeenCalled();
-  h.storage.resolve(saved); await Promise.resolve(); expect(h.sessions.disconnect).not.toHaveBeenCalled();
-  h.device.resolve(stopped); expect(await disconnect).toEqual({ ok: true, value: { sessionId: "session", disconnected: true } });
-  expect(h.sessions.disconnect).toHaveBeenCalledExactlyOnceWith("session", action);
-  expect(h.retire).not.toHaveBeenCalled(); expect(h.persistence.freeze).not.toHaveBeenCalled();
-});
-it.each(["released", "suspended", "disconnected", "core-disconnect"] as const)(
-  "%s ends only its reservation and leaves healthy process/generation unchanged", async (reason) => {
-    const h = fixture(); h.emit({ ...h.event, reason }); h.storage.resolve(saved);
-    await h.coordinator.pendingSession("session");
-    expect(h.retire).not.toHaveBeenCalled(); expect(h.persistence.freeze).not.toHaveBeenCalled();
-    expect(h.persistence.ownerLost).not.toHaveBeenCalled(); expect(h.event.owner).toEqual(owner); h.coordinator.dispose();
+Append this real supervisor→typed host→coordinator integration to the same desktop lifecycle-coordinator.test.ts. The existing fixture supplies the actual coordinator and unchanged R150 helper; only physical device/storage completions are controlled:
+
+```ts
+import { PluginSupervisor, type Stage3HostAttachment } from "@kobrixa/plugin-runtime";
+import { memoryPlugin } from "../../../../../packages/plugin-runtime/src/test-process.js";
+it("F17/F19 U12 uses one host fence and waits for actual original supervisor exit", async () => {
+  const f = fixture(); let exit!: () => void;
+  let exitRequested = false, didExit = false;
+  const child = memoryPlugin((peer, control) => {
+    exit = () => control.exit(0);
+    peer.handle("initialize", () => ({ apiVersion: "1.6.0", sdk: { name: "fixture", version: "1" } }));
+    peer.handle("command/execute", () => null);
+    peer.handle("shutdown", () => null);
+    peer.onNotification("exit", () => { exitRequested = true; });
   });
-it("uses the original earliest deadline and null grant goes to ownerLost without dispatch", async () => {
-  const h = fixture(); const event = { ...h.event, drain: null };
-  h.emit(event); h.emit({ ...event, endedMonotonicMs: 9_000 });
-  expect(h.persistence.endReservation).toHaveBeenCalledTimes(1);
-  h.storage.resolve({ ...saved, state: "checkpoint-only", blocker: true });
-  const reports = await h.coordinator.pendingSession("session");
-  expect(reports[0]?.blocker).toBe(true); expect(h.persistence.ownerLost).toHaveBeenCalledWith(owner);
-  expect(h.persistence.drain).not.toHaveBeenCalled();
-});
-it("Disconnect includes earlier ended pending finals, even when quiesce returns no active reservations", async () => {
-  const h = fixture(); h.emit();
-  vi.mocked(h.sessions.quiesce).mockReturnValue({ sessionId: "session", ended: [], settled: h.device.promise });
-  const run = h.coordinator.disconnect("session", action); h.device.resolve(stopped);
-  await Promise.resolve(); expect(h.sessions.disconnect).not.toHaveBeenCalled();
-  h.storage.resolve({ ...saved, state: "retryable", blocker: true, recovery: "recovery" });
-  expect(await run).toMatchObject({ ok: false }); expect(h.sessions.disconnect).not.toHaveBeenCalled();
-  expect(h.publish).toHaveBeenCalled();
-});
-it("renderer/window loss retires rather than using the healthy suspend path", async () => {
-  const h = fixture(); await h.coordinator.retire(owner, "renderer-crash");
-  expect(h.retire).toHaveBeenCalledWith(owner, "renderer-crash", expect.any(Number));
-  expect(h.sessions.quiesce).not.toHaveBeenCalled();
-});
-it("suspend uses OS authority, preserves generation and resumes only after reconciled dispositions", async () => {
-  const h = fixture(); const work = h.coordinator.suspend("session");
-  expect(h.sessions.quiesce).toHaveBeenCalledWith("session", { reason: "suspended" });
-  expect(await h.coordinator.resume("session")).toBe(false);
-  h.storage.resolve(saved); h.device.resolve(stopped); await work;
-  expect(await h.coordinator.resume("session")).toBe(true);
-  expect(h.sessions.resume).toHaveBeenCalledExactlyOnceWith("session"); expect(h.retire).not.toHaveBeenCalled();
-});
-it("normal close retains blockers at 25 seconds and does not turn a timeout into exit", async () => {
-  vi.useFakeTimers(); const h = fixture();
-  h.retire.mockImplementation(() => new Promise(() => {}));
-  const first = h.coordinator.close("shutdown"); const second = h.coordinator.close("update");
-  expect(first).toBe(second); await vi.advanceTimersByTimeAsync(25_000);
-  expect(await first).toMatchObject({ blocker: true, timedOut: true });
-  expect(h.retire).toHaveBeenCalledTimes(1); expect(h.legacy).toHaveBeenCalledTimes(1);
-});
-it("legacy Lab save failure blocks close even when the new participant has no resources", async () => {
-  const h = fixture(); h.legacy.mockRejectedValue(new Error("legacy save failed"));
-  expect(await h.coordinator.close("shutdown")).toMatchObject({ blocker: true, legacySaved: false });
-});
-it("explicit close retry observes reconciled retirement without restarting pending work", async () => {
-  const h = fixture();
-  h.retire.mockResolvedValueOnce({ owner, device: stopped, storage: { ...saved, blocker: true, state: "retryable" },
-    processStopped: true, blocker: true });
-  expect((await h.coordinator.close("shutdown")).blocker).toBe(true);
-  expect((await h.coordinator.close("shutdown")).blocker).toBe(true);
-  expect(h.retire).toHaveBeenCalledTimes(1);
-  // The real attachment calls UiLifecycle.reconcile with confirmed recovery before this reset.
-  h.coordinator.allowCloseRetry();
-  expect((await h.coordinator.close("shutdown")).blocker).toBe(false);
-  expect(h.retire).toHaveBeenCalledTimes(2); h.coordinator.dispose();
-});
-it("same-turn owner retirement takes over a queued end without a second final dispatch", async () => {
-  const h = fixture(); h.emit(); const work = h.coordinator.retire(owner, "disable");
-  await work; await h.coordinator.pendingSession("session");
-  expect(h.persistence.drain).not.toHaveBeenCalled(); expect(h.retire).toHaveBeenCalledTimes(1);
+  child.process.onExit(() => { didExit = true; });
+  const host: Stage3HostAttachment = {
+    hostEpoch: owner.hostEpoch, principal: value => ({ kind: "plugin", owner: value, authorityContext: null }),
+    requirements: () => [], hasPermission: () => false,
+    bindChannel: () => ({ initialized: async signal => signal.throwIfAborted(),
+      ready: async signal => signal.throwIfAborted(), dispose() {} }),
+    retireResources: (value, reason) => f.coordinator.retire(value, reason),
+  };
+  const supervisor = new PluginSupervisor({ id: owner.pluginId, sourceKey: owner.sourceKey,
+    directory: "/fixture", entry: "/fixture/main.js", runtime: "node", permissions: [], commands: ["test.run"] },
+    async () => child.process, { locale: "en", onNotice() {}, resourceOwner: () => owner,
+      hostEpoch: host.hostEpoch, bindChannel: host.bindChannel, retireResources: host.retireResources });
+  f.shutdown.mockImplementation(() => supervisor.stop());
+  await supervisor.executeCommand("test.run");
+  const closing = f.coordinator.close("close");
+  f.device.resolve(clean); f.storage.resolve(saved);
+  for (let turn = 0; turn < 100 && !exitRequested; turn++) await Promise.resolve();
+  expect(exitRequested).toBe(true); expect(didExit).toBe(false);
+  expect(f.coordinator.reports()[0]!.processStopped).toBe(false);
+  expect(f.resources.retire).toHaveBeenCalledOnce();
+  expect(f.persistence.freeze).toHaveBeenCalledOnce(); expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.input.reservations.onEnded).toHaveBeenCalledOnce();
+  exit(); await closing;
+  expect(didExit).toBe(true); expect(f.coordinator.reports()[0]!.blocker).toBe(false);
 });
 ```
 
-- [ ] **Step 6: Run red, then implement the single-listener coordinator.**
+Runtime supervisor unit tests use that same typed Stage3HostAttachment shape with a deferred `retireResources` and their existing memoryPlugin fixture; they import no Electron/coordinator implementation. The desktop test above is the live path required by F17/F19, not evidence from the helper in isolation.
 
-```sh
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugins/shutdown-coordinator.test.ts
-```
+- [ ] **Step 6: Add report/reconciliation projections to that same coordinator.**
 
-Expected red: missing coordinator. Create `apps/desktop/src/main/plugins/shutdown-coordinator.ts`:
+Run the preceding tests first; expect missing report/reconciliation methods, while existing F17/F19 remain green. In lifecycle-coordinator.ts extend the existing row types (no new retirement or reservation map):
 
 ```ts
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
-import {
-  ownerKey, unknownDevice, unknownStorage, withinDisposition,
-  type CoreActionReference, type DeviceDisposition, type DeviceSessionControlPort,
-  type DrainDispatcher, type DrainReport, type OwnerRetirement, type PersistenceParticipant,
-  type ReservationBindingPort, type ReservationEnded, type RetirementReport,
-} from "@kobrixa/plugin-runtime";
+export type RetirementReport = { owner: ResourceOwner; device: DeviceDisposition;
+  storage: DrainReport; processStopped: boolean; blocker: boolean };
+export type CloseReport = { blocker: boolean; timedOut: boolean; legacySaved: boolean;
+  device: DeviceDisposition; owners: RetirementReport[] };
+type EndWork = { event: ReservationEnded; offer: DrainOffer | null; promise: Promise<DrainReport>;
+  resolve(report: DrainReport): void; terminal: boolean; report?: DrainReport };
+type RetirementWork = { owner: ResourceOwner; device: Promise<DeviceDisposition>;
+  storage: Promise<DrainReport>; done: Promise<void>; settled: boolean;
+  report?: RetirementReport };
+const unknownDevice = (): DeviceDisposition => ({ stopConfirmed: false, journalCommitted: false, faultIds: [] });
+```
 
-type EndJob = { event: ReservationEnded; promise: Promise<DrainReport>; report?: DrainReport };
-export type CloseReport = {
-  blocker: boolean; timedOut: boolean; legacySaved: boolean;
-  device: DeviceDisposition; owners: RetirementReport[];
-};
-export class ShutdownCoordinator {
-  readonly #ends = new Map<string, EndJob>();
-  readonly #retirements = new Map<string, Promise<RetirementReport>>();
-  readonly #settledRetirements = new Map<string, RetirementReport>();
-  readonly #suspended = new Map<string, { done: boolean; device: DeviceDisposition; reports: DrainReport[] }>();
-  readonly #disconnects = new Map<string, Promise<Awaited<ReturnType<DeviceSessionControlPort["disconnect"]>>>>();
-  readonly #off: () => void;
-  #close: Promise<CloseReport> | undefined;
-  constructor(private readonly input: {
-    reservations: ReservationBindingPort; persistence: PersistenceParticipant; sessions: DeviceSessionControlPort;
-    now(): number; healthy(owner: ResourceOwner): boolean; dispatch: DrainDispatcher;
-    retire(owner: ResourceOwner, reason: OwnerRetirement, deadline: number): Promise<RetirementReport>;
-    owners(): readonly ResourceOwner[]; beginShutdown(): Promise<DeviceDisposition>;
-    legacy(): Promise<void>; publish(): void;
-  }) {
-    // Construct this before attaching any checkpoint admission router.
-    this.#off = input.reservations.onEnded((event) => this.#ended(event));
+In the existing `#ended` completion, assign `work.report = report` immediately before `work.terminal = ...`; retain the original `promise`, resolver, deadline and deferred dispatch. Replace `retire` with this implementation, which still delegates to the unchanged R150 primitive:
+
+```ts
+retire(owner: ResourceOwner, reason: OwnerRetirement, deadlineMonotonicMs?: number): Promise<void> {
+  const key = ownerKey(owner), existing = this.#retiring.get(key);
+  if (existing) return existing.done;
+  const t0 = this.input.now();
+  let resolve!: () => void;
+  const done = new Promise<void>(yes => { resolve = yes; });
+  let accept!: (value: Awaited<ReturnType<typeof retireStage3Owner>>) => void;
+  let fail!: (error: unknown) => void;
+  const receipt = new Promise<Awaited<ReturnType<typeof retireStage3Owner>>>((yes, no) => { accept = yes; fail = no; });
+  const device = this.#bounded(receipt.then(value => value.device), t0 + 20_000,
+    "Device stop/journal deadline expired.");
+  const storage = receipt.then(value => value.persistence);
+  const row: RetirementWork = { owner: { ...owner }, device, storage, done, settled: false };
+  this.#retiring.set(key, row); // Publish before synchronous onEnded/reentrant retirement.
+  try {
+    void retireStage3Owner(this.input.ports, owner, this.input.alive(owner) ? reason : "crashed",
+      this.input.now, this.input.dispatch, deadlineMonotonicMs).then(accept, fail);
+  } catch (error) { fail(error); }
+  void Promise.all([device, storage]).then(([d, report]) => {
+    row.settled = true;
+    row.report = { owner: row.owner, device: d, storage: report, processStopped: this.#closed, blocker: true };
+    this.#refresh(row);
+    resolve(); // Resource disposition completed; close separately checks the authoritative report.
+  }).catch((error: unknown) => {
+    row.settled = true;
+    row.report ??= { owner: row.owner, device: unknownDevice(), storage: uncertain("Retirement unconfirmed."),
+      processStopped: false, blocker: true };
+    resolve(); this.input.report(error);
+  });
+  void done.catch(() => undefined);
+  return done;
+}
+#refresh(row: RetirementWork): void {
+  if (!row.report) return;
+  try { this.#assert(row.report.device, [row.report.storage]); row.report.blocker = !row.report.processStopped; }
+  catch { row.report.blocker = true; }
+}
+reports(): RetirementReport[] {
+  return structuredClone([...this.#retiring.values()].flatMap(row => row.report ? [row.report] : []));
+}
+reconcile(owner: ResourceOwner, device: DeviceDisposition, storage: DrainReport): boolean {
+  const row = this.#retiring.get(ownerKey(owner));
+  if (!row?.settled || !row.report) return false;
+  // Callers pass actual core recovery results, never a UI-supplied processStopped boolean.
+  row.report = { ...row.report, device: structuredClone(device), storage: structuredClone(storage) };
+  this.#refresh(row); return true;
+}
+reconcileRecovery(recovery: Handle, report: DrainReport): void {
+  for (const work of this.#ends.values()) if (work.report?.recovery === recovery) {
+    work.report = structuredClone(report); work.terminal = !report.blocker && report.state === "saved";
   }
-  #ended(event: ReservationEnded): void {
-    const key = JSON.stringify([ownerKey(event.owner), event.reservationId]);
-    if (this.#ends.has(key)) return;
-    const deadline = Math.min(event.endedMonotonicMs + 10_000, event.drain?.expiresMonotonicMs ?? Infinity);
-    let offer: ReturnType<PersistenceParticipant["endReservation"]>;
-    try { offer = this.input.persistence.endReservation(event, deadline); }
-    catch {
-      this.#ends.set(key, { event, promise: Promise.resolve(unknownStorage()), report: unknownStorage() });
-      this.input.publish(); return;
-    }
-    if (offer === null) return;
-    const job: EndJob = { event, promise: Promise.resolve().then(async () => {
-      const retirement = this.#retirements.get(ownerKey(event.owner));
-      const result = retirement ? await retirement.then((report) => report.storage)
-        : await withinDisposition(
-          event.drain === null || !this.input.healthy(event.owner)
-            ? this.input.persistence.ownerLost(event.owner)
-            : this.input.persistence.drain(offer, this.input.dispatch),
-          deadline, this.input.now, unknownStorage,
-        );
-      job.report = result; this.input.publish(); this.#prune(); return result;
-    }) };
-    this.#ends.set(key, job);
+  for (const row of this.#retiring.values()) if (row.settled && row.report?.storage.recovery === recovery) {
+    row.report.storage = structuredClone(report); this.#refresh(row);
   }
-  #prune(): void {
-    // Do not evict pending/blocked work. B2 quotas bound unresolved jobs at admission.
-    const terminal = [...this.#ends].filter(([, job]) => job.report?.blocker === false);
-    for (const [key] of terminal.slice(0, Math.max(0, terminal.length - 128))) this.#ends.delete(key);
-  }
-  async pendingSession(sessionId: string): Promise<DrainReport[]> {
-    return Promise.all([...this.#ends.values()].filter((job) => job.event.sessionId === sessionId).map((job) => job.promise));
-  }
-  retire(owner: ResourceOwner, reason: OwnerRetirement, deadline = this.input.now() + 10_000): Promise<RetirementReport> {
-    const key = ownerKey(owner); const previous = this.#retirements.get(key); if (previous) return previous;
-    // input.retire performs device.retire -> freeze synchronously before returning.
-    const run = this.input.retire(owner, reason, deadline); this.#retirements.set(key, run);
-    void run.then((report) => {
-      this.#settledRetirements.set(key, report);
-      const clean = [...this.#settledRetirements].filter(([, value]) => !value.blocker);
-      for (const [oldKey] of clean.slice(0, Math.max(0, clean.length - 128))) {
-        this.#settledRetirements.delete(oldKey); this.#retirements.delete(oldKey);
-      }
-    }, () => { this.input.publish(); });
-    return run;
-  }
-  disconnect(sessionId: string, action: CoreActionReference): ReturnType<DeviceSessionControlPort["disconnect"]> {
-    const key = JSON.stringify([sessionId, action.actionToken, action.scope.hostEpoch, action.scope.workbenchInstance]);
-    const previous = this.#disconnects.get(key); if (previous) return previous;
-    let quiescence: ReturnType<DeviceSessionControlPort["quiesce"]>;
-    try { quiescence = this.input.sessions.quiesce(sessionId, { reason: "core-disconnect", action }); }
-    catch { return Promise.resolve(this.#blocked()); }
-    for (const event of quiescence.ended) this.#ended(event);
-    const run = (async (): ReturnType<DeviceSessionControlPort["disconnect"]> => {
-      const [device, reports] = await Promise.all([
-        withinDisposition(quiescence.settled, this.input.now() + 20_000, this.input.now, unknownDevice),
-        this.pendingSession(sessionId),
-      ]);
-      if (!device.stopConfirmed || !device.journalCommitted || reports.some((report) => report.blocker)) {
-        this.input.publish(); return this.#blocked();
-      }
-      // Same claimed action is a continuation; do not mint/claim another 5-second token here.
-      return this.input.sessions.disconnect(sessionId, action);
-    })();
-    this.#disconnects.set(key, run);
-    void run.finally(() => this.#disconnects.delete(key)).catch(() => undefined);
-    return run;
-  }
-  #blocked(): Awaited<ReturnType<DeviceSessionControlPort["disconnect"]>> {
-    return { ok: false, error: { code: "PLUGIN_E_PERMISSION_DENIED", message: "Stop and save must be confirmed before disconnect.",
-      detail: { kind: "permission", reason: "permission" } } };
-  }
-  async suspend(sessionId: string): Promise<void> {
-    const quiescence = this.input.sessions.quiesce(sessionId, { reason: "suspended" });
-    for (const event of quiescence.ended) this.#ended(event);
-    const state = { done: false, device: unknownDevice(), reports: [] as DrainReport[] }; this.#suspended.set(sessionId, state);
-    const [device, reports] = await Promise.all([
-      withinDisposition(quiescence.settled, this.input.now() + 20_000, this.input.now, unknownDevice),
-      this.pendingSession(sessionId),
-    ]);
-    Object.assign(state, { done: true, device, reports }); this.input.publish();
-  }
-  async resume(sessionId: string): Promise<boolean> {
-    const state = this.#suspended.get(sessionId);
-    if (!state?.done || !state.device.stopConfirmed || !state.device.journalCommitted || state.reports.some((report) => report.blocker)) return false;
-    this.input.sessions.resume(sessionId); this.#suspended.delete(sessionId); return true;
-  }
-  /** Called with actual results from explicit core retry/discard, never optimistic UI state. */
-  reconcileRecovery(recovery: string, report: DrainReport): void {
-    for (const job of this.#ends.values()) if (job.report?.recovery === recovery) {
-      job.report = report; job.promise = Promise.resolve(report);
-    }
-    for (const state of this.#suspended.values()) state.reports = state.reports.map((item) => item.recovery === recovery ? report : item);
-    this.input.publish(); this.#prune();
-  }
-  close(reason: "shutdown" | "update"): Promise<CloseReport> {
-    if (this.#close) return this.#close;
-    const started = this.input.now();
-    const device = this.input.beginShutdown();
-    // One shared storage deadline; no per-source await before freezing the next owner.
-    const owners = this.input.owners().map((owner) => this.retire(owner, reason, started + 10_000));
-    const legacy = this.input.legacy().then(() => true, () => false);
-    const cleanup = Promise.all([device, Promise.all(owners), legacy]).then(([disposition, reports, legacySaved]): CloseReport => ({
-      blocker: !disposition.stopConfirmed || !disposition.journalCommitted || reports.some((report) => report.blocker) || !legacySaved,
-      timedOut: false, device: disposition, owners: reports, legacySaved,
-    }));
-    this.#close = withinDisposition(cleanup, started + 25_000, this.input.now, (): CloseReport => ({
-      blocker: true, timedOut: true, device: unknownDevice(), owners: [], legacySaved: false,
-    })).then((report) => { this.input.publish(); return report; });
-    return this.#close;
-  }
-  /** Re-evaluate only after explicit core recovery and confirmed old process disposal. */
-  allowCloseRetry(): void {
-    this.#close = undefined;
-    // Re-read only settled receipts from UiLifecycle, which retains unresolved evidence.
-    // Pending retirements keep the original grant/deadline and remain coalesced.
-    for (const key of this.#settledRetirements.keys()) this.#retirements.delete(key);
-    this.#settledRetirements.clear();
-  }
-  dispose(): void { this.#off(); }
+}
+async pendingSession(sessionId: Handle): Promise<DrainReport[]> {
+  return this.#sessionReports(sessionId);
+}
+async #retirementDisposition(owner: ResourceOwner, reason: OwnerRetirement, deadline: number): Promise<void> {
+  const pending = this.retire(owner, reason, deadline);
+  const row = this.#retiring.get(ownerKey(owner))!;
+  if (!row.settled) await pending.catch(() => undefined);
+  if (!row.report) throw new CleanupBlocked(null, []);
+  this.#assert(row.report.device, [row.report.storage]);
+}
+allowCloseRetry(): void {
+  // close already clears only its settled attempt. Keep #closeStarted, all work promises and grants.
 }
 ```
 
-For an explicit core recovery result, call `lifecycle.reconcile(owner, confirmedDevice, actualStorageReport, confirmedProcessExit)` and then `coordinator.allowCloseRetry()`. The final argument comes from the supervisor's real exit receipt, never from a timeout or a UI dismissal. `reconcileRecovery` also replaces matching reservation-final reports. A close retry re-reads those terminal receipts and does not create a new drain window for pending work.
+Replace `#sessionReports` with the following so recovery is projected without replacing a pending promise:
 
-No normal release/suspend/provider loss enters `retire`; no renderer/window death enters the healthy session-only path. Target deduplication during an already-dispatched end followed by freeze stays B2's responsibility: this coordinator supplies the original evidence and never manufactures replacement checkpoint tokens. The same-turn case joins the runtime's retirement report before dispatch. The participant owns pending durable-registration reconciliation, final CAS, settings tickets and retained payload TTL; test doubles above cannot certify those algorithms.
-
-- [ ] **Step 7: Verify and commit lifecycle coordination.**
-
-```sh
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugins/shutdown-coordinator.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add apps/desktop/src/main/plugins/shutdown-coordinator.ts apps/desktop/src/main/plugins/shutdown-coordinator.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): unify reservation finals and stop-save close coordination"
+```ts
+async #sessionReports(sessionId: Handle): Promise<DrainReport[]> {
+  return Promise.all([...this.#ends.values()].filter(work => work.event.sessionId === sessionId)
+    .map(async work => { const original = await work.promise; return work.report ?? original; }));
+}
 ```
 
-Expected: one listener, synchronous end admission, no doubled final in same-turn retirement, no healthy consumer shutdown for release/Disconnect/suspend/provider loss, and timeout/legacy failures remain blockers. D170/X-T1 must additionally run the same assertions with real broker + persistence and late checkpoint registration, unconfirmed commit, sealed TTL expiry and retry; U12 remains explicitly pending until then.
+In the delivered `close` body change only owner collection from `this.retire(owner, ...)` to `this.#retirementDisposition(owner, ...)`, and end collection to `.map(async work => { const original = await work.promise; return work.report ?? original; })`. Retain all original 10/20/24/25-second deadlines and the single `input.shutdown()` call. Replace the successful `bounded.then` arm with:
+
+```ts
+() => {
+  this.#close = undefined; this.#closed = true;
+  for (const row of this.#retiring.values()) if (row.report) {
+    row.report.processStopped = true; this.#refresh(row);
+  }
+}
+```
+
+`input.shutdown()` is the actual manager supervisor shutdown receipt. It must reject until original children emit actual exit; timeout/kill-request/state publication is not exit. No reconcile method changes this bit. Keep D150 Disconnect/suspend authority and legacy blockers. For suspended recovery replace the stored rejected suspension with a recheck of the original captured quiescence and current session reports only after that suspension settles; use this concrete `suspend` body:
+
+```ts
+suspend(sessionId: Handle): Promise<void> {
+  const existing = this.#suspending.get(sessionId); if (existing) return existing;
+  const t0 = this.input.now();
+  const q = this.input.sessions.quiesce(sessionId, { reason: "suspended" });
+  for (const event of q.ended) this.#ended(event);
+  const device = this.#bounded(q.settled, t0 + 20_000, "Suspend stop/journal deadline expired.");
+  const legacy = this.input.legacyFlush("suspend");
+  const work = Promise.all([device, this.#sessionReports(sessionId), legacy])
+    .then(([d, reports]) => this.#assert(d, reports));
+  this.#suspending.set(sessionId, work);
+  void work.catch((error: unknown) => this.input.report(error));
+  // Capture original device/legacy promises; no second quiesce or storage dispatch on wake.
+  this.#resumeChecks.set(sessionId, async () => {
+    await work.catch(() => undefined);
+    const [d] = await Promise.all([device, legacy]);
+    this.#assert(d, await this.#sessionReports(sessionId));
+  });
+  return work;
+}
+async resume(sessionId: Handle): Promise<void> {
+  const check = this.#resumeChecks.get(sessionId); if (!check) return;
+  await check(); this.input.sessions.resume(sessionId);
+  this.#suspending.delete(sessionId); this.#resumeChecks.delete(sessionId);
+}
+```
+
+Add `readonly #resumeChecks = new Map<Handle, () => Promise<void>>();` to the same class. It contains observation closures only. It cannot dispatch a drain. Keep Disconnect's original claimed-action path; a retry requires a fresh trusted action and reads reconciled session reports.
+
+Create shutdown-coordinator.ts as this facade (no subscriptions, maps or timers):
+
+```ts
+import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { CoreActionReference, OwnerRetirement, DrainReport } from "@kobrixa/plugin-runtime";
+import { LifecycleCoordinator, type CloseReport } from "../device-broker/lifecycle-coordinator.js";
+export type { CloseReport } from "../device-broker/lifecycle-coordinator.js";
+export class ShutdownCoordinator {
+  constructor(private readonly lifecycle: LifecycleCoordinator) {}
+  retire(owner: ResourceOwner, reason: OwnerRetirement, deadline?: number) {
+    return this.lifecycle.retire(owner, reason, deadline);
+  }
+  disconnect(session: string, action: CoreActionReference) { return this.lifecycle.disconnect(session, action); }
+  suspend(session: string) { return this.lifecycle.suspend(session); }
+  resume(session: string) { return this.lifecycle.resume(session); }
+  pendingSession(session: string) { return this.lifecycle.pendingSession(session); }
+  reconcileRecovery(recovery: string, report: DrainReport) { this.lifecycle.reconcileRecovery(recovery, report); }
+  allowCloseRetry() { this.lifecycle.allowCloseRetry(); }
+  async close(reason: "shutdown" | "update"): Promise<CloseReport> {
+    try {
+      await this.lifecycle.close(reason === "shutdown" ? "close" : "update");
+      return { blocker: false, timedOut: false, legacySaved: true,
+        device: { stopConfirmed: true, journalCommitted: true, faultIds: [] }, owners: this.lifecycle.reports() };
+    } catch {
+      return { blocker: true, timedOut: false, legacySaved: false,
+        device: { stopConfirmed: false, journalCommitted: false, faultIds: [] }, owners: this.lifecycle.reports() };
+    }
+  }
+  dispose(): void { /* Lifetime belongs to composeDesktopMain. */ }
+}
+```
+
+Create shutdown-coordinator.test.ts; the actual lifecycle tests above prove fencing, this test proves the facade cannot add dispatch:
+
+```ts
+import { expect, it, vi } from "vitest";
+import { LifecycleCoordinator } from "../device-broker/lifecycle-coordinator.js";
+import { ShutdownCoordinator } from "./shutdown-coordinator.js";
+it("forwards close and recovery to the existing coordinator", async () => {
+  const close = vi.spyOn(LifecycleCoordinator.prototype, "close").mockResolvedValue();
+  const reports = vi.spyOn(LifecycleCoordinator.prototype, "reports").mockReturnValue([]);
+  const retry = vi.spyOn(LifecycleCoordinator.prototype, "allowCloseRetry").mockImplementation(() => {});
+  try {
+    const lifecycle: LifecycleCoordinator = Object.create(LifecycleCoordinator.prototype);
+    const facade = new ShutdownCoordinator(lifecycle);
+    expect(await facade.close("shutdown")).toMatchObject({ blocker: false });
+    expect(close).toHaveBeenCalledExactlyOnceWith("close");
+    facade.allowCloseRetry(); expect(retry).toHaveBeenCalledOnce();
+    close.mockRejectedValueOnce(new Error("actual exit pending"));
+    expect(await facade.close("update")).toMatchObject({ blocker: true });
+  } finally { close.mockRestore(); reports.mockRestore(); retry.mockRestore(); }
+});
+```
+
+- [ ] **Step 7: Verify and commit the single-coordinator extension.**
+
+```sh
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/lifecycle-coordinator.test.ts src/main/plugins/shutdown-coordinator.test.ts
+pnpm check:desktop
+git add apps/desktop/src/main/device-broker/lifecycle-coordinator.ts apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts apps/desktop/src/main/plugins/shutdown-coordinator.ts apps/desktop/src/main/plugins/shutdown-coordinator.test.ts
+git commit -m "feat(desktop): reconcile the authoritative lifecycle coordinator"
+```
+
+Expected: retained F17/F19 and new U12 tests PASS, one listener/fence/drain, no new deadline, process exit required before clear. U12 real-persistence races remain B2-T9/X-T1 acceptance. Include all four paths in the D160 stopped receipt.
 
 - [ ] **Step 8: Write core action and recovery paging tests (U16).**
 
@@ -9317,7 +9319,20 @@ it("a sticky third-party UI marker locks recovery after linked folders have been
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugins/session.test.ts src/main/plugins/controller.test.ts
 ```
 
-Expected red: no UI-risk marker method, no three-argument health hook, and optional enable is rejected outside developer mode.
+Run the retained D150 case separately (expected PASS before and after D160):
+
+```sh
+pnpm --filter @kobrixa/desktop test src/main/plugins/controller.test.ts -t "lets ordinary users toggle"
+```
+
+Run the new UI-marker cases (expected RED before this step, PASS after it):
+
+```sh
+pnpm --filter @kobrixa/desktop test src/main/plugins/controller.test.ts -t "sticky third-party UI marker"
+pnpm --filter @kobrixa/desktop test src/main/plugins/session.test.ts
+```
+
+Expected PASS for the retained D150 ordinary-user optional toggle/required-refusal case using the real controller. Expected RED only for new D160 checked UI-marker and three-argument health-hook cases; after their implementation, rerun the same scoped command expecting PASS. Preserve D150 toggle behavior without reimplementing it.
 
 In `session.ts` add the following exact schema field, private field and getter:
 
@@ -9695,13 +9710,324 @@ A listener may resume services only after confirmed old process disposal. `plugi
 
 - [ ] **Step 19: Attach the concrete T2 registry and unify native lifetime events.**
 
-T2 publishes `UiCatalog`, `UiStateRegistry`, and `UiSubscriptions` from its owned modules. T3 adds these exact barrel exports to `packages/plugin-runtime/src/index.ts` in its earlier R160 commit (desktop does not edit that file):
+Consume T3's named R160 commit, `feat(plugin-runtime): gate retirement on device and persistence dispositions`, after rebuilding runtime dist. It exports `UiCatalog`, `UiStateRegistry`, `currentStatusBindings`, `UiSubscriptions`, `sameUiBinding`, `sameResourceOwner`, and the F host types explicitly. D160 does not edit the runtime barrel; diagnostics remain direct-module imports.
+
+Append this downstream import test to ui-bridge.test.ts and run it after the runtime rebuild:
 
 ```ts
-export * from "./ui-catalog.js";
-export { UiStateRegistry, sameUiBinding, currentStatusBindings } from "./ui-state.js";
-export * from "./ui-subscriptions.js";
+import * as runtimeExports from "@kobrixa/plugin-runtime";
+it("consumes only the named R160 runtime values", () => {
+  for (const name of ["UiCatalog", "UiStateRegistry", "currentStatusBindings", "UiSubscriptions",
+    "sameUiBinding", "sameResourceOwner", "ChannelActivation", "createUiLifetimePort", "retireStage3Owner"] as const)
+    expect(typeof runtimeExports[name]).toBe("function");
+  expect(runtimeExports).not.toHaveProperty("UiLifecycle");
+  expect(runtimeExports).not.toHaveProperty("retireBeforePublish");
+  expect(runtimeExports).not.toHaveProperty("diagnosticsFor");
+});
 ```
+
+```sh
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/ui-bridge.test.ts
+pnpm check:desktop
+```
+
+Expected: the actual downstream import compiles and all named/absent export assertions PASS. T3 stages index.ts in Step 4; T5 stages only its downstream test in the Step 19 commit.
+
+
+Implement the complete original-channel adapter in ui-bridge.ts, merging these imports. The published RpcPeer validates params/results on every request; explicit result parsing below also protects direct host phase calls. No plugin-to-host ready/negotiate handler is installed.
+
+```ts
+import { RpcError, RPC_ERRORS, uiRequestSchemas, type RequestContext } from "@kobrixa/plugin-protocol";
+import { sameResourceOwner, remainingActivationMs, type Stage3ChannelContext,
+  type Stage3ChannelBinding, type DeviceChannelAttachment } from "@kobrixa/plugin-runtime";
+export function createUiChannelBinding(context: Stage3ChannelContext, input: {
+  states: UiStateRegistry; subscriptions: UiSubscriptions; catalog: UiCatalog;
+  runtime: UiRuntimeAttachment; attachment: DeviceChannelAttachment;
+}): Stage3ChannelBinding {
+  let disposed = false, negotiated = false, initialized = false, ready = false;
+  const lifetime = new AbortController();
+  const checkOwner = () => {
+    const principal = context.principal();
+    if (disposed || context.peer.closed || principal.kind !== "plugin" ||
+        !sameResourceOwner(principal.owner, context.owner) || !sameResourceOwner(input.attachment.owner, context.owner) ||
+        !input.runtime.current(context.owner))
+      throw new RpcError(RPC_ERRORS.invalidParams, "Stale UI channel owner.");
+  };
+  const check = (request: RequestContext) => {
+    request.signal.throwIfAborted(); checkOwner();
+    if (!negotiated) throw new RpcError(RPC_ERRORS.invalidParams, "UI domain is not negotiated.");
+  };
+  context.peer.handle("ui/instances", (params, request) => {
+    check(request); uiRequestSchemas["ui/instances"].params.parse(params);
+    return uiRequestSchemas["ui/instances"].result.parse({ ok: true,
+      value: { instances: input.states.instances(context.owner) } });
+  });
+  context.peer.handle("ui/state", (params, request) => {
+    check(request); const parsed = uiRequestSchemas["ui/state"].params.parse(params);
+    return uiRequestSchemas["ui/state"].result.parse(input.states.state(context.owner, parsed.binding));
+  });
+  context.peer.handle("ui/patch", (params, request) => {
+    check(request); const parsed = uiRequestSchemas["ui/patch"].params.parse(params);
+    return uiRequestSchemas["ui/patch"].result.parse(input.states.patch(context.owner, parsed));
+  });
+  context.peer.handle("ui/snapshot", (params, request) => {
+    check(request); const parsed = uiRequestSchemas["ui/snapshot"].params.parse(params);
+    return uiRequestSchemas["ui/snapshot"].result.parse(input.subscriptions.snapshot(context.owner, parsed.subscriptionId));
+  });
+  context.peer.handle("ui/subscribe", (params, request) => {
+    check(request); const parsed = uiRequestSchemas["ui/subscribe"].params.parse(params);
+    const result = input.subscriptions.subscribe(context.owner, parsed);
+    if (result.ok) {
+      const id = result.value.subscriptionId;
+      // Register abandon before validation/send; failed serialization and cancellation share it.
+      request.afterReply(() => {
+        try { check(request); input.attachment.activate(id); }
+        catch { input.attachment.abandon(id); }
+      }, () => input.attachment.abandon(id));
+    }
+    return uiRequestSchemas["ui/subscribe"].result.parse(result);
+  });
+  return {
+    async initialized(signal) {
+      checkOwner(); signal.throwIfAborted();
+      if (initialized) throw new Error("UI initialized twice.");
+      initialized = true;
+      if (!input.catalog.declaresUi(context.owner)) return;
+      const combined = AbortSignal.any([signal, lifetime.signal]);
+      const initialBindings = input.states.initialBindingsReady(context.owner, combined);
+      void initialBindings.catch(() => undefined);
+      const result = uiRequestSchemas["ui/negotiate"].result.parse(await context.peer.request("ui/negotiate",
+        { commandEnvelopeVersions: [1], uiResourceVersions: [1] },
+        { signal: combined, timeoutMs: remainingActivationMs(signal) }));
+      checkOwner(); combined.throwIfAborted();
+      if (!result.ok || !result.value.commandEnvelopeVersions.includes(1) || !result.value.uiResourceVersions.includes(1))
+        throw new Error("Declared UI is unsupported by the negotiated SDK.");
+      input.attachment.negotiated("ui", 1); negotiated = true;
+      await initialBindings;
+      checkOwner();
+    },
+    async ready(signal) {
+      checkOwner(); signal.throwIfAborted();
+      if (!initialized || ready) throw new Error("Invalid UI ready phase.");
+      ready = true;
+      if (!input.catalog.declaresUi(context.owner)) return;
+      if (!negotiated) throw new Error("UI negotiation is incomplete.");
+      const combined = AbortSignal.any([signal, lifetime.signal]);
+      const result = uiRequestSchemas["ui/ready"].result.parse(await context.peer.request("ui/ready", {},
+        { signal: combined, timeoutMs: remainingActivationMs(signal) }));
+      checkOwner(); combined.throwIfAborted();
+      if (!result.ok) throw new Error("Plugin UI ready failed.");
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true; negotiated = false; lifetime.abort(new Error("UI channel disposed."));
+      input.states.cancelInitialBindings(context.owner);
+      input.states.retireExecution(context.owner, "process-gone");
+      input.subscriptions.retire(context.owner);
+      // Existing void-returning handle API: replace with inert handlers, never remove shared routes.
+      for (const method of ["ui/instances", "ui/state", "ui/patch", "ui/snapshot", "ui/subscribe"] as const)
+        context.peer.handle(method, () => { throw new RpcError(RPC_ERRORS.methodNotFound, "UI channel disposed."); });
+    },
+  };
+}
+```
+
+T3's supervisor owns the original deadline registration in Step 10. RPC timers receive only the remaining budget; the adapter creates no ten-second timeout and never calls runtime.ready. The original shared attachment is disposed only by A's router disposer.
+
+A-T7's unchanged `attachDeviceRpc` returns a disposer, so capture its single attachment at that existing factory call. Add this concrete helper to controller.ts; the proxy forwards every other broker access unchanged and never attaches a second channel:
+
+```ts
+import type { DeviceChannelAttachment, Stage3ChannelContext, Stage3ChannelBinding } from "@kobrixa/plugin-runtime";
+import type { DeviceBrokerPort } from "../device-broker/broker-port.js";
+function bindDesktopChannel(context: Stage3ChannelContext, broker: DeviceBrokerPort,
+  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment">): Stage3ChannelBinding {
+  let attachment: DeviceChannelAttachment | undefined;
+  const routedBroker = new Proxy(broker, { get(target, key, receiver) {
+    if (key === "attachChannel") return (args: Parameters<DeviceBrokerPort["attachChannel"]>[0]) => {
+      if (attachment) throw new Error("Second channel attachment.");
+      attachment = target.attachChannel(args); return attachment;
+    };
+    return Reflect.get(target, key, receiver);
+  } });
+  const offDevice = attachDeviceRpc({ peer: context.peer, principal: context.principal, broker: routedBroker });
+  if (!attachment) { offDevice(); throw new Error("Device router did not attach the original channel."); }
+  try {
+    const ui = createUiChannelBinding(context, { ...input, attachment });
+    let disposed = false;
+    return { initialized: signal => ui.initialized(signal), ready: signal => ui.ready(signal),
+      dispose() { if (disposed) return; disposed = true; ui.dispose(); offDevice(); } };
+  } catch (error) { offDevice(); throw error; }
+}
+```
+
+Append this complete real-registry fixture and tests to `ui-bridge.test.ts`, merging imports and keeping its existing action tests. These tests run through the actual catalog/state/execution/bridge objects; only the runtime activation barrier is controlled:
+
+```ts
+import { describe, expect, it, vi } from "vitest";
+import { RpcPeer, createMemoryChannelPair, type ResourceOwner } from "@kobrixa/plugin-protocol";
+import { UiCatalog, UiStateRegistry, UiSubscriptions, type UiCatalogSource,
+  type UiRuntimeAttachment, type Stage3ChannelContext } from "@kobrixa/plugin-runtime";
+import { diagnosticsFor as stateDiagnostics } from "../../../../../packages/plugin-runtime/src/ui-state.js";
+import { createPluginUiBridge, createUiExecutionAdapter, createUiRegistry, UiBridgeEvents } from "./ui-bridge.js";
+import { UiIntent } from "./ui-intent.js";
+import { UserPersistenceActions } from "./user-persistence-actions.js";
+import { EventLedger } from "../device-broker/registry.js";
+import { uiEventLedgerPort } from "../device-broker/broker-port.js";
+
+function executionFixture() {
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const owner: ResourceOwner = { sourceKey: "development:fixture", pluginId: "test.ui",
+    generation: 1, hostEpoch: uuid(1), processEpoch: uuid(2) };
+  const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: uuid(3) };
+  const [a, b] = createMemoryChannelPair(); const peer = new RpcPeer(a), child = new RpcPeer(b);
+  let now = 0, current = true, markerFails = false;
+  const marker = vi.fn((sourceKey: string) => {
+    if (sourceKey.startsWith("builtin:")) return;
+    if (markerFails) throw new Error("checked marker failed");
+  });
+  const ledger = new EventLedger(() => now, () => {}, () => {});
+  const broker = { events: ledger };
+  const { catalog, states, subscriptions } = createUiRegistry({ hostEpoch: owner.hostEpoch, broker,
+    now: () => now, beforeDelivery: marker, revokeIntent: () => {} });
+  let principalOwner = owner;
+  const context: Stage3ChannelContext = { peer, owner, requirements: [],
+    principal: () => ({ kind: "plugin", owner: principalOwner, authorityContext: null }) };
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const runtime: UiRuntimeAttachment = {
+    activateInitialized: vi.fn(async (_sourceKey, signal) => { await gate; signal.throwIfAborted(); return context; }),
+    ready: vi.fn(async (_owner, signal) => { signal.throwIfAborted(); }),
+    current: candidate => current && candidate.generation === owner.generation && candidate.processEpoch === owner.processEpoch &&
+      candidate.hostEpoch === owner.hostEpoch && candidate.sourceKey === owner.sourceKey && candidate.pluginId === owner.pluginId,
+    owners: () => current ? [owner] : [], context: () => null, commands: () => [],
+    invoke: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }),
+    dispatchDrain: async () => { throw new Error("P160 has no drain RPC"); },
+  };
+  const execution = createUiExecutionAdapter({ catalog, states, runtime, scope: () => scope,
+    core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }) });
+  const events = new UiBridgeEvents(() => []);
+  // Resource/open tests must never touch motion; the real intent wrapper is otherwise idle.
+  const device: ConstructorParameters<typeof UiIntent>[0] = {
+    bindMotionScope() { throw new Error("unexpected motion"); }, pulsePanel() {},
+    beginGesture() { throw new Error("unexpected motion"); }, pulseGesture() {}, endGesture() {}, revokeScope() {},
+  };
+  const intent = new UiIntent(device, () => now, events.publish);
+  const bridge = createPluginUiBridge({ catalog, execution, intent, events,
+    actions: new UserPersistenceActions(() => now, () => current), scope: () => scope });
+  const raw = JSON.stringify({ kind: "status", text: { text: { en: "Ready" } }, tone: "neutral", data: { value: { schema: { type: "number", min: 0, max: 10, integer: true, nullable: false }, initial: 0 } } });
+  const source: UiCatalogSource = { owner, eligible: true, resources: { kind: "builtin", files: { "status.json": raw } },
+    commands: [], panels: [], status: [{ id: "test.ui.status", title: { en: "Status" }, resource: { version: 1, path: "status.json" } }] };
+  const load = async () => {
+    await catalog.replace([source]); const page = await catalog.catalog({});
+    if (!page.ok || !page.value.entries[0]) throw new Error("missing resource");
+    const entry = page.value.entries[0];
+    return { sourceKey: entry.sourceKey, id: entry.id, uiResourceGeneration: entry.uiResourceGeneration,
+      resourceDigest: entry.resourceDigest };
+  };
+  return { owner, source, catalog, states, ledger, subscriptions, bridge, execution, runtime, marker, release, load,
+    peer, child, context, hostWire: a, childWire: b, stalePrincipal: () => { principalOwner = { ...owner, processEpoch: uuid(99) }; },
+    markerFails: () => { markerFails = true; }, time: (value: number) => { now = value; },
+    replace: () => { current = false; states.retireExecution(owner, "generation-retired"); },
+    dispose() { execution.dispose(); intent.dispose(); subscriptions.dispose(); ledger.disposeOwner(owner); peer.close(); child.close(); },
+  };
+}
+describe("BM-11 real T2 execution ownership", () => {
+  it("first, concurrent and repeated opens share the initialized binding and await ready", async () => {
+    const h = executionFixture();
+    try {
+      const input = await h.load();
+      const first = h.bridge.open(input), second = h.bridge.open(input);
+      h.release(); const opened = await first;
+      expect(opened.ok).toBe(true); expect(await second).toEqual(opened);
+      expect(await h.bridge.open(input)).toEqual(opened);
+      expect(h.runtime.activateInitialized).toHaveBeenCalledTimes(1);
+      if (!opened.ok) throw new Error("open failed");
+      const owner = h.states.executionOwner(opened.value.binding);
+      expect(owner).toEqual(h.owner); expect(owner).not.toBe(h.owner);
+      expect(h.execution.resolve(opened.value.binding)?.owner).toEqual(h.owner);
+      expect(h.runtime.ready).toHaveBeenCalled();
+    } finally { h.dispose(); }
+  });
+  it("disposal cancels pending open and a late initialized reply cannot create a binding", async () => {
+    const h = executionFixture();
+    try {
+      const input = await h.load(); const opening = h.bridge.open(input);
+      await vi.waitFor(() => expect(h.runtime.activateInitialized).toHaveBeenCalledOnce());
+      h.execution.dispose(); expect((await opening).ok).toBe(false);
+      h.release(); await Promise.resolve(); expect(h.states.instances(h.owner)).toEqual([]);
+      expect(h.runtime.ready).not.toHaveBeenCalled();
+    } finally { h.dispose(); }
+  });
+  it("replacement invalidates both authoritative owner lookup and adapter metadata", async () => {
+    const h = executionFixture();
+    try {
+      const input = await h.load(); h.release(); const opened = await h.bridge.open(input);
+      if (!opened.ok) throw new Error("open failed"); h.replace();
+      expect(h.states.executionOwner(opened.value.binding)).toBeNull();
+      expect(h.execution.resolve(opened.value.binding)).toBeNull();
+      expect((await h.bridge.open(input)).ok).toBe(false);
+    } finally { h.dispose(); }
+  });
+});
+describe("BM-17 checked catalog delivery", () => {
+  it("checks direct bridge.resource before open and every cached fetch, with no activation", async () => {
+    const h = executionFixture();
+    try {
+      const input = await h.load(); expect((await h.bridge.resource(input)).ok).toBe(true);
+      expect((await h.bridge.resource(input)).ok).toBe(true); expect(h.marker).toHaveBeenCalledTimes(2);
+      h.markerFails(); const failure = await h.bridge.resource(input);
+      expect(failure).toMatchObject({ ok: false, error: { detail: { reason: "read" } } });
+      expect(failure).not.toHaveProperty("value"); expect(failure).not.toHaveProperty("rawBytes");
+      expect(h.runtime.activateInitialized).not.toHaveBeenCalled();
+    } finally { h.dispose(); }
+  });
+  it("a builtin exemption and another admitted contribution remain deliverable", async () => {
+    const h = executionFixture();
+    try {
+      await h.catalog.replace([h.source, { ...h.source, owner: { ...h.owner, sourceKey: "builtin:fixture" } }]);
+      h.markerFails(); const page = await h.catalog.catalog({}); if (!page.ok) throw new Error("catalog failed");
+      for (const entry of page.value.entries) {
+        const result = await h.bridge.resource({ sourceKey: entry.sourceKey, id: entry.id,
+          uiResourceGeneration: entry.uiResourceGeneration, resourceDigest: entry.resourceDigest });
+        expect(result.ok).toBe(entry.sourceKey.startsWith("builtin:"));
+      }
+      expect(h.runtime.activateInitialized).not.toHaveBeenCalled();
+    } finally { h.dispose(); }
+  });
+});
+describe("BM-16 authoritative ledger accounting", () => {
+  it.each(["ack", "timeout", "disposal"] as const)("retains terminal bytes until %s", async mode => {
+    const h = executionFixture();
+    try {
+      const input = await h.load(); h.release(); const opened = await h.bridge.open(input);
+      if (!opened.ok) throw new Error("open failed");
+      const result = h.subscriptions.subscribe(h.owner, { binding: opened.value.binding, topics: ["state"] });
+      if (!result.ok) throw new Error("subscribe failed");
+      h.ledger.activate(h.owner, result.value.subscriptionId);
+      await h.bridge.close({ binding: opened.value.binding });
+      expect(stateDiagnostics(h.states).snapshot()).toMatchObject({ subscriptions: 1, queuedEvents: 1 });
+      expect(stateDiagnostics(h.states).snapshot().queuedBytes).toBeGreaterThan(0);
+      expect(stateDiagnostics(h.states).snapshot().queuedBytes).toBe(h.ledger.diagnostics().queuedBytes);
+      if (mode === "ack") h.ledger.ack(h.owner, result.value.subscriptionId, 1);
+      else if (mode === "timeout") { h.time(10_000); h.ledger.sweep(); }
+      else h.ledger.disposeOwner(h.owner);
+      expect(stateDiagnostics(h.states).snapshot()).toMatchObject({ subscriptions: 0, queuedEvents: 0, queuedBytes: 0 });
+    } finally { h.dispose(); }
+  });
+});
+```
+
+Run before the executionOwner/adapter/marker changes (expected RED at those missing contracts), then after them (expected PASS); ledger cases require the real P150 EventLedger and its F projection:
+
+```sh
+pnpm --filter @kobrixa/plugin-protocol build
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/desktop test src/main/plugins/ui-bridge.test.ts
+pnpm check:desktop
+```
+
+Commit the owned changes in their respective steps: T2 includes ui-catalog.ts/ui-state.ts in its existing commit; T5 stages ui-bridge.ts/ui-bridge.test.ts in Step 22. Never stage the imported read-only broker ledger in D160.
 
 The T2 state API is used directly; main must not create another data/form store. Add this complete adapter to `ui-bridge.ts`, with `UiCatalog`, `UiStateRegistry`, `currentStatusBindings`, type `UiRuntimeAttachment`, and `sameUiBinding` imports from `@kobrixa/plugin-runtime`:
 
@@ -9710,8 +10036,9 @@ export function createUiExecutionAdapter(input: {
   catalog: UiCatalog; states: UiStateRegistry; scope(): CoreWindowScope;
   runtime: UiRuntimeAttachment;
   core: UiExecutionAdapter["core"];
-  beforeDelivery(sourceKey: string): void;
 }): UiExecutionAdapter {
+  const openings = new Set<AbortController>();
+  let disposed = false;
   // Only binding metadata lives here. All data/form/visibility/revisions stay in T2's registry.
   const metadata = new Map<string, Omit<ResolvedUi, "state"> & { binding: UiBinding }>();
   const offMetadata = input.states.onEvent((_owner, event) => {
@@ -9727,9 +10054,11 @@ export function createUiExecutionAdapter(input: {
   };
   return {
     resolve, invoke: (owner, invocation, signal) => input.runtime.invoke(owner, invocation, signal), core: input.core,
-    dispose: () => { offMetadata(); metadata.clear(); },
+    dispose: () => { disposed = true; for (const opening of openings) opening.abort(); openings.clear(); offMetadata(); metadata.clear(); },
     open: async (value) => {
-      input.beforeDelivery(value.sourceKey);
+      if (disposed) return stale();
+      const opening = new AbortController(); openings.add(opening);
+      try {
       let cursor: string | undefined;
       for (;;) {
         const page = await input.catalog.catalog(cursor === undefined ? {} : { cursor }); if (!page.ok) return page;
@@ -9738,27 +10067,26 @@ export function createUiExecutionAdapter(input: {
         if (descriptor) {
           const resource = await input.catalog.resource({ ...value, resourceDigest: descriptor.resourceDigest });
           if (!resource.ok) return resource;
-          const scope = input.scope(); const opening = new AbortController(); let owner: ResourceOwner | undefined;
+          const scope = input.scope();
           const state = await input.states.open({ owner: resource.value.owner, id: value.id, scope, resource: resource.value.resource,
-            activate: async () => {
-              const channel = await input.runtime.activateInitialized(value.sourceKey, opening.signal);
-              if (!input.runtime.current(channel.owner)) return stale();
-              owner = channel.owner; return { ok: true, value: owner };
-            } });
+            signal: opening.signal,
+            activateInitialized: (sourceKey, signal) => input.runtime.activateInitialized(sourceKey, signal) });
           if (!state.ok) return state;
-          // A repeated open returns the same registry instance without re-activating.
-          const previous = metadata.get(state.value.binding.panelInstance);
-          if (!owner) owner = previous?.owner;
-          if (!owner || !input.runtime.current(owner) || scope.workbenchInstance !== input.scope().workbenchInstance) return stale();
+          const owner = input.states.executionOwner(state.value.binding);
+          const currentScope = input.scope();
+          if (disposed || opening.signal.aborted || !owner || !input.runtime.current(owner) || scope.hostEpoch !== currentScope.hostEpoch ||
+              scope.workbenchInstance !== currentScope.workbenchInstance) return stale();
           metadata.set(state.value.binding.panelInstance, { owner, binding: state.value.binding, resource: resource.value.resource,
             workbenchInstance: scope.workbenchInstance, contextRef: input.runtime.context(owner, scope)?.ref ?? null,
             commands: new Map(input.runtime.commands(owner.sourceKey).map((command) => [command.id, command])) });
           await input.runtime.ready(owner, opening.signal);
-          if (!input.runtime.current(owner) || scope.workbenchInstance !== input.scope().workbenchInstance) return stale();
+          if (disposed || opening.signal.aborted || !input.runtime.current(owner) ||
+              scope.hostEpoch !== input.scope().hostEpoch || scope.workbenchInstance !== input.scope().workbenchInstance) return stale();
           return state;
         }
         if (page.value.nextCursor === null) return stale(); cursor = page.value.nextCursor;
       }
+      } catch { return stale(); } finally { openings.delete(opening); }
     },
     close: async ({ binding }) => {
       const value = resolve(binding); if (!value) return stale();
@@ -9840,12 +10168,255 @@ const offState = states.onEvent((_owner, event) => {
 
 Keep these subscriptions and `execution.dispose` in the runtime/window disposal list and call each disposer exactly once. Metadata rows are removed on `ui.revoked` alongside state retirement; they contain no second authoritative state. The shared event service (`UiSubscriptions`) attaches to the original process channel and uses the existing A `events/*` envelope/ack queue; no second event transport is introduced.
 
+Append these real-peer tests to ui-bridge.test.ts. They reuse `executionFixture`, whose peers use the actual published schema registry; no handler is invoked directly:
+
+```ts
+import { createUiChannelBinding } from "./ui-bridge.js";
+import { registerActivationDeadline, type DeviceChannelAttachment } from "@kobrixa/plugin-runtime";
+async function channelFixture() {
+  const h = executionFixture(); const descriptor = await h.load();
+  const attachment: DeviceChannelAttachment = { owner: h.owner,
+    negotiated: vi.fn(), activate: vi.fn(id => { h.ledger.activate(h.owner, id); }),
+    abandon: vi.fn(id => { h.ledger.unsubscribe(h.owner, id); }), dispose: vi.fn(),
+  };
+  const handle = vi.spyOn(h.peer, "handle");
+  const binding = createUiChannelBinding(h.context, { ...h, attachment });
+  const controller = new AbortController();
+  const deadlineOff = registerActivationDeadline(controller.signal, performance.now() + 10_000, () => performance.now());
+  h.child.handle("ui/negotiate", () => ({ ok: true, value: { commandEnvelopeVersions: [1], uiResourceVersions: [1] } }));
+  h.child.handle("ui/ready", async () => {
+    const instances = await h.child.request("ui/instances", {});
+    expect(instances.ok).toBe(true); return { ok: true, value: {} };
+  });
+  return { ...h, descriptor, attachment, handle, binding, controller,
+    dispose() { binding.dispose(); deadlineOff(); handle.mockRestore(); h.dispose(); } };
+}
+it("BM-12 routes all five requests on the original peer and ready can query instances", async () => {
+  const h = await channelFixture();
+  try {
+    const opening = h.bridge.open(h.descriptor); h.release();
+    await h.binding.initialized(h.controller.signal);
+    const opened = await opening; if (!opened.ok) throw new Error("open failed");
+    await h.binding.ready(h.controller.signal);
+    const instances = await h.child.request("ui/instances", {});
+    expect(instances).toEqual({ ok: true, value: { instances: [opened.value.binding] } });
+    expect((await h.child.request("ui/state", { binding: opened.value.binding })).ok).toBe(true);
+    expect(await h.child.request("ui/patch", { binding: opened.value.binding, baseRevision: 0, set: { value: 1 } }))
+      .toEqual({ ok: true, value: { revision: 1 } });
+    const subscription = await h.child.request("ui/subscribe", { binding: opened.value.binding, topics: ["state"] });
+    if (!subscription.ok) throw new Error("subscribe failed");
+    expect(h.attachment.activate).toHaveBeenCalledExactlyOnceWith(subscription.value.subscriptionId);
+    expect((await h.child.request("ui/snapshot", { subscriptionId: subscription.value.subscriptionId })).ok).toBe(true);
+    expect(h.handle.mock.calls.map(call => call[0])).toEqual(["ui/instances", "ui/state", "ui/patch", "ui/snapshot", "ui/subscribe"]);
+    expect(h.attachment.negotiated).toHaveBeenCalledExactlyOnceWith("ui", 1);
+    expect(h.runtime.activateInitialized).toHaveBeenCalledOnce();
+  } finally { h.dispose(); }
+});
+it.each(["command", "onPanel"])("BM-12 %s launch without open needs no ready recursion", async () => {
+  const h = await channelFixture();
+  try {
+    await h.binding.initialized(h.controller.signal); await h.binding.ready(h.controller.signal);
+    expect(h.runtime.ready).not.toHaveBeenCalled(); expect(h.states.instances(h.owner)).toEqual([]);
+  } finally { h.dispose(); }
+});
+it("BM-12 stale principal and unnegotiated domain are rejected on actual requests", async () => {
+  const h = await channelFixture();
+  try {
+    await expect(h.child.request("ui/instances", {})).rejects.toThrow();
+    await h.binding.initialized(h.controller.signal); h.stalePrincipal();
+    await expect(h.child.request("ui/instances", {})).rejects.toThrow();
+    await expect(h.child.request("ui/subscribe", { topics: ["instances"] })).rejects.toThrow();
+    expect(h.attachment.activate).not.toHaveBeenCalled();
+  } finally { h.dispose(); }
+});
+it.each(["ui/negotiate", "ui/ready"] as const)("BM-12 malformed %s reply fails schema routing", async method => {
+  const h = await channelFixture();
+  try {
+    if (method === "ui/ready") await h.binding.initialized(h.controller.signal);
+    // Invalid wire is deliberate: bypass TypeScript only at the transport boundary, never a typed handler.
+    const [rawHost, rawChild] = createMemoryChannelPair();
+    const malformed = new RpcPeer(rawHost);
+    const off = rawChild.onMessage(text => {
+      const request = JSON.parse(text);
+      if (request.id) rawChild.send(JSON.stringify({ jsonrpc: "2.0", id: request.id,
+        result: request.method === "ui/negotiate" && method === "ui/ready"
+          ? { ok: true, value: { commandEnvelopeVersions: [1], uiResourceVersions: [1] } }
+          : { unexpected: true } }));
+    });
+    try {
+      const context = { ...h.context, peer: malformed };
+      const binding = createUiChannelBinding(context, { ...h, attachment: h.attachment });
+      if (method === "ui/negotiate") await expect(binding.initialized(h.controller.signal)).rejects.toThrow();
+      else { await binding.initialized(h.controller.signal); await expect(binding.ready(h.controller.signal)).rejects.toThrow(); }
+      binding.dispose();
+    } finally { off(); malformed.close(); }
+  } finally { h.dispose(); }
+});
+it("BM-12 cancellation abandons an inactive subscription before a reply can activate it", async () => {
+  const h = await channelFixture();
+  try {
+    await h.binding.initialized(h.controller.signal);
+    const original = h.subscriptions.subscribe.bind(h.subscriptions);
+    const cancel = new AbortController();
+    vi.spyOn(h.subscriptions, "subscribe").mockImplementation((owner, input) => {
+      const result = original(owner, input); cancel.abort(); return result;
+    });
+    await expect(h.child.request("ui/subscribe", { topics: ["instances"] }, { signal: cancel.signal })).rejects.toThrow();
+    await Promise.resolve();
+    expect(h.attachment.activate).not.toHaveBeenCalled(); expect(h.attachment.abandon).toHaveBeenCalledOnce();
+    expect(h.ledger.diagnostics().subscriptions).toBe(0);
+  } finally { h.dispose(); }
+});
+it("BM-12 failed reply send abandons the original inactive subscription", async () => {
+  const h = await channelFixture();
+  try {
+    await h.binding.initialized(h.controller.signal);
+    const send = h.hostWire.send.bind(h.hostWire);
+    vi.spyOn(h.hostWire, "send").mockImplementation(text => {
+      const message = JSON.parse(text);
+      if (message.result?.value?.subscriptionId) throw new Error("reply send failed");
+      send(text);
+    });
+    await expect(h.child.request("ui/subscribe", { topics: ["instances"] }, { timeoutMs: 20 })).rejects.toThrow();
+    expect(h.attachment.activate).not.toHaveBeenCalled();
+    expect(h.attachment.abandon).toHaveBeenCalledOnce();
+    expect(h.ledger.diagnostics().subscriptions).toBe(0);
+  } finally { h.dispose(); }
+});
+it("BM-12 malformed incoming params never reach state mutation", async () => {
+  const h = await channelFixture();
+  try {
+    await h.binding.initialized(h.controller.signal);
+    const patch = vi.spyOn(h.states, "patch");
+    const replies: unknown[] = [];
+    const off = h.childWire.onMessage(text => { const value = JSON.parse(text); if (value.id === 990) replies.push(value); });
+    h.childWire.send(JSON.stringify({ jsonrpc: "2.0", id: 990, method: "ui/patch", params: { extra: true } }));
+    await Promise.resolve(); await Promise.resolve();
+    expect(replies).toHaveLength(1); expect(replies[0]).toMatchObject({ error: { code: -32602 } });
+    expect(patch).not.toHaveBeenCalled(); off();
+  } finally { h.dispose(); }
+});
+it("BM-12 no-UI source retains inert phases and never negotiates", async () => {
+  const h = await channelFixture();
+  try {
+    await h.catalog.replace([{ ...h.source, panels: [], status: [], commands: [] }]);
+    const request = vi.spyOn(h.peer, "request");
+    await h.binding.initialized(h.controller.signal); await h.binding.ready(h.controller.signal);
+    expect(request).not.toHaveBeenCalled(); expect(h.attachment.negotiated).not.toHaveBeenCalled();
+  } finally { h.dispose(); }
+});
+it("BM-12 ready receives the original remaining deadline", async () => {
+  vi.useFakeTimers(); const h = await channelFixture();
+  try {
+    await h.binding.initialized(h.controller.signal);
+    await vi.advanceTimersByTimeAsync(9_500);
+    h.child.handle("ui/ready", () => new Promise(() => {}));
+    const request = vi.spyOn(h.peer, "request");
+    const ready = h.binding.ready(h.controller.signal); const rejected = expect(ready).rejects.toThrow();
+    expect(request.mock.calls.at(-1)![2]!.timeoutMs).toBeLessThanOrEqual(500);
+    await vi.advanceTimersByTimeAsync(500); await rejected;
+    expect(h.runtime.ready).not.toHaveBeenCalled();
+  } finally { h.dispose(); vi.useRealTimers(); }
+});
+it("BM-12 disposal rejects pending initial bindings without closing the shared channel twice", async () => {
+  const h = await channelFixture();
+  try {
+    const opening = h.bridge.open(h.descriptor);
+    for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    const phase = h.binding.initialized(h.controller.signal); const failed = expect(phase).rejects.toThrow();
+    h.binding.dispose(); h.binding.dispose(); await failed;
+    expect((await opening).ok).toBe(false);
+    expect(h.attachment.dispose).not.toHaveBeenCalled();
+  } finally { h.dispose(); }
+});
+```
+
+```sh
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/ui-bridge.test.ts src/main/plugins/controller.test.ts src/main/device-broker/rpc-router.test.ts
+pnpm check:desktop
+```
+
+Expected: new adapter cases RED before implementation and PASS afterward; retained A router send-failure, malformed-result, synchronous-reply and cancelled-afterReply tests PASS. The latter exercise the same actual RequestContext continuation and guarantee abandoned IDs never activate. Include these test names and ui-bridge/controller source+tests in the D160 receipt.
+
+The D160 registry constructor in `ui-bridge.ts` is the sole production catalog/state/subscription allocation. Merge these imports with the file's existing imports:
+
+```ts
+import { UiCatalog, UiStateRegistry, UiSubscriptions, type UiEventLedgerPort,
+  type CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
+import type { Handle, ResourceOwner, UiBinding } from "@kobrixa/plugin-protocol";
+import { uiEventLedgerPort } from "../device-broker/broker-port.js";
+export function createUiRegistry(input: {
+  hostEpoch: Handle;
+  broker: { readonly events: CommonEventLedgerPort };
+  now(): number;
+  beforeDelivery(sourceKey: string): void;
+  revokeIntent(owner: ResourceOwner, binding?: UiBinding): void;
+}): { catalog: UiCatalog; states: UiStateRegistry; subscriptions: UiSubscriptions } {
+  const catalog = new UiCatalog(input.hostEpoch, { now: input.now, beforeDelivery: input.beforeDelivery });
+  const states = new UiStateRegistry({ now: input.now, current: owner => catalog.isCurrent(owner),
+    eventCounters: () => input.broker.events.diagnostics() });
+  const ledger: UiEventLedgerPort = uiEventLedgerPort(input.broker.events);
+  const subscriptions = new UiSubscriptions(states, ledger, input.revokeIntent);
+  return { catalog, states, subscriptions };
+}
+```
+
+In controller.ts's shared `composeDesktopMain`, use this allocation in place of the standalone catalog/state/subscription constructors. `broker` and `profile` are the existing foundation inputs, `now` is the monotonic foundation clock, and `plugins` is the controller assigned by `startPlugins`. The callbacks close over those existing objects; no delivery occurs before startup returns:
+
+```ts
+const { catalog, states, subscriptions } = createUiRegistry({
+  hostEpoch: profile.hostEpoch, broker, now,
+  beforeDelivery: sourceKey => {
+    if (!plugins) throw new Error("Plugin controller is not attached.");
+    plugins.markThirdPartyUiContributions(sourceKey);
+  },
+  revokeIntent: (owner, binding) => {
+    if (binding) intent.forget(binding);
+    else for (const current of states.instances(owner)) intent.forget(current);
+  },
+});
+```
+
+The real-registry fixture above uses this same constructor. It verifies the production counter injection, current resource-generation predicate and checked delivery callback rather than test-only counter defaults. Only T2's diagnostics report the whole common ledger; T3 reports owners/timers. The callback is not exposed through RPC/preload, and diagnostics never sweep the ledger.
+
+Append to the same BM-16 describe block:
+
+```ts
+it("counts mixed-domain subscriptions once, including terminal controls", async () => {
+  const h = executionFixture();
+  try {
+    const input = await h.load(); h.release(); const opened = await h.bridge.open(input);
+    if (!opened.ok) throw new Error("open failed");
+    const ui = h.subscriptions.subscribe(h.owner, { binding: opened.value.binding, topics: ["state"] });
+    const other = h.ledger.create(h.owner);
+    if (!ui.ok || !other.ok) throw new Error("subscription failed");
+    h.ledger.activate(h.owner, ui.value.subscriptionId);
+    h.ledger.activate(h.owner, other.value.subscriptionId);
+    await h.bridge.close({ binding: opened.value.binding });
+    expect(stateDiagnostics(h.states).snapshot()).toMatchObject({ subscriptions: 2, queuedEvents: 1 });
+    expect(stateDiagnostics(h.states).snapshot().queuedBytes).toBe(h.ledger.diagnostics().queuedBytes);
+    h.ledger.ack(h.owner, ui.value.subscriptionId, 1);
+    expect(stateDiagnostics(h.states).snapshot()).toMatchObject({ subscriptions: 1, queuedEvents: 0, queuedBytes: 0 });
+    h.ledger.unsubscribe(h.owner, other.value.subscriptionId);
+    expect(stateDiagnostics(h.states).snapshot().subscriptions).toBe(0);
+  } finally { h.dispose(); }
+});
+```
+
+Run `pnpm --filter @kobrixa/desktop test src/main/plugins/ui-bridge.test.ts` (RED before the constructor/counter wiring, PASS afterward), then `pnpm check:desktop` after rebuilding protocol/runtime. Include ui-bridge.ts/test and controller.ts/test in the D160 stopped receipt. Commit exactly those files:
+
+```sh
+git add apps/desktop/src/main/plugins/ui-bridge.ts apps/desktop/src/main/plugins/ui-bridge.test.ts apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts
+git commit -m "fix(plugins): enforce resource delivery and common ledger diagnostics"
+```
+
 In `main/index.ts`, replace the old independent quit/update/window cleanup calls with this composition sequence **after the existing P150 primary-instance gate and safe-mode decision**:
 
 1. Reuse D150's `createCoreActionLedger` result, broker, authority, operation gate and primary `ProfileWriterLock` instance. D150 already created the workbench scope before broker construction. D160 and D170 extend those same objects; no second ledger, lock or broker. Keep the existing trusted provider allowlist and safe-mode registration guard.
-2. Construct `UiCatalog`, `UiStateRegistry`, the UI event hub, `UserPersistenceActions`, `UiIntent`, and `UiLifecycle`. Register one `ShutdownCoordinator` listener before exposing checkpoint registration. The P160 participant is the F resource-free adapter; it refuses storage-bearing consumers. Do not move B2 creation into this slice.
-3. Build `ui` with `createUiLifetimePort({ catalog, states, subscriptions, revoke: (_owner, binding) => intent.forget(binding) })`. Pass `{ device: broker.resources, persistence, ui }` as `stage3` and the R150 `Stage3HostAttachment` as `stage3Host` to `startPlugins`. Extend its `bindChannel(context)` to return `Stage3ChannelBinding` with real UI negotiation/initial-binding/ready phases. Reuse the device attachment and `uiEventLedgerPort(broker.events)`; no second ACK router. Pass `manager.stage3Runtime()` as `runtime` to `createUiExecutionAdapter`. T2 `open` releases its initial-binding latch before this adapter awaits `runtime.ready`. `retireResources` uses the existing disposition cache, synchronously revoking device/UI and freezing persistence before any await. Retain the original channel through R170 drain completion.
-4. Pass `beforeDelivery: (sourceKey) => plugins.markThirdPartyUiContributions(sourceKey)` to T2 publication and the adapter. A failed checked marker prevents the resource from reaching the renderer. Optional builtins do not set the third-party flag.
+2. Consume Step 24's complete composeDesktopMain implementation and desktopUi accessor. The existing LifecycleCoordinator owns the sole reservation listener; ShutdownCoordinator is its facade. No allocations are duplicated in main.
+3. Step 24 passes the exact stage3/stage3Host pair and uses Step 19's bindDesktopChannel helper. onStage3Runtime assigns the actual runtime before attaching the provider or exposing admission; no PluginController.manager access is used. The original peer remains retained through disposition and actual exit.
+4. Pass `beforeDelivery: (sourceKey) => plugins.markThirdPartyUiContributions(sourceKey)` in every production UiCatalog constructor. Its resource() method is the sole checked delivery gate, including cached fetches before open. A failed checked marker prevents the resource from reaching the renderer. Optional builtins do not set the third-party flag.
 5. Register UI and recovery IPC through the same trusted handler and publish only to the current renderer. The new main registrations are (also dispose `offUi` on window loss; `handle` validates sender before every call):
 
 ```ts
@@ -9879,7 +10450,7 @@ The above construction consumes P150 factories and the T2 implementation classes
 
 - [ ] **Step 20: Write native-lifetime and trusted-main IPC integration tests.**
 
-Create `apps/desktop/src/main/index.test.ts`. The test exercises the native-event adapter used by main without importing Electron's executable entry:
+Modify `apps/desktop/src/main/index.test.ts` (append to the D150 file; retain primary/source-order/sender/legacy device cases). The test exercises the native-event adapter used by main without importing Electron's executable entry:
 
 ```ts
 import { EventEmitter } from "node:events";
@@ -9918,7 +10489,7 @@ it("suspend/wake routes each session through quiesce/reconcile without retiring 
 });
 ```
 
-Create `apps/desktop/src/main/ipc.test.ts`:
+Modify `apps/desktop/src/main/ipc.test.ts` (append to the D150 file; retain primary/source-order/sender/legacy device cases):
 
 ```ts
 import { expect, it, vi } from "vitest";
@@ -10072,7 +10643,7 @@ it("manage navigates through the detail bridge and preserves the core result", a
 
 Extend the existing bridge/preload tests with the admitted resource's `validationContext` and `rawBytes`: assert exact forwarding, then run the shared maximum/+1, unknown property, ref/cycle and field-type fixtures through `validateUiResource` in main and T7's browser validation gate. Use `ContractFixtureFile` from AM-31's strict family format, not a second fixture representation. A failed validation revokes/quarantines the complete contribution; another valid contribution survives. H-P alone publishes the common registry changes after its P150 stop/path/SHA receipt: exactly `ui-binding`, six `ui.*` kinds and the B1 error table at P160. No storage registry publication occurs here.
 
-Add the following diagnostic registration implementation in `ui-bridge.ts` and `ui-lifecycle.ts`, importing `FoundationDiagnostics`, `FoundationCounters`, `FoundationDiagnosticEvent` from runtime `ui-host-ports.ts` (desktop imports the package types). These maps contain only observer closures; they are not persistence or runtime attachment maps:
+Add the following diagnostic registration implementation only in `ui-bridge.ts` (T3 Step 11 exclusively implements `ui-lifecycle.ts` diagnostics), importing `FoundationDiagnostics`, `FoundationCounters`, `FoundationDiagnosticEvent` from runtime `ui-host-ports.ts` (desktop imports the package types). These maps contain only observer closures; they are not persistence or runtime attachment maps:
 
 ```ts
 const foundationDiagnostics = new WeakMap<object, FoundationDiagnostics>();
@@ -10106,208 +10677,245 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Expected: ready-before-mount/remount status is discoverable, original core return shape is unchanged, metadata survives preload, retired resources count zero only after their real disposition, and unknown diagnostic instances throw.
 
-- [ ] **Step 24: Give T9 the formal provider injection through the production composition.**
+- [ ] **Step 24: Extend the side-effect-free D150 composition and inject only its foundation factory.**
 
-Use A-T8's delivered `DesktopFoundationOptions`/`createDesktopFoundation` in main and the test entry; do not edit `lifecycle-coordinator.ts` or the fake-provider backend in this part. Keep the exact required options `profile`, `authority`, `journal`, `coreActions`, `now`, `hasPermission`, `requirements`, `connectionPolicy`, `operationGate`. D160 main constructs the foundation once, reuses its broker when attaching the real `UiIntent` and `createPluginUiBridge`, and passes both AM-14 manager options. The production caller omits `providerFactory`.
+Keep the frozen DesktopMainCompositionInput/DesktopMainComposition types, D150 `lifecycles` WeakMap and `desktopLifecycle` accessor. Replace the delivered composeDesktopMain body in controller.ts with the complete body below. Keep all startup options, the single onStage3Runtime callback and stage3Host identity. Import types from lifecycle-coordinator.ts and retain its type re-exports. The `bindDesktopChannel` helper is Step 19's implementation, not another router.
 
-The T9-owned `tests/desktop/declarative-ui-main.ts` calls that same main composition with this factory, retaining control only in its closure:
+Consume T3 Step 10's host-only uiCatalogSources inventory and named R160 commit.
+
+`processEpoch:hostEpoch` in T3's catalog inventory is catalog metadata only; it is never sent as channel identity. T2 strips it to UiOwner and executionOwner(binding) supplies the actual R150 owner after launch. Add `"uiCatalogSources"` to PluginManagerPort and this host-only method to PluginController (no preload/RPC method):
 
 ```ts
-import type { DesktopFoundationOptions } from "./device-broker/lifecycle-coordinator.js";
-import { createFakeDeviceProvider, type FakeProviderControl } from "./device-broker/fake-provider.js";
+uiCatalogSources(): readonly UiCatalogSource[] { return this.deps.manager.uiCatalogSources(); }
+```
 
-function acceptanceProvider(now: () => number): {
-  providerFactory: NonNullable<DesktopFoundationOptions["providerFactory"]>;
-  control(): FakeProviderControl;
-} {
-  let control: FakeProviderControl | undefined;
-  return {
-    providerFactory: (catalog) => {
-      const fake = createFakeDeviceProvider({ catalog, now }); control = fake.control;
-      return fake.provider;
-    },
-    control: () => {
-      if (!control) throw new Error("Foundation has not constructed its provider.");
-      return control;
-    },
-  };
+Use the class's existing dependency property name (`deps` in the method above) consistently with its constructor. No new manager field is exposed. Append the production composition:
+
+```ts
+import { createUiLifetimePort, currentStatusBindings, resourceFreePersistence150,
+  UiCatalog, UiStateRegistry, UiSubscriptions, type PluginUiBridge, type UiCatalogSource, type Stage3RuntimePorts,
+  type Stage3HostAttachment, type UiRuntimeAttachment } from "@kobrixa/plugin-runtime";
+import { handleSchema, resourceFailure, type CommandValue, type Result } from "@kobrixa/plugin-protocol";
+import { LifecycleCoordinator } from "../device-broker/lifecycle-coordinator.js";
+import type { DesktopMainCompositionInput, DesktopMainComposition } from "../device-broker/lifecycle-coordinator.js";
+import { attachDeviceRpc } from "../device-broker/rpc-router.js";
+import { createUiRegistry, createUiChannelBinding, createUiExecutionAdapter, createPluginUiBridge,
+  UiBridgeEvents, type UiExecutionAdapter } from "./ui-bridge.js";
+import { UiIntent } from "./ui-intent.js";
+import { UserPersistenceActions } from "./user-persistence-actions.js";
+import { ShutdownCoordinator } from "./shutdown-coordinator.js";
+type DesktopUi = { bridge: PluginUiBridge; catalog: UiCatalog; states: UiStateRegistry;
+  subscriptions: UiSubscriptions; intent: UiIntent; actions: UserPersistenceActions;
+  coordinator: ShutdownCoordinator; setRecoveryNavigation(navigate: () => void): void };
+const desktopUis = new WeakMap<DesktopMainComposition, DesktopUi>();
+export function desktopUi(composition: DesktopMainComposition): DesktopUi {
+  const ui = desktopUis.get(composition); if (!ui) throw new Error("Unknown desktop UI composition."); return ui;
 }
-```
-
-The snippet's imports are relative to `apps/desktop/src/main/index.ts`; T9 imports the same defining modules via its test build. Pass `providerFactory` only at initial `createDesktopFoundation({...options, providerFactory})` construction, never rebuild an already-running foundation. `DesktopFoundation` returns exactly `{broker: DeviceBrokerPort & LegacyOperationPort; dispose(): Promise<void>}`. Authority, intent and channel attachments remain those from production; never substitute a fake `DeviceIntentPort` at the bridge. No manifest, environment or preload selector is introduced.
-
-T9 drives trusted renderer hold-begin, blocks a real `ProviderStep` at `before-exchange`, waits for `control.reached`, releases/cancels the hold, then releases the step. Assert real authority revocation rejects the late start and trace shows stop/readback. Repeat lost start response, late ACK and pressure while stopping at `before-stop-readback`; stop-dispatch timing comes from the provider's first real stop exchange. Use the published `createInvocationContext(base, invocation, signal)` (Python `create_invocation_context(base, invocation)`) in the fixture SDK: overlapping commands retain independent context, and P170 action getters cannot mutate shared base. These are P160 U10 requirements, not replaceable by isolated intent doubles.
-
-```sh
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugins/ui-bridge.test.ts src/main/plugins/ui-intent.test.ts src/main/device-broker/fake-provider.test.ts src/main/device-broker/lifecycle-coordinator.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm check:desktop
-```
-
-Expected: production and test compositions share the real bridge/broker/authority path; T9 records actual U10 distributions and zero-live-resource evidence before P160 acceptance.
-
-- [ ] **Step 25: Attach D170's typed persistence bridges under H-D at P170.**
-
-This is the D170 handoff contract and owned bridge implementation, executed only after P160 and stopped-owner receipts for H-D/H-R/H-K. All `main/plugins/persistence/**` files stay with B2 owners. In `shared/plugin-persistence.ts`, import the frozen B2 types and export the exact bridge:
-
-```ts
-export interface PersistenceRecoveryBridge {
-  snapshot(input: { itemId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
-  act(input: { itemId: Handle; optionId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
-  onOpen(listener: (input: { itemId: Handle }) => void): () => void;
-  onChanged(listener: () => void): () => void;
-}
-```
-
-In `shared/plugins.ts` extend `PluginsApi` exactly:
-
-```ts
-persistenceRecovery: PersistenceRecoveryBridge;
-settings: Omit<BoundSettingsService, "open"> & {
-  open(input: {sourceKey: string; resourceDigest: Sha256}): ReturnType<BoundSettingsService["open"]>;
-};
-legacyPreferences: {
-  challenge(descriptorId: string): Promise<LegacyPreferenceChallenge>;
-  submit(snapshot: LegacyPreferencesSnapshot): ReturnType<LegacyImportHostPort["acceptPreferencesEvidence"]>;
-};
-```
-
-`BoundSettingsService` comes from runtime `settings-form-port.ts`, challenge/snapshot/import port from B2-T6's defining modules, and persistence result/snapshot/hash/handle from protocol. Re-export these types through the owned shared module for preload; do not copy backend implementations. Add exact type-equality tests in `shared/plugin-persistence.test.ts`.
-
-In main, after the existing primary-profile gate and safe-mode/catalog admission, create the single backend with `openStoreRoot({userData, profile})` and `startPersistenceWorker({profile, root, workerEntry: persistenceWorkerPath({packaged, resourcesPath, buildRoot}), now})`. No worker starts in the secondary branch. A blocked recovery scan retains read-only recovery and does not enable writes. Construct the import coordinator using `createLegacyWriterBarrier({backend, writers, importOwner})` and `createLegacyImportCoordinator({backend, sources: backend.sources, barrier, descriptors, currentScope, currentSource, importOwner})`. Restore durable barriers before starting old writer admission. Foundations supply no live Lab/device mappings or controls; use the T7 synthetic mappings only in its private worker bootstrap.
-
-Pass the explicit composition into the real B2-T5 factory:
-
-```ts
-const composition: PersistenceCompositionInput = {
-  backend,
-  sources,
-  events: broker.events,
-  dispatchDrain: manager.stage3Runtime().dispatchDrain,
-  imports,
-};
-const persistenceHost = await createPersistenceHost({
-  profile, composition, reservations, actions, actionAdapter, coreActions, now, hasPermission,
-});
-```
-
-`sources: PersistenceSourcePort` resolves only admitted source/digest rows, validates current owners and supplies the host-issued `coreOwner({sourceKey,scope})` independently of optional execution. Its `settings` returns exactly `{owner,resource,validationDigest}` or null. `coreOwner` cannot start a feature or bypass source admission. The factory owns backend after success and disposes it on construction failure. Retain the single B1 reservation-ended listener before exposing checkpoint admission; replace its participant dependency with `persistenceHost`'s real participant during initial D170 composition, never add a second listener. Host disposal drains services/backend/worker before releasing the original lock. Do not use a filesystem WeakMap, `bindPersistenceComposition`, a second worker, or forged plugin principals.
-
-Add this narrow settings binder to the owned `main/plugins/ipc.ts` and use it behind trusted main-frame IPC. It admits a single form for the current workbench and forwards only issued bindings:
-
-```ts
-export function bindSettingsBridge(service: BoundSettingsService, scope: () => CoreWindowScope): PluginsApi["settings"] {
-  let active: SettingsFormBinding | undefined;
-  let admittedScope: CoreWindowScope | undefined;
-  let openGeneration = 0;
-  const watches = new Set<() => void>();
-  const check = (binding: SettingsFormBinding) => {
-    const current = scope();
-    if (!active || binding.resourceDigest !== active.resourceDigest ||
-        binding.scope.hostEpoch !== active.scope.hostEpoch || binding.scope.workbenchInstance !== active.scope.workbenchInstance ||
-        binding.owner.sourceKey !== active.owner.sourceKey || binding.owner.pluginId !== active.owner.pluginId ||
-        binding.owner.uiResourceGeneration !== active.owner.uiResourceGeneration ||
-        admittedScope?.hostEpoch !== current.hostEpoch || admittedScope.workbenchInstance !== current.workbenchInstance)
-      throw new Error("Stale settings form.");
+export async function composeDesktopMain(input: DesktopMainCompositionInput): Promise<DesktopMainComposition> {
+  const { profile, now, coreActions } = input.foundationOptions;
+  profile.assertHeld();
+  const foundation = await input.createFoundation(input.foundationOptions);
+  const broker = foundation.broker;
+  let runtimeAttachment: UiRuntimeAttachment | undefined;
+  let plugins: PluginController | undefined;
+  const runtime = (): UiRuntimeAttachment => {
+    if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached."); return runtimeAttachment;
   };
-  const dispose = () => {
-    openGeneration++;
-    for (const off of watches) off(); watches.clear();
-    if (active) service.dispose(active); active = undefined; admittedScope = undefined;
+  // The forwarding port is inert until the callback assigns the actual manager attachment.
+  const runtimePort: UiRuntimeAttachment = {
+    activateInitialized: (source, signal) => runtime().activateInitialized(source, signal),
+    ready: (owner, signal) => runtime().ready(owner, signal), current: owner => runtime().current(owner),
+    owners: () => runtime().owners(), context: (owner, scope) => input.currentScope(scope) ? runtime().context(owner, scope) : null,
+    commands: source => runtime().commands(source), invoke: (owner, invocation, signal) => runtime().invoke(owner, invocation, signal),
+    dispatchDrain: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
   };
-  return {
-    open: async (input) => {
-      dispose(); const generation = openGeneration; const original = scope();
-      const result = await service.open({ ...input, scope: original });
-      const current = scope();
-      if (generation !== openGeneration || current.hostEpoch !== original.hostEpoch || current.workbenchInstance !== original.workbenchInstance) {
-        service.dispose(result.binding); throw new Error("Workbench changed during settings open.");
+  const events = new UiBridgeEvents(() => currentStatusBindings(states, input.scope())
+    .map(({ binding, revision }) => ({ type: "state" as const, binding, revision })));
+  const intent = new UiIntent(broker.intent, now, events.publish);
+  const actions = new UserPersistenceActions(now, (owner, scope, uiResourceGeneration) =>
+    input.currentScope(scope) && runtime().current(owner) && catalog.isCurrent({
+      sourceKey: owner.sourceKey, pluginId: owner.pluginId, uiResourceGeneration }));
+  const { catalog, states, subscriptions } = createUiRegistry({ hostEpoch: profile.hostEpoch, broker, now,
+    beforeDelivery(sourceKey) {
+      if (!plugins) throw new Error("Plugin controller not attached.");
+      plugins.markThirdPartyUiContributions(sourceKey);
+    },
+    revokeIntent(owner, binding) {
+      if (binding) intent.forget(binding);
+      else for (const current of states.instances(owner)) intent.forget(current);
+    },
+  });
+  const stage3: Stage3RuntimePorts = { device: broker.resources, persistence: resourceFreePersistence150(),
+    ui: createUiLifetimePort({ catalog, states, subscriptions, revoke: (_owner, binding) => intent.forget(binding) }) };
+  const lifecycle = new LifecycleCoordinator({ ports: stage3, resources: broker.resources,
+    sessions: broker.sessions, reservations: broker.reservations, persistence: stage3.persistence,
+    now, alive: owner => runtime().current(owner), owners: () => runtime().owners(),
+    dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+    shutdown: async () => { if (plugins) await plugins.shutdown(); },
+    legacyFlush: input.legacyFlush, report: input.report });
+  const coordinator = new ShutdownCoordinator(lifecycle);
+  let navigateRecovery = () => { throw new Error("Recovery navigation is not attached."); };
+  const execution: UiExecutionAdapter = createUiExecutionAdapter({ catalog, states, runtime: runtimePort, scope: input.scope,
+    async core(resolved, nodeId): Promise<Result<CommandValue>> {
+      const node = resolved.resource.kind === "panel" ? resolved.resource.nodes.find(value => value.id === nodeId) : undefined;
+      if (!node || node.type !== "action" || node.action.kind !== "core" || !runtime().current(resolved.owner))
+        return resourceFailure("stale");
+      const action = node.action;
+      if (action.action === "openRecovery") { navigateRecovery(); return { ok: true, value: { output: {}, fieldErrors: [] } }; }
+      if (action.action === "openPanel") {
+        let cursor: string | undefined;
+        do {
+          const page = await catalog.catalog(cursor ? { cursor } : {}); if (!page.ok) return page;
+          const entry = page.value.entries.find(value => value.sourceKey === resolved.owner.sourceKey && value.id === action.panelId);
+          if (entry) {
+            const result = await execution.open({ sourceKey: entry.sourceKey, id: entry.id, uiResourceGeneration: entry.uiResourceGeneration });
+            return result.ok ? { ok: true, value: { output: {}, fieldErrors: [] } } : result;
+          }
+          cursor = page.value.nextCursor ?? undefined;
+        } while (cursor);
+        return resourceFailure("stale");
       }
-      active = result.binding; admittedScope = original; return result;
+      if (action.action === "stop") {
+        const operationId = handleSchema.parse(resolved.state.data[action.operation.key]);
+        const result = await broker.request(input.principal(resolved.owner), "devices/motion/stop", { operationId }, new AbortController().signal);
+        return result.ok ? { ok: true, value: { output: {}, fieldErrors: [] } } : result;
+      }
+      const sessionId = handleSchema.parse(resolved.state.data[action.session.key]);
+      const scope = input.scope(); if (!input.currentScope(scope)) return resourceFailure("stale");
+      const token = coreActions.mint(scope, { kind: "device-disconnect", sessionId });
+      try { await lifecycle.disconnect(sessionId, token); return { ok: true, value: { output: {}, fieldErrors: [] } }; }
+      finally { coreActions.complete(token); }
     },
-    read: (binding) => { check(binding); return service.read(binding); },
-    update: (binding, params) => { check(binding); return service.update(binding, params); },
-    reset: (binding, params) => { check(binding); return service.reset(binding, params); },
-    watch: (binding, changed) => {
-      check(binding);
-      const off = service.watch(binding, () => { check(binding); changed(); }); watches.add(off);
-      return () => { watches.delete(off); off(); };
-    },
-    dispose: (binding) => { check(binding); dispose(); },
+  });
+  const bridge = createPluginUiBridge({ catalog, execution, intent, actions, events, scope: input.scope });
+  const offCatalog = catalog.onEvent(events.publish);
+  const offState = states.onEvent((_owner, event) => {
+    if (event.kind === "ui.revoked") {
+      intent.forget(event.data.binding); events.publish({ type: "revoked", binding: event.data.binding, reason: event.data.reason });
+    } else if (event.kind === "ui.state") events.publish({ type: "state", binding: event.data.binding, revision: event.data.revision });
+    else if (event.kind === "ui.visibility" && !event.data.visible) intent.revoke(event.data.binding, "hidden");
+    else if (event.kind === "ui.form") intent.cancelHold(event.data.binding);
+  });
+  const stage3Host: Stage3HostAttachment = {
+    hostEpoch: profile.hostEpoch, principal: input.principal,
+    hasPermission: (owner, permission) => input.foundationOptions.hasPermission(input.principal(owner), permission),
+    requirements: owner => input.foundationOptions.requirements(owner),
+    bindChannel: context => bindDesktopChannel(context, broker, { catalog, states, subscriptions, runtime: runtimePort }),
+    retireResources: (owner, reason) => lifecycle.retire(owner, reason),
   };
+  let offSources: (() => void) | undefined;
+  let refresh = Promise.resolve();
+  let inventory = "";
+  const refreshCatalog = () => {
+    refresh = refresh.catch(input.report).then(async () => {
+      const sources = plugins!.uiCatalogSources(); const key = JSON.stringify(sources);
+      if (key === inventory) return;
+      await catalog.replace(sources); inventory = key;
+    });
+    void refresh.catch(input.report); return refresh;
+  };
+  const disposeUi = () => { offSources?.(); offState(); offCatalog(); execution.dispose(); intent.dispose();
+    actions.revokeWindow(input.scope()); subscriptions.dispose(); };
+  try {
+    plugins = await startPlugins({ ...input.plugins, stage3, stage3Host,
+      onStage3Runtime(attachment, providers) {
+        if (runtimeAttachment) throw new Error("Runtime already attached.");
+        runtimeAttachment = attachment;
+        foundation.attachProvider(providers);
+        offSources = providers.onEvent(event => { if (event.type === "state" && plugins) void refreshCatalog(); });
+      },
+    });
+    if (!runtimeAttachment) throw new Error("Missing runtime attachment.");
+    await refreshCatalog();
+    let disposed = false;
+    const composition: DesktopMainComposition = { foundation, plugins, stage3, stage3Host,
+      async dispose() {
+        if (disposed) return;
+        await lifecycle.close("close"); await refresh.catch(input.report);
+        disposeUi(); await foundation.dispose(); lifecycle.dispose(); disposed = true;
+      },
+    };
+    lifecycles.set(composition, lifecycle);
+    desktopUis.set(composition, { bridge, catalog, states, subscriptions, intent, actions, coordinator,
+      setRecoveryNavigation(navigate) { navigateRecovery = navigate; } });
+    return composition;
+  } catch (error) {
+    disposeUi();
+    try { if (plugins) await plugins.shutdown(); await foundation.dispose(); lifecycle.dispose(); }
+    catch (cleanup) { input.report(cleanup); throw cleanup; }
+    throw error;
+  }
 }
 ```
 
-Use strict method-specific validators for each IPC input, rejecting `scope`, principal and native-path properties; main inserts scope after parsing. Preload maps dedicated `settings` methods and watch notifications to the exact issued binding, retaining disposers for form switch/window loss. V170 calls `createContributedSettingsForm(controls, plugins.settings)` and `attachSettingsControls(controls,{retry:form.retry,reload:form.reload,fieldMap:createSettingsFieldMap})`. B2-T3 owns those factories; do not implement renderer control files here.
+In primary main, retain its existing `composeDesktopMain({createFoundation:createDesktopFoundation,...})` input construction and obtain the UI objects with `const {bridge:uiBridge,intent,actions,coordinator}=desktopUi(composition)`. Install IPC using Step 19's trusted registration block. Bind `desktopUi(composition).setRecoveryNavigation` to the existing native recovery-navigation callback. Do not construct another broker, coordinator, state registry or intent in index.ts. All module-scope additions above are definitions/WeakMaps only.
 
-`plugins.legacyPreferences.challenge` validates the descriptor against main's allowlist and calls `imports.issuePreferences({descriptorId,scope:scope()})`. `submit` checks the current trusted sender scope independently against the challenge, rejects a mismatched supplied scope, replaces it with the main scope, then calls `imports.acceptPreferencesEvidence`. Return its exact accepted/pending/reconciled state. Window replacement calls `retirePreferences(oldScope)`. Renderer cannot supply an arbitrary key allowlist. Durable nonce/barrier evidence and original source bytes remain B2's responsibility.
-
-For `persistenceRecovery`, main maps item IDs to host recovery IDs and emits `onOpen({itemId})` only to the originally validated workbench. `snapshot` returns bounded host detail. Every option is issued for the item generation/revision/scope; `act` checks that tuple, maps the option to retry/export/discard, mints a fresh core action from the existing ledger, calls participant retry/discard or `persistenceHost.recovery.export({recovery,action})`, completes the action, and refreshes detail. Keep `CoreRecoveryItem.actions[].kind` unchanged and the core `act` result a `CoreRecoverySnapshot`. Detail IDs and snapshot reads confer no authority. Recovery works with all optional processes off.
-
-Keep `PersistenceActionAdapter.chooseDestination`'s existing signature. Its trusted closure resolves the already-claimed action's original scope/deadline, invokes the native save dialog, and only after a selection calls:
+Append these controller.test.ts cases to D150's existing BM-18 suite. Its real `compositionInput()` fixture retains all named production options and starts no optional process without an explicit open. Merge the desktopUi import and preserve the secondary-instance/callback-failure tests:
 
 ```ts
-const destination = await backend.destinations.register({
-  action: claimedActionId,
-  scope: originalScope,
-  nativePath: selectedPath,
-  deadlineMonotonicMs: originalDeadline,
+it("BM-18 D160 uses one injected factory/provider and one UI registry", async () => {
+  const f = await compositionInput();
+  let providers = 0;
+  let attached = 0;
+  f.factory.mockImplementation(async options => {
+    const foundation = await createDesktopFoundation({ ...options, providerFactory: catalog => {
+      providers++; return createFakeDeviceProvider({ catalog, now: options.now }).provider;
+    } });
+    const attach = foundation.attachProvider.bind(foundation);
+    foundation.attachProvider = manager => { attached++; attach(manager); };
+    return foundation;
+  });
+  try {
+    const composition = await composeDesktopMain(f.input);
+    expect(f.factory).toHaveBeenCalledExactlyOnceWith(f.input.foundationOptions);
+    expect(providers).toBe(1); expect(attached).toBe(1);
+    const ui = desktopUi(composition); expect(desktopUi(composition)).toBe(ui);
+    expect(ui.coordinator).toBe(desktopUi(composition).coordinator);
+    const [a, b] = createMemoryChannelPair(); const peer = new RpcPeer(a), child = new RpcPeer(b);
+    const owner = { sourceKey: "dev:test", pluginId: "test.ui", generation: 1,
+      hostEpoch: f.input.foundationOptions.profile.hostEpoch, processEpoch: randomUUID() };
+    const attach = vi.spyOn(composition.foundation.broker, "attachChannel");
+    const handlers = vi.spyOn(peer, "handle");
+    const channel = composition.stage3Host.bindChannel({ peer, owner, requirements: [],
+      principal: () => f.input.principal(owner) });
+    expect(attach).toHaveBeenCalledOnce();
+    const names = handlers.mock.calls.map(call => call[0]);
+    for (const method of ["events/ack", "events/unsubscribe", "ui/instances", "ui/state", "ui/patch", "ui/snapshot", "ui/subscribe"])
+      expect(names.filter(name => name === method)).toHaveLength(1);
+    channel.dispose(); channel.dispose(); peer.close(); child.close();
+    await composition.dispose();
+  } finally { await f.cleanup(); }
+});
+it("BM-18 D160 import has no provider, process or profile side effects", async () => {
+  vi.resetModules();
+  const runtime = await import("@kobrixa/plugin-runtime");
+  const module = await import("../device-broker/lifecycle-coordinator.js");
+  const create = vi.spyOn(runtime.PluginManager, "create");
+  const factory = vi.spyOn(module, "createDesktopFoundation");
+  try {
+    await import("./controller.js");
+    expect(create).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
+  } finally { create.mockRestore(); factory.mockRestore(); }
 });
 ```
-
-For core export `claimedActionId` is `action.actionToken`; never substitute a feature actionRef. Cancel returns the existing adapter cancellation result without registering. After the dialog, recheck original scope and deadline before registration; keep paths within main/worker. Release the destination only after a known result/expiry cleanup, retaining unknown publication evidence for original-job reconciliation. B2-T2/B2-T5 own output streaming and sealed/committed export, not this part.
-
-- [ ] **Step 26: Run D170 sender/scope/action tests and the real P170 gate.**
-
-Append these direct bridge tests to `plugins/ipc.test.ts` with type imports for `BoundSettingsService` and `SettingsFormBinding`, and `bindSettingsBridge` from `./ipc.js`:
-
-```ts
-it("inserts main scope and rejects unissued settings bindings before service dispatch", async () => {
-  const trustedScope = { hostEpoch: "host", workbenchInstance: "window" };
-  const open = vi.fn<BoundSettingsService["open"]>().mockRejectedValue(new Error("catalog rejected digest"));
-  const service: BoundSettingsService = {
-    open, read: vi.fn(), update: vi.fn(), reset: vi.fn(),
-    watch: vi.fn(() => () => {}), dispose: vi.fn(),
-  };
-  const bridge = bindSettingsBridge(service, () => trustedScope);
-  const request = { sourceKey: "builtin:acceptance.ui", resourceDigest: "a".repeat(64) };
-  await expect(bridge.open(request)).rejects.toThrow("catalog rejected digest");
-  expect(open).toHaveBeenCalledExactlyOnceWith({ ...request, scope: trustedScope });
-  const forged: SettingsFormBinding = {
-    owner: { sourceKey: request.sourceKey, pluginId: "acceptance.ui", uiResourceGeneration: 1 },
-    scope: trustedScope, resourceDigest: request.resourceDigest,
-  };
-  expect(() => bridge.read(forged)).toThrow("Stale settings form");
-  expect(service.read).not.toHaveBeenCalled();
-});
-```
-
-Append to `shared/plugin-persistence.test.ts`, importing the exact types from their defining modules:
-
-```ts
-it("keeps settings scope host-only and recovery result domains distinct", () => {
-  expectTypeOf<Parameters<PluginsApi["settings"]["open"]>[0]>()
-    .toEqualTypeOf<{ sourceKey: string; resourceDigest: Sha256 }>();
-  expectTypeOf<PluginsApi["persistenceRecovery"]>().toEqualTypeOf<PersistenceRecoveryBridge>();
-  expectTypeOf<ReturnType<PluginsApi["recovery"]["act"]>>()
-    .toEqualTypeOf<Promise<Result<CoreRecoverySnapshot>>>();
-  expectTypeOf<ReturnType<PluginsApi["legacyPreferences"]["submit"]>>()
-    .toEqualTypeOf<ReturnType<LegacyImportHostPort["acceptPreferencesEvidence"]>>();
-});
-```
-
-In the owned `plugins/ipc.test.ts` and `shared/plugin-persistence.test.ts`, exercise the actual registered handlers/preload methods: wrong webContents, subframe, old workbench, forged form, stale digest, duplicate/replayed option, unknown item/descriptor/key, changed nonce replay and renderer-supplied scope. Assert zero service/action/dialog calls on rejection. Use `bindSettingsBridge` with an issued binding to prove open inserts scope, read/update/reset preserve typed params, one form disposes prior watches, and late open after window replacement disposes its result. Test concurrent opens resolving in reverse order; only the latest admitted open may remain active, and the other service binding must be disposed. Preserve draft on CAS conflict until explicit retry/reload. Detail manage navigation preserves core return shape and never itself registers an export destination.
-
-P170 integration receives B2-T2/T3/T5/T6 and R170/K170, then repeats those tests with the actual worker: one profile/worker/common ledger/reservation listener, no-process settings initial render/CAS/watch, safe-mode recovery, retry/discard reports feeding the existing coordinator, dialog cancellation/late result, sealed or committed export, checkpoint-only refusal to invent payload, unknown publication/restart, worker loss and restored durable import barrier. Verify original legacy bytes unchanged and no old nonce survives workbench replacement. P160's empty participant does not close U12; X-T1 reruns recording/late-registration/final-CAS/TTL cases with this composition.
 
 ```sh
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugins/ipc.test.ts src/main/plugins/ui-bridge.test.ts src/main/plugins/core-recovery.test.ts src/main/plugins/shutdown-coordinator.test.ts src/preload/index.test.ts src/shared/plugin-persistence.test.ts src/main/packaging.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop test src/main/plugins/persistence
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime test src/manager.test.ts src/supervisor.test.ts src/ui-lifecycle.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm check:desktop
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git diff --check
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/controller.test.ts src/main/plugins/ui-bridge.test.ts src/main/device-broker/lifecycle-coordinator.test.ts
+pnpm check:desktop
+git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/plugins/ui-bridge.ts apps/desktop/src/main/plugins/ui-bridge.test.ts apps/desktop/src/main/index.ts
+git commit -m "feat(desktop): share declarative UI production composition"
 ```
 
-Expected: owned bridge suites pass with real P170 dependencies, original-peer drains cannot use replacement generations, and actual worker/process cleanup leaves no live resources. H-I/T9 owns integration harness and acceptance-report updates; this task consumes their receipts without editing those files. H-P alone adds the seven B2 codes, five storage kinds including `storage-watch`, and `settings.changed` after the P160 stopped-owner receipt. The worker bootstrap, SDK clients, import backend and protocol registries are not implemented by D170.
+The D160 receipt includes controller.ts/test, ui-bridge.ts/test and lifecycle-coordinator.ts/test, plus shutdown-coordinator.ts/test and the main call-site change. T3's separate stopped receipt includes manager.ts/test, supervisor.ts/test, ui-lifecycle.ts/test and index.ts. T9 stages declarative-ui-main.ts and declarative-ui-run.mjs in its existing Step 7 commit; no implementation commits are performed while editing this plan.
+
+Expected: new injection/UI-route tests RED before D160 extension, PASS afterward; no import-time factories, secondary factory calls zero, one real broker/provider/registry/channel path. T9 passes acceptanceFoundation to this exact function and records actual trusted hold→broker traces, not an intent double. No environment, manifest, preload selector or source-rewriting build plugin.
+
+- [ ] **Steps 25–26: Consume the frozen D170 seam; implementation belongs to B2-T9.**
+
+Skeleton BM-14 and `docs/superpowers/plans/2026-10-17-plugin-system-3b2-settings-storage.md`, **Task 3B2-T9 Steps 1–3, 7–9, 13**, are the sole executable D170/V170 composition. Consume F's AM-18 `PersistenceRecoveryBridge`, AM-27 `composePersistence170(input, ports)`, AM-28 `BoundSettingsService`/`ContributedSettingsForm`/`SettingsFieldMap`, and AM-29 import evidence types. P160 delivers only generic controls/detail outputs; it mounts no persistence runtime.
+
+D170 binds `bindSettingsBridge(service: BoundSettingsService, scope: () => CoreWindowScope): PluginsApi["settings"]` in main/plugins/ipc.ts. V170 alone implements `submitLegacyPreferences(api, storage:()=>Pick<Storage,"getItem">, descriptorId):Promise<"accepted"|"pending"|"reconciled">` and the settings form's watch→read→replaceSnapshot sequence, rejecting late reads after a generation switch. Startup preserves the existing stage3/stage3Host pair, assigns the runtime through BM-18's onStage3Runtime callback before admission, and replaces only stage3.persistence. No second worker, profile lock, coordinator, form mount or bootstrap trigger is created here.
 
 ### Task 3B1-T6: Renderer catalog, state, input lifetime and bootstrap
 
@@ -13189,157 +13797,9 @@ git add apps/desktop/src/renderer/app.tsx apps/desktop/src/renderer/app.test.ts 
 git commit -m "feat(plugins): integrate generic tools and independent recovery into the workbench"
 ```
 
-- [ ] **Step 10: Attach the frozen V170 settings, recovery and preference services**
+- [ ] **Step 10: Hand off the frozen V170 settings/recovery seam.**
 
-The same H-V writer executes this serialized slice under P12/3B2-T9 after P160 and the D170/B2-T3/T6 handoffs. The following concrete attachment code and tests are part of that receipt:
-
-| Attachment | Producer → consumer | Invariant and required V170 test |
-| --- | --- | --- |
-| Contributed settings | B2-T3 `SettingsFormPort` → T7 `SettingsControlsPort` | `open(binding, resource, snapshot)`, `replaceSnapshot(binding,snapshot)`, `showFailure(binding,error)`, `dispose(binding)` retain their exact signatures above. One selected host form, 16 fields/page, at most 8 pages; B2 owns CAS and error recovery. Numeric/string enums and dotted keys round-trip unchanged. |
-| Settings shell | B2-T3 adapter → H-V `settings-panel.tsx` / `settings-catalog.ts` | Add an independently sourced contributed settings section and search entries using the host settings catalog. Enable/disable and resource replacement unmount/dispose the matching binding, without erasing a newer source's form. No `plugin/ui.invoke` wrapper, no Apply, no feature process activation for reading or changing settings. |
-| Retained recovery | B2-T5 `PersistenceParticipant.recoverySnapshot()` → D170 core recovery → T7 `CorePersistenceDetail` | Only complete host-held staging is retryable; `checkpoint-only`/`none` cannot become “saved” or “retryable” from renderer state. `CoreRecoveryItem.actions` remains `stop/reconcile/clear-resolved/retry-save/manage`. The trusted detail callback sends item/option IDs; only main mints `CoreActionReference` and chooses export destination. Use `plugins.persistenceRecovery.snapshot/act/onOpen/onChanged` exactly; manage never treats a core snapshot as persistence detail. |
-| Import evidence | B2-T6 trusted nonce request → H-V `legacy-preferences-bridge.ts` → `plugins.legacyPreferences.submit(snapshot)` | Exact `LegacyPreferencesSnapshot` above: matching nonce + `CoreWindowScope`, at most 128 allowlisted entries / 64 KiB; `getItem` exception is failure/pending, not null. No localStorage enumeration, no feature IPC, no arbitrary paths. Original raw values preserved, no default coercion. |
-| Publication ordering | P160 → D170/V170/K170/R170 → B2-T9 → X-T1 | No actual persistence writer, import mapping or fake success is installed at P160. V170 uses B2's real worker/participant and the one profile writer lock; synthetic mapping only. Real Lab/EV3 transformations remain 3D/3E. |
-
-The V170 adapter consumes the formal Settings/Storage request maps; it must not extend UI v1 `LocalId`, `UiScalar`, `choice` or the 16 KiB command form to fit 64 KiB settings. Only layout identity is restored; no operation, gesture, input token, pending command, native path or recording state is stored in H-V. `legacy-preferences-bridge.ts` and its test are created in this V170 slice, after the coordinator/preload handoff.
-
-At V170 add to `settings-panel.tsx` (merge the React imports with its existing imports), and mount `<ContributedSettingsMount sourceKey={entry.sourceKey} resourceDigest={entry.resourceDigest} locale={locale} labels={pluginUiCopy[locale]} />` for the selected contributed settings catalog entry. `settings-catalog.ts` retains the existing independently sourced host catalog/search entries; do not synthesize them from plugin process activation. No selected entry means no form mount.
-
-```tsx
-import { useEffect, useMemo, useState } from "react";
-import type { BoundSettingsService } from "@kobrixa/plugin-runtime";
-import { createContributedSettingsForm, createSettingsFieldMap } from "./contributed-settings-form.js";
-import { attachSettingsControls, type UiLabels } from "../plugin-ui/host-ports.js";
-import { SettingsControls, SettingsControlsView } from "../plugin-ui/forms.js";
-export function ContributedSettingsMount({ sourceKey, resourceDigest, locale, labels }: {
-  sourceKey: string; resourceDigest: string; locale: "en" | "zh-TW"; labels: UiLabels;
-}) {
-  const [failed, setFailed] = useState(false);
-  const controls = useMemo(() => new SettingsControls(), [sourceKey, resourceDigest]);
-  useEffect(() => {
-    setFailed(false);
-    const api = window.kobrixa.plugins.settings;
-    const service: BoundSettingsService = {
-      open: ({ sourceKey, resourceDigest }) => api.open({ sourceKey, resourceDigest }),
-      read: (binding) => api.read(binding), update: (binding, params) => api.update(binding, params),
-      reset: (binding, params) => api.reset(binding, params),
-      watch: (binding, changed) => api.watch(binding, changed), dispose: (binding) => api.dispose(binding),
-    };
-    const form = createContributedSettingsForm(controls, service);
-    const detach = attachSettingsControls(controls, {
-      retry: (binding, key) => form.retry(binding, key), reload: (binding) => form.reload(binding),
-      fieldMap: createSettingsFieldMap,
-    });
-    let live = true;
-    let opened: Awaited<ReturnType<typeof api.open>> | undefined;
-    void api.open({ sourceKey, resourceDigest }).then((value) => {
-      if (!live) { api.dispose(value.binding); return; }
-      opened = value; form.open(value.binding, value.resource, value.snapshot);
-    }).catch(() => { if (live) setFailed(true); });
-    return () => {
-      live = false;
-      if (opened) form.dispose(opened.binding);
-      detach(); controls.destroy();
-    };
-  }, [controls, sourceKey, resourceDigest]);
-  return failed ? <p role="alert">{labels.unavailable}</p> : <SettingsControlsView controls={controls} locale={locale} labels={labels} />;
-}
-```
-
-P170 tests use the real bound service and propagate stale digest/CAS errors. Never create `CoreWindowScope` or a core token in renderer.
-
-In `app.tsx`, import `CorePersistenceRecovery` from `./plugin-ui/core-persistence-detail.js` and mount it beside `CoreRecoveryView` at V170:
-
-```tsx
-<CorePersistenceRecovery port={window.kobrixa.plugins.persistenceRecovery} labels={uiLabels} />
-```
-
-`onOpen` selects the trusted item even when all optional features are off. `CoreRecoveryPort.act` continues to return only its core snapshot, and the generic detail wrapper requests a fresh persistence snapshot. Export/discard are detail options only; main issues and consumes their core actions.
-
-Create `settings/legacy-preferences-bridge.ts`:
-
-```ts
-import type { PluginsApi } from "../../shared/plugins.js";
-export async function submitLegacyPreferences(descriptorId: string,
-  api: PluginsApi["legacyPreferences"], storage: Pick<Storage, "getItem">): Promise<{
-    state: "accepted" | "pending" | "reconciled";
-  }> {
-  try {
-    const challenge = await api.challenge(descriptorId);
-    if (challenge.descriptorId !== descriptorId || challenge.keys.length > 128
-      || new Set(challenge.keys).size !== challenge.keys.length) return { state: "pending" };
-    const entries = challenge.keys.map((key) => ({ key, raw: storage.getItem(key) }));
-    const snapshot = { nonce: challenge.nonce, scope: challenge.scope, entries };
-    if (new TextEncoder().encode(JSON.stringify(snapshot)).length > 65536) return { state: "pending" };
-    return await api.submit(snapshot);
-  } catch { return { state: "pending" }; }
-}
-```
-
-V170 bootstrap invokes this once for each main-registered synthetic descriptor selected by the integration fixture and records the returned state. The foundations product registers no live Lab/device mappings and issues no made-up descriptor/nonce; D170 supplies the allowlisted descriptor identity and derives sender scope independently. A failed read/submit leaves durable import pending, never marks complete-empty. Do not enumerate, rewrite or delete localStorage.
-
-Create `settings/legacy-preferences-bridge.test.ts`:
-
-```ts
-import { expect, it, vi } from "vitest";
-import type { PluginsApi } from "../../shared/plugins.js";
-import { submitLegacyPreferences } from "./legacy-preferences-bridge.js";
-const scope = { hostEpoch: "00000000-0000-4000-8000-000000000001", workbenchInstance: "00000000-0000-4000-8000-000000000002" };
-function fixture() {
-  const api = {
-    challenge: vi.fn<PluginsApi["legacyPreferences"]["challenge"]>(async (descriptorId) => ({
-      descriptorId, scope, nonce: "00000000-0000-4000-8000-000000000003", keys: ["fixture.preference"],
-    })),
-    submit: vi.fn<PluginsApi["legacyPreferences"]["submit"]>(async () => ({ state: "accepted" })),
-  };
-  return api;
-}
-it("AM-29 submits only coordinator-issued raw evidence and preserves pending", async () => {
-  const api = fixture(); const storage = { getItem: vi.fn(() => " 01 ") };
-  expect(await submitLegacyPreferences("synthetic", api, storage)).toEqual({ state: "accepted" });
-  expect(api.submit).toHaveBeenCalledWith({ nonce: "00000000-0000-4000-8000-000000000003", scope,
-    entries: [{ key: "fixture.preference", raw: " 01 " }] });
-  api.submit.mockResolvedValue({ state: "pending" });
-  expect(await submitLegacyPreferences("synthetic", api, storage)).toEqual({ state: "pending" });
-});
-it("AM-29 read failure is not absent and oversized evidence is not submitted", async () => {
-  const api = fixture();
-  expect(await submitLegacyPreferences("synthetic", api, { getItem: () => { throw new Error("denied"); } })).toEqual({ state: "pending" });
-  expect(await submitLegacyPreferences("synthetic", api, { getItem: () => "x".repeat(65536) })).toEqual({ state: "pending" });
-  expect(api.submit).not.toHaveBeenCalled();
-});
-```
-
-Append to `forms.test.ts`, importing `attachSettingsControls` and B2-T3's `createSettingsFieldMap`:
-
-```ts
-it("AM-28 attaches exact retry/reload handlers and reversible synthetic field/option IDs", async () => {
-  const controls = new SettingsControls(); const retry = vi.fn(async () => {}); const reload = vi.fn(async () => {});
-  const detach = attachSettingsControls(controls, { retry, reload, fieldMap: createSettingsFieldMap });
-  const map = createSettingsFieldMap(resource);
-  expect(map.key(map.field("editor.mode"))).toBe("editor.mode");
-  expect(map.value("editor.mode", map.option("editor.mode", 1))).toBe(1);
-  expect(map.value("editor.mode", map.option("editor.mode", "1"))).toBe("1");
-  expect(map.option("editor.mode", 1)).not.toBe(map.option("editor.mode", "1"));
-  expect(() => map.key("unknown")).toThrow(); expect(() => map.value("editor.mode", "unknown")).toThrow();
-  const baseline = { schemaVersion: 1, revision: null, values: [{ key: "editor.mode", value: 1 }, { key: "editor.size", value: 12 }] };
-  controls.render(binding, resource, { baseline, draft: baseline.values, busyKeys: [], errors: [{ key: "editor.size", message: { en: "Conflict" } }] });
-  controls.raw("editor.size", "13"); await controls.retry("editor.size");
-  expect(retry).toHaveBeenCalledWith(binding, "editor.size"); expect(controls.getSnapshot()?.raw["editor.size"]).toBe("13");
-  await controls.reload(); expect(reload).toHaveBeenCalledWith(binding); expect(controls.getSnapshot()?.raw).toEqual({});
-  detach(); controls.dispose(binding); await controls.retry("editor.size");
-  expect(retry).toHaveBeenCalledTimes(1);
-});
-```
-
-Run the V170 attachments and B2's actual adapter/service tests after dependency builds:
-
-```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/renderer/plugin-ui/forms.test.ts src/renderer/plugin-ui/core-persistence-detail.test.ts src/renderer/settings/contributed-settings-form.test.ts src/renderer/settings/settings-panel.test.ts src/renderer/settings/legacy-preferences-bridge.test.ts src/main/plugins/persistence/settings-service.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm check:desktop
-```
-
-Expected PASS at P170: no-process initial settings read, stale digest rejected, immediate per-field CAS, conflict retains draft until explicit retry/reload, numeric `1` versus string `"1"`, dotted keys, source switch and late-open disposal, manage/onOpen with all optional sources off, stale option/window/replay refusal, dialog cancel, original core snapshot shape, and pending preference submission. D170 supplies the main security assertions; these renderer tests do not mint tokens or simulate a successful export receipt. Before P170 this suite is a named dependency gate, not claimed persistence acceptance.
+Skeleton BM-14 and `docs/superpowers/plans/2026-10-17-plugin-system-3b2-settings-storage.md`, **Task 3B2-T9 Steps 1–3, 7–9, 13**, exclusively implement and test this slice. Consume the existing P160 `SettingsControlsPort`, `SettingsDraftState`, `attachSettingsControls`, `CorePersistenceRecovery` and AM-18/27/28/29 types read-only. The form opens once per source/digest/scope, subscribes watch→read→replaceSnapshot, ignores late reads after replacement and disposes watch/form/binding once. The sole preference helper is `submitLegacyPreferences(api, storage:()=>Pick<Storage,"getItem">, descriptorId):Promise<"accepted"|"pending"|"reconciled">`; its trigger is B2's settings panel. Keep product descriptor/writer arrays empty. No D170/V170 implementation, test or commit is executed in this B1 step.
 
 - [ ] **Step 11: Controller runs outside sandbox — V160 integration and evidence receipt**
 
@@ -13467,19 +13927,14 @@ interface CoreRecoveryPort {
 }
 ```
 
-The SDK and launcher signatures consumed by the executable fixtures are:
+The SDK and launcher signatures consumed by the executable fixtures are (import `ValueSpec` from protocol and `ContextCommandHandler` from the JS SDK). Python uses `context_command(id, arguments)` with the identical speed/mode schema. Run both actual consumers through U05–U07 and hold→broker U10 below; the SDK remains unchanged:
 
 ```ts
 // Existing SDK registration remains available for saved legacy consumers.
 declare const commands: {
   register(id: string, handler: CommandHandler): void;
-// B1 §14.4: new handler registration, with the protocol invocation's members.
-  registerContext(id: string, handler: (input: {
-  arguments: CommandInvocation["arguments"];
-  context: CommandInvocation["context"];
-  invocationId: CommandInvocation["invocationId"];
-  signal: AbortSignal;
-}) => Promise<ResultOf<"command/invoke">>): void;
+// T1's three-argument registration returns raw CommandValue through ContextCommandHandler.
+  registerContext(id: string, argumentsSchema: Record<string, ValueSpec>, handler: ContextCommandHandler): void;
 };
 // The canonical public wire signatures, also consumed by the SDK helpers:
 declare const ui: {
@@ -14291,7 +14746,10 @@ let ticks = 0;
 runPlugin(definePlugin({
   activate(ctx) {
     ctx.commands.register(`${ctx.pluginId}.legacy`, async () => {});
-    ctx.commands.registerContext(`${ctx.pluginId}.activate`, async invocation => {
+    ctx.commands.registerContext(`${ctx.pluginId}.activate`, {
+      speed: {type: "number", min: -100, max: 100, integer: true, nullable: false},
+      mode: {type: "enum", values: ["coast", "brake"], nullable: false},
+    }, async invocation => {
       if (invocation.arguments.speed === -99) throw new Error("fixture callback failed");
       if (invocation.arguments.speed === -98) {
         await new Promise<void>((resolve, reject) => {
@@ -14304,17 +14762,20 @@ runPlugin(definePlugin({
         });
       }
       calls++;
-      return { ok: true, value: { output: {
+      return { output: {
         calls, speed: invocation.arguments.speed!, mode: invocation.arguments.mode!,
         origin: invocation.context.origin, hasBinding: Boolean(invocation.context.binding),
         hasMotion: Boolean(invocation.context.motionScopeRef), unicode: "🙂界",
-      }, fieldErrors: [] } };
+      }, fieldErrors: [] };
     });
-    ctx.commands.registerContext(`${ctx.pluginId}.hold`, async invocation => ({
-      ok: true, value: { output: {
+    ctx.commands.registerContext(`${ctx.pluginId}.hold`, {
+      speed: {type: "number", min: -100, max: 100, integer: true, nullable: false},
+      mode: {type: "enum", values: ["coast", "brake"], nullable: false},
+    }, async invocation => ({
+      output: {
         speed: invocation.arguments.speed!, mode: invocation.arguments.mode!,
         phase: invocation.context.trigger.kind === "hold" ? invocation.context.trigger.phase : "invalid",
-      }, fieldErrors: [] },
+      }, fieldErrors: [],
     }));
   },
   async ready(ctx) {
@@ -14359,7 +14820,10 @@ producer = None
 async def legacy(ctx):
     return None
 
-@plugin.context_command("acceptance.ui.activate")
+@plugin.context_command("acceptance.ui.activate", {
+    "speed": {"type": "number", "min": -100, "max": 100, "integer": True, "nullable": False},
+    "mode": {"type": "enum", "values": ["coast", "brake"], "nullable": False},
+})
 async def activate(ctx):
     global calls
     if ctx.arguments["speed"] == -99:
@@ -14367,18 +14831,21 @@ async def activate(ctx):
     if ctx.arguments["speed"] == -98:
         await asyncio.sleep(60)
     calls += 1
-    return {"ok": True, "value": {"output": {
+    return {"output": {
         "calls": calls, "speed": ctx.arguments["speed"], "mode": ctx.arguments["mode"],
         "origin": ctx.context["origin"], "hasBinding": "binding" in ctx.context,
         "hasMotion": "motionScopeRef" in ctx.context, "unicode": "🙂界"
-    }, "fieldErrors": []}}
+    }, "fieldErrors": []}
 
-@plugin.context_command("acceptance.ui.hold")
+@plugin.context_command("acceptance.ui.hold", {
+    "speed": {"type": "number", "min": -100, "max": 100, "integer": True, "nullable": False},
+    "mode": {"type": "enum", "values": ["coast", "brake"], "nullable": False},
+})
 async def hold(ctx):
-    return {"ok": True, "value": {"output": {
+    return {"output": {
         "speed": ctx.arguments["speed"], "mode": ctx.arguments["mode"],
         "phase": ctx.context["trigger"].get("phase", "invalid")
-    }, "fieldErrors": []}}
+    }, "fieldErrors": []}
 
 @plugin.ready
 async def ready(ctx):
@@ -14685,7 +15152,7 @@ async function run() {
       })().catch(failure);
     });
   });
-  await import("../../apps/desktop/src/main/index.js");
+  await startAcceptanceWindow();
 }
 void run().catch(failure);
 ```
@@ -14895,6 +15362,13 @@ export async function acceptanceFoundation(options: DesktopFoundationOptions) {
     return fake.provider;
   } });
 }
+// This is the same typed production composition, with the sole permitted factory override.
+import { composeDesktopMain, desktopUi, desktopLifecycle }
+  from "../../apps/desktop/src/main/plugins/controller.js";
+import type { DesktopMainCompositionInput } from "../../apps/desktop/src/main/plugins/controller.js";
+export function acceptanceComposition(input: DesktopMainCompositionInput) {
+  return composeDesktopMain({ ...input, createFoundation: acceptanceFoundation });
+}
 const wallTime = () => performance.timeOrigin + performance.now();
 async function bounded<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -14970,33 +15444,110 @@ export async function runMotionRace(test: MotionRace) {
 }
 ```
 
-Add this test-only esbuild plugin in `declarative-ui-run.mjs` before the main build, and include `foundationOverride()` before `rawResourcePlugin()` in that build's plugin array. This rewrites only the one production composition call in memory. The lifecycle factory itself and its production options remain unchanged; the installed builder omits the plugin.
+Replace the product-mode dynamic main import in Step 5 with `await startAcceptanceWindow()` and add this native test-shell function to declarative-ui-main.ts. The shell creates the real authority/profile/native input boundary, passes those objects unchanged into the shared composition, and loads the existing production renderer test entry. It never injects intent/router/state factories. Merge duplicate imports (BrowserWindow must be a value import):
 
-```js
-function foundationOverride() {
-  let calls = 0;
-  return {
-    name: "acceptance-foundation-override",
-    setup(builder) {
-      builder.onLoad({ filter: /apps[\\/]desktop[\\/]src[\\/]main[\\/].*\.ts$/ }, async args => {
-        if (args.path.replaceAll("\\", "/").endsWith("/device-broker/lifecycle-coordinator.ts")) return;
-        const text = await readFile(args.path, "utf8");
-        const matches = [...text.matchAll(/\bcreateDesktopFoundation\s*\(/g)];
-        if (!matches.length) return;
-        assert.equal(matches.length, 1, "one production foundation call per module");
-        calls += matches.length;
-        const entry = path.join(root, "tests/desktop/declarative-ui-main.ts");
-        return { loader: "ts", resolveDir: path.dirname(args.path), contents:
-          `import { acceptanceFoundation as __acceptanceFoundation } from ${JSON.stringify(entry)};\n` +
-          text.replace(/\bcreateDesktopFoundation\s*\(/, "__acceptanceFoundation(") };
+```ts
+import { BrowserWindow, ipcMain } from "electron";
+import { startPrimary } from "../../apps/desktop/src/main/plugins/profile-writer-lock.js";
+import { AuthorityContexts } from "../../apps/desktop/src/main/device-broker/authority-context.js";
+import { createCoreActionLedger, CoreRecovery } from "../../apps/desktop/src/main/plugins/core-recovery.js";
+import { registerCoreRecoveryIpc } from "../../apps/desktop/src/main/plugins/ipc.js";
+import { createJournal } from "../../apps/desktop/src/main/device-broker/journal.js";
+import { createJournalFilesystem } from "../../apps/desktop/src/main/device-broker/journal-filesystem.js";
+import { BUILTIN_PLUGIN_SOURCES } from "../../apps/desktop/src/main/plugins/builtin.js";
+import { registerUiIpc } from "../../apps/desktop/src/main/plugins/ui-bridge.js";
+import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
+import { readSource } from "@kobrixa/plugin-runtime";
+let acceptanceMain: Awaited<ReturnType<typeof acceptanceComposition>> | undefined;
+async function startAcceptanceWindow(): Promise<void> {
+  let window: BrowserWindow | undefined;
+  const primary = startPrimary(app, async profile => {
+    const now = () => performance.now();
+    const authority = new AuthorityContexts(profile.hostEpoch);
+    window = new BrowserWindow({ width: 1024, height: 768, show: true,
+      webPreferences: { preload: path.join(path.dirname(process.argv[1]!), "preload.cjs"),
+        contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    const win = window;
+    const document = authority.open(win.webContents.id);
+    authority.report(win.webContents.id, { document, sequence: 1, state: "local", roomId: null,
+      connected: true, synced: true, role: null, isHolder: true });
+    const scope = () => {
+      const principal = authority.core(win.webContents.id, "recovery");
+      return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
+    };
+    const currentScope: DesktopMainCompositionInput["currentScope"] = candidate => {
+      if (win.isDestroyed()) return false;
+      const current = scope(); return candidate.hostEpoch === current.hostEpoch && candidate.workbenchInstance === current.workbenchInstance;
+    };
+    const directories = (process.argv.find(value => value.startsWith("--plugin-dev-dir="))?.slice("--plugin-dev-dir=".length) ?? "")
+      .split(path.delimiter).filter(Boolean);
+    const admitted = await Promise.all(directories.map(directory => readSource({ kind: "development", directory }, { safeMode: false })));
+    const coreActions = createCoreActionLedger({ now, current: currentScope });
+    const composition = await acceptanceComposition({ createFoundation: createDesktopFoundation,
+      foundationOptions: { profile, now, authority,
+        journal: createJournal(createJournalFilesystem(app.getPath("userData")), profile), coreActions,
+        hasPermission: (principal, permission) => principal.kind === "plugin" &&
+          !!admitted.find(source => source.sourceKey === principal.owner.sourceKey)?.manifest?.permissions.includes(permission),
+        requirements: owner => admitted.find(source => source.sourceKey === owner.sourceKey)?.manifest?.requires?.devices ?? [],
+        connectionPolicy: () => ({ wifiConnectTimeoutMs: 10000, wifiHandshakeTimeoutMs: 5000,
+          usbAutoReconnect: false, usbRetryInterval: 2000, usbRetryLimit: 3 }),
+        operationGate: () => ({ ok: true, value: null }) },
+      plugins: { userData: app.getPath("userData"), builtins: BUILTIN_PLUGIN_SOURCES, locale: "en",
+        commandLine: { developmentDirectories: directories, safeMode: false },
+        dialogs: { confirmDeveloperMode: async () => true, chooseFolder: async () => undefined,
+          confirmLink: async () => true, confirmUnlink: async () => true, choosePython: async () => undefined } },
+      principal: owner => authority.plugin(win.webContents.id, owner), scope, currentScope,
+      legacyFlush: async () => {}, report: failure,
+    });
+    acceptanceMain = composition;
+    const ui = desktopUi(composition);
+    const trusted = (event: { sender: { id: number }; senderFrame: unknown }) =>
+      !win.isDestroyed() && event.sender.id === win.webContents.id && event.senderFrame === win.webContents.mainFrame;
+    const handle: IpcHandle = (name, action) => ipcMain.handle(name, (event, ...args) => {
+      if (!trusted(event)) throw new Error("Untrusted acceptance sender."); return action(event, ...args);
+    });
+    registerUiIpc({ handle, bridge: ui.bridge, trusted });
+    const recovery = new CoreRecovery({ scope, now, actions: coreActions,
+      entries: () => composition.foundation.broker.recovery.snapshot().blockers.map(id => ({
+        item: { id, sourceKey: "core:device", kind: "device", state: "unconfirmed",
+          title: { en: "Device recovery", "zh-TW": "裝置復原" },
+          detail: { en: "Stop or journal disposition is unconfirmed.", "zh-TW": "停止或日誌結果尚未確認。" }, actions: [] },
+        options: new Map(),
+      })),
+      openDetail() { throw new Error("No persistence detail in this P160 acceptance shell."); } });
+    const offRecovery = registerCoreRecoveryIpc(handle, recovery, () => {
+      if (!win.isDestroyed()) win.webContents.send("plugins:recovery:changed");
+    });
+    const offDeviceRecovery = composition.foundation.broker.recovery.subscribe(() => recovery.changed());
+    ui.setRecoveryNavigation(() => { if (!win.isDestroyed()) win.webContents.send("plugins:recovery:changed"); });
+    let off: (() => void) | undefined;
+    handle("plugins:ui:subscribe", () => {
+      off?.(); off = ui.bridge.onEvent(event => { if (!win.isDestroyed()) win.webContents.send("plugins:ui:event", event); });
+    });
+    handle("plugins:ui:unsubscribe", () => { off?.(); off = undefined; });
+    win.on("blur", () => ui.intent.dispose());
+    win.on("hide", () => ui.intent.dispose());
+    win.webContents.on("render-process-gone", () => {
+      ui.intent.dispose(); coreActions.retire(scope()); ui.actions.revokeWindow(scope());
+      void desktopLifecycle(composition).close("close").catch(failure);
+    });
+    let closed = false, closing = false;
+    win.on("close", event => {
+      if (closed) return; event.preventDefault(); if (closing) return; closing = true;
+      void composition.dispose().then(() => { closed = true; off?.(); offRecovery(); offDeviceRecovery(); win.close(); app.quit(); }, error => {
+        closing = false; failure(error);
       });
-      builder.onEnd(() => { assert.equal(calls, 1, "exactly one real composition call must be overridden"); });
-    },
-  };
+    });
+    await win.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  }, () => { if (!window || window.isDestroyed()) return false; window.focus(); return true; });
+  if (!primary) throw new Error("Acceptance profile is already held.");
+  await primary.ready;
 }
 ```
 
-The override calls the original imported factory, so it cannot recurse. Exported function declarations are initialized before the dynamically imported production entry executes; retain the original `void run()` entry once. Pass the real returned foundation onward; the runner never registers a second provider or brokers an alternate request path.
+The acceptance shell has no legacy Lab resources, hence its empty legacyFlush; production retains the real D150 callback. Keep native sender checks and the same broker authority implementation. Retain acceptanceMain for diagnostics and race assertions; a missing fakeControl or missing actual provider trace fails U10. This test shell does not certify production native-window/legacy-Lab behavior, which remains covered by the retained D160 main IPC/lifetime integration and packaged smoke gates.
+
+The runner imports composeDesktopMain from controller.ts and passes acceptanceFoundation directly. The build uses only rawResourcePlugin(); delete foundationOverride and its build registration. There is no import of main/index.ts and no source-text replacement. Installed/transport mode retains its existing separate entry; the native shell below is used only by the controller's real UI acceptance run.
 
 Bind the race operations to real objects retained by that composition: `diagnostics` is T5 `diagnosticsFor` of the actual bridge; `settled` awaits the original operation's public `devices/motion/query` terminal result and stop/readback, and `recovery` reads `window.kobrixa.plugins.recovery.snapshot({})` on a surviving workbench. `inject` uses native mouseUp for cancel, window hide for hide, the real collaboration authority report for holder→viewer, CDP `Debugger.pause`/`Debugger.resume` for renderer freeze (main keeps running past 350 ms), `webContents.forcefullyCrashRenderer()` for crash, and OS kill of the PID captured from the actual plugin log for plugin-kill. Capture the authority transition event before releasing a held exchange. Do not call `DeviceIntentPort` from the test to manufacture revocation.
 
@@ -15115,7 +15666,7 @@ try {
   const main = path.join(directory, "build/main.cjs");
   await build({ entryPoints: [path.join(root, "tests/desktop/declarative-ui-main.ts")], outfile: main,
     bundle: true, platform: "node", format: "cjs", sourcemap: true,
-    external: ["electron", "node-hid", "electron-updater"], plugins: [foundationOverride(), rawResourcePlugin()],
+    external: ["electron", "node-hid", "electron-updater"], plugins: [rawResourcePlugin()],
     define: { MAIN_WINDOW_VITE_DEV_SERVER_URL: JSON.stringify(renderer), MAIN_WINDOW_VITE_NAME: '"main_window"' } });
   await build({ entryPoints: [path.join(root, "apps/desktop/src/preload/index.ts")],
     outfile: path.join(directory, "build/preload.cjs"), bundle: true,

@@ -6,9 +6,9 @@
 
 **Tech Stack:** Repository TypeScript strict/noUncheckedIndexedAccess/exactOptionalPropertyTypes, Zod 4, Node 24+, Vitest, pnpm, Electron utility-process MessagePort, and Python 3.10+ Content-Length stdio. Reuse prepared dependencies and existing package scripts.
 
-**Spec:** `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md` and `docs/superpowers/specs/2026-10-17-plugin-system-3a-device-broker-design.md`; sibling core actions/intent/coordinator in 3B-1 §§9,11.4,13.1 and persistence participant in 3B-2 §8.2. `.superpowers/sdd/stage-3-plans/skeleton.md` controls task IDs, exact paths, interfaces and execution order. Planning baseline: `b7953e639182117865f5a46f71828e724b7aa334`; this is not future baseline F. Binding revision: T0 Amendment A, 2026-10-18 (AM-01–16/21/22/31/32); corrected spec wording in `spec-corrections.md` applies without editing specs.
+**Spec:** `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md` and `docs/superpowers/specs/2026-10-17-plugin-system-3a-device-broker-design.md`; sibling core actions/intent/coordinator in 3B-1 §§9,11.4,13.1 and persistence participant in 3B-2 §8.2. `.superpowers/sdd/stage-3-plans/skeleton.md` controls task IDs, exact paths, interfaces and execution order. Planning baseline: `b7953e639182117865f5a46f71828e724b7aa334`; this is not future baseline F. Binding revision: T0 Amendments A and B, 2026-10-18 (AM-01–16/21/22/31/32); corrected spec wording in `spec-corrections.md` applies without editing specs.
 
-**Execution:** These are future implementation instructions. This drafting part changes only `.superpowers/sdd/stage-3-plans/parts/P01.md`; it performs no implementation, test execution, commit or merge. Implementers record actual results. Every Electron, localhost, installed-app and hardware step is **controller runs outside sandbox**. Git commit/worktree commands below are controller commands; merges remain user-executed.
+**Execution:** These are future implementation instructions for this plan. Implementers record actual results. Every Electron, localhost, installed-app and hardware step is **controller runs outside sandbox**. Git commit/worktree commands below are controller commands; merges remain user-executed.
 
 ## Global Constraints
 
@@ -289,7 +289,7 @@ strict wire schema 可匯出的結構限制由 Zod 生成 JSON Schema；需要�
 
 Execute **3A-T0 → 3B1-T0 → 3B2-T0** as one short, non-releasable cross-plan T0 on `feat/plugin-system-stage-3`. The three T0 sections are portions of the same operation, not independent freezes that each feature branch reruns. The controller records the final baseline SHA and per-file successor owners in `docs/superpowers/plans/2026-10-17-plugin-system-stage-3-contract-freeze.md` (future artifact). Each plan's preflight verifies that receipt and the contract tests; if absent, execute all three T0 portions in order before starting its tasks. No task silently acquires contracts from an unmerged sibling branch.
 
-T0 freezes formal module-local types, host-only ports, export destinations, error/event registries by batch, schemas/semantic fixture expectations, all budgets, maximum workloads, performance measurement fields, and ownership. It provides compilable type-only scaffolds and explicitly unavailable/inert adapters only where a task needs them. No transport constructor, filesystem writer, process launch, UI registration, or motion is wired in T0. Do not publish API 1.6/1.7 schemas, methods, permissions, events, or required fields in 1.5. Future domain modules may compile internally but are absent from public runtime exports/method registration and generated schema until their batch (type-only forward exports are permitted for the unreleased contract baseline). T0 keeps the published API at 1.4.0; the unreleased baseline is not a product acceptance gate. All ordinary existing behavior remains available. Type-only host exports can be assembled by the unique runtime owner; contract tests can import unpublished modules directly.
+T0 freezes formal module-local types, host-only ports, export destinations, error/event registries by batch, schemas/semantic fixture expectations, all budgets, maximum workloads, performance measurement fields, and ownership. It provides compilable type-only scaffolds and explicitly unavailable/inert adapters only where a task needs them. No transport constructor, filesystem writer, process launch, UI registration, or motion is wired in T0. Do not publish API 1.6/1.7 schemas, methods, permissions, events, or required fields in 1.5. Future domain modules may compile internally but are absent from public runtime exports/method registration and generated schema until their batch (type-only forward exports are permitted for the unreleased contract baseline). T0 keeps the published API at 1.4.0; the unreleased baseline is not a product acceptance gate. All ordinary existing behavior remains available. Type-only host exports MUST be assembled by H-R during the final B2-T0 portion (BM-01); every earlier T0 desktop/package compile gate runs only after that assembly. Contract tests may import unpublished modules directly.
 
 After step 3, the controller publishes one baseline commit **F**. The user/controller cuts `feat/plugin-3a`, `feat/plugin-3b1`, and `feat/plugin-3b2` from F on `feat/plugin-system-stage-3`; record actual SHAs, never substitute a guessed SHA. Each implementation task may use an isolated worktree from its plan's recorded baseline. Tasks use only their declared write set and local mocks; read access is unrestricted. T0 relinquishes every scaffold to its successor before any parallel writer starts.
 
@@ -313,27 +313,27 @@ Ownership is a persistent role, not a new person per plan. A role may move its w
 | Role                       | Plan/task owner and serialized execution                                                                                                                                              | Exclusive shared files                                                                                                                                                                                                                                                                                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Protocol integrator        | Dedicated task **3A-T1**, continued as **3B1-T1**, then **3B2-T8**                                                                                                                    | H-P below: protocol shared schema/exports/registries/conformance and both SDK contexts, including business-result/events and common SDK event adapters; AM-15 orders P150 → P160 → P170 stopped-owner handoffs. B2-T1 only supplies isolated new modules.                                                                                                                                                                                                                             |
-| Runtime owner              | **3B1-T3**; slice **R150** applied in 3A-T10 before P150 acceptance, then R160 in B1, then R170 in B2-T9                                                                              | H-R: manager/registry/supervisor/errors/index and their tests. R150 installs provider own-property rejection, errors import/re-export, channel owner/generation, device participant hooks and the provider-only optional source disable/safe-mode policy; no UI wire publication. AM-14 freezes channel phases and original-peer routing; AM-13 adds required-policy fixture paths. R170 installs actual persistence through those hooks. |
+| Runtime owner              | **3B1-T3**; slice **R150** applied in 3A-T10 before P150 acceptance, then R160 in B1, then R170 in B2-T9                                                                              | H-R: manager/registry/supervisor/errors/index and their tests. R150 installs provider own-property rejection, errors import/re-export, channel owner/generation, device participant hooks and the provider-only optional source disable/safe-mode policy; no UI wire publication. AM-14 freezes channel phases and original-peer routing; AM-13 adds required-policy fixture paths. R170 implements original-peer storage/drain dispatch in B2-T9; D170 installs the inbound persistence routes (BM-19). |
 | Desktop integration owner  | **3A-T8 (D150, including early B1-T5 ledger/controller) → 3B1-T5 (D160) → 3B2-T9 (D170)**                                                                                                                                                           | H-D: main composition/IPC/preload/shared bridges, controller/state/session and core action ledger, quit/update/window guards; AM-11/13 name the early slice and compatibility tests. B2 hands over factories; it never independently edits H-D.                                                                                                                                                                                                                       |
-| Packaging owner            | **3B1-T4**; slice **K150** supplies the EV3 factory allowlist/provider-only source registration in 3A-T10, K160 adds generic shipped-process packaging                                | H-K. No product motor/Lab/device UI source is fabricated. Missing future feature entries remain explicitly undelivered.                                                                                                                                                                                                                                       |
+| Packaging owner            | **3B1-T4**; slice **K150** supplies the EV3 factory allowlist/provider-only source registration in 3A-T10, K160 adds generic shipped-process packaging; K170 alone adds worker paths/build/unpack in B2-T9 (BM-15)                                | H-K. No product motor/Lab/device UI source is fabricated. Missing future feature entries remain explicitly undelivered.                                                                                                                                                                                                                                       |
 | Renderer integration owner | **3B1-T8**; slice **V150** applies legacy broker/battery/file/execution bridge changes in 3A-T10, V160 mounts generic UI, V170 connects contributed settings/import/recovery in B2-T9 | H-V. App composition, settings shell and all i18n stay with this writer.                                                                                                                                                                                                                                                                                      |
 | Shared integration owner   | **3A-T10 → 3B1-T10 → 3B2-T9 → X-T1**                                                                                                                                                  | H-I: package manifests, lockfile, root/CI test wiring, shared smoke harness and shared bilingual docs. Receives dependency/test needs; no other task runs install or edits these files.                                                                                                                                                                       |
 
-D150/R150/K150/V150 are implemented against the frozen contracts on isolated branches based on the 3A baseline, merged by the user into 3A for its integration gate, then reach B1/B2 only through stage-3. Their owners do not start D160/R160/K160/V160 on the same files until P150 is synchronized. Independent B1 catalog/renderer modules and B2 backends may continue meanwhile. The 3A integration checklist explicitly requires these slices; this removes the circular dependency that would result from waiting for the entire 1.6.0 plan to attach a 1.5.0 device participant.
+D150/R150/K150/V150 are implemented against the frozen contracts on isolated branches based on the 3A baseline, merged by the user into 3A for its integration gate, then reach B1/B2 only through stage-3. These slices are one co-integrated set: A-T10 schedules R150/K150/V150 while A-T8 completes D150 on scoped tests; only the final P150 gate requires all T1–T9 and all four slices. Their owners do not start D160/R160/K160/V160 on the same files until P150 is synchronized. Independent B1 catalog/renderer modules and B2 backends may continue meanwhile. The 3A integration checklist explicitly requires these slices; this removes the circular dependency that would result from waiting for the entire 1.6.0 plan to attach a 1.5.0 device participant.
 
 Hotspot direct tests/mocks follow the same owner. H-P/R/D/K/V/I are exact finite path sets listed below, not directory-wide permission. Integration may edit another task's file only after that task has stopped and the handoff receipt names that exact path. Prefer returning defects to the original owner. No blanket final-integration write grant.
 
 ### Parallel waves
 
 - **F:** only the three ordered T0 steps. Their contract tests and fixture lists must agree before F is published.
-- **W1:** A-T1..T9, B1-T2/T6/T7/T9, B2-T1..T7 can develop independently against frozen ports. A-T8 owns H-D; only the early R150/K150/V150 slices may touch H-R/K/V. All tasks own disjoint files in this wave. Runtime implementation dependencies below are read-only mock interfaces until integrated.
+- **W1:** A-T1..T9, B1-T2/T6/T7/T9, B2-T1..T7 can develop independently against frozen ports. A-T8 owns H-D; only the early R150/K150/V150 slices may touch H-R/K/V. All tasks own disjoint files in this wave. Runtime implementation dependencies below are read-only mock interfaces until integrated. A-T2 core tests inject T3 factory doubles without loading declaration-only value exports; A-T3 real-broker acceptance and A-T8 whole-desktop gates run in A-T10, not as prerequisites of their W1 commits (BM-07).
 - **W2:** after P150, B1-T1/T3/T4/T5/T8 run their 1.6.0 slices, alongside any unfinished non-hotspot work. B2 modules remain disjoint. B1-T10 requires completed B1 tasks and real A artifacts.
 - **W3:** after P160, B2-T8 publishes the batch; B2-T9 schedules R170/D170/V170/shared integration with their existing owners, then verifies actual artifacts.
 - **W4:** user merges P170, all writers stop, X-T1 runs. No concurrent writer of any shared file remains.
 
 Task dependencies distinguish **start** (F plus frozen stubs) from **acceptance** (real upstream implementations). A mock pass is branch-local only; no actual transport, installed, filesystem durability or hardware acceptance can be replaced by it.
 
-The finite hotspot sets below are ownership, not directory globs. P04 supplies the five Review Focus lines immediately before this section during assembly.
+The finite hotspot sets below are ownership, not directory globs. The five Review Focus lines immediately before this section govern the acceptance report.
 
 ### H-P — finite hotspot set
 
@@ -437,10 +437,12 @@ AM-15: these baseline-N common modules are handed over with H-P after A-T1 stops
 - E `apps/desktop/src/main/plugins/ipc.test.ts`
 - N `apps/desktop/src/main/plugins/core-recovery.ts`
 - N `apps/desktop/src/main/plugins/core-recovery.test.ts`
+- N `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts`
+- N `apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts`
 - E `apps/desktop/src/main/workspace/compiler-chain.test.ts`
 - E `apps/desktop/src/main/language/language-provider.integration.test.ts`
 
-AM-11/13: D150 owns the early controller/core-action and mandatory-policy compatibility slice; D160/D170 resume only after the prior slice stops.
+AM-11/13 and BM-06/18: D150 owns the early controller/core-action and mandatory-policy compatibility slice; its lifecycle-coordinator pair transfers with H-D so D160 extends the same coordinator, and controller.ts/test owns the side-effect-free composition entry; D160/D170 resume only after the prior slice stops.
 
 ### H-K — finite hotspot set
 
@@ -658,6 +660,30 @@ import type { DeviceBrokerPort, LegacyOperationPort, createDeviceBroker } from "
 import type { BuiltinDeviceProvider, ProviderCleanupContext } from "./provider.js";
 import type { attachDeviceRpc } from "./rpc-router.js";
 import type { createEv3Provider } from "../device-providers/ev3/provider.js";
+import type { Principal, ProfileWriterLock, CoreActionReference, CoreActionValidationPort,
+  FaultJournalDocument, DeviceRecoverySnapshot, DeviceRecoveryPort, DeviceFailureDetail,
+  DeviceResourceParticipant, DeviceRequirement, CommonEventLedgerPort, UiEventLedgerPort,
+  Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding,
+  UiRuntimeAttachment, OwnerRetirement, ReservationBindingPort, DeviceSessionControlPort } from "@kobrixa/plugin-runtime";
+import type { CoreActionTarget } from "@kobrixa/plugin-runtime";
+import type { DeviceFailureDetail as ProtocolFailure } from "@kobrixa/plugin-protocol";
+import type { DeviceRecoverySnapshot as JournalSnapshot } from "./journal-port.js";
+import type { DeviceRecoveryPort as RecoveryPort } from "./recovery-port.js";
+import type { DeviceRecoverySnapshot as BrokerSnapshot } from "./broker-port.js";
+it("F/P150 package-root host contracts preserve single definitions", () => {
+  expectTypeOf<Extract<CoreActionTarget, { kind: "device-current-stop" }>>().toEqualTypeOf<{ kind: "device-current-stop"; sessionId: string }>();
+  expectTypeOf<DeviceFailureDetail>().toEqualTypeOf<ProtocolFailure>();
+  expectTypeOf<DeviceRecoverySnapshot>().toEqualTypeOf<JournalSnapshot>();
+  expectTypeOf<DeviceRecoverySnapshot>().toEqualTypeOf<BrokerSnapshot>();
+  expectTypeOf<DeviceRecoveryPort>().toEqualTypeOf<RecoveryPort>();
+  expectTypeOf<CommonEventLedgerPort["diagnostics"]>().toEqualTypeOf<
+    () => Readonly<{ subscriptions: number; queuedEvents: number; queuedBytes: number }>>();
+  expectTypeOf<UiEventLedgerPort["create"]>().toEqualTypeOf<CommonEventLedgerPort["create"]>();
+});
+export type FrozenPackageRootConsumers = [Principal, ProfileWriterLock, CoreActionReference,
+  CoreActionValidationPort, FaultJournalDocument, DeviceResourceParticipant, DeviceRequirement,
+  Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding,
+  UiRuntimeAttachment, OwnerRetirement, ReservationBindingPort, DeviceSessionControlPort];
 it("F21 freezes provider cleanup and retained legacy operations", () => {
   expectTypeOf<ReturnType<typeof createDeviceBroker>>().toEqualTypeOf<DeviceBrokerPort & LegacyOperationPort>();
   expectTypeOf<ReturnType<typeof createEv3Provider>>().toEqualTypeOf<BuiltinDeviceProvider>();
@@ -1115,7 +1141,8 @@ export type DeviceRecoverySnapshot = {
   faults: SafetyFaultEntry[];
   blockers: Handle[];
 };
-export type DeviceFailureDetail = DeviceErrorDetail | PermissionErrorDetail | ResourceErrorDetail;
+import type { DeviceFailureDetail } from "@kobrixa/plugin-protocol";
+export type { DeviceFailureDetail } from "@kobrixa/plugin-protocol";
 export interface DeviceRecoveryPort {
   snapshot(): DeviceRecoverySnapshot;
   subscribe(listener: (snapshot: DeviceRecoverySnapshot) => void): () => void;
@@ -1386,6 +1413,7 @@ Create `apps/desktop/src/main/device-broker/journal-port.ts`:
 
 ```ts
 import type { FaultJournalDocument, DeviceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export type { DeviceRecoverySnapshot } from "@kobrixa/plugin-runtime";
 export interface JournalPort {
   load(): Promise<FaultJournalDocument>;
   commit(document: FaultJournalDocument): Promise<void>;
@@ -1399,6 +1427,7 @@ Create `apps/desktop/src/main/device-broker/broker-port.ts`:
 ```ts
 import type { Handle, Counter, ResourceOwner, ReadSnapshot, SourceCatalog, BusinessResult, DeviceRequestMap, Permission } from "@kobrixa/plugin-protocol";
 import type { Principal, DeviceIntentPort, ReservationBindingPort, DeviceSessionControlPort, DeviceResourceParticipant, DeviceRecoveryPort, DeviceRecoverySnapshot, DeviceFailureDetail, DeviceRequirement, CommonEventLedgerPort, Stage3EventEnvelope, DeviceChannelAttachment, OperationClass, CoreActionReference, ProfileWriterLock, CoreActionValidationPort } from "@kobrixa/plugin-runtime";
+export type { DeviceRecoveryPort, DeviceRecoverySnapshot, DeviceFailureDetail } from "@kobrixa/plugin-runtime";
 import type { BuiltinDeviceProvider, LegacyProviderRequest, LegacyProviderValue, ProviderOutcome, ProviderCatalogPort, DeviceConnectionPolicy } from "./provider.js";
 import type { AuthorityPort } from "./authority-port.js";
 import type { JournalPort } from "./journal-port.js";
@@ -1596,7 +1625,8 @@ type Stage3Event =
   | { [K in keyof Stage3EventData]: { kind: K; data: Stage3EventData[K] } }[keyof Stage3EventData];
 // Stage3EventData is A-T1 events.ts's type-only map of the exact A/B1/B2 event data schemas.
 type Stage3EventEnvelope = Omit<EventEnvelope<unknown>, "kind" | "data"> & Stage3Event;
-interface CommonEventLedgerPort {
+export interface CommonEventLedgerPort {
+  diagnostics(): Readonly<{ subscriptions: number; queuedEvents: number; queuedBytes: number }>;
   create(owner: ResourceOwner): BusinessResult<{ subscriptionId: Handle; sequence: 0 }, ResourceErrorDetail>;
   owns(owner: ResourceOwner, subscriptionId: Handle): boolean;
   publish(owner: ResourceOwner, subscriptionId: Handle, event: Stage3Event,
@@ -1641,17 +1671,23 @@ Resolves **P04.N1 and the catalog portion of P03.N2**. A-T2 `broker-port.ts` add
 
 ### AM-04 — Recovery and participant factories
 
-Resolves **P01.N1**. Accept P02's dependency design. A-T3 owns these exports in `main/device-broker/recovery-port.ts`:
+Resolves **P01.N1**. Use the frozen dependency design. A-T3 owns these exports in `main/device-broker/recovery-port.ts`:
 
 ```ts
-interface RecoveryDriver {
+import type { Counter, Handle } from "@kobrixa/plugin-protocol";
+import type { CoreActionValidationPort, DeviceRecoveryPort, PhysicalIdentity } from "@kobrixa/plugin-runtime";
+import type { JournalPort } from "./journal-port.js";
+import type { IdleObservation, ProviderOutcome } from "./provider.js";
+export type { DeviceFailureDetail, DeviceRecoveryPort, DeviceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export interface RecoveryDriver {
+  wallNow(): number; // Unix epoch milliseconds, independent of monotonic deadlines.
   describe(sessionId: Handle): { sessionId: Handle; providerGeneration: Counter; physical: PhysicalIdentity } | null;
   occupy<T>(sessionId: Handle, work: (lane: {
     observe(): Promise<ProviderOutcome<IdleObservation>>;
     stop(): Promise<ProviderOutcome<IdleObservation>>;
   }) => Promise<T>): Promise<T>;
 }
-declare function createDeviceRecovery(input: {
+export declare function createDeviceRecovery(input: {
   journal: JournalPort; actions: CoreActionValidationPort; driver: RecoveryDriver;
 }): DeviceRecoveryPort;
 ```
@@ -1685,7 +1721,7 @@ interface CoreTelemetrySubscription {
 // }): Promise<CoreTelemetrySubscription>;
 ```
 
-A-T5 `legacy-device.ts` exports `createLegacyMonitorFeed(broker: DeviceBrokerPort): LegacyMonitorFeed` with P02's existing `subscribe({principal,sessionId,intervalMs,receive}): Promise<() => Promise<void>>` shape; it validates core identity, reads catalog channel IDs, applies the initial snapshot before activation and ACKs only after bounded enqueue. Core IDs remain `JournalOwner` identities, never fabricated `ResourceOwner`s. Queue limits/overflow/10-second ACK deadline are the common A budgets, charged to this core owner; disposal removes only this demand. One sampler, no second poller. F declaration; P150. Tests: battery/monitor/Lab overlap, initial delivery, slow/throwing consumer, owner/window loss and removing one demand preserves the others.
+A-T5 `legacy-device.ts` exports `createLegacyMonitorFeed(broker: DeviceBrokerPort): LegacyMonitorFeed` with the existing `subscribe({principal,sessionId,intervalMs,receive}): Promise<() => Promise<void>>` shape; it validates core identity, reads catalog channel IDs, applies the initial snapshot before activation and ACKs only after bounded enqueue. Core IDs remain `JournalOwner` identities, never fabricated `ResourceOwner`s. Queue limits/overflow/10-second ACK deadline are the common A budgets, charged to this core owner; disposal removes only this demand. One sampler, no second poller. F declaration; P150. Tests: battery/monitor/Lab overlap, initial delivery, slow/throwing consumer, owner/window loss and removing one demand preserves the others.
 
 ### AM-08 — Connection policy and serial-match recovery
 
@@ -1811,7 +1847,7 @@ Canonical exports: device-types.ts `handleSchema: z.ZodType<Handle>`, `counterSc
 
 ### AM-16 — UI projections over the common event implementation
 
-Resolves **P05.N2**. Use P05's projection, with explicit after-reply activation supplied by AM-01. B1-T2 defines `UiEventLedgerPort` in runtime `ui-subscriptions.ts`; it is the following projection of the same ledger, implemented by A-T2 through broker-port.ts export `uiEventLedgerPort(events: CommonEventLedgerPort): UiEventLedgerPort` (type-only runtime import, no runtime→desktop dependency):
+Resolves **P05.N2**. Use the frozen projection, with explicit after-reply activation supplied by AM-01. B1-T2 defines `UiEventLedgerPort` in runtime `ui-subscriptions.ts`; it is the following projection of the same ledger, implemented by A-T2 through broker-port.ts export `uiEventLedgerPort(events: CommonEventLedgerPort): UiEventLedgerPort` (type-only runtime import, no runtime→desktop dependency):
 
 ```ts
 interface UiEventLedgerPort {
@@ -1855,7 +1891,60 @@ declare function createFakeDeviceProvider(input: {
 }): {provider: BuiltinDeviceProvider; control: FakeProviderControl};
 ```
 
-A-T8 `lifecycle-coordinator.ts` exports `DesktopFoundationOptions` with optional **main/test-only** `providerFactory?: (catalog: ProviderCatalogPort) => BuiltinDeviceProvider`; `createDesktopFoundation(input: DesktopFoundationOptions): Promise<DesktopFoundation>` uses the exact same production composition with AM-11 action ledger, AM-14 runtime, authority/intent and UI bridge. The other required options are `profile:ProfileWriterLock`, `authority:AuthorityPort`, `journal:JournalPort`, `coreActions:CoreActionLedger`, `now:()=>number`, `hasPermission:(principal:Principal, permission:Permission)=>boolean`, `requirements:(owner:ResourceOwner)=>readonly DeviceRequirement[]|null`, `connectionPolicy:()=>DeviceConnectionPolicy`, `operationGate:DeviceOperationGate`; `DesktopFoundation = {broker:DeviceBrokerPort & LegacyOperationPort; dispose():Promise<void>}`. Production main passes no override and obtains the EV3 allowlisted factory; tests retain the returned fake control in their closure. No environment/manifest/preload selector. B1-T9 `declarative-ui-main.ts` injects this factory into the real D160 bridge and drives actual trusted renderer input. F contract, P150 factory, P160 U10 proof. Tests hold/release, lost start response, late ACK, real authority revocation and stop/readback under pressure; a mocked DeviceIntentPort does not close U10.
+A-T8 `lifecycle-coordinator.ts` exports `DesktopFoundationOptions` with optional **main/test-only** `providerFactory?: (catalog: ProviderCatalogPort) => BuiltinDeviceProvider`; `createDesktopFoundation(input: DesktopFoundationOptions): Promise<DesktopFoundation>` uses the exact same production composition with AM-11 action ledger, AM-14 runtime, authority/intent and UI bridge. The other required options are `profile:ProfileWriterLock`, `authority:AuthorityPort`, `journal:JournalPort`, `coreActions:CoreActionLedger`, `now:()=>number`, `hasPermission:(principal:Principal, permission:Permission)=>boolean`, `requirements:(owner:ResourceOwner)=>readonly DeviceRequirement[]|null`, `connectionPolicy:()=>DeviceConnectionPolicy`, `operationGate:DeviceOperationGate`; `DesktopFoundation = {broker:DeviceBrokerPort & LegacyOperationPort; attachProvider(manager:Pick<PluginManager,"state"|"onEvent">):void; dispose():Promise<void>}` (BM-03). Production main passes no override; after manager creation inside startPlugins, its onStage3Runtime callback lets composeDesktopMain call foundation.attachProvider(manager) once, which invokes K150's state-gated allowlist reconciler; tests retain the returned fake control in their closure. No environment/manifest/preload selector. B1-T9 `declarative-ui-main.ts` injects this factory into the real D160 bridge and drives actual trusted renderer input. F contract, P150 factory, P160 U10 proof. Tests hold/release, lost start response, late ACK, real authority revocation and stop/readback under pressure; a mocked DeviceIntentPort does not close U10.
+
+- [ ] **Step 3A.21: Write the foundation/composition scaffold in `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts`**
+
+```ts
+import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { PluginManager, Principal, ProfileWriterLock, DeviceRequirement,
+  Stage3HostAttachment, Stage3RuntimePorts } from "@kobrixa/plugin-runtime";
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+import type { StartPluginsOptions, PluginController } from "../plugins/controller.js";
+import type { CoreActionLedger } from "../plugins/core-recovery.js";
+import type { AuthorityPort } from "./authority-port.js";
+import type { JournalPort } from "./journal-port.js";
+import type { DeviceBrokerPort, LegacyOperationPort, DeviceOperationGate } from "./broker-port.js";
+import type { ProviderCatalogPort, BuiltinDeviceProvider, DeviceConnectionPolicy } from "./provider.js";
+export interface DesktopFoundationOptions {
+  profile: ProfileWriterLock;
+  authority: AuthorityPort;
+  journal: JournalPort;
+  coreActions: CoreActionLedger;
+  now: () => number;
+  hasPermission: (principal: Principal, permission: Permission) => boolean;
+  requirements: (owner: ResourceOwner) => readonly DeviceRequirement[] | null;
+  connectionPolicy: () => DeviceConnectionPolicy;
+  operationGate: DeviceOperationGate;
+  providerFactory?: (catalog: ProviderCatalogPort) => BuiltinDeviceProvider;
+}
+export type DesktopFoundation = {
+  broker: DeviceBrokerPort & LegacyOperationPort;
+  attachProvider(manager: Pick<PluginManager, "state" | "onEvent">): void;
+  dispose(): Promise<void>;
+};
+export declare function createDesktopFoundation(input: DesktopFoundationOptions): Promise<DesktopFoundation>;
+export interface DesktopMainCompositionInput {
+  createFoundation: typeof createDesktopFoundation;
+  foundationOptions: DesktopFoundationOptions;
+  plugins: Omit<StartPluginsOptions, "stage3" | "stage3Host" | "onStage3Runtime">;
+  principal: Stage3HostAttachment["principal"];
+  scope(): CoreWindowScope;
+  currentScope(scope: CoreWindowScope): boolean;
+  legacyFlush(reason: "close" | "update" | "suspend"): Promise<void>;
+  report(error: unknown): void;
+}
+export interface DesktopMainComposition {
+  foundation: DesktopFoundation;
+  plugins: PluginController;
+  stage3: Stage3RuntimePorts;
+  stage3Host: Stage3HostAttachment;
+  dispose(): Promise<void>;
+}
+```
+
+These are declarations only; all forward imports resolve after the final B2-T0 H-R assembly. Record these exports and the controller/lifecycle-coordinator.ts/test D150→D160→D170 stopped-owner transfer in the F receipt. T8 replaces the factory declaration while preserving these interfaces; controller.ts type-re-exports them. No runtime controller or provider constructor is imported at F.
+
 
 ### AM-22 — Read-only diagnostics
 
@@ -2205,7 +2294,21 @@ No gate is marked passed by type-only declarations or frozen doubles.
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-protocol exec vitest run src/device-contract.test.ts
 ```
 
-Expected PASS for the inert local contract test. Do not run a published-schema generator in T0. After B1-T0/B2-T0 resolve their type-only forward imports, the controller runs the four package builds in skeleton §6 and the runtime/desktop contract tests. No implementation branch starts while any import or type assertion fails.
+Expected PASS for the inert local contract test. Do not run a published-schema generator in T0. Only after B2-T0 Step 3 completes the single H-R type-only assembly in `packages/plugin-runtime/src/index.ts`, the controller rebuilds protocol/runtime/SDK/device and runs runtime/desktop contract checks. The F receipt records that H-R path and actual assembly commit. A-T0 does not edit that barrel. Exports include device-resources, profile-writer-lock, core-actions, builtin-launch, ui-lifecycle, ui-subscriptions, ui-host-ports, persistence-participant and settings-form-port. UiEventLedgerPort resolves at F and P150; R150 retains the type exports and records its explicit helper-value barrel change and commit in the H-R receipt. No implementation branch starts while any import or type assertion fails.
+
+Run only after the final B2-T0/H-R assembly:
+
+```bash
+pnpm --filter @kobrixa/plugin-protocol build
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/plugin-sdk build
+pnpm --filter @kobrixa/device build
+pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/contract.test.ts
+pnpm check:desktop
+```
+
+Expected: PASS at completed F, including package-root UiEventLedgerPort and DTO equalities. No future methods appear in the public registry; P150's separate registry exclusion test is retained in T10.
+
 
 - [ ] **Step 6: Commit this first ordered portion**
 
@@ -2213,6 +2316,124 @@ Expected PASS for the inert local contract test. Do not run a published-schema g
 git add packages/plugin-protocol/src/device-types.ts packages/plugin-protocol/src/business-result.ts packages/plugin-protocol/src/device-methods.ts packages/plugin-protocol/src/device-limits.ts packages/plugin-protocol/src/events.ts packages/plugin-protocol/src/device-contract.test.ts packages/plugin-runtime/src/device-resources.ts packages/plugin-runtime/src/device-resources.test.ts apps/desktop/src/main/device-broker/provider.ts apps/desktop/src/main/device-broker/broker-port.ts apps/desktop/src/main/device-broker/journal-port.ts apps/desktop/src/main/device-broker/authority-port.ts apps/desktop/src/main/device-broker/contract.test.ts packages/plugin-runtime/src/profile-writer-lock.ts packages/device/src/io-boundary.ts packages/plugin-protocol/test-fixtures/device-broker-v1/valid.json packages/plugin-protocol/test-fixtures/device-broker-v1/invalid.json packages/plugin-protocol/test-fixtures/device-broker-v1/maximum.json docs/superpowers/plans/2026-10-17-plugin-system-stage-3-contract-freeze.md apps/desktop/src/main/device-providers/ev3/provider.ts apps/desktop/src/main/device-broker/rpc-router.ts apps/desktop/src/main/device-broker/recovery-port.ts apps/desktop/src/main/device-broker/resource-participant.ts apps/desktop/src/main/device-broker/legacy-device.ts apps/desktop/src/main/device-broker/legacy-files.ts apps/desktop/src/main/device-broker/fake-provider.ts apps/desktop/src/main/device-broker/lifecycle-coordinator.ts packages/plugin-sdk-js/src/events.ts sdks/python/kobrixa/_events.py packages/plugin-protocol/src/peer.ts packages/plugin-protocol/src/errors.ts
 git commit -m "chore(plugins): freeze stage 3A device and safety contracts"
 ```
+
+## T0 Amendment B — binding cross-plan resolutions
+
+### BM-01 — One complete F type export and scaffold receipt
+
+Resolves **A#1, A#7, B1#1, B1#5, B1#10, B2#4**. Keep the existing ordered T0: H-R assembles `packages/plugin-runtime/src/index.ts` once in **B2-T0 Step 3**, after all three portions create their modules, before any F desktop/typecheck gate. Do not add an A-T0 index writer or evaluate an incomplete freeze. Add type-only exports for device-resources, profile-writer-lock, core-actions, builtin-launch, ui-lifecycle and ui-subscriptions, plus explicit ui-host-ports and settings-form-port exports below and existing persistence-participant exports. This is type assembly only; no future wire publication or constructor import.
+
+B1-T0 must write actual exported AM-14 declarations in ui-lifecycle.ts, AM-22 diagnostics in ui-host-ports.ts, AM-16 UiEventLedgerPort in ui-subscriptions.ts, AM-19 UiValidationContext and `declare function validateUiResource` in protocol/ui-validation.ts, and AM-18 PersistenceRecoveryBridge in desktop/shared/plugin-persistence.ts. Put the existing AM-09 `{kind:"device-current-stop";sessionId:Handle}` in core-actions.ts at F with an Extract equality assertion. B2-T0 writes all AM-28 BoundSettingsService, ContributedSettingsForm and SettingsFieldMap declarations before exporting them alongside SettingsFormBinding/SettingsFormPort. Scaffolds retain their exact defining-module imports and export keywords; amendment quotations alone are not file instructions.
+
+H-R's F explicit ui-host-ports type exports are `PluginUiBridge`, `UiCatalogPort`, `UiBridgeEvent`, `FoundationDiagnostics`, `FoundationCounters`, `FoundationDiagnosticEvent`; lifecycle exports include Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding, UiRuntimeAttachment and OwnerRetirement. Record all defining modules and the single index owner in the F receipt. A/B1 preflights wait for the final assembly, rebuild package dist, then check package-root consumer imports.
+
+At R150 retain the type exports and add explicit value exports only for delivered lifecycle helpers (BM-06, resourceFreePersistence150, unavailableUi150). At **B1-T3 R160**, export `UiCatalog` from ui-catalog, `UiStateRegistry` and `currentStatusBindings` from ui-state, `UiSubscriptions` from ui-subscriptions, and `sameUiBinding`/`sameResourceOwner` from ui-host-ports; export `UiCatalogSource`/`UiCatalogDependencies` type-only. Keep existing valid lifecycle values explicit; never wildcard-export modules with competing diagnosticsFor functions. Each diagnosticsFor remains a direct-module test import. T5 consumes this barrel; it never patches it. Pin F type equality and P160 downstream imports with compile checks and include index.ts in the respective H-R commits.
+
+
+### BM-02 — Preserve one recovery DTO definition and F assertions
+
+Resolves **A#5, A#12**. A-T1 protocol/device-methods.ts owns DeviceFailureDetail; A-T3 runtime/device-resources.ts imports/type-re-exports it. Runtime device-resources.ts alone defines DeviceRecoverySnapshot and DeviceRecoveryPort. Journal/recovery/broker ports import and type-re-export those symbols, never redeclare structurally similar DTOs. A-T3 Step 3 appends/completes declarations while preserving every F/AM type; Step 1 appends tests, including the original ReservationBindingPort.onEnded and DeviceSessionControlPort.quiesce assertions. Pin equality through both desktop and package-root import paths at F and P150.
+
+
+### BM-03 — State-gated optional provider attachment
+
+Resolves **A#2**. A-T8 createDesktopFoundation constructs the broker but no provider. Its F DesktopFoundation type gains `attachProvider(manager: Pick<PluginManager,"state"|"onEvent">): void`; repeated attachment throws, disposal is idempotent, attachment after disposal throws. Immediately after manager construction, the sole main composition calls it once through onStage3Runtime, before optional admission. The factory keeps providerFactory private until that call; it obtains the broker allocator and delegates to K150 `attachBuiltinDeviceProvider(manager, broker, catalog, providerFactory?)`, whose fourth parameter is `(catalog:ProviderCatalogPort)=>BuiltinDeviceProvider`, defaulting to the allowlisted EV3 factory.
+
+K150's reconciler alone constructs/registers/removes providers, only for the admitted optional enabled source after safe-mode policy. No eager factory call on disabled/safe-mode boot, no second registerProvider in D150. Removal invalidates the original allocator; each enable/reload gets a new broker allocator. D150 retains the detach closure and calls it only after beginShutdown confirms stop/journal disposition; a blocked shutdown retains the provider/lock. Tests at P150 cover disabled/safe-mode zero factory/registration, enable once, disable/re-enable and reload fresh generation, wrong provider ID, factory override with identical gating, and disposition-before-detach. No environment or renderer factory selector.
+
+
+### BM-04 — One legacy stop/Disconnect composition
+
+Resolves **A#3, A#10**. A-T8 Step 8 is the only D150 main composition for LegacyDeviceDependencies. Delete A-T5 Step 11a's AsyncLocalStorage composition; T5 supplies its already-frozen facade exports and tests only. Use `deviceControl.principal(webContents.id,"recovery")`, never AuthorityPort.principal. The T8 trustedCoreStop/trustedCoreDisconnect callbacks mint once after the validated main-frame entry, derive scope from that captured principal and complete in finally. Internal callbacks must remain reachable only from that trusted admission, never a timer, ready handler or plugin call. T5 facade tests verify delegation; T8 tests verify sender, target, expiry and one mint/claim per explicit attempt.
+
+
+### BM-05 — One file-renewal controller spelling
+
+Resolves **A#4**. V150 in A-T10 Steps 11–15 alone edits renderer remote-files/controller/button/app mounts. Use `RemoteFilesController.renewConfirmation():Promise<void>` there; it calls the existing preload `device.renewFiles(ref):Promise<void>`. Main and DeviceService keep AM-12 renewFiles/renewFilePlan; those are separate layers. Remove A-T5 Step 11b renderer patches and point to V150. Preserve explicit-user-only renewal and the original 600-second total deadline.
+
+
+### BM-06 — One resource fence, coordinator and process-teardown owner
+
+Resolves **A#8, B2#15**. Choose a wired shared primitive, not a reserved/dead helper. H-R R150 owns `retireStage3Owner` in runtime/ui-lifecycle.ts with this single host signature, retained at R160/R170:
+
+```ts
+export type RetirementDisposition = { device: DeviceDisposition; persistence: DrainReport };
+export function retireStage3Owner(ports: Stage3RuntimePorts, owner: ResourceOwner,
+  reason: OwnerRetirement, now: () => number, dispatch: DrainDispatcher,
+  deadlineMonotonicMs?: number): Promise<RetirementDisposition>;
+```
+
+Cache by ports instance plus the complete owner tuple, not ResourceOwner object identity. Insert the deferred cached receipt before synchronous revocation so reentrant notifications cannot create a second attempt. Before returning the promise, retire device once and UI once; for non-crash freeze persistence synchronously with the identical non-null device grant, omitting argument four when null. Deadline is the minimum of the original offer/deadline, supplied outer deadline, now+10000 and grant expiry. The participant coalesces any earlier end offer; dispatch uses the returned offer's earliest deadline, never a recomputed deadline. Dispatch is deferred until the current turn's fencing/registration finishes. `crashed` maps to device `crashed` plus persistence.ownerLost, never a new DrainReason or callback; dead peers follow that path: the coordinator checks its existing alive(owner) callback and passes crashed to this helper when the original peer is gone. Keep unresolved evidence; a bounded clean-receipt cache cannot make a retired generation admissible again.
+
+Normalize LifecycleCoordinator.retire(owner, reason:OwnerRetirement, deadlineMonotonicMs?:number):Promise<void> at F/P150; translate legacy crash/renderer-loss boundary labels to crashed/renderer-crash once in the caller. Keep the device reason map solely in retireStage3Owner, exactly matching the existing lifecycle table. A-T8 LifecycleCoordinator.retire delegates its resource work to this helper and projects the returned device/storage promises into its existing retirement record before the deferred onEnded dispatch. It keeps the sole reservation-ended listener, joins queued end work to the same retirement promise, and owns close/Disconnect/suspend and legacy save blockers. Its input includes the exact Stage3RuntimePorts so UI retirement is not duplicated in deviceHostAttachment. Supervisor calls only Stage3HostAttachment.retireResources, then performs actual teardown after disposition; no callback invokes manager.stop recursively. F17/F19 tests drive that live path, not just the helper in isolation.
+
+D160 extends this same LifecycleCoordinator via the named stopped-owner handoff of lifecycle-coordinator.ts/test in H-D. B1 shutdown-coordinator.ts is a facade over that existing instance for report/retry UI, not another listener or retirement map; forward close, Disconnect, suspend and reconciliation to the authoritative instance. Remove B1 UiLifecycle's competing fence/drain/teardown implementation and its instruction to construct another owner. Reporting helpers/types may remain, observing the authoritative coordinator and supervisor exit receipts only. B1-T3 tests exercise supervisor→host attachment; B1-T5 tests exercise the coordinator's real helper. Reconciliation updates only actual confirmed reports and never resets an outstanding deadline. B2-T9 cites this function and A's OwnerRetirement→device mapping, tests crashed→ownerLost and no replacement-peer callback.
+
+
+### BM-07 — Acyclic W1 and P150 gates
+
+Resolves **A#9**. Keep the public createDeviceBroker(input) signature unchanged. A-T2 broker.ts's internal `createBroker(input, factories)` receives `factories: {recovery:typeof createDeviceRecovery;participant:typeof createDeviceResourceParticipant}` using type-only imports. W1 unit tests import this core and inject typed doubles. broker-port.ts owns the production facade that imports the real A-T3 factories and supplies them; no W1 unit module loads declaration-only factory values. The real-factory broker test and T3 Step 13a run at A-T10 Step 18 after both implementations exist, using T3-owned tests read-only.
+
+A-T8 commits on scoped unit/contract tests; its check:desktop/test:desktop and real R/K/V-dependent suites belong to A-T10's final gate. A-T10 schedules R150/K150/V150 from F while D150 is being completed; final acceptance, not start, requires T1–T9 plus every stopped slice. Keep red/green evidence labeled local versus integrated; no mock closes P150.
+
+
+### BM-08 — Exact writers for cross-task tests and diagnostics
+
+Resolves **A#6, B1#9, B1#15**. Physically place the H-I script/CI boundary test in A-T9 Step 5 before its stop receipt; A-T10 Step 17 only runs it and edits H-I scripts/CI. The existing A prose already says T9 owns this edit; the fix removes misleading placement, not an authorization to edit T9 from T10. B1-T5 Step 23 writes diagnostics registration only in ui-bridge.ts; B1-T3 Step 11 exclusively owns ui-lifecycle.ts diagnostics. Refresh every copied role/finite-path table from this skeleton, including D150, mandatory-policy fixtures and the BM-06 coordinator handoff. No implicit directory-wide write grant.
+
+
+### BM-09 — Deterministic recovery wall time
+
+Resolves **A#14**. F RecoveryDriver in A-T0/A-T3 recovery-port.ts gains `wallNow():number` returning Unix epoch milliseconds. A-T2 supplies its existing injected wall clock, distinct from monotonic deadline time. Replace Math.max(Date.now(), fault.updatedAt) with Math.max(driver.wallNow(), fault.updatedAt); update all typed driver fixtures. Factory input remains `{journal,actions,driver}`. P150 tests fix wall time, advance only the monotonic clock and prove persisted resolution time remains deterministic and nondecreasing.
+
+
+### BM-10 — Preserve seeded files and test history
+
+Resolves **A#11, B1#8, B1#18, B2#10**. Successors label F-created files `Modify (F scaffold; baseline N)` and replace declaration scaffolds while preserving exported names/types. A: fake-provider, recovery-port, resource-participant, legacy-device, legacy-files, and D150 shared/plugin-persistence. B1: ui-validation, ui-subscriptions; D160 main/index.test and main/ipc.test append to D150 cases; shared/plugin-ui.ts/test are D150-created, not F. B2: worker, settings-service, contributed-settings-form, recovery-port and plugin-persistence-main preserve their F contracts. B2-T9's acceptance report is `Modify (stopped T7 handoff)`, not an F-created report. Apply the correction to both Files lists and implementation headings/commit lists.
+
+
+### BM-16 — Observable common ledger counters
+
+Resolves **B1#11**. F CommonEventLedgerPort in runtime/device-resources.ts adds `diagnostics():Readonly<{subscriptions:number;queuedEvents:number;queuedBytes:number}>`. A-T2 EventLedger already has the implementation shape; publish it through broker.events without casts or a second ledger. D160 constructs UiStateRegistry with `eventCounters:()=>broker.events.diagnostics()`. T2 is the sole AM-22 reporter of all host ledger counts, including terminal-awaiting-ACK subscriptions/encoded bytes across domains; no other diagnostics instance sums them again. Test nonzero queued bytes while terminal control awaits ACK, drop after ACK/timeout/disposal, and mixed-domain no double count. No RPC/preload export or observational sweep/mutation.
+
+
+### BM-18 — Side-effect-free production composition entry
+
+Resolves **B1#13**. Use existing H-D controller.ts/test, not a new hotspot. D150 implements and exports `composeDesktopMain(input:DesktopMainCompositionInput):Promise<DesktopMainComposition>` from controller.ts. Freeze the following host types in the already-seeded lifecycle-coordinator.ts (A-T0), and type-re-export them from controller.ts when implemented; forward type references resolve by the completed F. No implementation value is imported by a scaffold. A-T0 also emits the actual AM-21 DesktopFoundationOptions/DesktopFoundation and declare createDesktopFoundation scaffolds here; quotation-only AM text is insufficient. Import StartPluginsOptions and PluginController type-only from controller.ts; other imports use their F defining modules.
+
+```ts
+export interface DesktopMainCompositionInput {
+  createFoundation: typeof createDesktopFoundation;
+  foundationOptions: DesktopFoundationOptions;
+  plugins: Omit<StartPluginsOptions, "stage3" | "stage3Host" | "onStage3Runtime">;
+  principal: Stage3HostAttachment["principal"];
+  scope(): CoreWindowScope;
+  currentScope(scope: CoreWindowScope): boolean;
+  legacyFlush(reason: "close" | "update" | "suspend"): Promise<void>;
+  report(error: unknown): void;
+}
+export interface DesktopMainComposition {
+  foundation: DesktopFoundation;
+  plugins: PluginController;
+  stage3: Stage3RuntimePorts;
+  stage3Host: Stage3HostAttachment;
+  dispose(): Promise<void>;
+}
+```
+
+The input has no second broker/lock/coordinator or generic factory bag. profile/authority/journal/coreActions/clock/permissions/requirements/connectionPolicy/operationGate are the named foundationOptions fields, plugin directories/builtins/dialogs/locale/userData are the named plugins fields, and main supplies scope/currentScope/principal/legacyFlush/report from its trusted workbench/native adapters. D160 builds its UI catalog/state/intent/action objects inside this function from the admitted controller/runtime and these inputs; its marker callback calls the constructed controller. D170 constructs its root/worker/host/import/source adapters inside the same function using plugins.userData, the held profile and packaging owner’s trusted path adapter; native export/copy uses the same main dialog/clipboard adapter, not a renderer input. New domain-local helpers have typed parameters and concrete bodies in the owning step; they do not change this cross-plan injection signature. Tests inject the foundation factory only; the rest is the same production composition.
+
+index.ts retains the OS single-instance gate/window/native lifecycle entry and calls this function only in the primary branch, passing production createDesktopFoundation. Module import does not start app/windows/provider/worker/process or mutate profile. B1-T9 calls the same function with acceptanceFoundation, which delegates to createDesktopFoundation with the AM-21 providerFactory override and retains FakeProviderControl. Startup uses BM-03 attachProvider after manager creation. A-T0 records the signature with forward type imports completed at F, and A-T8 delivers it at P150; B1-T5/T9 deliver the actual U10 route at P160; B2-T7 consumes its P170 extension. Test import-time inactivity, zero secondary factory calls and one factory/broker/UI path with the fake override.
+
+D150 also adds the exact host-only option `onStage3Runtime?:(runtime:UiRuntimeAttachment,providers:Pick<PluginManager,"state"|"onEvent">)=>void` to StartPluginsOptions, invoked once with `manager.stage3Runtime(), manager` immediately after manager construction and before optional activation/admission. composeDesktopMain owns this callback: assign the runtime closure, then attach the provider. Do not expose manager through PluginController or call stage3Runtime on the controller. Callback failure aborts startup/disposes the new manager/foundation. Forwarding tests inspect the actual manager inputs and this callback by identity. B2 startup uses this callback rather than an invented plugins.manager property.
+
+
+### BM-22 — Executable ordering, complete commits and no drafting residue
+
+Resolves **A#13, A#15, B1#14, B1#16, B1#17, B2#11, B2#12**. Move A-T2 Step 10A immediately after 10 and before 11; keep dependent 11A/11B after 11. Remove A-T10's P03 reference. Move B1-T1 Step 12's heading to its actual body after 11a. Mark D160's ordinary optional-toggle case as retained PASS from D150; only new marker cases start red. B1-T3 Step 10 stages manager.ts/test as well as supervisor/lifecycle/index, Step 11 commits diagnostics/tests, and B1-T4 Step 10 commits its K160 fixture changes. Every stopped-owner receipt lists exact changed paths included in that slice's commit, never another writer's pending changes.
+
+Replace B2 P10/P11/P12 and fragment-ownership language with B2-T5/T6/T7/T9/X-T1 according to the actual owner. For X-T1 scripts, remove literal baseline test:ci/test:desktop values; append ` && node --test tests/desktop/stage-3-foundations.test.mjs` exactly once to each current string, with assertions preserving every prior A/B1/B2 segment. These are instructions for future implementation commits; this amendment pass performs no commit.
+
 
 ## Interfaces Summary
 
@@ -4551,7 +4772,7 @@ git commit -m "feat(plugins): publish device protocol 1.5 and SDK clients"
 - Modify: `apps/desktop/src/main/device-broker/provider.ts`
 - Test: `apps/desktop/src/main/device-broker/provider.test.ts`
 - Modify: `apps/desktop/src/main/device-broker/broker-port.ts`
-- Test: `apps/desktop/src/main/device-broker/broker-port.test.ts`
+- Read-only integrated test (T3-owned; T10 Step 18 execution): `apps/desktop/src/main/device-broker/broker-port.test.ts`
 - Create: `apps/desktop/src/main/device-broker/broker.ts`
 - Test: `apps/desktop/src/main/device-broker/broker.test.ts`
 - Create: `apps/desktop/src/main/device-broker/registry.ts`
@@ -4565,7 +4786,7 @@ git commit -m "feat(plugins): publish device protocol 1.5 and SDK clients"
 - Create: `apps/desktop/src/main/device-broker/intent.ts`
 - Test: `apps/desktop/src/main/device-broker/intent.test.ts`
 - Test: `apps/desktop/src/main/device-broker/contract.test.ts`
-- Create: `apps/desktop/src/main/device-broker/fake-provider.ts`
+- Modify (F scaffold; baseline N): `apps/desktop/src/main/device-broker/fake-provider.ts`
 - Test: `apps/desktop/src/main/device-broker/fake-provider.test.ts`
 
 **Interfaces**
@@ -4850,8 +5071,8 @@ Create `apps/desktop/src/main/device-broker/reservations.test.ts`:
 ```ts
 import { expect,it,vi } from "vitest";
 import { Reservations } from "./reservations.js";
-import {createDeviceRecovery,type RecoveryDriver} from "./recovery-port.js";
-import {createDeviceResourceParticipant,type ResourceDriver} from "./resource-participant.js";
+import type {createDeviceRecovery, RecoveryDriver} from "./recovery-port.js";
+import type {createDeviceResourceParticipant, ResourceDriver} from "./resource-participant.js";
 import { channel,frame,pluginPrincipal,ID } from "./fake-provider.js";
 it("F12/F19/A-RF5 one end linearization preserves the original drain grant",async()=>{
   let now=0;const owner=pluginPrincipal().owner;const ended=vi.fn();
@@ -5156,7 +5377,7 @@ The final journal failure keeps `stopConfirmation:"confirmed"` when physical rea
 
 - [ ] **Step 7: Add the complete provider double and harness, then turn the low-level tests green**
 
-Create `apps/desktop/src/main/device-broker/fake-provider.ts`:
+Modify (F scaffold; baseline N) `apps/desktop/src/main/device-broker/fake-provider.ts`: replace the declaration scaffold, preserving exported names and frozen signatures.
 
 ```ts
 import type { CapabilityId,ChannelDefinition,TelemetryFrame,SourceCatalog } from "@kobrixa/plugin-protocol";
@@ -5286,7 +5507,24 @@ Create `apps/desktop/src/main/device-broker/broker.test.ts`:
 
 ```ts
 import { expect,it } from "vitest";
-import { createDeviceBroker,type DeviceBrokerOptions } from "./broker-port.js";
+import type { DeviceBrokerOptions } from "./broker-port.js";
+import { createBroker } from "./broker.js";
+const factories: Parameters<typeof createBroker>[1] = {
+  recovery: ({ journal }) => ({ snapshot: () => journal.snapshot(), subscribe: listener => journal.subscribe(listener),
+    async stopCurrent() { throw new Error("W1 recovery double cannot close P150"); },
+    async reconcile() { throw new Error("W1 recovery double cannot close P150"); },
+    async clearResolved() { throw new Error("W1 recovery double cannot close P150"); } }),
+  participant: driver => ({ retire: (owner, reason) => driver.revokeOwner(owner, reason),
+    async retireProvider(id, generation) {
+      const all = await Promise.all(driver.revokeProvider(id, generation));
+      return { stopConfirmed: all.every(x => x.stopConfirmed), journalCommitted: all.every(x => x.journalCommitted), faultIds: all.flatMap(x => x.faultIds) };
+    },
+    async beginShutdown() {
+      const all = await Promise.all(driver.revokeAll());
+      return { stopConfirmed: all.every(x => x.stopConfirmed), journalCommitted: all.every(x => x.journalCommitted), faultIds: all.flatMap(x => x.faultIds) };
+    } }),
+};
+const createDeviceBroker = (input: DeviceBrokerOptions) => createBroker(input, factories);
 import { operationHarness,pluginPrincipal,ID } from "./fake-provider.js";
 const signal=()=>new AbortController().signal;
 function setup(allowed=true,overrides:Partial<Pick<DeviceBrokerOptions,"requirements"|"operationGate"|"connectionPolicy">>={}){const h=operationHarness();const broker=createDeviceBroker({journal:h.dependencies.journal,profile:h.dependencies.profile,now:h.dependencies.now,authority:{current:()=>({ref:ID,epoch:ID,workbenchInstance:ID,state:"local",roomBinding:null,connected:false,synced:true,role:null,isHolder:true}),assertContinuation(){},subscribe:()=>()=>{}},coreActions:{claim:()=>true,isClaimed:()=>true,complete(){}},hasPermission:()=>allowed,requirements:()=>[],operationGate:()=>({ok:true,value:null}),connectionPolicy:()=>({wifiConnectTimeoutMs:5000,wifiHandshakeTimeoutMs:3000,usbAutoReconnect:false,usbRetryInterval:"backoff",usbRetryLimit:3}),...overrides});const unregister=broker.registerProvider(h.provider);return {...h,broker,unregister};}
@@ -5314,25 +5552,13 @@ it("F07 public disconnect is busy while a retained file plan owns foreground",as
 });
 ```
 
-Create `apps/desktop/src/main/device-broker/broker-port.test.ts`:
-
-```ts
-import { expect,expectTypeOf,it } from "vitest";
-import { createDeviceBroker,type DeviceBrokerPort,type LegacyOperationPort } from "./broker-port.js";
-import { operationHarness,ID } from "./fake-provider.js";
-it("F19 canonical factory has no hidden Electron side effects",()=>{
-  expectTypeOf<ReturnType<typeof createDeviceBroker>>().toEqualTypeOf<DeviceBrokerPort&LegacyOperationPort>();
-  const h=operationHarness();const broker=createDeviceBroker({journal:h.dependencies.journal,profile:h.dependencies.profile,now:h.dependencies.now,authority:{current:()=>null,assertContinuation(){throw new Error("unbound");},subscribe:()=>()=>{}},coreActions:{claim:()=>false,isClaimed:()=>false,complete(){}},hasPermission:()=>true,requirements:()=>[],operationGate:()=>({ok:true,value:null}),connectionPolicy:()=>({wifiConnectTimeoutMs:5000,wifiHandshakeTimeoutMs:3000,usbAutoReconnect:false,usbRetryInterval:"backoff",usbRetryLimit:3})});
-  expect(broker.recovery.snapshot().faults).toEqual([]);
-  expect(()=>broker.sessions.quiesce(ID,{reason:"suspended"})).toThrow();
-});
-```
+The production facade test is owned by T3 Step 13a and executed at T10 Step 18 after both real factories exist. W1 tests import only `createBroker` and use the typed doubles above.
 
 ```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker.test.ts src/main/device-broker/broker-port.test.ts
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker.test.ts
 ```
 
-Expected FAIL: the T0 factory is still declaration-only.
+Expected FAIL: the internal two-argument createBroker has not been implemented. This W1 gate never evaluates T3 declaration-only exports.
 
 - [ ] **Step 9: Implement broker dispatch and retained legacy plans**
 
@@ -5349,8 +5575,8 @@ import { IntentRegistry } from "./intent.js";
 import { OperationStore,type MotionAdmission } from "./operations.js";
 import { Sampler } from "./sampler.js";
 import { Reservations } from "./reservations.js";
-import {createDeviceRecovery,type RecoveryDriver} from "./recovery-port.js";
-import {createDeviceResourceParticipant,type ResourceDriver} from "./resource-participant.js";
+import type {createDeviceRecovery, RecoveryDriver} from "./recovery-port.js";
+import type {createDeviceResourceParticipant, ResourceDriver} from "./resource-participant.js";
 type Options=Parameters<typeof Factory>[0];
 type Session={snapshot:DeviceSessionSnapshot;sources:SourceCatalog;connection:ProviderConnection;provider:BuiltinDeviceProvider;generation:number;lane:ExchangeLane;sampler:Sampler;quiescence:SessionQuiescence|null;users:Set<string>;unregister:()=>void};
 type Candidate={candidate:ProviderCandidate;generation:number;expires:number};
@@ -5361,7 +5587,8 @@ function value<T>(outcome:ProviderOutcome<T>):T{
   if(outcome.error||outcome.value===null)return deviceFailure("PLUGIN_E_DEVICE_OPERATION","provider-failure",outcome.dispatch);
   return outcome.value;
 }
-export function createBroker(input:Options):DeviceBrokerPort&LegacyOperationPort {
+export function createBroker(input:Options, factories: { recovery: typeof createDeviceRecovery; participant: typeof createDeviceResourceParticipant }):DeviceBrokerPort&LegacyOperationPort {
+  const wallNow = () => Date.now(); // Epoch clock; tests inject via vi.setSystemTime, input.now remains monotonic.
   input.profile.assertHeld();
   const providers=new ProviderRegistry(),candidates=new OwnerLedger<Candidate>(64,64,"candidate"),subscriptions=new Map<string,{owner:ResourceOwner;params:DeviceSubscriptionParams;dispose:()=>void}>(),reservations=new Reservations(input.now),retired=new Set<string>();
   let session:Session|null=null,connecting=false,closing=false,revision=0;
@@ -5424,7 +5651,7 @@ export function createBroker(input:Options):DeviceBrokerPort&LegacyOperationPort
       const core:Principal={kind:"core",adapter:"recovery",hostEpoch:input.profile.hostEpoch,workbenchInstance:action.scope.workbenchInstance,authorityContext:null};
       const ctx=contexts(core,current,"connection",60000);await current.lane.drain(input.now()+15000);
       const result=await current.provider.disconnect(current.connection.key,ctx.cleanup);if(result.error)return deviceFailure("PLUGIN_E_DEVICE_OPERATION","provider-failure",result.dispatch);
-      current.snapshot.state="disconnected";current.unregister();session=null;revision++;input.coreActions.complete(action);return {ok:true,value:{sessionId:id,disconnected:true}};
+      current.snapshot.state="disconnected";current.unregister();session=null;revision++;return {ok:true,value:{sessionId:id,disconnected:true}};
     }catch(error){if(error instanceof BrokerFailure)return error.result;throw error;}},
     resume(id){if(session?.snapshot.sessionId!==id)return;session.quiescence??=finishSession(session,"suspended");},
   };
@@ -5434,8 +5661,9 @@ export function createBroker(input:Options):DeviceBrokerPort&LegacyOperationPort
     revokeProvider(id,generation){for(const [ref,row] of lostUsb)if(row.providerId===id&&row.generation===generation)lostUsb.delete(ref);const current=session;if(!current||current.provider.id!==id||current.generation!==generation)return [];current.quiescence??=finishSession(current,"disconnected");return [current.quiescence.settled];},
     revokeAll(){closing=true;lostUsb.clear();if(!session)return [];session.quiescence??=finishSession(session,"suspended");return [session.quiescence.settled];},
   };
-  const resources=createDeviceResourceParticipant(resourceDriver);
+  const resources=factories.participant(resourceDriver);
   const recoveryDriver:RecoveryDriver={
+    wallNow: () => wallNow(),
     describe(sessionId){const current=session;return current&&current.snapshot.sessionId===sessionId?{sessionId,providerGeneration:current.generation,physical:structuredClone(current.connection.physical)}:null;},
     async occupy(sessionId,work){
       const current=session;if(!current||current.snapshot.sessionId!==sessionId)return stale();
@@ -5449,7 +5677,7 @@ export function createBroker(input:Options):DeviceBrokerPort&LegacyOperationPort
       finally{await current.lane.drain(ctx.cleanup.deadlineMonotonicMs);current.provider.releaseOperation(id);current.lane.release(id);}
     },
   };
-  const recovery=createDeviceRecovery({journal:input.journal,actions:input.coreActions,driver:recoveryDriver});
+  const recovery=factories.recovery({journal:input.journal,actions:input.coreActions,driver:recoveryDriver});
   const sessionSnapshot=(current:Session):DeviceSessionSnapshot=>{
     const foreground=current.lane.foreground;
     return {...structuredClone(current.snapshot),state:current.lane.quarantined?"quarantined":current.snapshot.state,recording:reservations.active,foreground:foreground===null?"none":operations.rows.rows.has(foreground)?"motion":legacy.get(foreground)?.operationClass==="program-launch"?"program":legacy.has(foreground)?"file":"mode"};
@@ -5613,7 +5841,6 @@ export function createBroker(input:Options):DeviceBrokerPort&LegacyOperationPort
         if(!confirmed)return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED","readback-failed",outcome.dispatch);
         return {ok:true as const,value:input.journal.snapshot()};
       });}catch(error){if(error instanceof BrokerFailure)return error.result;return {ok:false,error:{code:"PLUGIN_E_DEVICE_OPERATION",message:"Safety-stop journal or readback failed",detail:{kind:"device",reason:"journal-unwritable",dispatch:"unknown",stopConfirmation:"unconfirmed"}}};}
-      finally{input.coreActions.complete(action);}
     },
     async subscribeCoreTelemetry({principal,sessionId,channelIds,intervalMs,receive}){
       assertPrincipal(principal);permission(principal,"devices.read");
@@ -5676,11 +5903,7 @@ export function createBroker(input:Options):DeviceBrokerPort&LegacyOperationPort
 }
 ```
 
-In `broker-port.ts`, replace only the T0 `export declare function createDeviceBroker(...)` declaration with this runtime export. Keep the amended frozen type/interface exports above it unchanged:
-
-```ts
-export { createBroker as createDeviceBroker } from "./broker.js";
-```
+In `broker-port.ts`, replace only the T0 factory declaration using the complete facade below. Preserve all frozen exports. Only this production facade imports T3 factory values; W1 core tests use typed dependencies.
 
 For `Options` to avoid a recursive factory alias, export the exact factory input type locally from `broker-port.ts` and import it into `broker.ts` as shown by this complete replacement:
 
@@ -5696,7 +5919,12 @@ export type DeviceBrokerOptions = {
   operationGate: DeviceOperationGate;
   connectionPolicy: () => DeviceConnectionPolicy;
 };
-export { createBroker as createDeviceBroker } from "./broker.js";
+import { createBroker } from "./broker.js";
+import { createDeviceRecovery } from "./recovery-port.js";
+import { createDeviceResourceParticipant } from "./resource-participant.js";
+export function createDeviceBroker(input: DeviceBrokerOptions): DeviceBrokerPort & LegacyOperationPort {
+  return createBroker(input, { recovery: createDeviceRecovery, participant: createDeviceResourceParticipant });
+}
 ```
 
 Replace the `Factory` import in `broker.ts` with `DeviceBrokerOptions`, and replace `type Options=Parameters<typeof Factory>[0];` with `type Options=DeviceBrokerOptions;`. This is a module-local name for the exact frozen structural input, not a changed factory signature.
@@ -5769,7 +5997,7 @@ export class EventLedger implements CommonEventLedgerPort {
 
 Use one broker-owned ACK-deadline timer while the ledger has live rows; arm it on first create, sweep against the original enqueue timestamps and cancel it when the last row is removed or shutdown finishes. The read-only `diagnostics()` projection includes terminal-awaiting-ACK rows. B1-T2 forwards these host counters through AM-22 `diagnosticsFor`, without double counting its UI subscriptions. No RPC/preload diagnostics export or lifecycle mutation is permitted through diagnostics. Bound same-owner unsubscribe tombstones to the owner lifetime; disposal deletes them.
 
-In `broker-port.ts`, export this projection with a type-only import from runtime `ui-subscriptions.ts`. It delegates to the same ledger, with no new state:
+In `broker-port.ts`, export this projection with F's package-root type-only `UiEventLedgerPort` export from `ui-subscriptions.ts` (BM-01), available at F and P150, without importing its implementation. It delegates to the same ledger, with no new state:
 
 ```ts
 import type {UiEventLedgerPort} from "@kobrixa/plugin-runtime";
@@ -5782,6 +6010,15 @@ export function uiEventLedgerPort(events:CommonEventLedgerPort):UiEventLedgerPor
     onRemoved:listener=>events.onRemoved(listener),
   };
 }
+```
+
+Append to the existing `contract.test.ts` with imports merged:
+
+```ts
+import type { uiEventLedgerPort } from "./broker-port.js";
+it("P150 UI ledger adapter uses F's exported projection", () => {
+  expectTypeOf<ReturnType<typeof uiEventLedgerPort>>().toEqualTypeOf<UiEventLedgerPort>();
+});
 ```
 
 Append to `registry.test.ts`:
@@ -5797,10 +6034,11 @@ it("mixed-domain slots share quotas; terminal control stays charged until ACK",(
   const id=ids[0]!;ledger.publish(owner,id,{kind:"devices.catalog",data:{revision:0,providers:[],sessions:[]}},"control");
   expect(sent).toEqual([]);ledger.activate(owner,id);expect(sent).toHaveLength(1);
   ledger.closeAfterControl(owner,id);expect(ledger.diagnostics().queuedEvents).toBe(1);
+  expect(ledger.diagnostics().subscriptions).toBe(32);expect(ledger.diagnostics().queuedBytes).toBeGreaterThan(0);
   expect(()=>ledger.ack(owner,id,2)).toThrow();ledger.ack(owner,id,1);
   expect(ledger.diagnostics().subscriptions).toBe(31);expect(ledger.diagnostics().queuedBytes).toBe(0);
   const second=ids[1]!;ledger.publish(owner,second,{kind:"devices.catalog",data:{revision:1,providers:[],sessions:[]}},"control");ledger.activate(owner,second);ledger.closeAfterControl(owner,second);now=10000;ledger.sweep();
-  expect(ledger.owns(owner,second)).toBe(false);
+  expect(ledger.owns(owner,second)).toBe(false);expect(ledger.diagnostics().queuedBytes).toBe(0);
   ledger.disposeOwner(owner);expect(ledger.diagnostics()).toEqual({subscriptions:0,queuedEvents:0,queuedBytes:0});
 });
 it("snapshot preserves exact failure details and captures state with its sequence",()=>{
@@ -5820,6 +6058,32 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 ```
 
 Expected red before implementation: missing common methods/projection. Expected green: inactive subscription buffering, synchronous ACK safety, no duplicate ledger, shared quotas, exact snapshot watermark, once-only removal and terminal timeout cleanup. T7 alone writes its router test; run it after the stopped-owner integration handoff.
+
+- [ ] **Step 10A: Verify the unchanged router handoff against the real peer**
+
+Supply A-T7 this exact call-site contract; A-T7 alone edits `rpc-router.ts`. `attachDeviceRpc({peer,principal,broker})` retains its three required arguments. Attach once from the full plugin owner; use this sender:
+
+```ts
+const bound=principal();
+if(bound.kind!=="plugin")throw new Error("Device RPC requires a bound plugin owner");
+const attachment=broker.attachChannel({owner:bound.owner,principal,send:event=>{
+  if(peer.closed)throw new Error("Event channel closed");
+  const parsed=eventEnvelopeSchema.parse(event);
+  peer.notify("events/deliver",parsed);
+}});
+```
+
+After a successful `devices/negotiate` result call `attachment.negotiated("devices",1)`. In the `devices/subscribe` handler, after a successful broker result and before returning it, register:
+
+```ts
+if(result.ok){
+  const id=result.value.subscriptionId;
+  context.afterReply(()=>attachment.activate(id),()=>attachment.abandon(id));
+}
+return result;
+```
+
+The common ACK/unsubscribe handlers are registered here once; B1/B2 routers reuse this attachment and call `negotiated("ui",1)` / `negotiated("settings",1)` only after their own successful negotiation. On detach install inert handlers using the existing void-returning `peer.handle`, dispose the attachment, then tear down the channel. Do not invent `sendNotification` or change the public subscribe result. T7's synchronous transport test holds an event before the result, observes result send, then observes event delivery before the client's await resumes; thrown result send, invalid result, cancellation and close each abandon the ID and remove demands.
 
 - [ ] **Step 11: Add the remaining broker-side matrix regressions**
 
@@ -5874,32 +6138,6 @@ it.each([
 ```
 
 All matrix rows above are test code, not checkmarks of actual acceptance. F01 external own-property registration is R150's test; F08/F09 firmware and EV3 DTO evidence is T4; F10 filesystem crash injection and F11 identity reconciliation are T3; F13 real notification/transport attachment is T7; F19 actual checkpoint registration/drain is X-T1. Their local contracts remain covered here and their real gates remain open.
-
-- [ ] **Step 10A: Verify the unchanged router handoff against the real peer**
-
-Supply A-T7 this exact call-site contract; A-T7 alone edits `rpc-router.ts`. `attachDeviceRpc({peer,principal,broker})` retains its three required arguments. Attach once from the full plugin owner; use this sender:
-
-```ts
-const bound=principal();
-if(bound.kind!=="plugin")throw new Error("Device RPC requires a bound plugin owner");
-const attachment=broker.attachChannel({owner:bound.owner,principal,send:event=>{
-  if(peer.closed)throw new Error("Event channel closed");
-  const parsed=eventEnvelopeSchema.parse(event);
-  peer.notify("events/deliver",parsed);
-}});
-```
-
-After a successful `devices/negotiate` result call `attachment.negotiated("devices",1)`. In the `devices/subscribe` handler, after a successful broker result and before returning it, register:
-
-```ts
-if(result.ok){
-  const id=result.value.subscriptionId;
-  context.afterReply(()=>attachment.activate(id),()=>attachment.abandon(id));
-}
-return result;
-```
-
-The common ACK/unsubscribe handlers are registered here once; B1/B2 routers reuse this attachment and call `negotiated("ui",1)` / `negotiated("settings",1)` only after their own successful negotiation. On detach install inert handlers using the existing void-returning `peer.handle`, dispose the attachment, then tear down the channel. Do not invent `sendNotification` or change the public subscribe result. T7's synchronous transport test holds an event before the result, observes result send, then observes event delivery before the client's await resumes; thrown result send, invalid result, cancellation and close each abandon the ID and remove demands.
 
 - [ ] **Step 11A: Complete event producers, shared core accounting and connection lifecycle**
 
@@ -5992,7 +6230,7 @@ it("provider frames have one receipt origin and mode snapshots use the same sequ
 Use the real T3 factory and genuine D150 action ledger in the integration variants: replay/foreign-window stop claims fail; failed pending commit sends no stop; failed final commit retains occupancy; read-only reconcile calls observe and never stop; restart fault requires explicit connection. Add catalog cases for construction-before-session, stable tuple/revision, foreign session, replaced provider and conflicting provider. Test configured Wi-Fi timeouts and clamp every exchange to the captured deadline; USB tests cover stale descriptor, duplicate serial, changed serial and no replay. Core telemetry tests overlap battery/monitor/Lab, dispose one demand while the other two continue, then destroy their workbench and assert zero queues/timers. Gate tests flip the callback during a blocked file chunk and assert no next chunk but exactly one close. Hold the formal fake before exchange/after exchange/before stop-readback; inspect trace after release and prove single dispatch, late ACK cleanup and immediate intent revocation under event pressure.
 
 ```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker.test.ts src/main/device-broker/broker-port.test.ts src/main/device-broker/registry.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/provider.test.ts src/main/device-broker/sampler.test.ts src/main/device-broker/fake-provider.test.ts
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker.test.ts src/main/device-broker/registry.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/provider.test.ts src/main/device-broker/sampler.test.ts src/main/device-broker/fake-provider.test.ts
 ```
 
 Expected red before the AM wiring: callback, channel, stop or stamping assertions fail. Expected green afterward with all sibling ports integrated. P150 requires the real recovery/controller/router variants, not only frozen journal doubles. Record evidence under the one canonical 3A acceptance report; no duplicate conformance or host fixture tree.
@@ -6004,17 +6242,17 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime build
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-sdk build
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/device build
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/contract.test.ts src/main/device-broker/provider.test.ts src/main/device-broker/broker-port.test.ts src/main/device-broker/broker.test.ts src/main/device-broker/registry.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/sampler.test.ts src/main/device-broker/reservations.test.ts src/main/device-broker/intent.test.ts src/main/device-broker/fake-provider.test.ts
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/contract.test.ts src/main/device-broker/provider.test.ts src/main/device-broker/broker.test.ts src/main/device-broker/registry.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/sampler.test.ts src/main/device-broker/reservations.test.ts src/main/device-broker/intent.test.ts src/main/device-broker/fake-provider.test.ts
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm check:desktop
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git diff --check
 ```
 
-Expected local PASS after F's exports and the T1/T3 implementations are available. P150 additionally requires the real D150/R150/K150/V150 adapters and sibling acceptance. The controller records the actual command results, source SHA, mocked ports, and open gates in the shared receipt. The A-T10 real broker/provider/router test and X-T1 reservation/storage test are **controller runs outside sandbox** when they require Electron, localhost or installed adapters. No automatic merge or hardware acceptance is implied.
+Expected local PASS after final F export assembly and the protocol implementation; typed local factory doubles do not depend on T3 value implementations. Real factory acceptance remains in T10 Step 18. P150 additionally requires the real D150/R150/K150/V150 adapters and sibling acceptance. The controller records the actual command results, source SHA, mocked ports, and open gates in the shared receipt. The A-T10 real broker/provider/router test and X-T1 reservation/storage test are **controller runs outside sandbox** when they require Electron, localhost or installed adapters. No automatic merge or hardware acceptance is implied.
 
 - [ ] **Step 13: Commit only the T2 write set**
 
 ```bash
-git add apps/desktop/src/main/device-broker/provider.ts apps/desktop/src/main/device-broker/provider.test.ts apps/desktop/src/main/device-broker/broker-port.ts apps/desktop/src/main/device-broker/broker-port.test.ts apps/desktop/src/main/device-broker/broker.ts apps/desktop/src/main/device-broker/broker.test.ts apps/desktop/src/main/device-broker/registry.ts apps/desktop/src/main/device-broker/registry.test.ts apps/desktop/src/main/device-broker/operations.ts apps/desktop/src/main/device-broker/operations.test.ts apps/desktop/src/main/device-broker/sampler.ts apps/desktop/src/main/device-broker/sampler.test.ts apps/desktop/src/main/device-broker/reservations.ts apps/desktop/src/main/device-broker/reservations.test.ts apps/desktop/src/main/device-broker/intent.ts apps/desktop/src/main/device-broker/intent.test.ts apps/desktop/src/main/device-broker/contract.test.ts apps/desktop/src/main/device-broker/fake-provider.ts apps/desktop/src/main/device-broker/fake-provider.test.ts
+git add apps/desktop/src/main/device-broker/provider.ts apps/desktop/src/main/device-broker/provider.test.ts apps/desktop/src/main/device-broker/broker-port.ts apps/desktop/src/main/device-broker/broker.ts apps/desktop/src/main/device-broker/broker.test.ts apps/desktop/src/main/device-broker/registry.ts apps/desktop/src/main/device-broker/registry.test.ts apps/desktop/src/main/device-broker/operations.ts apps/desktop/src/main/device-broker/operations.test.ts apps/desktop/src/main/device-broker/sampler.ts apps/desktop/src/main/device-broker/sampler.test.ts apps/desktop/src/main/device-broker/reservations.ts apps/desktop/src/main/device-broker/reservations.test.ts apps/desktop/src/main/device-broker/intent.ts apps/desktop/src/main/device-broker/intent.test.ts apps/desktop/src/main/device-broker/contract.test.ts apps/desktop/src/main/device-broker/fake-provider.ts apps/desktop/src/main/device-broker/fake-provider.test.ts
 git commit -m "feat(desktop): add guarded device broker and recording reservations"
 ```
 
@@ -6022,17 +6260,19 @@ git commit -m "feat(desktop): add guarded device broker and recording reservatio
 
 **Files**
 
+- Create: `apps/desktop/src/main/device-broker/broker-port.test.ts` (real facade acceptance; run in T10 Step 18).
+
 - Modify: `apps/desktop/src/main/device-broker/journal-port.ts`
 - Create: `apps/desktop/src/main/device-broker/journal-port.test.ts` (Test)
 - Create: `apps/desktop/src/main/device-broker/journal.ts`
 - Create: `apps/desktop/src/main/device-broker/journal.test.ts` (Test)
 - Create: `apps/desktop/src/main/device-broker/journal-filesystem.ts`
 - Create: `apps/desktop/src/main/device-broker/journal-filesystem.test.ts` (Test)
-- Create: `apps/desktop/src/main/device-broker/recovery-port.ts`
+- Modify (F scaffold; baseline N): `apps/desktop/src/main/device-broker/recovery-port.ts`
 - Create: `apps/desktop/src/main/device-broker/recovery-port.test.ts` (Test)
 - Modify: `packages/plugin-runtime/src/device-resources.ts`
 - Modify: `packages/plugin-runtime/src/device-resources.test.ts` (Test)
-- Create: `apps/desktop/src/main/device-broker/resource-participant.ts`
+- Modify (F scaffold; baseline N): `apps/desktop/src/main/device-broker/resource-participant.ts`
 - Create: `apps/desktop/src/main/device-broker/resource-participant.test.ts` (Test)
 - Test: `apps/desktop/src/main/device-broker/journal-port.test.ts`
 - Test: `apps/desktop/src/main/device-broker/journal.test.ts`
@@ -6049,7 +6289,7 @@ Precondition: the controller recorded F and relinquished the T0 scaffolds. T2 su
 
 - [ ] **Step 1: Write the contract tests before replacing the T0 declarations**
 
-Replace `packages/plugin-runtime/src/device-resources.test.ts`:
+Append to `packages/plugin-runtime/src/device-resources.test.ts`, merging duplicate imports and preserving the F `ReservationBindingPort.onEnded`, `DeviceSessionControlPort.quiesce` and all AM equality assertions:
 
 ```ts
 import { expectTypeOf, it } from "vitest";
@@ -6084,9 +6324,9 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Expected: the frozen tests pass on F; a missing export fails compilation and is a freeze defect, not permission to invent a sibling type. The behavioral test in Step 4 supplies the red phase.
 
-- [ ] **Step 3: Install the complete type-only declarations**
+- [ ] **Step 3: Complete the frozen type-only declarations**
 
-Install the following declarations in `packages/plugin-runtime/src/device-resources.ts`, preserving the AM-01 `Stage3Event`, `Stage3EventEnvelope`, `CommonEventLedgerPort` and `DeviceChannelAttachment` declarations already frozen in F (with type-only imports from A-T1 events.ts):
+Append/complete the following declarations in `packages/plugin-runtime/src/device-resources.ts`; merge existing declarations by name, preserving every F declaration, including `DeviceRecoverySnapshot`, `DeviceRecoveryPort`, the imported/type-re-exported `DeviceFailureDetail`, reservations and session ports. Preserve the AM-01 `Stage3Event`, `Stage3EventEnvelope`, `CommonEventLedgerPort` and `DeviceChannelAttachment` declarations already frozen in F (with type-only imports from A-T1 events.ts):
 
 ```ts
 import type { Handle, Counter, Timestamp, ResourceOwner, DispatchOutcome, MotionSnapshot, ReservationSnapshot, BusinessResult, DeviceErrorDetail, PermissionErrorDetail, ResourceErrorDetail, DeviceErrorReason } from "@kobrixa/plugin-protocol";
@@ -6252,15 +6492,11 @@ export type PhysicalIdentity = {
 };
 ```
 
-Replace `apps/desktop/src/main/device-broker/journal-port.ts`:
+Complete `apps/desktop/src/main/device-broker/journal-port.ts`, preserving its F exports:
 
 ```ts
-import type { Counter, Handle } from "@kobrixa/plugin-protocol";
-import type { FaultJournalDocument, SafetyFaultEntry } from "@kobrixa/plugin-runtime";
-export type DeviceRecoverySnapshot = {
-  revision: Counter; journalHealth: "ready" | "unwritable" | "corrupt" | "full";
-  faults: SafetyFaultEntry[]; blockers: Handle[];
-};
+import type { FaultJournalDocument, DeviceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export type { DeviceRecoverySnapshot } from "@kobrixa/plugin-runtime";
 export interface JournalPort {
   load(): Promise<FaultJournalDocument>;
   commit(document: FaultJournalDocument): Promise<void>;
@@ -6748,12 +6984,25 @@ function fixture() {
   const stop = vi.fn(observe.getMockImplementation()!);
   const current = { sessionId, physical: item.physical, providerGeneration: 2 };
   const driver: RecoveryDriver = {
+    wallNow: () => 1700000000000,
     describe: vi.fn(() => current),
     async occupy(id, work) { expect(id).toBe(sessionId); return work({ observe, stop }); },
   };
   const recovery = createDeviceRecovery({ journal, actions, driver });
   return { item, action, sessionId, journal, actions, observe, stop, driver, current, recovery, deny: () => { allowed = false; } };
 }
+it.each([1700000000000, 1700000000500])("F11 resolution uses injected epoch time with a nondecreasing floor %s", async (updatedAt) => {
+  const f = fixture();
+  const document = await f.journal.load();
+  document.entries[0]!.updatedAt = updatedAt;
+  await f.journal.commit(document);
+  let monotonic = 0;
+  f.driver.wallNow = () => 1700000000000;
+  f.driver.occupy = async (_id, work) => { monotonic += 9000; return work({ observe: f.observe, stop: f.stop }); };
+  const result = await f.recovery.reconcile({ faultId: f.item.id, sessionId: f.sessionId, action: f.action, identityEvidence: "serial-match" });
+  expect(result.ok).toBe(true); expect(monotonic).toBe(9000);
+  expect(f.journal.snapshot().faults[0]).toMatchObject({ updatedAt, resolution: { at: updatedAt } });
+});
 it("F11 serial reconciliation resolves present idleness without rewriting unknown movement", async () => {
   const f = fixture();
   const result = await f.recovery.reconcile({ faultId: f.item.id, sessionId: f.sessionId, action: f.action, identityEvidence: "serial-match" });
@@ -6852,7 +7101,7 @@ Expected: FAIL because `createDeviceRecovery` is absent. The authorization cases
 
 - [ ] **Step 11: Implement the frozen recovery port and its local broker driver**
 
-Create `apps/desktop/src/main/device-broker/recovery-port.ts`:
+Modify (F scaffold; baseline N) `apps/desktop/src/main/device-broker/recovery-port.ts`: replace the declaration scaffold, preserving exported names and frozen signatures.
 
 ```ts
 import type { BusinessResult, Counter, DeviceErrorDetail, Handle, PermissionErrorDetail, ResourceErrorDetail } from "@kobrixa/plugin-protocol";
@@ -6860,19 +7109,14 @@ import type { CoreActionReference, CoreActionTarget, CoreActionValidationPort, P
 import type { IdleObservation, ProviderOutcome } from "./provider.js";
 import type { DeviceRecoverySnapshot, JournalPort } from "./journal-port.js";
 import { journalDocument } from "./journal.js";
-export type DeviceFailureDetail = DeviceErrorDetail | PermissionErrorDetail | ResourceErrorDetail;
+import type { DeviceFailureDetail, DeviceRecoveryPort } from "@kobrixa/plugin-runtime";
+export type { DeviceFailureDetail, DeviceRecoveryPort, DeviceRecoverySnapshot } from "@kobrixa/plugin-runtime";
 type Result = BusinessResult<DeviceRecoverySnapshot, DeviceFailureDetail>;
-export interface DeviceRecoveryPort {
-  snapshot(): DeviceRecoverySnapshot;
-  subscribe(listener: (snapshot: DeviceRecoverySnapshot) => void): () => void;
-  stopCurrent(input: { faultId: Handle; sessionId: Handle; action: CoreActionReference }): Promise<Result>;
-  reconcile(input: { faultId: Handle; sessionId: Handle; action: CoreActionReference; identityEvidence: "serial-match" | "user-confirmed-device" }): Promise<Result>;
-  clearResolved(input: { entryIds: Handle[]; action: CoreActionReference }): Promise<Result>;
-}
 // Local dependency supplied by T2's registry. occupy must reserve the recovery lane
 // synchronously before its first await, reject foreground/recording, and retain
 // original occupancy through work, journal publication and cleanup settlement.
 export interface RecoveryDriver {
+  wallNow(): number; // Unix epoch milliseconds, independent of monotonic deadlines.
   describe(sessionId: Handle): { sessionId: Handle; providerGeneration: Counter; physical: PhysicalIdentity } | null;
   occupy<T>(sessionId: Handle, work: (lane: {
     observe(): Promise<ProviderOutcome<IdleObservation>>;
@@ -6922,7 +7166,7 @@ export function createDeviceRecovery(input: { journal: JournalPort; actions: Cor
         const existing = document.entries.find((e) => e.id === fault.id);
         if (!existing || existing.revision !== fault.revision) return stale();
         const same = fault.sessionId === target.sessionId && fault.providerGeneration === session.providerGeneration;
-        const at = Math.max(Date.now(), fault.updatedAt);
+        const at = Math.max(driver.wallNow(), fault.updatedAt);
         const entries = document.entries.map((e) => e.id !== fault.id ? e : {
           ...fault, revision: fault.revision + 1, updatedAt: at, state: "resolved" as const,
           stopConfirmation: "confirmed" as const,
@@ -7001,7 +7245,7 @@ Expected: FAIL on the missing factory.
 
 - [ ] **Step 13: Implement the main-only participant**
 
-Create `apps/desktop/src/main/device-broker/resource-participant.ts`:
+Modify (F scaffold; baseline N) `apps/desktop/src/main/device-broker/resource-participant.ts`: replace the declaration scaffold, preserving exported names and frozen signatures.
 
 ```ts
 import type { Counter } from "@kobrixa/plugin-protocol";
@@ -7037,14 +7281,26 @@ export function createDeviceResourceParticipant(driver: ResourceDriver): DeviceR
 
 - [ ] **Step 13a: Bind both factories in A-T2's real broker before P150**
 
-A-T2 owns the following construction inside `createDeviceBroker` in `broker-port.ts`; T3 exports the implementations and imports its registry-backed inputs type-only. This is a required construction step, not a journal snapshot substitute. A-T2 supplies `recoveryDriver: RecoveryDriver` and `resourceDriver: ResourceDriver` from its operation/session registry: `describe` looks up the live generation; `occupy` reserves synchronously, calls provider `observeIdle` for observe and `stopAndReadback({kind:"current-device"})` for stop, and awaits the original cleanup settlement before releasing. The revoke functions synchronously fence admission and return the already-started original cleanup promises. They never call the public facade recursively.
+Create `apps/desktop/src/main/device-broker/broker-port.test.ts`:
 
 ```ts
-const recovery = createDeviceRecovery({ journal: input.journal, actions: input.coreActions, driver: recoveryDriver });
-const resources = createDeviceResourceParticipant(resourceDriver);
+import { expect,expectTypeOf,it } from "vitest";
+import { createDeviceBroker,type DeviceBrokerPort,type LegacyOperationPort } from "./broker-port.js";
+import { operationHarness,ID } from "./fake-provider.js";
+it("F19 canonical factory has no hidden Electron side effects",()=>{
+  expectTypeOf<ReturnType<typeof createDeviceBroker>>().toEqualTypeOf<DeviceBrokerPort&LegacyOperationPort>();
+  const h=operationHarness();const broker=createDeviceBroker({journal:h.dependencies.journal,profile:h.dependencies.profile,now:h.dependencies.now,authority:{current:()=>null,assertContinuation(){throw new Error("unbound");},subscribe:()=>()=>{}},coreActions:{claim:()=>false,isClaimed:()=>false,complete(){}},hasPermission:()=>true,requirements:()=>[],operationGate:()=>({ok:true,value:null}),connectionPolicy:()=>({wifiConnectTimeoutMs:5000,wifiHandshakeTimeoutMs:3000,usbAutoReconnect:false,usbRetryInterval:"backoff",usbRetryLimit:3})});
+  expect(broker.recovery.snapshot().faults).toEqual([]);
+  expect(()=>broker.sessions.quiesce(ID,{reason:"suspended"})).toThrow();
+});
 ```
 
-Return these exact instances as `DeviceBrokerPort.recovery` and `.resources`; construct each once per broker. A-T8 passes this broker participant to the real controller during D150. In `broker-port.test.ts` and `operations.test.ts` (A-T2 owner), load a pending restart journal, explicitly connect, reconcile and assert the provider read trace with no stop/run/upload. Then mint a real device-stop action, hold final journal commit after stop readback and assert foreground admission stays blocked. Reject that commit and assert the retained journal blocker. Retire a live owner/provider and assert admission is revoked before awaiting disposition, with the same original cleanup promise. Repeat through the D150 controller disable/window-loss entrypoints in its owned tests. Run these together with T3's tests at P150:
+
+A-T2 owns the production facade in `broker-port.ts` and injected internal drivers in `broker.ts`; T3 exports the implementations and imports its registry-backed inputs type-only. This is a required construction step, not a journal snapshot substitute. A-T2 supplies `recoveryDriver: RecoveryDriver` and `resourceDriver: ResourceDriver` from its operation/session registry: `describe` looks up the live generation; `occupy` reserves synchronously, calls provider `observeIdle` for observe and `stopAndReadback({kind:"current-device"})` for stop, and awaits the original cleanup settlement before releasing. The revoke functions synchronously fence admission and return the already-started original cleanup promises. They never call the public facade recursively.
+
+The production facade supplies `{recovery:createDeviceRecovery, participant:createDeviceResourceParticipant}` to `createBroker(input, factories)`. The internal core invokes each dependency once with its registry-backed driver; this step adds no duplicate construction.
+
+Return these exact instances as `DeviceBrokerPort.recovery` and `.resources`; construct each once per broker. A-T8 passes this broker participant to the real controller during D150. In `broker-port.test.ts` (A-T3 owner) and read-only `operations.test.ts` (A-T2 owner), load a pending restart journal, explicitly connect, reconcile and assert the provider read trace with no stop/run/upload. Then mint a real device-stop action, hold final journal commit after stop readback and assert foreground admission stays blocked. Reject that commit and assert the retained journal blocker. Retire a live owner/provider and assert admission is revoked before awaiting disposition, with the same original cleanup promise. Repeat through the D150 controller disable/window-loss entrypoints in its owned tests. Run these together with T3's tests at P150:
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker-port.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-broker/resource-participant.test.ts src/main/plugins/controller.test.ts
@@ -7062,7 +7318,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 Expected: PASS, including F05/F08/F10/F11/F17/F19/F20 and A-RF2 assertions local to this task. T2 supplies the registry-backed `RecoveryDriver` and `ResourceDriver` at `createDeviceBroker`; this task does not change that factory's frozen signature. T8 supplies the same `ProfileWriterLock` used by persistence. T9/T10 must rerun through the actual broker and action ledger. Filesystem durability under process kill, all operating systems and actual hardware are **controller runs outside sandbox**.
 
 ```bash
-git add apps/desktop/src/main/device-broker/recovery-port.ts apps/desktop/src/main/device-broker/recovery-port.test.ts apps/desktop/src/main/device-broker/resource-participant.ts apps/desktop/src/main/device-broker/resource-participant.test.ts
+git add apps/desktop/src/main/device-broker/broker-port.test.ts apps/desktop/src/main/device-broker/recovery-port.ts apps/desktop/src/main/device-broker/recovery-port.test.ts apps/desktop/src/main/device-broker/resource-participant.ts apps/desktop/src/main/device-broker/resource-participant.test.ts
 git commit -m "feat(devices): retain core recovery and synchronous resource retirement"
 ```
 
@@ -8246,9 +8502,9 @@ git commit -m "feat(devices): extract EV3 provider with finite motion and guarde
 - Modify: `apps/desktop/src/main/device/monitor.test.ts`
 - Modify: `apps/desktop/src/main/device/deployment-snapshot.test.ts`
 - Modify: `apps/desktop/src/main/device/recovery.test.ts`
-- Create: `apps/desktop/src/main/device-broker/legacy-device.ts`
+- Modify (F scaffold; baseline N): `apps/desktop/src/main/device-broker/legacy-device.ts`
 - Create: `apps/desktop/src/main/device-broker/legacy-device.test.ts`
-- Create: `apps/desktop/src/main/device-broker/legacy-files.ts`
+- Modify (F scaffold; baseline N): `apps/desktop/src/main/device-broker/legacy-files.ts`
 - Create: `apps/desktop/src/main/device-broker/legacy-files.test.ts`
 - Create: `apps/desktop/src/main/device-broker/legacy-lab.ts`
 - Create: `apps/desktop/src/main/device-broker/legacy-lab.test.ts`
@@ -8358,7 +8614,7 @@ Expected: FAIL on the absent adapter.
 
 - [ ] **Step 2: Implement file projection and local confirmation lifetime**
 
-Create `apps/desktop/src/main/device-broker/legacy-files.ts`:
+Modify (F scaffold; baseline N) `apps/desktop/src/main/device-broker/legacy-files.ts`: replace the declaration scaffold, preserving exported names and frozen signatures.
 
 ```ts
 import type { DeviceSession } from "@kobrixa/device";
@@ -8542,7 +8798,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Expected: FAIL on the missing `LegacyDevice` adapter and projection.
 
-Create `apps/desktop/src/main/device-broker/legacy-device.ts`:
+Modify (F scaffold; baseline N) `apps/desktop/src/main/device-broker/legacy-device.ts`: replace the declaration scaffold, preserving exported names and frozen signatures.
 
 ```ts
 import type { DeviceDescriptor, DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
@@ -8798,7 +9054,7 @@ it("AM-08 uses the host serial-match reconnect seam and never replays legacy mut
 });
 ```
 
-A-T2 owns the real matching tests in `broker-port.test.ts`: retain a live USB session with serial A, lose its connection, rediscover serial A at a different native path, and assert only that fresh candidate connects. Run with 2000ms/3 attempts and with backoff 1000→2000→5000ms; assert policy capture and exact attempt count. Replacing discovery with duplicate A, no serial or same IP/different serial must reject without opening a candidate. Explicit Disconnect, provider disable, safe mode, workbench retirement and preference cancellation must invalidate the old schedule/alias; loading a restart journal alone produces zero attempts. After reconnect, assert the trace contains connection/observe only, no run/upload/motion and no reconstructed authority. T3's real recovery integration consumes the newly returned session only with a fresh reconcile or stop core action.
+A-T3 owns the real matching tests in `broker-port.test.ts`, consuming A-T2's core read-only at T10 Step 18: retain a live USB session with serial A, lose its connection, rediscover serial A at a different native path, and assert only that fresh candidate connects. Run with 2000ms/3 attempts and with backoff 1000→2000→5000ms; assert policy capture and exact attempt count. Replacing discovery with duplicate A, no serial or same IP/different serial must reject without opening a candidate. Explicit Disconnect, provider disable, safe mode, workbench retirement and preference cancellation must invalidate the old schedule/alias; loading a restart journal alone produces zero attempts. After reconnect, assert the trace contains connection/observe only, no run/upload/motion and no reconstructed authority. T3's real recovery integration consumes the newly returned session only with a fresh reconcile or stop core action.
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/legacy-device.test.ts src/main/device-broker/broker-port.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-providers/ev3/provider.test.ts
@@ -9532,93 +9788,9 @@ PY
 
 This old-store integration fixture deliberately uses a fake sampler. The new `legacy-lab.test.ts` proves actual reserve/read/release request translation; T9 must connect both to the formal T2 fake provider before claiming F12/F19 end-to-end. The T8 coordinator retains existing flush failures and last committed checkpoints during Disconnect/suspend and normal close.
 
-- [ ] **Step 11a: Apply D150 composition and trusted action call sites under A-T8 ownership**
+- [ ] **Step 11a: Hand off the frozen legacy facade to D150**
 
-The following patches are submitted to A-T8; T5 does not edit H-D. In `main/index.ts`, construct one shared feed and pass the real `DeviceBrokerPort & LegacyOperationPort`. Bind `principal` to the current main-owned workbench/authority record, never request JSON. `stop` and `disconnect` below consume the action carried by the trusted IPC invocation; neither callback mints a token. Use a local `AsyncLocalStorage` context (imported from `node:async_hooks`) so simultaneous async handlers cannot borrow each other's action. The context is main-only and is not attached to preload or renderer data.
-
-```ts
-const coreDeviceInvocation = new AsyncLocalStorage<{
-  principal: CorePrincipal;
-  action: CoreActionReference;
-  kind: "device-current-stop" | "device-disconnect";
-  sessionId: Handle;
-}>();
-const requireDeviceAction = (kind: "device-current-stop" | "device-disconnect", sessionId: Handle) => {
-  const value = coreDeviceInvocation.getStore();
-  if (!value || value.kind !== kind || value.sessionId !== sessionId) throw new Error("A trusted device action is required.");
-  return value.action;
-};
-const feed = createLegacyMonitorFeed(broker);
-const device = createLegacyDevice({
-  broker, principal, feed,
-  async stop(sessionId) {
-    const action = requireDeviceAction("device-current-stop", sessionId);
-    const result = await broker.stopCurrentDevice({ sessionId, action });
-    if (!result.ok) throw new Error(result.error.message);
-  },
-  async disconnect(sessionId) {
-    const action = requireDeviceAction("device-disconnect", sessionId);
-    const result = await broker.sessions.disconnect(sessionId, action);
-    if (!result.ok) throw new Error(result.error.message);
-  },
-});
-devices.attachLegacy({ device, files: new LegacyFiles(broker, (operationClass) => ({
-  ...principal(), adapter: operationClass === "deployment" ? "deployment" : operationClass === "program-launch" ? "program" : "remote-files",
-})) });
-devices.setBeforeDisconnect(async (sessionId) => {
-  const action = requireDeviceAction("device-disconnect", sessionId);
-  const quiescence = broker.sessions.quiesce(sessionId, { reason: "core-disconnect", action });
-  const disposition = await quiescence.settled;
-  if (!disposition.stopConfirmed || !disposition.journalCommitted) throw new Error("Device cleanup remains unconfirmed.");
-  await sensorLab.flush("close");
-});
-const connectionPolicy = (): DeviceConnectionPolicy => {
-  const value = devices.getPreferences();
-  return Object.freeze({ wifiConnectTimeoutMs: value.wifiConnectTimeout,
-    wifiHandshakeTimeoutMs: value.wifiHandshakeTimeout, usbAutoReconnect: value.usbAutoReconnect,
-    usbRetryInterval: value.usbRetryInterval, usbRetryLimit: value.usbRetryLimit });
-};
-```
-
-Define `connectionPolicy` before calling `createDeviceBroker`/`createDesktopFoundation`, and supply it as that required input. A-T8 also supplies the live `operationGate`; A-T2 evaluates capability, then gate, then authority at admission and each consequential continuation. Preserve cleanup/original-owner stop/query exceptions. A preference change cancels any old USB recovery schedule before capturing the next policy. The real D150 controller and this one participant must be attached before publishing P150.
-
-In `main/ipc.ts`, replace the existing `device:stop` and `device:disconnect` handlers with the following bodies. Here `handle`, `trusted`, `id` and `batchRef` are the existing IPC registration/validation helpers; D150's `principal` callback derives the current `CorePrincipal` from its main-owned workbench and authority record after `trusted(event)`. `coreActions` is the sole AM-11 `CoreActionLedger` supplied by main. Pass the same `coreDeviceInvocation` object from composition into IPC registration as a main-only dependency. The `DeviceService.setBeforeDisconnect` binding above quiesces/stops before the existing Lab stop/save guard; a failed save prevents disconnect and remains retryable. The session-control coordinator retains the same action across quiesce/stop/save/disconnect, never minting on retry inside that attempt.
-
-```ts
-handle("device:stop", (event, raw: unknown) => {
-  trusted(event);
-  const sessionId = id.parse(raw), owner = principal();
-  const action = coreActions.mint({ hostEpoch: owner.hostEpoch, workbenchInstance: owner.workbenchInstance },
-    { kind: "device-current-stop", sessionId });
-  return coreDeviceInvocation.run({ principal: owner, action, kind: "device-current-stop", sessionId }, () => devices.stop(sessionId));
-});
-handle("device:disconnect", (event, raw: unknown) => {
-  trusted(event);
-  const sessionId = id.parse(raw), owner = principal();
-  const action = coreActions.mint({ hostEpoch: owner.hostEpoch, workbenchInstance: owner.workbenchInstance },
-    { kind: "device-disconnect", sessionId });
-  return coreDeviceInvocation.run({ principal: owner, action, kind: "device-disconnect", sessionId }, () => devices.disconnect(sessionId));
-});
-handle("device:files-renew", (event, raw: unknown) => {
-  trusted(event);
-  const owner: CorePrincipal = { ...principal(), adapter: "remote-files" };
-  renewFilePlan(batchRef.parse(raw), owner);
-});
-```
-
-A-T2's `stopCurrentDevice` claims `{kind:"device-current-stop",sessionId}` exactly once, reserves recovery ownership, commits a new real pending safety-stop entry and only then calls the provider's `stopAndReadback` with `{kind:"current-device"}` and the original cleanup context. It does not route through `recovery.stopCurrent` with an invented fault ID or add a `LegacyProviderRequest` variant. Failure of the pending commit prevents send; failed readback or final commit retains the blocker. Add D150 IPC/controller tests for an externally launched program with no existing fault, replay, wrong sender/window, foreign session, expired action, pending/final journal failure, update starting between upload chunks and single-click Disconnect with save failure/retry. Assert real broker/provider traces and ledger claims, not only callback invocations.
-
-A-T8 owns these exact additional `shared/api.ts` and `preload/index.ts` members:
-
-```ts
-// KobrixaApi.device
-renewFiles(ref: FileBatchRef): Promise<void>;
-```
-
-```ts
-// preload device object
-renewFiles: (ref) => ipcRenderer.invoke("device:files-renew", ref),
-```
+Task 3A-T8 Step 8 in this plan is the sole D150 composition (BM-04). T5 supplies `LegacyDeviceDependencies`, `createLegacyDevice`, `createLegacyMonitorFeed`, `DeviceService.attachLegacy` and `renewFilePlan`; its existing facade delegation assertions remain in the T5 tests. T8 captures the admitted main-frame principal and owns mint/claim/complete for stop-current-device and Disconnect. No action context, timer, ready handler or plugin call mints an action here.
 
 - [ ] **Step 11b: Attach battery/monitor/Lab demands and explicit renewal under V150 ownership**
 
@@ -9645,38 +9817,7 @@ async function attachBattery(sessionId: Handle | undefined): Promise<void> {
 
 `devices.subscribe` invokes `attachBattery(event.sessionId)` only on connected state and `attachBattery(undefined)` on disconnected state; main's existing window/navigation teardown also invokes `attachBattery(undefined)`. A-T2 independently revokes demands on owner loss, so queued callbacks cannot keep sampling a retired workbench. The monitor IPC retains `monitor.watch(sessionId, enabled, event.sender.id)` and its own disposal; Lab's `LegacyLab.acquire/release` retains the reservation and ring cursor. Closing any one UI does not dispose the other demands.
 
-V150 (`3B1-T8`, applied during A-T10) changes `renderer/device/battery-status.ts` to remove its read callback, timer, interval and `poll`; keep `observe`, `apply`, `subscribe` and state reset. `setSession` only resets the state and `dispose` resets it. In `renderer/app.tsx`, construct `new BatteryStatus()` and subscribe to the existing preload stream:
-
-```ts
-useEffect(() => window.kobrixa.device.onMonitor((update) => {
-  battery.observe(update.sessionId, update.snapshot);
-}), [battery]);
-```
-
-Keep the existing `battery.setSession(execution.session?.id)` effect. The trusted main connection lifetime supplies the 30000ms battery demand, independently of the visible 500ms monitor and Lab reservation.
-
-In V150's `renderer/device/remote-files.ts`, add this complete method to `RemoteFilesController`; in `remote-files-panel.tsx`, render the explicit button only while `batch.phase === "ready"`. `controller` below is the existing `RemoteFilesPanel` prop and `t` is its `RemoteCopy`; its existing error state renders failures. Add `renew` to the existing `remote-files-copy.ts` bilingual object with `"Keep waiting"` / `"繼續等待"`.
-
-```ts
-async renewFiles(): Promise<void> {
-  const batch = this.state.batch;
-  if (!batch || batch.phase !== "ready") return;
-  try { await this.api.device.renewFiles({ sessionId: batch.sessionId, requestId: batch.requestId, planId: batch.planId }); }
-  catch (error) { this.update({ error: asError(error) }); }
-}
-```
-
-```tsx
-{state.batch?.phase === "ready" && <button type="button" onClick={() => { void controller.renewFiles(); }}>{t.renew}</button>}
-```
-
-V150's execution controller continues to invoke `api.device.stop(sessionId)` / `api.device.disconnect(sessionId)`; no action token or fault ID is accepted from the renderer. Test battery events with fake timers advanced beyond 30000ms and assert no renderer `device.monitor` call; hiding monitor preserves battery and Lab. Test that one click invokes `renewFiles` once with the retained ref and that visibility/timer ticks never renew. D150's main IPC tests reject forged ref, foreign sender, old window, changed authority, non-ready/expired plans; the original retained `LegacyOperation.renewConfirmation()` revalidates current authority and the 600-second deadline. Repeated user renewals reset only the 120-second idle allowance.
-
-```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/ipc.test.ts src/main/device-broker/lifecycle-coordinator.test.ts src/main/device/device.test.ts src/main/device/file-batch.test.ts src/main/device-broker/legacy-files.test.ts src/renderer/device/battery-status.test.ts src/renderer/device/remote-files.test.ts src/renderer/execution/execution.test.ts
-```
-
-Expected: PASS with real D150 broker/action/controller composition and V150 explicit UI input. A-T8 and V150 retain exclusive write ownership of these call sites and publish their receipts before P150; T5's local unit suite cannot substitute for this gate.
+Task 3A-T10 V150 Steps 11–15 in this plan exclusively implement `RemoteFilesController.renewConfirmation():Promise<void>`, its button and the single battery subscription mount. The controller forwards `device.renewFiles(ref)`; main retains `device:files-renew` and `DeviceService.renewFilePlan`. T8 Step 8a owns sender/window/authority validation. T5's existing repeated-renewal tests preserve the 600-second total deadline; T10 runs the real D150/V150 integration gate.
 
 - [ ] **Step 12: Run the scoped legacy gate, then commit**
 
@@ -10879,9 +11020,11 @@ git commit -m "feat(devices): bind public RPC to original process owners"
 **Files**
 
 - Modify (T0-created): `packages/plugin-runtime/src/profile-writer-lock.ts`.
-- Create: `apps/desktop/src/main/plugins/profile-writer-lock.ts`, `apps/desktop/src/main/plugins/profile-writer-lock.test.ts`, `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts`, `apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts`.
+- Create: `apps/desktop/src/main/plugins/profile-writer-lock.ts`, `apps/desktop/src/main/plugins/profile-writer-lock.test.ts`, `apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts`.
+- Modify (F scaffold; baseline N): `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts`.
 - Modify H-D: `apps/desktop/src/main/index.ts`, `apps/desktop/src/main/ipc.ts`, `apps/desktop/src/main/plugins/quit.ts`, `apps/desktop/src/main/plugins/quit.test.ts`, `apps/desktop/src/main/updates/service.ts`, `apps/desktop/src/main/updates/updates.test.ts`, `apps/desktop/src/main/updates/install-ipc.test.ts`, `apps/desktop/src/main/window/main-close.ts`, `apps/desktop/src/main/window/main-close.test.ts`, `apps/desktop/src/main/device/motor-test-ipc.test.ts`, `apps/desktop/src/main/device/monitor-ipc.test.ts`, `apps/desktop/src/main/sensor-lab/ipc.test.ts`, `apps/desktop/src/preload/index.ts`, `apps/desktop/src/preload/index.test.ts`, `apps/desktop/src/shared/api.ts`, `apps/desktop/src/shared/plugins.ts`.
-- Create H-D: `apps/desktop/src/main/index.test.ts`, `apps/desktop/src/main/ipc.test.ts`, `apps/desktop/src/shared/plugin-ui.ts`, `apps/desktop/src/shared/plugin-ui.test.ts`, `apps/desktop/src/shared/plugin-persistence.ts`, `apps/desktop/src/shared/plugin-persistence.test.ts`.
+- Create H-D: `apps/desktop/src/main/index.test.ts`, `apps/desktop/src/main/ipc.test.ts`, `apps/desktop/src/shared/plugin-ui.ts`, `apps/desktop/src/shared/plugin-ui.test.ts`, `apps/desktop/src/shared/plugin-persistence.test.ts`.
+- Modify (F scaffold; baseline N) H-D: `apps/desktop/src/shared/plugin-persistence.ts`; retain `PersistenceRecoveryBridge` and its zero-runtime-export invariant.
 - Modify H-D D150: `apps/desktop/src/main/plugins/controller.ts`, `apps/desktop/src/main/plugins/controller.test.ts`, `apps/desktop/src/main/plugins/state-store.ts`, `apps/desktop/src/main/plugins/state-store.test.ts`, `apps/desktop/src/main/plugins/session.ts`, `apps/desktop/src/main/plugins/session.test.ts`, `apps/desktop/src/main/plugins/ipc.ts`, `apps/desktop/src/main/plugins/ipc.test.ts`, `apps/desktop/src/main/workspace/compiler-chain.test.ts`, `apps/desktop/src/main/language/language-provider.integration.test.ts`.
 - Implement F scaffolds in H-D: `apps/desktop/src/main/plugins/core-recovery.ts`, `apps/desktop/src/main/plugins/core-recovery.test.ts`. Import B1-T3 core-actions/ui-lifecycle declarations read-only; D160 resumes these paths only after D150 stops with path/SHA/owner receipt.
 - Test: all named `*.test.ts` files in this task. The H-D ownership list is finite; a listed unchanged bridge file remains reserved for the same writer's B1-T5/D170 slice. D150 also owns the early B1-T5 controller/state/session/plugin-IPC/core-action implementation below. Runtime manager and provider implementations remain read-only.
@@ -11041,6 +11184,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
 import type { DeviceDisposition, DeviceDrainGrant, ReservationEnded, PersistenceParticipant,
   DrainOffer, DrainReport, CoreActionReference } from "@kobrixa/plugin-runtime";
+import { unavailableUi150 } from "@kobrixa/plugin-runtime";
 import { LifecycleCoordinator, createDesktopFoundation, type CoordinatorInput } from "./lifecycle-coordinator.js";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 const owner: ResourceOwner = { sourceKey: "dev:one", pluginId: "test.consumer", generation: 1,
@@ -11080,6 +11224,7 @@ function fixture() {
   const legacyFlush = vi.fn(async () => { trace.push("legacy"); });
   const alive = vi.fn(() => true);
   const input: CoordinatorInput = {
+    ports: { device: resources, persistence, ui: unavailableUi150() },
     resources, sessions, reservations: { validate: () => null,
       onEnded: vi.fn((listener) => { onEnded = listener; return vi.fn(); }) },
     persistence, dispatch: async () => ({ ok: true, value: { status: "submitted", writes: [] } }),
@@ -11098,7 +11243,7 @@ it("A-RF5/F19 installs one listener, fences synchronously, and merges same-turn 
   expect(f.persistence.freeze).toHaveBeenCalledWith(owner, "disable", 10_000, grant);
   await Promise.resolve();
   expect(f.persistence.drain).toHaveBeenCalledOnce();
-  f.emit(); f.time(4_000); f.coordinator.retire(owner, "disable");
+  f.emit(); f.time(4_000); expect(f.coordinator.retire({ ...owner }, "disable")).toBe(retiring);
   expect(f.persistence.freeze).toHaveBeenCalledTimes(1);
   expect(f.persistence.endReservation).toHaveBeenCalledTimes(1);
   f.storage.resolve(saved); f.device.resolve(clean); await retiring;
@@ -11190,7 +11335,7 @@ Expected: FAIL because the coordinator is absent. Tests use a pending end offer 
 
 - [ ] **Step 3: Implement one coordinator and one reservation-ended listener**
 
-Create `lifecycle-coordinator.ts`:
+Modify (F scaffold; baseline N) `lifecycle-coordinator.ts`, preserving the foundation/composition type exports:
 
 ```ts
 import type { Handle, ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -11198,14 +11343,8 @@ import type { CoreActionReference, DeviceDisposition, DeviceResourceParticipant,
   DeviceSessionControlPort, ReservationBindingPort, ReservationEnded, RetirementReason,
   PersistenceParticipant, DrainDispatcher, DrainOffer, DrainReason, DrainReport } from "@kobrixa/plugin-runtime";
 
-export type RetirementEvent = "disable" | "reload" | "remove" | "crash" | "renderer-loss" |
-  "window-destroyed" | "shutdown" | "update" | "safe-mode";
-const reasonMap: Record<Exclude<RetirementEvent, "crash">, [RetirementReason, Exclude<DrainReason, "reservation-ended">]> = {
-  disable: ["disabled", "disable"], reload: ["reload", "reload"], remove: ["disabled", "remove"],
-  "renderer-loss": ["renderer-lost", "renderer-crash"],
-  "window-destroyed": ["renderer-lost", "window-destroyed"], shutdown: ["shutdown", "shutdown"],
-  update: ["shutdown", "update"], "safe-mode": ["safe-mode", "safe-mode"],
-};
+import { retireStage3Owner } from "@kobrixa/plugin-runtime";
+import type { Stage3RuntimePorts, OwnerRetirement } from "@kobrixa/plugin-runtime";
 const ownerKey = (o: ResourceOwner) => JSON.stringify([o.sourceKey, o.pluginId, o.generation, o.hostEpoch, o.processEpoch]);
 const saved = (): DrainReport => ({ state: "saved", blocker: false, pendingSettings: false, records: [], errors: [] });
 function uncertain(message: string): DrainReport {
@@ -11218,6 +11357,7 @@ export class CleanupBlocked extends Error {
   }
 }
 export interface CoordinatorInput {
+  ports: Stage3RuntimePorts;
   resources: DeviceResourceParticipant;
   sessions: DeviceSessionControlPort;
   reservations: ReservationBindingPort;
@@ -11232,7 +11372,7 @@ export interface CoordinatorInput {
 }
 type EndWork = { event: ReservationEnded; offer: DrainOffer | null; promise: Promise<DrainReport>;
   resolve(report: DrainReport): void; terminal: boolean };
-type RetirementWork = { offer: DrainOffer | null; device: Promise<DeviceDisposition>;
+type RetirementWork = { device: Promise<DeviceDisposition>;
   storage: Promise<DrainReport>; done: Promise<void> };
 export class LifecycleCoordinator {
   readonly #ends = new Map<string, EndWork>();
@@ -11244,6 +11384,8 @@ export class LifecycleCoordinator {
   #closeStarted: number | undefined;
   #closed = false;
   constructor(private readonly input: CoordinatorInput) {
+    if (input.ports.device !== input.resources || input.ports.persistence !== input.persistence)
+      throw new Error("Coordinator must share the runtime participants.");
     this.#off = input.reservations.onEnded((event) => this.#ended(event));
   }
   #bounded<T>(work: Promise<T>, deadline: number, message: string): Promise<T> {
@@ -11285,24 +11427,18 @@ export class LifecycleCoordinator {
       });
     });
   }
-  retire(owner: ResourceOwner, event: RetirementEvent, deadline = this.input.now() + 10_000): Promise<void> {
+  retire(owner: ResourceOwner, reason: OwnerRetirement, deadlineMonotonicMs?: number): Promise<void> {
     const key = ownerKey(owner), existing = this.#retiring.get(key);
     if (existing) return existing.done;
     const t0 = this.input.now();
-    const deviceReason: RetirementReason = event === "crash" ? "crashed" : reasonMap[event][0];
-    const retired = this.input.resources.retire(owner, deviceReason);
-    const end = Math.min(deadline, retired.drain?.expiresMonotonicMs ?? deadline);
-    const offer = event === "crash" ? null : retired.drain
-      ? this.input.persistence.freeze(owner, reasonMap[event][1], end, retired.drain)
-      : this.input.persistence.freeze(owner, reasonMap[event][1], end);
-    const device = this.#bounded(retired.settled, t0 + 20_000, "Device stop/journal deadline expired.");
-    // Promise.then delays dispatch until this synchronous retire/end/freeze turn has completed.
-    const storage = this.#observe(Promise.resolve().then(() =>
-      event === "crash" || !this.input.alive(owner) ? this.input.persistence.ownerLost(owner) :
-        this.input.persistence.drain(offer!, this.input.dispatch)), offer?.deadlineMonotonicMs ?? end);
-    const done = Promise.all([device, storage]).then(([d, s]) => this.#assert(d, [s]));
-    this.#retiring.set(key, { offer, device, storage, done });
-    // Retain evidence without creating an unhandled rejection for lifecycle notifications.
+    const receipt = retireStage3Owner(this.input.ports, owner,
+      this.input.alive(owner) ? reason : "crashed", this.input.now,
+      this.input.dispatch, deadlineMonotonicMs);
+    const device = this.#bounded(receipt.then(value => value.device), t0 + 20_000,
+      "Device stop/journal deadline expired.");
+    const storage = receipt.then(value => value.persistence);
+    const done = Promise.all([device, storage]).then(([d, report]) => this.#assert(d, [report]));
+    this.#retiring.set(key, { device, storage, done });
     void done.catch((error: unknown) => this.input.report(error));
     return done;
   }
@@ -11479,7 +11615,7 @@ it.each([
   f.device.resolve(clean); f.storage.resolve(saved); await task;
 });
 it("F17 crash uses ownerLost and does not issue an impossible drain callback", async () => {
-  const f = fixture(); const task = f.coordinator.retire(owner, "crash");
+  const f = fixture(); const task = f.coordinator.retire(owner, "crashed");
   const assertion = expect(task).rejects.toThrow("disposition"); f.device.resolve(clean);
   await assertion;
   expect(f.resources.retire).toHaveBeenCalledWith(owner, "crashed");
@@ -11643,28 +11779,38 @@ Keep `updates:install`'s `await beforeUpdateInstall(); updates.install();` order
 Create `main/ipc.test.ts`:
 
 ```ts
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, expectTypeOf, it, vi } from "vitest";
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>());
 vi.mock("electron", () => ({ ipcMain: { handle: (key: string, fn: (...args: unknown[]) => unknown) => handlers.set(key, fn) }, shell: {} }));
 import { registerIpc } from "./ipc.js";
 import { DeviceControlGate } from "./collab/device-control.js";
 import { AuthorityContexts } from "./device-broker/authority-context.js";
 import { UpdateOperationGate } from "./updates/service.js";
+import { trustedDeviceActions } from "./plugins/controller.js";
+import { createCoreActionLedger } from "./plugins/core-recovery.js";
+import type { DeviceBrokerPort } from "./device-broker/broker-port.js";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 beforeEach(() => handlers.clear());
 function fixture() {
   const renderer = { id: 7, mainFrame: {}, once: vi.fn() };
   const event = { sender: renderer, senderFrame: renderer.mainFrame };
   const authority = new DeviceControlGate(new AuthorityContexts(id(1)));
-  const disconnect = vi.fn(async () => {}), beforeClose = vi.fn(async () => {}), finish = vi.fn();
+  const disconnect = vi.fn(async (_session: string, _principal: import("@kobrixa/plugin-runtime").Principal) => {}), stop = vi.fn(async (_session: string, _principal: import("@kobrixa/plugin-runtime").Principal) => {}), beforeClose = vi.fn(async () => {}), finish = vi.fn();
   const motors = { flush: vi.fn(async () => {}) }, lab = { flush: vi.fn(async () => {}) };
   registerIpc(() => renderer as never, {} as never, {} as never, {} as never, {} as never,
     {} as never, new UpdateOperationGate(() => undefined), finish, undefined,
     { monitor: {} as never, lab: lab as never, motors: motors as never }, [], undefined, undefined,
-    { authority, disconnect, beforeClose });
-  return { renderer, event, authority, disconnect, beforeClose, finish, motors, lab,
+    { authority, disconnect, stop, beforeClose });
+  return { renderer, event, authority, disconnect, stop, beforeClose, finish, motors, lab,
     call: (name: string, ...args: unknown[]) => handlers.get(name)!(event, ...args) };
 }
+it("BM-04 principal derivation belongs to DeviceControlGate, not AuthorityPort", () => {
+  const contexts = new AuthorityContexts(id(1));
+  const authority: import("./device-broker/authority-port.js").AuthorityPort = contexts;
+  const gate = new DeviceControlGate(contexts);
+  expectTypeOf<typeof gate.principal>().parameters.toEqualTypeOf<[number, import("./device-broker/broker-port.js").CorePrincipal["adapter"]]>();
+  expectTypeOf<Extract<"principal", keyof typeof authority>>().toEqualTypeOf<never>();
+});
 it("F02 rejects foreign/subframe senders before deriving any principal", async () => {
   const f = fixture();
   for (const event of [{ ...f.event, sender: { ...f.renderer, id: 8 } }, { ...f.event, senderFrame: {} }])
@@ -11690,6 +11836,39 @@ it("F17 renderer flush success cannot skip legacy or foundation save blockers", 
   await f.call("workspace:finish-close", id(2), true);
   expect(f.finish).toHaveBeenCalledWith(id(2), true);
 });
+it("BM-04 sender admission precedes one mint/claim/complete and retry uses a fresh token", async () => {
+  const f = fixture();
+  const issued = f.call("collab:device-control-context") as { document: string };
+  await f.call("collab:set-device-control", { document: issued.document, sequence: 1, state: "local",
+    roomId: null, connected: true, synced: true, role: null, isHolder: true });
+  const principal = f.authority.principal(f.renderer.id, "recovery");
+  if (principal.kind !== "core") throw new Error("Expected core principal");
+  const ledger = createCoreActionLedger({ now: () => 0,
+    current: scope => scope.hostEpoch === principal.hostEpoch && scope.workbenchInstance === principal.workbenchInstance });
+  const mint = vi.spyOn(ledger, "mint"), claim = vi.spyOn(ledger, "claim"), complete = vi.spyOn(ledger, "complete");
+  const broker = { stopCurrentDevice: vi.fn<DeviceBrokerPort["stopCurrentDevice"]>(async ({ sessionId, action }) => {
+    expect(ledger.claim(action, { kind: "device-current-stop", sessionId })).toBe(true);
+    return { ok: true, value: { revision: 0, journalHealth: "ready", faults: [], blockers: [] } };
+  }) };
+  let fail = true;
+  const coordinator = { async disconnect(sessionId: string, action: import("@kobrixa/plugin-runtime").CoreActionReference) {
+    expect(ledger.claim(action, { kind: "device-disconnect", sessionId })).toBe(true);
+    if (fail) throw new Error("journal blocked");
+  } };
+  const callbacks = trustedDeviceActions(broker, coordinator, ledger);
+  f.stop.mockImplementation(callbacks.trustedCoreStop);
+  f.disconnect.mockImplementation(callbacks.trustedCoreDisconnect);
+  expect(() => handlers.get("device:stop")!({ ...f.event, senderFrame: {} }, id(2))).toThrow("untrusted");
+  expect(mint).not.toHaveBeenCalled();
+  await f.call("device:stop", id(2));
+  expect(mint).toHaveBeenCalledTimes(1); expect(claim).toHaveBeenCalledTimes(1); expect(complete).toHaveBeenCalledTimes(1);
+  expect(mint.mock.calls[0]![1]).toEqual({ kind: "device-current-stop", sessionId: id(2) });
+  await expect(f.call("device:disconnect", id(2))).rejects.toThrow("journal blocked");
+  fail = false; await f.call("device:disconnect", id(2));
+  expect(mint).toHaveBeenCalledTimes(3); expect(claim).toHaveBeenCalledTimes(3); expect(complete).toHaveBeenCalledTimes(3);
+  expect(new Set(mint.mock.results.map(result => result.value.actionToken)).size).toBe(3);
+});
+
 ```
 
 Run before and after the handler changes:
@@ -11778,7 +11957,7 @@ Create `shared/plugin-ui.ts`:
 export type { CoreActionReference, CoreWindowScope } from "@kobrixa/plugin-runtime";
 ```
 
-Create `shared/plugin-persistence.ts`:
+Modify (F scaffold; baseline N) `shared/plugin-persistence.ts`, preserving the type-only `PersistenceRecoveryBridge`:
 
 ```ts
 /** P150 forward types only. Public storage methods are introduced by P170. */
@@ -12034,7 +12213,8 @@ import type { JournalPort } from "./journal-port.js";
 import { createDeviceBroker, type DeviceBrokerPort, type LegacyOperationPort,
   type DeviceRequirement, type DeviceOperationGate } from "./broker-port.js";
 import type { BuiltinDeviceProvider, ProviderCatalogPort, DeviceConnectionPolicy } from "./provider.js";
-import { BUILTIN_DEVICE_PROVIDER_FACTORIES } from "../plugins/builtin.js";
+import { attachBuiltinDeviceProvider } from "../plugins/builtin.js";
+import type { PluginManager } from "@kobrixa/plugin-runtime";
 
 export interface DesktopFoundationOptions {
   profile: ProfileWriterLock;
@@ -12050,6 +12230,7 @@ export interface DesktopFoundationOptions {
 }
 export type DesktopFoundation = {
   broker: DeviceBrokerPort & LegacyOperationPort;
+  attachProvider(manager: Pick<PluginManager, "state" | "onEvent">): void;
   dispose(): Promise<void>;
 };
 export async function createDesktopFoundation(input: DesktopFoundationOptions): Promise<DesktopFoundation> {
@@ -12060,32 +12241,45 @@ export async function createDesktopFoundation(input: DesktopFoundationOptions): 
     journal: input.journal, coreActions: input.coreActions, now: input.now,
     hasPermission: input.hasPermission, requirements: input.requirements,
     connectionPolicy: input.connectionPolicy, operationGate: input.operationGate });
-  const catalog = broker.providerCatalog("kobrixa.device-ev3");
-  const factory = input.providerFactory ?? BUILTIN_DEVICE_PROVIDER_FACTORIES["builtin:kobrixa.device-ev3"];
-  const provider = factory(catalog);
-  if (provider.id !== "kobrixa.device-ev3") throw new Error("Provider factory violated the EV3 allowlist.");
-  const unregister = broker.registerProvider(provider);
-  let disposed = false;
-  return { broker, async dispose() {
-    if (disposed) return;
-    input.profile.assertHeld();
-    const disposition = await broker.resources.beginShutdown();
-    if (!disposition.stopConfirmed || !disposition.journalCommitted)
-      throw new CleanupBlocked(disposition, []);
-    unregister(); disposed = true;
-  } };
+  let attached = false, disposed = false;
+  let detach: (() => void) | undefined;
+  let disposal: Promise<void> | undefined;
+  return { broker,
+    attachProvider(manager) {
+      if (disposed || disposal) throw new Error("Foundation disposal has started.");
+      if (attached) throw new Error("Provider attachment is one-shot.");
+      attached = true;
+      detach = attachBuiltinDeviceProvider(manager, broker,
+        broker.providerCatalog("kobrixa.device-ev3"), input.providerFactory);
+    },
+    dispose() {
+      if (disposed) return Promise.resolve();
+      if (disposal) return disposal;
+      const attempt = (async () => {
+        input.profile.assertHeld();
+        const disposition = await broker.resources.beginShutdown();
+        if (!disposition.stopConfirmed || !disposition.journalCommitted)
+          throw new CleanupBlocked(disposition, []);
+        detach?.(); disposed = true;
+      })();
+      disposal = attempt;
+      void attempt.catch(() => { disposal = undefined; });
+      return attempt;
+    },
+  };
 }
 ```
 
-Registering a provider factory does not connect a device or enable an optional source. K150's `attachBuiltinDeviceProvider` receives the allocator obtained above; its allowlisted EV3 construction uses `createEv3Provider(catalog)` unchanged. The factory block is the one construction/registration path: integrate K150's registry enable/disable reconciliation at that path and retain its disposer in this foundation lifetime, rather than calling registration again from main. The provider remains unavailable while its optional source is disabled or safe mode is active. On removal, retire its original provider generation and invalidate its allocator; on enable/reload, obtain a fresh broker-bound allocator before constructing the successor. No source ID map lives in packaging. The `providerFactory` override substitutes only the factory at this same path, with the same source lifecycle rules. Do not expose it through environment, manifest, renderer, IPC or preload.
+K150's reconciler is the sole provider construction/registration path. The factory remains private until `attachProvider`; disabled and safe-mode startup never call it. BM-18's `onStage3Runtime` callback attaches once after manager creation and before admission. Removal invalidates the original allocator and enable/reload obtains a new one. `dispose` detaches only after successful stop/journal disposition; `CleanupBlocked` retains the provider and profile lock for recovery. No environment, manifest, renderer, IPC or preload factory selector exists.
 
-The broker constructor calls A-T3 `createDeviceRecovery({journal, actions: coreActions, driver})` and `createDeviceResourceParticipant(driver)` exactly once with its internal operation/session drivers. D150 consumes `broker.recovery` and `broker.resources`; do not create a journal-snapshot-only facade or a second participant. Its recovery lane remains occupied through journal commit and cleanup settlement. The same profile object is passed to journal and future persistence. Main constructs `LifecycleCoordinator` separately from the factory result, installs its single reservation-ended listener before exposing checkpoint admission, and retains it through D160/D170.
+The broker constructor calls A-T3 `createDeviceRecovery({journal, actions: coreActions, driver})` and `createDeviceResourceParticipant(driver)` exactly once with its internal operation/session drivers. D150 consumes `broker.recovery` and `broker.resources`; do not create a journal-snapshot-only facade or a second participant. Its recovery lane remains occupied through journal commit and cleanup settlement. The same profile object is passed to journal and future persistence. `composeDesktopMain` constructs one `LifecycleCoordinator` from the foundation result, installs its single reservation-ended listener before admission, and retains it through D160/D170.
 
 In `plugins/controller.ts`, add these fields to `StartPluginsOptions` and pass them unchanged in the existing `PluginManager.create` options:
 
 ```ts
 stage3?: PluginManagerOptions["stage3"];
 stage3Host?: PluginManagerOptions["stage3Host"];
+onStage3Runtime?: (runtime: UiRuntimeAttachment, providers: Pick<PluginManager, "state" | "onEvent">) => void;
 ```
 
 Before creating any manager, reject a partial pair:
@@ -12098,9 +12292,23 @@ if ((options.stage3 === undefined) !== (options.stage3Host === undefined))
 The added manager option entries are:
 
 ```ts
-stage3: options.stage3,
-stage3Host: options.stage3Host,
+...(options.stage3 && options.stage3Host
+  ? { stage3: options.stage3, stage3Host: options.stage3Host } : {}),
 ```
+
+Import `UiRuntimeAttachment` type-only from runtime. Immediately after `PluginManager.create` resolves, before constructing/exposing the controller or any optional admission, execute:
+
+```ts
+try {
+  if (options.stage3 && options.stage3Host)
+    options.onStage3Runtime?.(manager.stage3Runtime(), manager);
+} catch (error) {
+  await manager.shutdown();
+  throw error;
+}
+```
+
+`PluginManager.create` does not activate optional sources before this callback; R150 preserves that admission barrier. A callback failure disposes the new manager; the composition below then disposes its foundation, retaining it if cleanup is blocked.
 
 Within the controller's existing source enable and reload handlers, derive the exemption from the manager registry summary at the point of admission (and again after any awaited confirmation), not persisted user JSON:
 
@@ -12114,72 +12322,133 @@ if (refused) return refused;
 
 Keep required-source disable/reload refusal, safe-mode refusal, and development/third-party gates. In `state-store.ts` retain optional disabled source keys without converting them into development directories; in `session.ts` retain crash/safe-mode state without auto-launching the optional provider. `plugins/ipc.ts` retains main-frame sender validation and accepts sourceKey only. Update its management summary fixtures with explicit `required` and `canToggle`. Update required builtin literals in `workspace/compiler-chain.test.ts` and `language/language-provider.integration.test.ts` with `policy: "required"`; optional fixture sources explicitly use `policy: "optional"`. No optional fields or default-required coercion.
 
-Main constructs `Stage3RuntimePorts` with exactly `{device: broker.resources, persistence, ui}`. At P150 only the AM-14 explicit resource-free persistence and no-UI adapter are permitted. The legacy Lab save guard is still real. Construct `Stage3HostAttachment` from admitted-generation lookups and the trusted workbench binding; use this local typed binding function in `index.ts`:
+Append the following implementation to `plugins/controller.ts`, merging imports. Keep the F interfaces in lifecycle-coordinator.ts and type-re-export them here. This is the sole shared domain startup entry; index.ts retains the OS gate, windows and native events. Importing this module creates no broker, provider, worker, process or profile writer.
 
 ```ts
-import type { Stage3ChannelContext, Stage3ChannelBinding } from "@kobrixa/plugin-runtime";
-import { attachDeviceRpc } from "./device-broker/rpc-router.js";
+import type { Stage3RuntimePorts, Stage3HostAttachment, UiRuntimeAttachment } from "@kobrixa/plugin-runtime";
+import { unavailableUi150, resourceFreePersistence150 } from "@kobrixa/plugin-runtime";
+import { LifecycleCoordinator } from "../device-broker/lifecycle-coordinator.js";
+import type { DesktopMainComposition, DesktopMainCompositionInput } from "../device-broker/lifecycle-coordinator.js";
+import { attachDeviceRpc } from "../device-broker/rpc-router.js";
+export type { DesktopFoundationOptions, DesktopFoundation, DesktopMainComposition,
+  DesktopMainCompositionInput } from "../device-broker/lifecycle-coordinator.js";
 
-function bindDeviceChannel(context: Stage3ChannelContext): Stage3ChannelBinding {
-  const original = context.principal();
-  if (original.kind !== "plugin" || original.owner.sourceKey !== context.owner.sourceKey ||
-    original.owner.pluginId !== context.owner.pluginId || original.owner.generation !== context.owner.generation ||
-    original.owner.hostEpoch !== context.owner.hostEpoch || original.owner.processEpoch !== context.owner.processEpoch)
-    throw new Error("Channel owner mismatch.");
-  const dispose = attachDeviceRpc({ peer: context.peer, principal: context.principal, broker });
-  return {
-    async initialized(signal) { signal.throwIfAborted(); },
-    async ready(signal) { signal.throwIfAborted(); },
-    dispose,
-  };
+const lifecycles = new WeakMap<DesktopMainComposition, LifecycleCoordinator>();
+export function desktopLifecycle(composition: DesktopMainComposition): LifecycleCoordinator {
+  const coordinator = lifecycles.get(composition);
+  if (!coordinator) throw new Error("Unknown desktop composition.");
+  return coordinator;
 }
-```
-
-Place this function within the primary startup scope where `broker` is the foundation broker. Supply `stage3Host.hostEpoch = profile.hostEpoch`, `principal(owner)` from the host workbench authority binding, `hasPermission(owner, permission)` and `requirements(owner)` from R150's admitted registry generation, `bindChannel: bindDeviceChannel`, and `retireResources` from the coordinator. Maintain a main-only owner-to-workbench binding; absent bindings yield an unbound principal, never a local fallback. Requirements are copied/frozen manifest declarations for that exact owner: `[]` means none, `null` means unknown/retired and fails stale. Never read requirements, owner, grants or role from RPC params. At retirement, revoke device/UI and freeze persistence synchronously before the first await; map `crashed` to coordinator `crash`, `renderer-crash` to `renderer-loss`, and other AM-14 reasons to the corresponding `RetirementEvent`. Reuse the original disposition cache. R150 no-UI initialized/ready callbacks are no-ops; R160 replaces them with initial-binding phases. Install the routes before initialize; do not wait recursively for ready.
-
-Implement the attachment object in the primary scope with this local helper; its trusted callbacks are the host's admitted registry/workbench lookups, not controller casts. `bindDeviceChannel` above closes over the foundation broker. `retireResources` calls UI retirement and coordinator retirement synchronously in the same turn before returning their disposition promise.
-
-```ts
-import type { Stage3HostAttachment, UiCatalogPort } from "@kobrixa/plugin-runtime";
-
-function deviceHostAttachment(
-  trusted: Pick<Stage3HostAttachment, "hostEpoch" | "principal" | "hasPermission" | "requirements">,
-  coordinator: LifecycleCoordinator,
-  ui: UiCatalogPort,
-): Stage3HostAttachment {
-  return {
-    hostEpoch: trusted.hostEpoch,
-    principal: (owner) => trusted.principal(owner),
-    hasPermission: (owner, permission) => trusted.hasPermission(owner, permission),
+export async function composeDesktopMain(input: DesktopMainCompositionInput): Promise<DesktopMainComposition> {
+  input.foundationOptions.profile.assertHeld();
+  const foundation = await input.createFoundation(input.foundationOptions);
+  const broker = foundation.broker;
+  const stage3: Stage3RuntimePorts = { device: broker.resources,
+    persistence: resourceFreePersistence150(), ui: unavailableUi150() };
+  let runtimeAttachment: UiRuntimeAttachment | undefined;
+  const originalChannels = new Map<string, import("@kobrixa/plugin-runtime").Stage3ChannelContext>();
+  const ownerKey = (owner: import("@kobrixa/plugin-protocol").ResourceOwner) => JSON.stringify([
+    owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
+  let plugins: PluginController | undefined;
+  const runtime = (): UiRuntimeAttachment => {
+    if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached.");
+    return runtimeAttachment;
+  };
+  const coordinator = new LifecycleCoordinator({ ports: stage3,
+    resources: broker.resources, sessions: broker.sessions, reservations: broker.reservations,
+    persistence: stage3.persistence, now: input.foundationOptions.now,
+    alive: owner => { const channel = originalChannels.get(ownerKey(owner)); return !!channel && !channel.peer.closed; },
+    owners: () => runtime().owners(),
+    dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+    shutdown: async () => { if (plugins) await plugins.shutdown(); },
+    legacyFlush: input.legacyFlush, report: input.report,
+  });
+  const stage3Host: Stage3HostAttachment = {
+    hostEpoch: input.foundationOptions.profile.hostEpoch,
+    principal: input.principal,
+    hasPermission: (owner, permission) => input.foundationOptions.hasPermission(input.principal(owner), permission),
     requirements(owner) {
-      const requirements = trusted.requirements(owner);
-      return requirements === null ? null : Object.freeze(requirements.map((value) => Object.freeze({
-        capability: value.capability, required: value.required,
-      })));
+      const declarations = input.foundationOptions.requirements(owner);
+      return declarations === null ? null : Object.freeze(declarations.map(value => Object.freeze({ ...value })));
     },
-    bindChannel: bindDeviceChannel,
-    retireResources(owner, reason) {
-      ui.retire(owner);
-      return coordinator.retire(owner, reason === "crashed" ? "crash" :
-        reason === "renderer-crash" ? "renderer-loss" : reason);
+    bindChannel(context) {
+      const principal = context.principal();
+      const key = (owner: typeof context.owner) => JSON.stringify([owner.sourceKey, owner.pluginId,
+        owner.generation, owner.hostEpoch, owner.processEpoch]);
+      if (principal.kind !== "plugin" || key(principal.owner) !== key(context.owner))
+        throw new Error("Channel owner mismatch.");
+      originalChannels.set(ownerKey(context.owner), context);
+      const detach = attachDeviceRpc({ peer: context.peer, principal: context.principal, broker });
+      return { async initialized(signal) { signal.throwIfAborted(); },
+        async ready(signal) { signal.throwIfAborted(); },
+        dispose() { detach(); originalChannels.delete(ownerKey(context.owner)); } };
     },
+    retireResources: (owner, reason) => coordinator.retire(owner, reason),
   };
+  try {
+    plugins = await startPlugins({ ...input.plugins, stage3, stage3Host,
+      onStage3Runtime(attachment, providers) {
+        if (runtimeAttachment) throw new Error("Runtime already attached.");
+        runtimeAttachment = attachment;
+        foundation.attachProvider(providers);
+      },
+    });
+    if (!runtimeAttachment) throw new Error("Missing runtime attachment.");
+    let disposed = false;
+    const composition: DesktopMainComposition = { foundation, plugins, stage3, stage3Host,
+      async dispose() {
+        if (disposed) return;
+        await coordinator.close("close");
+        await foundation.dispose();
+        coordinator.dispose(); disposed = true;
+      },
+    };
+    lifecycles.set(composition, coordinator);
+    return composition;
+  } catch (error) {
+    try { await foundation.dispose(); coordinator.dispose(); }
+    catch (cleanup) { input.report(cleanup); throw cleanup; }
+    throw error;
+  }
 }
 ```
 
-Use the same `trusted.requirements` and permission lookup for `DesktopFoundationOptions` and `stage3Host`; do not derive a second authority view from `Stage3ChannelContext.requirements`. R150 validates that copied channel snapshot against its admitted generation, and the broker still calls the live requirements callback at admission. Host epoch is the existing primary profile epoch. In `controller.test.ts`, assert callback identity forwarding for principal/permission and frozen-value equivalence for requirements, null on retired owner, and synchronous retirement before a pending journal promise settles.
+At P150 the persistence adapter is valid only for the unpublished domain's zero admitted resources; existing Lab data still uses the real `legacyFlush`. D160/D170 extend this same composition, coordinator and exact stage3Host identity. The main-only `desktopLifecycle` accessor returns the one instance to native stop/Disconnect/suspend/update handlers; it constructs no resources.
 
-Construct the coordinator at startup with `resources`, `sessions`, `reservations` from the broker, the same persistence participant, and closures over R150's real `UiRuntimeAttachment`: `alive: owner => runtime.current(owner)`, `owners: () => runtime.owners()`, `dispatch: (owner, request, signal) => runtime.dispatchDrain(owner, request, signal)`. Obtain that attachment inside the controller from the declared `manager.stage3Runtime()` and use it in its startup wiring; do not cast `PluginController` or add fictional manager methods. Closures become callable only after manager startup has supplied the attachment. The shutdown callback remains the controller's real shutdown path. Initialize the coordinator before any checkpoint admission; runtime retirement must use this same coordinator.
+In index.ts's existing `startPrimary` callback, after creating the held journal, authority gate, action ledger, preferences and native adapters, replace separate foundation/startPlugins/coordinator construction with:
+
+```ts
+const composition = await composeDesktopMain({
+  createFoundation: createDesktopFoundation,
+  foundationOptions: { profile, authority, journal, coreActions, now,
+    hasPermission, requirements, connectionPolicy, operationGate },
+  plugins: pluginOptions,
+  principal: pluginPrincipal,
+  scope: currentCoreScope, currentScope: isCurrentCoreScope,
+  legacyFlush, report: reportCleanupError,
+});
+const { broker } = composition.foundation;
+const plugins = composition.plugins;
+const coordinator = desktopLifecycle(composition);
+```
+
+The named trusted adapters are the existing primary-scope inputs; `pluginOptions` is the existing StartPluginsOptions object, not command-line options alone. Move their construction before this call without changing their behavior. Never derive principals from RPC parameters or expose manager through PluginController. The trusted callbacks below retain this single coordinator. Native close/update/suspend/Disconnect use it; final application disposal calls composition.dispose only after successful disposition. No secondary branch calls composeDesktopMain.
 
 Construct the core telemetry and legacy facades in the primary scope. `currentCorePrincipal` below is a local function reading the current validated main window each call; a missing window throws. `DeviceControlGate.principal` supplies the immutable workbench/authority identity. Pass that same callback to LegacyFiles, which captures it once per operation.
 
 ```ts
 import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
 import { LegacyFiles } from "./device-broker/legacy-files.js";
+import type { DeviceControlGate } from "./collab/device-control.js";
+import type { AuthorityPort } from "./device-broker/authority-port.js";
 
+const principalMethod: DeviceControlGate["principal"] = deviceControl.principal.bind(deviceControl);
+void principalMethod;
+const authorityContract: AuthorityPort = authority;
+void authorityContract;
 const currentCorePrincipal = () => {
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
-  return authority.principal(mainWindow.webContents.id, "recovery");
+  return deviceControl.principal(mainWindow.webContents.id, "recovery");
 };
 const feed = createLegacyMonitorFeed(broker);
 const legacy = createLegacyDevice({ broker, principal: currentCorePrincipal,
@@ -12197,24 +12466,43 @@ devices.attachLegacy({ device: legacy, files: new LegacyFiles(broker, (operation
 
 Implement the following local main callbacks and pass them to the trusted IPC adapter. `coreActions` is the one real ledger created with current scope validation; `coordinator` is the instance above. `trustedCoreDisconnect` must be reached only after the existing main-frame sender check. The scope derives from that handler's freshly captured principal. Legacy facade calls retain the same trusted host identity and must never mint from renderer-provided fields.
 
+Append this typed domain helper to `plugins/controller.ts` (merge imports). The primary main scope alone constructs it and passes its returned callbacks to the existing validated main-frame IPC wrapper. The helper is never registered on a plugin route or timer.
+
 ```ts
-async function trustedCoreDisconnect(sessionId: string, principal: Principal): Promise<void> {
-  if (principal.kind !== "core") throw new Error("Core workbench required.");
-  const action = coreActions.mint({ hostEpoch: principal.hostEpoch,
-    workbenchInstance: principal.workbenchInstance }, { kind: "device-disconnect", sessionId });
-  try { await coordinator.disconnect(sessionId, action); }
-  finally { coreActions.complete(action); }
-}
-async function trustedCoreStop(sessionId: string, principal: Principal): Promise<void> {
-  if (principal.kind !== "core") throw new Error("Core workbench required.");
-  const action = coreActions.mint({ hostEpoch: principal.hostEpoch,
-    workbenchInstance: principal.workbenchInstance }, { kind: "device-current-stop", sessionId });
-  try {
-    const result = await broker.stopCurrentDevice({ sessionId, action });
-    if (!result.ok) throw new Error(result.error.message);
-  } finally { coreActions.complete(action); }
+import type { Principal } from "@kobrixa/plugin-runtime";
+import type { DeviceBrokerPort } from "../device-broker/broker-port.js";
+import type { CoreActionLedger } from "./core-recovery.js";
+export function trustedDeviceActions(broker: Pick<DeviceBrokerPort, "stopCurrentDevice">,
+  coordinator: Pick<LifecycleCoordinator, "disconnect">, coreActions: CoreActionLedger) {
+  return {
+    async trustedCoreDisconnect(sessionId: string, principal: Principal): Promise<void> {
+      if (principal.kind !== "core") throw new Error("Core workbench required.");
+      const action = coreActions.mint({ hostEpoch: principal.hostEpoch,
+        workbenchInstance: principal.workbenchInstance }, { kind: "device-disconnect", sessionId });
+      try { await coordinator.disconnect(sessionId, action); }
+      finally { coreActions.complete(action); }
+    },
+    async trustedCoreStop(sessionId: string, principal: Principal): Promise<void> {
+      if (principal.kind !== "core") throw new Error("Core workbench required.");
+      const action = coreActions.mint({ hostEpoch: principal.hostEpoch,
+        workbenchInstance: principal.workbenchInstance }, { kind: "device-current-stop", sessionId });
+      try {
+        const result = await broker.stopCurrentDevice({ sessionId, action });
+        if (!result.ok) throw new Error(result.error.message);
+      } finally { coreActions.complete(action); }
+    },
+  };
 }
 ```
+
+In the primary scope, before attaching legacy/IPC callbacks:
+
+```ts
+const { trustedCoreStop, trustedCoreDisconnect } = trustedDeviceActions(broker, coordinator, coreActions);
+```
+
+The broker claims but does not complete these two main-owned actions; the trusted callback's finally is the sole completion site on success or failure. Recovery-port actions retain their separate existing ownership.
+
 
 Add `stop(sessionId: string, principal: Principal): Promise<void>` to the local `DesktopDeviceIpc` interface and replace `device:stop`:
 
@@ -12228,6 +12516,59 @@ handle("device:stop", (event, sessionId: unknown) => {
 Use real one-click Disconnect at P150. In coordinator `#disconnect`, include `this.input.legacyFlush("close")` in the same `Promise.all` as stop/journal and pending storage reports, before physical disconnect. Stop/reconcile claims once and final disconnect uses `isClaimed`; the five-second mint deadline is not restarted. A failed attempt retains uncertainty; a later user click uses a new token and the same recovery evidence. Do not admit arbitrary motion while retrying. Add the existing coalescing regression:
 
 ```ts
+it.each([false, true])("F17/F19 live supervisor retirement uses the coordinator helper, null grant=%s", async (nullGrant) => {
+  const { PluginSupervisor } = await import("@kobrixa/plugin-runtime");
+  const { memoryPlugin } = await import("../../../../../packages/plugin-runtime/src/test-process.js");
+  const f = fixture();
+  const uiRetire = vi.spyOn(f.input.ports.ui, "retire");
+  if (nullGrant) f.resources.retire.mockImplementation(() => ({ drain: null, settled: f.device.promise }));
+  const child = memoryPlugin((peer, control) => {
+    peer.handle("initialize", () => ({ apiVersion: "1.5.0", sdk: { name: "fixture", version: "1" } }));
+    peer.handle("command/execute", () => null);
+    peer.handle("shutdown", () => { f.trace.push("process-shutdown"); return null; });
+    peer.onNotification("exit", () => control.exit());
+  });
+  const attachment = {
+    retireResources: (original: ResourceOwner, reason: import("@kobrixa/plugin-runtime").OwnerRetirement) =>
+      f.coordinator.retire(original, reason, 8000),
+  };
+  const supervisor = new PluginSupervisor({ id: owner.pluginId, sourceKey: owner.sourceKey,
+    directory: "/fixture", entry: "/fixture/main.cjs", runtime: "node", permissions: [], commands: ["test.consumer.run"] },
+    async () => child.process, { locale: "en", onNotice() {}, hostEpoch: owner.hostEpoch,
+      resourceOwner: () => ({ ...owner }),
+      bindChannel: () => ({ async initialized(signal) { signal.throwIfAborted(); },
+        async ready(signal) { signal.throwIfAborted(); }, dispose() {} }),
+      retireResources: attachment.retireResources,
+    });
+  // The real participant must preserve the earlier outer deadline in its returned offer.
+  vi.mocked(f.persistence.freeze).mockImplementation((original, reason, deadline) => ({ owner: original,
+    reason, deadlineMonotonicMs: deadline, token: id(5), checkpoints: [], writes: [], acceptedTickets: [] }));
+  await supervisor.executeCommand("test.consumer.run");
+  const stopping = supervisor.stop();
+  expect(f.input.reservations.onEnded).toHaveBeenCalledOnce();
+  expect(f.resources.retire).toHaveBeenCalledOnce(); expect(uiRetire).toHaveBeenCalledOnce();
+  const args = vi.mocked(f.persistence.freeze).mock.calls[0]!;
+  expect(args).toEqual(nullGrant ? [owner, "disable", 8000] : [owner, "disable", 8000, grant]);
+  if (!nullGrant) expect(args[3]).toBe(grant);
+  const joined = f.coordinator.retire({ ...owner }, "reload", 20000);
+  await Promise.resolve(); f.storage.resolve(saved); await Promise.resolve();
+  expect(child.killed()).toBe(false); expect(f.trace).not.toContain("process-shutdown");
+  f.device.resolve(clean); await stopping; await joined;
+  expect(f.persistence.freeze).toHaveBeenCalledOnce(); expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.trace.filter(value => value === "process-shutdown")).toHaveLength(1);
+  f.coordinator.dispose();
+});
+it("F17 crashed original peer reconciles without a drain callback or a second fence", async () => {
+  const f = fixture(); f.alive.mockReturnValue(false);
+  const retired = f.coordinator.retire(owner, "reload");
+  expect(f.resources.retire).toHaveBeenCalledWith(owner, "crashed");
+  expect(f.persistence.freeze).not.toHaveBeenCalled();
+  f.device.resolve(clean);
+  await expect(retired).rejects.toThrow("disposition");
+  expect(f.persistence.ownerLost).toHaveBeenCalledOnce(); expect(f.persistence.drain).not.toHaveBeenCalled();
+  expect(f.coordinator.retire({ ...owner }, "crashed")).toBe(retired);
+  f.coordinator.dispose();
+});
 it("F19 coalesces repeated Disconnect without another quiesce, grant or final handler", async () => {
   const f = fixture(); const first = f.coordinator.disconnect(id(3), action);
   expect(f.coordinator.disconnect(id(3), action)).toBe(first);
@@ -12240,6 +12581,119 @@ it("F19 coalesces repeated Disconnect without another quiesce, grant or final ha
 ```
 
 Connect `mainQuit`/`flushDeviceWork`, quit cleanup and window close to `coordinator.close("close")`, update install to `coordinator.close("update")`, and suspend/resume to the existing session coordinator methods. On navigation/destruction, retire the captured old `CoreWindowScope` before invalidating authority, retire bound owners, and wait for disposition before peer/provider teardown. Blur/hide/minimize revoke motion only. The operation gate reads current update/shutdown policy at admission and every consequential continuation after capability and before authority; cleanup and original-owner stop/query retain their specified exceptions. Starting update between two upload chunks rejects the second chunk but still closes the original handle through its retained cleanup context.
+
+- [ ] **Step 8.1: Exercise the side-effect-free composition and actual manager handoff**
+
+Append to `plugins/controller.test.ts`, merging existing imports. These tests execute at T10 Step 18 after R150/K150 implementations are present; keep local controller unit tests in the W1 gate.
+
+```ts
+import { composeDesktopMain, desktopLifecycle } from "./controller.js";
+import { createDesktopFoundation } from "../device-broker/lifecycle-coordinator.js";
+import type { DesktopMainCompositionInput } from "../device-broker/lifecycle-coordinator.js";
+import { createJournal } from "../device-broker/journal.js";
+import { createJournalFilesystem } from "../device-broker/journal-filesystem.js";
+import { AuthorityContexts } from "../device-broker/authority-context.js";
+import { createCoreActionLedger } from "./core-recovery.js";
+import { createFakeDeviceProvider } from "../device-broker/fake-provider.js";
+import { BUILTIN_PLUGIN_SOURCES } from "./builtin.js";
+import { startPrimary } from "./profile-writer-lock.js";
+import { randomUUID } from "node:crypto";
+
+async function compositionInput() {
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-composition-"));
+  const profile = { hostEpoch: randomUUID(), assertHeld() {} };
+  const now = () => performance.now();
+  const scope = { hostEpoch: profile.hostEpoch, workbenchInstance: randomUUID() };
+  const foundationOptions = {
+    profile, now, authority: new AuthorityContexts(profile.hostEpoch),
+    journal: createJournal(createJournalFilesystem(root), profile),
+    coreActions: createCoreActionLedger({ now, current: candidate => candidate.hostEpoch === scope.hostEpoch && candidate.workbenchInstance === scope.workbenchInstance }),
+    hasPermission: () => false, requirements: () => null,
+    connectionPolicy: () => ({ wifiConnectTimeoutMs: 10000, wifiHandshakeTimeoutMs: 5000,
+      usbAutoReconnect: false, usbRetryInterval: 2000 as const, usbRetryLimit: 3 as const }),
+    operationGate: () => ({ ok: true as const, value: null }),
+  };
+  const factory = vi.fn<typeof createDesktopFoundation>(options => createDesktopFoundation({ ...options,
+    providerFactory: catalog => createFakeDeviceProvider({ catalog, now }).provider }));
+  const input: DesktopMainCompositionInput = {
+    createFoundation: factory, foundationOptions,
+    plugins: { userData: root, builtins: BUILTIN_PLUGIN_SOURCES,
+      commandLine: { developmentDirectories: [], safeMode: false }, locale: "en",
+      dialogs: { confirmDeveloperMode: async () => false, chooseFolder: async () => undefined,
+        confirmLink: async () => false, confirmUnlink: async () => false, choosePython: async () => undefined },
+      launcher: () => async () => { throw new Error("No provider process"); },
+    },
+    principal: owner => ({ kind: "plugin", owner, authorityContext: null }),
+    scope: () => scope,
+    currentScope: candidate => candidate.hostEpoch === scope.hostEpoch && candidate.workbenchInstance === scope.workbenchInstance,
+    legacyFlush: async () => {}, report: vi.fn(),
+  };
+  return { input, factory, cleanup: () => rm(root, { recursive: true, force: true }) };
+}
+it("BM-18 creates one foundation and forwards the exact host/runtime pair", async () => {
+  const f = await compositionInput(); const create = vi.spyOn(PluginManager, "create");
+  try {
+    const composition = await composeDesktopMain(f.input);
+    expect(f.factory).toHaveBeenCalledExactlyOnceWith(f.input.foundationOptions);
+    expect(create).toHaveBeenCalledOnce();
+    const options = create.mock.calls[0]![0];
+    expect(options.stage3).toBe(composition.stage3);
+    expect(options.stage3Host).toBe(composition.stage3Host);
+    expect(composition.stage3.device).toBe(composition.foundation.broker.resources);
+    expect(composition.stage3Host.principal).toBe(f.input.principal);
+    expect(desktopLifecycle(composition)).toBe(desktopLifecycle(composition));
+    expect(composition.stage3Host.requirements({ sourceKey: "retired", pluginId: "test.retired", generation: 1,
+      hostEpoch: f.input.foundationOptions.profile.hostEpoch, processEpoch: randomUUID() })).toBeNull();
+    await composition.dispose(); await composition.dispose();
+  } finally { create.mockRestore(); await f.cleanup(); }
+});
+it("BM-18 secondary never calls the foundation or manager factories", async () => {
+  const f = await compositionInput(); const create = vi.spyOn(PluginManager, "create");
+  try {
+    const primary = startPrimary({ requestSingleInstanceLock: () => false, hasSingleInstanceLock: () => false,
+      whenReady: async () => {}, quit() {}, on() {} },
+      async () => { await composeDesktopMain(f.input); }, () => false);
+    expect(primary).toBeNull(); await Promise.resolve();
+    expect(f.factory).not.toHaveBeenCalled(); expect(create).not.toHaveBeenCalled();
+  } finally { create.mockRestore(); await f.cleanup(); }
+});
+it("BM-18 callback failure shuts down the manager and disposes the foundation", async () => {
+  const f = await compositionInput();
+  const original = PluginManager.create.bind(PluginManager);
+  let shutdown: ReturnType<typeof vi.spyOn> | undefined;
+  const create = vi.spyOn(PluginManager, "create").mockImplementation(async options => {
+    const manager = await original(options); shutdown = vi.spyOn(manager, "shutdown"); return manager;
+  });
+  let dispose: ReturnType<typeof vi.spyOn> | undefined;
+  f.factory.mockImplementation(async options => {
+    const foundation = await createDesktopFoundation(options);
+    dispose = vi.spyOn(foundation, "dispose");
+    foundation.attachProvider = () => { throw new Error("attachment failed"); };
+    return foundation;
+  });
+  try {
+    await expect(composeDesktopMain(f.input)).rejects.toThrow("attachment failed");
+    expect(shutdown).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledOnce();
+  } finally { create.mockRestore(); await f.cleanup(); }
+});
+it("BM-18 importing controller does not invoke shared production startup", async () => {
+  vi.resetModules();
+  const runtime = await import("@kobrixa/plugin-runtime");
+  const create = vi.spyOn(runtime.PluginManager, "create");
+  const foundationModule = await import("../device-broker/lifecycle-coordinator.js");
+  const factory = vi.spyOn(foundationModule, "createDesktopFoundation");
+  try {
+    await import("./controller.js");
+    expect(create).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
+  } finally { create.mockRestore(); factory.mockRestore(); }
+});
+```
+
+```bash
+pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/controller.test.ts -t 'BM-18'
+```
+
+Expected red before the composition exists; green after R150/K150 and D150 integration. Include this test and controller implementation in T8's existing exact-path commit. No import-time app/window/process creation is permitted; the primary gate owns native entry.
 
 - [ ] **Step 8a: Implement explicit file renewal through trusted IPC**
 
@@ -12289,37 +12743,93 @@ import { AuthorityContexts } from "./authority-context.js";
 import { createCoreActionLedger } from "../plugins/core-recovery.js";
 import type { DesktopFoundationOptions } from "./lifecycle-coordinator.js";
 
-it("constructs the real broker/recovery with the held profile and formal factory only", async () => {
+import { PluginManager } from "@kobrixa/plugin-runtime";
+import { BUILTIN_PLUGIN_SOURCES } from "../plugins/builtin.js";
+import type { ProviderCatalogPort } from "./provider.js";
+async function providerComposition(safeMode = false, disabled = false, wrongId = false) {
   const root = await mkdtemp(join(tmpdir(), "kobrixa-d150-"));
   const now = () => performance.now();
-  const assertHeld = vi.fn();
-  const profile = { hostEpoch: id(1), assertHeld };
+  const profile = { hostEpoch: id(1), assertHeld: vi.fn() };
   const authority = new AuthorityContexts(profile.hostEpoch);
   const journal = createJournal(createJournalFilesystem(root), profile);
   const coreActions = createCoreActionLedger({ now, current: () => false });
-  let injected = 0;
-  let control: FakeProviderControl | undefined;
+  const catalogs: ProviderCatalogPort[] = [];
+  const controls: FakeProviderControl[] = [];
+  const foundation = await createDesktopFoundation({ profile, authority, journal, coreActions, now,
+    hasPermission: () => false, requirements: () => null,
+    operationGate: () => ({ ok: true, value: null }),
+    connectionPolicy: () => ({ wifiConnectTimeoutMs: 10000, wifiHandshakeTimeoutMs: 5000,
+      usbAutoReconnect: false, usbRetryInterval: 2000, usbRetryLimit: 3 }),
+    providerFactory(catalog) {
+      catalogs.push(catalog);
+      const fake = createFakeDeviceProvider({ catalog, now }); controls.push(fake.control);
+      if (wrongId) Object.defineProperty(fake.provider, "id", { value: "wrong.provider" });
+      return fake.provider;
+    },
+  });
+  const register = foundation.broker.registerProvider.bind(foundation.broker);
+  const removals: Array<ReturnType<typeof vi.fn<() => void>>> = [];
+  const registration = vi.spyOn(foundation.broker, "registerProvider").mockImplementation(provider => {
+    const remove = vi.fn(register(provider)); removals.push(remove); return remove;
+  });
+  const manager = await PluginManager.create({ sources: BUILTIN_PLUGIN_SOURCES,
+    store: { load: async () => ({ disabled: new Set(disabled ? ["builtin:kobrixa.device-ev3"] : []), legacyDisabledIds: new Set() }), save: async () => {} },
+    safeMode, locale: "en", launcher: async () => { throw new Error("Provider-only source must not launch"); },
+  });
+  return { foundation, manager, catalogs, controls, registration, removals, profile,
+    async cleanup() { await manager.shutdown(); await foundation.dispose(); await rm(root, { recursive: true, force: true }); } };
+}
+it.each([[true, false], [false, true]])("BM-03 safe=%s disabled=%s constructs no optional provider", async (safeMode, disabled) => {
+  const f = await providerComposition(safeMode, disabled);
   try {
-    const foundation = await createDesktopFoundation({ profile, authority, journal, coreActions, now,
-      hasPermission: () => false, requirements: () => null,
-      operationGate: () => ({ ok: true, value: null }),
-      connectionPolicy: () => ({ wifiConnectTimeoutMs: 10000, wifiHandshakeTimeoutMs: 5000,
-        usbAutoReconnect: false, usbRetryInterval: 2000, usbRetryLimit: 3 }),
-      providerFactory(catalog) {
-        injected++;
-        const fake = createFakeDeviceProvider({ catalog, now }); control = fake.control;
-        return fake.provider;
-      },
-    });
-    expect(injected).toBe(1); expect(assertHeld).toHaveBeenCalled();
-    expect(control?.trace()).toEqual([]);
-    expect(foundation.broker.recovery).toBeDefined();
-    expect(foundation.broker.resources).toBeDefined();
-    expect(foundation.broker.events).toBeDefined();
-    await foundation.dispose(); await foundation.dispose();
-    expect(control?.trace()).toEqual([]);
-  } finally { await rm(root, { recursive: true, force: true }); }
+    expect(f.catalogs).toHaveLength(0);
+    f.foundation.attachProvider(f.manager);
+    expect(f.catalogs).toHaveLength(0); expect(f.registration).not.toHaveBeenCalled();
+    expect(f.manager.state().plugins.filter(row => row.required).every(row => row.status === "enabled")).toBe(true);
+  } finally { await f.cleanup(); }
 });
+it("BM-03 override obeys one registration per enable and fresh allocators after reload", async () => {
+  const f = await providerComposition(false, true);
+  try {
+    f.foundation.attachProvider(f.manager);
+    await f.manager.setEnabled("builtin:kobrixa.device-ev3", true);
+    expect(f.registration).toHaveBeenCalledTimes(1);
+    expect(() => f.foundation.attachProvider(f.manager)).toThrow("one-shot");
+    await f.manager.setEnabled("builtin:kobrixa.device-ev3", false);
+    await f.manager.setEnabled("builtin:kobrixa.device-ev3", true);
+    expect(f.registration).toHaveBeenCalledTimes(2);
+    expect(f.catalogs[1]).not.toBe(f.catalogs[0]);
+    await f.manager.reloadSource("builtin:kobrixa.device-ev3");
+    expect(f.registration).toHaveBeenCalledTimes(3);
+    expect(new Set(f.catalogs).size).toBe(3);
+    expect(f.controls.every(control => control.trace().length === 0)).toBe(true);
+  } finally { await f.cleanup(); }
+  expect(() => f.foundation.attachProvider(f.manager)).toThrow("disposal");
+});
+it("BM-03 wrong provider ID is refused before registration", async () => {
+  const f = await providerComposition(false, false, true);
+  try {
+    expect(() => f.foundation.attachProvider(f.manager)).toThrow("wrong provider");
+    expect(f.registration).not.toHaveBeenCalled();
+  } finally { await f.cleanup(); }
+});
+it("BM-03 blocked disposition retains registration until a successful retry", async () => {
+  const f = await providerComposition();
+  try {
+    f.foundation.attachProvider(f.manager);
+    const detach = vi.spyOn(f.foundation.broker.resources, "beginShutdown")
+      .mockResolvedValueOnce({ stopConfirmed: true, journalCommitted: false, faultIds: [id(99)] });
+    await expect(f.foundation.dispose()).rejects.toThrow("disposition");
+    expect(f.registration).toHaveBeenCalledTimes(1);
+    expect(f.removals[0]).not.toHaveBeenCalled();
+    expect(() => f.profile.assertHeld()).not.toThrow();
+    detach.mockRestore();
+    await f.foundation.dispose(); await f.foundation.dispose();
+    expect(f.removals[0]).toHaveBeenCalledOnce();
+    expect(() => f.foundation.attachProvider(f.manager)).toThrow("disposal");
+  } finally { await f.cleanup(); }
+});
+
 ```
 
 The integration fixture must construct a real journal on a temporary root with the held profile, real `AuthorityContexts`, `createCoreActionLedger`, actual R150 manager/channel and the real D150 IPC handlers. Feed its admitted registry requirements/permissions and live update gate to the exact factory options; never pass a permissive/mock action validator. Use the same construction as production with `providerFactory` as the only device substitution. Import T2's formal control, not a second fake provider implementation. Add these required assertions in the existing named test files:
@@ -12341,7 +12851,7 @@ Use `control.block`, `control.reached`, `control.release` and `control.trace` at
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/core-recovery.test.ts src/main/plugins/controller.test.ts src/main/plugins/state-store.test.ts src/main/plugins/session.test.ts src/main/plugins/ipc.test.ts src/main/device-broker/lifecycle-coordinator.test.ts src/main/device-broker/rpc-router.test.ts src/main/ipc.test.ts src/preload/index.test.ts src/main/device/monitor-ipc.test.ts src/main/sensor-lab/ipc.test.ts src/main/workspace/compiler-chain.test.ts src/main/language/language-provider.integration.test.ts
 ```
 
-Expected red before D150: missing forwarding, action producer, renewal or broker-backed composition. Expected green after D150/R150/K150/V150: actual production-path assertions and mandatory-policy compatibility suites pass. Preserve the full legacy close/update/Lab regression suite. Record the D150 receipt with these commands and exact owner/path/SHA; P06 consumes this implementation unchanged before extending it at D160.
+Expected red before D150: missing forwarding, action producer, renewal or broker-backed composition. Expected green after D150/R150/K150/V150: actual production-path assertions and mandatory-policy compatibility suites pass. Preserve the full legacy close/update/Lab regression suite. Record the D150 receipt with these commands and exact owner/path/SHA; B1-T5 consumes this implementation before extending it at D160.
 
 - [ ] **Step 9: Add the operation-class update guard and its tests**
 
@@ -12399,13 +12909,11 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime build
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-sdk build
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/device build
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/lifecycle-coordinator.test.ts src/main/plugins/core-recovery.test.ts src/main/plugins/controller.test.ts src/main/plugins/state-store.test.ts src/main/plugins/session.test.ts src/main/plugins/ipc.test.ts src/main/workspace/compiler-chain.test.ts src/main/language/language-provider.integration.test.ts src/main/plugins/profile-writer-lock.test.ts src/main/index.test.ts src/main/ipc.test.ts src/main/plugins/quit.test.ts src/main/window/main-close.test.ts src/main/updates/updates.test.ts src/main/updates/install-ipc.test.ts src/main/device/motor-test-ipc.test.ts src/main/device/monitor-ipc.test.ts src/main/sensor-lab/ipc.test.ts src/preload/index.test.ts src/shared/plugin-ui.test.ts src/shared/plugin-persistence.test.ts
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm check:desktop
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm test:desktop
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/profile-writer-lock.test.ts src/main/plugins/core-recovery.test.ts src/main/plugins/state-store.test.ts src/main/plugins/session.test.ts src/shared/plugin-ui.test.ts src/shared/plugin-persistence.test.ts
 git diff --check
 ```
 
-Expected after D150/R150/K150/V150 and dependent slices merge: PASS. Missing real-adapter or hardware evidence fails P150 acceptance. Type-only future contracts remain absent from runtime methods, permissions, events, preload and generated public 1.5 schema. Do not run schema generation or root formatting from this task; those belong to the shared integrator.
+Expected local scoped unit/contract gate: PASS. Real R/K/V-dependent composition tests and whole-desktop checking execute only at T10 Step 18 after stopped slice handoffs; they are not prerequisites of the W1 commit. Missing real-adapter or hardware evidence fails P150 acceptance. Type-only future contracts remain absent from runtime methods, permissions, events, preload and generated public 1.5 schema. Do not run schema generation or root formatting from this task; those belong to the shared integrator.
 
 The controller runs these outside sandbox, only after the owning T9/T10/X-T1 files exist:
 
@@ -12760,13 +13268,22 @@ test("F07: battery owns no hardware polling clock", async () => {
   const text = await readFile(path.join(root, "apps/desktop/src/renderer/device/battery-status.ts"), "utf8");
   assert.doesNotMatch(text, /setInterval|setTimeout|\.monitor\(/);
 });
+
+test("H-I runs device boundary/conformance tests and real transport smoke", async () => {
+  const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  assert.equal(pkg.scripts["test:device-broker"], "node --test tests/desktop/device-broker-*.test.mjs");
+  assert.equal(pkg.scripts["test:device-broker:smoke"], "node tests/desktop/device-broker-run.mjs");
+  assert.ok(pkg.scripts["test:desktop"].includes("pnpm test:device-broker"));
+  const ci = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
+  assert.match(ci, /pnpm test:device-broker:smoke/);
+});
 ```
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; node --test tests/desktop/device-broker-boundaries.test.mjs
 ```
 
-Expected red: consumers are missing, and the existing battery owns `setInterval`. The boundary audit is supplementary; it cannot replace the T5 runtime routing tests.
+Expected red: consumers are missing, the existing battery owns `setInterval`, and H-I scripts remain absent until T10 Step 17. T9 stages this test in its existing boundary-test commit before its stopped-owner receipt. The boundary audit is supplementary; it cannot replace the T5 runtime routing tests.
 
 - [ ] **Step 6: Implement matching JS and Python public-device consumers.**
 
@@ -13632,7 +14149,7 @@ V150 remains exclusively **3B1-T8**, using:
 
 Create no other files. Test: each named direct test plus the T9 suites. The lists are subsets of the frozen hotspot write sets, not a transfer of their ownership to T10. AM-13 adds `packages/plugin-runtime/src/compiler-resolution.test.ts` and `packages/plugin-runtime/src/language-service-conformance.test.ts` to R150/H-R; D150/H-D owns `apps/desktop/src/main/workspace/compiler-chain.test.ts` and `apps/desktop/src/main/language/language-provider.integration.test.ts`.
 
-D150 is **3A-T8**, continuing the persistent H-D owner. Consume P03 Task 3A-T8 Steps 8, 8a and 8b verbatim as the concrete implementation: `main/plugins/{controller,state-store,session,ipc}.ts` and their `.test.ts` files, `main/plugins/core-recovery.ts`/test, `main/{index,ipc}.ts`/test, `preload/index.ts`/test and `shared/api.ts` under `apps/desktop/src/`, plus the two AM-13 H-D fixtures above. Its real core ledger, Stage3HostAttachment, legacy feed, current-stop/Disconnect and renewal handlers must be delivered before V150 and the actual T9 run. Do not apply a second controller patch in this task.
+D150 is **3A-T8**, continuing the persistent H-D owner. Its D160 stopped-owner receipt includes `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts` and `apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts`, plus controller.ts/test; the existing coordinator instance transfers unchanged before extension. Consume Task 3A-T8 Steps 8, 8a and 8b, subject to BM-03/04/06/18 as the concrete implementation: `main/plugins/{controller,state-store,session,ipc}.ts` and their `.test.ts` files, `main/plugins/core-recovery.ts`/test, `main/{index,ipc}.ts`/test, `preload/index.ts`/test and `shared/api.ts` under `apps/desktop/src/`, plus the two AM-13 H-D fixtures above. Its real core ledger, Stage3HostAttachment, legacy feed, current-stop/Disconnect and renewal handlers must be delivered before V150 and the actual T9 run. Do not apply a second controller patch in this task.
 
 R150 also owns `packages/plugin-runtime/src/process.ts`/test and its named H-R compatibility fixtures. K150 owns `apps/desktop/src/main/plugins/launchers.ts`/test for initial event-owner metadata. These are AM-01/13/14 finite additions, not directory-wide writes.
 
@@ -13898,14 +14415,14 @@ it("F17 retire/freeze is synchronous; teardown waits for device disposition", as
     persistence,
     ui: { retire() { order.push("ui"); }, catalog: vi.fn(), resource: vi.fn(), onEvent: () => () => {} },
   };
-  const result = retireStage3Owner(ports, owner, "disabled", () => 100);
+  const result = retireStage3Owner(ports, owner, "disable", () => 100, async () => { throw new Error("No drain RPC at P150"); });
   expect(order).toEqual(["retire", "ui", "freeze"]);
-  expect(freeze).toHaveBeenCalledWith(owner, "disable", 10_100, undefined);
+  expect(freeze).toHaveBeenCalledWith(owner, "disable", 10_100);
   let settled = false;
   void result.then(() => { settled = true; });
   await Promise.resolve();
   expect(settled).toBe(false);
-  expect(retireStage3Owner(ports, owner, "shutdown", () => 900)).toBe(result);
+  expect(retireStage3Owner(ports, { ...owner }, "shutdown", () => 900, async () => { throw new Error("No drain RPC at P150"); })).toBe(result);
   finish({ stopConfirmed: true, faultIds: [], journalCommitted: true });
   await result;
   expect(freeze).toHaveBeenCalledTimes(1);
@@ -13921,7 +14438,7 @@ it("F19 preserves the original grant and never extends its deadline", async () =
     persistence,
     ui: { retire: vi.fn(), catalog: vi.fn(), resource: vi.fn(), onEvent: () => () => {} },
   };
-  await retireStage3Owner(ports, owner, "reload", () => 100);
+  await retireStage3Owner(ports, { ...owner }, "reload", () => 100, async () => { throw new Error("No drain RPC at P150"); });
   expect(freeze).toHaveBeenCalledWith(owner, "reload", 8_000, grant);
 });
 
@@ -13935,7 +14452,7 @@ it("F17 crash uses ownerLost and the 1.5 empty participant never dispatches a st
     persistence,
     ui: { retire: vi.fn(), catalog: vi.fn(), resource: vi.fn(), onEvent: () => () => {} },
   };
-  const result = await retireStage3Owner(ports, owner, "crashed", () => 0);
+  const result = await retireStage3Owner(ports, { ...owner }, "crashed", () => 0, async () => { throw new Error("No drain RPC at P150"); });
   expect(result.device.stopConfirmed).toBe(false);
   expect(lost).toHaveBeenCalledWith(owner);
   expect(freeze).not.toHaveBeenCalled();
@@ -13961,37 +14478,50 @@ import type { ResourceOwner as RetirementOwner150 } from "@kobrixa/plugin-protoc
 import type { DeviceDisposition as DeviceDisposition150, RetirementReason as RetirementReason150 } from "./device-resources.js";
 import type { DrainDispatcher as DrainDispatcher150, DrainOffer as DrainOffer150, DrainReport as DrainReport150, PersistenceParticipant as PersistenceParticipant150 } from "./persistence-participant.js";
 
-type RuntimeRetirement = RetirementReason150 | "removed";
-type RetirementDisposition = { device: DeviceDisposition150; persistence: DrainReport150 };
-const retirementResults = new WeakMap<Stage3RuntimePorts, WeakMap<RetirementOwner150, Promise<RetirementDisposition>>>();
-const noDrainRpc150: DrainDispatcher150 = async () => {
-  throw new Error("Public storage/drain is unavailable in API 1.5.0.");
+export type RetirementDisposition = { device: DeviceDisposition150; persistence: DrainReport150 };
+const retirementResults = new WeakMap<Stage3RuntimePorts, Map<string, Promise<RetirementDisposition>>>();
+const deviceRetirementReason: Record<OwnerRetirement, RetirementReason150> = {
+  disable: "disabled", reload: "reload", remove: "disabled", crashed: "crashed",
+  "renderer-crash": "renderer-lost", "window-destroyed": "renderer-lost",
+  shutdown: "shutdown", update: "shutdown", "safe-mode": "safe-mode",
 };
-
 export function retireStage3Owner(
-  ports: Stage3RuntimePorts,
-  owner: RetirementOwner150,
-  reason: RuntimeRetirement,
-  now: () => number,
-  dispatch: DrainDispatcher150 = noDrainRpc150,
+  ports: Stage3RuntimePorts, owner: RetirementOwner150,
+  reason: OwnerRetirement, now: () => number, dispatch: DrainDispatcher150,
+  deadlineMonotonicMs?: number,
 ): Promise<RetirementDisposition> {
   let completed = retirementResults.get(ports);
-  if (!completed) { completed = new WeakMap(); retirementResults.set(ports, completed); }
-  const existing = completed.get(owner);
-  if (existing) return existing;
-  // No await between the broker revocation and persistence freeze.
-  const device = ports.device.retire(owner, reason === "removed" ? "disabled" : reason);
-  ports.ui.retire(owner);
-  const drainReason = reason === "disabled" ? "disable" : reason === "removed" ? "remove"
-    : reason === "renderer-lost" ? "renderer-crash" : reason;
-  const deadline = Math.min(now() + 10_000, device.drain?.expiresMonotonicMs ?? Number.POSITIVE_INFINITY);
-  const storage = reason === "crashed"
-    ? ports.persistence.ownerLost(owner)
-    : ports.persistence.drain(ports.persistence.freeze(owner,
-        drainReason as Exclude<typeof drainReason, "crashed">, deadline, device.drain ?? undefined), dispatch);
-  const result = Promise.all([device.settled, storage]).then(([device, persistence]) => ({ device, persistence }));
-  completed.set(owner, result);
-  return result;
+  if (!completed) { completed = new Map(); retirementResults.set(ports, completed); }
+  const key = JSON.stringify([owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
+  const existing = completed.get(key); if (existing) return existing;
+  let resolve!: (value: RetirementDisposition) => void;
+  let reject!: (error: unknown) => void;
+  const receipt = new Promise<RetirementDisposition>((yes, no) => { resolve = yes; reject = no; });
+  // Publish before fencing: reentrant reservation notifications join this receipt.
+  completed.set(key, receipt);
+  try {
+    const t0 = now();
+    const device = ports.device.retire(owner, deviceRetirementReason[reason]);
+    ports.ui.retire(owner);
+    const deadline = Math.min(t0 + 10_000, deadlineMonotonicMs ?? Infinity,
+      device.drain?.expiresMonotonicMs ?? Infinity);
+    const offer = reason === "crashed" ? null : device.drain === null
+      ? ports.persistence.freeze(owner, reason, deadline)
+      : ports.persistence.freeze(owner, reason, deadline, device.drain);
+    const storage = Promise.resolve().then(() => {
+      if (!offer) return ports.persistence.ownerLost(owner);
+      // freeze coalesces any end offer; never extend its original deadline.
+      const remaining = Math.max(0, Math.min(deadline, offer.deadlineMonotonicMs) - now());
+      const signal = AbortSignal.timeout(remaining);
+      return ports.persistence.drain(offer, (original, request, callerSignal) =>
+        dispatch(original, request, AbortSignal.any([callerSignal, signal])));
+    });
+    void Promise.all([device.settled, storage]).then(([device, persistence]) =>
+      resolve({ device, persistence }), reject);
+  } catch (error) { reject(error); }
+  // Keep receipts for this ports lifetime: unresolved evidence and retired generations
+  // are never re-admitted by an eviction policy.
+  return receipt;
 }
 
 export function unavailableUi150(): Stage3RuntimePorts["ui"] {
@@ -14311,17 +14841,21 @@ replace('        ...this.options.supervisor,\n        locale: this.options.local
         } : {}),
         locale: this.options.locale,''')
 p.write_text(s)
+# Provider-only builtins have no supervisor; publish withdrawal before replacement.
+p = Path('packages/plugin-runtime/src/manager.ts')
+s = p.read_text()
+anchor = '    entry.read = { ...entry.read, unread: true };'
+assert s.count(anchor) == 1
+s = s.replace(anchor, anchor + '\n    if (entry.source.kind === "builtin" && entry.source.policy === "optional") {\n      entry.plugin = { ...entry.plugin, status: "disabled" };\n      this.#emitState();\n    }')
+p.write_text(s)
 p = Path('packages/plugin-runtime/src/index.ts')
 s = p.read_text()
-for line in [
-    'export * from "./device-resources.js";',
-    'export * from "./profile-writer-lock.js";',
-    'export * from "./core-actions.js";',
-    'export * from "./builtin-launch.js";',
-    'export * from "./ui-lifecycle.js";',
-    'export * from "./persistence-participant.js";',
-]:
-    if line not in s: s += '\n' + line + '\n'
+# F/B2-T0 already assembled every host type; R150 adds delivered values only.
+for module in ['device-resources', 'profile-writer-lock', 'core-actions', 'builtin-launch',
+               'ui-lifecycle', 'ui-subscriptions', 'persistence-participant']:
+    assert f'export type * from "./{module}.js";' in s, module
+line = 'export { retireStage3Owner, resourceFreePersistence150, unavailableUi150 } from "./ui-lifecycle.js";'
+if line not in s: s += '\n' + line + '\n'
 p.write_text(s)
 PY
 ```
@@ -14404,7 +14938,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(runtime): attach API 1.5 device ownership and optional provider policy"
 ```
 
-Expected: required compiler/static-language behavior preserved; optional user disables survive restart; same-turn revocation and original cleanup identity observed; manager process timer starts after dispositions. The controller records R150's exact commit and path list before allowing R160.
+Expected: required compiler/static-language behavior preserved; optional user disables survive restart; same-turn revocation and original cleanup identity observed; manager process timer starts after dispositions. The controller records R150's exact commit and path list, including `packages/plugin-runtime/src/index.ts`, before allowing R160. Confirm the preserved F `UiEventLedgerPort` type export at P150; no ledger implementation or future public UI/storage route is published.
 
 - [ ] **Step 9: K150 owner writes the allowlist test.**
 
@@ -14476,6 +15010,7 @@ export function attachBuiltinDeviceProvider(
   manager: Pick<PluginManager, "state" | "onEvent">,
   broker: DeviceBrokerPort,
   catalog: ProviderCatalogPort,
+  factory: (catalog: ProviderCatalogPort) => BuiltinDeviceProvider = BUILTIN_DEVICE_PROVIDER_FACTORIES["builtin:kobrixa.device-ev3"],
 ): () => void {
   let unregister: (() => void) | undefined;
   let initialCatalog: ProviderCatalogPort | undefined = catalog;
@@ -14485,7 +15020,7 @@ export function attachBuiltinDeviceProvider(
     if (enabled && !unregister) {
       const currentCatalog = initialCatalog ?? broker.providerCatalog("kobrixa.device-ev3");
       initialCatalog = undefined;
-      const provider = BUILTIN_DEVICE_PROVIDER_FACTORIES["builtin:kobrixa.device-ev3"](currentCatalog);
+      const provider = factory(currentCatalog);
       if (provider.id !== "kobrixa.device-ev3") throw new Error("EV3 allowlist factory returned the wrong provider");
       unregister = broker.registerProvider(provider);
     } else if (!enabled && unregister) {
@@ -14495,7 +15030,7 @@ export function attachBuiltinDeviceProvider(
     }
   };
   const off = manager.onEvent((event) => { if (event.type === "state") reconcile(); });
-  reconcile();
+  try { reconcile(); } catch (error) { off(); throw error; }
   return () => { off(); const remove = unregister; unregister = undefined; remove?.(); };
 }
 ```
@@ -14508,7 +15043,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): allowlist the optional EV3 provider-only source"
 ```
 
-Expected: the two required compiler factories still resolve; safe mode suppresses only the optional provider. Actual registration/disposal is tested by A-T8's real composition suite with the broker-bound allocator. K160 waits for P150 synchronization.
+Expected: the two required compiler factories still resolve; safe mode suppresses only the optional provider. Actual registration/disposal is tested by A-T8's real composition suite with the broker-bound allocator. The K150 receipt records the fourth `(catalog:ProviderCatalogPort)=>BuiltinDeviceProvider` factory parameter and both builtin.ts/test paths. K160 waits for P150 synchronization.
 
 - [ ] **Step 10a: K150 binds initial event-owner launch metadata and proves catalog lifetime.**
 
@@ -14645,7 +15180,7 @@ with:
   const [battery] = useState(() => new BatteryStatus(window.kobrixa.device));
 ```
 
-D150/P03 constructs `createLegacyMonitorFeed(broker)` and passes it into `createLegacyDevice({broker, principal, disconnect, stop, feed})`, then calls `DeviceService.attachLegacy({device, files})` once. The feed uses `broker.subscribeCoreTelemetry`, applies its initial snapshot before activation and ACKs only after bounded enqueue. A-T8/A-T5 attach one core battery demand for each live trusted workbench/session and deliver its shared sampler snapshots over the existing `onMonitor` channel, even when the monitor pane is hidden. That demand uses the frozen battery-only 30-second cadence and is removed at window/session retirement. This is the delivered D150 main-owner handoff; the renderer does not infer battery demand by starting a 500-ms monitor watch. Run the real monitor IPC/legacy-device/sampler suites with battery, monitor and Lab demands overlapping, then remove one demand and assert the others remain. Slow/throwing consumers and window retirement release only their own demand.
+D150/A-T8 constructs `createLegacyMonitorFeed(broker)` and passes it into `createLegacyDevice({broker, principal, disconnect, stop, feed})`, then calls `DeviceService.attachLegacy({device, files})` once. The feed uses `broker.subscribeCoreTelemetry`, applies its initial snapshot before activation and ACKs only after bounded enqueue. A-T8/A-T5 attach one core battery demand for each live trusted workbench/session and deliver its shared sampler snapshots over the existing `onMonitor` channel, even when the monitor pane is hidden. That demand uses the frozen battery-only 30-second cadence and is removed at window/session retirement. This is the delivered D150 main-owner handoff; the renderer does not infer battery demand by starting a 500-ms monitor watch. Run the real monitor IPC/legacy-device/sampler suites with battery, monitor and Lab demands overlapping, then remove one demand and assert the others remain. Slow/throwing consumers and window retirement release only their own demand.
 
 - [ ] **Step 13: V150 changes Disconnect so failed stop/save retains the session.**
 
@@ -14759,11 +15294,11 @@ it.each(["en", "zh-TW"] as const)("F20 optional builtins toggle with developer m
 });
 ```
 
-Run this test once before the action-block change (red: optional toggle absent), then after (green). All source-level developer restrictions remain enforced by the main controller; the renderer is presentation, not authority. D150/P03 delivers the registry-derived optional-builtin exemption and forwards both stage3 options; run its real controller suite before accepting this renderer gate.
+Run this test once before the action-block change (red: optional toggle absent), then after (green). All source-level developer restrictions remain enforced by the main controller; the renderer is presentation, not authority. D150/A-T8 delivers the registry-derived optional-builtin exemption and forwards both stage3 options; run its real controller suite before accepting this renderer gate.
 
 - [ ] **Step 15: V150 pins file-confirmation renewal and stale-result handling.**
 
-AM-12 freezes `KobrixaApi["device"].renewFiles(ref: FileBatchRef): Promise<void>`. Consume D150/P03's shared/api member, preload forwarding to `device:files-renew`, and main handler calling A-T5 `renewFilePlan(ref, owner)` with a freshly derived `CorePrincipal`. The retained plan must match original owner/workbench/session, current authority and state, and its original 600-second deadline. Only the 120-second confirmation idle allowance resets. V150 calls the typed bridge directly; no cast or timer supplies authority.
+AM-12 freezes `KobrixaApi["device"].renewFiles(ref: FileBatchRef): Promise<void>`. Consume D150/A-T8's shared/api member, preload forwarding to `device:files-renew`, and main handler calling A-T5 `renewFilePlan(ref, owner)` with a freshly derived `CorePrincipal`. The retained plan must match original owner/workbench/session, current authority and state, and its original 600-second deadline. Only the 120-second confirmation idle allowance resets. V150 calls the typed bridge directly; no cast or timer supplies authority.
 
 Append this test to `remote-files.test.ts` after the A-T8 bridge type handoff:
 
@@ -14915,18 +15450,8 @@ Expected: no battery hardware clock, optional toggle without developer mode, exp
 
 - [ ] **Step 17: H-I wires the new test entrypoints into the existing scripts and CI.**
 
-T9 includes this test in its Step 5 test file before its stop receipt; H-I consumes it read-only. Append this test to the `tests/desktop/device-broker-boundaries.test.mjs` while T9 still owns it; alternatively perform it before T9's final stop receipt. It is part of T9's same commit, not a later unsolicited T10 write:
+Run T9 Step 5's boundary test read-only. H-I edits only `package.json` and `.github/workflows/ci.yml` in this step.
 
-```js
-test("H-I runs device boundary/conformance tests and real transport smoke", async () => {
-  const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-  assert.equal(pkg.scripts["test:device-broker"], "node --test tests/desktop/device-broker-*.test.mjs");
-  assert.equal(pkg.scripts["test:device-broker:smoke"], "node tests/desktop/device-broker-run.mjs");
-  assert.ok(pkg.scripts["test:desktop"].includes("pnpm test:device-broker"));
-  const ci = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
-  assert.match(ci, /pnpm test:device-broker:smoke/);
-});
-```
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; node --test --test-name-pattern='H-I' tests/desktop/device-broker-boundaries.test.mjs
@@ -14975,6 +15500,20 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 Expected green: scripts and desktop CI routing are present. CI's real-Electron execution is **controller runs outside sandbox**. A writer must not claim CI success merely because YAML contains the command.
 
 - [ ] **Step 18: Integrate owner commits and verify the actual P150 publication.**
+
+Run the real T3-owned facade/recovery and D150 composition acceptance after T1–T9 and all four slices stop. Schedule R150/K150/V150 from F concurrently with D150; completion is a final acceptance requirement, not a prerequisite for starting T10.
+
+```bash
+pnpm --filter @kobrixa/plugin-protocol build
+pnpm --filter @kobrixa/plugin-runtime build
+pnpm --filter @kobrixa/plugin-sdk build
+pnpm --filter @kobrixa/device build
+pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker-port.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-broker/lifecycle-coordinator.test.ts src/main/plugins/controller.test.ts src/main/ipc.test.ts
+pnpm check:desktop
+pnpm test:desktop
+```
+
+Expected: PASS through real factories and the actual manager→attachment→coordinator helper path; W1 doubles are not publication evidence.
 
 Controller records the real F, R150, K150 and V150 SHAs from Git, checks ancestry, and receives stopped-owner receipts. User performs the no-ff merges. Do not copy generated schema from another branch or replace conflicts by choosing a JSON side. H-P regenerates the 1.5.0 schema from the merged source and verifies unchanged initialize/legacy-command fixtures. Build protocol/runtime/SDK/device before desktop checks. Use the verification appendix below in order; a failure returns to the named owner and invalidates only dependent evidence.
 
@@ -15147,4 +15686,4 @@ Each row is a concrete assertion obligation for its mapped owner tests; T9 requi
 - [ ] Ten-minute synthetic load, real SDK transports, installed native adapters and physical USB/Wi-Fi evidence are separate.
 - [ ] A-RF5/F19 real persistence remains pending X-T1; stage-2 V01–V04 and 3C/3D/3E retain their original exception statuses.
 - [ ] The T9 acceptance-file handoff precedes T10's writes. H-I touched only the exact listed files; no installer/dependency changes were smuggled in.
-- [ ] All seven P04 revision items are resolved by AM-01/02/03/08/11/12/13/14/15/20/21/32; D150/R150/K150/V150 and each compatibility path have stopped-owner/path/SHA receipts before later slices start.
+- [ ] All applicable review items are resolved by BM-01/02/03/04/05/06/07/08/09/10/16/18/22 and AM-01/02/03/08/11/12/13/14/15/20/21/32; D150/R150/K150/V150 and each compatibility path have stopped-owner/path/SHA receipts before later slices start.
