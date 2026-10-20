@@ -68,3 +68,13 @@ it("AM-22 exposes immutable observations and cancels pending deadlines on retire
     expect(vi.getTimerCount()).toBe(0); expect(() => diagnosticsFor({})).toThrow();
   } finally { vi.useRealTimers(); }
 });
+
+it("bounds raw input at 4,000 code points without publishing an oversized edit", () => {
+  const state = new UiStateStore(fixture().bridge, panel, snapshot());
+  state.edit("speed", null, "😀".repeat(4000));
+  expect(Array.from(state.getSnapshot().raw.speed!)).toHaveLength(4000);
+  const previous = state.getSnapshot();
+  state.edit("speed", 1, "😀".repeat(4001));
+  expect(state.getSnapshot()).toBe(previous);
+  state.retire();
+});

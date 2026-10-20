@@ -70,3 +70,38 @@ it("U04 never publishes mixed pages or duplicate IDs", async () => {
   expect(store.getSnapshot().entries).toEqual([]);
   expect(store.getSnapshot().phase).toBe("failed"); store.dispose();
 });
+
+it("rejects an owner generation absent from the latest catalog event", async () => {
+  let emit!: (event: UiBridgeEvent) => void;
+  const api = {
+    onEvent: (listener: typeof emit) => { emit = listener; return () => {}; },
+    resource: vi.fn<PluginUiBridge["resource"]>(),
+    catalog: vi.fn<PluginUiBridge["catalog"]>().mockResolvedValue({ ok: true, value: page(1, [entry()]) }),
+  };
+  const store = new UiCatalogStore(api, () => {}); await store.start();
+  api.catalog.mockResolvedValue({ ok: true, value: page(2, [entry()]) });
+  emit({ type: "catalog", hostEpoch: epoch, revision: 2, owners: [entry(2)] });
+  await store.refresh();
+  expect(store.getSnapshot().phase).toBe("failed"); store.dispose();
+});
+it("ignores a lower revision event in the same epoch without revoking", async () => {
+  let emit!: (event: UiBridgeEvent) => void; const revoked = vi.fn();
+  const api = {
+    onEvent: (listener: typeof emit) => { emit = listener; return () => {}; },
+    resource: vi.fn<PluginUiBridge["resource"]>(),
+    catalog: vi.fn<PluginUiBridge["catalog"]>().mockResolvedValue({ ok: true, value: page(2, [entry(2)]) }),
+  };
+  const store = new UiCatalogStore(api, revoked); await store.start();
+  emit({ type: "catalog", hostEpoch: epoch, revision: 2, owners: [entry(2)] }); await store.refresh();
+  const before = store.getSnapshot(); revoked.mockClear();
+  emit({ type: "catalog", hostEpoch: epoch, revision: 1, owners: [] });
+  expect(revoked).not.toHaveBeenCalled(); expect(store.getSnapshot()).toBe(before); store.dispose();
+});
+it("rejects duplicate contribution IDs within a page", async () => {
+  const api = {
+    onEvent: () => () => {}, resource: vi.fn<PluginUiBridge["resource"]>(),
+    catalog: vi.fn<PluginUiBridge["catalog"]>().mockResolvedValue({ ok: true, value: page(1, [entry(), entry()]) }),
+  };
+  const store = new UiCatalogStore(api, () => {}); await store.start();
+  expect(store.getSnapshot().phase).toBe("failed"); expect(store.getSnapshot().entries).toEqual([]); store.dispose();
+});

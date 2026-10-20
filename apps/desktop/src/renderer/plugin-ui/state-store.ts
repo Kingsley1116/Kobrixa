@@ -97,6 +97,7 @@ export class UiStateStore {
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(update: Partial<StateView>) { this.view = { ...this.view, ...update }; this.listeners.forEach((listener) => listener()); }
   edit(key: string, value: UiScalar, raw?: string): void {
+    if (raw !== undefined && Array.from(raw).length > 4000) return;
     if (!this.view.active || !Object.hasOwn(this.resource.fields, key)) return;
     if (this.view.localRevision >= Number.MAX_SAFE_INTEGER) { this.retire(); return; }
     this.onEdit(); const errors = { ...this.view.errors }; delete errors[key];

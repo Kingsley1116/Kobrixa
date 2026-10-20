@@ -1,0 +1,87 @@
+
+// @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { expect, it, vi } from "vitest";
+import type { SettingsFormBinding } from "@kobrixa/plugin-runtime";
+import type { SettingsResourceV1 } from "@kobrixa/plugin-protocol";
+import { labels } from "./contract.test.js";
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+import { entry, handle } from "./contract.test.js";
+import { SettingsControls, SettingsControlsView } from "./forms.js";
+const binding: SettingsFormBinding = { owner: entry, scope: { hostEpoch: handle(1), workbenchInstance: handle(20) }, resourceDigest: "b".repeat(64) };
+const resource: SettingsResourceV1 = { schemaVersion: 1, title: { en: "Settings" }, fields: [
+  { key: "editor.mode", type: "enum", label: { en: "Mode" }, default: 1, options: [{ value: 1, label: { en: "Numeric one" } }, { value: "1", label: { en: "String one" } }] },
+  { key: "editor.size", type: "number", label: { en: "Size" }, default: 12, minimum: 1, maximum: 50 },
+] };
+it("U01/U15 retains dotted keys and enum types, commits on blur/enter/reset and has no Apply", async () => {
+  const controls = new SettingsControls(); const change = vi.fn(); controls.onChange(change);
+  const baseline = { schemaVersion: 1, revision: null, values: [{ key: "editor.mode", value: 1 }, { key: "editor.size", value: 12 }] };
+  controls.render(binding, resource, { baseline, draft: baseline.values, busyKeys: [], errors: [] });
+  const div = document.createElement("div"); document.body.append(div); const root = createRoot(div);
+  await act(async () => root.render(createElement(SettingsControlsView, { controls, locale: "en", labels })));
+  const select = div.querySelector("select")!;
+  await act(async () => { select.value = "option1"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(change).toHaveBeenLastCalledWith(binding, "editor.mode", "1", "change");
+  const input = div.querySelector<HTMLInputElement>('input[inputmode="decimal"]')!;
+  await act(async () => controls.raw("editor.size", "-"));
+  await act(async () => { controls.commit("editor.size", "blur"); });
+  expect(change).toHaveBeenCalledTimes(1); expect(input.value).toBe("-");
+  await act(async () => controls.render(binding, resource, { baseline: { ...baseline, revision: "r_" + "1".repeat(32) }, draft: baseline.values, busyKeys: [], errors: [] }));
+  expect(input.value).toBe("-");
+  await act(async () => { controls.raw("editor.size", "13"); controls.commit("editor.size", "enter"); });
+  expect(change).toHaveBeenLastCalledWith(binding, "editor.size", 13, "enter");
+  await act(async () => controls.commit("editor.size", "reset"));
+  expect(change).toHaveBeenLastCalledWith(binding, "editor.size", 12, "reset");
+  expect(div.textContent).not.toContain("Apply"); await act(async () => root.unmount()); div.remove();
+});
+it("U01 bounds forms to 16 fields per page and 8 pages, and disposes only the matching binding", () => {
+  const controls = new SettingsControls(); const fields = Array.from({ length: 128 }, (_, index) => ({ type: "boolean" as const, key: `flag${index}`, label: { en: `Flag ${index}` }, default: false }));
+  const baseline = { schemaVersion: 1, revision: null, values: fields.map((field) => ({ key: field.key, value: false })) };
+  controls.render(binding, { ...resource, fields }, { baseline, draft: baseline.values, busyKeys: [], errors: [] });
+  expect(controls.fields(0)).toHaveLength(16); expect(controls.fields(7)).toHaveLength(16);
+  expect(() => controls.render(binding, { ...resource, fields: [...fields, fields[0]!] }, { baseline, draft: baseline.values, busyKeys: [], errors: [] })).toThrow();
+  controls.dispose({ ...binding, resourceDigest: "c".repeat(64) }); expect(controls.getSnapshot()).not.toBeNull();
+  controls.dispose(binding); expect(controls.getSnapshot()).toBeNull();
+});
+
+it("bounds local settings raw drafts to 4,000 code points", () => {
+  const controls = new SettingsControls(); const baseline = { schemaVersion: 1, revision: null, values: [{ key: "editor.size", value: 12 }] };
+  controls.render(binding, resource, { baseline, draft: baseline.values, busyKeys: [], errors: [] });
+  controls.raw("editor.size", "😀".repeat(4000));
+  expect(Array.from(controls.getSnapshot()!.raw["editor.size"]!)).toHaveLength(4000);
+  const before = controls.getSnapshot(); controls.raw("editor.size", "😀".repeat(4001));
+  expect(controls.getSnapshot() === before).toBe(true); controls.destroy();
+});
+
+// B2-T3 attach: test-only frozen mapping and retained-form methods; replace with
+// createSettingsFieldMap/createContributedSettingsForm when their owner lands.
+import type { SettingsFieldMap, ContributedSettingsForm } from "@kobrixa/plugin-runtime";
+import { attachSettingsControls } from "./host-ports.js";
+it("AM-28 attaches frozen mappings and routes retry/reload to the retained form", async () => {
+  const controls = new SettingsControls(); const change = vi.fn(); controls.onChange(change);
+  const retry = vi.fn<ContributedSettingsForm["retry"]>(async () => {});
+  const reload = vi.fn<ContributedSettingsForm["reload"]>(async () => {});
+  const map: SettingsFieldMap = {
+    field: (key) => { const index = resource.fields.findIndex((f) => f.key === key); if (index < 0) throw new Error("Unknown key"); return `field${index}`; },
+    key: (id) => { const field = resource.fields.find((_, index) => id === `field${index}`); if (!field) throw new Error("Unknown field"); return field.key; },
+    option: (key, value) => { const field = resource.fields.find((f) => f.key === key); const index = field?.type === "enum" ? field.options.findIndex((o) => o.value === value) : -1; if (index < 0) throw new Error("Unknown value"); return `option${index}`; },
+    value: (key, id) => { const field = resource.fields.find((f) => f.key === key); const option = field?.type === "enum" ? field.options.find((_, index) => id === `option${index}`) : undefined; if (!option) throw new Error("Unknown option"); return option.value; },
+  };
+  const fieldMap = vi.fn(() => map); const detach = attachSettingsControls(controls, { retry, reload, fieldMap });
+  expect(() => attachSettingsControls(controls, { retry, reload, fieldMap })).toThrow();
+  const baseline = { schemaVersion: 1, revision: null, values: [{ key: "editor.mode", value: 1 }, { key: "editor.size", value: 12 }] };
+  controls.render(binding, resource, { baseline, draft: baseline.values, busyKeys: [], errors: [{ key: "editor.size", message: { en: "Conflict" } }] });
+  const div = document.createElement("div"); const root = createRoot(div);
+  await act(async () => root.render(createElement(SettingsControlsView, { controls, locale: "en", labels })));
+  const select = div.querySelector("select")!;
+  expect(select.id).toBe(`setting-${binding.scope.workbenchInstance}-field0`);
+  await act(async () => { select.value = "option1"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(change).toHaveBeenLastCalledWith(binding, "editor.mode", "1", "change");
+  await act(async () => [...div.querySelectorAll("button")].find((b) => b.textContent === labels.retry)!.click());
+  expect(retry).toHaveBeenCalledWith(binding, "editor.size");
+  await act(async () => [...div.querySelectorAll("button")].find((b) => b.textContent === labels.refresh)!.click());
+  expect(reload).toHaveBeenCalledWith(binding); expect(change).toHaveBeenCalledTimes(1);
+  expect(() => map.value("editor.mode", "foreign")).toThrow(); expect(() => map.key("foreign")).toThrow();
+  await act(async () => root.unmount()); detach(); detach(); controls.destroy();
+});
