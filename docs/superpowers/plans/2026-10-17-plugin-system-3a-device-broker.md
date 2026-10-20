@@ -678,7 +678,7 @@ it("F/P150 package-root host contracts preserve single definitions", () => {
   expectTypeOf<DeviceRecoveryPort>().toEqualTypeOf<RecoveryPort>();
   expectTypeOf<CommonEventLedgerPort["diagnostics"]>().toEqualTypeOf<
     () => Readonly<{ subscriptions: number; queuedEvents: number; queuedBytes: number }>>();
-  expectTypeOf<UiEventLedgerPort["create"]>().toEqualTypeOf<CommonEventLedgerPort["create"]>();
+  expectTypeOf<Parameters<UiEventLedgerPort["create"]>>().toEqualTypeOf<Parameters<CommonEventLedgerPort["create"]>>();
 });
 export type FrozenPackageRootConsumers = [Principal, ProfileWriterLock, CoreActionReference,
   CoreActionValidationPort, FaultJournalDocument, DeviceResourceParticipant, DeviceRequirement,
@@ -4772,7 +4772,7 @@ git commit -m "feat(plugins): publish device protocol 1.5 and SDK clients"
 - Modify: `apps/desktop/src/main/device-broker/provider.ts`
 - Test: `apps/desktop/src/main/device-broker/provider.test.ts`
 - Modify: `apps/desktop/src/main/device-broker/broker-port.ts`
-- Read-only integrated test (T3-owned; T10 Step 18 execution): `apps/desktop/src/main/device-broker/broker-port.test.ts`
+- Create (A-T2-owned; executed at T10 Step 18): `apps/desktop/src/main/device-broker/broker-port.test.ts`
 - Create: `apps/desktop/src/main/device-broker/broker.ts`
 - Test: `apps/desktop/src/main/device-broker/broker.test.ts`
 - Create: `apps/desktop/src/main/device-broker/registry.ts`
@@ -5552,7 +5552,33 @@ it("F07 public disconnect is busy while a retained file plan owns foreground",as
 });
 ```
 
-The production facade test is owned by T3 Step 13a and executed at T10 Step 18 after both real factories exist. W1 tests import only `createBroker` and use the typed doubles above.
+The production facade test is A-T2-owned; executed at T10 Step 18 after both real factories exist. Write and stage it here as deferred acceptance, outside every T2/W1 gate. W1 tests import only `createBroker` and use the typed doubles above.
+
+Create `apps/desktop/src/main/device-broker/broker-port.test.ts`:
+
+```ts
+import { expect,expectTypeOf,it } from "vitest";
+import { createDeviceBroker,type DeviceBrokerPort,type LegacyOperationPort,type DeviceBrokerOptions } from "./broker-port.js";
+import { operationHarness,pluginPrincipal,ID } from "./fake-provider.js";
+it("F19 canonical factory has no hidden Electron side effects",()=>{
+  expectTypeOf<ReturnType<typeof createDeviceBroker>>().toEqualTypeOf<DeviceBrokerPort&LegacyOperationPort>();
+  const h=operationHarness();const broker=createDeviceBroker({journal:h.dependencies.journal,profile:h.dependencies.profile,now:h.dependencies.now,authority:{current:()=>null,assertContinuation(){throw new Error("unbound");},subscribe:()=>()=>{}},coreActions:{claim:()=>false,isClaimed:()=>false,complete(){}},hasPermission:()=>true,requirements:()=>[],operationGate:()=>({ok:true,value:null}),connectionPolicy:()=>({wifiConnectTimeoutMs:5000,wifiHandshakeTimeoutMs:3000,usbAutoReconnect:false,usbRetryInterval:"backoff",usbRetryLimit:3})});
+  expect(broker.recovery.snapshot().faults).toEqual([]);
+  expect(()=>broker.sessions.quiesce(ID,{reason:"suspended"})).toThrow();
+});
+const signal=()=>new AbortController().signal;
+function setup(allowed=true,overrides:Partial<Pick<DeviceBrokerOptions,"requirements"|"operationGate"|"connectionPolicy">>={}){const h=operationHarness();const broker=createDeviceBroker({journal:h.dependencies.journal,profile:h.dependencies.profile,now:h.dependencies.now,authority:{current:()=>({ref:ID,epoch:ID,workbenchInstance:ID,state:"local",roomBinding:null,connected:false,synced:true,role:null,isHolder:true}),assertContinuation(){},subscribe:()=>()=>{}},coreActions:{claim:()=>true,isClaimed:()=>true,complete(){}},hasPermission:()=>allowed,requirements:()=>[],operationGate:()=>({ok:true,value:null}),connectionPolicy:()=>({wifiConnectTimeoutMs:5000,wifiHandshakeTimeoutMs:3000,usbAutoReconnect:false,usbRetryInterval:"backoff",usbRetryLimit:3}),...overrides});const unregister=broker.registerProvider(h.provider);return {...h,broker,unregister};}
+it("current-device stop journals a real request before stop and does not invent a prior fault",async()=>{
+  const h=setup(),principal=pluginPrincipal();
+  const connected=await h.broker.request(principal,"devices/connect",{target:{kind:"wifi-address",providerId:h.provider.id,address:"127.0.0.1"}},signal());
+  if(!connected.ok)throw new Error("connect failed");
+  expect(h.broker.recovery.snapshot().faults).toEqual([]);
+  const result=await h.broker.stopCurrentDevice({sessionId:connected.value.session.sessionId,action:{actionToken:ID,scope:{hostEpoch:ID,workbenchInstance:ID}}});
+  expect(result.ok).toBe(true);expect(h.provider.calls).toContain("stop");
+  expect(h.broker.recovery.snapshot().faults[0]).toMatchObject({operationClass:"safety-stop",state:"resolved",stopConfirmation:"confirmed"});
+});
+
+```
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker.test.ts
@@ -5588,7 +5614,7 @@ function value<T>(outcome:ProviderOutcome<T>):T{
   return outcome.value;
 }
 export function createBroker(input:Options, factories: { recovery: typeof createDeviceRecovery; participant: typeof createDeviceResourceParticipant }):DeviceBrokerPort&LegacyOperationPort {
-  const wallNow = () => Date.now(); // Epoch clock; tests inject via vi.setSystemTime, input.now remains monotonic.
+  const wallNow = () => Date.now(); // Broker has no injected wall clock; recovery determinism is pinned through RecoveryDriver.wallNow test doubles.
   input.profile.assertHeld();
   const providers=new ProviderRegistry(),candidates=new OwnerLedger<Candidate>(64,64,"candidate"),subscriptions=new Map<string,{owner:ResourceOwner;params:DeviceSubscriptionParams;dispose:()=>void}>(),reservations=new Reservations(input.now),retired=new Set<string>();
   let session:Session|null=null,connecting=false,closing=false,revision=0;
@@ -6151,7 +6177,7 @@ On loss of an established USB session, retain its serial digest, original princi
 
 Before every consequential provider exchange, check capability, `operationGate`, then authority. Include connection, mode, recording admission, finite motion and legacy upload/deployment chunks. Recheck after awaits and before dispatch; the ordinary gate must never veto original cleanup, original-owner stop or query. Keep first-end reservation grants and original cleanup deadlines unchanged. The recovery driver occupies synchronously, and a returned failed journal/readback result must quarantine the lane just as a thrown error does; release only after underlying I/O settles and safety evidence permits.
 
-- [ ] **Step 11B: Add amendment regressions using the actual broker factory**
+- [ ] **Step 11B: Add amendment regressions using the broker core and typed local doubles**
 
 Extend `setup` in `broker.test.ts` with a second optional argument of type `Partial<Pick<DeviceBrokerOptions,"requirements"|"operationGate"|"connectionPolicy">>`, default `{}`. Spread it last into the factory input and export no test hook from production. Import `DeviceBrokerOptions` type from `broker-port.ts`. Append:
 
@@ -6191,15 +6217,7 @@ it("channel owner is bound before subscription and disposal removes its ledger r
   expect(sent).toEqual([]);channel.activate(id);expect(sent).toHaveLength(1);
   channel.dispose();expect(h.broker.events.owns(principal.owner,id)).toBe(false);
 });
-it("current-device stop journals a real request before stop and does not invent a prior fault",async()=>{
-  const h=setup(),principal=pluginPrincipal();
-  const connected=await h.broker.request(principal,"devices/connect",{target:{kind:"wifi-address",providerId:h.provider.id,address:"127.0.0.1"}},signal());
-  if(!connected.ok)throw new Error("connect failed");
-  expect(h.broker.recovery.snapshot().faults).toEqual([]);
-  const result=await h.broker.stopCurrentDevice({sessionId:connected.value.session.sessionId,action:{actionToken:ID,scope:{hostEpoch:ID,workbenchInstance:ID}}});
-  expect(result.ok).toBe(true);expect(h.provider.calls).toContain("stop");
-  expect(h.broker.recovery.snapshot().faults[0]).toMatchObject({operationClass:"safety-stop",state:"resolved",stopConfirmation:"confirmed"});
-});
+
 ```
 
 Append to `provider.test.ts`:
@@ -6227,13 +6245,13 @@ it("provider frames have one receipt origin and mode snapshots use the same sequ
 });
 ```
 
-Use the real T3 factory and genuine D150 action ledger in the integration variants: replay/foreign-window stop claims fail; failed pending commit sends no stop; failed final commit retains occupancy; read-only reconcile calls observe and never stop; restart fault requires explicit connection. Add catalog cases for construction-before-session, stable tuple/revision, foreign session, replaced provider and conflicting provider. Test configured Wi-Fi timeouts and clamp every exchange to the captured deadline; USB tests cover stale descriptor, duplicate serial, changed serial and no replay. Core telemetry tests overlap battery/monitor/Lab, dispose one demand while the other two continue, then destroy their workbench and assert zero queues/timers. Gate tests flip the callback during a blocked file chunk and assert no next chunk but exactly one close. Hold the formal fake before exchange/after exchange/before stop-readback; inspect trace after release and prove single dispatch, late ACK cleanup and immediate intent revocation under event pressure.
+The integration variants using the real T3 factory and genuine D150 action ledger belong to A-T2-owned `broker-port.test.ts` and run only at T10 Step 18; `broker.test.ts` uses the typed local doubles. Write those deferred variants in T2 alongside the F19 facade test: replay/foreign-window stop claims fail; failed pending commit sends no stop; failed final commit retains occupancy; read-only reconcile calls observe and never stop; restart fault requires explicit connection. Add catalog cases for construction-before-session, stable tuple/revision, foreign session, replaced provider and conflicting provider. Test configured Wi-Fi timeouts and clamp every exchange to the captured deadline; USB tests cover stale descriptor, duplicate serial, changed serial and no replay. Core telemetry tests overlap battery/monitor/Lab, dispose one demand while the other two continue, then destroy their workbench and assert zero queues/timers. Gate tests flip the callback during a blocked file chunk and assert no next chunk but exactly one close. Hold the formal fake before exchange/after exchange/before stop-readback; inspect trace after release and prove single dispatch, late ACK cleanup and immediate intent revocation under event pressure.
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker.test.ts src/main/device-broker/registry.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/provider.test.ts src/main/device-broker/sampler.test.ts src/main/device-broker/fake-provider.test.ts
 ```
 
-Expected red before the AM wiring: callback, channel, stop or stamping assertions fail. Expected green afterward with all sibling ports integrated. P150 requires the real recovery/controller/router variants, not only frozen journal doubles. Record evidence under the one canonical 3A acceptance report; no duplicate conformance or host fixture tree.
+Expected red before the AM wiring: callback, channel, stop or stamping assertions fail. Expected green with local doubles. P150 requires the real recovery/controller/router variants, not only frozen journal doubles. Record evidence under the one canonical 3A acceptance report; no duplicate conformance or host fixture tree.
 
 - [ ] **Step 12: Run the local green gate, rebuild imports and record integration evidence**
 
@@ -6252,15 +6270,13 @@ Expected local PASS after final F export assembly and the protocol implementatio
 - [ ] **Step 13: Commit only the T2 write set**
 
 ```bash
-git add apps/desktop/src/main/device-broker/provider.ts apps/desktop/src/main/device-broker/provider.test.ts apps/desktop/src/main/device-broker/broker-port.ts apps/desktop/src/main/device-broker/broker.ts apps/desktop/src/main/device-broker/broker.test.ts apps/desktop/src/main/device-broker/registry.ts apps/desktop/src/main/device-broker/registry.test.ts apps/desktop/src/main/device-broker/operations.ts apps/desktop/src/main/device-broker/operations.test.ts apps/desktop/src/main/device-broker/sampler.ts apps/desktop/src/main/device-broker/sampler.test.ts apps/desktop/src/main/device-broker/reservations.ts apps/desktop/src/main/device-broker/reservations.test.ts apps/desktop/src/main/device-broker/intent.ts apps/desktop/src/main/device-broker/intent.test.ts apps/desktop/src/main/device-broker/contract.test.ts apps/desktop/src/main/device-broker/fake-provider.ts apps/desktop/src/main/device-broker/fake-provider.test.ts
+git add apps/desktop/src/main/device-broker/provider.ts apps/desktop/src/main/device-broker/provider.test.ts apps/desktop/src/main/device-broker/broker-port.ts apps/desktop/src/main/device-broker/broker-port.test.ts apps/desktop/src/main/device-broker/broker.ts apps/desktop/src/main/device-broker/broker.test.ts apps/desktop/src/main/device-broker/registry.ts apps/desktop/src/main/device-broker/registry.test.ts apps/desktop/src/main/device-broker/operations.ts apps/desktop/src/main/device-broker/operations.test.ts apps/desktop/src/main/device-broker/sampler.ts apps/desktop/src/main/device-broker/sampler.test.ts apps/desktop/src/main/device-broker/reservations.ts apps/desktop/src/main/device-broker/reservations.test.ts apps/desktop/src/main/device-broker/intent.ts apps/desktop/src/main/device-broker/intent.test.ts apps/desktop/src/main/device-broker/contract.test.ts apps/desktop/src/main/device-broker/fake-provider.ts apps/desktop/src/main/device-broker/fake-provider.test.ts
 git commit -m "feat(desktop): add guarded device broker and recording reservations"
 ```
 
 ### Task 3A-T3: Durable safety journal and retained recovery
 
 **Files**
-
-- Create: `apps/desktop/src/main/device-broker/broker-port.test.ts` (real facade acceptance; run in T10 Step 18).
 
 - Modify: `apps/desktop/src/main/device-broker/journal-port.ts`
 - Create: `apps/desktop/src/main/device-broker/journal-port.test.ts` (Test)
@@ -7279,28 +7295,13 @@ export function createDeviceResourceParticipant(driver: ResourceDriver): DeviceR
 }
 ```
 
-- [ ] **Step 13a: Bind both factories in A-T2's real broker before P150**
-
-Create `apps/desktop/src/main/device-broker/broker-port.test.ts`:
-
-```ts
-import { expect,expectTypeOf,it } from "vitest";
-import { createDeviceBroker,type DeviceBrokerPort,type LegacyOperationPort } from "./broker-port.js";
-import { operationHarness,ID } from "./fake-provider.js";
-it("F19 canonical factory has no hidden Electron side effects",()=>{
-  expectTypeOf<ReturnType<typeof createDeviceBroker>>().toEqualTypeOf<DeviceBrokerPort&LegacyOperationPort>();
-  const h=operationHarness();const broker=createDeviceBroker({journal:h.dependencies.journal,profile:h.dependencies.profile,now:h.dependencies.now,authority:{current:()=>null,assertContinuation(){throw new Error("unbound");},subscribe:()=>()=>{}},coreActions:{claim:()=>false,isClaimed:()=>false,complete(){}},hasPermission:()=>true,requirements:()=>[],operationGate:()=>({ok:true,value:null}),connectionPolicy:()=>({wifiConnectTimeoutMs:5000,wifiHandshakeTimeoutMs:3000,usbAutoReconnect:false,usbRetryInterval:"backoff",usbRetryLimit:3})});
-  expect(broker.recovery.snapshot().faults).toEqual([]);
-  expect(()=>broker.sessions.quiesce(ID,{reason:"suspended"})).toThrow();
-});
-```
-
+- [ ] **Step 13a: Specify the integrated acceptance run at T10 Step 18**
 
 A-T2 owns the production facade in `broker-port.ts` and injected internal drivers in `broker.ts`; T3 exports the implementations and imports its registry-backed inputs type-only. This is a required construction step, not a journal snapshot substitute. A-T2 supplies `recoveryDriver: RecoveryDriver` and `resourceDriver: ResourceDriver` from its operation/session registry: `describe` looks up the live generation; `occupy` reserves synchronously, calls provider `observeIdle` for observe and `stopAndReadback({kind:"current-device"})` for stop, and awaits the original cleanup settlement before releasing. The revoke functions synchronously fence admission and return the already-started original cleanup promises. They never call the public facade recursively.
 
 The production facade supplies `{recovery:createDeviceRecovery, participant:createDeviceResourceParticipant}` to `createBroker(input, factories)`. The internal core invokes each dependency once with its registry-backed driver; this step adds no duplicate construction.
 
-Return these exact instances as `DeviceBrokerPort.recovery` and `.resources`; construct each once per broker. A-T8 passes this broker participant to the real controller during D150. In `broker-port.test.ts` (A-T3 owner) and read-only `operations.test.ts` (A-T2 owner), load a pending restart journal, explicitly connect, reconcile and assert the provider read trace with no stop/run/upload. Then mint a real device-stop action, hold final journal commit after stop readback and assert foreground admission stays blocked. Reject that commit and assert the retained journal blocker. Retire a live owner/provider and assert admission is revoked before awaiting disposition, with the same original cleanup promise. Repeat through the D150 controller disable/window-loss entrypoints in its owned tests. Run these together with T3's tests at P150:
+Return these exact instances as `DeviceBrokerPort.recovery` and `.resources`; construct each once per broker. A-T8 passes this broker participant to the real controller during D150. In `broker-port.test.ts` (A-T2 owner; written in T2, read-only here) (the A-T2-owned real-factory file; `operations.test.ts` keeps typed doubles), load a pending restart journal, explicitly connect, reconcile and assert the provider read trace with no stop/run/upload. Then mint a real device-stop action, hold final journal commit after stop readback and assert foreground admission stays blocked. Reject that commit and assert the retained journal blocker. Retire a live owner/provider and assert admission is revoked before awaiting disposition, with the same original cleanup promise. Repeat through the D150 controller disable/window-loss entrypoints in its owned tests. The following command and expected result are executed in T10 Step 18; not a T3 gate. T3 Step 14 remains the local gate:
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker-port.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-broker/resource-participant.test.ts src/main/plugins/controller.test.ts
@@ -7318,7 +7319,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 Expected: PASS, including F05/F08/F10/F11/F17/F19/F20 and A-RF2 assertions local to this task. T2 supplies the registry-backed `RecoveryDriver` and `ResourceDriver` at `createDeviceBroker`; this task does not change that factory's frozen signature. T8 supplies the same `ProfileWriterLock` used by persistence. T9/T10 must rerun through the actual broker and action ledger. Filesystem durability under process kill, all operating systems and actual hardware are **controller runs outside sandbox**.
 
 ```bash
-git add apps/desktop/src/main/device-broker/broker-port.test.ts apps/desktop/src/main/device-broker/recovery-port.ts apps/desktop/src/main/device-broker/recovery-port.test.ts apps/desktop/src/main/device-broker/resource-participant.ts apps/desktop/src/main/device-broker/resource-participant.test.ts
+git add apps/desktop/src/main/device-broker/recovery-port.ts apps/desktop/src/main/device-broker/recovery-port.test.ts apps/desktop/src/main/device-broker/resource-participant.ts apps/desktop/src/main/device-broker/resource-participant.test.ts
 git commit -m "feat(devices): retain core recovery and synchronous resource retirement"
 ```
 
@@ -9054,13 +9055,13 @@ it("AM-08 uses the host serial-match reconnect seam and never replays legacy mut
 });
 ```
 
-A-T3 owns the real matching tests in `broker-port.test.ts`, consuming A-T2's core read-only at T10 Step 18: retain a live USB session with serial A, lose its connection, rediscover serial A at a different native path, and assert only that fresh candidate connects. Run with 2000ms/3 attempts and with backoff 1000→2000→5000ms; assert policy capture and exact attempt count. Replacing discovery with duplicate A, no serial or same IP/different serial must reject without opening a candidate. Explicit Disconnect, provider disable, safe mode, workbench retirement and preference cancellation must invalidate the old schedule/alias; loading a restart journal alone produces zero attempts. After reconnect, assert the trace contains connection/observe only, no run/upload/motion and no reconstructed authority. T3's real recovery integration consumes the newly returned session only with a fresh reconcile or stop core action.
+A-T2 owns the real matching tests in `broker-port.test.ts`, written in T2 and consumed read-only at T10 Step 18: retain a live USB session with serial A, lose its connection, rediscover serial A at a different native path, and assert only that fresh candidate connects. Run with 2000ms/3 attempts and with backoff 1000→2000→5000ms; assert policy capture and exact attempt count. Replacing discovery with duplicate A, no serial or same IP/different serial must reject without opening a candidate. Explicit Disconnect, provider disable, safe mode, workbench retirement and preference cancellation must invalidate the old schedule/alias; loading a restart journal alone produces zero attempts. After reconnect, assert the trace contains connection/observe only, no run/upload/motion and no reconstructed authority. T3's real recovery integration consumes the newly returned session only with a fresh reconcile or stop core action.
 
 ```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/legacy-device.test.ts src/main/device-broker/broker-port.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-providers/ev3/provider.test.ts
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/legacy-device.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-providers/ev3/provider.test.ts
 ```
 
-Expected: non-default policy, fresh serial matching and no replay pass before P150; parity is no longer deferred.
+Expected: legacy-device, recovery-port and EV3 provider tests pass locally. The broker-port serial-match variants run at T10 Step 18.
 
 - [ ] **Step 5: Replace the legacy hardware facade with broker calls**
 
@@ -11786,7 +11787,8 @@ import { registerIpc } from "./ipc.js";
 import { DeviceControlGate } from "./collab/device-control.js";
 import { AuthorityContexts } from "./device-broker/authority-context.js";
 import { UpdateOperationGate } from "./updates/service.js";
-import { trustedDeviceActions } from "./plugins/controller.js";
+import { trustedDeviceActions, createLegacyActionAdmission } from "./plugins/controller.js";
+import { createLegacyDevice } from "./device-broker/legacy-device.js";
 import { createCoreActionLedger } from "./plugins/core-recovery.js";
 import type { DeviceBrokerPort } from "./device-broker/broker-port.js";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
@@ -11856,8 +11858,21 @@ it("BM-04 sender admission precedes one mint/claim/complete and retry uses a fre
     if (fail) throw new Error("journal blocked");
   } };
   const callbacks = trustedDeviceActions(broker, coordinator, ledger);
-  f.stop.mockImplementation(callbacks.trustedCoreStop);
-  f.disconnect.mockImplementation(callbacks.trustedCoreDisconnect);
+  const admission = createLegacyActionAdmission(callbacks);
+  const legacy = createLegacyDevice({ broker: broker as unknown as DeviceBrokerPort, principal: () => principal,
+    feed: {} as Parameters<typeof createLegacyDevice>[0]["feed"],
+    stop: admission.stop, disconnect: admission.disconnect });
+  const admitted = admission.bind(legacy);
+  f.stop.mockImplementation(admitted.stop);
+  f.disconnect.mockImplementation(admitted.disconnect);
+  // Model each non-IPC entry without handing it the private admitted wrapper.
+  const timer = () => legacy.stop(id(2));
+  const ready = () => legacy.disconnect(id(2));
+  const deviceServiceEvent = () => legacy.stop(id(2));
+  for (const callback of [timer, ready, deviceServiceEvent])
+    await expect(Promise.resolve().then(callback)).rejects.toThrow("Validated device IPC required");
+  expect(broker.stopCurrentDevice).not.toHaveBeenCalled();
+  expect(mint).not.toHaveBeenCalled();
   expect(() => handlers.get("device:stop")!({ ...f.event, senderFrame: {} }, id(2))).toThrow("untrusted");
   expect(mint).not.toHaveBeenCalled();
   await f.call("device:stop", id(2));
@@ -11867,6 +11882,9 @@ it("BM-04 sender admission precedes one mint/claim/complete and retry uses a fre
   fail = false; await f.call("device:disconnect", id(2));
   expect(mint).toHaveBeenCalledTimes(3); expect(claim).toHaveBeenCalledTimes(3); expect(complete).toHaveBeenCalledTimes(3);
   expect(new Set(mint.mock.results.map(result => result.value.actionToken)).size).toBe(3);
+  await expect(legacy.stop(id(2))).rejects.toThrow("Validated device IPC required");
+  await expect(legacy.disconnect(id(2))).rejects.toThrow("Validated device IPC required");
+  expect(mint).toHaveBeenCalledTimes(3);
 });
 
 ```
@@ -12066,7 +12084,7 @@ Register authority invalidation before exposing the renderer:
   });
 ```
 
-This registration is additional to the cleanup event handling until the composition handoff below replaces it. Never perform old `devices.reset()` before the broker has completed its stop/journal disposition. Change language/build/update final disposal from `will-quit` to `quit`; a prevented `will-quit` must leave the recovery UI and processes usable. Monitor/provider disposal instead runs inside the successful cleanup function **before** process exit; it is not fire-and-forget in `will-quit`.
+This registration is additional to the cleanup event handling until the composition handoff below replaces it. The composition handoff deletes every `devices.reset()` call in index.ts; window loss and quit disconnect only through the coordinator. Change language/build/update final disposal from `will-quit` to `quit`; a prevented `will-quit` must leave the recovery UI and processes usable. Monitor/provider disposal instead runs inside the successful cleanup function **before** process exit; it is not fire-and-forget in `will-quit`.
 
 Create `main/index.test.ts` for the concrete source-order guard plus the extracted startup behavior. `profile-writer-lock.test.ts` provides behavioral lock tests; this test detects bypasses in the actual composition entrypoint.
 
@@ -12434,26 +12452,73 @@ const coordinator = desktopLifecycle(composition);
 
 The named trusted adapters are the existing primary-scope inputs; `pluginOptions` is the existing StartPluginsOptions object, not command-line options alone. Move their construction before this call without changing their behavior. Never derive principals from RPC parameters or expose manager through PluginController. The trusted callbacks below retain this single coordinator. Native close/update/suspend/Disconnect use it; final application disposal calls composition.dispose only after successful disposition. No secondary branch calls composeDesktopMain.
 
+- [ ] **Step 8 (composition handoff): Remove the obsolete index.ts lifecycle reset calls**
+
+Delete all four `void devices.reset()` calls from `apps/desktop/src/main/index.ts`: `will-quit`, window `destroyed`, renderer `render-process-gone`, and main-frame `did-start-navigation`. The coordinator obtained through `desktopLifecycle(composition)` handles window-loss disposition, and `beforeClose` handles quit disposition through that same coordinator. These paths must not invoke the legacy facade's unadmitted disconnect. Apply these deletions to the existing handlers while retaining the coordinator wiring and disposal ordering above:
+
+```diff
+   app.on("will-quit", () => {
+     void monitor.dispose();
+-    void devices.reset();
+   });
+   app.on("web-contents-created", (_event, contents) => {
+     if (contents.getType() !== "window") return;
+     contents.on("destroyed", () => {
+       void sensorLab.stop("close").catch(() => {});
+       void monitor.pause();
+-      void devices.reset();
+     });
+     contents.on("render-process-gone", () => {
+       void sensorLab.stop("interrupted").catch(() => {});
+       void monitor.pause();
+-      void devices.reset();
+     });
+     contents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+       if (isMainFrame) {
+         void sensorLab.stop("interrupted").catch(() => {});
+         void monitor.pause();
+-        void devices.reset();
+       }
+     });
+   });
+```
+
+Append this complete source assertion to `apps/desktop/src/main/index.test.ts`, using its existing `readFile`, `expect` and `it` imports:
+
+```ts
+it("delegates window loss and quit disconnect to the coordinator without legacy reset", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toContain("devices.reset(");
+});
+```
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/desktop exec vitest run src/main/index.test.ts
+```
+
+Expected red before deletion: the source assertion finds `devices.reset(`. Expected green after the composition handoff: all index source guards pass and no legacy reset call remains in `main/index.ts`.
+
+```bash
+git add apps/desktop/src/main/index.ts apps/desktop/src/main/index.test.ts
+git commit -m "fix(desktop): remove legacy resets from lifecycle cleanup"
+```
+
 Construct the core telemetry and legacy facades in the primary scope. `currentCorePrincipal` below is a local function reading the current validated main window each call; a missing window throws. `DeviceControlGate.principal` supplies the immutable workbench/authority identity. Pass that same callback to LegacyFiles, which captures it once per operation.
 
 ```ts
 import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
 import { LegacyFiles } from "./device-broker/legacy-files.js";
-import type { DeviceControlGate } from "./collab/device-control.js";
-import type { AuthorityPort } from "./device-broker/authority-port.js";
+import { createLegacyActionAdmission, trustedDeviceActions } from "./plugins/controller.js";
 
-const principalMethod: DeviceControlGate["principal"] = deviceControl.principal.bind(deviceControl);
-void principalMethod;
-const authorityContract: AuthorityPort = authority;
-void authorityContract;
 const currentCorePrincipal = () => {
   if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
   return deviceControl.principal(mainWindow.webContents.id, "recovery");
 };
 const feed = createLegacyMonitorFeed(broker);
+const legacyAdmission = createLegacyActionAdmission(trustedDeviceActions(broker, coordinator, coreActions));
 const legacy = createLegacyDevice({ broker, principal: currentCorePrincipal,
-  disconnect: (sessionId) => trustedCoreDisconnect(sessionId, currentCorePrincipal()),
-  stop: (sessionId) => trustedCoreStop(sessionId, currentCorePrincipal()), feed });
+  disconnect: legacyAdmission.disconnect, stop: legacyAdmission.stop, feed });
+const admittedDeviceActions = legacyAdmission.bind(legacy);
 devices.attachLegacy({ device: legacy, files: new LegacyFiles(broker, (operationClass) => {
   const principal = currentCorePrincipal();
   if (principal.kind !== "core") throw new Error("Core operation owner required.");
@@ -12464,7 +12529,7 @@ devices.attachLegacy({ device: legacy, files: new LegacyFiles(broker, (operation
 
 `DeviceService.attachLegacy` is one-shot. Monitor/battery/Lab share this feed and broker sampler: initial snapshot before activation, bounded enqueue before ACK, no second poller. Removal of one consumer preserves other demand. Preserve preference choices/defaults by reading existing device preferences anew in `connectionPolicy()`; broker snapshots the policy for each attempt and clamps exchange deadlines. Recovery reconnect remains USB-only with a retained original serial digest, not IP equality, and is invalidated by explicit Disconnect, disable/safe-mode/window loss or preference cancellation. Loading a journal does not connect or stop a device.
 
-Implement the following local main callbacks and pass them to the trusted IPC adapter. `coreActions` is the one real ledger created with current scope validation; `coordinator` is the instance above. `trustedCoreDisconnect` must be reached only after the existing main-frame sender check. The scope derives from that handler's freshly captured principal. Legacy facade calls retain the same trusted host identity and must never mint from renderer-provided fields.
+Implement the following local main callbacks and pass them to the trusted IPC adapter. `coreActions` is the one real ledger created with current scope validation; `coordinator` is the instance above. `trustedCoreDisconnect` must be reached only after the existing main-frame sender check. The scope derives from that handler's freshly captured principal. The only production callers authorized to invoke `LegacyDevice.stop/disconnect` are the validated `device:stop`/`device:disconnect` handlers via `admittedDeviceActions`. DeviceService events, reset, timers and ready handlers receive no admission wrapper; their direct facade calls reject before minting. Native lifecycle cleanup goes through the coordinator without invoking these explicit-user callbacks.
 
 Append this typed domain helper to `plugins/controller.ts` (merge imports). The primary main scope alone constructs it and passes its returned callbacks to the existing validated main-frame IPC wrapper. The helper is never registered on a plugin route or timer.
 
@@ -12495,11 +12560,41 @@ export function trustedDeviceActions(broker: Pick<DeviceBrokerPort, "stopCurrent
 }
 ```
 
-In the primary scope, before attaching legacy/IPC callbacks:
+Append this internal admission adapter to `plugins/controller.ts`; import `createLegacyActionAdmission` and `trustedDeviceActions` in main. It preserves the frozen one-argument LegacyDeviceDependencies callbacks. A permit carries the principal captured by IPC, is consumed before minting, and expires on return from the synchronous facade entry (before any awaited work). No asynchronous ambient action context is retained.
 
 ```ts
-const { trustedCoreStop, trustedCoreDisconnect } = trustedDeviceActions(broker, coordinator, coreActions);
+import type { LegacyDevice } from "../device-broker/legacy-device.js";
+export function createLegacyActionAdmission(actions: ReturnType<typeof trustedDeviceActions>) {
+  type Kind = "stop" | "disconnect";
+  let permit: { kind: Kind; sessionId: string; principal: Principal } | undefined;
+  const consume = (kind: Kind, sessionId: string): Promise<void> => {
+    const captured = permit;
+    permit = undefined;
+    if (!captured || captured.kind !== kind || captured.sessionId !== sessionId)
+      return Promise.reject(new Error("Validated device IPC required."));
+    return kind === "stop" ? actions.trustedCoreStop(sessionId, captured.principal)
+      : actions.trustedCoreDisconnect(sessionId, captured.principal);
+  };
+  return {
+    stop: (sessionId: string) => consume("stop", sessionId),
+    disconnect: (sessionId: string) => consume("disconnect", sessionId),
+    bind(device: Pick<LegacyDevice, "stop" | "disconnect">) {
+      const invoke = (kind: Kind, sessionId: string, principal: Principal) => {
+        if (permit) throw new Error("Nested device IPC admission.");
+        permit = { kind, sessionId, principal };
+        try { return device[kind](sessionId); }
+        finally { permit = undefined; }
+      };
+      return {
+        stop: (sessionId: string, principal: Principal) => invoke("stop", sessionId, principal),
+        disconnect: (sessionId: string, principal: Principal) => invoke("disconnect", sessionId, principal),
+      };
+    },
+  };
+}
 ```
+
+Pass `stop: admittedDeviceActions.stop` and `disconnect: admittedDeviceActions.disconnect` in the `DesktopDeviceIpc` object supplied to `registerIpc`. Keep `authority` and `beforeClose` unchanged. Keep this wrapper private to that registration; do not pass it to DeviceService, native events, timers, ready handlers or plugin routes.
 
 The broker claims but does not complete these two main-owned actions; the trusted callback's finally is the sole completion site on success or failure. Recovery-port actions retain their separate existing ownership.
 
@@ -12680,12 +12775,10 @@ it("BM-18 importing controller does not invoke shared production startup", async
   vi.resetModules();
   const runtime = await import("@kobrixa/plugin-runtime");
   const create = vi.spyOn(runtime.PluginManager, "create");
-  const foundationModule = await import("../device-broker/lifecycle-coordinator.js");
-  const factory = vi.spyOn(foundationModule, "createDesktopFoundation");
   try {
     await import("./controller.js");
-    expect(create).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
-  } finally { create.mockRestore(); factory.mockRestore(); }
+    expect(create).not.toHaveBeenCalled();
+  } finally { create.mockRestore(); }
 });
 ```
 
@@ -12927,7 +13020,7 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Record command/exit status, commit/artifact, OS/architecture, CPU/RAM/filesystem, Node/Electron, fixture size and limits, warm/cold, sample count, p50/p95/max, memory metric/method, and manual/unrun reason. No timeout is labeled a successful stop, save or process exit. Keep unresolved safety/persistence evidence visible and leave the primary lock held. Hardware outcomes remain unrun until the controller supplies them.
 
-After the integrated code passes, have the controller commit only this finite set (omit a path from `git add` only if it is byte-for-byte unchanged):
+After the scoped gate above passes, have the controller commit only this finite set (omit a path from `git add` only if it is byte-for-byte unchanged):
 
 ```bash
 git add apps/desktop/src/main/plugins/core-recovery.test.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/plugins/state-store.test.ts apps/desktop/src/main/plugins/session.test.ts apps/desktop/src/main/plugins/ipc.test.ts apps/desktop/src/main/workspace/compiler-chain.test.ts apps/desktop/src/main/language/language-provider.integration.test.ts apps/desktop/src/main/plugins/core-recovery.ts apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/state-store.ts apps/desktop/src/main/plugins/session.ts apps/desktop/src/main/plugins/ipc.ts packages/plugin-runtime/src/profile-writer-lock.ts apps/desktop/src/main/plugins/profile-writer-lock.ts apps/desktop/src/main/plugins/profile-writer-lock.test.ts apps/desktop/src/main/device-broker/lifecycle-coordinator.ts apps/desktop/src/main/device-broker/lifecycle-coordinator.test.ts apps/desktop/src/main/index.ts apps/desktop/src/main/index.test.ts apps/desktop/src/main/ipc.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/main/plugins/quit.ts apps/desktop/src/main/plugins/quit.test.ts apps/desktop/src/main/updates/service.ts apps/desktop/src/main/updates/updates.test.ts apps/desktop/src/main/updates/install-ipc.test.ts apps/desktop/src/main/window/main-close.ts apps/desktop/src/main/window/main-close.test.ts apps/desktop/src/main/device/motor-test-ipc.test.ts apps/desktop/src/main/device/monitor-ipc.test.ts apps/desktop/src/main/sensor-lab/ipc.test.ts apps/desktop/src/preload/index.ts apps/desktop/src/preload/index.test.ts apps/desktop/src/shared/api.ts apps/desktop/src/shared/plugins.ts apps/desktop/src/shared/plugin-ui.ts apps/desktop/src/shared/plugin-ui.test.ts apps/desktop/src/shared/plugin-persistence.ts apps/desktop/src/shared/plugin-persistence.test.ts
@@ -14292,7 +14385,20 @@ it("F20 optional builtin toggles persist without development mode; required stay
   expect(reopened.state().plugins[1]).toMatchObject({ status: "disabled", disabledBy: "user" });
   expect(await reopened.setEnabled("builtin:kobrixa.device-ev3", true)).toMatchObject({ ok: true });
   expect(await reopened.removeSource("builtin:kobrixa.device-ev3")).toMatchObject({ ok: false, code: "PLUGIN_E_BUILTIN_REQUIRED" });
-  expect(await reopened.reloadSource("builtin:kobrixa.device-ev3")).toMatchObject({ ok: true });
+  // This optional provider-only source has no process supervisor to publish withdrawal.
+  const reloadStates: string[] = [];
+  const off = reopened.onEvent(event => {
+    if (event.type === "state") {
+      const provider = event.state.plugins.find(source => source.sourceKey === "builtin:kobrixa.device-ev3");
+      if (provider) reloadStates.push(provider.status);
+    }
+  });
+  try {
+    expect(await reopened.reloadSource("builtin:kobrixa.device-ev3")).toMatchObject({ ok: true });
+    const disabled = reloadStates.indexOf("disabled");
+    expect(disabled).toBeGreaterThanOrEqual(0);
+    expect(reloadStates.slice(disabled + 1)).toContain("enabled");
+  } finally { off(); }
   await Promise.all([manager.shutdown(), reopened.shutdown()]);
 });
 ```
@@ -14792,8 +14898,10 @@ replace('export interface PluginManagerOptions {\n', 'export interface PluginMan
 replace('    let stored: PluginPersistedState & { problem?: string };', '''    if ((options.stage3 === undefined) !== (options.stage3Host === undefined))
       throw new Error("stage3 and stage3Host must be supplied together.");
     let stored: PluginPersistedState & { problem?: string };''')
-replace('    this.#revokeStaticSource(sourceKey);', '''    if (entry.source.kind === "builtin" && entry.source.policy === "optional")
+replace('    this.#revokeStaticSource(sourceKey);', '''    if (entry.source.kind === "builtin" && entry.source.policy === "optional") {
       entry.plugin = { ...entry.plugin, status: "disabled" };
+      this.#emitState();
+    }
     this.#revokeStaticSource(sourceKey);''')
 replace('    this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);', '''    const supervisor = this.#supervisors.get(sourceKey);
     if (supervisor) {
@@ -14840,13 +14948,6 @@ replace('        ...this.options.supervisor,\n        locale: this.options.local
           },
         } : {}),
         locale: this.options.locale,''')
-p.write_text(s)
-# Provider-only builtins have no supervisor; publish withdrawal before replacement.
-p = Path('packages/plugin-runtime/src/manager.ts')
-s = p.read_text()
-anchor = '    entry.read = { ...entry.read, unread: true };'
-assert s.count(anchor) == 1
-s = s.replace(anchor, anchor + '\n    if (entry.source.kind === "builtin" && entry.source.policy === "optional") {\n      entry.plugin = { ...entry.plugin, status: "disabled" };\n      this.#emitState();\n    }')
 p.write_text(s)
 p = Path('packages/plugin-runtime/src/index.ts')
 s = p.read_text()
@@ -15501,14 +15602,14 @@ Expected green: scripts and desktop CI routing are present. CI's real-Electron e
 
 - [ ] **Step 18: Integrate owner commits and verify the actual P150 publication.**
 
-Run the real T3-owned facade/recovery and D150 composition acceptance after T1–T9 and all four slices stop. Schedule R150/K150/V150 from F concurrently with D150; completion is a final acceptance requirement, not a prerequisite for starting T10.
+Run the real A-T2-owned facade, T3-owned recovery and D150 composition acceptance after T1–T9 and all four slices stop. Schedule R150/K150/V150 from F concurrently with D150; completion is a final acceptance requirement, not a prerequisite for starting T10.
 
 ```bash
 pnpm --filter @kobrixa/plugin-protocol build
 pnpm --filter @kobrixa/plugin-runtime build
 pnpm --filter @kobrixa/plugin-sdk build
 pnpm --filter @kobrixa/device build
-pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker-port.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-broker/lifecycle-coordinator.test.ts src/main/plugins/controller.test.ts src/main/ipc.test.ts
+pnpm --filter @kobrixa/desktop exec vitest run src/main/device-broker/broker-port.test.ts src/main/device-broker/operations.test.ts src/main/device-broker/resource-participant.test.ts src/main/device-broker/recovery-port.test.ts src/main/device-broker/lifecycle-coordinator.test.ts src/main/plugins/controller.test.ts src/main/ipc.test.ts
 pnpm check:desktop
 pnpm test:desktop
 ```

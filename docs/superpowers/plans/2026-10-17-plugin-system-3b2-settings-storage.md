@@ -698,6 +698,19 @@ it("consumes the built runtime form types through its package root", () => {
   expectTypeOf<RuntimeRoot.ContributedSettingsForm>().toEqualTypeOf<FrozenForms.ContributedSettingsForm>();
   expectTypeOf<RuntimeRoot.SettingsFieldMap>().toEqualTypeOf<FrozenForms.SettingsFieldMap>();
 });
+import type { DurableImportPort, ImportPlan, ImportItemEvidence, LegacyPreferencesEvidenceRef,
+  PersistenceBackend } from "./engine-port.js";
+import type { LegacySourceResolver, LegacyImportDescriptor, LegacyWriterPort, LegacyWriterBarrier } from "./import-sources.js";
+import type { createLegacyWriterBarrier } from "./import-sources.js";
+it("pins BM-24/25 host-only admission and renderer evidence contracts",()=>{
+  expectTypeOf<DurableImportPort["admit"]>().toEqualTypeOf<(owner:PersistenceOwner,id:string,key:string)=>Promise<PublicationTicket>>();
+  expectTypeOf<ImportItemEvidence["publicationTicket"]>().toEqualTypeOf<PublicationTicket|null>();
+  expectTypeOf<ImportPlan["preferencesEvidence"]>().toEqualTypeOf<LegacyPreferencesEvidenceRef|null>();
+  expectTypeOf<LegacySourceResolver["resolvePreferences"]>().toEqualTypeOf<(input:{descriptorId:string;owner:PersistenceOwner;evidence:LegacyPreferencesEvidenceRef})=>Promise<void>>();
+  expectTypeOf<typeof createLegacyWriterBarrier>().toEqualTypeOf<(input:{backend:PersistenceBackend;
+    descriptors:readonly Pick<LegacyImportDescriptor,"id"|"targetSourceKey">[];writers:readonly LegacyWriterPort[];
+    importOwner:(sourceKey:string)=>PersistenceOwner})=>LegacyWriterBarrier>();
+});
 it("pins byte I/O, immutable publication tickets and generation-bound read pins", () => {
   expectTypeOf<PersistenceFsPort["open"]>().toEqualTypeOf<(p: StorePath, mode: "read" | "create-exclusive") => Promise<StoreFd>>();
   expectTypeOf<PersistenceEnginePort["fence"]>().toEqualTypeOf<(owner: PersistenceOwner, deadline: number) => readonly Handle[]>();
@@ -1436,19 +1449,23 @@ T2 worker.ts exports strict internal `PersistenceWorkerRequest`/`PersistenceWork
 B2-T2 engine-port.ts defines; B2-T6 consumes in import-coordinator.ts/import-journal.ts. No change to `PublicationTicket`, `RecordWrite` or plugin methods:
 
 ```ts
+export type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 type ImportTag = Readonly<{importId:string; itemKey:string; sourceSha256:Sha256}>;
 type ImportPlannedItem = Readonly<{
   key:string; sourceFormat:Version; sourceSha256:Sha256; mappedSha256:Sha256; byteLength:number;
   ticket:PublicationTicket; tag:ImportTag;
 }>;
-type ImportPlan = Readonly<{formatVersion:1; id:string; mappingVersion:Version;
-  targetSourceKey:string; items:readonly ImportPlannedItem[]}>;
-type ImportItemEvidence = {key:string; state:"pending"|"committed"|"skipped"|"unknown";
-  receipt:Receipt<SettingsRevision|RecordRevision>|null; skipReason:string|null};
-interface DurableImportPort {
+export type LegacyPreferencesEvidenceRef = Readonly<{nonce:Handle; digest:Sha256}>;
+export type ImportPlan = Readonly<{formatVersion:1; id:string; descriptorId:string; mappingVersion:Version;
+  targetSourceKey:string; preferencesEvidence:LegacyPreferencesEvidenceRef|null; items:readonly ImportPlannedItem[]}>;
+export type ImportItemEvidence = {key:string; state:"pending"|"committed"|"skipped"|"unknown";
+  receipt:Receipt<SettingsRevision|RecordRevision>|null; skipReason:string|null;
+  publicationTicket:PublicationTicket|null};
+export interface DurableImportPort {
   load(owner: PersistenceOwner, id: string): Promise<{plan:ImportPlan;
     items:readonly ImportItemEvidence[]; complete:boolean}|null>;
   plan(owner: PersistenceOwner, plan: ImportPlan): Promise<void>;
+  admit(owner: PersistenceOwner, id:string, key:string): Promise<PublicationTicket>;
   tagImport(ticket: PublicationTicket, tag: ImportTag): Promise<void>;
   importReceipts(owner: PersistenceOwner, id:string): Promise<readonly {
     tag:ImportTag; ticket:PublicationTicket; receipt:Receipt<SettingsRevision|RecordRevision>;
@@ -1589,7 +1606,9 @@ type LegacyMappedItem = Readonly<{mapped:Handle;sourceSha256:Sha256;
   {kind:"settings";schemaVersion:Version} |
   {kind:"record";metadata:Omit<RecordWrite,"target"|"checkpoint"|"drainToken">}
 )>;
-interface LegacySourceResolver {
+export interface LegacySourceResolver {
+  resolvePreferences(input:{descriptorId:string;owner:PersistenceOwner;
+    evidence:LegacyPreferencesEvidenceRef}):Promise<void>;
   register(input:{descriptorId:string;mapperId:string;sourceKind:LegacyImportInput["sourceKind"]}): Promise<void>;
   map(descriptorId:string, key:string): Promise<LegacyMappedItem>;
   appendMapped(input:{mapped:Handle;ticket:PublicationTicket;offset:number;
@@ -1626,13 +1645,14 @@ interface LegacyWriterPort {
   settled(): Promise<void>;
 }
 declare function createLegacyWriterBarrier(input:{backend:PersistenceBackend;
+  descriptors:readonly Pick<LegacyImportDescriptor,"id"|"targetSourceKey">[];
   writers:readonly LegacyWriterPort[];importOwner:(sourceKey:string)=>PersistenceOwner;
 }): LegacyWriterBarrier;
 ```
 
 `acceptPreferences` remains the existing `Promise<void>` compatibility facet, resolving only after durable acceptance/reconciliation; trusted D170/V170 use `acceptPreferencesEvidence` for explicit pending status. T6 alone issues challenges from allowlisted descriptors, derives target scope from main, persists challenge/evidence/digest before marking nonce consumed, allows one in-flight challenge per scope/descriptor and rejects changed replay. On restart restore evidence and durable barrier; a fresh bootstrap may reconcile existing evidence but cannot replay an old window nonce. D170 `PluginsApi.legacyPreferences` has `challenge(descriptorId:string):Promise<LegacyPreferenceChallenge>` and `submit(snapshot:LegacyPreferencesSnapshot):ReturnType<LegacyImportHostPort["acceptPreferencesEvidence"]>`; sender scope is independently checked/replaced, no arbitrary key allowlist from renderer.
 
-Roots and descriptors are fixed by main/worker allowlists. `register` selects only a worker-installed mapper ID and its fixed source root; it cannot install executable code or accept a path. T2 worker.ts exports `runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>}):void`; the product entry uses only shipped allowlisted mappings (none for real Lab/device in foundations). T7's existing `tests/desktop/fixtures/plugin-persistence/kill-worker.mjs` is the test bootstrap wrapper importing T6's import-fixtures.ts synthetic mapping through its built artifact and calling the same worker runner. Test roots are supplied by its private test launch, never a production registry entry. `createLegacyImportCoordinator` uses `sources.map` in the worker; descriptor functions supplied to the host are never serialized or run on main. Map retains the mapped payload in the worker and returns only its bounded metadata/digests/opaque mapped handle. `appendMapped` transfers at most 256KiB directly into the same admitted engine ticket per call, verifies sequential offsets and the plan digest/target, and `releaseMapped` frees the pin after a known outcome; no 8MiB payload is copied into main or an IPC frame. Mapping concurrency obeys the four-job and scratch quotas; no full inventory buffering. No functions or unvalidated paths cross worker transport. inventory only reports absent for actual ENOENT, preserves permission/format failures as blocked. T6 implements `createLegacyWriterBarrier` in import-sources.ts; D170 supplies registered host writer controls, freezes their admissions synchronously and waits for their in-flight work before collection; the marker survives restart and disables old writers before they start. Challenge/raw-evidence/consumption/barrier documents use immutable engine tickets with metadata kind `import` and AM-26 auxiliary reads; bounded keys are `nonce/<nonce>` and `barrier/<descriptorId>`. A durable nonce record contains formatVersion, descriptorId, scope, allowlist, nonce, raw entries, digest and issued/consumed state; consume is atomic only after raw evidence persistence/reconciliation. `importOwner` supplies a host-issued namespace identity, independent of optional execution, never reconstructed by renderer. Restoring barriers enumerates admitted descriptors and reads these keys before invoking writer controls. Foundation supplies no live legacy product writer controls or mappings; it uses synthetic sources/barriers only; real Lab/device mapping and permanently switching those stores remains 3D/3E. F signatures, P170 tests: wrong descriptor/key/window, duplicate/oversize nonce evidence, persistence failure before consume, uncertain publish/restart, missing-versus-permission, barrier restart and original bytes unchanged.
+Roots and descriptors are fixed by main/worker allowlists. `register` selects only a worker-installed mapper ID and, for file sources, its fixed source root; renderer sources use BM-25 evidence binding with no filesystem root. It cannot install executable code or accept a path. T2 worker.ts exports `runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>;sourceRoots?:ReadonlyMap<string,string>}):void` (BM-26's optional host/test-only fixed-root map); the product entry uses only shipped allowlisted mappings (none for real Lab/device in foundations). T7's existing `tests/desktop/fixtures/plugin-persistence/kill-worker.mjs` is the test bootstrap wrapper importing T6's import-fixtures.ts synthetic mapping through its built artifact and calling the same worker runner. BM-26 supplies descriptor-ID/absolute-root pairs in the controller-built wrapper entry, validated by the worker before ready; the private boot transport is unchanged and no production registry entry supplies test roots. `createLegacyImportCoordinator` uses `sources.map` in the worker; descriptor functions supplied to the host are never serialized or run on main. Map retains the mapped payload in the worker and returns only its bounded metadata/digests/opaque mapped handle. `appendMapped` transfers at most 256KiB directly into the BM-24 admitted publicationTicket per call, verifies sequential offsets and the immutable plan digest/target, and `releaseMapped` frees the pin after a known outcome; no 8MiB payload is copied into main or an IPC frame. Mapping concurrency obeys the four-job and scratch quotas; no full inventory buffering. No functions or unvalidated paths cross worker transport. inventory only reports absent for actual ENOENT, preserves permission/format failures as blocked. T6 implements `createLegacyWriterBarrier` in import-sources.ts; D170 supplies registered host writer controls, freezes their admissions synchronously and waits for their in-flight work before collection; the marker survives restart and disables old writers before they start. Challenge/raw-evidence/consumption/barrier documents use immutable engine tickets with metadata kind `import` and AM-26 auxiliary reads; bounded keys are `nonce/<nonce>` and BM-24's `barrier/<sha256(descriptorId)>`. A durable nonce record contains formatVersion, kind, descriptorId, sourceKey, scope, allowlist, nonce, raw snapshot, digest, original/current metadata tickets and issued/consumed state (BM-25 and fix8-ruling.md); consume is atomic only after raw evidence persistence/reconciliation. `importOwner` supplies a host-issued namespace identity, independent of optional execution, never reconstructed by renderer. Restoring barriers uses the constructor's fixed descriptors, synchronously freezes writer controls before its first await, then reads these keys before admitting any writer. Foundation supplies no live legacy product writer controls or mappings; it uses synthetic sources/barriers only; real Lab/device mapping and permanently switching those stores remains 3D/3E. F signatures, P170 tests: wrong descriptor/key/window, duplicate/oversize nonce evidence, persistence failure before consume, uncertain publish/restart, missing-versus-permission, barrier restart and original bytes unchanged.
 
 #### Frozen AM-30 — Real persistence and cross-plan fixture
 
@@ -5965,6 +5985,137 @@ Precondition: F only. Tests supply canonical owner objects and a fake held profi
 
 Negative-matrix coverage: B2 §10 filesystem aliases, disk/sync/rename/short-write failures, quota races, cancellation before/after dispatch, retained pins, corrupt/unknown disk formats and staging expiry. **B2-RF1** is pinned by the paused-rename and lost-reply cases. **B2-RF5** is pinned by import-tag reconciliation and the streamed 50-record quota case; installed import journal/marker/resume, real RSS and concurrent safety-stop latency remain the T6/T7/X-T1 gates. No mock timing measurement closes those gates.
 
+- [ ] **Binding T2 prerequisites — BM-24/BM-25/BM-26**
+
+Implement these additions in the existing import validators, AtomicStore, WorkerSources and worker operation-table steps under TDD; retain their compatible code. The owning method signature is `AtomicStore.admitImport(owner:PersistenceOwner,id:string,key:string):Promise<PublicationTicket>`; expose it only as `backend.imports.admit` through strict `imports.admit`. `WorkerSources.resolvePreferences(input:Parameters<LegacySourceResolver["resolvePreferences"]>[0]):Promise<void>` implements the defining source-port signature through strict `sources.resolvePreferences`. F declarations/type checks precede T2; T2 unit receipts precede T6/T7. T6 cannot edit these prerequisite paths.
+
+#### 3. Exact contracts and serialization rules
+
+Use these declarations from their defining modules, not local lookalikes. In T2 engine-port.ts, retain existing AM-24 fields and methods and add/replace exactly:
+
+```ts
+export type LegacyPreferencesEvidenceRef =
+  Readonly<{nonce: Handle; digest: Sha256}>;
+export type ImportPlan = Readonly<{
+  formatVersion: 1;
+  id: string;
+  descriptorId: string;
+  mappingVersion: Version;
+  targetSourceKey: string;
+  preferencesEvidence: LegacyPreferencesEvidenceRef | null;
+  items: readonly ImportPlannedItem[];
+}>;
+export type ImportItemEvidence = {
+  key: string;
+  state: "pending" | "committed" | "skipped" | "unknown";
+  receipt: Receipt<SettingsRevision | RecordRevision> | null;
+  skipReason: string | null;
+  publicationTicket: PublicationTicket | null;
+};
+// Add to DurableImportPort:
+// admit(owner: PersistenceOwner, id: string, key: string):
+//   Promise<PublicationTicket>;
+```
+
+`ImportPlannedItem.ticket` remains unchanged. `DurableImportPort.load` still returns `{plan,items,complete}|null`, with items using the amended type. `importReceipts` retains its signature, but its ticket is the actual publicationTicket that produced the head, not the original plan ticket.
+
+In T6 import-sources.ts add the following method to `LegacySourceResolver`, import the evidence-reference type from engine-port.ts, and amend the barrier constructor:
+
+```ts
+// Add to LegacySourceResolver:
+// resolvePreferences(input: {
+//   descriptorId: string;
+//   owner: PersistenceOwner;
+//   evidence: LegacyPreferencesEvidenceRef;
+// }): Promise<void>;
+export declare function createLegacyWriterBarrier(input: {
+  backend: PersistenceBackend;
+  descriptors: readonly Pick<LegacyImportDescriptor, "id" | "targetSourceKey">[];
+  writers: readonly LegacyWriterPort[];
+  importOwner: (sourceKey: string) => PersistenceOwner;
+}): LegacyWriterBarrier;
+```
+
+The actual functions replace `declare` when implemented. `createLegacyImportCoordinator` and `LegacyImportHostPort` signatures remain exactly AM-29. The function reached from T6 is `backend.sources.resolvePreferences(...)`; worker class method is `WorkerSources.resolvePreferences`, private transport key is `sources.resolvePreferences`. T2's admission implementation is `AtomicStore.admitImport(owner,id,key):Promise<PublicationTicket>`, exposed by `backend.imports.admit`, private key `imports.admit`. Add both to the strict request schema, dispatcher, facade and typed test doubles. No `any`, unknown-method tunnel, function serialization or permissive extra-key schema.
+
+Define the following pure codecs/types in T6 import-sources.ts. Worker imports them without importing a coordinator instance:
+
+```ts
+export type LegacyNonceDocument = Readonly<{
+  formatVersion: 1; kind: "nonce";
+  descriptorId: string; sourceKey: string;
+  nonce: Handle; scope: CoreWindowScope; allowlist: readonly string[];
+  state: "issued" | "consumed";
+  raw: LegacyPreferencesSnapshot | null; digest: Sha256 | null;
+  originalTicket: PublicationTicket; ticket: PublicationTicket;
+}>;
+export type LegacyBarrierDocument = Readonly<{
+  formatVersion: 1; kind: "barrier";
+  descriptorId: string; sourceKey: string; barrier: Handle;
+  state: "active" | "complete";
+  originalTicket: PublicationTicket; ticket: PublicationTicket;
+}>;
+export type ImportAuxiliaryDocument =
+  LegacyNonceDocument | LegacyBarrierDocument;
+export declare function importIdFor(descriptorId: string, sourceKey: string): string;
+export declare function barrierKeyFor(descriptorId: string): string;
+export declare function snapshotDigest(
+  snapshot: LegacyPreferencesSnapshot, allowlist: readonly string[],
+): Sha256;
+export declare function parseNonceDocument(bytes: Uint8Array): LegacyNonceDocument;
+export declare function parseBarrierDocument(bytes: Uint8Array): LegacyBarrierDocument;
+```
+
+1. `importIdFor` returns `"import/" + sha256(UTF8(JSON.stringify([descriptorId,sourceKey])))`. `barrierKeyFor` returns `"barrier/" + sha256(UTF8(descriptorId))`. Nonce key is `"nonce/" + nonce`. Keep original descriptor/namespace in documents and verify against derived keys. These bounded keys support a 128-byte descriptor without exceeding AM-26's 128-byte auxiliary-key limit. MappingVersion is excluded from identity.
+2. `snapshotBytes` keeps the Step 2 canonical object construction/UTF-8 JSON representation, exact entry order and every raw string/null. Snapshot input must have exactly nonce/scope/entries; scope exactly hostEpoch/workbenchInstance; each entry exactly key/raw. Reject null/nonobject containers and wrong types before `Object.keys`. Allowlist keys are unique; the snapshot contains exactly those keys once. Do not trim, parse/coerce raw strings, sort entries after capture, omit nulls, normalize whitespace inside raw strings or substitute defaults. `snapshotDigest` is SHA-256 of `snapshotBytes`; checking and hashing must use the same copied snapshot.
+3. Strict nonce parsing checks all document keys, canonical handles/digests, allowed states, both tickets' source/target/kind/key bindings, original scope/nonce equal to raw snapshot scope/nonce, exact allowlist coverage, snapshot size and hash. Issued permits either both raw/digest null or both present; consumed requires both present. Initial originalTicket equals ticket; later ticket is a new metadata publication but originalTicket/nonce/scope/allowlist/raw evidence cannot change. A captured raw snapshot's digest is independent of the metadata ticket and state.
+4. Strict barrier parsing checks both tickets against the derived barrier key, namespace, descriptor and canonical identity. Barrier identity and originalTicket never change. Its latest ticket records the active/complete metadata publication.
+5. Full original/attempt ticket equality means validated structural equality of every field, not matching only an ID or source. Serialize normalized typed documents consistently. Scope equality includes both fields; owner equality for live admission includes all five fields. Historical plan-owner checks allow historical lifetime fields but require the same persisted namespace/plugin binding.
+6. All new fields count toward the same 512-item/2 MiB aggregate journal/evidence and existing metadata quotas. Auxiliary pages remain ≤64 items/256 KiB; no raw preference document is returned in an enumeration page. Reject before publishing a plan/document that would exceed a limit.
+
+
+#### 4. Required T2 code before T6 can pass
+
+1. Extend strict import plan/evidence/document schemas for preferencesEvidence/publicationTicket. Initial items are `{key,state:"pending",receipt:null,skipReason:null,publicationTicket:null}`. Committed requires a real receipt and publicationTicket; skipped requires a nonempty ≤256-byte reason and null receipt; pending/unknown have null receipt/reason. Unknown requires a publicationTicket. Reject duplicate/missing/foreign items, invalid complete evidence and forged attempts. `record` preserves the stored publicationTicket exactly; a caller cannot install an attempt through record. All terminal evidence is monotonic.
+2. Implement `admitImport` inside `mutateImport(owner,id,...)`, with the current held primary and host-issued namespace identity. Load the plan, reject completed/skipped/committed items, validate original/current ticket association, and reconcile before allocating. A matching atomic tagged head is committed and must be recorded, not published again. Unknown/conflicting evidence prevents admission. A known old expected head proves non-commit only after recovery has settled all relevant dispatched I/O; never infer it from ENOENT on a journal or an unreadable head.
+3. An existing current-owner attempt that has never been reserved and is still within its deadline is returned unchanged. A live receiving/sealed/aborted attempt is not returned for a second reserve: revoke its dispatch gate, settle/abort it, and replace only on proven non-commit. Same-host replacement preserves the earlier attempt deadline and is rejected after it expires. First admission or admission under a new host gets a newly generated ticket ID and `now()+10_000` maximum deadline. Clone original metadata/target exactly, including target ID/CAS/schema/digest/record revision/timestamps; use the entire trusted current owner. Never adjust an old owner by copying just the new epoch.
+4. Persist the attempt association in the existing import document with the same atomic metadata writer before returning. Persist it before destination reserve/tag/append. If this metadata write is unknown, retain/fence that exact metadata ticket and return an uncertainty error; subsequent calls reconcile it or reload its confirmed document before making another candidate. The single publicationTicket slot can replace an old attempt only after its rights are revoked and non-commit known. No unbounded history is necessary or allowed.
+5. `reconcileImport(originalTicket)` finds the immutable plan entry and follows publicationTicket; passing that exact publicationTicket finds the same entry. Use verified disk heads plus internal tags, object hashes/length, target/schema and actual commit identity. In `publishOne`, allocate `receipt.commitId` as `e.tag ? t.id : randomUUID()`: tagged import heads bind the actual publication attempt using the existing receipt field; ordinary publications retain their existing allocation. This is a required T2 change, not existing behavior. `importReceipts` returns only verified matches with that ticket. A prior durable committed item remains terminal even if its destination is later modified/deleted; do not require its current head to remain unchanged to trust already validated durable receipt evidence. Without such a receipt, a foreign/newer head blocks, never overwrites.
+6. Historical evidence reads do not invoke `admitted` on the old ticket. They remain restricted to the host's fixed namespace/plan/nonce/barrier records under the held primary and recovery scan. Do not relax `reserve`, `append`, `seal`, `publish`, their gate/held checks or plugin owner checks. `engine.reconcile` remains the current registry-entry implementation. `imports.reconcile` handles historical import item tickets and host import auxiliary tickets, verifying their persisted document/intent association; it must dispatch by document kind rather than parsing every import key as an ImportPlan.
+7. For nonce/barrier auxiliary reconciliation, recognize the exact ticket in a verified current document or recovered publication intent. A verified matching document/hash and settled directory sync proves committed. A verified predecessor plus settled startup recovery proving no dispatch/commit proves not-committed. Missing association, corrupt/permission failures or outstanding I/O remain unknown. In recovery-scan.ts, inspect and classify validated import intents against heads before transient cleanup; preserve bounded unresolved identity evidence and charge retained files under existing quotas. Discard old staged payload rights, never promote orphan bytes, and do not erase the only uncertain association before classifying it. Read-only reconciliation must be possible while mutation admission is fenced; writing a status marker must not be used to bypass that fence. Metadata writes always use a current owner after reconciliation. Existing internal `writeDocument` retains any unresolved ticket until reconciliation; do not lose it in a thrown generic error and retry with a fresh ticket.
+8. `tagImport` and `WorkerSources.appendMapped` use the durable publicationTicket association instead of requiring equality to `plan.items[].ticket`. Still compare original target/metadata, tag, source and mapped hashes and length. Restrict plan enumeration to `import/` keys; nonce/barrier documents must not be passed to loadImport. Reserve once, tag before first append/seal, use sequential ≤256 KiB chunks and existing quota/CAS primitives.
+9. Implement renderer registration as a discriminated source binding with no filesystem capability. `resolvePreferences` requires a registered worker-installed renderer descriptor, exact current owner/target namespace, matching descriptor allowlist and a consumed strict nonce document at `nonce/<ref.nonce>`. Read through the rooted store's verified auxiliary reader, recompute digest and compare both the ref and document digest. Verify historical scope/raw consistency, without demanding its epoch equal the current epoch. Do not execute a mapper during resolution.
+10. Retain a bounded `{evidence,bytes}` renderer binding in the worker, charged to existing metadata/scratch limits. Recheck that the pinned consumed record still matches on inventory/read/map. Inventory returns exactly one `"preferences"` format-1 item; read returns bounded slices; map calls the installed pure descriptor on the same bytes. Before binding, inventory returns blocked, read/map reject. All-null is present. Ref changes during an unfinished plan, wrong kind/descriptor/namespace/digest, missing/issued/corrupt evidence or permission failure reject. No file fallback.
+11. Add strict argument validators for `imports.admit` = tuple `[owner,boundedId,boundedKey]` and `sources.resolvePreferences` = tuple `[strictObject({descriptorId,owner,evidence:strictObject({nonce,digest})})]`. Preserve transport version 1, the existing operation queue and all frame/job limits. The method is reachable only through the host backend, never a plugin/preload handler.
+
+
+4. T2, `apps/desktop/src/main/plugins/persistence/worker.ts/test`, changes only the host runner input to `runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>;sourceRoots?:ReadonlyMap<string,string>}):void`. Keys are installed descriptor IDs; values are absolute, validated roots for file descriptors only. Reject unknown IDs, renderer-preferences roots, relative/unsafe paths and conflicting mappings before ready. `WorkerSources` uses the selected fixed root with the same containment/identity/no-symlink checks as other rooted reads; descriptor registration cannot supply or change it. Product calls still use `{mappers:new Map()}` and never set `sourceRoots`. BM-25 renderer evidence has no filesystem fallback.
+
+   T7's existing `kill-worker.mjs` exports the test-wrapper function with signature `runSyntheticPersistenceWorker(sourceRoots:ReadonlyMap<string,string>):void`, installs T6's `syntheticImportDescriptor`, and calls `runPersistenceWorker({mappers,sourceRoots})` once. The controller builds a temporary entry calling that export with literal validated absolute roots before starting Electron. This is build input, not a new worker launch transport. D170 receives only the absolute built entry via `test.worker`.
+
+   The same T2 module adds `export function persistenceWorkerCount(backend:PersistenceBackend):number` for host-test observation: lookup the real backend's worker registration, count it live until the actual Worker `exit` event, retain zero after disposal, throw for unknown backends. Do not infer worker instances from `FoundationCounters.workerJobs`. T7 counts the coordinator's reservation subscriptions by observing the real broker's `onEnded` registration/unsubscribe through its injected foundation factory, delegating unchanged; never install a counting listener. Keep both count observations out of `FoundationDiagnostics`' frozen schema.
+
+
+
+```ts
+export declare function runPersistenceWorker(input: {
+  mappers: ReadonlyMap<string, LegacyImportDescriptor>;
+  sourceRoots?: ReadonlyMap<string, string>;
+}): void;
+export declare function persistenceWorkerCount(backend: PersistenceBackend): number;
+```
+
+- [ ] Test `T0/T2 contract.test.ts, engine-port.test.ts`: assert Exact types for admit, publicationTicket, preferencesEvidence, resolvePreferences and amended barrier constructor; all backend doubles implement them; unchanged PublicationTicket, ImportTag, renderer DTO, plugin wire versions/methods and limits.
+- [ ] Test `T2 atomic-store.test.ts: epoch`: assert Old ticket reserve/append/seal/publish denied under new host; held-lock loss denied; original-ticket reconciliation finds matching new-attempt tagged head/receipt without granting rights; wrong full ticket/owner/namespace denied; new admission preserves target ID/revision/metadata/CAS/hash/tag; only id/current owner/deadline differ.
+- [ ] Test `T2 atomic-store.test.ts: attempts`: assert Initial null → durable attempt before payload reserve; duplicate unreserved admit returns same ticket; two concurrent admit calls serialize; current receiving attempt revoked/settled before replacement; same-host earlier deadline/TTL never renews; expired same-host retry blocked; new-host fresh deadline remaps without transient staging; completed/skipped/committed items cannot admit.
+- [ ] Test `T2 atomic-store.test.ts/recovery-scan.test.ts`: assert Crash/failure before and after attempt-association publish and receipt, before reserve, before/after destination publish and before receipt record; unresolved metadata/destination never permits second publication; prior attempt slot replaced only after known non-commit; permission/corrupt/missing association yields blocked/unknown; foreign/newer target conflicts; verified expected head/no live dispatch is required for non-commit.
+- [ ] Test `T2 namespace.test.ts/atomic-store.test.ts`: assert Strict attempt/ref/document validators, correct commitId-to-actual-ticket binding, atomic tag plus head and object digest; no fabricated original-ticket receipt; terminal durable receipt survives later target modification/deletion; nonce/barrier auxiliary docs are not parsed as plans; historical auxiliary reconciliation while writes remain fenced; original metadata ticket retained on unknown.
+- [ ] Test `T2 worker.test.ts: resolver`: assert Correct persisted consumed nonce resolves after worker/host epoch change without renderer; issued/no raw, issued-with-raw, missing, unreadable, corrupt, unsupported format, digest mismatch, altered raw/scope/allowlist, wrong descriptor/kind/owner/namespace/ref fail; resolution executes zero mapper calls; no renderer filesystem root/fallback.
+- [ ] Test `T2 worker.test.ts: map`: assert Resolved inventory exactly one format-1 preferences item, all-null remains present, read bounds and exact bytes, map sees same bytes/hash, no raw bytes in resolver request; plan ref cannot be swapped; stale handle/ref and changed persisted evidence reject; appendMapped matches actual attempt and plan, rejects foreign ticket/offset/hash/schema and >256 KiB chunks; pins released only on known outcome.
+- [ ] Test `T2 worker.test.ts: transport/budgets`: assert Strict imports.admit/sources.resolvePreferences tuples reject extra fields, functions, paths and malformed IDs; no plugin/preload registration; 32 pending/8 MiB host/1 MiB source/four jobs and scratch limits still enforced; restore creates one worker/uses same lock; unknown worker loss preserves honest outcome.
+- [ ] `worker.test.ts`, test `sourceRoots`: assert matching installed file descriptor roots work; unknown IDs, renderer roots, relative/unsafe paths and conflicting maps fail before ready; registration cannot replace roots; no root fallback; omission in product startup preserves empty shipped mappings.
+- [ ] `worker.test.ts`, test `persistenceWorkerCount`: assert one live worker/control forwarding, count stays live until actual exit then zero after disposal, unknown backend throws, and workerJobs does not determine the count.
+
 - [ ] **Step 1: Write filesystem and quota tests before implementation**
 
 Create `apps/desktop/src/main/plugins/persistence/filesystem.test.ts`:
@@ -6438,17 +6589,54 @@ const target = z.union([z.strictObject({ kind: z.literal("settings"), expectedRe
 export const importTagSchema = z.strictObject({ importId: key, itemKey: key, sourceSha256: hash }).refine(t => Buffer.byteLength(JSON.stringify(t)) <= 256);
 export const persistenceOwnerSchema=z.strictObject({sourceKey:z.string().min(1).max(160),pluginId:z.string().min(1),generation:n,hostEpoch:h,processEpoch:h});
 export const publicationTicketSchema=z.strictObject({id:h,owner:persistenceOwnerSchema,deadlineMonotonicMs:n,metadata,target});
-export const importPlanSchema=z.strictObject({formatVersion:z.literal(1),id:key,mappingVersion:v,targetSourceKey:z.string().min(1).max(160),
+export const legacyPreferencesEvidenceRefSchema=z.strictObject({nonce:h,digest:hash});
+export function sameImportValue(a:unknown,b:unknown):boolean {
+  if(a===b)return true;
+  if(a===null || b===null || typeof a!=="object" || typeof b!=="object")return false;
+  if(Array.isArray(a) || Array.isArray(b))return Array.isArray(a) && Array.isArray(b) &&
+    a.length===b.length && a.every((value,index)=>sameImportValue(value,b[index]));
+  const left=Object.entries(a),right=Object.entries(b);
+  return left.length===right.length && left.every(([key,value])=>
+    Object.prototype.hasOwnProperty.call(b,key) && sameImportValue(value,Reflect.get(b,key)));
+}
+export function sameImportAttempt(original:PublicationTicket,attempt:PublicationTicket):boolean {
+  return sameImportValue(original.metadata,attempt.metadata) && sameImportValue(original.target,attempt.target) &&
+    original.owner.sourceKey===attempt.owner.sourceKey && original.owner.pluginId===attempt.owner.pluginId;
+}
+export const importPlanSchema=z.strictObject({formatVersion:z.literal(1),id:key,descriptorId:key,mappingVersion:v,
+  targetSourceKey:z.string().min(1).max(160),preferencesEvidence:legacyPreferencesEvidenceRefSchema.nullable(),
   items:z.array(z.strictObject({key,sourceFormat:v,sourceSha256:hash,mappedSha256:hash,byteLength:n.max(8388608),ticket:publicationTicketSchema,tag:importTagSchema})).max(512)
 }).superRefine((plan,ctx)=>{
-  if (new Set(plan.items.map(i=>i.key)).size!==plan.items.length || new Set(plan.items.map(i=>i.ticket.id)).size!==plan.items.length ||
-      plan.items.some(i=>i.tag.importId!==plan.id || i.tag.itemKey!==i.key || i.sourceSha256!==i.tag.sourceSha256 || i.ticket.owner.sourceKey!==plan.targetSourceKey)) ctx.addIssue({code:"custom",message:"input-changed"});
+  const expectedId="import/"+createHash("sha256").update(JSON.stringify([plan.descriptorId,plan.targetSourceKey]),"utf8").digest("hex");
+  const ids=plan.items.flatMap(item=>item.ticket.target.kind==="record"?[item.ticket.target.id]:["settings"]);
+  if(plan.id!==expectedId || new Set(ids).size!==ids.length ||
+      new Set(plan.items.map(i=>i.key)).size!==plan.items.length ||
+      new Set(plan.items.map(i=>i.ticket.id)).size!==plan.items.length ||
+      Buffer.byteLength(JSON.stringify(plan))>2097152 ||
+      plan.items.some(i=>i.tag.importId!==plan.id || i.tag.itemKey!==i.key ||
+        i.sourceSha256!==i.tag.sourceSha256 || i.ticket.owner.sourceKey!==plan.targetSourceKey ||
+        i.ticket.metadata.kind!==i.ticket.target.kind ||
+        (i.ticket.metadata.kind!=="settings" && i.ticket.metadata.kind!=="record") ||
+        (i.ticket.metadata.kind==="record" && (i.ticket.metadata.deleted || i.ticket.target.kind!=="record" ||
+          i.ticket.metadata.record.id!==i.ticket.target.id || i.ticket.metadata.record.byteLength!==i.byteLength ||
+          i.ticket.metadata.record.sha256!==i.mappedSha256))))ctx.addIssue({code:"custom",message:"input-changed"});
 });
 const receipt=z.strictObject({revision:r,commitId:h,durability:z.enum(["file-and-directory-sync","file-sync-only"])});
-export const importItemEvidenceSchema=z.strictObject({key,state:z.enum(["pending","committed","skipped","unknown"]),receipt:receipt.nullable(),skipReason:z.string().refine(s=>Buffer.byteLength(s)<=256).nullable()})
-  .refine(e=>e.state==="skipped"?!!e.skipReason && e.receipt===null:e.skipReason===null && (e.state!=="committed" || e.receipt!==null));
-export const importDocumentSchema=z.strictObject({formatVersion:z.literal(1),plan:importPlanSchema,items:z.array(importItemEvidenceSchema).max(512),complete:z.boolean()})
-  .refine(d=>d.items.length===d.plan.items.length && d.items.every((e,i)=>e.key===d.plan.items[i]?.key) && (!d.complete || d.items.every(e=>e.state==="committed" || e.state==="skipped")));
+export const importItemEvidenceSchema=z.strictObject({key,state:z.enum(["pending","committed","skipped","unknown"]),
+  receipt:receipt.nullable(),skipReason:z.string().refine(s=>Buffer.byteLength(s)<=256).nullable(),
+  publicationTicket:publicationTicketSchema.nullable()}).refine(e=>{
+    if(e.state==="committed")return e.receipt!==null && e.publicationTicket!==null && e.skipReason===null &&
+      e.receipt.commitId===e.publicationTicket.id && (e.publicationTicket.metadata.kind!=="record" ||
+        e.receipt.revision===e.publicationTicket.metadata.record.revision);
+    if(e.state==="skipped")return !!e.skipReason && e.receipt===null;
+    return e.receipt===null && e.skipReason===null && (e.state!=="unknown" || e.publicationTicket!==null);
+  });
+export const importDocumentSchema=z.strictObject({formatVersion:z.literal(1),plan:importPlanSchema,
+  items:z.array(importItemEvidenceSchema).max(512),complete:z.boolean()}).refine(d=>
+    Buffer.byteLength(JSON.stringify(d))<=2097152 && d.items.length===d.plan.items.length &&
+    new Set(d.items.map(e=>e.key)).size===d.items.length && d.items.every((e,i)=>e.key===d.plan.items[i]?.key &&
+      (e.publicationTicket===null || sameImportAttempt(d.plan.items[i]!.ticket,e.publicationTicket))) &&
+    (!d.complete || d.items.every(e=>e.state==="committed" || e.state==="skipped")));
 export const storedRecoverySchema=z.strictObject({id:h,owner:persistenceOwnerSchema,
   report:z.strictObject({state:z.enum(["saved","retryable","checkpoint-only","uncertain"]),blocker:z.boolean(),recovery:h.optional(),retryAction:h.optional(),pendingSettings:z.boolean(),
     records:z.array(z.strictObject({id:h,committedRevision:r.nullable(),final:z.boolean(),payload:z.enum(["complete-staging","checkpoint-only","none"]),expiresAt:n.optional()})).max(2),
@@ -6670,18 +6858,26 @@ it("does not renew the original staging lease for repeated seal/retry", async ()
     expect((await env.store.publish(t)).disposition).toBe("not-committed");
   } finally { await env.close(); }
 });
-it("B2-RF5: item receipt is in the same head and is discoverable without publishing again", async () => {
-  const env = await setup();
+it("B2-RF5: item receipt binds the durable attempt and original evidence reconciles it", async () => {
+  const env=await setup();
   try {
-    const bytes = new Uint8Array([9]), t = ticket(bytes);
-    const tag={importId:"lab-v1",itemKey:"record-0",sourceSha256:hash(bytes)};
-    await env.store.planImport(owner,{formatVersion:1,id:"lab-v1",mappingVersion:1,targetSourceKey:owner.sourceKey,items:[{key:"record-0",sourceFormat:1,sourceSha256:hash(bytes),mappedSha256:hash(bytes),byteLength:1,ticket:t,tag}]});
-    await env.store.reserve(t, 1); await env.store.tagImport(t, tag);
-    await env.store.append(t, 0, bytes); await env.store.seal(t, 1, hash(bytes));
-    const result = await env.store.publish(t), receipts = await env.store.importReceipts(owner,"lab-v1");
-    expect(receipts).toHaveLength(1); expect(receipts[0]?.receipt).toEqual(result.receipt);
-    expect((await env.store.importReceipts(owner,"lab-v1"))[0]?.ticket.id).toBe(receipts[0]?.ticket.id);
-  } finally { await env.close(); }
+    const bytes=new Uint8Array([9]),original=ticket(bytes),descriptorId="test.synthetic-import";
+    const id="import/"+hash(Buffer.from(JSON.stringify([descriptorId,owner.sourceKey])));
+    const tag={importId:id,itemKey:"record-0",sourceSha256:hash(bytes)};
+    await env.store.planImport(owner,{formatVersion:1,id,descriptorId,mappingVersion:1,preferencesEvidence:null,
+      targetSourceKey:owner.sourceKey,items:[{key:"record-0",sourceFormat:1,sourceSha256:hash(bytes),mappedSha256:hash(bytes),
+        byteLength:1,ticket:original,tag}]});
+    const attempt=await env.store.admitImport(owner,id,"record-0");
+    expect((await env.store.loadImport(owner,id))?.items[0]?.publicationTicket).toEqual(attempt);
+    await env.store.reserve(attempt,1);await env.store.tagImport(attempt,tag);
+    await env.store.append(attempt,0,bytes);await env.store.seal(attempt,1,hash(bytes));
+    const result=await env.store.publish(attempt),receipts=await env.store.importReceipts(owner,id);
+    expect(receipts).toHaveLength(1);expect(receipts[0]?.receipt).toEqual(result.receipt);
+    expect(receipts[0]?.ticket).toEqual(attempt);expect(result.receipt?.commitId).toBe(attempt.id);
+    expect(await env.store.reconcileImport(original)).toEqual(result);
+    await expect(env.store.admitImport(owner,id,"record-0")).rejects.toThrow("already-committed");
+    expect((await env.store.loadImport(owner,id))?.items[0]?.state).toBe("committed");
+  } finally {await env.close();}
 });
 ```
 
@@ -6789,7 +6985,9 @@ import { Namespace, parseHead, liveRecord, importTagSchema, type DiskHead, type 
 import { QuotaLedger } from "./quota.js";
 import { scanNamespace, garbageCandidates } from "./recovery-scan.js";
 import type { DurableImportPort, ImportPlan, ImportItemEvidence, PersistenceEvidencePort, StoredRecovery, PersistenceBarrier, PersistenceBarrierEvidence } from "./engine-port.js";
-import { importDocumentSchema, importPlanSchema, importItemEvidenceSchema, storedRecoverySchema } from "./namespace.js";
+import { importDocumentSchema, importPlanSchema, importItemEvidenceSchema, storedRecoverySchema,
+  publicationTicketSchema, sameImportAttempt, sameImportValue } from "./namespace.js";
+import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
 type Outcome = Awaited<ReturnType<PersistenceEnginePort["publish"]>>;
 type Entry = { ticket: PublicationTicket; signature: string; ns: Namespace; location: Location; old: DiskHead | null; size: number;
   fd: StoreFd | null; temp: StorePath; object: StorePath | null; gate: PublicationGate; hash: Hash; received: number; last: { offset: number; bytes: Uint8Array } | null;
@@ -6865,8 +7063,29 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     }
     for (const e of this.entries.values()) if ((e.state === "receiving" || e.state === "sealed") && !e.busy && now >= Math.min(e.created + 120000, e.progress + 30000, e.gate.deadline)) await this.abort(e.ticket);
   }
+  private async checkImportAdmission(ticket:PublicationTicket):Promise<void> {
+    if(ticket.target.kind!=="record" && ticket.target.kind!=="settings")return;
+    const ns=await this.ns(ticket.owner.sourceKey);let blocked=false,associated=false;
+    for(const loc of await ns.locations()) {
+      const head=await ns.head(loc);if(head?.target.kind!=="import")continue;
+      if(!head.target.key.startsWith("import/") && !head.target.key.startsWith("barrier/"))continue;
+      await ns.verify(loc,head);const bytes=await this.fs.bytes(ns.object(loc,head),2097152);
+      if(head.target.key.startsWith("barrier/")) {
+        const barrier=parseBarrierDocument(bytes);if(barrier.sourceKey!==ns.sourceKey)throw new Error("evidence-binding");
+        if(barrier.state==="active")blocked=true;
+      } else {
+        const saved=importDocumentSchema.parse(JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes)));
+        if(saved.plan.targetSourceKey!==ns.sourceKey || saved.plan.id!==head.target.key)throw new Error("evidence-binding");
+        if(!saved.complete) {
+          blocked=true;
+          if(saved.items.some(e=>e.state==="pending" && sameImportValue(e.publicationTicket,ticket)))associated=true;
+        }
+      }
+    }
+    if(blocked && !associated)throw new Error("import-pending");
+  }
   async reserve(ticket: PublicationTicket, byteLength: number, memory?: SharedArrayBuffer, byteOffset=0): Promise<void> {
-    await this.prune(); this.admitted(ticket);
+    await this.prune(); this.admitted(ticket);await this.checkImportAdmission(ticket);
     if (!Number.isSafeInteger(byteLength) || byteLength < 0 || byteLength > (ticket.metadata.kind === "record" ? 8388608 : ticket.metadata.kind === "settings" ? 69632 : 2097152)) throw new Error("size-limit");
     if (this.entries.has(ticket.id) || this.failedReserves.has(ticket.id) || this.entries.size + this.failedReserves.size >= 1024 || [...this.entries.values()].filter(e => e.ticket.owner.sourceKey === ticket.owner.sourceKey).length >= 64) throw new Error("quota");
     if (ticket.metadata.kind !== ticket.target.kind) throw new Error("invalid-target");
@@ -6880,7 +7099,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       if (old) { await ns.verify(location, old); if (old.object) { const key = this.fs.name(ns.object(location, old)); this.quota.holdTemporary(ticket.owner.sourceKey, key, old.byteLength); held = { source: ticket.owner.sourceKey, key }; } }
       await this.fs.at("reserve", async () => { this.quota.reserve(ticket.id, ticket.owner.sourceKey, { bytes: ticket.metadata.kind === "record" ? byteLength : 0, create: ticket.target.kind === "record" && old === null, metadata: 32768 + (ticket.metadata.kind === "record" ? 0 : byteLength), lane: ticket.metadata.kind === "record" ? "write" : "metadata" }, (await this.fs.statfs(ns.path())).availableBytes); });
       allocated = ns; await this.fs.mkdir(ns.path("staging", ticket.id));
-      await ns.writeNew(ns.path("staging", ticket.id, "intent.json"), { formatVersion: 1, ticket, byteLength });
+      await ns.writeNew(ns.path("staging", ticket.id, "intent.json"), { formatVersion: 1, ticket, byteLength, predecessor: old });
       const temp = ns.path("staging", ticket.id, "payload.tmp");
       await this.fs.at("open-temp", async () => { opened = await this.fs.open(temp, "create-exclusive"); });
       const fd = opened;
@@ -6955,7 +7174,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       const revision = t.metadata.kind === "record" ? t.metadata.record.revision : "r_" + randomUUID().replaceAll("-", "");
       const deleted = t.metadata.kind === "record" && t.metadata.deleted;
       if (!e.head) e.head = { formatVersion: 1, metadata: t.metadata, target: t.target, object: deleted ? null : `${revision}.${t.metadata.kind === "record" ? "bin" : "json"}`,
-        byteLength: e.size, sha256: e.hash.copy().digest("hex"), receipt: { revision, commitId: randomUUID(), durability: this.fs.durability }, ...(e.tag ? { importTag: e.tag } : {}) };
+        byteLength: e.size, sha256: e.hash.copy().digest("hex"), receipt: { revision, commitId: e.tag ? t.id : randomUUID(), durability: this.fs.durability }, ...(e.tag ? { importTag: e.tag } : {}) };
       parseHead(Buffer.from(JSON.stringify(e.head)));
       if (!deleted && !e.object) {
         this.live(e);
@@ -7145,29 +7364,36 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       const parsed=importTagSchema.parse(tag);
       const saved=await this.loadImport(ticket.owner,parsed.importId);
       const item=saved?.plan.items.find(i=>i.key===parsed.itemKey);
-      if (!item || JSON.stringify(item.ticket)!==JSON.stringify(ticket) || JSON.stringify(item.tag)!==JSON.stringify(parsed)) throw new Error("input-changed");
+      const attempt=saved?.items.find(i=>i.key===parsed.itemKey)?.publicationTicket;
+      if (!item || !attempt || !sameImportValue(attempt,ticket) || !sameImportAttempt(item.ticket,ticket) || !sameImportValue(item.tag,parsed)) throw new Error("input-changed");
       // Persist the immutable binding before append can be admitted. The published head includes it.
       await e.ns.writeNew(e.ns.path("staging",ticket.id,"import-tag.json"),{formatVersion:1,tag:parsed});
       await this.fs.syncDirectory(e.ns.path("staging",ticket.id)); e.tag=parsed;
     } finally { e.busy=false; }
   }
   async importReceipts(owner:PersistenceOwner,id:string):ReturnType<DurableImportPort["importReceipts"]> {
-    const saved=await this.loadImport(owner,id); if (!saved) return [];
-    const ns=await this.ns(owner.sourceKey), receipts:Awaited<ReturnType<DurableImportPort["importReceipts"]>>[number][]=[];
-    for (let offset=0;offset<saved.plan.items.length;offset+=64) {
-      for (const item of saved.plan.items.slice(offset,offset+64)) {
-        const loc=await ns.location(item.ticket.target), head=await ns.head(loc);
-        if (!head?.importTag || JSON.stringify(head.importTag)!==JSON.stringify(item.tag)) continue;
-        await ns.verify(loc,head);
-        if (head.sha256!==item.mappedSha256 || head.byteLength!==item.byteLength) throw new Error("input-changed");
-        receipts.push({tag:item.tag,ticket:item.ticket,receipt:head.receipt});
+    const saved=await this.loadImport(owner,id);if(!saved)return [];
+    const ns=await this.ns(owner.sourceKey),receipts:Awaited<ReturnType<DurableImportPort["importReceipts"]>>[number][]=[];
+    for(const item of saved.plan.items) {
+      const evidence=saved.items.find(e=>e.key===item.key)!,attempt=evidence.publicationTicket;
+      if(!attempt)continue;
+      if(evidence.state==="committed" && evidence.receipt) {
+        receipts.push({tag:item.tag,ticket:attempt,receipt:evidence.receipt});continue;
       }
+      const loc=await ns.location(attempt.target),head=await ns.head(loc);
+      if(!head?.importTag || !sameImportValue(head.importTag,item.tag))continue;
+      await ns.verify(loc,head);
+      if(head.receipt.commitId!==attempt.id || head.sha256!==item.mappedSha256 || head.byteLength!==item.byteLength ||
+          !sameImportValue(head.metadata,attempt.metadata) || !sameImportValue(head.target,attempt.target))throw new Error("input-changed");
+      await this.fs.syncDirectory(loc.directory);
+      receipts.push({tag:item.tag,ticket:attempt,receipt:head.receipt});
     }
-    if (Buffer.byteLength(JSON.stringify(receipts))>2097152) throw new Error("size-limit");
-    return receipts;
+    if(Buffer.byteLength(JSON.stringify(receipts))>2097152)throw new Error("size-limit");return receipts;
   }
   async auxiliary(owner: PersistenceOwner, kind: "import" | "recovery", key: string): Promise<Uint8Array | null> {
-    const ns = await this.settled(owner), loc = await ns.location({ kind, key }), head = await ns.head(loc);
+    this.fs.profile.assertHeld();
+    if(owner.hostEpoch!==this.fs.profile.hostEpoch)throw new Error("stale");
+    const ns = await this.ns(owner.sourceKey), loc = await ns.location({ kind, key }), head = await ns.head(loc);
     if (!head) return null; await ns.verify(loc, head); return this.fs.bytes(ns.object(loc, head), 2097152);
   }
   private readonly importMutations=new Map<string,Promise<unknown>>();
@@ -7179,20 +7405,82 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   planImport(owner:PersistenceOwner,plan:ImportPlan):Promise<void>{return this.mutateImport(owner,plan.id,()=>this.planImportOne(owner,plan));}
   recordImport(owner:PersistenceOwner,id:string,evidence:ImportItemEvidence):Promise<void>{return this.mutateImport(owner,id,()=>this.recordImportOne(owner,id,evidence));}
   completeImport(owner:PersistenceOwner,id:string):Promise<void>{return this.mutateImport(owner,id,()=>this.completeImportOne(owner,id));}
+  private readonly documentWrites=new Map<string,{ticket:PublicationTicket;bytes:Uint8Array;result:Promise<Outcome>}>();
   private async writeDocument(owner:PersistenceOwner,kind:"import"|"recovery",key:string,value:unknown):Promise<void> {
-    const bytes=Buffer.from(JSON.stringify(value));
-    if (bytes.length>2097152 || Buffer.byteLength(key)>128) throw new Error("size-limit");
-    const t:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:this.fs.now()+10000,
+    const bytes=Buffer.from(JSON.stringify(value)),identity=JSON.stringify([owner.sourceKey,kind,key]);
+    if(bytes.length>2097152 || Buffer.byteLength(key)>128)throw new Error("size-limit");
+    if(kind==="import" && key.startsWith("import/"))importDocumentSchema.parse(value);
+    const previous=this.documentWrites.get(identity);
+    if(previous) {
+      let result=await previous.result;
+      if(result.disposition==="unknown")result=await this.reconcile(previous.ticket);
+      if(result.disposition==="unknown")throw new Error("publish-uncertain");
+      this.documentWrites.delete(identity);
+      if(result.disposition==="committed" && Buffer.from(previous.bytes).equals(bytes))return;
+      if(result.disposition==="committed")throw new Error("reload-import");
+    }
+    const ticket:PublicationTicket={id:randomUUID(),owner:structuredClone(owner),deadlineMonotonicMs:this.fs.now()+10000,
       metadata:{kind,key},target:{kind,key}};
-    await this.reserve(t,bytes.length);
-    for (let offset=0;offset<bytes.length;offset+=262144) await this.append(t,offset,bytes.subarray(offset,offset+262144));
-    await this.seal(t,bytes.length,createHash("sha256").update(bytes).digest("hex"));
-    let result=await this.publish(t);
-    if (result.disposition==="unknown") result=await this.reconcile(t);
-    if (result.disposition!=="committed") throw new Error(result.disposition==="unknown"?"publish-uncertain":"not-committed");
+    this.admitted(ticket);
+    // Schedule only after the exact candidate is installed. A thrown write retains its identity.
+    const result=Promise.resolve().then(async():Promise<Outcome>=>{
+      try {
+        await this.reserve(ticket,bytes.length);
+        for(let offset=0;offset<bytes.length;offset+=262144)await this.append(ticket,offset,bytes.subarray(offset,offset+262144));
+        await this.seal(ticket,bytes.length,createHash("sha256").update(bytes).digest("hex"));
+        const outcome=await this.publish(ticket);
+        return outcome.disposition==="unknown"?await this.reconcile(ticket):outcome;
+      } catch(error) {
+        if(this.entries.has(ticket.id)) {
+          const disposition=await this.abort(ticket);
+          if(disposition!=="aborted")return this.reconcile(ticket);
+        }
+        if(this.failedReserves.has(ticket.id))return {disposition:"unknown"};
+        return {disposition:"not-committed"};
+      }
+    });
+    this.documentWrites.set(identity,{ticket,bytes,result});
+    const outcome=await result;
+    if(outcome.disposition==="unknown")throw new Error("publish-uncertain");
+    this.documentWrites.delete(identity);
+    if(outcome.disposition!=="committed")throw new Error("not-committed");
+  }
+  admitImport(owner:PersistenceOwner,id:string,key:string):Promise<PublicationTicket> {
+    return this.mutateImport(owner,id,async()=>{
+      this.fs.profile.assertHeld();
+      const saved=await this.loadImport(owner,id);if(!saved || saved.complete)throw new Error("stale");
+      const index=saved.plan.items.findIndex(item=>item.key===key),item=saved.plan.items[index],prior=saved.items[index];
+      if(!item || !prior || prior.state==="committed" || prior.state==="skipped" ||
+          owner.pluginId!==item.ticket.owner.pluginId || owner.sourceKey!==item.ticket.owner.sourceKey)throw new Error("stale");
+      const old=prior.publicationTicket;
+      const competing=this.targets.get(this.targetKey(item.ticket));
+      if(competing && competing!==old?.id)throw new Error("write-in-progress");
+      if(old && !sameImportAttempt(item.ticket,old))throw new Error("input-changed");
+      if(old && this.entries.has(old.id)) {
+        const live=this.entry(old);live.gate.shorten(this.fs.now(),this.fs.now());
+        if(await this.abort(old)==="unknown")throw new Error("publish-uncertain");
+      }
+      const outcome=await this.reconcileImport(item.ticket);
+      if(outcome.disposition==="committed") {
+        if(!old || !outcome.receipt)throw new Error("unverified-receipt");
+        await this.recordImportOne(owner,id,{...prior,state:"committed",receipt:outcome.receipt,skipReason:null});
+        throw new Error("already-committed");
+      }
+      if(outcome.disposition!=="not-committed")throw new Error("publish-uncertain");
+      if(old && sameImportValue(old.owner,owner) && !this.entries.has(old.id) && old.deadlineMonotonicMs>this.fs.now()) {
+        this.admitted(old);return structuredClone(old);
+      }
+      const deadline=old?.owner.hostEpoch===owner.hostEpoch?old.deadlineMonotonicMs:this.fs.now()+10000;
+      if(deadline<=this.fs.now())throw new Error("stale");
+      const attempt:PublicationTicket={...structuredClone(item.ticket),id:randomUUID(),owner:structuredClone(owner),deadlineMonotonicMs:deadline};
+      this.admitted(attempt);
+      const items=saved.items.map((e,i)=>i===index?{...e,state:"pending" as const,receipt:null,skipReason:null,publicationTicket:attempt}:e);
+      await this.writeDocument(owner,"import",id,{formatVersion:1,...saved,items});
+      return structuredClone(attempt);
+    });
   }
   async loadImport(owner:PersistenceOwner,id:string):ReturnType<DurableImportPort["load"]> {
-    if (Buffer.byteLength(id)>128 || !id) throw new Error("size-limit");
+    if (Buffer.byteLength(id)>128 || !id.startsWith("import/")) throw new Error("size-limit");
     const bytes=await this.auxiliary(owner,"import",id); if (!bytes) return null;
     const raw=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
     if (raw.formatVersion!==1) throw new Error("unsupported-format");
@@ -7205,7 +7493,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (plan.targetSourceKey!==owner.sourceKey || plan.items.some(i=>ownerKey(i.ticket.owner)!==ownerKey(owner))) throw new Error("stale");
     const old=await this.loadImport(owner,plan.id);
     if (old) { if (JSON.stringify(old.plan)!==JSON.stringify(plan)) throw new Error("input-changed"); return; }
-    await this.writeDocument(owner,"import",plan.id,{formatVersion:1,plan,items:plan.items.map(i=>({key:i.key,state:"pending",receipt:null,skipReason:null})),complete:false});
+    await this.writeDocument(owner,"import",plan.id,{formatVersion:1,plan,items:plan.items.map(i=>({key:i.key,state:"pending",receipt:null,skipReason:null,publicationTicket:null})),complete:false});
   }
   private async recordImportOne(owner:PersistenceOwner,id:string,evidence:ImportItemEvidence):Promise<void> {
     importItemEvidenceSchema.parse(evidence);
@@ -7216,27 +7504,75 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       if (!receipt || JSON.stringify(receipt.receipt)!==JSON.stringify(evidence.receipt)) throw new Error("input-changed");
     }
     const prior=saved.items[index]!;
+    if(!sameImportValue(prior.publicationTicket,evidence.publicationTicket))throw new Error("input-changed");
+    if(evidence.state==="skipped") {
+      const attempt=prior.publicationTicket;
+      if(attempt && this.entries.has(attempt.id)) {
+        this.fenceTargetOrTicket(attempt);
+        if(await this.abort(attempt)!=="aborted")throw new Error("publish-uncertain");
+      }
+      if((await this.reconcileImport(saved.plan.items[index]!.ticket)).disposition!=="not-committed")throw new Error("publish-uncertain");
+    }
     if ((prior.state==="committed" || prior.state==="skipped") && JSON.stringify(prior)!==JSON.stringify(evidence)) throw new Error("input-changed");
     const items=[...saved.items]; items[index]=evidence;
     await this.writeDocument(owner,"import",id,{formatVersion:1,...saved,items});
   }
   async reconcileImport(ticket:PublicationTicket):ReturnType<PersistenceEnginePort["reconcile"]> {
-    if (this.entries.has(ticket.id)) return this.reconcile(ticket);
-    // A prior epoch's original ticket is evidence, never a fresh writable capability.
+    publicationTicketSchema.parse(ticket);this.fs.profile.assertHeld();
     const ns=await this.ns(ticket.owner.sourceKey);
-    for (const loc of await ns.locations()) {
-      const h=await ns.head(loc);
-      if (h?.target.kind!=="import") continue;
-      const saved=await this.loadImport({...ticket.owner,hostEpoch:this.fs.profile.hostEpoch},h.target.key);
-      const item=saved?.plan.items.find(i=>i.ticket.id===ticket.id);
-      if (!item) continue;
-      if (JSON.stringify(item.ticket)!==JSON.stringify(ticket)) throw new Error("stale");
-      const receipt=(await this.importReceipts({...ticket.owner,hostEpoch:this.fs.profile.hostEpoch},saved!.plan.id)).find(r=>r.ticket.id===ticket.id);
-      if (receipt) return {disposition:"committed",receipt:receipt.receipt};
-      const evidence=saved!.items.find(i=>i.key===item.key);
-      if (evidence?.state==="committed" && evidence.receipt) return {disposition:"committed",receipt:evidence.receipt};
-      const head=await ns.head(await ns.location(ticket.target));
-      if ((ticket.target.kind==="record" || ticket.target.kind==="settings") && (head?.receipt.revision??null)===ticket.target.expectedRevision) return {disposition:"not-committed"};
+    if(ticket.target.kind==="import") {
+      const loc=await ns.location(ticket.target),head=await ns.head(loc);
+      if(head) {
+        await ns.verify(loc,head);
+        const bytes=await this.fs.bytes(ns.object(loc,head),2097152);
+        if(ticket.target.key.startsWith("nonce/") || ticket.target.key.startsWith("barrier/")) {
+          const document=ticket.target.key.startsWith("nonce/")?parseNonceDocument(bytes):parseBarrierDocument(bytes);
+          if(sameImportValue(document.ticket,ticket)) {
+            await this.fs.syncDirectory(loc.directory);return {disposition:"committed",receipt:head.receipt};
+          }
+        }
+      }
+      // Live metadata uses the exact retained engine entry, including its dispatch gate.
+      if(this.entries.has(ticket.id))return this.reconcile(ticket);
+      const intentPath=ns.path("staging",ticket.id,"intent.json");
+      if(!await this.fs.exists(intentPath))return {disposition:"unknown"};
+      const raw=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(await this.fs.bytes(intentPath,32768)));
+      if(raw.formatVersion!==1 || Object.keys(raw).sort().join(",")!=="byteLength,formatVersion,predecessor,ticket" ||
+          !sameImportValue(publicationTicketSchema.parse(raw.ticket),ticket))throw new Error("stale");
+      const predecessor=raw.predecessor===null?null:parseHead(Buffer.from(JSON.stringify(raw.predecessor)));
+      if(predecessor)await ns.verify(loc,predecessor);
+      if(this.blockedSources.has(ticket.owner.sourceKey) || this.uncertain.has(ticket.owner.sourceKey))return {disposition:"unknown"};
+      return sameImportValue(head,predecessor)?{disposition:"not-committed"}:{disposition:"unknown"};
+    }
+    for(const loc of await ns.locations()) {
+      const head=await ns.head(loc);
+      if(head?.target.kind!=="import" || !head.target.key.startsWith("import/"))continue;
+      await ns.verify(loc,head);
+      const saved=importDocumentSchema.parse(JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(
+        await this.fs.bytes(ns.object(loc,head),2097152))));
+      if(saved.plan.targetSourceKey!==ns.sourceKey || saved.plan.id!==head.target.key)throw new Error("input-changed");
+      const index=saved.plan.items.findIndex((item,i)=>sameImportValue(item.ticket,ticket) ||
+        sameImportValue(saved.items[i]!.publicationTicket,ticket));
+      if(index<0)continue;
+      const item=saved.plan.items[index]!,evidence=saved.items[index]!,attempt=evidence.publicationTicket;
+      if(evidence.state==="committed" && evidence.receipt)return {disposition:"committed",receipt:evidence.receipt};
+      if(attempt && this.entries.has(attempt.id)) {
+        const live=await this.reconcile(attempt);
+        if(live.disposition!=="not-committed")return live;
+        if(this.unresolvedTicket(attempt.id))return {disposition:"unknown"};
+      }
+      const target=await ns.location(item.ticket.target),current=await ns.head(target);
+      if(current)await ns.verify(target,current);
+      if(attempt && current?.importTag && sameImportValue(current.importTag,item.tag) &&
+          current.receipt.commitId===attempt.id && sameImportValue(current.metadata,attempt.metadata) &&
+          sameImportValue(current.target,attempt.target) && current.sha256===item.mappedSha256 && current.byteLength===item.byteLength) {
+        await this.fs.syncDirectory(target.directory);return {disposition:"committed",receipt:current.receipt};
+      }
+      if(this.blockedSources.has(ns.sourceKey) || this.uncertain.has(ns.sourceKey) ||
+          [...this.entries.values()].some(e=>e.ticket.owner.sourceKey===ns.sourceKey &&
+            (e.busy || e.state==="publishing" || e.state==="unknown")))return {disposition:"unknown"};
+      if((item.ticket.target.kind==="record" || item.ticket.target.kind==="settings") &&
+          (current?.receipt.revision??null)===item.ticket.target.expectedRevision)return {disposition:"not-committed"};
       return {disposition:"unknown"};
     }
     throw new Error("stale");
@@ -7246,7 +7582,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const receipts=await this.importReceipts(owner,id);
     const items=saved.items.map(e=>{
       const r=receipts.find(r=>r.tag.itemKey===e.key);
-      return r?{key:e.key,state:"committed" as const,receipt:r.receipt,skipReason:null}:e;
+      return e.state==="committed" || e.state==="skipped"?e:r?{key:e.key,state:"committed" as const,receipt:r.receipt,skipReason:null,publicationTicket:r.ticket}:e;
     });
     if (items.length!==saved.plan.items.length || items.some(e=>e.state!=="committed" && e.state!=="skipped")) throw new Error("incomplete");
     await this.writeDocument(owner,"import",id,{formatVersion:1,...saved,items,complete:true});
@@ -7417,7 +7753,8 @@ Create `apps/desktop/src/main/plugins/persistence/recovery-scan.ts`:
 ```ts
 import { randomUUID } from "node:crypto";
 import type { StorePath } from "./filesystem.js";
-import { Namespace, parseHead, liveRecord, type DiskHead } from "./namespace.js";
+import { Namespace, parseHead, liveRecord, publicationTicketSchema, sameImportValue, type DiskHead } from "./namespace.js";
+import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
 export type NamespaceScan = { heads: DiskHead[]; problems: string[]; totals: { committed: number; records: number; metadata: number; temporary: number } };
 const contentError = (e: unknown): boolean => e instanceof Error && (e.message === "corrupt" || e instanceof SyntaxError || e instanceof TypeError);
 export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<NamespaceScan> {
@@ -7461,6 +7798,28 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
     const value = JSON.parse(Buffer.from(await fs.bytes(intent, 8192)).toString("utf8")) as { formatVersion?: unknown; ticket?: { owner?: { hostEpoch?: unknown; sourceKey?: unknown } } };
     if (value.formatVersion !== 1) throw new Error("unsupported-format");
     if (value.ticket?.owner?.sourceKey !== ns.sourceKey) throw new Error("identity-mismatch");
+    const checkedTicket=publicationTicketSchema.parse(value.ticket);
+    if(checkedTicket.target.kind==="import") {
+      // Classify verified heads before touching the only persisted association.
+      const loc=await ns.location(checkedTicket.target),head=await ns.head(loc);
+      if(head)await ns.verify(loc,head);
+      const raw=JSON.parse(Buffer.from(await fs.bytes(intent,32768)).toString("utf8"));
+      if(Object.keys(raw).sort().join(",")!=="byteLength,formatVersion,predecessor,ticket")throw new Error("corrupt");
+      const predecessor=raw.predecessor===null?null:parseHead(Buffer.from(JSON.stringify(raw.predecessor)));
+      if(predecessor)await ns.verify(loc,predecessor);
+      let matching=false;
+      if(head && (checkedTicket.target.key.startsWith("nonce/") || checkedTicket.target.key.startsWith("barrier/"))) {
+        const bytes=await fs.bytes(ns.object(loc,head),2097152);
+        const document=checkedTicket.target.key.startsWith("nonce/")?parseNonceDocument(bytes):parseBarrierDocument(bytes);
+        matching=sameImportValue(document.ticket,checkedTicket);
+      }
+      if(matching)await fs.syncDirectory(loc.directory);
+      else if(!sameImportValue(head,predecessor))result.problems.push("import-uncertain");
+      // Retain bounded metadata association under the existing metadata quota. Never promote payload.tmp.
+      const payload=ns.path("staging",entry.name,"payload.tmp");
+      if(await fs.exists(payload))await fs.unlink(payload);
+      continue;
+    }
     if (value.ticket.owner.hostEpoch !== hostEpoch) {
       for (const name of ["payload.tmp", "sealed.json", "import-tag.json", "intent.json"]) {
         const p = ns.path("staging", entry.name, name);
@@ -7607,19 +7966,70 @@ export class NativeOutput implements ExportDestinationRegistry,PersistenceOutput
 Define the following class in worker.ts before the runner. It uses worker-installed `LegacyImportDescriptor` mappings and retains mapped bytes in worker scratch only. Foundation's production mapping map is empty; T7's private wrapper supplies the synthetic descriptor and test userData. No descriptor function, root string or mapper can arrive from plugin RPC. The fixed `legacy/<sourceKind>` directories below are test/future host allowlist locations, not a claim that real Lab/device legacy stores have been migrated.
 
 ```ts
+import { parseNonceDocument, snapshotBytes, importIdFor } from "./import-sources.js";
+import { sameImportValue, sameImportAttempt } from "./namespace.js";
+import type { LegacyPreferencesEvidenceRef } from "./engine-port.js";
+type SourceBinding = {kind:"file";descriptor:LegacyImportDescriptor;fs:NodePersistenceFs} |
+  {kind:"renderer";descriptor:LegacyImportDescriptor;resolved:null|{
+    owner:PersistenceOwner;evidence:LegacyPreferencesEvidenceRef;bytes:Uint8Array;charge:string}};
 class WorkerSources implements LegacySourceResolver {
-  private readonly registered=new Map<string,{descriptor:LegacyImportDescriptor;fs:NodePersistenceFs}>();
+  private readonly registered=new Map<string,SourceBinding>();
   private readonly mapped=new Map<string,{bytes:Uint8Array;sourceSha256:string;mappedSha256:string;metadata:LegacyMappedItem;offset:number;ticket:string|null}>();
-  constructor(private readonly root:string,private readonly store:AtomicStore,private readonly mappers:ReadonlyMap<string,LegacyImportDescriptor>) {}
+  constructor(private readonly root:string,private readonly store:AtomicStore,private readonly mappers:ReadonlyMap<string,LegacyImportDescriptor>,private readonly sourceRoots:ReadonlyMap<string,string>) {}
   async register(input:Parameters<LegacySourceResolver["register"]>[0]):Promise<void> {
     const descriptor=this.mappers.get(input.mapperId);
     if(!descriptor || descriptor.id!==input.descriptorId || descriptor.sourceKind!==input.sourceKind)throw new Error("invalid-mapper");
-    const sourceRoot=path.join(path.dirname(path.dirname(this.root)),"legacy",descriptor.sourceKind);
-    this.registered.set(input.descriptorId,{descriptor,fs:new NodePersistenceFs(sourceRoot,this.store.fs.profile)});
+    const existing=this.registered.get(input.descriptorId);
+    if(existing) {if(existing.descriptor!==descriptor)throw new Error("invalid-mapper");return;}
+    if(descriptor.sourceKind==="renderer-preferences") {
+      this.registered.set(input.descriptorId,{kind:"renderer",descriptor,resolved:null});return;
+    }
+    const sourceRoot=this.sourceRoots.get(descriptor.id);
+    if(!sourceRoot)throw new Error("missing-source-root");
+    this.registered.set(input.descriptorId,{kind:"file",descriptor,fs:new NodePersistenceFs(sourceRoot,this.store.fs.profile)});
   }
   private source(id:string){const s=this.registered.get(id);if(!s)throw new Error("stale");return s;}
+  async resolvePreferences(input:Parameters<LegacySourceResolver["resolvePreferences"]>[0]):Promise<void> {
+    const binding=this.source(input.descriptorId);
+    if(binding.kind!=="renderer" || input.owner.sourceKey!==binding.descriptor.targetSourceKey ||
+        input.owner.hostEpoch!==this.store.fs.profile.hostEpoch)throw new Error("stale");
+    const plan=await this.store.loadImport(input.owner,importIdFor(binding.descriptor.id,binding.descriptor.targetSourceKey));
+    if(plan && !plan.complete && !sameImportValue(plan.plan.preferencesEvidence,input.evidence))throw new Error("input-changed");
+    if(binding.resolved && (!sameImportValue(binding.resolved.evidence,input.evidence) ||
+        !sameImportValue(binding.resolved.owner,input.owner)))throw new Error("input-changed");
+    const encoded=await this.store.auxiliary(input.owner,"import","nonce/"+input.evidence.nonce);
+    if(!encoded)throw new Error("missing-evidence");
+    const document=parseNonceDocument(encoded);
+    if(document.state!=="consumed" || !document.raw || document.nonce!==input.evidence.nonce ||
+        document.digest!==input.evidence.digest || document.sourceKey!==input.owner.sourceKey ||
+        document.originalTicket.owner.pluginId!==input.owner.pluginId || document.descriptorId!==binding.descriptor.id ||
+        !sameImportValue(document.allowlist,binding.descriptor.rendererKeyAllowlist) ||
+        !binding.descriptor.sourceFormatVersions.includes(1))throw new Error("evidence-binding");
+    const bytes=snapshotBytes(document.raw,document.allowlist);
+    if(createHash("sha256").update(bytes).digest("hex")!==input.evidence.digest)throw new Error("evidence-binding");
+    if(binding.resolved) {
+      if(!Buffer.from(binding.resolved.bytes).equals(bytes))throw new Error("input-changed");return;
+    }
+    const bindings=[...this.registered.values()].flatMap(s=>s.kind==="renderer" && s.resolved?[s.resolved]:[]);
+    if(bindings.reduce((total,b)=>total+b.bytes.length,bytes.length)>8388608 ||
+        bindings.filter(b=>b.owner.sourceKey===input.owner.sourceKey).reduce((total,b)=>total+b.bytes.length,bytes.length)>524288)
+      throw new Error("quota");
+    const charge=randomUUID();this.store.quota.holdTemporary(input.owner.sourceKey,charge,bytes.length);
+    binding.resolved={owner:structuredClone(input.owner),evidence:structuredClone(input.evidence),bytes,charge};
+  }
+  private async preferences(binding:Extract<SourceBinding,{kind:"renderer"}>):Promise<Uint8Array> {
+    if(!binding.resolved)throw new Error("missing-evidence");
+    await this.resolvePreferences({descriptorId:binding.descriptor.id,owner:binding.resolved.owner,evidence:binding.resolved.evidence});
+    return binding.resolved.bytes;
+  }
   async inventory(id:string):ReturnType<LegacySourceResolver["inventory"]> {
-    const {fs,descriptor}=this.source(id);
+    const binding=this.source(id),{descriptor}=binding;
+    if(binding.kind==="renderer") {
+      if(!binding.resolved)return {state:"blocked",entries:[]};
+      const bytes=await this.preferences(binding);
+      return {state:"present",entries:[{key:"preferences",format:1,byteLength:bytes.length,sha256:binding.resolved.evidence.digest}]};
+    }
+    const {fs}=binding;
     try {
       await fs.check(fs.path());const entries=await fs.entries(fs.path(),4096),items:LegacySourceItem[]=[];
       if(entries.length>512)throw new Error("size-limit");
@@ -7634,7 +8044,14 @@ class WorkerSources implements LegacySourceResolver {
     }catch(e){return {state:(e as NodeJS.ErrnoException).code==="ENOENT"?"absent":"blocked",entries:[]};}
   }
   async read(id:string,key:string,offset:number,maxBytes:number):Promise<Uint8Array> {
-    const {fs}=this.source(id);if(Buffer.byteLength(key)>128)throw new Error("size-limit");
+    const binding=this.source(id);
+    if(!Number.isSafeInteger(offset) || offset<0 || !Number.isSafeInteger(maxBytes) || maxBytes<1 || maxBytes>262144)throw new Error("size-limit");
+    if(binding.kind==="renderer") {
+      if(key!=="preferences")throw new Error("stale");
+      const bytes=await this.preferences(binding);if(offset>bytes.length)throw new Error("offset-mismatch");
+      return bytes.slice(offset,offset+maxBytes);
+    }
+    const {fs}=binding;if(Buffer.byteLength(key)>128)throw new Error("size-limit");
     const fd=await fs.open(fs.path(key),"read");try{return await fs.read(fd,offset,maxBytes);}finally{await fs.close(fd);}
   }
   private async settingsValidationDigest(descriptor:LegacyImportDescriptor):Promise<string> {
@@ -7646,7 +8063,9 @@ class WorkerSources implements LegacySourceResolver {
     throw new Error("schema-mismatch");
   }
   async map(id:string,key:string):Promise<LegacyMappedItem> {
-    const {descriptor,fs}=this.source(id),bytes=await fs.bytes(fs.path(key),8388608);
+    const binding=this.source(id),{descriptor}=binding;
+    if(binding.kind==="renderer" && key!=="preferences")throw new Error("stale");
+    const bytes=binding.kind==="renderer"?await this.preferences(binding):await binding.fs.bytes(binding.fs.path(key),8388608);
     const sourceSha256=createHash("sha256").update(bytes).digest("hex");
     if(!descriptor.validate({sourceKind:descriptor.sourceKind,bytes,sha256:sourceSha256}))throw new Error("invalid-resource");
     const item=descriptor.map({sourceKind:descriptor.sourceKind,bytes,sha256:sourceSha256});
@@ -7663,7 +8082,17 @@ class WorkerSources implements LegacySourceResolver {
     const p=this.mapped.get(input.mapped);
     if(!p || input.offset!==p.offset || input.maxBytes<1 || input.maxBytes>262144 || (p.ticket!==null && p.ticket!==input.ticket.id))throw new Error("stale");
     const planKeys=await this.store.auxiliaryKeys(input.ticket.owner,"import");let cursor=planKeys.nextCursor,keys=[...planKeys.keys],matched=false;
-    for(;;){for(const key of keys){const plan=await this.store.loadImport(input.ticket.owner,key);if(plan?.plan.items.some(i=>i.ticket.id===input.ticket.id && JSON.stringify(i.ticket)===JSON.stringify(input.ticket) && i.mappedSha256===p.mappedSha256 && i.sourceSha256===p.sourceSha256))matched=true;}
+    for(;;){for(const key of keys){
+        if(!key.startsWith("import/"))continue;
+        const plan=await this.store.loadImport(input.ticket.owner,key);
+        if(plan?.plan.items.some(i=>sameImportValue(plan.items.find(e=>e.key===i.key)?.publicationTicket,input.ticket) &&
+          sameImportAttempt(i.ticket,input.ticket) && i.byteLength===p.bytes.length &&
+          i.mappedSha256===p.mappedSha256 && i.sourceSha256===p.sourceSha256 &&
+          (p.metadata.kind==="settings"?input.ticket.metadata.kind==="settings" &&
+            p.metadata.schemaVersion===input.ticket.metadata.schemaVersion:
+            input.ticket.metadata.kind==="record" && p.metadata.metadata.kind===input.ticket.metadata.record.kind &&
+            p.metadata.metadata.schemaVersion===input.ticket.metadata.record.schemaVersion)))matched=true;
+      }
       if(!cursor)break;const next=await this.store.auxiliaryKeys(input.ticket.owner,"import",cursor);keys=[...next.keys];cursor=next.nextCursor;}
     if(!matched)throw new Error("input-changed");p.ticket=input.ticket.id;
     const chunk=p.bytes.subarray(p.offset,p.offset+input.maxBytes);if(chunk.length)p.offset=await this.store.append(input.ticket,p.offset,chunk);
@@ -7700,9 +8129,15 @@ let directory:string,entry:string;
 const hash=(bytes:Uint8Array)=>createHash("sha256").update(bytes).digest("hex");
 beforeAll(async()=>{
   directory=await mkdtemp(path.join(tmpdir(),"persistence-worker-test-"));
-  await build({configFile:false,logLevel:"error",build:{target:"node24",outDir:path.join(directory,"bundle"),emptyOutDir:true,
-    lib:{entry:fileURLToPath(new URL("./worker.ts",import.meta.url)),formats:["cjs"],fileName:()=>"persistence-worker.cjs"},
-    rollupOptions:{external:[/^node:/],output:{footer:"exports.runPersistenceWorker({mappers:new Map()});"}},minify:false}});
+  const workerPath=fileURLToPath(new URL("./worker.ts",import.meta.url)),fixturesPath=fileURLToPath(new URL("./import-fixtures.ts",import.meta.url));
+  await build({configFile:false,logLevel:"error",plugins:[{name:"private-import-worker",
+    resolveId(id){if(id==="virtual:import-worker")return "\0virtual:import-worker";},
+    load(id){if(id==="\0virtual:import-worker")return `import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
+      import {syntheticImportDescriptor,syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixturesPath)};
+      runPersistenceWorker({mappers:new Map([syntheticImportDescriptor,syntheticPreferencesImportDescriptor].map(d=>[d.id,d])),
+        sourceRoots:new Map([[syntheticImportDescriptor.id,${JSON.stringify(path.join(directory,"legacy","sensor-lab"))}]])});`;}}],
+    build:{target:"node24",outDir:path.join(directory,"bundle"),emptyOutDir:true,
+      lib:{entry:"virtual:import-worker",formats:["cjs"],fileName:()=>"persistence-worker.cjs"},rollupOptions:{external:[/^node:/]},minify:false}});
   entry=path.join(directory,"bundle","persistence-worker.cjs");
 },60000);
 afterAll(async()=>{await rm(directory,{recursive:true,force:true});});
@@ -7757,28 +8192,76 @@ for(const point of points)it(`real worker kill at ${point}`,async()=>{
 },30000);
 it("kill after imported head before receipt reconciles original ticket without new IDs",async()=>{
   const userData=path.join(directory,randomUUID()),env=await launch(userData),owner=ownerFor(env.profile.hostEpoch),bytes=new Uint8Array([7,0,255]);
-  const t=make(owner,bytes),tag={importId:"once",itemKey:"item",sourceSha256:hash(bytes)},skipTicket=make(owner,bytes);
-  const plan:ImportPlan={formatVersion:1,id:"once",mappingVersion:1,targetSourceKey:owner.sourceKey,items:[
+  const id="import/"+hash(Buffer.from(JSON.stringify(["test.synthetic-import",owner.sourceKey])));
+  const t=make(owner,bytes),tag={importId:id,itemKey:"item",sourceSha256:hash(bytes)},skipTicket=make(owner,bytes);
+  const plan:ImportPlan={formatVersion:1,id,descriptorId:"test.synthetic-import",preferencesEvidence:null,mappingVersion:1,targetSourceKey:owner.sourceKey,items:[
     {key:"item",sourceFormat:1,sourceSha256:hash(bytes),mappedSha256:hash(bytes),byteLength:bytes.length,ticket:t,tag},
     {key:"skip",sourceFormat:1,sourceSha256:hash(bytes),mappedSha256:hash(bytes),byteLength:bytes.length,ticket:skipTicket,tag:{...tag,itemKey:"skip"}},
   ]};
   await env.backend.imports.plan(owner,plan);
-  await env.backend.imports.record(owner,"once",{key:"skip",state:"skipped",receipt:null,skipReason:"already-new"});
-  await expect(env.backend.imports.complete(owner,"once")).rejects.toThrow();
-  await env.backend.engine.reserve(t,bytes.length);await env.backend.imports.tagImport(t,tag);
-  await env.backend.engine.append(t,0,bytes);await env.backend.engine.seal(t,bytes.length,hash(bytes));
-  env.control.arm("after-publish","pause");const reached=env.control.reached("after-publish");const pending=env.backend.engine.publish(t).catch(()=>null);
+  await env.backend.imports.record(owner,id,{key:"skip",state:"skipped",receipt:null,skipReason:"already-new",publicationTicket:null});
+  await expect(env.backend.imports.complete(owner,id)).rejects.toThrow();
+  const publication=await env.backend.imports.admit(owner,id,"item");
+  await env.backend.engine.reserve(publication,bytes.length);await env.backend.imports.tagImport(publication,tag);
+  await env.backend.engine.append(publication,0,bytes);await env.backend.engine.seal(publication,bytes.length,hash(bytes));
+  env.control.arm("after-publish","pause");const reached=env.control.reached("after-publish");const pending=env.backend.engine.publish(publication).catch(()=>null);
   await reached;await env.control.terminate();await pending;
   for(let attempt=0;attempt<3;attempt++){
-    const next=await launch(userData),current=ownerFor(next.profile.hostEpoch),saved=await next.backend.imports.load(current,"once");
+    const next=await launch(userData),current=ownerFor(next.profile.hostEpoch),saved=await next.backend.imports.load(current,id);
+    expect(current.hostEpoch).not.toBe(owner.hostEpoch);
+    await expect(next.backend.engine.reserve(t,bytes.length)).rejects.toThrow();
     expect(saved?.plan).toEqual(plan);expect(saved?.items[1]?.skipReason).toBe("already-new");
     expect((await next.backend.imports.reconcile(t)).disposition).toBe("committed");
-    const receipts=await next.backend.imports.importReceipts(current,"once");expect(receipts).toHaveLength(1);expect(receipts[0]?.ticket.id).toBe(t.id);
-    await next.backend.imports.complete(current,"once");expect((await next.backend.imports.load(current,"once"))?.complete).toBe(true);
+    const receipts=await next.backend.imports.importReceipts(current,id);expect(receipts).toHaveLength(1);expect(receipts[0]?.ticket.id).toBe(publication.id);
+    await next.backend.imports.complete(current,id);expect((await next.backend.imports.load(current,id))?.complete).toBe(true);
     expect((await next.backend.reads.list(current,{limit:64})).entries).toHaveLength(1);
     await next.backend.dispose();
   }
 },30000);
+```
+
+Append these worker resolver and private-schema tests to the same `worker.test.ts` file. They use the existing private wrapper build and the real store; no Electron import enters Vitest.
+
+```ts
+import { syntheticPreferencesImportDescriptor } from "./import-fixtures.js";
+import { snapshotBytes, snapshotDigest, type LegacyNonceDocument } from "./import-sources.js";
+it("resolves a consumed nonce after host change without a renderer or filesystem fallback",async()=>{
+  const userData=path.join(directory,randomUUID()),first=await launch(userData),d=syntheticPreferencesImportDescriptor;
+  const owner={...ownerFor(first.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
+  const nonce=randomUUID(),scope={hostEpoch:owner.hostEpoch,workbenchInstance:randomUUID()},raw={nonce,scope,entries:[{key:"test.preference",raw:null}]};
+  const key="nonce/"+nonce,ticket:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:performance.now()+10000,
+    target:{kind:"import",key},metadata:{kind:"import",key}};
+  const digest=snapshotDigest(raw,d.rendererKeyAllowlist!),document:LegacyNonceDocument={formatVersion:1,kind:"nonce",descriptorId:d.id,
+    sourceKey:d.targetSourceKey,nonce,scope,allowlist:[...d.rendererKeyAllowlist!],state:"consumed",raw,digest,originalTicket:ticket,ticket};
+  await stage(first.backend,ticket,Buffer.from(JSON.stringify(document)));expect((await first.backend.engine.publish(ticket)).disposition).toBe("committed");
+  await first.backend.dispose();
+  const second=await launch(userData),current={...ownerFor(second.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
+  expect(current.hostEpoch).not.toBe(owner.hostEpoch);
+  await second.backend.sources.register({descriptorId:d.id,mapperId:d.id,sourceKind:d.sourceKind});
+  expect((await second.backend.sources.inventory(d.id)).state).toBe("blocked");
+  await expect(second.backend.sources.map(d.id,"preferences")).rejects.toThrow();
+  await second.backend.sources.resolvePreferences({descriptorId:d.id,owner:current,evidence:{nonce,digest}});
+  const expected=snapshotBytes(raw,d.rendererKeyAllowlist!);
+  expect(await second.backend.sources.inventory(d.id)).toEqual({state:"present",entries:[{key:"preferences",format:1,byteLength:expected.length,sha256:digest}]});
+  expect(await second.backend.sources.read(d.id,"preferences",0,262144)).toEqual(expected);
+  const mapped=await second.backend.sources.map(d.id,"preferences");expect(mapped.sourceSha256).toBe(digest);expect(mapped.mappedSha256).toBe(digest);
+  expect(mapped.byteLength).toBe(expected.length);await second.backend.sources.releaseMapped(mapped.mapped);
+  await expect(second.backend.sources.resolvePreferences({descriptorId:d.id,owner:current,evidence:{nonce:randomUUID(),digest}})).rejects.toThrow();
+  await expect(second.backend.sources.read(d.id,"preferences",0,262145)).rejects.toThrow();
+  await second.backend.dispose();
+},30000);
+it("strictly validates both new private tuples",()=>{
+  const owner=ownerFor(randomUUID()),nonce=randomUUID(),digest="0".repeat(64);
+  const valid=[{operation:"imports.admit",args:[owner,"import/"+digest,"item"]},
+    {operation:"sources.resolvePreferences",args:[{descriptorId:"test.synthetic-preferences",owner,evidence:{nonce,digest}}]}];
+  for(const request of valid) {
+    expect(PersistenceWorkerRequest.safeParse({version:1,id:1,...request}).success).toBe(true);
+    expect(PersistenceWorkerRequest.safeParse({version:1,id:1,...request,args:[...request.args,"extra"]}).success).toBe(false);
+  }
+  for(const evidence of [{nonce,digest,raw:[]},{nonce,digest,path:"/tmp/source"},{nonce:"bad",digest},{nonce,digest:"bad"},{nonce,digest,map(){}}])
+    expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"sources.resolvePreferences",
+      args:[{descriptorId:"test.synthetic-preferences",owner,evidence}]}).success).toBe(false);
+});
 ```
 
 Keep filesystem/atomic-store tests on both sides of each syscall boundary. The worker controls expose the exact frozen `arm(point, action)`, `reached`, `release`, `trace`, `terminate` API; `before-publish` and `after-publish` distinguish head dispatch. T7 reuses those controls for host kills, after-skip and before/after-completion-marker runs through its real `createFoundationFixture`. No test-only API enters production RPC or preload.
@@ -7839,11 +8322,13 @@ const args={
   "evidence.flush":z.tuple([persistenceBarrierSchema]),"evidence.quota":z.tuple([owner]),"evidence.settingsDigest":z.tuple([owner]),
   "evidence.auxiliary":z.tuple([owner,z.enum(["import","recovery"]),text]),"evidence.auxiliaryKeys":z.tuple([owner,z.enum(["import","recovery"]),handle.optional()]),
   "evidence.recoveryPage":z.tuple([handle.optional()]),"evidence.loadRecovery":z.tuple([handle]),"evidence.saveRecovery":z.tuple([storedRecoverySchema]),"evidence.removeRecovery":z.tuple([handle]),
+  "imports.admit":z.tuple([owner,text,text]),
   "imports.load":z.tuple([owner,text]),"imports.plan":z.tuple([owner,importPlanSchema]),"imports.tagImport":z.tuple([ticket,importTagSchema]),
   "imports.importReceipts":z.tuple([owner,text]),"imports.record":z.tuple([owner,text,importItemEvidenceSchema]),"imports.reconcile":z.tuple([ticket]),"imports.complete":z.tuple([owner,text]),
   "output.begin":z.tuple([handle,owner,handle,count.max(8388608),digest,count]),"output.append":z.tuple([handle,count,bytes]),
   "output.commit":z.tuple([handle]),"output.reconcile":z.tuple([handle]),"output.abort":z.tuple([handle]),
   "destinations.register":z.tuple([z.strictObject({action:handle,scope,nativePath:z.string().min(1),deadlineMonotonicMs:count})]),"destinations.release":z.tuple([handle]),
+  "sources.resolvePreferences":z.tuple([z.strictObject({descriptorId:text,owner,evidence:z.strictObject({nonce:z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),digest})})]),
   "sources.register":z.tuple([z.strictObject({descriptorId:text,mapperId:text,sourceKind:z.enum(["sensor-lab","device-settings","renderer-preferences"])})]),
   "sources.map":z.tuple([text,text]),"sources.appendMapped":z.tuple([z.strictObject({mapped:handle,ticket,offset:count,maxBytes:count.min(1).max(262144)})]),
   "sources.releaseMapped":z.tuple([handle]),"sources.inventory":z.tuple([text]),"sources.read":z.tuple([text,text,count,count.min(1).max(262144)]),
@@ -7923,17 +8408,17 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
       auxiliary:(o,k,key)=>send("evidence.auxiliary",[o,k,key]),auxiliaryKeys:(o,k,c)=>send("evidence.auxiliaryKeys",[o,k,c]),recoveryPage:c=>send("evidence.recoveryPage",[c]),
       loadRecovery:id=>send("evidence.loadRecovery",[id]),saveRecovery:v=>send("evidence.saveRecovery",[v]),removeRecovery:id=>send("evidence.removeRecovery",[id]),
     },
-    imports:{load:(o,id)=>send("imports.load",[o,id]),plan:(o,p)=>send("imports.plan",[o,p]),tagImport:(t,tag)=>send("imports.tagImport",[t,tag]),importReceipts:(o,id)=>send("imports.importReceipts",[o,id]),record:(o,id,e)=>send("imports.record",[o,id,e]),reconcile:t=>send("imports.reconcile",[t]),complete:(o,id)=>send("imports.complete",[o,id])},
+    imports:{admit:(o,id,k)=>send("imports.admit",[o,id,k]),load:(o,id)=>send("imports.load",[o,id]),plan:(o,p)=>send("imports.plan",[o,p]),tagImport:(t,tag)=>send("imports.tagImport",[t,tag]),importReceipts:(o,id)=>send("imports.importReceipts",[o,id]),record:(o,id,e)=>send("imports.record",[o,id,e]),reconcile:t=>send("imports.reconcile",[t]),complete:(o,id)=>send("imports.complete",[o,id])},
     destinations:{async register(i){const id=await send("destinations.register",[i]) as unknown as string;const token=Object.freeze({}) as ExportDestination;destinations.set(token,id);return token;},release:d=>{const id=destinations.get(d);if(!id)throw new Error("stale");return send("destinations.release",[id]);}},
     output:{begin:(id,o,d,n,h,deadline)=>{const token=destinations.get(d);if(!token)throw new Error("stale");return send("output.begin",[id,o,token,n,h,deadline]);},append:(id,o,b)=>send("output.append",[id,o,b]),commit:id=>send("output.commit",[id]),reconcile:id=>send("output.reconcile",[id]),abort:id=>send("output.abort",[id])},
-    sources:{register:i=>send("sources.register",[i]),map:(d,k)=>send("sources.map",[d,k]),appendMapped:i=>send("sources.appendMapped",[i]),releaseMapped:m=>send("sources.releaseMapped",[m]),inventory:d=>send("sources.inventory",[d]),read:(d,k,o,n)=>send("sources.read",[d,k,o,n])},
+    sources:{resolvePreferences:i=>send("sources.resolvePreferences",[i]),register:i=>send("sources.register",[i]),map:(d,k)=>send("sources.map",[d,k]),appendMapped:i=>send("sources.appendMapped",[i]),releaseMapped:m=>send("sources.releaseMapped",[m]),inventory:d=>send("sources.inventory",[d]),read:(d,k,o,n)=>send("sources.read",[d,k,o,n])},
     dispose(){return closing??=new Promise<void>((resolve,reject)=>{input.profile.assertHeld();for(const e of ledger.values())e.gate.shorten(input.now(),input.now());worker.once("exit",code=>{channel?.port1.close();Atomics.store(new Int32Array(held),0,0);code===0?resolve():reject(new Error("worker-dispose-unknown"));});worker.postMessage({version:1,kind:"close"});});},
   };
   diagnosticInstances.set(backend,{snapshot:()=>({owners:0,bindings:0,subscriptions:0,queuedEvents:0,queuedBytes:0,timers:0,pendingInvocations:0,actionTokens:0,resourceReaders:0,workerJobs:queue.pending}),onEvent:()=>()=>{}});
   return {backend,recovery:ready.recovery};
 }
 
-export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>}):void {
+export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>;sourceRoots?:ReadonlyMap<string,string>}):void {
   if(!parentPort)throw new Error("worker-port-missing");const port=parentPort;
   port.once("message",async raw=>{
     const boot=bootSchema.parse(raw);if(!path.isAbsolute(boot.root) || boot.held.byteLength!==16+1024*16)throw new Error("invalid-boot");
@@ -7948,7 +8433,7 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       if(action==="kill")process.exit(71);if(action==="fail")throw Object.assign(new Error("injected"),{code:"EIO"});
       await new Promise<void>(resolve=>paused.set(point,resolve));
     }});
-    await fs.check(fs.path());const store=new AtomicStore(fs),output=new NativeOutput(profile,store.quota,()=>performance.now(),fs),sources=new WorkerSources(boot.root,store,input.mappers);
+    await fs.check(fs.path());const store=new AtomicStore(fs),output=new NativeOutput(profile,store.quota,()=>performance.now(),fs),sources=new WorkerSources(boot.root,store,input.mappers,input.sourceRoots??new Map());
     let recovery:"ready"|"blocked"="ready";try{await store.initialize();}catch{recovery="blocked";}
     const queue=new WorkQueue(()=>performance.now()),accepted:Array<{sequence:number;ticket:PublicationTicket}>=[],destinations=new Map<string,ExportDestination>();let seq=0,closed=false;const requests=new Map<number,z.infer<typeof PersistenceWorkerRequest>>();
     const api={
@@ -7956,10 +8441,10 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       "reads.settings":store.settings.bind(store),"reads.stat":store.stat.bind(store),"reads.list":store.list.bind(store),"reads.open":store.open.bind(store),"reads.read":store.read.bind(store),"reads.close":store.close.bind(store),
       "evidence.flush":(b:PersistenceBarrier)=>store.flushEvidence(b,accepted.filter(e=>e.sequence<=b.through && matches(b.scope,e.ticket)).map(e=>e.ticket)),
       "evidence.quota":async(o:PersistenceOwner)=>({ok:true as const,value:store.quota.snapshot(o.sourceKey)}),"evidence.settingsDigest":store.settingsDigest.bind(store),"evidence.auxiliary":store.auxiliary.bind(store),"evidence.auxiliaryKeys":store.auxiliaryKeys.bind(store),"evidence.recoveryPage":store.recoveryPage.bind(store),"evidence.loadRecovery":store.loadRecovery.bind(store),"evidence.saveRecovery":store.saveRecovery.bind(store),"evidence.removeRecovery":store.removeRecovery.bind(store),
-      "imports.load":store.loadImport.bind(store),"imports.plan":store.planImport.bind(store),"imports.tagImport":store.tagImport.bind(store),"imports.importReceipts":store.importReceipts.bind(store),"imports.record":store.recordImport.bind(store),"imports.reconcile":store.reconcileImport.bind(store),"imports.complete":store.completeImport.bind(store),
+      "imports.admit":store.admitImport.bind(store),"imports.load":store.loadImport.bind(store),"imports.plan":store.planImport.bind(store),"imports.tagImport":store.tagImport.bind(store),"imports.importReceipts":store.importReceipts.bind(store),"imports.record":store.recordImport.bind(store),"imports.reconcile":store.reconcileImport.bind(store),"imports.complete":store.completeImport.bind(store),
       "destinations.register":async(i:Parameters<NativeOutput["register"]>[0])=>{const value=await output.register(i),id=randomUUID();destinations.set(id,value);return id;},"destinations.release":async(id:string)=>{const d=destinations.get(id);if(!d)throw new Error("stale");await output.release(d);},
       "output.begin":(id:string,o:PersistenceOwner,d:string,n:number,h:string,deadline:number)=>{const token=destinations.get(d);if(!token)throw new Error("stale");return output.begin(id,o,token,n,h,deadline);},"output.append":output.append.bind(output),"output.commit":output.commit.bind(output),"output.reconcile":output.reconcile.bind(output),"output.abort":output.abort.bind(output),
-      "sources.register":sources.register.bind(sources),"sources.map":sources.map.bind(sources),"sources.appendMapped":sources.appendMapped.bind(sources),"sources.releaseMapped":sources.releaseMapped.bind(sources),"sources.inventory":sources.inventory.bind(sources),"sources.read":sources.read.bind(sources),
+      "sources.resolvePreferences":sources.resolvePreferences.bind(sources),"sources.register":sources.register.bind(sources),"sources.map":sources.map.bind(sources),"sources.appendMapped":sources.appendMapped.bind(sources),"sources.releaseMapped":sources.releaseMapped.bind(sources),"sources.inventory":sources.inventory.bind(sources),"sources.read":sources.read.bind(sources),
     };
     port.on("message",raw=>{
       const cancel=z.strictObject({version:z.literal(1),kind:z.literal("cancel"),id:count.min(1)}).safeParse(raw);
@@ -7984,7 +8469,7 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
 
 ```
 
-The private scope schema is exactly `{hostEpoch,workbenchInstance}` from core-actions.ts. Destination scope validation remains main-derived, and registry IDs never become transferable authority. For the test wrapper, call `runPersistenceWorker({mappers})` exactly once; it receives its private fault port through the launch and does not set a product environment flag.
+The private scope schema is exactly `{hostEpoch,workbenchInstance}` from core-actions.ts. Destination scope validation remains main-derived, and registry IDs never become transferable authority. For the test wrapper, call `runPersistenceWorker({mappers,sourceRoots})` exactly once; it receives its private fault port through the launch and does not set a product environment flag.
 
 Amend `PublicationGate`'s constructor to `constructor(deadline:number,memory?:SharedArrayBuffer,byteOffset=0,initialize=memory===undefined)` and construct `new BigInt64Array(this.memory,byteOffset,2)`; initialize the two words only when `initialize` is true. Amend AtomicStore.reserve's private overload to `(ticket,byteLength,memory?:SharedArrayBuffer,byteOffset=0)` and pass the offset to PublicationGate. This private overload does not change `PersistenceEnginePort.reserve`. Gates use stable, collision-rejected slots; reclaim a slot only after the original ticket is known settled and its bounded reconciliation retention ends. Do not recycle an unknown publication's slot. Assert the profile before every filesystem write and gate dispatch.
 
@@ -10704,11 +11189,11 @@ function recoveryBackendDouble(): PersistenceBackend {
       loadRecovery: async id => rows.get(id) ?? null,
       saveRecovery: async row => { rows.set(row.id, structuredClone(row)); },
       removeRecovery: async id => { rows.delete(id); } },
-    imports: { load: fail, plan: fail, tagImport: fail, importReceipts: fail, record: fail,
+    imports: { load: fail, plan: fail, admit: fail, tagImport: fail, importReceipts: fail, record: fail,
       reconcile: fail, complete: fail },
     output: { begin: fail, append: fail, commit: fail, reconcile: fail, abort: fail },
     destinations: { register: fail, release: fail },
-    sources: { register: fail, map: fail, appendMapped: fail, releaseMapped: fail, inventory: fail, read: fail },
+    sources: { resolvePreferences: fail, register: fail, map: fail, appendMapped: fail, releaseMapped: fail, inventory: fail, read: fail },
     dispose: async () => {},
   };
 }
@@ -11290,14 +11775,17 @@ type ImportPlannedItem = Readonly<{
   key:string; sourceFormat:Version; sourceSha256:Sha256; mappedSha256:Sha256; byteLength:number;
   ticket:PublicationTicket; tag:ImportTag;
 }>;
-type ImportPlan = Readonly<{formatVersion:1; id:string; mappingVersion:Version;
-  targetSourceKey:string; items:readonly ImportPlannedItem[]}>;
-type ImportItemEvidence = {key:string; state:"pending"|"committed"|"skipped"|"unknown";
-  receipt:Receipt<SettingsRevision|RecordRevision>|null; skipReason:string|null};
-interface DurableImportPort {
+export type LegacyPreferencesEvidenceRef = Readonly<{nonce:Handle; digest:Sha256}>;
+export type ImportPlan = Readonly<{formatVersion:1; id:string; descriptorId:string; mappingVersion:Version;
+  targetSourceKey:string; preferencesEvidence:LegacyPreferencesEvidenceRef|null; items:readonly ImportPlannedItem[]}>;
+export type ImportItemEvidence = {key:string; state:"pending"|"committed"|"skipped"|"unknown";
+  receipt:Receipt<SettingsRevision|RecordRevision>|null; skipReason:string|null;
+  publicationTicket:PublicationTicket|null};
+export interface DurableImportPort {
   load(owner: PersistenceOwner, id: string): Promise<{plan:ImportPlan;
     items:readonly ImportItemEvidence[]; complete:boolean}|null>;
   plan(owner: PersistenceOwner, plan: ImportPlan): Promise<void>;
+  admit(owner: PersistenceOwner, id:string, key:string): Promise<PublicationTicket>;
   tagImport(ticket: PublicationTicket, tag: ImportTag): Promise<void>;
   importReceipts(owner: PersistenceOwner, id:string): Promise<readonly {
     tag:ImportTag; ticket:PublicationTicket; receipt:Receipt<SettingsRevision|RecordRevision>;
@@ -11315,7 +11803,9 @@ type LegacyMappedItem = Readonly<{mapped:Handle;sourceSha256:Sha256;
   {kind:"settings";schemaVersion:Version} |
   {kind:"record";metadata:Omit<RecordWrite,"target"|"checkpoint"|"drainToken">}
 )>;
-interface LegacySourceResolver {
+export interface LegacySourceResolver {
+  resolvePreferences(input:{descriptorId:string;owner:PersistenceOwner;
+    evidence:LegacyPreferencesEvidenceRef}):Promise<void>;
   register(input:{descriptorId:string;mapperId:string;sourceKind:LegacyImportInput["sourceKind"]}): Promise<void>;
   map(descriptorId:string, key:string): Promise<LegacyMappedItem>;
   appendMapped(input:{mapped:Handle;ticket:PublicationTicket;offset:number;
@@ -11352,9 +11842,271 @@ interface LegacyWriterPort {
   settled(): Promise<void>;
 }
 declare function createLegacyWriterBarrier(input:{backend:PersistenceBackend;
+  descriptors:readonly Pick<LegacyImportDescriptor,"id"|"targetSourceKey">[];
   writers:readonly LegacyWriterPort[];importOwner:(sourceKey:string)=>PersistenceOwner;
 }): LegacyWriterBarrier;
 ```
+
+- [ ] **Binding implementation contract (BM-21/BM-24/BM-25)**
+
+Controller ruling: T6 does not require fully written implementation code in this plan. The implementer writes and completes code under TDD at execution time against this binding contract. Retained compatible code below is implementation material, not evidence that the contract or its tests have executed. All numbered requirements and signatures below are mandatory.
+
+#### 1. Findings and fixed decisions
+
+1. **Objection (a) is real for continuation, but overstates the reconciliation problem.** T2's `AtomicStore.admitted` rejects `ticket.owner.hostEpoch !== profile.hostEpoch`, correctly. T6 Step 5 nevertheless says to reserve the original persisted ticket after restart. T2 already implements a historical `reconcileImport` branch, so read-only reconciliation does not require reviving the old epoch. B2 spec §§6.5,8.3,9.3 distinguish persistent evidence from transient publication rights. BM-24 freezes the original plan ticket as evidence and adds a separately persisted current publication attempt. Never “fix” this by skipping admission, changing the original ticket's owner in place, restoring transient staging, or treating a missing receipt as permission to publish.
+2. **Objection (b) is real.** B2 spec §9.2 and AM-29 require persisted raw preferences/digest and restart recovery, but the existing resolver has no evidence binding, and T2's `WorkerSources` constructs filesystem roots for renderer preferences. BM-25 supplies `LegacySourceResolver.resolvePreferences`, implemented in worker.ts, and pins `ImportPlan.preferencesEvidence`. The worker reads and verifies the durable nonce record itself. Historical scope proves where bytes came from; it is not current renderer authority.
+3. No plugin methods, preload methods, renderer snapshot fields, published schemas, API versions, receipt/tag shapes, product mappings, budget increases or new store are permitted. Internal formatVersion remains 1: these are corrections to unreleased scaffolds. Unknown old formats fail closed, not silently upgraded. Do not edit specs. Preserve the existing `finishImport(imports,owner,plan):Promise<boolean>` implementation and invoke its existing `completionCases` tests with a real nonempty typed fixture.
+
+
+#### 2. Exact ownership and prerequisites
+
+1. Update the B2 plan's T0/interface copies to the amended AM-24/29 signatures. F seeds the declarations in existing `apps/desktop/src/main/plugins/persistence/engine-port.ts`, `import-sources.ts` and `contract.test.ts`. No new source file is needed.
+2. T2 implements BM-24 in its existing `engine-port.ts/test`, `atomic-store.ts/test`, `namespace.ts/test`, `recovery-scan.ts/test`, `worker.ts/test`. T2 implements BM-25's worker method/transport in `worker.ts/test`, importing T6's pure evidence codec from import-sources.ts. Implement these prerequisites in the T2 plan steps that already define import validators, `AtomicStore`, `WorkerSources`, and the worker operation table. No whole-file rewrite or unrelated T2 correction is authorized.
+3. T6's exact implementation write set remains `import-coordinator.ts/test`, `import-journal.ts/test`, `import-sources.ts/test`, `import-fixtures.ts`, all under the persistence directory. T6 does not patch worker/store code. Where a writer has stopped, request a stopped-owner receipt for the exact prerequisite paths; do not delegate their ownership to T6. The plan fixer embeds the complete prerequisite contract and signature declarations in the owning T2 steps; the implementation owner completes and tests them under TDD before T6 acceptance, with no unresolved port.
+4. D170's existing composition passes `descriptors` into `createLegacyWriterBarrier` and provides a trusted current `importOwner`; it waits for barrier restoration before starting writers or exposing ordinary persistence mutation requests. T7 updates the same constructor call in `tests/desktop/plugin-persistence-main.ts` and supplies real restart/nonce evidence through `plugin-persistence-import.test.mjs` and its existing worker wrapper. V170 retains the existing challenge/submit bridge and must not swallow `getItem` exceptions as null.
+5. F type checks come first; T2/T6 unit checks precede T7's real worker checks; D170/K170 attachments precede final T7 acceptance. These changes do not close B2-RF5 using unit mocks alone.
+
+
+#### 3. Exact contracts and serialization rules
+
+Use these declarations from their defining modules, not local lookalikes. In T2 engine-port.ts, retain existing AM-24 fields and methods and add/replace exactly:
+
+```ts
+export type LegacyPreferencesEvidenceRef =
+  Readonly<{nonce: Handle; digest: Sha256}>;
+export type ImportPlan = Readonly<{
+  formatVersion: 1;
+  id: string;
+  descriptorId: string;
+  mappingVersion: Version;
+  targetSourceKey: string;
+  preferencesEvidence: LegacyPreferencesEvidenceRef | null;
+  items: readonly ImportPlannedItem[];
+}>;
+export type ImportItemEvidence = {
+  key: string;
+  state: "pending" | "committed" | "skipped" | "unknown";
+  receipt: Receipt<SettingsRevision | RecordRevision> | null;
+  skipReason: string | null;
+  publicationTicket: PublicationTicket | null;
+};
+// Add to DurableImportPort:
+// admit(owner: PersistenceOwner, id: string, key: string):
+//   Promise<PublicationTicket>;
+```
+
+`ImportPlannedItem.ticket` remains unchanged. `DurableImportPort.load` still returns `{plan,items,complete}|null`, with items using the amended type. `importReceipts` retains its signature, but its ticket is the actual publicationTicket that produced the head, not the original plan ticket.
+
+In T6 import-sources.ts add the following method to `LegacySourceResolver`, import the evidence-reference type from engine-port.ts, and amend the barrier constructor:
+
+```ts
+// Add to LegacySourceResolver:
+// resolvePreferences(input: {
+//   descriptorId: string;
+//   owner: PersistenceOwner;
+//   evidence: LegacyPreferencesEvidenceRef;
+// }): Promise<void>;
+export declare function createLegacyWriterBarrier(input: {
+  backend: PersistenceBackend;
+  descriptors: readonly Pick<LegacyImportDescriptor, "id" | "targetSourceKey">[];
+  writers: readonly LegacyWriterPort[];
+  importOwner: (sourceKey: string) => PersistenceOwner;
+}): LegacyWriterBarrier;
+```
+
+The actual functions replace `declare` when implemented. `createLegacyImportCoordinator` and `LegacyImportHostPort` signatures remain exactly AM-29. The function reached from T6 is `backend.sources.resolvePreferences(...)`; worker class method is `WorkerSources.resolvePreferences`, private transport key is `sources.resolvePreferences`. T2's admission implementation is `AtomicStore.admitImport(owner,id,key):Promise<PublicationTicket>`, exposed by `backend.imports.admit`, private key `imports.admit`. Add both to the strict request schema, dispatcher, facade and typed test doubles. No `any`, unknown-method tunnel, function serialization or permissive extra-key schema.
+
+Define the following pure codecs/types in T6 import-sources.ts. Worker imports them without importing a coordinator instance:
+
+```ts
+export type LegacyNonceDocument = Readonly<{
+  formatVersion: 1; kind: "nonce";
+  descriptorId: string; sourceKey: string;
+  nonce: Handle; scope: CoreWindowScope; allowlist: readonly string[];
+  state: "issued" | "consumed";
+  raw: LegacyPreferencesSnapshot | null; digest: Sha256 | null;
+  originalTicket: PublicationTicket; ticket: PublicationTicket;
+}>;
+export type LegacyBarrierDocument = Readonly<{
+  formatVersion: 1; kind: "barrier";
+  descriptorId: string; sourceKey: string; barrier: Handle;
+  state: "active" | "complete";
+  originalTicket: PublicationTicket; ticket: PublicationTicket;
+}>;
+export type ImportAuxiliaryDocument =
+  LegacyNonceDocument | LegacyBarrierDocument;
+export declare function importIdFor(descriptorId: string, sourceKey: string): string;
+export declare function barrierKeyFor(descriptorId: string): string;
+export declare function snapshotDigest(
+  snapshot: LegacyPreferencesSnapshot, allowlist: readonly string[],
+): Sha256;
+export declare function parseNonceDocument(bytes: Uint8Array): LegacyNonceDocument;
+export declare function parseBarrierDocument(bytes: Uint8Array): LegacyBarrierDocument;
+```
+
+1. `importIdFor` returns `"import/" + sha256(UTF8(JSON.stringify([descriptorId,sourceKey])))`. `barrierKeyFor` returns `"barrier/" + sha256(UTF8(descriptorId))`. Nonce key is `"nonce/" + nonce`. Keep original descriptor/namespace in documents and verify against derived keys. These bounded keys support a 128-byte descriptor without exceeding AM-26's 128-byte auxiliary-key limit. MappingVersion is excluded from identity.
+2. `snapshotBytes` keeps the Step 2 canonical object construction/UTF-8 JSON representation, exact entry order and every raw string/null. Snapshot input must have exactly nonce/scope/entries; scope exactly hostEpoch/workbenchInstance; each entry exactly key/raw. Reject null/nonobject containers and wrong types before `Object.keys`. Allowlist keys are unique; the snapshot contains exactly those keys once. Do not trim, parse/coerce raw strings, sort entries after capture, omit nulls, normalize whitespace inside raw strings or substitute defaults. `snapshotDigest` is SHA-256 of `snapshotBytes`; checking and hashing must use the same copied snapshot.
+3. Strict nonce parsing checks all document keys, canonical handles/digests, allowed states, both tickets' source/target/kind/key bindings, original scope/nonce equal to raw snapshot scope/nonce, exact allowlist coverage, snapshot size and hash. Issued permits either both raw/digest null or both present; consumed requires both present. Initial originalTicket equals ticket; later ticket is a new metadata publication but originalTicket/nonce/scope/allowlist/raw evidence cannot change. A captured raw snapshot's digest is independent of the metadata ticket and state.
+4. Strict barrier parsing checks both tickets against the derived barrier key, namespace, descriptor and canonical identity. Barrier identity and originalTicket never change. Its latest ticket records the active/complete metadata publication.
+5. Full original/attempt ticket equality means validated structural equality of every field, not matching only an ID or source. Serialize normalized typed documents consistently. Scope equality includes both fields; owner equality for live admission includes all five fields. Historical plan-owner checks allow historical lifetime fields but require the same persisted namespace/plugin binding.
+6. All new fields count toward the same 512-item/2 MiB aggregate journal/evidence and existing metadata quotas. Auxiliary pages remain ≤64 items/256 KiB; no raw preference document is returned in an enumeration page. Reject before publishing a plan/document that would exceed a limit.
+
+
+#### 4. Required T2 code before T6 can pass
+
+1. Extend strict import plan/evidence/document schemas for preferencesEvidence/publicationTicket. Initial items are `{key,state:"pending",receipt:null,skipReason:null,publicationTicket:null}`. Committed requires a real receipt and publicationTicket; skipped requires a nonempty ≤256-byte reason and null receipt; pending/unknown have null receipt/reason. Unknown requires a publicationTicket. Reject duplicate/missing/foreign items, invalid complete evidence and forged attempts. `record` preserves the stored publicationTicket exactly; a caller cannot install an attempt through record. All terminal evidence is monotonic.
+2. Implement `admitImport` inside `mutateImport(owner,id,...)`, with the current held primary and host-issued namespace identity. Load the plan, reject completed/skipped/committed items, validate original/current ticket association, and reconcile before allocating. A matching atomic tagged head is committed and must be recorded, not published again. Unknown/conflicting evidence prevents admission. A known old expected head proves non-commit only after recovery has settled all relevant dispatched I/O; never infer it from ENOENT on a journal or an unreadable head.
+3. An existing current-owner attempt that has never been reserved and is still within its deadline is returned unchanged. A live receiving/sealed/aborted attempt is not returned for a second reserve: revoke its dispatch gate, settle/abort it, and replace only on proven non-commit. Same-host replacement preserves the earlier attempt deadline and is rejected after it expires. First admission or admission under a new host gets a newly generated ticket ID and `now()+10_000` maximum deadline. Clone original metadata/target exactly, including target ID/CAS/schema/digest/record revision/timestamps; use the entire trusted current owner. Never adjust an old owner by copying just the new epoch.
+4. Persist the attempt association in the existing import document with the same atomic metadata writer before returning. Persist it before destination reserve/tag/append. If this metadata write is unknown, retain/fence that exact metadata ticket and return an uncertainty error; subsequent calls reconcile it or reload its confirmed document before making another candidate. The single publicationTicket slot can replace an old attempt only after its rights are revoked and non-commit known. No unbounded history is necessary or allowed.
+5. `reconcileImport(originalTicket)` finds the immutable plan entry and follows publicationTicket; passing that exact publicationTicket finds the same entry. Use verified disk heads plus internal tags, object hashes/length, target/schema and actual commit identity. In `publishOne`, allocate `receipt.commitId` as `e.tag ? t.id : randomUUID()`: tagged import heads bind the actual publication attempt using the existing receipt field; ordinary publications retain their existing allocation. This is a required T2 change, not existing behavior. `importReceipts` returns only verified matches with that ticket. A prior durable committed item remains terminal even if its destination is later modified/deleted; do not require its current head to remain unchanged to trust already validated durable receipt evidence. Without such a receipt, a foreign/newer head blocks, never overwrites.
+6. Historical evidence reads do not invoke `admitted` on the old ticket. They remain restricted to the host's fixed namespace/plan/nonce/barrier records under the held primary and recovery scan. Do not relax `reserve`, `append`, `seal`, `publish`, their gate/held checks or plugin owner checks. `engine.reconcile` remains the current registry-entry implementation. `imports.reconcile` handles historical import item tickets and host import auxiliary tickets, verifying their persisted document/intent association; it must dispatch by document kind rather than parsing every import key as an ImportPlan.
+7. For nonce/barrier auxiliary reconciliation, recognize the exact ticket in a verified current document or recovered publication intent. A verified matching document/hash and settled directory sync proves committed. A verified predecessor plus settled startup recovery proving no dispatch/commit proves not-committed. Missing association, corrupt/permission failures or outstanding I/O remain unknown. In recovery-scan.ts, inspect and classify validated import intents against heads before transient cleanup; preserve bounded unresolved identity evidence and charge retained files under existing quotas. Discard old staged payload rights, never promote orphan bytes, and do not erase the only uncertain association before classifying it. Read-only reconciliation must be possible while mutation admission is fenced; writing a status marker must not be used to bypass that fence. Metadata writes always use a current owner after reconciliation. Existing internal `writeDocument` retains any unresolved ticket until reconciliation; do not lose it in a thrown generic error and retry with a fresh ticket.
+8. `tagImport` and `WorkerSources.appendMapped` use the durable publicationTicket association instead of requiring equality to `plan.items[].ticket`. Still compare original target/metadata, tag, source and mapped hashes and length. Restrict plan enumeration to `import/` keys; nonce/barrier documents must not be passed to loadImport. Reserve once, tag before first append/seal, use sequential ≤256 KiB chunks and existing quota/CAS primitives.
+9. Implement renderer registration as a discriminated source binding with no filesystem capability. `resolvePreferences` requires a registered worker-installed renderer descriptor, exact current owner/target namespace, matching descriptor allowlist and a consumed strict nonce document at `nonce/<ref.nonce>`. Read through the rooted store's verified auxiliary reader, recompute digest and compare both the ref and document digest. Verify historical scope/raw consistency, without demanding its epoch equal the current epoch. Do not execute a mapper during resolution.
+10. Retain a bounded `{evidence,bytes}` renderer binding in the worker, charged to existing metadata/scratch limits. Recheck that the pinned consumed record still matches on inventory/read/map. Inventory returns exactly one `"preferences"` format-1 item; read returns bounded slices; map calls the installed pure descriptor on the same bytes. Before binding, inventory returns blocked, read/map reject. All-null is present. Ref changes during an unfinished plan, wrong kind/descriptor/namespace/digest, missing/issued/corrupt evidence or permission failure reject. No file fallback.
+11. Add strict argument validators for `imports.admit` = tuple `[owner,boundedId,boundedKey]` and `sources.resolvePreferences` = tuple `[strictObject({descriptorId,owner,evidence:strictObject({nonce,digest})})]`. Preserve transport version 1, the existing operation queue and all frame/job limits. The method is reachable only through the host backend, never a plugin/preload handler.
+
+
+#### 5. T6 Step 1 — red source, codec and barrier tests
+
+Retain the existing source-limit/absence/snapshot tests. Add the source/nonce/barrier cases from section 12 before implementing their exports. Instantiate typed backends with the amended methods; use separate durable documents, live ticket state and atomic tagged heads in fixtures. The tests must not implement the expected state machine inside an untyped callback used as the production code.
+
+Run the scoped source test command already in T6 and show a missing-export/assertion red result. Do not launch Electron in these unit files.
+
+
+#### 6. T6 Step 2 — pure source validation and codecs
+
+Keep `IMPORT_LIMITS`, `assertInventory`, `classifySourceError`, `snapshotBytes` and scope comparison. Complete null/type/extra-key guards and implement the exact helpers/types in section 3. File reads/root containment stay in T2. `classifySourceError` maps only actual ENOENT to absent; no catch-all or message-string heuristic.
+
+Descriptor validation requires a unique bounded namespaced ID, a fixed targetSourceKey, supported positive versions, unique renderer allowlist, and renderer format 1 where applicable. Maintain the host's descriptor registry; never serialize descriptor functions. Do not register a live Lab/device/preferences product mapper in foundations.
+
+
+#### 7. T6 Step 3 — journal wrappers and auxiliary publication
+
+Implement these exported wrappers in import-journal.ts. Import all port/data types from engine-port.ts; descriptor/auxiliary types are type-only imports from import-sources.ts.
+
+```ts
+export declare function loadImport(
+  imports: DurableImportPort, owner: PersistenceOwner,
+  descriptor: LegacyImportDescriptor,
+): ReturnType<DurableImportPort["load"]>;
+export declare function planImport(
+  imports: DurableImportPort, owner: PersistenceOwner,
+  descriptor: LegacyImportDescriptor, plan: ImportPlan,
+): Promise<void>;
+export declare function recordImport(
+  imports: DurableImportPort, owner: PersistenceOwner,
+  id: string, evidence: ImportItemEvidence,
+): Promise<void>;
+export declare function reconcileImport(
+  imports: DurableImportPort, owner: PersistenceOwner, plan: ImportPlan,
+): ReturnType<DurableImportPort["load"]>;
+export declare function publishImportDocument(
+  backend: PersistenceBackend, document: ImportAuxiliaryDocument,
+): ReturnType<PersistenceEnginePort["publish"]>;
+```
+
+1. `loadImport` derives the stable ID, calls imports.load with the current owner, strictly validates the stored document and original identities, and returns a defensive copy. Structural validation applies even to complete documents. Check complete before comparing the current descriptor's mapping/target schema versions: complete is terminal across version changes. For unfinished plans require exact mappingVersion/target schemas/preferences kind and frozen metadata. Reject unknown fields/formats/duplicate source keys/destination IDs, forged receipts, mismatched tag/import ID/item/source hash, invalid expected revision and invalid publicationTicket associations.
+2. `planImport` validates the full bounded plan, descriptorId/derived import ID, structural settings validationDigest/schema and one-to-one items; then calls imports.plan. The coordinator obtains and compares the committed digest through `backend.evidence.settingsDigest` before calling this wrapper; the wrapper does not invent a backend dependency. New plans contain no attempt associations. A repeated equal plan is idempotent, a changed plan fails. Never overwrite a plan to update its publication ticket, descriptor version or nonce.
+3. `recordImport` reloads and checks the item, state transition and exact publicationTicket preservation before calling imports.record. A committed receipt comes only from verified imports.reconcile/importReceipts; an explicit skip comes only from trusted core acceptance, never a mapper failure, cancellation, missing renderer or automatic policy. Before recording a skip, revoke/settle any attempt and require known non-commit; unknown I/O cannot become skipped/complete. Enforce this in imports.record as well. Tests may inject the trusted skip directly through this host port; do not add a public skip method.
+4. `reconcileImport` reloads first and returns terminal complete immediately. For every nonterminal item, reconcile its original ticket (which follows the latest attempt), inspect verified receipts and persist matching committed evidence using the stored actual publicationTicket. Preserve prior skips/receipts. If outcome is unknown, report blocked to run; record unknown only if the backend can durably write that status without crossing its uncertainty fence. If the status write is fenced, retain the existing pending/unknown document plus recovered unresolved intent and stop. Never swallow that failure and continue, create a replacement, or call complete. Re-read before returning.
+5. `publishImportDocument` is the sole T6 helper for nonce/barrier auxiliary publication, not a second import-plan store. Validate/copy/encode its supplied immutable document, reserve `document.ticket`, append ≤256 KiB chunks, seal with exact length/SHA-256, publish once, and call imports.reconcile on unknown. Return the actual disposition/receipt. The caller stores the exact pending document/promise before the first await; duplicate calls reconcile/join it instead of reserving its ticket twice. On prepublish failure/cancellation, abort/settle before cleanup. Unknown retains the ticket/document and gates further mutation. After restart consult recovered evidence before generating a fresh current-owner metadata ticket.
+6. Leave `finishImport`'s implementation intact. The adapter is responsible for strict evidence/receipt validation and durable completion. Call it only after a validated reload shows every item committed or explicitly skipped. Call `completionCases(owner,nonemptyPlan,typedImports)` at describe construction and reset its durable fixture before each case. Add publicationTicket fields to its item fixtures; do not weaken its existing assertions.
+
+
+#### 8. T6 Step 4 — complete legacy writer barrier
+
+1. Implement `createLegacyWriterBarrier` with the exact amended constructor. Validate unique descriptor bindings and admitted writer source keys; multiple distinct writer controls for the same source are allowed and all must freeze/settle. Maintain entries by descriptor and barrier ID, plus per-descriptor operation promises and one restoration promise. It may be called with an empty writer list; descriptors still make durable restoration possible.
+2. `restore()` calls every registered writer's `freezeAdmission()` synchronously before creating/awaiting asynchronous scans. Cache the promise, so repeated callers join it. Enumerate fixed descriptor namespaces with current importOwner using bounded auxiliary pages, inspect only admitted barrier keys, and strictly validate key/document/namespace bindings. Restore active and complete identities; reconcile unresolved metadata before any further publication. Do not run a mapper or optional source while restoring. Reject/block on unsupported/corrupt/permission/unknown evidence; all affected writers remain frozen.
+3. `enter(sourceKey,descriptorId)` first verifies the fixed descriptor binding and synchronously freezes **all** matching writer controls before its first await, including while restore is pending. Join an existing entry promise idempotently. Await restoration, retain an existing barrier identity if present, otherwise allocate a canonical barrier handle and current-owner metadata ticket for an active document. Store pending state before publishing. Only after the active marker is confirmed durable await every matching `settled()`; only then resolve the handle. No inventory/snapshot collection before this resolves.
+4. Restore conservatively freezes even writers with no recovered marker. There is no thaw method in the frozen port; the import/consumer switch owns later reads, and legacy writers remain disabled. D170 may not start writers ahead of restore, nor may run use an admission window created by awaiting restoration before freeze.
+5. `complete(barrier)` looks up its original descriptor, reloads the corresponding import document by `importIdFor`, and requires durable complete. Publish a terminal barrier document with the same barrier/originalTicket and a fresh current-owner metadata ticket; if already complete, return. Unknown keeps the gate closed. Never thaw on complete, failure, cancellation, source disable or process loss. If the import marker committed before a crash but the barrier completion did not, a subsequent run repairs only the barrier completion, with zero mapping/item publication.
+
+
+#### 9. T6 Step 5 — coordinator, recovery and publication loop
+
+1. Implement the factory with exactly AM-29 inputs. Require `sources === backend.sources`; use the single backend. Build a fixed descriptor registry, per-descriptor queues shared by run/challenge/submit, synchronous retired-scope set, outstanding challenges, pending immutable metadata documents and captured-evidence index. Store returned values defensively. Serialize by descriptor (stronger than scope/descriptor), so two scopes cannot race one namespace import. Release queue entries in finally after known settlement; an unresolved durable operation remains represented and blocks later work.
+2. Start one restoration promise: invoke barrier.restore immediately, then enumerate known descriptor namespaces' bounded nonce evidence, validate documents, reconcile unresolved publications, retire old scopes and select captured evidence according to BM-25. Finish issued-with-raw consumption only after its raw document is confirmed durable, using a fresh current importOwner metadata ticket. Do not map, activate plugins or invent missing bytes. All async public operations await restoration; `retirePreferences` is synchronous and never waits for it.
+3. Run validates the supplied descriptor against the registry (use the installed registry object; do not execute caller functions) and loads its stable import ID. Structurally valid complete returns counts/complete immediately, including after mapping-version changes or user deletion; repair its barrier completion first. For unfinished work, check currentSource and signal before registration, inventory, each map and each new admission. Disabled/safe-mode returns pending and does zero mapper/schema/source read work. Read-only recovery of durable host metadata remains allowed.
+4. Enter the barrier before source collection and keep the new store's existing import-pending admission gate closed to ordinary user mutation/checkpoints until durable complete. Reconcile an existing plan's original/latest tickets and receipts before allocating any new item IDs or attempts. A foreign/newer target, changed descriptor/schema or unknown outcome returns blocked with prior progress retained. Nonterminal confirmed non-commit is the only path toward publication.
+5. Register with `{descriptorId:descriptor.id,mapperId:descriptor.id,sourceKind:descriptor.sourceKind}`. For a renderer plan use exactly its preferencesEvidence; for a new renderer plan select the sole restored captured evidence, completing consumption first if necessary. No evidence means pending, not absent. Call `sources.resolvePreferences({descriptorId,owner:importOwner(targetSourceKey),evidence})` before inventory/map. A different captured snapshot cannot replace an unfinished plan's reference. A new snapshot for a stale/retired nonce is never used to repair a plan.
+6. Inventory is complete bounded metadata, ≤4096 candidate names/512 items, processed in batches ≤64. Reject duplicate keys and every unsupported source format. Only verified absent or a verified empty file inventory can produce an empty plan; renderer evidence always produces its single present item. Permission/format/containment errors block. Compare the entire inventory key/format/source-hash set to an existing unfinished plan before resuming; additions/deletions count as input-changed, not just changes to the next item.
+7. For a new nonempty plan map one item at a time in the worker. Validate source hash/format, mapped kind/schema/hash/length/metadata against the descriptor and committed settings validation digest. Allocate a host record ID/revision/timestamps once, or freeze the settings target/expected revision. Build original immutable tickets and unchanged tags; release each planning pin before mapping the next item. Set preferencesEvidence exactly or null. Atomically persist the full bounded plan before destination reserve. No partial plan publication, full payload in main, guessed schema digest or mapping call on main.
+8. For each nonterminal item, re-read its evidence, remap in the worker, and compare both hashes, length and all mapped target/schema/metadata facts to the immutable plan. Call `imports.admit(currentOwner,plan.id,item.key)` **after** remap validation. This persists a current publication attempt; it does not reserve the payload. If source/signal changes while awaiting admission, revoke/abort the attempt before any publication and retain a conservative blocker. Do not pass `item.ticket` to reserve.
+9. Retain the existing Step 5 `publishMapped` implementation with this exact signature change:
+
+   ```ts
+   async function publishMapped(
+     backend: PersistenceBackend, sources: LegacySourceResolver,
+     item: ImportPlannedItem, mapped: LegacyMappedItem,
+     ticket: PublicationTicket, signal: AbortSignal,
+   ): Promise<Awaited<ReturnType<PersistenceEnginePort["publish"]>>>
+   ```
+
+   Define this helper inside the serialized descriptor run so it closes over that run's descriptor and factory input. Compare ticket metadata/target to original item and use **ticket** in reserve, tagImport, appendMapped, seal, publish and reconcile; preserve item.tag. Do not create a modified ImportPlannedItem to trick validation. Keep ≤256 KiB sequential progress checks, exact end offset/done, seal hash and a single publish. Before each consequential operation call `signal.throwIfAborted()` and reject if `!input.currentSource(descriptor.targetSourceKey)`; no new callback/factory port is needed. Reconcile unknown, never republish it.
+10. Known committed: record the verified receipt with the actual publicationTicket and only then proceed. Known not-committed: abort/settle, release the mapped pin, return blocked; a subsequent explicit run may re-admit under BM-24 deadlines. Unknown: retain pin/attempt/namespace fence, return blocked; release only after known settlement. A pin is freed automatically on worker destruction and is never reconstructed as retry authority after restart. Exceptions after reserve use abort/reconcile before release; exceptions before reserve release the planning pin. Cancellation cannot return success or erase dispatched evidence.
+11. Reload all evidence. If every item is committed/skipped, call the existing finishImport, await a known durable complete marker, then barrier.complete. Return complete, or complete-empty for a confirmed zero-item file plan; otherwise blocked/pending as above. `completedItems` counts durable committed plus skipped items; `totalItems` is persisted plan length, zero before a plan. These counts never come from attempted publishes or mapped pins. Skips keep their reasons in the marker's durable item evidence. Marker fingerprints/revisions/hashes/counts derive from the frozen plan/evidence, not current source data.
+
+
+#### 10. T6 Step 6 — challenge, raw evidence, consumption and replay
+
+1. `issuePreferences({descriptorId,scope})` awaits restoration in the descriptor queue, verifies an allowlisted renderer descriptor/currentSource/currentScope and not synchronously retired, then enters the source barrier and waits for writers to settle **before returning a challenge**. Freeze/copy the allowlist. Reject completed imports as stale and captured-but-unreconciled/existing-plan evidence as import-pending; do not supersede it with another challenge.
+2. At most one outstanding no-raw challenge per scope/descriptor; a repeated request joins its persistence and returns the same nonce. Generate a canonical UUID nonce, issued document with raw/digest null, and current-owner metadata ticket. Persist/reconcile before returning `{nonce,scope,descriptorId,keys}`. Unknown does not return a usable challenge. A later scope can obtain a fresh challenge only if no captured evidence/unfinished plan would be displaced; old no-raw challenges remain retired historical evidence.
+3. `acceptPreferencesEvidence(snapshot)` validates shape/bounds and deep-copies the snapshot immediately, before awaiting any queue/restoration. Look up the host-issued nonce; never infer descriptor/allowlist from caller keys. Recheck currentScope, currentSource and the synchronous retirement set after waits and immediately before admitting raw evidence. Exact scope includes both fields. A stale/retired window submission fails even if bytes/digest equal a durable old record.
+4. Under the descriptor queue, use snapshotBytes/digest once on the copied snapshot. For a consumed same-current-scope challenge, compare exact snapshot bytes/digest: identical returns reconciled; changed fails. An issued record with captured raw bytes accepts only identical continuation/reconciliation. No new snapshot can replace durable raw evidence.
+5. For no-raw issued state, build a new immutable issued-with-raw document/ticket retaining originalTicket/nonce/scope/allowlist. Persist and reconcile it first. If unknown return pending and retain the exact pending document; consume must not run. On known failure leave issued/unconsumed and propagate an error. No mutable renderer reference survives into persisted bytes.
+6. After raw evidence is known durable, publish a consumed document with exactly the same snapshot/digest and a fresh current-owner metadata ticket. Publication of each transition is atomic; consumption is not a mutable in-memory flag. If retirement occurs after raw publication was admitted, reconcile that host-owned completion, retain the durable capture and reject the retiring caller with stale; host restoration may finish its consumption. Do not use a late renderer callback as renewed authority.
+7. Return accepted only after first known durable consumption; reconciled only when a prior identical accepted/in-flight transition is now confirmed; pending only while a publication is unresolved. `acceptPreferences` delegates and throws `Error("import-pending")` on pending, so its Promise<void> never resolves as false acceptance. It does not busy-wait or issue another nonce.
+8. `retirePreferences(scope)` synchronously adds the exact scope to the retired set and invalidates outstanding submission authority before returning, even during restore/issue/submit awaits. Preserve durable evidence. Do not delete uncertain records, thaw barriers, cancel dispatched filesystem work as if rolled back, or return the old challenge to a new scope.
+9. On restart, a plan's pinned reference wins selection. Without a plan, a sole captured issued-with-raw/consumed record is recoverable; multiple differing captured candidates block. No-raw old challenges are not absent-source proof. Internal recovery may consume/resolve historical bytes under current host metadata authority, while every old-window submit remains rejected. This is how import resumes with no renderer.
+
+
+#### 11. T6 Step 7 and Step 8 — fixtures, commands and handoff
+
+Keep the existing pure synthetic file descriptor. Add a pure synthetic renderer descriptor in the same import-fixtures.ts that accepts source format 1, validates the exact raw snapshot and produces a deterministic test record containing those bytes. Export it as `syntheticPreferencesImportDescriptor`; use ID `test.synthetic-preferences`, target `builtin:test.preferences`, key allowlist `["test.preference"]`, record kind `test.preferences`, schemaVersion 1, mediaType `application/json`, byteLength/hash from the input. It is registered only by the private test worker wrapper, never shipped as a real feature migration.
+
+Implement the full tests below and run:
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/persistence/import-sources.test.ts src/main/plugins/persistence/import-journal.test.ts src/main/plugins/persistence/import-coordinator.test.ts
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/persistence/engine-port.test.ts src/main/plugins/persistence/atomic-store.test.ts src/main/plugins/persistence/namespace.test.ts src/main/plugins/persistence/recovery-scan.test.ts src/main/plugins/persistence/worker.test.ts src/main/plugins/persistence/contract.test.ts
+pnpm check:desktop
+```
+
+Use T7's existing real Electron/worker runner and import verifier commands for integration, not Electron imports inside these Vitest files. Add observations to the existing import-restart execution/assertions without inventing a second producer or changing BM-20's evidence vocabulary. Store detailed assertions in the existing test output.
+
+Step 8 retains the future implementation-owner commit instructions and seven-file T6 write set, but its handoff must name the amended F/T2 prerequisites and T7 changed-epoch/evidence verification. The B2 plan fixer does not run those future commits while editing the plan.
+
+
+#### Mandatory checkbox test steps (fix8 §12)
+
+Use the quoted row labels as test names (parameterized subcases retain each concrete assertion). All filenames below are relative to `apps/desktop/src/main/plugins/persistence/` unless a `tests/desktop/` file is specified. These are executable-test requirements for the implementation pass, not prose acceptance.
+
+- [ ] Test `T0/T2 contract.test.ts, engine-port.test.ts`: assert Exact types for admit, publicationTicket, preferencesEvidence, resolvePreferences and amended barrier constructor; all backend doubles implement them; unchanged PublicationTicket, ImportTag, renderer DTO, plugin wire versions/methods and limits.
+- [ ] Test `T6 import-sources.test.ts: shape`: assert Nonobject/null/wrong-type/extra-key snapshot, scope and entries; malformed handles; wrong nonce/scope/key; duplicate/missing/foreign keys; allowlist duplicates; raw string versus null preserved; invalid raw types; exact UTF-8 hashing with multibyte strings and whitespace; caller mutation after submit does not alter captured bytes.
+- [ ] Test `T6 import-sources.test.ts: bounds`: assert 128/129 entries, 64 KiB/+1 encoded snapshot, 128/+1-byte IDs/item keys, 256/+1-byte skip reason, 256/+1-byte tag; hashed barrier key stays within 128 bytes for maximum descriptor; nonce/barrier document parse/size/state/ticket binding failures.
+- [ ] Test `T6 import-sources.test.ts: source`: assert 4096/4097 candidate names before filtering, 512/513 items, 64-item batches, 8 MiB/+1 records, 64 KiB/+1 device-settings; regular file/UUID basename/link count/containment; ENOENT versus EACCES/EPERM/EIO/EROFS/ENOTDIR; arbitrary mapper ID/path and wrong source kind rejected.
+- [ ] Test `T6 import-sources.test.ts: barrier`: assert Every matching writer freezes synchronously before first await; unrelated source not frozen by enter; restore freezes all before first await; settle-before-inventory/challenge; duplicate enter/restore/complete join; no writers still restores descriptors; active/complete restart; failed/unknown marker stays frozen; no complete before import marker; completed writer never thaws.
+- [ ] Test `T6 import-journal.test.ts: strictness`: assert Format/extra keys/duplicate item or target IDs/missing evidence/foreign namespace or tag; wrong source/mapped digest/length/schema/metadata/CAS; current ticket substituted into original plan rejected; original historical owner allowed only as evidence; invalid receipt/commit ID/revision and forged complete rejected; 2 MiB aggregate/+1 including attempts and nonce refs.
+- [ ] Test `T6 import-journal.test.ts: transitions`: assert Plan idempotent only on exact plan; record cannot change attempt; pending/unknown do not finish; invoked nonempty completionCases; explicit skip persists reason and counts only after non-commit/settlement, unknown cannot be skipped; failed/unknown receipt/complete marker cannot report success; already complete terminal after deletion/version change; no second finishImport/store.
+- [ ] Test `T2 atomic-store.test.ts: epoch`: assert Old ticket reserve/append/seal/publish denied under new host; held-lock loss denied; original-ticket reconciliation finds matching new-attempt tagged head/receipt without granting rights; wrong full ticket/owner/namespace denied; new admission preserves target ID/revision/metadata/CAS/hash/tag; only id/current owner/deadline differ.
+- [ ] Test `T2 atomic-store.test.ts: attempts`: assert Initial null → durable attempt before payload reserve; duplicate unreserved admit returns same ticket; two concurrent admit calls serialize; current receiving attempt revoked/settled before replacement; same-host earlier deadline/TTL never renews; expired same-host retry blocked; new-host fresh deadline remaps without transient staging; completed/skipped/committed items cannot admit.
+- [ ] Test `T2 atomic-store.test.ts/recovery-scan.test.ts`: assert Crash/failure before and after attempt-association publish and receipt, before reserve, before/after destination publish and before receipt record; unresolved metadata/destination never permits second publication; prior attempt slot replaced only after known non-commit; permission/corrupt/missing association yields blocked/unknown; foreign/newer target conflicts; verified expected head/no live dispatch is required for non-commit.
+- [ ] Test `T2 namespace.test.ts/atomic-store.test.ts`: assert Strict attempt/ref/document validators, correct commitId-to-actual-ticket binding, atomic tag plus head and object digest; no fabricated original-ticket receipt; terminal durable receipt survives later target modification/deletion; nonce/barrier auxiliary docs are not parsed as plans; historical auxiliary reconciliation while writes remain fenced; original metadata ticket retained on unknown.
+- [ ] Test `T2 worker.test.ts: resolver`: assert Correct persisted consumed nonce resolves after worker/host epoch change without renderer; issued/no raw, issued-with-raw, missing, unreadable, corrupt, unsupported format, digest mismatch, altered raw/scope/allowlist, wrong descriptor/kind/owner/namespace/ref fail; resolution executes zero mapper calls; no renderer filesystem root/fallback.
+- [ ] Test `T2 worker.test.ts: map`: assert Resolved inventory exactly one format-1 preferences item, all-null remains present, read bounds and exact bytes, map sees same bytes/hash, no raw bytes in resolver request; plan ref cannot be swapped; stale handle/ref and changed persisted evidence reject; appendMapped matches actual attempt and plan, rejects foreign ticket/offset/hash/schema and >256 KiB chunks; pins released only on known outcome.
+- [ ] Test `T2 worker.test.ts: transport/budgets`: assert Strict imports.admit/sources.resolvePreferences tuples reject extra fields, functions, paths and malformed IDs; no plugin/preload registration; 32 pending/8 MiB host/1 MiB source/four jobs and scratch limits still enforced; restore creates one worker/uses same lock; unknown worker loss preserves honest outcome.
+- [ ] Test `T6 import-coordinator.test.ts: ordering`: assert Factory restore precedes all async admission; synchronous retire wins during restore; descriptor serialization across run/issue/submit and multiple scopes; complete check before mapping; barrier before collection; source checks before registration/inventory/map/admit; safe-mode/disabled zero mapper/schema reads; descriptor functions never called on main.
+- [ ] Test `T6 import-coordinator.test.ts: plan`: assert Full inventory comparison detects added/deleted/changed files; source format/mapping version/settings schema/validation digest/record schema/target mismatch; map twice with source/mapped/metadata change blocks before reserve; full durable plan before first item; unique assigned IDs; planning pins released one at a time; all-null renderer mapped, no renderer pending; missing files versus permission distinct.
+- [ ] Test `T6 import-coordinator.test.ts: outcomes`: assert Known committed repairs missing receipt; unknown blocks without retry publish/admit/complete; known non-commit blocks until explicit retry; cancellation/failure at reserve/tag/append/seal/before publish/after dispatch settles before releasing; no success from queued attempt; retained skips/progress; complete-marker-before-barrier crash repairs barrier without mapping.
+- [ ] Test `T6 import-coordinator.test.ts: nonce`: assert Durable challenge before return; no challenge before writer settlement; one outstanding nonce; wrong nonce/descriptor/window/epoch/allowlist rejected; identical current replay reconciles, changed replay rejected; concurrent submissions share one accepted transition; raw persistence failure never consumes; unknown raw/consumption stays pending; raw bytes durable while still issued; consumed contains identical bytes/digest; compatibility accept rejects pending.
+- [ ] Test `T6 import-coordinator.test.ts: restart`: assert Restart after challenge, raw capture, consumption, plan, attempt association, item head, receipt, skip, import marker and barrier completion; three new host epochs retain IDs/count/bytes/skips; consumed/no-renderer resumes; issued-with-raw finishes host consumption; no-raw remains pending; old-window submit always rejected; multiple differing captured records block; unfinished plan pins exact ref and rejects substitution.
+- [ ] Test `T6 import-coordinator.test.ts: terminal/load`: assert User deletion and mapping-version upgrade never reimport complete records; completion counts only durable committed/skipped items; originals byte-for-byte unchanged; empty file plan only with trusted empty/absent inventory; no truncated completion on limits/quota; 50 × 8 MiB streamed with one coordinator mapped payload at a time.
+- [ ] Test `T7 plugin-persistence-import.test.mjs + existing producer/wrapper`: assert Repeat actual process kill/reopen at before/after plan, attempt association, destination head, receipt, skip, raw evidence, consumption, complete marker and barrier marker; genuinely different hostEpoch each launch; assert one committed destination per item, stable IDs/count/bytes, original-byte hashes, barrier restored before writer start, no publish while unknown, no deleted-record resurrection and persisted preferences mapped with renderer absent. Use actual worker/store and fault controls, not saved mock maps.
+- [ ] Test `D170/V170 existing bridge/composition tests`: assert Same fixed descriptors/current-owner callbacks supplied; restoration before writers/ordinary requests; renderer sender independently validated; getItem throw distinct from null; old bootstrap cannot replay nonce; backend resolver is host-only and ordinary public contracts unchanged.
+
+Every row names its owning file and test name using the ruling’s case label. For rows without a colon, use the entire owner/file label as the test name. Run all fault, boundary, aggregate-budget and cross-owner cases; no helper-only or expected-boolean substitute is permitted.
 
 - [ ] **Step 1: Pin source limits, absence, and renderer evidence before implementing them**
 
@@ -11405,6 +12157,58 @@ describe("legacy source evidence", () => {
 });
 ```
 
+Append these codec cases to the same source test file before implementing the exports:
+
+```ts
+import { createHash } from "node:crypto";
+import { snapshotDigest, importIdFor, barrierKeyFor, parseNonceDocument, parseBarrierDocument,
+  type LegacyPreferencesSnapshot } from "./import-sources.js";
+const expectInvalidSnapshot=(value:unknown)=>expect(()=>snapshotBytes(value as LegacyPreferencesSnapshot,["test.preference"])).toThrow();
+it.each([null,[],42,"x",{}, {nonce,scope:null,entries:[]},{nonce,scope,entries:null},
+  {nonce,scope,entries:[null]}, {...snapshot(),extra:true}, {...snapshot(),nonce:"not-a-handle"},
+  {...snapshot(),scope:{...scope,extra:true}}, {...snapshot(),entries:[{key:"test.preference",raw:1}]},
+  {...snapshot(),entries:[{key:"test.preference",raw:null,extra:true}]}])("rejects malformed raw evidence %#",expectInvalidSnapshot);
+it("hashes exact ordered UTF-8 entries including null and whitespace",()=>{
+  const raw={nonce,scope,entries:[{key:"test.preference",raw:"  中文\n\t  "}]};
+  const bytes=snapshotBytes(raw,["test.preference"]);
+  expect(Buffer.from(bytes).toString("utf8")).toBe(JSON.stringify(raw));
+  expect(snapshotDigest(raw,["test.preference"])).toBe(createHash("sha256").update(bytes).digest("hex"));
+  expect(snapshotDigest(raw,["test.preference"])).not.toBe(snapshotDigest(snapshot(),["test.preference"]));
+  expect(()=>snapshotBytes(raw,["test.preference","test.preference"])).toThrow();
+  raw.entries[0]!.raw="changed";expect(Buffer.from(bytes).toString()).toContain("中文");
+});
+it("accepts exact key and byte bounds then rejects one over",()=>{
+  const keys=Array.from({length:128},(_,i)=>`k${i}`),raw={nonce,scope,entries:keys.map(key=>({key,raw:null}))};
+  expect(snapshotBytes(raw,keys).length).toBeGreaterThan(0);
+  expect(()=>snapshotBytes({...raw,entries:[...raw.entries,{key:"extra",raw:null}]},[...keys,"extra"])).toThrow();
+  const sized={nonce,scope,entries:[{key:"test.preference",raw:""}]};
+  const overhead=snapshotBytes(sized,["test.preference"]).length;
+  sized.entries[0]!.raw="x".repeat(65536-overhead);
+  expect(snapshotBytes(sized,["test.preference"])).toHaveLength(65536);
+  sized.entries[0]!.raw+="x";expect(()=>snapshotBytes(sized,["test.preference"])).toThrow();
+  expect(barrierKeyFor("a".repeat(128))).toHaveLength(72);
+  expect(importIdFor("test.synthetic-import","builtin:test.synthetic")).toHaveLength(71);
+});
+it("parses only bound nonce and barrier documents",()=>{
+  const sourceKey="builtin:test.preferences",descriptorId="test.synthetic-preferences";
+  const ticket={id:nonce,owner:{sourceKey,pluginId:"test.preferences",generation:1,hostEpoch:scope.hostEpoch,
+    processEpoch:scope.hostEpoch},deadlineMonotonicMs:10000,metadata:{kind:"import",key:"nonce/"+nonce},target:{kind:"import",key:"nonce/"+nonce}};
+  const raw=snapshot(),digest=snapshotDigest(raw,["test.preference"]);
+  const document={formatVersion:1,kind:"nonce",sourceKey,descriptorId,nonce,scope,allowlist:["test.preference"],
+    state:"consumed",raw,digest,originalTicket:ticket,ticket};
+  const encode=(value:unknown)=>Buffer.from(JSON.stringify(value));
+  expect(parseNonceDocument(encode(document)).raw).toEqual(raw);
+  for(const patch of [{formatVersion:2},{extra:true},{digest:"0".repeat(64)},{raw:null},
+    {allowlist:["foreign"]},{nonce:scope.hostEpoch},{sourceKey:"builtin:foreign"},
+    {raw:{...raw,scope:{...scope,workbenchInstance:nonce}}}])expect(()=>parseNonceDocument(encode({...document,...patch}))).toThrow();
+  const key=barrierKeyFor(descriptorId),barrierTicket={...ticket,metadata:{kind:"import",key},target:{kind:"import",key}};
+  const barrier={formatVersion:1,kind:"barrier",sourceKey,descriptorId,barrier:nonce,state:"active",originalTicket:barrierTicket,ticket:barrierTicket};
+  expect(parseBarrierDocument(encode(barrier)).barrier).toBe(nonce);
+  for(const patch of [{kind:"nonce"},{state:"issued"},{descriptorId:"test.other"},{sourceKey:"builtin:other"},{extra:true}])
+    expect(()=>parseBarrierDocument(encode({...barrier,...patch}))).toThrow();
+});
+```
+
 Run red:
 
 ```bash
@@ -11434,7 +12238,7 @@ export type InventoryFact = {
 };
 export function assertInventory(candidateCount: number, entries: readonly InventoryFact[]): void {
   if (!Number.isSafeInteger(candidateCount) || candidateCount < entries.length ||
-      candidateCount > IMPORT_LIMITS.candidateNames) throw new Error("inventory-limit");
+      candidateCount > IMPORT_LIMITS.candidateNames || entries.length > IMPORT_LIMITS.items) throw new Error("inventory-limit");
   for (const file of entries) {
     if (!uuidFile.test(file.name) || !file.regular || !file.contained || file.links !== 1 ||
         !Number.isSafeInteger(file.bytes) || file.bytes < 0 || file.bytes > IMPORT_LIMITS.recordBytes)
@@ -11448,29 +12252,108 @@ export function classifySourceError(error: unknown): "absent" | "blocked" {
 export function snapshotBytes(
   snapshot: LegacyPreferencesSnapshot, allowlist: readonly string[],
 ): Uint8Array {
-  if (Object.keys(snapshot).sort().join(",") !== "entries,nonce,scope" ||
-      !canonicalHandle.test(snapshot.nonce) ||
-      Object.keys(snapshot.scope).sort().join(",") !== "hostEpoch,workbenchInstance" ||
-      !canonicalHandle.test(snapshot.scope.hostEpoch) || !canonicalHandle.test(snapshot.scope.workbenchInstance))
+  const object = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!object(snapshot) || Object.keys(snapshot).sort().join(",") !== "entries,nonce,scope" ||
+      typeof snapshot.nonce !== "string" || !canonicalHandle.test(snapshot.nonce) ||
+      !object(snapshot.scope) || Object.keys(snapshot.scope).sort().join(",") !== "hostEpoch,workbenchInstance" ||
+      typeof snapshot.scope.hostEpoch !== "string" || !canonicalHandle.test(snapshot.scope.hostEpoch) ||
+      typeof snapshot.scope.workbenchInstance !== "string" || !canonicalHandle.test(snapshot.scope.workbenchInstance) ||
+      !Array.isArray(snapshot.entries) || !Array.isArray(allowlist) ||
+      allowlist.some(key => typeof key !== "string" || !key || Buffer.byteLength(key) > 128))
     throw new Error("snapshot-shape");
   if (allowlist.length > IMPORT_LIMITS.preferenceKeys ||
       snapshot.entries.length > IMPORT_LIMITS.preferenceKeys) throw new Error("snapshot-limit");
-  const allowed = new Set(allowlist);
+  const allowed = new Set(allowlist), seen = new Set<string>();
   if (allowed.size !== allowlist.length || snapshot.entries.length !== allowed.size)
     throw new Error("snapshot-keys");
-  const seen = new Set<string>();
   for (const entry of snapshot.entries) {
-    if (Object.keys(entry).sort().join(",") !== "key,raw" ||
-        !allowed.has(entry.key) || seen.has(entry.key) ||
+    if (!object(entry) || Object.keys(entry).sort().join(",") !== "key,raw" ||
+        typeof entry.key !== "string" || !allowed.has(entry.key) || seen.has(entry.key) ||
         (entry.raw !== null && typeof entry.raw !== "string")) throw new Error("snapshot-keys");
     seen.add(entry.key);
   }
-  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
+  const copy: LegacyPreferencesSnapshot = {nonce:snapshot.nonce,
+    scope:{hostEpoch:snapshot.scope.hostEpoch,workbenchInstance:snapshot.scope.workbenchInstance},
+    entries:snapshot.entries.map(entry=>({key:entry.key,raw:entry.raw}))};
+  const bytes = new TextEncoder().encode(JSON.stringify(copy));
   if (bytes.byteLength > IMPORT_LIMITS.preferenceBytes) throw new Error("snapshot-limit");
   return bytes;
 }
 const sameScope = (a: CoreWindowScope, b: CoreWindowScope): boolean =>
   a.hostEpoch === b.hostEpoch && a.workbenchInstance === b.workbenchInstance;
+
+// These codecs are pure: no filesystem, coordinator instance or renderer authority.
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import { publicationTicketSchema } from "./namespace.js";
+import type { LegacyPreferencesEvidenceRef, PersistenceOwner, PublicationTicket } from "./engine-port.js";
+export type LegacyNonceDocument = Readonly<{
+  formatVersion:1; kind:"nonce"; descriptorId:string; sourceKey:string;
+  nonce:Handle; scope:CoreWindowScope; allowlist:readonly string[];
+  state:"issued"|"consumed"; raw:LegacyPreferencesSnapshot|null; digest:Sha256|null;
+  originalTicket:PublicationTicket; ticket:PublicationTicket;
+}>;
+export type LegacyBarrierDocument = Readonly<{
+  formatVersion:1; kind:"barrier"; descriptorId:string; sourceKey:string; barrier:Handle;
+  state:"active"|"complete"; originalTicket:PublicationTicket; ticket:PublicationTicket;
+}>;
+export type ImportAuxiliaryDocument = LegacyNonceDocument | LegacyBarrierDocument;
+const sha256 = (bytes:Uint8Array):Sha256 => createHash("sha256").update(bytes).digest("hex");
+export function importIdFor(descriptorId:string,sourceKey:string):string {
+  return "import/"+sha256(new TextEncoder().encode(JSON.stringify([descriptorId,sourceKey])));
+}
+export function barrierKeyFor(descriptorId:string):string {
+  return "barrier/"+sha256(new TextEncoder().encode(descriptorId));
+}
+export function snapshotDigest(snapshot:LegacyPreferencesSnapshot,allowlist:readonly string[]):Sha256 {
+  return sha256(snapshotBytes(snapshot,allowlist));
+}
+const boundedId = z.string().min(1).refine(value=>Buffer.byteLength(value)<=128 && !value.includes("\0"));
+const descriptorIdSchema = boundedId.refine(value=>/^[a-z][a-z0-9-]*(?:[.:][a-z0-9-]+)+$/.test(value));
+const handleSchema = z.string().regex(canonicalHandle);
+const scopeSchema = z.strictObject({hostEpoch:handleSchema,workbenchInstance:handleSchema});
+const rawSchema = z.strictObject({nonce:handleSchema,scope:scopeSchema,
+  entries:z.array(z.strictObject({key:boundedId,raw:z.string().nullable()})).max(128)});
+const commonAuxiliary = {formatVersion:z.literal(1),descriptorId:descriptorIdSchema,
+  sourceKey:z.string().min(1).max(160),originalTicket:publicationTicketSchema,ticket:publicationTicketSchema};
+const nonceSchema = z.strictObject({...commonAuxiliary,kind:z.literal("nonce"),nonce:handleSchema,
+  scope:scopeSchema,allowlist:z.array(boundedId).max(128),state:z.enum(["issued","consumed"]),
+  raw:rawSchema.nullable(),digest:z.string().regex(/^[0-9a-f]{64}$/).nullable()});
+const barrierSchema = z.strictObject({...commonAuxiliary,kind:z.literal("barrier"),barrier:handleSchema,
+  state:z.enum(["active","complete"])});
+function decodeAuxiliary(bytes:Uint8Array):unknown {
+  if(bytes.byteLength>IMPORT_LIMITS.journalBytes)throw new Error("size-limit");
+  return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
+}
+function checkAuxiliaryTickets(document:ImportAuxiliaryDocument,key:string):void {
+  for(const ticket of [document.originalTicket,document.ticket]) {
+    if(ticket.owner.sourceKey!==document.sourceKey || ticket.owner.pluginId!==document.originalTicket.owner.pluginId ||
+        ticket.metadata.kind!=="import" || ticket.metadata.key!==key ||
+        ticket.target.kind!=="import" || ticket.target.key!==key)throw new Error("evidence-binding");
+  }
+}
+export function parseNonceDocument(bytes:Uint8Array):LegacyNonceDocument {
+  const document=nonceSchema.parse(decodeAuxiliary(bytes));
+  checkAuxiliaryTickets(document,"nonce/"+document.nonce);
+  if(new Set(document.allowlist).size!==document.allowlist.length ||
+      (document.raw===null)!==(document.digest===null) ||
+      (document.state==="consumed" && document.raw===null) ||
+      document.originalTicket.owner.hostEpoch!==document.scope.hostEpoch)
+    throw new Error("evidence-binding");
+  if(document.raw && (document.raw.nonce!==document.nonce || !sameScope(document.raw.scope,document.scope) ||
+      snapshotDigest(document.raw,document.allowlist)!==document.digest))throw new Error("evidence-binding");
+  if(document.raw===null && !sameImportValue(document.originalTicket,document.ticket))
+    throw new Error("evidence-binding");
+  return structuredClone(document);
+}
+export function parseBarrierDocument(bytes:Uint8Array):LegacyBarrierDocument {
+  const document=barrierSchema.parse(decodeAuxiliary(bytes));
+  checkAuxiliaryTickets(document,barrierKeyFor(document.descriptorId));
+  if(document.state==="active" && document.originalTicket.id===document.ticket.id &&
+      !sameImportValue(document.originalTicket,document.ticket))throw new Error("evidence-binding");
+  return structuredClone(document);
+}
 
 ```
 
@@ -11478,15 +12361,115 @@ Run the Step 1 command again. Expected: all source/snapshot tests pass, with no 
 
 - [ ] **Step 3: Pin the durable journal contract and immutable plan invariants**
 
-In `import-journal.ts`, import `ImportPlan`, `ImportPlannedItem`, `ImportItemEvidence`, `DurableImportPort`, `PublicationTicket` from `engine-port.ts`. Implement strict formatVersion-1 validation before calling `backend.imports.plan` and after `load`. Reject unknown keys/format, duplicate source keys or record IDs, mismatched target/schema/tag/owner, changed mapping version on an unfinished plan and invalid receipts. Limit IDs/item keys/skip reasons to 128/128/256 UTF-8 bytes, items to 512 and encoded journal plus evidence to 2 MiB; process at most 64 metadata items per batch. The immutable ticket fixes target, schema, expected revision and assigned record ID; retain source and mapped digests separately. Settings tickets use the committed validation digest from `backend.evidence.settingsDigest`, never a substituted current-resource digest. Reject a settings target/schema mismatch before reserve.
+Implement the wrappers below in `import-journal.ts`. The namespace schemas are T2's strict shared validators; they do not acquire a store or publish. Only `DurableImportPort` owns plan/evidence mutations. Original tickets remain immutable evidence across epochs.
 
-Implement journal operations as direct calls to the one durable adapter: `load`, `plan`, `tagImport`, `importReceipts`, `record`, `reconcile`, `complete`. Completion must verify every item has a committed receipt or an explicit durable skip, including its reason. A completed plan remains terminal after user deletion; never recreate the record. An unfinished changed mapping/schema/target is blocked. The stable import ID derives from descriptor ID and target source, excluding mappingVersion. No local encoded JSON journal replaces the adapter's atomic store.
+```ts
+import type { DurableImportPort, ImportItemEvidence, ImportPlan, PersistenceOwner,
+  PersistenceBackend, PersistenceEnginePort, PublicationTicket } from "./engine-port.js";
+import type { LegacyImportDescriptor, ImportAuxiliaryDocument } from "./import-sources.js";
+import { importIdFor, parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
+import { importDocumentSchema, importPlanSchema, importItemEvidenceSchema,
+  sameImportValue } from "./namespace.js";
+import { createHash } from "node:crypto";
+function checkDescriptor(plan:ImportPlan,owner:PersistenceOwner,descriptor:LegacyImportDescriptor,complete:boolean):void {
+  if(plan.id!==importIdFor(descriptor.id,owner.sourceKey) || plan.descriptorId!==descriptor.id ||
+      plan.targetSourceKey!==owner.sourceKey || descriptor.targetSourceKey!==owner.sourceKey ||
+      plan.items.some(item=>item.ticket.owner.pluginId!==owner.pluginId))throw new Error("input-changed");
+  if(complete)return;
+  if(plan.mappingVersion!==descriptor.mappingVersion ||
+      (plan.preferencesEvidence!==null)!==(descriptor.sourceKind==="renderer-preferences"))throw new Error("input-changed");
+  for(const item of plan.items) {
+    if(!descriptor.sourceFormatVersions.includes(item.sourceFormat))throw new Error("unsupported-format");
+    const metadata=item.ticket.metadata;
+    if(metadata.kind==="settings" && metadata.schemaVersion!==descriptor.targetSettingsSchemaVersion)
+      throw new Error("schema-mismatch");
+    if(metadata.kind==="record" && !descriptor.targetRecordSchemaVersions.includes(metadata.record.schemaVersion))
+      throw new Error("schema-mismatch");
+  }
+}
+export async function loadImport(imports:DurableImportPort,owner:PersistenceOwner,
+  descriptor:LegacyImportDescriptor):ReturnType<DurableImportPort["load"]> {
+  const saved=await imports.load(owner,importIdFor(descriptor.id,descriptor.targetSourceKey));
+  if(!saved)return null;
+  const checked=importDocumentSchema.parse({formatVersion:1,...saved});
+  checkDescriptor(checked.plan,owner,descriptor,checked.complete);
+  return structuredClone({plan:checked.plan,items:checked.items,complete:checked.complete});
+}
+export async function planImport(imports:DurableImportPort,owner:PersistenceOwner,
+  descriptor:LegacyImportDescriptor,plan:ImportPlan):Promise<void> {
+  const checked=importPlanSchema.parse(plan);checkDescriptor(checked,owner,descriptor,false);
+  const initial={formatVersion:1,plan:checked,items:checked.items.map(item=>({key:item.key,
+    state:"pending",receipt:null,skipReason:null,publicationTicket:null})),complete:false};
+  importDocumentSchema.parse(initial);
+  await imports.plan(owner,structuredClone(checked));
+}
+export async function recordImport(imports:DurableImportPort,owner:PersistenceOwner,id:string,
+  evidence:ImportItemEvidence):Promise<void> {
+  const next=importItemEvidenceSchema.parse(evidence),saved=await imports.load(owner,id);
+  if(!saved)throw new Error("missing-import-plan");
+  importDocumentSchema.parse({formatVersion:1,...saved});
+  const item=saved.plan.items.find(item=>item.key===next.key),prior=saved.items.find(item=>item.key===next.key);
+  if(!item || !prior || !sameImportValue(prior.publicationTicket,next.publicationTicket))throw new Error("input-changed");
+  if(prior.state==="committed" || prior.state==="skipped") {
+    if(!sameImportValue(prior,next))throw new Error("input-changed");return;
+  }
+  if(saved.complete)throw new Error("stale");
+  if(next.state==="committed") {
+    const verified=await imports.reconcile(item.ticket);
+    if(verified.disposition!=="committed" || !sameImportValue(verified.receipt,next.receipt))throw new Error("unverified-receipt");
+  }
+  // AtomicStore.recordImport revokes/settles the actual attempt before admitting a trusted skip.
+  if(next.state==="skipped" && (await imports.reconcile(item.ticket)).disposition!=="not-committed")
+    throw new Error("publish-uncertain");
+  await imports.record(owner,id,structuredClone(next));
+}
+export async function reconcileImport(imports:DurableImportPort,owner:PersistenceOwner,
+  plan:ImportPlan):ReturnType<DurableImportPort["load"]> {
+  let saved=await imports.load(owner,plan.id);
+  if(!saved)throw new Error("missing-import-plan");
+  importDocumentSchema.parse({formatVersion:1,...saved});
+  if(!sameImportValue(saved.plan,plan))throw new Error("input-changed");
+  if(saved.complete)return structuredClone(saved);
+  for(const item of saved.plan.items) {
+    const prior=saved.items.find(e=>e.key===item.key)!;
+    if(prior.state==="committed" || prior.state==="skipped")continue;
+    const result=await imports.reconcile(item.ticket);
+    if(result.disposition==="unknown")throw new Error("publish-uncertain");
+    if(result.disposition==="committed") {
+      if(!result.receipt || !prior.publicationTicket)throw new Error("unverified-receipt");
+      await recordImport(imports,owner,plan.id,{...prior,state:"committed",receipt:result.receipt,skipReason:null});
+    }
+  }
+  saved=await imports.load(owner,plan.id);
+  if(!saved)throw new Error("missing-import-plan");
+  importDocumentSchema.parse({formatVersion:1,...saved});return structuredClone(saved);
+}
+export async function publishImportDocument(backend:PersistenceBackend,document:ImportAuxiliaryDocument)
+  :ReturnType<PersistenceEnginePort["publish"]> {
+  const encoded=Buffer.from(JSON.stringify(document));
+  const checked=document.kind==="nonce"?parseNonceDocument(encoded):parseBarrierDocument(encoded);
+  const bytes=Buffer.from(JSON.stringify(checked)),ticket=checked.ticket;
+  let reserved=false;
+  try {
+    await backend.engine.reserve(ticket,bytes.length);reserved=true;
+    for(let offset=0;offset<bytes.length;offset+=262144)
+      await backend.engine.append(ticket,offset,bytes.subarray(offset,offset+262144));
+    await backend.engine.seal(ticket,bytes.length,createHash("sha256").update(bytes).digest("hex"));
+    const result=await backend.engine.publish(ticket);
+    return result.disposition==="unknown"?await backend.imports.reconcile(ticket):result;
+  } catch(error) {
+    if(reserved) {
+      const disposition=await backend.engine.abort(ticket);
+      if(disposition==="unknown" || disposition==="committed")return backend.imports.reconcile(ticket);
+    }
+    throw error;
+  }
+}
+```
 
 Add the following helper to `import-journal.ts` and exercise it with actual typed adapter doubles in `import-journal.test.ts`:
 
 ```ts
-import type { DurableImportPort, ImportItemEvidence, ImportPlan,
-  PersistenceOwner } from "./engine-port.js";
 export async function finishImport(
   imports: DurableImportPort, owner: PersistenceOwner, plan: ImportPlan,
 ): Promise<boolean> {
@@ -11513,7 +12496,8 @@ function completionCases(owner: PersistenceOwner, plan: ImportPlan, imports: Dur
   it("does not complete unknown or pending items", async () => {
     for (const state of ["pending", "unknown"] as const) {
       vi.spyOn(imports, "load").mockResolvedValue({plan, complete:false,
-        items:plan.items.map(item => ({key:item.key,state,receipt:null,skipReason:null}))});
+        items:plan.items.map(item => ({key:item.key,state,receipt:null,skipReason:null,
+          publicationTicket:state==="unknown"?item.ticket:null}))});
       const complete = vi.spyOn(imports, "complete");
       expect(await finishImport(imports, owner, plan)).toBe(false);
       expect(complete).not.toHaveBeenCalled();
@@ -11522,7 +12506,7 @@ function completionCases(owner: PersistenceOwner, plan: ImportPlan, imports: Dur
   });
   it("preserves explicit skip evidence across completion", async () => {
     for (const item of plan.items) await imports.record(owner, plan.id,
-      {key:item.key,state:"skipped",receipt:null,skipReason:"trusted-user-skip"});
+      {key:item.key,state:"skipped",receipt:null,skipReason:"trusted-user-skip",publicationTicket:null});
     expect(await finishImport(imports, owner, plan)).toBe(true);
     const restored = await imports.load(owner, plan.id);
     expect(restored?.complete).toBe(true);
@@ -11532,7 +12516,83 @@ function completionCases(owner: PersistenceOwner, plan: ImportPlan, imports: Dur
 }
 ```
 
-Invoke `completionCases` for a nonempty plan from the test's typed backend fixture. Add exact-limit/+1 cases for all bounds, unknown format, duplicate key/ID, altered target/expected revision/mapped digest, receipt-revision mismatch and forged complete evidence. The test double implements `DurableImportPort`, including persisted snapshots, rather than accepting arbitrary callbacks.
+Append this real disk fixture and invoke `completionCases` at describe construction. Each case starts with a nonempty typed plan; it uses AtomicStore's adapter, not a callback implementing journal semantics.
+
+```ts
+import { beforeEach, afterEach, describe } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { AtomicStore } from "./atomic-store.js";
+import { createNodePersistenceFs } from "./filesystem.js";
+import { importIdFor } from "./import-sources.js";
+import { importPlanSchema, importDocumentSchema } from "./namespace.js";
+const owner:PersistenceOwner={sourceKey:"builtin:test.synthetic",pluginId:"test.synthetic",generation:1,
+  hostEpoch:randomUUID(),processEpoch:randomUUID()};
+const bytes=new Uint8Array([0,255,7]),digest=createHash("sha256").update(bytes).digest("hex");
+const recordId=randomUUID(),id=importIdFor("test.synthetic-import",owner.sourceKey);
+const plan:ImportPlan={formatVersion:1,id,descriptorId:"test.synthetic-import",mappingVersion:1,
+  targetSourceKey:owner.sourceKey,preferencesEvidence:null,items:[{key:"one",sourceFormat:1,sourceSha256:digest,
+    mappedSha256:digest,byteLength:bytes.length,tag:{importId:id,itemKey:"one",sourceSha256:digest},
+    ticket:{id:randomUUID(),owner,deadlineMonotonicMs:10000,target:{kind:"record",id:recordId,expectedRevision:null},
+      metadata:{kind:"record",deleted:false,record:{id:recordId,revision:"r_"+randomUUID().replaceAll("-",""),
+        kind:"test.synthetic",schemaVersion:1,label:"Synthetic",mediaType:"application/octet-stream",byteLength:bytes.length,
+        sha256:digest,createdAt:1,updatedAt:1,checkpoint:"none",interrupted:false}}}}]};
+let directory:string,store:AtomicStore;
+const typedImports:DurableImportPort={
+  load:(o,id)=>store.loadImport(o,id),plan:(o,p)=>store.planImport(o,p),admit:(o,id,key)=>store.admitImport(o,id,key),
+  tagImport:(t,tag)=>store.tagImport(t,tag),importReceipts:(o,id)=>store.importReceipts(o,id),
+  record:(o,id,e)=>store.recordImport(o,id,e),reconcile:t=>store.reconcileImport(t),complete:(o,id)=>store.completeImport(o,id),
+};
+describe("durable completion",()=>{
+  beforeEach(async()=>{
+    directory=await mkdtemp(path.join(tmpdir(),"import-journal-"));
+    const fs=await createNodePersistenceFs(directory,{hostEpoch:owner.hostEpoch,assertHeld(){}},{now:()=>0});
+    store=new AtomicStore(fs);await store.initialize();await typedImports.plan(owner,plan);
+  });
+  afterEach(async()=>{vi.restoreAllMocks();await store.dispose();await rm(directory,{recursive:true,force:true});});
+  completionCases(owner,plan,typedImports);
+  it("stores admission before reserve and rejects attempts installed through record",async()=>{
+    const original=await typedImports.load(owner,id);expect(original?.items[0]?.publicationTicket).toBeNull();
+    const first=await typedImports.admit(owner,id,"one"),again=await typedImports.admit(owner,id,"one");
+    expect(first).toEqual(again);expect(first.id).not.toBe(plan.items[0]!.ticket.id);
+    expect(first.target).toEqual(plan.items[0]!.ticket.target);expect(first.metadata).toEqual(plan.items[0]!.ticket.metadata);
+    const saved=await typedImports.load(owner,id);expect(saved?.items[0]?.publicationTicket).toEqual(first);
+    await expect(typedImports.record(owner,id,{...saved!.items[0]!,publicationTicket:{...first,id:randomUUID()}})).rejects.toThrow();
+    expect((await typedImports.load(owner,id))?.plan).toEqual(plan);
+  });
+  it("joins concurrent unreserved admission and never renews its deadline",async()=>{
+    const attempts=await Promise.all([typedImports.admit(owner,id,"one"),typedImports.admit(owner,id,"one")]);
+    expect(attempts[0]).toEqual(attempts[1]);expect(attempts[0]!.deadlineMonotonicMs).toBe(10000);
+  });
+  it("requires an actual tagged head before recording a committed receipt",async()=>{
+    const ticket=await typedImports.admit(owner,id,"one");
+    await expect(typedImports.record(owner,id,{key:"one",state:"committed",publicationTicket:ticket,skipReason:null,
+      receipt:{revision:ticket.metadata.kind==="record"?ticket.metadata.record.revision:"r_"+"0".repeat(32),
+        commitId:ticket.id,durability:"file-and-directory-sync"}})).rejects.toThrow();
+    await store.reserve(ticket,bytes.length);await typedImports.tagImport(ticket,plan.items[0]!.tag);
+    await store.append(ticket,0,bytes);await store.seal(ticket,bytes.length,digest);
+    const outcome=await store.publish(ticket);expect(outcome.disposition).toBe("committed");
+    expect(outcome.receipt?.commitId).toBe(ticket.id);
+    await typedImports.record(owner,id,{key:"one",state:"committed",publicationTicket:ticket,skipReason:null,receipt:outcome.receipt!});
+    expect(await finishImport(typedImports,owner,plan)).toBe(true);
+    await expect(typedImports.admit(owner,id,"one")).rejects.toThrow();
+  });
+  it("accepts only an exactly repeated plan",async()=>{
+    await expect(typedImports.plan(owner,structuredClone(plan))).resolves.toBeUndefined();
+    await expect(typedImports.plan(owner,{...plan,mappingVersion:2})).rejects.toThrow("input-changed");
+  });
+  it("rejects malformed journals and forged complete evidence",()=>{
+    for(const invalid of [{...plan,formatVersion:2},{...plan,extra:true},{...plan,items:[plan.items[0],plan.items[0]]},
+      {...plan,id:"import/"+"0".repeat(64)},{...plan,preferencesEvidence:{nonce:"bad",digest}}])
+      expect(importPlanSchema.safeParse(invalid).success).toBe(false);
+    const pending={key:"one",state:"pending",receipt:null,skipReason:null,publicationTicket:null};
+    for(const items of [[],[pending,pending],[{...pending,key:"foreign"}],[{...pending,state:"committed"}]])
+      expect(importDocumentSchema.safeParse({formatVersion:1,plan,items,complete:true}).success).toBe(false);
+  });
+});
+```
 
 Run red, then green after implementation:
 
@@ -11545,62 +12605,586 @@ Expected: tests first fail on missing durable journal operations, then pass with
 
 - [ ] **Step 4: Implement fixed-root source and durable writer admission**
 
-Implement `createLegacyWriterBarrier` in `import-sources.ts` with the exact AM-29 signature above. `enter` synchronously calls every matching writer's `freezeAdmission()` before its first await, persists a formatVersion-1 `barrier/<descriptorId>` document through an immutable import engine ticket, and waits for `settled()` before inventory. Failure keeps admissions frozen. `restore` enumerates only admitted descriptors via bounded `auxiliaryKeys` pages and reads `auxiliary(owner,"import",key)`; restore markers and freeze admissions before D170 starts any registered legacy writer. `complete` atomically records the terminal barrier after the durable import completion marker, is idempotent, and never thaws a completed legacy writer. Unknown outcomes reconcile the original ticket before proceeding. Persist barrier identity, sourceKey, descriptorId and original ticket; never mint a replacement for an uncertain publish.
+Append this implementation to `import-sources.ts`. Descriptor namespaces drive restoration even when `writers` is empty. No method thaws a legacy writer.
+
+```ts
+import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import { publishImportDocument } from "./import-journal.js";
+import { sameImportValue } from "./namespace.js";
+import type { PersistenceBackend } from "./engine-port.js";
+export function createLegacyWriterBarrier(input:{backend:PersistenceBackend;
+  descriptors:readonly Pick<LegacyImportDescriptor,"id"|"targetSourceKey">[];
+  writers:readonly LegacyWriterPort[];importOwner:(sourceKey:string)=>PersistenceOwner;
+}):LegacyWriterBarrier {
+  const descriptors=new Map(input.descriptors.map(d=>[d.id,{...d}]));
+  if(descriptors.size!==input.descriptors.length)throw new Error("duplicate-descriptor");
+  for(const d of descriptors.values())descriptorIdSchema.parse(d.id);
+  for(const w of input.writers)if(![...descriptors.values()].some(d=>d.targetSourceKey===w.sourceKey))
+    throw new Error("invalid-writer");
+  const entries=new Map<string,LegacyBarrierDocument>(),operations=new Map<string,Promise<unknown>>();
+  const pending=new Map<string,{document:LegacyBarrierDocument;promise:ReturnType<typeof publishImportDocument>}>();
+  let restoration:ReturnType<LegacyWriterBarrier["restore"]>|undefined;
+  function serialize<T>(id:string,body:()=>Promise<T>):Promise<T> {
+    const result=(operations.get(id)??Promise.resolve()).catch(()=>{}).then(body);
+    operations.set(id,result);
+    void result.finally(()=>{if(operations.get(id)===result)operations.delete(id);}).catch(()=>{});return result;
+  }
+  function ticket(sourceKey:string,key:string):PublicationTicket {
+    return {id:randomUUID(),owner:structuredClone(input.importOwner(sourceKey)),deadlineMonotonicMs:performance.now()+10000,
+      metadata:{kind:"import",key},target:{kind:"import",key}};
+  }
+  async function save(document:LegacyBarrierDocument):Promise<void> {
+    let operation=pending.get(document.descriptorId);
+    if(operation && !sameImportValue(operation.document,document))throw new Error("import-pending");
+    if(!operation) {
+      const copy=parseBarrierDocument(Buffer.from(JSON.stringify(document)));
+      operation={document:copy,promise:Promise.resolve().then(()=>publishImportDocument(input.backend,copy))};
+      pending.set(document.descriptorId,operation);
+    }
+    let result=await operation.promise;
+    if(result.disposition==="unknown")result=await input.backend.imports.reconcile(operation.document.ticket);
+    if(result.disposition==="unknown")throw new Error("import-pending");
+    pending.delete(document.descriptorId);
+    if(result.disposition!=="committed")throw new Error("not-committed");
+    entries.set(document.descriptorId,operation.document);
+  }
+  function restore():ReturnType<LegacyWriterBarrier["restore"]> {
+    if(restoration)return restoration;
+    for(const writer of input.writers)writer.freezeAdmission();
+    restoration=Promise.resolve().then(async()=>{
+      for(const descriptor of descriptors.values()) {
+        const owner=input.importOwner(descriptor.targetSourceKey),key=barrierKeyFor(descriptor.id);
+        let cursor:Handle|undefined;
+        do {
+          const page=await input.backend.evidence.auxiliaryKeys(owner,"import",cursor);
+          if(page.keys.length>64 || Buffer.byteLength(JSON.stringify(page))>262144)throw new Error("size-limit");
+          if(page.keys.includes(key)) {
+            const bytes=await input.backend.evidence.auxiliary(owner,"import",key);
+            if(!bytes)throw new Error("missing-evidence");
+            const document=parseBarrierDocument(bytes);
+            if(document.descriptorId!==descriptor.id || document.sourceKey!==descriptor.targetSourceKey ||
+                barrierKeyFor(document.descriptorId)!==key)throw new Error("evidence-binding");
+            const result=await input.backend.imports.reconcile(document.ticket);
+            if(result.disposition!=="committed")throw new Error("import-pending");
+            entries.set(descriptor.id,document);
+          }
+          cursor=page.nextCursor??undefined;
+        }while(cursor);
+      }
+      return [...entries.values()].map(d=>({sourceKey:d.sourceKey,descriptorId:d.descriptorId,barrier:d.barrier}));
+    });return restoration;
+  }
+  function enter(sourceKey:string,descriptorId:string):Promise<Handle> {
+    const descriptor=descriptors.get(descriptorId);
+    if(!descriptor || descriptor.targetSourceKey!==sourceKey)return Promise.reject(new Error("invalid-descriptor"));
+    for(const writer of input.writers)if(writer.sourceKey===sourceKey)writer.freezeAdmission();
+    return serialize(descriptorId,async()=>{
+      await restore();
+      const unresolved=pending.get(descriptorId);if(unresolved)await save(unresolved.document);
+      let document=entries.get(descriptorId);
+      if(!document) {
+        const originalTicket=ticket(sourceKey,barrierKeyFor(descriptorId));
+        document={formatVersion:1,kind:"barrier",sourceKey,descriptorId,barrier:randomUUID(),state:"active",
+          originalTicket,ticket:originalTicket};await save(document);
+      }
+      await Promise.all(input.writers.filter(w=>w.sourceKey===sourceKey).map(w=>w.settled()));
+      return document.barrier;
+    });
+  }
+  async function complete(barrier:Handle):Promise<void> {
+    await restore();
+    const document=[...entries.values()].find(d=>d.barrier===barrier);if(!document)throw new Error("stale");
+    return serialize(document.descriptorId,async()=>{
+      const unresolved=pending.get(document.descriptorId);if(unresolved)await save(unresolved.document);
+      const current=entries.get(document.descriptorId)!;if(current.state==="complete")return;
+      const saved=await input.backend.imports.load(input.importOwner(current.sourceKey),importIdFor(current.descriptorId,current.sourceKey));
+      if(!saved?.complete)throw new Error("incomplete");
+      await save({...current,state:"complete",ticket:ticket(current.sourceKey,barrierKeyFor(current.descriptorId))});
+    });
+  }
+  return {restore,enter,complete};
+}
+```
 
 Use `backend.sources` as the coordinator resolver. `register({descriptorId,mapperId,sourceKind})` selects the same ID in the worker-installed allowlist; the descriptor ID is the mapper ID for the synthetic fixture. It cannot transmit functions, source paths or renderer-provided roots. T2 performs bounded root inventory/read and ENOENT-only absence; permission, format and alias failures are blocked. Check source admission before registration, inventory and every mapping. Renderer evidence missing remains pending, distinct from a present snapshot whose allowlisted values are all null. Inventory contains bounded metadata, not retained file payloads; process its entries in batches of 64 and reject more than 512 items/4096 names at the resolver boundary.
 
 In `import-sources.test.ts`, cover freeze-before-first-await, in-flight writer settlement before inventory, restart marker restoration before writer start, failure/unknown publication retaining the barrier, idempotent completion, ENOENT versus EACCES/EPERM/EIO, symlink/hardlink containment, arbitrary mapper/path rejection and disabled/safe-mode zero mapper calls. Unit tests use registered synthetic writer controls only; T7 repeats the restart cases on disk.
 
-- [ ] **Step 5: Bind the coordinator to durable plans, original tickets and worker-local mapping**
+- [ ] **Step 5: Implement the serialized coordinator and current publication attempts**
 
-Implement `createLegacyImportCoordinator` with exactly the AM-29 input and `LegacyImportHostPort` result, not a local operations callback interface. Capture `backend.imports`, `backend.engine`, `backend.evidence` and the supplied worker resolver. Serialize runs per descriptor and nonce submissions per scope/descriptor. The factory's restoration promise runs `barrier.restore()` plus bounded import-evidence reads; every public method awaits it before admission.
-
-For `run`, validate the descriptor against the host allowlist and current source. Load the stable import ID first; return terminal completion without remapping or recreating deleted targets. Reconcile original tickets and inspect `importReceipts(owner,id)` before allocating anything. Compare the entire original ticket, tag, target revision and source/mapped hashes; a foreign/newer head is a conflict. Repair a missing receipt with `imports.record` only from matching atomic head evidence. Unknown reconciliation durably records `state:"unknown"` and returns blocked with the barrier retained; it never republishes. Explicit per-item skips are persisted with bounded nonempty reasons and survive restart.
-
-For a new plan, enter the barrier before source collection. Call `sources.map(descriptor.id,key)` inside the worker; validate source format, sourceSha256, mappedSha256, byteLength and destination schema. Allocate immutable tickets using main-derived `importOwner`, preallocated target IDs, expected revisions and schema/digest metadata. Persist the complete bounded `ImportPlan` before the first publication. Release mapped pins after metadata planning, then remap one item at a time and compare both digests against the plan before reserving; the worker enforces at most four jobs and scratch quotas. A changed input blocks without modifying originals.
-
-For each pending item, reserve its original ticket, tag it before append/seal, and transfer worker-local bytes directly in at most 256 KiB pieces. Add this complete helper to `import-coordinator.ts`:
+Create `import-coordinator.ts` with the following factory. `run`, challenge and submission use the same descriptor queue. No supplied descriptor function runs in main. The immutable plan's ticket is used only for reconciliation; `imports.admit` supplies the separately persisted publication attempt.
 
 ```ts
-import type { ImportPlannedItem, PersistenceBackend } from "./engine-port.js";
-import type { LegacyMappedItem, LegacySourceResolver } from "./import-sources.js";
-async function publishMapped(
-  backend: PersistenceBackend, sources: LegacySourceResolver,
-  item: ImportPlannedItem, mapped: LegacyMappedItem, signal: AbortSignal,
-) {
-  if (mapped.sourceSha256 !== item.sourceSha256 || mapped.mappedSha256 !== item.mappedSha256 ||
-      mapped.byteLength !== item.byteLength) throw new Error("input-changed");
-  await backend.engine.reserve(item.ticket, item.byteLength);
-  await backend.imports.tagImport(item.ticket, item.tag);
-  let offset = 0;
-  let done = item.byteLength === 0;
-  while (!done) {
-    signal.throwIfAborted();
-    const next = await sources.appendMapped({mapped:mapped.mapped, ticket:item.ticket,
-      offset, maxBytes:256 * 1024});
-    if (next.nextOffset <= offset || next.nextOffset > item.byteLength ||
-        next.nextOffset - offset > 256 * 1024 || next.done !== (next.nextOffset === item.byteLength))
-      throw new Error("mapped-offset");
-    offset = next.nextOffset;
-    done = next.done;
+import { randomUUID, createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import type { Handle } from "@kobrixa/plugin-protocol";
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+import type { PersistenceBackend, PersistenceEnginePort, PublicationTicket, PersistenceOwner,
+  ImportPlan, ImportPlannedItem, LegacyPreferencesEvidenceRef } from "./engine-port.js";
+import type { LegacySourceResolver, LegacyWriterBarrier, LegacyImportDescriptor, LegacyImportHostPort,
+  LegacyPreferencesSnapshot, LegacyNonceDocument, LegacyMappedItem } from "./import-sources.js";
+import { snapshotBytes, parseNonceDocument, importIdFor } from "./import-sources.js";
+import { loadImport, planImport, recordImport, reconcileImport, finishImport, publishImportDocument } from "./import-journal.js";
+import { sameImportValue, sameImportAttempt, publicationTicketSchema } from "./namespace.js";
+export function createLegacyImportCoordinator(input:{backend:PersistenceBackend;
+  sources:LegacySourceResolver;barrier:LegacyWriterBarrier;descriptors:readonly LegacyImportDescriptor[];
+  currentScope:(scope:CoreWindowScope)=>boolean;currentSource:(sourceKey:string)=>boolean;
+  importOwner:(sourceKey:string)=>PersistenceOwner;
+}):LegacyImportHostPort {
+  if(input.sources!==input.backend.sources)throw new Error("backend-mismatch");
+  const {backend,sources,barrier}=input,imports=backend.imports;
+  const descriptors=new Map<string,LegacyImportDescriptor>();
+  for(const source of input.descriptors) {
+    if(!/^[a-z][a-z0-9-]*(?:[.:][a-z0-9-]+)+$/.test(source.id) || Buffer.byteLength(source.id)>128 ||
+        descriptors.has(source.id) || !source.targetSourceKey || Buffer.byteLength(source.targetSourceKey)>160 ||
+        !Number.isInteger(source.mappingVersion) || source.mappingVersion<1 || source.mappingVersion>2147483647 ||
+        (source.targetSettingsSchemaVersion!==undefined && (!Number.isInteger(source.targetSettingsSchemaVersion) ||
+          source.targetSettingsSchemaVersion<1 || source.targetSettingsSchemaVersion>2147483647)) ||
+        !source.sourceFormatVersions.length || [...source.sourceFormatVersions,...source.targetRecordSchemaVersions].some(v=>
+          !Number.isInteger(v) || v<1 || v>2147483647))throw new Error("invalid-descriptor");
+    const copy={...source,sourceFormatVersions:[...source.sourceFormatVersions],targetRecordSchemaVersions:[...source.targetRecordSchemaVersions],
+      ...(source.rendererKeyAllowlist?{rendererKeyAllowlist:[...source.rendererKeyAllowlist]}:{})};
+    if(copy.sourceKind==="renderer-preferences") {
+      const keys=copy.rendererKeyAllowlist;
+      if(!keys || keys.length>128 || new Set(keys).size!==keys.length || keys.some(k=>!k || Buffer.byteLength(k)>128) ||
+          !copy.sourceFormatVersions.includes(1))throw new Error("invalid-descriptor");
+    }
+    descriptors.set(copy.id,copy);
   }
-  await backend.engine.seal(item.ticket, item.byteLength, item.mappedSha256);
-  let outcome = await backend.engine.publish(item.ticket);
-  if (outcome.disposition === "unknown") outcome = await backend.imports.reconcile(item.ticket);
-  if (outcome.disposition !== "unknown") await sources.releaseMapped(mapped.mapped);
-  return outcome;
+  const queues=new Map<string,Promise<unknown>>(),retired=new Set<string>();
+  const nonces=new Map<Handle,LegacyNonceDocument>(),challenges=new Map<string,Handle>();
+  const pending=new Map<Handle,{document:LegacyNonceDocument;promise:ReturnType<typeof publishImportDocument>}>();
+  const retainedPins=new Map<string,{mapped:Handle;ticket:PublicationTicket}>();
+  const scopeKey=(scope:CoreWindowScope)=>JSON.stringify([scope.hostEpoch,scope.workbenchInstance]);
+  function serial<T>(id:string,body:()=>Promise<T>):Promise<T> {
+    const result=(queues.get(id)??Promise.resolve()).catch(()=>{}).then(body);queues.set(id,result);
+    void result.finally(()=>{if(queues.get(id)===result)queues.delete(id);}).catch(()=>{});return result;
+  }
+  function metadataTicket(d:LegacyImportDescriptor,nonce:Handle):PublicationTicket {
+    const key="nonce/"+nonce;
+    return {id:randomUUID(),owner:structuredClone(input.importOwner(d.targetSourceKey)),deadlineMonotonicMs:performance.now()+10000,
+      metadata:{kind:"import",key},target:{kind:"import",key}};
+  }
+  function live(d:LegacyImportDescriptor,scope?:CoreWindowScope):void {
+    if(!input.currentSource(d.targetSourceKey) || (scope && (!input.currentScope(scope) || retired.has(scopeKey(scope)))))
+      throw new Error("stale");
+  }
+  async function save(document:LegacyNonceDocument):Promise<boolean> {
+    let operation=pending.get(document.nonce);
+    if(operation && !sameImportValue(operation.document,document))throw new Error("import-pending");
+    if(!operation && sameImportValue(nonces.get(document.nonce),document))return true;
+    if(!operation) {
+      const copy=parseNonceDocument(Buffer.from(JSON.stringify(document)));
+      operation={document:copy,promise:Promise.resolve().then(()=>publishImportDocument(backend,copy))};
+      pending.set(document.nonce,operation);
+    }
+    let result=await operation.promise;
+    if(result.disposition==="unknown")result=await imports.reconcile(operation.document.ticket);
+    if(result.disposition==="unknown")return false;
+    pending.delete(document.nonce);
+    if(result.disposition!=="committed")throw new Error("not-committed");
+    nonces.set(document.nonce,operation.document);return true;
+  }
+  async function consume(d:LegacyImportDescriptor,document:LegacyNonceDocument):Promise<LegacyNonceDocument|null> {
+    const unresolved=pending.get(document.nonce);
+    if(unresolved && !await save(unresolved.document))return null;
+    const current=nonces.get(document.nonce)??document;
+    if(current.state==="consumed")return current;
+    if(!current.raw || !current.digest)throw new Error("missing-evidence");
+    const next:LegacyNonceDocument={...current,state:"consumed",ticket:metadataTicket(d,current.nonce)};
+    return await save(next)?next:null;
+  }
+  function captured(d:LegacyImportDescriptor,ref:LegacyPreferencesEvidenceRef|null):LegacyNonceDocument|null {
+    const available=new Map(nonces);for(const [nonce,operation] of pending)available.set(nonce,operation.document);
+    const candidates=[...available.values()].filter(n=>n.descriptorId===d.id && n.sourceKey===d.targetSourceKey && n.raw!==null);
+    if(ref) {
+      const selected=candidates.find(n=>n.nonce===ref.nonce && n.digest===ref.digest);
+      if(!selected)throw new Error("missing-evidence");return selected;
+    }
+    if(candidates.length>1)throw new Error("ambiguous-evidence");return candidates[0]??null;
+  }
+  // Invoke restore synchronously: all registered legacy writer admission closes now.
+  const restoredBarrier=barrier.restore();
+  const restored=restoredBarrier.then(async()=>{
+    let count=0,totalBytes=0;
+    for(const d of descriptors.values()) {
+      const owner=input.importOwner(d.targetSourceKey);let cursor:Handle|undefined;
+      do {
+        const page=await backend.evidence.auxiliaryKeys(owner,"import",cursor);
+        if(page.keys.length>64 || Buffer.byteLength(JSON.stringify(page))>262144)throw new Error("size-limit");
+        for(const key of page.keys) {
+          if(!key.startsWith("nonce/"))continue;
+          const bytes=await backend.evidence.auxiliary(owner,"import",key);if(!bytes)throw new Error("missing-evidence");
+          if(++count>512 || (totalBytes+=bytes.length)>2097152)throw new Error("size-limit");
+          const document=parseNonceDocument(bytes);
+          if(document.sourceKey!==d.targetSourceKey || key!=="nonce/"+document.nonce)throw new Error("evidence-binding");
+          if(document.descriptorId!==d.id)continue;
+          if(!sameImportValue(document.allowlist,d.rendererKeyAllowlist))throw new Error("evidence-binding");
+          retired.add(scopeKey(document.scope));
+          if((await imports.reconcile(document.ticket)).disposition!=="committed")throw new Error("import-pending");
+          nonces.set(document.nonce,document);
+        }
+        cursor=page.nextCursor??undefined;
+      }while(cursor);
+      const saved=await loadImport(imports,owner,d);
+      if(saved?.complete)continue;
+      const selected=captured(d,saved?.plan.preferencesEvidence??null);
+      if(selected && selected.state==="issued" && !await consume(d,selected))throw new Error("import-pending");
+    }
+  });
+  // Keep a rejection observed while allowing each public operation to report restoration failure.
+  void restored.catch(()=>{});
+  async function run(requested:LegacyImportDescriptor,signal:AbortSignal):ReturnType<LegacyImportHostPort["run"]> {
+    const descriptor=descriptors.get(requested.id);if(!descriptor)throw new Error("invalid-descriptor");
+    return serial(descriptor.id,async()=>{
+      let saved:Awaited<ReturnType<typeof loadImport>>=null;
+      const progress=(state:Awaited<ReturnType<LegacyImportHostPort["run"]>>["state"])=>({state,
+        completedItems:saved?.items.filter(e=>e.state==="committed" || e.state==="skipped").length??0,totalItems:saved?.plan.items.length??0});
+      const check=()=>{signal.throwIfAborted();live(descriptor);};
+      // This helper closes over the serialized run's descriptor and factory input.
+      async function publishMapped(backend:PersistenceBackend,sources:LegacySourceResolver,item:ImportPlannedItem,
+        mapped:LegacyMappedItem,ticket:PublicationTicket,signal:AbortSignal)
+        :Promise<Awaited<ReturnType<PersistenceEnginePort["publish"]>>> {
+        const consequential=()=>{signal.throwIfAborted();if(!input.currentSource(descriptor.targetSourceKey))throw new Error("stale");};
+        if(!sameImportAttempt(item.ticket,ticket) || mapped.sourceSha256!==item.sourceSha256 ||
+            mapped.mappedSha256!==item.mappedSha256 || mapped.byteLength!==item.byteLength)throw new Error("input-changed");
+        consequential();await backend.engine.reserve(ticket,item.byteLength);
+        consequential();await backend.imports.tagImport(ticket,item.tag);
+        let offset=0,done=item.byteLength===0;
+        while(!done) {
+          consequential();const next=await sources.appendMapped({mapped:mapped.mapped,ticket,offset,maxBytes:262144});
+          if(next.nextOffset<=offset || next.nextOffset>item.byteLength || next.nextOffset-offset>262144 ||
+              next.done!==(next.nextOffset===item.byteLength))throw new Error("mapped-offset");
+          offset=next.nextOffset;done=next.done;
+        }
+        consequential();await backend.engine.seal(ticket,item.byteLength,item.mappedSha256);
+        consequential();const result=await backend.engine.publish(ticket);
+        return result.disposition==="unknown"?await backend.imports.reconcile(ticket):result;
+      }
+      const recordMetadata=(mapped:Extract<LegacyMappedItem,{kind:"record"}>,original:PublicationTicket)=>{
+        if(original.metadata.kind!=="record")throw new Error("input-changed");
+        const {id,revision,createdAt,updatedAt,checkpoint,interrupted,...metadata}=original.metadata.record;
+        if(!sameImportValue(metadata,mapped.metadata))throw new Error("input-changed");
+      };
+      try {
+        await restored;
+        const owner=input.importOwner(descriptor.targetSourceKey);
+        saved=await loadImport(imports,owner,descriptor);
+        if(saved?.complete) {
+          const handle=await barrier.enter(descriptor.targetSourceKey,descriptor.id);await barrier.complete(handle);
+          return progress(saved.plan.items.length?"complete":"complete-empty");
+        }
+        if(!input.currentSource(descriptor.targetSourceKey))return progress("pending");
+        check();const handle=await barrier.enter(descriptor.targetSourceKey,descriptor.id);
+        if(saved)saved=await reconcileImport(imports,owner,saved.plan);
+        check();await sources.register({descriptorId:descriptor.id,mapperId:descriptor.id,sourceKind:descriptor.sourceKind});
+        let preferencesEvidence:LegacyPreferencesEvidenceRef|null=null;
+        if(descriptor.sourceKind==="renderer-preferences") {
+          const selected=captured(descriptor,saved?.plan.preferencesEvidence??null);
+          if(!selected)return progress("pending");
+          const consumed=await consume(descriptor,selected);if(!consumed || !consumed.digest)return progress("blocked");
+          preferencesEvidence={nonce:consumed.nonce,digest:consumed.digest};
+          check();await backend.sources.resolvePreferences({descriptorId:descriptor.id,owner,evidence:preferencesEvidence});
+        }
+        check();const inventory=await sources.inventory(descriptor.id);
+        if(inventory.state==="blocked")return progress("blocked");
+        if(descriptor.sourceKind==="renderer-preferences" && (inventory.state!=="present" || inventory.entries.length!==1))return progress("pending");
+        if(inventory.entries.length>512 || new Set(inventory.entries.map(e=>e.key)).size!==inventory.entries.length ||
+            inventory.entries.some(e=>!descriptor.sourceFormatVersions.includes(e.format)))throw new Error("input-changed");
+        if(saved) {
+          const planned=saved.plan.items;
+          if(planned.length!==inventory.entries.length || planned.some(item=>!inventory.entries.some(e=>
+              e.key===item.key && e.format===item.sourceFormat && e.sha256===item.sourceSha256)))throw new Error("input-changed");
+        } else {
+          const id=importIdFor(descriptor.id,descriptor.targetSourceKey),items:ImportPlannedItem[]=[];
+          for(let start=0;start<inventory.entries.length;start+=64)for(const source of inventory.entries.slice(start,start+64)) {
+            check();const mapped=await sources.map(descriptor.id,source.key);
+            try {
+              check();if(mapped.sourceSha256!==source.sha256)throw new Error("input-changed");
+              let target:PublicationTicket["target"],metadata:PublicationTicket["metadata"];
+              if(mapped.kind==="record") {
+                if(!descriptor.targetRecordSchemaVersions.includes(mapped.metadata.schemaVersion) ||
+                    mapped.metadata.byteLength!==mapped.byteLength || mapped.metadata.sha256!==mapped.mappedSha256)throw new Error("schema-mismatch");
+                const recordId=randomUUID(),now=Date.now();target={kind:"record",id:recordId,expectedRevision:null};
+                metadata={kind:"record",deleted:false,record:{...mapped.metadata,id:recordId,revision:"r_"+randomUUID().replaceAll("-",""),
+                  createdAt:now,updatedAt:now,checkpoint:"none",interrupted:false}};
+              } else {
+                const digest=await backend.evidence.settingsDigest(owner);
+                if(!digest || digest.schemaVersion!==descriptor.targetSettingsSchemaVersion || digest.schemaVersion!==mapped.schemaVersion)
+                  throw new Error("schema-mismatch");
+                target={kind:"settings",expectedRevision:digest.revision};metadata={kind:"settings",schemaVersion:digest.schemaVersion,validationDigest:digest.validationDigest};
+              }
+              const ticket:PublicationTicket={id:randomUUID(),owner:structuredClone(owner),target,metadata,deadlineMonotonicMs:performance.now()+10000};
+              publicationTicketSchema.parse(ticket);
+              items.push({key:source.key,sourceFormat:source.format,sourceSha256:source.sha256,mappedSha256:mapped.mappedSha256,
+                byteLength:mapped.byteLength,ticket,tag:{importId:id,itemKey:source.key,sourceSha256:source.sha256}});
+            } finally {await sources.releaseMapped(mapped.mapped);}
+          }
+          const plan:ImportPlan={formatVersion:1,id,descriptorId:descriptor.id,mappingVersion:descriptor.mappingVersion,
+            targetSourceKey:descriptor.targetSourceKey,preferencesEvidence,items};
+          check();await planImport(imports,owner,descriptor,plan);saved=await loadImport(imports,owner,descriptor);
+        }
+        if(!saved)throw new Error("missing-import-plan");
+        for(const item of saved.plan.items) {
+          saved=await loadImport(imports,owner,descriptor);if(!saved)throw new Error("missing-import-plan");
+          const prior=saved.items.find(e=>e.key===item.key)!;
+          if(prior.state==="committed" || prior.state==="skipped")continue;
+          const pin=retainedPins.get(saved.plan.id+"/"+item.key);
+          if(pin) {
+            const settled=await imports.reconcile(pin.ticket);
+            if(settled.disposition==="unknown")return progress("blocked");
+            await sources.releaseMapped(pin.mapped);retainedPins.delete(saved.plan.id+"/"+item.key);
+          }
+          check();const mapped=await sources.map(descriptor.id,item.key);let attempt:PublicationTicket|undefined;
+          let release=true;
+          try {
+            check();if(mapped.sourceSha256!==item.sourceSha256 || mapped.mappedSha256!==item.mappedSha256 || mapped.byteLength!==item.byteLength)
+              throw new Error("input-changed");
+            if(mapped.kind==="record")recordMetadata(mapped,item.ticket);
+            else {
+              const digest=await backend.evidence.settingsDigest(owner);
+              if(item.ticket.metadata.kind!=="settings" || !digest || digest.validationDigest!==item.ticket.metadata.validationDigest ||
+                  mapped.schemaVersion!==item.ticket.metadata.schemaVersion || digest.schemaVersion!==mapped.schemaVersion)throw new Error("schema-mismatch");
+            }
+            check();attempt=await imports.admit(owner,saved.plan.id,item.key);check();
+            const result=await publishMapped(backend,sources,item,mapped,attempt,signal);
+            if(result.disposition==="unknown") {
+              release=false;retainedPins.set(saved.plan.id+"/"+item.key,{mapped:mapped.mapped,ticket:attempt});return progress("blocked");
+            }
+            if(result.disposition==="not-committed") {await backend.engine.abort(attempt);return progress("blocked");}
+            if(!result.receipt)throw new Error("unverified-receipt");
+            await recordImport(imports,owner,saved.plan.id,{key:item.key,state:"committed",receipt:result.receipt,
+              skipReason:null,publicationTicket:attempt});
+          } catch(error) {
+            if(attempt) {
+              release=false;retainedPins.set(saved.plan.id+"/"+item.key,{mapped:mapped.mapped,ticket:attempt});
+              await backend.engine.abort(attempt);
+              const result=await imports.reconcile(attempt);
+              if(result.disposition!=="unknown") {release=true;retainedPins.delete(saved.plan.id+"/"+item.key);}
+            }
+            throw error;
+          } finally {if(release)await sources.releaseMapped(mapped.mapped);}
+        }
+        saved=await loadImport(imports,owner,descriptor);if(!saved)throw new Error("missing-import-plan");
+        if(saved.items.every(e=>e.state==="committed" || e.state==="skipped") && await finishImport(imports,owner,saved.plan)) {
+          await barrier.complete(handle);return progress(saved.plan.items.length?"complete":"complete-empty");
+        }
+        return progress("blocked");
+      } catch {return progress("blocked");}
+    });
+  }
+  async function issuePreferences(request:Parameters<LegacyImportHostPort["issuePreferences"]>[0])
+    :ReturnType<LegacyImportHostPort["issuePreferences"]> {
+    const descriptor=descriptors.get(request.descriptorId),scope=structuredClone(request.scope);
+    if(!descriptor || descriptor.sourceKind!=="renderer-preferences")throw new Error("invalid-descriptor");
+    return serial(descriptor.id,async()=>{
+      await restored;live(descriptor,scope);
+      const saved=await loadImport(imports,input.importOwner(descriptor.targetSourceKey),descriptor);
+      if(saved?.complete)throw new Error("stale");
+      if(saved || captured(descriptor,null))throw new Error("import-pending");
+      await barrier.enter(descriptor.targetSourceKey,descriptor.id);live(descriptor,scope);
+      const key=JSON.stringify([descriptor.id,scopeKey(scope)]),existing=challenges.get(key);
+      let document=existing?(pending.get(existing)?.document??nonces.get(existing)):undefined;
+      if(!document) {
+        const nonce=randomUUID(),ticket=metadataTicket(descriptor,nonce);
+        document={formatVersion:1,kind:"nonce",descriptorId:descriptor.id,sourceKey:descriptor.targetSourceKey,nonce,scope,
+          allowlist:[...descriptor.rendererKeyAllowlist!],state:"issued",raw:null,digest:null,originalTicket:ticket,ticket};
+        challenges.set(key,nonce);
+      }
+      if(!await save(document))throw new Error("import-pending");
+      live(descriptor,scope);return structuredClone({nonce:document.nonce,scope:document.scope,descriptorId:descriptor.id,keys:document.allowlist});
+    });
+  }
+  function acceptPreferencesEvidence(snapshot:LegacyPreferencesSnapshot):ReturnType<LegacyImportHostPort["acceptPreferencesEvidence"]> {
+    // Copy and validate before joining any promise; keys are checked again against the issued allowlist.
+    const copy=structuredClone(snapshot);
+    snapshotBytes(copy,Array.isArray(copy?.entries)?copy.entries.map(e=>e?.key):[]);
+    const issued=pending.get(copy.nonce)?.document??nonces.get(copy.nonce);
+    if(!issued)return Promise.reject(new Error("stale"));
+    const descriptor=descriptors.get(issued.descriptorId);if(!descriptor)return Promise.reject(new Error("stale"));
+    return serial(descriptor.id,async()=>{
+      await restored;live(descriptor,copy.scope);
+      if(!sameImportValue(copy.scope,issued.scope))throw new Error("stale");
+      const bytes=snapshotBytes(copy,issued.allowlist),digest=createHash("sha256").update(bytes).digest("hex");
+      let document=pending.get(copy.nonce)?.document??nonces.get(copy.nonce);
+      if(!document)throw new Error("stale");
+      const replay=document.raw!==null;
+      if(document.raw && (document.digest!==digest || !Buffer.from(snapshotBytes(document.raw,document.allowlist)).equals(bytes)))
+        throw new Error("changed-replay");
+      const unresolved=pending.get(copy.nonce);
+      if(unresolved && !await save(unresolved.document))return {state:"pending"};
+      document=nonces.get(copy.nonce)!;
+      if(document.state==="consumed")return {state:"reconciled"};
+      live(descriptor,copy.scope);
+      if(!document.raw) {
+        document={...document,raw:JSON.parse(new TextDecoder().decode(bytes)),digest,ticket:metadataTicket(descriptor,copy.nonce)};
+        if(!await save(document))return {state:"pending"};
+      }
+      // If the window retired during raw persistence, preserve its durable capture for host recovery.
+      live(descriptor,copy.scope);
+      const consumed=await consume(descriptor,document);live(descriptor,copy.scope);
+      if(!consumed)return {state:"pending"};return {state:replay?"reconciled":"accepted"};
+    });
+  }
+  return {run,issuePreferences,acceptPreferencesEvidence,
+    retirePreferences(scope){retired.add(scopeKey(scope));},
+    async acceptPreferences(snapshot){const result=await acceptPreferencesEvidence(snapshot);if(result.state==="pending")throw new Error("import-pending");}};
 }
 ```
 
-The caller persists committed receipt evidence before proceeding, retains unknown pins/tickets for recovery, and aborts/reconciles the original ticket on cancellation or append/seal failure before releasing a pin. Never automatically retry `publish` on an unknown outcome. Once all items are committed/skipped call `finishImport`, then `barrier.complete`. Return pending/planned/copying/complete/complete-empty/blocked with counts from durable item evidence. Do not dispatch descriptor functions on main.
+- [ ] **Step 6: Verify challenge capture, consumption and retirement ordering**
 
-- [ ] **Step 6: Persist coordinator-issued preferences challenges and restore evidence**
+Run the nonce/restart cases in `import-coordinator.test.ts` before and after the factory implementation. The raw issued document and consumed document must be separately observed through `backend.evidence.auxiliary`. A retired window must fail even for identical bytes; host recovery consumes captured bytes under its current owner. Pending publication retains its exact document and ticket, and compatibility `acceptPreferences` rejects with `import-pending`.
 
-Implement `issuePreferences`, `retirePreferences`, `acceptPreferencesEvidence` and the `acceptPreferences` compatibility method in the same coordinator. Issue random canonical Handle nonces only for an allowlisted renderer descriptor and a current main-derived scope. Freeze its allowlist from `rendererKeyAllowlist`. At most one outstanding challenge per scope/descriptor. Before returning the challenge persist `nonce/<nonce>` using an immutable import engine ticket and AM-26 auxiliary reads. Each document includes formatVersion, descriptorId, scope, allowlist, nonce, raw entries, digest and issued/consumed state. Keep immutable ticket identity with uncertain writes; reconcile before any replacement.
+Add the following invoked tests to `import-coordinator.test.ts`. This fixture uses the real AtomicStore for documents, attempts and heads. Its typed resolver only supplies deterministic worker-boundary bytes; it does not implement journal or coordinator transitions. T2 worker tests separately exercise the actual resolver.
 
-Validate exact snapshot shape/nonce/window/keys/duplicates/64 KiB/128 keys before accepting. Copy raw entries before awaiting. Persist raw evidence and its digest, reconcile unknown publication, then atomically persist consumption; never consume on validation/persistence failure. An identical durable replay may return reconciled; changed replay is rejected. Return `{state:"accepted"}` after known durable acceptance, `{state:"pending"}` while publication remains unknown, `{state:"reconciled"}` after original-ticket reconciliation. `acceptPreferences():Promise<void>` resolves only after acceptance/reconciliation; it cannot treat pending as success. Retirement invalidates old window authority without deleting durable evidence. Restart restores bytes and barriers, but a fresh bootstrap cannot replay the old window nonce.
-
-In `import-coordinator.test.ts`, use `createLegacyImportCoordinator` with a fully typed backend/resolver/barrier and real allowlisted descriptor. Assert wrong descriptor/key/window/nonce, duplicates, extra/oversize entries, concurrent submission, same versus changed replay, failed persistence before consume and unknown publication after raw evidence. Observe the durable nonce before releasing the mocked publication promise and assert it is still issued; after success load it through `evidence.auxiliary` and assert consumed plus exact original raw bytes. Restart under a new hostEpoch, reconcile existing evidence and reject the retired nonce. An absent snapshot must never create complete-empty.
+```ts
+import { afterEach, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
+import type { PersistenceBackend, PersistenceOwner, PublicationTicket } from "./engine-port.js";
+import type { LegacySourceResolver, LegacyMappedItem, LegacyImportDescriptor } from "./import-sources.js";
+import { createLegacyWriterBarrier, parseNonceDocument, snapshotBytes, importIdFor } from "./import-sources.js";
+import { createLegacyImportCoordinator } from "./import-coordinator.js";
+import { syntheticImportDescriptor, syntheticPreferencesImportDescriptor } from "./import-fixtures.js";
+import { AtomicStore } from "./atomic-store.js";
+import { createNodePersistenceFs } from "./filesystem.js";
+const roots:string[]=[];
+afterEach(async()=>{vi.restoreAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
+async function fixture(descriptor:LegacyImportDescriptor,root?:string) {
+  const directory=root??await mkdtemp(path.join(tmpdir(),"import-coordinator-"));if(!root)roots.push(directory);
+  const epoch=randomUUID(),scope={hostEpoch:epoch,workbenchInstance:randomUUID()};
+  const owner:PersistenceOwner={sourceKey:descriptor.targetSourceKey,pluginId:descriptor.id,generation:1,hostEpoch:epoch,processEpoch:randomUUID()};
+  const fs=await createNodePersistenceFs(directory,{hostEpoch:epoch,assertHeld(){}},{now:()=>performance.now()});
+  const store=new AtomicStore(fs);await store.initialize();
+  const counts={map:0,reserve:0,publish:0,freeze:0,settle:0,peakPins:0};
+  const fileBytes=Buffer.from("synthetic immutable original"),fileKey="11111111-1111-4111-8111-111111111111.json";
+  let active=true,renderer:Uint8Array|null=null,registered=false,settle:Promise<void>=Promise.resolve();
+  const pins=new Map<string,{bytes:Uint8Array;offset:number;ticket:PublicationTicket|null}>();
+  const hash=(bytes:Uint8Array)=>createHash("sha256").update(bytes).digest("hex");
+  const sources:LegacySourceResolver={
+    async register(value){if(value.descriptorId!==descriptor.id || value.mapperId!==descriptor.id || value.sourceKind!==descriptor.sourceKind)throw new Error("invalid-mapper");registered=true;},
+    async resolvePreferences(value){
+      if(value.owner.hostEpoch!==epoch || value.owner.sourceKey!==owner.sourceKey || value.descriptorId!==descriptor.id)throw new Error("stale");
+      const encoded=await store.auxiliary(owner,"import","nonce/"+value.evidence.nonce);if(!encoded)throw new Error("missing-evidence");
+      const document=parseNonceDocument(encoded);if(document.state!=="consumed" || !document.raw || document.digest!==value.evidence.digest)throw new Error("missing-evidence");
+      renderer=snapshotBytes(document.raw,document.allowlist);
+    },
+    async inventory(){
+      if(!registered)throw new Error("stale");
+      const bytes=descriptor.sourceKind==="renderer-preferences"?renderer:fileBytes;
+      if(!bytes)return {state:"blocked",entries:[]};
+      return {state:"present",entries:[{key:renderer?"preferences":fileKey,format:1,byteLength:bytes.length,sha256:hash(bytes)}]};
+    },
+    async read(_id,_key,offset,maxBytes){return (renderer??fileBytes).slice(offset,offset+maxBytes);},
+    async map(id,key){
+      if(id!==descriptor.id || !registered)throw new Error("stale");
+      counts.map++;const bytes=descriptor.sourceKind==="renderer-preferences"?renderer:fileBytes;if(!bytes)throw new Error("missing-evidence");
+      const mapped=randomUUID(),sha=hash(bytes);pins.set(mapped,{bytes:bytes.slice(),offset:0,ticket:null});counts.peakPins=Math.max(counts.peakPins,pins.size);
+      const value:LegacyMappedItem={kind:"record",mapped,sourceSha256:sha,mappedSha256:sha,byteLength:bytes.length,
+        metadata:{kind:descriptor.sourceKind==="renderer-preferences"?"test.preferences":"test.synthetic",schemaVersion:1,
+          label:"Fixture",mediaType:"application/octet-stream",byteLength:bytes.length,sha256:sha}};
+      return value;
+    },
+    async appendMapped(value){
+      const pin=pins.get(value.mapped);if(!pin || value.offset!==pin.offset || value.maxBytes>262144)throw new Error("stale");
+      pin.ticket=value.ticket;pin.offset=await store.append(value.ticket,pin.offset,pin.bytes.slice(pin.offset,pin.offset+value.maxBytes));
+      return {nextOffset:pin.offset,done:pin.offset===pin.bytes.length};
+    },
+    async releaseMapped(id){const pin=pins.get(id);if(pin?.ticket && store.unresolvedTicket(pin.ticket.id))throw new Error("publish-uncertain");pins.delete(id);},
+  };
+  const unavailable=():never=>{throw new Error("unexpected-test-port");};
+  const backend:PersistenceBackend={engine:store,reads:store,sources,
+    imports:{load:(o,id)=>store.loadImport(o,id),plan:(o,p)=>store.planImport(o,p),admit:(o,id,k)=>store.admitImport(o,id,k),
+      tagImport:(t,tag)=>store.tagImport(t,tag),importReceipts:(o,id)=>store.importReceipts(o,id),
+      record:(o,id,e)=>store.recordImport(o,id,e),reconcile:t=>store.reconcileImport(t),complete:(o,id)=>store.completeImport(o,id)},
+    evidence:{capture:unavailable,flush:unavailable,tickets:unavailable,quota:unavailable,
+      settingsDigest:o=>store.settingsDigest(o),auxiliary:(o,k,key)=>store.auxiliary(o,k,key),auxiliaryKeys:(o,k,c)=>store.auxiliaryKeys(o,k,c),
+      recoveryPage:c=>store.recoveryPage(c),loadRecovery:id=>store.loadRecovery(id),saveRecovery:v=>store.saveRecovery(v),removeRecovery:id=>store.removeRecovery(id)},
+    output:{begin:unavailable,append:unavailable,commit:unavailable,reconcile:unavailable,abort:unavailable},
+    destinations:{register:unavailable,release:unavailable},dispose:()=>store.dispose()};
+  const reserve=store.reserve.bind(store),publish=store.publish.bind(store);
+  vi.spyOn(store,"reserve").mockImplementation(async(...args)=>{counts.reserve++;return reserve(...args);});
+  vi.spyOn(store,"publish").mockImplementation(async ticket=>{counts.publish++;return publish(ticket);});
+  const writer={sourceKey:owner.sourceKey,freezeAdmission(){counts.freeze++;},async settled(){counts.settle++;await settle;}};
+  const barrier=createLegacyWriterBarrier({backend,descriptors:[descriptor],writers:[writer],importOwner:()=>owner});
+  const coordinator=createLegacyImportCoordinator({backend,sources,barrier,descriptors:[descriptor],
+    currentScope:s=>s.hostEpoch===scope.hostEpoch && s.workbenchInstance===scope.workbenchInstance,
+    currentSource:()=>active,importOwner:()=>owner});
+  return {directory,descriptor,owner,scope,backend,store,barrier,coordinator,counts,pins,fileBytes,
+    setActive(value:boolean){active=value;},holdWriters(value:Promise<void>){settle=value;},
+    saved:()=>backend.imports.load(owner,importIdFor(descriptor.id,owner.sourceKey))};
+}
+it("freezes synchronously, settles writers before challenge, and joins challenge requests",async()=>{
+  const f=await fixture(syntheticPreferencesImportDescriptor);expect(f.counts.freeze).toBeGreaterThan(0);
+  let release!:()=>void;f.holdWriters(new Promise<void>(resolve=>{release=resolve;}));
+  let returned=0;
+  const a=f.coordinator.issuePreferences({descriptorId:f.descriptor.id,scope:f.scope}).then(v=>{returned++;return v;});
+  const b=f.coordinator.issuePreferences({descriptorId:f.descriptor.id,scope:f.scope});
+  await new Promise(resolve=>setTimeout(resolve,0));expect(returned).toBe(0);release();
+  const [first,second]=await Promise.all([a,b]);expect(first).toEqual(second);
+  const bytes=await f.backend.evidence.auxiliary(f.owner,"import","nonce/"+first.nonce);
+  expect(parseNonceDocument(bytes!).state).toBe("issued");expect(parseNonceDocument(bytes!).raw).toBeNull();await f.backend.dispose();
+});
+it("captures a defensive snapshot, reconciles identical replay, rejects changed and retired replay",async()=>{
+  const f=await fixture(syntheticPreferencesImportDescriptor),challenge=await f.coordinator.issuePreferences({descriptorId:f.descriptor.id,scope:f.scope});
+  const snapshot={nonce:challenge.nonce,scope:f.scope,entries:[{key:"test.preference",raw:"  中文  "}]};
+  const expected=structuredClone(snapshot),pending=f.coordinator.acceptPreferencesEvidence(snapshot);snapshot.entries[0]!.raw="mutated";
+  expect(await pending).toEqual({state:"accepted"});
+  const bytes=await f.backend.evidence.auxiliary(f.owner,"import","nonce/"+challenge.nonce),document=parseNonceDocument(bytes!);
+  expect(document.state).toBe("consumed");expect(document.raw).toEqual(expected);
+  expect(await f.coordinator.acceptPreferencesEvidence(expected)).toEqual({state:"reconciled"});
+  await expect(f.coordinator.acceptPreferencesEvidence(snapshot)).rejects.toThrow("changed-replay");
+  f.coordinator.retirePreferences(f.scope);await expect(f.coordinator.acceptPreferencesEvidence(expected)).rejects.toThrow("stale");
+  await f.backend.dispose();
+});
+it("serializes concurrent submissions into one accepted transition",async()=>{
+  const f=await fixture(syntheticPreferencesImportDescriptor),challenge=await f.coordinator.issuePreferences({descriptorId:f.descriptor.id,scope:f.scope});
+  const snapshot={nonce:challenge.nonce,scope:f.scope,entries:[{key:"test.preference",raw:null}]};
+  const results=await Promise.all([f.coordinator.acceptPreferencesEvidence(snapshot),f.coordinator.acceptPreferencesEvidence(snapshot)]);
+  expect(results).toEqual([{state:"accepted"},{state:"reconciled"}]);
+  expect(parseNonceDocument((await f.backend.evidence.auxiliary(f.owner,"import","nonce/"+challenge.nonce))!).raw).toEqual(snapshot);
+  await f.backend.dispose();
+});
+it("keeps missing renderer pending and safe-mode free of mapping",async()=>{
+  const f=await fixture(syntheticPreferencesImportDescriptor);f.setActive(false);
+  expect((await f.coordinator.run(f.descriptor,new AbortController().signal)).state).toBe("pending");expect(f.counts.map).toBe(0);
+  f.setActive(true);expect((await f.coordinator.run(f.descriptor,new AbortController().signal)).state).toBe("pending");
+  expect(await f.saved()).toBeNull();await f.backend.dispose();
+});
+it("resumes consumed all-null preferences across three new epochs without a renderer",async()=>{
+  let f=await fixture(syntheticPreferencesImportDescriptor);const root=f.directory;
+  const challenge=await f.coordinator.issuePreferences({descriptorId:f.descriptor.id,scope:f.scope});
+  const snapshot={nonce:challenge.nonce,scope:f.scope,entries:[{key:"test.preference",raw:null}]};
+  await f.coordinator.acceptPreferencesEvidence(snapshot);await f.backend.dispose();
+  const epochs=new Set<string>([f.owner.hostEpoch]);let ids:string[]|undefined;
+  for(let i=0;i<3;i++) {
+    f=await fixture(syntheticPreferencesImportDescriptor,root);expect(epochs.has(f.owner.hostEpoch)).toBe(false);epochs.add(f.owner.hostEpoch);
+    const result=await f.coordinator.run(f.descriptor,new AbortController().signal);expect(result).toEqual({state:"complete",completedItems:1,totalItems:1});
+    const records=(await f.backend.reads.list(f.owner,{limit:64})).entries;
+    if(ids)expect(records.map(r=>r.id)).toEqual(ids);else ids=records.map(r=>r.id);
+    await expect(f.coordinator.acceptPreferencesEvidence(snapshot)).rejects.toThrow("stale");
+    expect(f.counts.map).toBe(i===0?2:0);await f.backend.dispose();
+  }
+});
+it("persists the full plan before destination reserve and pins one payload at a time",async()=>{
+  const f=await fixture(syntheticImportDescriptor),reserve=f.store.reserve.bind(f.store),originalHash=createHash("sha256").update(f.fileBytes).digest("hex");
+  vi.spyOn(f.store,"reserve").mockImplementation(async(ticket,...rest)=>{
+    if(ticket.target.kind==="record") {
+      const saved=await f.saved();expect(saved?.plan.items).toHaveLength(1);
+      expect(saved?.items[0]?.publicationTicket).toEqual(ticket);expect(saved?.plan.items[0]?.ticket.id).not.toBe(ticket.id);
+    }
+    return reserve(ticket,...rest);
+  });
+  expect(await f.coordinator.run(f.descriptor,new AbortController().signal)).toEqual({state:"complete",completedItems:1,totalItems:1});
+  expect(f.counts.peakPins).toBe(1);expect(f.pins.size).toBe(0);expect(createHash("sha256").update(f.fileBytes).digest("hex")).toBe(originalHash);
+  await f.backend.dispose();
+});
+```
 
 - [ ] **Step 7: Supply synthetic worker mappings and run crash/restart checks**
 
@@ -11608,6 +13192,7 @@ In `import-fixtures.ts`, export this pure synthetic descriptor; it is never regi
 
 ```ts
 import type { LegacyImportDescriptor } from "./import-sources.js";
+import { snapshotBytes, snapshotDigest } from "./import-sources.js";
 export const syntheticImportDescriptor: LegacyImportDescriptor = {
   id:"test.synthetic-import", mappingVersion:1, targetSourceKey:"builtin:test.synthetic",
   sourceKind:"sensor-lab", sourceFormatVersions:[1], targetRecordSchemaVersions:[1],
@@ -11618,6 +13203,24 @@ export const syntheticImportDescriptor: LegacyImportDescriptor = {
       byteLength:input.bytes.byteLength,sha256:input.sha256},bytes:input.bytes};
   },
 };
+export const syntheticPreferencesImportDescriptor:LegacyImportDescriptor={
+  id:"test.synthetic-preferences",mappingVersion:1,targetSourceKey:"builtin:test.preferences",
+  sourceKind:"renderer-preferences",sourceFormatVersions:[1],targetRecordSchemaVersions:[1],rendererKeyAllowlist:["test.preference"],
+  validate(input) {
+    if(input.sourceKind!=="renderer-preferences")return false;
+    try {
+      const snapshot=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(input.bytes));
+      return Buffer.from(snapshotBytes(snapshot,["test.preference"])).equals(input.bytes) &&
+        snapshotDigest(snapshot,["test.preference"])===input.sha256;
+    } catch {return false;}
+  },
+  map(input) {
+    if(!syntheticPreferencesImportDescriptor.validate(input))throw new Error("invalid-resource");
+    return {kind:"record",metadata:{kind:"test.preferences",schemaVersion:1,label:"Synthetic preferences fixture",
+      mediaType:"application/json",byteLength:input.bytes.length,sha256:input.sha256},bytes:input.bytes.slice()};
+  },
+};
+
 ```
 
 Implement test-local typed `PersistenceBackend`/`LegacySourceResolver` doubles in the three owned test files, recording durable snapshots and atomic tagged heads separately so a crash can lose the receipt without losing the head. Test before/after plan, publish, receipt, skip and completion-marker boundaries. Reconstruct the coordinator three times from retained backend state; require identical IDs/count/bytes, preserved skips and originals, and one committed publication per item. Include target conflict, input change, source/target version mismatch, permission failure versus absent, safe mode, user deletion after completion, 4096/4097 names, 512/513 items, 2 MiB/+1 journal, 64-item batches and 50 × 8 MiB streaming with one mapped payload pinned at a time. These are unit tests; T7's real worker-kill evidence is separately mandatory.
@@ -11627,6 +13230,7 @@ Run scoped green:
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
 pnpm --filter @kobrixa/desktop test -- src/main/plugins/persistence/import-sources.test.ts src/main/plugins/persistence/import-journal.test.ts src/main/plugins/persistence/import-coordinator.test.ts
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/persistence/engine-port.test.ts src/main/plugins/persistence/atomic-store.test.ts src/main/plugins/persistence/namespace.test.ts src/main/plugins/persistence/recovery-scan.test.ts src/main/plugins/persistence/worker.test.ts src/main/plugins/persistence/contract.test.ts
 pnpm check:desktop
 ```
 
@@ -11634,13 +13238,17 @@ Expected: exact frozen contracts compile, all durable adapter/barrier/nonce test
 
 - [ ] **Step 8: Commit the durable framework after reviewing the real-engine handoff**
 
-Do not close B2-RF5 on these unit results. The implementation commit, executed by the future task owner, is:
+F must first publish the amended engine-port.ts/import-sources.ts/contract.test.ts types. T2 owns engine-port.ts/test, atomic-store.ts/test, namespace.ts/test, recovery-scan.ts/test and worker.ts/test, including `AtomicStore.admitImport`, `WorkerSources.resolvePreferences` and strict private transport. If that writer has stopped, obtain its stopped-owner receipt for those exact prerequisite paths. T6 never edits those paths. T2/T6 unit checks precede T7 changed-hostEpoch worker kills and persisted renderer evidence without a renderer; D170/K170 attachments precede final T7 acceptance. Do not close B2-RF5 on unit results. The implementation commit, executed by the future task owner, is:
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git diff --check
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add apps/desktop/src/main/plugins/persistence/import-coordinator.ts apps/desktop/src/main/plugins/persistence/import-coordinator.test.ts apps/desktop/src/main/plugins/persistence/import-journal.ts apps/desktop/src/main/plugins/persistence/import-journal.test.ts apps/desktop/src/main/plugins/persistence/import-sources.ts apps/desktop/src/main/plugins/persistence/import-sources.test.ts apps/desktop/src/main/plugins/persistence/import-fixtures.ts
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): add bounded resumable legacy import mechanism"
 ```
+
+- [ ] **Final self-check — fix8 section 13**
+
+Re-read the resulting T0/T2/T6/T7/D170 fragments against BM-24/25. Search for and remove obsolete instructions to reserve original tickets after restart, compare historical scope to the current epoch for evidence reads, parse nonce/barrier keys as import plans, construct a renderer-preferences file root, or replay an old nonce to recover bytes. Keep original-ticket reconciliation language with its evidence-only meaning. Every new method must have a defining type, strict private transport mapping, implementation owner, caller and invoked test. No placeholders or missing worker handoffs remain. Re-run document diff/ownership checks; do not edit specs or commit during the plan-fix pass.
 
 ### Task 3B2-T7: Cross-layer persistence, fault/load evidence and author documentation
 
@@ -11802,9 +13410,38 @@ Create `plugin-persistence-import.test.mjs`:
 
 ```js
 import test from "node:test";
+import assert from "node:assert/strict";
 import { readEvidence, verifyImports } from "./plugin-persistence-harness.mjs";
 test("B2-RF5: actual import kill/reopen repeats preserve IDs, bytes and originals", async () => {
-  verifyImports(await readEvidence());
+  const report=await readEvidence();verifyImports(report);
+  const required=["before-plan","after-plan","before-attempt","after-attempt","before-head","after-head",
+    "before-receipt","after-receipt","before-skip","after-skip","before-raw","after-raw",
+    "before-consumption","after-consumption","before-marker","after-marker","before-barrier","after-barrier"];
+  const trials=report.imports.restartDetails;
+  assert.deepEqual([...new Set(trials.map(t=>t.boundary))].sort(),required.slice().sort());
+  for(const trial of trials) {
+    assert.equal(trial.actualProcessDeath,true);
+    assert.ok(trial.signal==="SIGKILL" || trial.platformTermination==="taskkill-/T-/F");
+    assert.ok(trial.reopens.length>=3);
+    assert.equal(new Set([trial.hostEpoch,...trial.reopens.map(r=>r.hostEpoch)]).size,trial.reopens.length+1);
+    for(const reopen of trial.reopens) {
+      assert.notEqual(reopen.pid,trial.pid);
+      assert.deepEqual(reopen.ids,trial.expectedIds);
+      assert.deepEqual(reopen.hashes,trial.expectedHashes);
+      assert.deepEqual(reopen.originalHashes,trial.originalHashes);
+      assert.equal(reopen.committedDestinations,new Set(reopen.ids).size);
+      assert.deepEqual(reopen.skipReasons,trial.skipReasons);
+      assert.equal(reopen.completedItems,reopen.committedItems+reopen.skippedItems);
+      assert.ok(reopen.barrierRestoredAt<=reopen.writerStartAttemptAt);
+      assert.equal(reopen.writerAdmitted,false);
+      assert.equal(reopen.publishesWhileUnknown,0);
+      assert.equal(reopen.deletedRecordResurrected,false);
+      assert.equal(reopen.rendererPresent,false);
+      assert.equal(reopen.preferenceSourceHash,trial.persistedPreferenceDigest);
+      assert.equal(reopen.preferenceMappedHash,trial.expectedPreferenceMappedHash);
+      assert.equal(reopen.oldWindowSubmitAccepted,false);
+    }
+  }
 });
 ```
 
@@ -12298,45 +13935,137 @@ export function launchPython(interpreter: string, entry: string, sdkRoot: string
 
 Neither this helper nor its callers may install a private `settings` test service on the peer. Only the real runtime router may handle the public requests. `launchJs` is **controller runs outside sandbox**; Python process tests also require the controller-selected interpreter, and a missing interpreter is pending/failed, never a passed parity test.
 
-- [ ] **Step 5: Implement the real producer, all fifteen cases and its executable runner**
+- [ ] **Step 5: Binding fixture contract (BM-26)**
 
-Implement `createFoundationFixture():Promise<FoundationFixture>` and `runPersistenceAcceptance` in `plugin-persistence-main.ts`. Keep the preceding real transport helpers; build consumers and this entry with the existing esbuild dependency. Bundle the owned `kill-worker.mjs` and the T6 synthetic descriptor into the worker test entry. The wrapper source is:
+Controller ruling: T7 does not require fully written fixture implementation code in this plan. The implementer writes the code under TDD at execution time. Preserve compatible helpers below, implement every producer from observed values, and enforce that requirement with the completeness test. The complete binding fixture instructions follow.
 
-```js
-import { runPersistenceWorker } from "../../../../apps/desktop/src/main/plugins/persistence/worker.ts";
-import { syntheticImportDescriptor } from "../../../../apps/desktop/src/main/plugins/persistence/import-fixtures.ts";
-runPersistenceWorker({mappers:new Map([[syntheticImportDescriptor.id, syntheticImportDescriptor]])});
-```
+This is the binding application of skeleton BM-26. Modify the T7 plan only when assigned that write set; this architecture pass edits no plan or spec. Preserve AM-30's no-argument factory and BM-20's fifteen-case vocabulary. The decision is to drive the real production composition from the existing native acceptance shell. Four of the eight inputs were already defined; four require the host/test additions in BM-26. A declaration or this ruling is not execution evidence.
 
-The private test launch supplies fixed synthetic source roots; product launch has no real Lab/device mappings. `import-map.ts` re-exports this same synthetic descriptor, never a second mapping implementation. The production-path/installed case uses K170 `persistenceWorkerPath({packaged,resourcesPath,buildRoot})` and its actual packaged worker artifact. The import fault case uses the bundled wrapper with the same worker runner, backend and fault controller.
+1. **Replace the partial assembly recipe, not the production implementation.**
 
-Construct the fixture in this order inside the no-argument factory, using local test configuration resolved from its built artifact and a fresh temporary userData directory:
+   The binding contract replaces T7 Step 5's separate `createDesktopFoundation` / `openStoreRoot` / `startPersistenceWorker` / `createPersistenceHost` / import-coordinator assembly and its “undefined construction inputs” table with the complete shell contract below; the implementer writes its implementation under TDD at execution time. T7 imports `composeDesktopMain`, `desktopUi`, `desktopLifecycle` and BM-26's `desktopFoundationTestHandles` from `apps/desktop/src/main/plugins/controller.ts`. The production function owns every runtime/service allocation after the primary shell inputs. Keep `createDesktopFoundation` only inside the AM-21 injected factory. Do not import product main/index.ts or inject a source-text replacement, manager, intent port, host/backend factory, source-admission result or precomputed evidence.
 
-1. Acquire the actual primary `ProfileWriterLock` once. Build the real journal, authority, operation gate and `createCoreActionLedger({now,current})` using D150's implementations and one validated test window scope. Pass the same lock to journal, broker and persistence. Keep monotonic deadline time separate from aligned diagnostic timestamps.
-2. Call `createDesktopFoundation` with `profile, authority, journal, coreActions, now, hasPermission, requirements, connectionPolicy, operationGate` and `providerFactory(catalog)` returning `createFakeDeviceProvider({catalog,now}).provider`; retain its real `control`. The provider is test-only and goes through real broker arbitration, authority, stop and readback. Do not substitute `DeviceIntentPort`.
-3. Open the root and start the worker with the exact calls below. Capture `PersistenceFaultControl` through `testControl`; fail construction if it was not delivered. Require `recovery === "ready"` for writable cases; corrupt/unknown-format cases exercise blocked read-only startup explicitly. The single backend supplies reads, imports, evidence, output, destinations and sources.
-4. Construct source admission from the real installed static catalog/registry, including safe-mode gating before resource reads. Use `createLegacyWriterBarrier({backend,writers,importOwner})` then `createLegacyImportCoordinator({backend,sources:backend.sources,barrier,descriptors,currentScope,currentSource,importOwner})`. Restore barriers before starting synthetic writer controls. `importOwner` is main-issued and does not activate a feature process.
-5. Call `createPersistenceHost` exactly as below using the real broker reservation port, existing B1 feature action ledger and D150 core ledger. D170 action adapter uses native save/clipboard with `backend.destinations.register({action,scope,nativePath,deadlineMonotonicMs})`, and `backend.output` performs actual writes. Dialog cancellation/identity swap trials control the test window/native destination, not a fake successful output callback.
-6. Attach `host.participant` to the real R170 `Stage3RuntimePorts`, preserving device/UI members; attach the paired `Stage3HostAttachment` to the real manager and original peer drain dispatcher. Use the single B1 reservation-ended listener. Mount the real D170 settings bridge, V170 contributed form and `attachSettingsControls` retry/reload/field map. Open a real BrowserWindow and drive trusted input through the same IPC sender validation. Launch JS/Python consumers with actual typed clients. No private settings/storage responder is installed.
-7. Subscribe to AM-22 `diagnosticsFor(instance)` from ui-state, ui-lifecycle, ui-bridge, state-store, host-ports and the worker. Sum only disjoint counters; capture actual apply/revoke/stop-dispatch events, clocks/uncertainty, RSS baselines/peaks and post-GC retained heap separately. Environment values come from the actual process, OS/filesystem and built artifact SHA-256. `close` drains host/backend, exits consumers/window, disposes foundation/journal and releases the original lock last, even on failure; assert zero live owned resources afterward.
+   Prerequisites must be concrete stopped-owner receipts: the existing R170 runtime; T2 `worker.ts/test` for `sourceRoots` and `persistenceWorkerCount`; D170 `controller.ts/test` for the optional test argument, existing-launcher observation and returned handles; B1-T9 `declarative-ui-browser.ts` for the completed test-page diagnostics collector. Use the exact signatures in BM-26. T7 cannot patch those files. The existing implementations of `startPrimary`, journal, authority and `StartPluginsOptions` need no replacement constructors.
 
-The constructor fragments use only the frozen factory inputs; variables are the local instances constructed in the numbered steps:
+2. **Materialize test artifacts before Electron starts.**
+
+   The controller in T7's existing `plugin-persistence-run.mjs` / `plugin-persistence-interop.test.mjs` builds the producer, JS consumer, worker wrapper and renderer test artifact using the existing build dependencies. Produce a fresh temporary profile and per-case artifact directory. Record real bundle hashes and artifact locations. Temporary generated entries/manifests are build artifacts, not new tracked source paths.
+
+   Use AM-20/K160's `acceptance.ui` / `acceptance-builtin` build and resource-index rules for two independent optional builtin copies. In the generated artifacts use IDs `acceptance.ui-recording` and `acceptance.ui-settings`, slugs `acceptance-builtin-recording` and `acceptance-builtin-settings`, and sourceKeys `builtin:acceptance.ui-recording` and `builtin:acceptance.ui-settings`. These suffixes are **new test artifact identities**, not new product registry entries. Substitute IDs consistently in manifests, public command registrations, resource references and indexes before hashing/building; never change an initialized source's identity. Preserve the original acceptance fixture as a read-only template. T7 owns modifications only to its already-listed `fixtures/plugin-persistence` templates and generated output.
+
+   Both copies use API `^1.7.0`, the real T7 public-client consumer and packaged `settings.json` with the existing `fixture.enabled` boolean used by `produceHealthyRelease`. Extend the owned consumer.ts to register the acceptance UI v1 contributions and persistence/drain handlers on its single SDK context; materialize the matching read-only UI resource templates alongside settings.json. Do not start a second SDK context by importing an auto-starting UI consumer. Keep the existing persistence permissions required by that consumer. Recording additionally declares `devices.read`, `devices.connect` and `requires.devices:[{capability:"recordingReservation.v1",required:true}]`; add other device requirements/permissions only for the already-scoped cases that use them. The recording capability requires `devices.read`, not an invented recording permission. Resolve permissions/requirements from the admitted validated manifest for the exact current execution; unknown/retired owners return false/null. Do not use `hasPermission:()=>true`.
+
+   For each builtin call the real `resolveBuiltinLaunch({sourceKey,pluginId,slug,packaged,appPath,buildRoot})`; install its returned descriptor as `Stage3BuiltinSource.launch`, with `kind:"builtin"`, `policy:"optional"`, the validated manifest and exact resource text map. Include both in the test input's `builtins` beside `BUILTIN_PLUGIN_SOURCES`. The manager/production launcher owns initialization and process creation. No T7 `launchJs` call supplies either admitted child.
+
+   T6's synthetic descriptor retains its declared targetSourceKey; materialize an additional inert test builtin for that namespace if it is not one of the two consumer namespaces. Do not rewrite a mapper's target identity to fit a consumer. It is static import metadata, not a third launched reference consumer. Product descriptors/writers stay empty. The two lifecycle reference cases need no synthetic import writer; the import cases supply the real T6 synthetic registrations through `test.legacy`.
+
+3. **Bind worker roots at build time, not through guessed transport fields.**
+
+   In the owned `kill-worker.mjs`, export `runSyntheticPersistenceWorker(sourceRoots)` as specified in BM-26. Import T6's `syntheticImportDescriptor` and call the real `runPersistenceWorker` once with the installed mapper map and that root map. The controller generates/builds a temporary entry that imports this wrapper and calls it with `new Map([[descriptorId, absoluteSyntheticRoot]])`, serialized from controller-owned build inputs. A wrapper invocation without the matching root must fail the synthetic-file test; do not silently use the old `WorkerSources` path heuristic. Renderer-preferences descriptors use BM-25 evidence, never this map.
+
+   Pass the resulting absolute built entry to `test.worker.entry`; D170 forwards its `control` callback to the existing single worker startup. The normal installed-path test omits this worker override and exercises K170's real packaged worker path. It must not claim that a substituted test wrapper proves packaged worker placement. Do not call `startPersistenceWorker` again from `createFoundationFixture`.
+
+4. **Implement the primary shell inside the no-argument factory.**
+
+   Keep importing `plugin-persistence-main.ts` inert. Its controller-generated Electron entry sets `app.setPath("userData", absoluteTestProfile)` before readiness, then calls `createFoundationFixture()`; the factory calls `startPrimary` once. It must not be wrapped in a pre-existing `app.whenReady()` that moves profile configuration or lock acquisition after readiness. The launch metadata is test-local artifact configuration, not an external composition module. A second factory call in the same Electron process fails explicitly.
+
+   The exact structure below supplies the two reference cases. Other existing case modes select their real startup policy/artifacts before this same no-argument factory is called; in particular safe-mode/all-optional-off runs must not inherit reference-case optional reads or activation. Record that test-local case configuration with the artifact, without adding any product selector. The structure is:
+
+   - Call `startPrimary(app, async profile => { ... }, focusExistingWindow)`. The real Electron app supplies the lock; retain the returned `profile` and await `primary.ready`. Null is a failed reference-fixture launch, not a fixture with a dummy profile. The separate secondary-instance case verifies zero construction and primary focus.
+   - In its callback create the BrowserWindow/native sender boundary as in B1-T9 `startAcceptanceWindow`; retain that actual window. Construct `new AuthorityContexts(profile.hostEpoch)`, call `open(win.webContents.id)`, then `report` with `{document,sequence:1,state:"local",roomId:null,connected:true,synced:true,role:null,isHolder:true}`. `scope()` projects `authority.core(sender,"recovery")`; `currentScope` checks the live window and both hostEpoch/workbenchInstance. `principal(owner)` delegates to `authority.plugin(sender,owner)`.
+   - Construct `journal = createJournal(createJournalFilesystem(userData), profile)` and await `journal.load()`. Retain the profile argument used by that constructor as `journalProfile`. Use `now=()=>performance.now()` for deadlines and `createCoreActionLedger({now,current:currentScope})`. The foundation input retains the existing validated manifest permission/requirement adapters, fixed test connection policy and operation gate from the native shell.
+   - Define `acceptanceFoundation(options:DesktopFoundationOptions):Promise<DesktopFoundation>` to call `createDesktopFoundation({...options,providerFactory(catalog){...}})`. Its callback calls `createFakeDeviceProvider({catalog,now:options.now})`, retains the actual control and returns its provider. Return the exact foundation object. BM-03 invokes this provider callback only when composition attaches the manager; check control after composition startup, not immediately after creating the foundation.
+   - In that factory observe the actual broker's `reservations.onEnded` registrations by a typed delegating wrapper: increment only after the original registration succeeds; return an idempotent unsubscribe that calls the original unsubscribe and decrements once. Preserve callback identity/arguments and method receiver. This installs no listener. Restore the method after composition disposal. The observed live count supplies AM-30 `reservationListenerCount`.
+   - Call `composeDesktopMain(input,test)` **once** using the full input in instruction 5. `test.worker.control` retains the real `PersistenceFaultControl`; the function itself still starts the worker/host/imports, binds native actions, installs the coordinator and starts the manager. `test.legacy`, when needed, contains only T6 synthetic descriptors/writers. The test options never supply service instances.
+   - Retain `composition`, `desktopUi(composition)`, `desktopLifecycle(composition)` and `desktopFoundationTestHandles(composition)`. Assert provider and fault control delivery, writable `handles.recovery === "ready"` for these two cases, and `composition.stage3.persistence === handles.host.participant`. Use the existing blocked-recovery cases to test `"blocked"`; never force it writable.
+   - Bind the existing UI/settings/recovery IPC and V170 mounts to this window using the actual composition/controller/host. Reuse the native sender/frame validation from B1-T9 and the D170 implementations; no private settings/storage responder. Load the production renderer test entry and attach the main and browser diagnostics collectors. For the two reference cases, explicitly activate the two declared fixture commands/openings through `composition.plugins` before resolving their channel rows in instruction 6. Merely reading the catalog must not start them.
+
+   The shell owns only the primary/window/native inputs already present in B1-T9. D170 remains responsible for barrier restoration and static-source admission ordering; do not move these services into T7 to bypass the startup gate.
+
+5. **Supply the complete existing startup input.**
+
+   For the two reference cases use `input:DesktopMainCompositionInput` with:
+
+   ```ts
+   {
+     createFoundation: acceptanceFoundation,
+     foundationOptions: {
+       profile, authority, journal, coreActions, now, hasPermission, requirements,
+       connectionPolicy, operationGate,
+     },
+     plugins: {
+       userData,
+       builtins, // retained builtins plus validated synthetic descriptors from instruction 2
+       commandLine: { developmentDirectories: [], safeMode: false },
+       locale: "en",
+       dialogs: {
+         confirmDeveloperMode: async () => true,
+         chooseFolder: async () => undefined,
+         confirmLink: async () => true,
+         confirmUnlink: async () => true,
+         choosePython: async () => undefined,
+       },
+     },
+     principal: owner => authority.plugin(win.webContents.id, owner),
+     scope, currentScope,
+     legacyFlush: async () => {},
+     report: reportCleanupError,
+   }
+   ```
+
+   These names are local values constructed in instruction 4, not ambient declarations. The shell has no legacy Lab resources, so its empty `legacyFlush` matches the existing B1 acceptance shell; production retains its real callback. `reportCleanupError` records actual failures and fails the run. Keep `connectionPolicy` exactly `{wifiConnectTimeoutMs:10000,wifiHandshakeTimeoutMs:5000,usbAutoReconnect:false,usbRetryInterval:2000,usbRetryLimit:3}` and the resource-free test shell's operation gate `()=>({ok:true,value:null})`, with normal broker authority/permission checks intact.
+
+   T7 omits optional launcher/probe/realpath/platform/wall-clock/supervisor overrides. D170 internally observes the existing launcher seam only when test handles are requested: delegate to createDesktopLauncher(hooks), retain each exact returned PluginProcess with its R150 channelOwner tuple, and return it unchanged to the supervisor. Pair it with bindChannel(context) by all five owner fields. Production defaults remain responsible for process launch; no new runtime accessor is needed. `stage3`, `stage3Host` and `onStage3Runtime` belong to composition; neither add them to `plugins` nor cast the provider observer into a manager. The reference pair uses JS optional builtins. Preserve the separate public Python stdio/parity run with its actual interpreter and admitted development source under the existing startup options; do not claim a node-only builtin descriptor launches Python.
+
+6. **Resolve both `LiveConsumer`s from admitted handles.**
+
+   Wait for successful explicit activation/ready and find one matching row in `handles.channels()` for each role's admitted sourceKey. Require a plugin principal, matching sourceKey/pluginId/generation/hostEpoch/processEpoch, and the original ready execution. Check `handles.runtime.current(owner)` at selection. Reject missing/duplicate/retired rows. Retain the selected row, never refresh it by sourceKey during retirement or generation comparison.
+
+   Change T7's local type to `type LiveConsumer={principal:()=>Principal;child:PluginProcess}`. Bind `recording={principal:recordingRow.context.principal,child:recordingRow.process}` and similarly for settings. Use `child.onExit` and its returned unsubscribe in both reference producers, replacing UtilityProcess `once/on/off("exit")`. Retirement's latch accepts the actual `ProcessExit` (including nullable code); it records an exit only from that callback. Healthy release subscribes to both actual processes and removes both subscriptions in `finally`.
+
+   Populate the existing `LifecycleCaseInput` with `now`, `broker:composition.foundation.broker`, `host:handles.host`, `stage3:composition.stage3`, `plugins:composition.plugins`, `fault`, `recording`, `settings`. Register `retirement:()=>produceRetirement(input)` and `"healthy-release":()=>produceHealthyRelease(input)` in the sole case dispatch table. Keep their real operations, original deadlines, grant identity/turn observations and method restoration. Both producers operate on the same composed host/broker/participant. `produceRetirement` disables through the real controller; `produceHealthyRelease` releases the real reservation and commits unrelated settings without replacing either process.
+
+   The reference bodies currently call real host/broker methods with retained channel principals; those observations do not alone prove public SDK transport. Keep T7's actual public JS/Python traffic and the separate route/SDK evidence required by the full acceptance suite. Do not replace the reference bodies with expected booleans or relabel their direct host calls as wire traffic.
+
+7. **Collect the exact instances, in their owning processes.**
+
+   Main registers `diagnosticsFor(ui.states)` from runtime ui-state, `diagnosticsFor(handles.runtime)` from ui-lifecycle, `diagnosticsFor(ui.bridge)` from main ui-bridge and `diagnosticsFor(handles.backend)` from worker. Import each function from its defining module and ensure the bundle resolves the same module instance as the factory; same-named functions are not a barrel export.
+
+   B1-T9's BM-26 browser collector imports `pluginUiWindow()` from the existing `apps/desktop/src/renderer/settings/settings-state.ts` and uses that production singleton. Register `host-ports.diagnosticsFor(owner.host)`, `state-store.diagnosticsFor(owner.session.catalog)` and each actual `state-store.diagnosticsFor(owner.session.record(entry).state)` as records appear. Use existing session/catalog subscriptions before operations, retain diagnostics for removed records until final observation, and deduplicate by identity. This supplies the five non-worker module bindings (three main, two renderer), not an arbitrary five-object total.
+
+   Call the test-page `api.foundationDiagnostics()` through the debugger after collector installation and before/after measured actions and disposal. It returns only the frozen counters/events and clock sample in BM-26. Preserve raw per-instance observations locally and sum only disjoint ownership. Capture aligned clock conversion and uncertainty as in B1-T9 Step 5b; deadline `now` stays monotonic. Do not import renderer modules into main to measure a separate WeakMap, fabricate zero snapshots, or expose diagnostics in product preload.
+
+   Use `persistenceWorkerCount(handles.backend)` for actual live worker count, not `workerJobs`, and the factory's actual onEnded subscription count for listener count. In the returned AM-30 `composition`, `profile` is `handles.profile`, `journalProfile` is the actual journal constructor argument, `persistenceProfile` is `handles.persistenceProfile`, `host` is `handles.host`, and `stage3` is `composition.stage3`. Verify the three profiles with strict identity. Expose count fields as getters over live observations so teardown checks see zero, rather than copying startup values.
+
+8. **Return the full fixture and close its actual lifetime.**
+
+   Return precisely the existing `FoundationFixture` shape: the identity-bearing composition projection, measured `environment`, `runCase`, and idempotent `close`. `runCase` invokes only a real producer and validates its result with `assertFoundationEvidence`. Keep the required `Record<FoundationCase,()=>Promise<CaseEvidence>>` and completeness check for all fifteen cases. During development a missing case is an explicit failing prerequisite; never fill the other thirteen entries from `FOUNDATION_CHECKS`, `validEvidence`, or a successful stub merely to run this pair.
+
+   `close` memoizes one promise, awaits `composition.dispose()` and the real worker/process teardown, calls the separate test-page `disposeFoundationRenderer():void` action on the actual renderer owner, reads final browser diagnostics before destroying the BrowserWindow, then removes IPC/collector subscriptions and verifies final main diagnostics and observed worker/listener counts. A crashed renderer uses its recorded process-exit evidence; an unavailable final snapshot is not a fabricated zero. Normal reference teardown must obtain the final snapshot. Keep the native close handler from recursively re-entering this close promise. Keep diagnostics until disposal observations finish. Honor unresolved disposition blockers; failed close is not clean shutdown. Journal filesystem operations close their own handles; do not invent journal disposal. Keep the primary lock held throughout. The outer Electron runner records success/failure and exits only after cleanup; the outside controller observes OS exit and then removes temporary profiles. A blocked/hung failure may be killed by the existing controller timeout, but must produce a failure receipt with retained disk evidence, never a normal-close success.
+
+   Construction failure uses the same ownership boundaries: composition owns cleanup for resources it allocated; the shell cleans its window/IPC observers and reports the error; the controller exits after cleanup. No second backend disposal or profile reacquisition in the catch path. Do not delete a profile with a live Electron process.
+
+9. **Make the reference end-to-end test execute one process per case.**
+
+   Fix T7 Step 5b's current two-fixtures-in-one-Electron loop. The outside-sandbox Node controller builds once, then launches a fresh Electron process and fresh profile for `retirement`, waits for its report/exit, and repeats for `healthy-release`. Each generated test entry configures the profile before readiness, imports the inert producer, calls `createFoundationFixture()`, verifies identity/counts, calls `fixture.runCase(theCase)`, validates live evidence, awaits `fixture.close()` and then quits. It never calls the two exported producer functions directly.
+
+   Inside Electron, check exact grant object identity and synchronous turn ordering before serialization. The controller then validates each fresh report, artifact hash, process exit and after-exit child cleanup. Missing control/channel/diagnostics, unknown instances, nonzero teardown counts, absent case producers, stale output and timeouts fail. Assert failure when any required observation is removed. Require zero secondary factory/worker/provider calls and import-time inactivity in the owning tests. Add focused owner tests for original-context/process association across replacement and exit, single worker/control forwarding, invalid source-root maps and production omission of test options.
+
+   Keep the existing command `node --test --test-name-pattern='BM-20 reference cases execute through createFoundationFixture' tests/desktop/plugin-persistence-interop.test.mjs`, now backed by those two real processes. Report the two-case result separately from the full fifteen-case report. Do not mark either case runnable until all prerequisite implementations and this controller-run receipt exist.
+
+10. **Preserve the remaining gates and ownership.**
+
+    T7 stops before X-T1 and records the actual producer artifact hash/commit receipt at P170. X-T1 imports its producer/constants read-only and runs all fifteen real cases. Its existing stage-3-foundations-main.ts/run.mjs harness uses the same per-case Electron/profile lifetime instead of reacquiring the primary lock or constructing a second fixture in one process; assertions and evidence vocabulary stay unchanged. Defects return through stopped-owner receipts. BM-24/25 import restart/evidence rules, K170 installed paths, safe mode, native sender checks, API 1.5/1.6/1.7 publication, all deadlines and counters remain unchanged. This fixes fixture binding only; it neither ships product migrations nor closes hardware/manual/umbrella acceptance.
+
+
+Implement these exact signatures under the fixture contract; they are declarations in the plan, not ambient stubs permitted in the executed producer:
 
 ```ts
-const root = await openStoreRoot({userData, profile});
-let fault: PersistenceFaultControl | undefined;
-const started = await startPersistenceWorker({profile, root, workerEntry, now,
-  testControl(control) { fault = control; }});
-if (!fault) throw new Error("worker fault control missing");
-const backend = started.backend;
-const barrier = createLegacyWriterBarrier({backend, writers, importOwner});
-await barrier.restore();
-const imports = createLegacyImportCoordinator({backend, sources:backend.sources, barrier,
-  descriptors, currentScope, currentSource, importOwner});
-const host = await createPersistenceHost({profile,
-  composition:{backend, sources, events:foundation.broker.events, dispatchDrain, imports},
-  reservations, actions, actionAdapter, coreActions, now, hasPermission});
+export declare function createFoundationFixture(): Promise<FoundationFixture>;
+export declare function runSyntheticPersistenceWorker(sourceRoots: ReadonlyMap<string, string>): void;
 ```
+
+The wrapper registers both T6 synthetic descriptors when executing the renderer-evidence import cases, with roots only for the file descriptor. Preserve the file descriptor's targetSourceKey and the renderer descriptor's BM-25 evidence binding.
 
 Export the case inventory next to the frozen types:
 
@@ -12346,6 +14075,85 @@ export const FOUNDATION_CASES = [
   "suspend-wake", "renderer-loss", "sealed-ttl", "unknown-publication", "all-optional-off",
   "action-replay", "import-restart", "storage-ui-pressure", "compatibility", "installed",
 ] as const satisfies readonly FoundationCase[];
+export const FOUNDATION_CHECKS: Readonly<Record<FoundationCase, {
+  checks: readonly string[]; events: readonly string[]; samples: readonly string[];
+}>> = {
+  "contention": {
+    checks: ["motionWhileRecording", "recordingWhileMotion", "concurrentActive", "settingsSuccess", "settingsConflict", "dirtyDraftPreserved"],
+    events: [],
+    samples: []
+  },
+  "retirement": {
+    checks: ["firstDeadline"],
+    events: ["retire", "freeze", "drain", "process-exit"],
+    samples: []
+  },
+  "registration-end": {
+    checks: ["finalTargets", "finalPublications", "pendingRegistrationIncluded", "firstDeadline", "lastDeadline"],
+    events: [],
+    samples: []
+  },
+  "healthy-release": {
+    checks: ["retireCalls", "freezeCalls", "processExits", "unrelatedSettingsCommitted", "generationBefore", "generationAfter"],
+    events: [],
+    samples: []
+  },
+  "disconnect-retry": {
+    checks: ["disconnectsBeforeSaved", "failedSaveBlocker", "retriesWithFreshAction", "finalTargets", "finalPublications", "priorSessionIncluded", "firstDeadline", "lastDeadline"],
+    events: ["quiesce", "stop-confirmed", "save-failed", "save-confirmed", "journal-confirmed", "disconnect"],
+    samples: []
+  },
+  "suspend-wake": {
+    checks: ["quiesceReason", "retireCalls", "freezeCalls", "processExits", "replayedMotion", "replayedRecording", "replayedCommand", "renewedOldToken"],
+    events: [],
+    samples: []
+  },
+  "renderer-loss": {
+    checks: ["processExited", "explicitRestart", "oldActionDenied", "oldGestureDenied", "oldEpochDenied", "oldCommitDenied", "newGeneration", "previousGeneration"],
+    events: [],
+    samples: []
+  },
+  "sealed-ttl": {
+    checks: ["lastProgressAt", "createdAt", "observedExpiry", "expiryAfterFailedRetry", "afterExpiry", "latePublishCalls", "unresolvedEvidenceDeleted", "originalExpiryPreserved", "expiredPinRejected", "checkpointOnlyNoInventedBytes"],
+    events: [],
+    samples: []
+  },
+  "unknown-publication": {
+    checks: ["disposition", "oldEvidenceRetained", "newEvidenceRetained", "namespaceFenced", "secondPublicationCalls", "reconciledOriginalTicket", "reconciledDisposition", "exportOriginalJobReconciled", "noRepublish", "destinationIdentityPreserved"],
+    events: [],
+    samples: []
+  },
+  "all-optional-off": {
+    checks: ["optionalProcesses", "optionalSchemaReads", "mapperCalls", "autoConnects", "coreRecoveryVisible", "coreExportSucceeded", "featureActionRefsMinted", "noProcessSettings", "durableRecoveryRestored", "committedExportHash", "sealedExportHash"],
+    events: [],
+    samples: []
+  },
+  "action-replay": {
+    checks: ["forgedDestinationWrites", "replayedDestinationWrites", "expiredDestinationWrites", "lateDialogWrites", "deniedClipboardWrites", "deviceLocksDuringDialog", "leakedPathsOrValues", "freshCoreAction", "cancelNoWrite", "lateDialogReleased", "identitySwapRejected"],
+    events: [],
+    samples: []
+  },
+  "import-restart": {
+    checks: ["recordCounts", "byteCounts", "idsStable", "originalsUnchanged", "deletedRecordReimported", "missingRendererCompletedEmpty", "markerBeforeCrashPending", "markerAfterCrashCompleteOnce", "atomicImportReceipt", "barrierRestored", "originalBytesUnchanged"],
+    events: [],
+    samples: []
+  },
+  "storage-ui-pressure": {
+    checks: ["records", "recordBytes", "activeJobs", "liveCounters", "peakPendingJobs", "peakQueuedHostBytes", "peakQueuedSourceBytes", "mainExtraRss", "workerExtraRss", "mainSyncMaxMs", "uiHeapBytes", "residualBytes", "cycles", "uiWarmupMs", "uiSampleMs", "uiRepeats", "deviceWorkloadMs", "namespaceIncludesSettingsImport", "targetExcludesSettings", "afterBarrierExcluded"],
+    events: [],
+    samples: ["stopExtraMs", "draftMs", "pageMs", "listMs", "commitMs", "uiApplyMs", "uiInputMs", "uiRevokeMs"]
+  },
+  "compatibility": {
+    checks: ["apiVersions", "schemasEqual", "secondGenerationDrift", "legacyExecutePreserved", "legacyInitializePreserved", "drainSentBelow17", "pythonExecuted", "publicApi18Published"],
+    events: [],
+    samples: []
+  },
+  "installed": {
+    checks: ["cwdOutsideCheckout", "externalNodeUsed", "networkRequired", "primaryWorkers", "secondaryWorkers", "secondaryProviders", "secondaryPlugins", "primaryRecordingInterrupted", "primaryFocused", "childrenAfterFiveSeconds"],
+    events: [],
+    samples: []
+  },
+};
 ```
 
 Add the following acceptance executor in the same producer. `runPersistenceAcceptance` obtains its `foundation` results by calling `await runFoundationEvidence()` before writing the report; it does not execute a second case loop. These assertions run in the Electron process while object identity is still available. The separate terminal fixture checks idempotent disposal without destroying a fixture needed by later cases.
@@ -12360,6 +14168,36 @@ const ADDITIONAL_FOUNDATION_CHECKS = {
   "storage-ui-pressure": ["namespaceIncludesSettingsImport", "targetExcludesSettings", "afterBarrierExcluded"],
   "import-restart": ["atomicImportReceipt", "barrierRestored", "originalBytesUnchanged"],
 } satisfies Partial<Record<FoundationCase, readonly string[]>>;
+export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
+  const required = FOUNDATION_CHECKS[id];
+  assert.ok(required, `Unknown foundation case ${id}`);
+  for (const key of required.checks) {
+    assert.ok(Object.hasOwn(evidence.checks, key), `${id}: missing check ${key}`);
+    const value = evidence.checks[key];
+    assert.ok(typeof value === "string" || typeof value === "boolean" ||
+      typeof value === "number" && Number.isFinite(value) ||
+      Array.isArray(value) && value.every(item => typeof item === "string" ||
+        typeof item === "number" && Number.isFinite(item)), `${id}: invalid check ${key}`);
+  }
+  for (const key of Object.keys(evidence.checks))
+    assert.ok(required.checks.includes(key), `${id}: undeclared check ${key}`);
+  for (const kind of required.events)
+    assert.ok(evidence.events.some(event => event.kind === kind), `${id}: missing event ${kind}`);
+  for (const event of evidence.events) {
+    assert.ok(Number.isSafeInteger(event.turn) && event.turn >= 0, `${id}: invalid event turn`);
+    assert.ok(Number.isFinite(event.time) && event.time >= 0, `${id}: invalid event time`);
+    if (event.deadline !== undefined)
+      assert.ok(Number.isFinite(event.deadline) && event.deadline >= 0, `${id}: invalid deadline`);
+  }
+  for (const key of required.samples) {
+    assert.ok(Object.hasOwn(evidence.samples, key), `${id}: missing sample ${key}`);
+    const values = evidence.samples[key]!;
+    assert.ok(values.length >= 30 && values.every(value => Number.isFinite(value) && value >= 0),
+      `${id}: ${key} needs 30 finite nonnegative measurements`);
+  }
+  for (const key of Object.keys(evidence.samples))
+    assert.ok(required.samples.includes(key), `${id}: undeclared sample ${key}`);
+}
 function assertRealComposition(fixture: FoundationFixture): void {
   const c = fixture.composition;
   assert.equal(c.persistenceProfile, c.profile);
@@ -12373,35 +14211,10 @@ function assertRealComposition(fixture: FoundationFixture): void {
   try { assert.deepEqual(c.host.recovery.snapshot(), c.host.participant.recoverySnapshot()); }
   finally { off(); }
 }
-export async function runFoundationEvidence(): Promise<Partial<Record<FoundationCase, CaseEvidence>>> {
-  const foundation: Partial<Record<FoundationCase, CaseEvidence>> = {};
-  const additional: Partial<Record<FoundationCase, readonly string[]>> = ADDITIONAL_FOUNDATION_CHECKS;
-  for (const name of FOUNDATION_CASES) {
-    const fixture = await createFoundationFixture();
-    try {
-      assertRealComposition(fixture);
-      const evidence = await fixture.runCase(name);
-      for (const key of additional[name] ?? []) {
-        assert.ok(Object.hasOwn(evidence.checks, key), `${name}: missing ${key}`);
-        assert.equal(evidence.checks[key], true, `${name}.${key}`);
-      }
-      if (name === "all-optional-off") {
-        assert.ok(evidence.events.length > 0, "missing recovery/restart observations");
-        assert.equal(typeof fixture.composition.host.recovery.export, "function");
-      }
-      assertRealComposition(fixture);
-      foundation[name] = evidence;
-    } finally { await fixture.close(); }
-  }
-  const disposal = await createFoundationFixture();
-  try {
-    assertRealComposition(disposal);
-    await Promise.all([disposal.composition.host.dispose(), disposal.composition.host.dispose()]);
-    disposal.composition.profile.assertHeld();
-  } finally { await disposal.close(); }
-  return foundation;
-}
+export declare function runFoundationEvidence(): Promise<Partial<Record<FoundationCase, CaseEvidence>>>;
 ```
+
+Implement `runFoundationEvidence` through the outside controller’s one fresh Electron process/profile per case, collecting each process’s validated report only after `fixture.close()` and OS exit. Never construct a second fixture or separately dispose the host in one Electron process. Run `assertRealComposition` and additional checks inside each owning case before serialization.
 
 Derive the additional booleans from actual worker traces, disk hashes and restart state. `committedExportHash` and `sealedExportHash` compare observed exported bytes with the respective source hashes. Run the data-only admitted settings subtrial separately from cold safe mode, which must retain zero optional schema reads. Barrier evidence pauses real settings/import tickets, captures namespace/target barriers before release, and proves later tickets are excluded; unknown outcomes never count as saved.
 
@@ -12424,6 +14237,500 @@ Derive the additional booleans from actual worker traces, disk hashes and restar
 | storage-ui-pressure | Four actual worker jobs, 50 maximum records, real renderer edits/pages and broker fake-provider telemetry; collect 30 cold/warm timing samples, queue quotas, RSS and stop-dispatch deltas. |
 | compatibility | Execute real JS/Python 1.4/1.5/1.6 consumers and unregistered 1.7 drain case; collect negotiation/results and zero unauthorized persistence traffic. |
 | installed | Launch built installed artifact without checkout/PATH fallback; hash executable/worker/resources, run SDK traffic and dispose to zero resources. |
+
+- [ ] **Step 5a: Observe retirement and healthy release at the real participant boundaries**
+
+Add the following code to `plugin-persistence-main.ts`. These functions take existing live objects, not fixture drivers. `principal` is the original `Stage3ChannelContext.principal` closure retained by `bindChannel`; `child` is the exact `PluginProcess` paired with that original context by `desktopFoundationTestHandles(composition).channels()`. `plugins` is the actual `PluginController` returned by startup. BM-18 gives `onStage3Runtime` only the provider observer (`state`/`onEvent`), not a callable `PluginManager`; do not cast that observer to gain `setEnabled`. Both calls use the same host, broker, worker and stage3 objects constructed above. No callback argument supplies a result or expected evidence. Register listeners before starting operations and restore the original methods in `finally`.
+
+This block implements the two case bodies; the no-argument factory still needs executable construction and dispatch wiring before either case can be reported complete. Do not replace that missing wiring with an ambient declaration or a successful stub.
+
+```ts
+import { randomBytes, createHash } from "node:crypto";
+import type { PluginProcess, ProcessExit } from "@kobrixa/plugin-runtime";
+import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { Principal, Stage3RuntimePorts, DrainOffer } from "@kobrixa/plugin-runtime";
+import type { DeviceBrokerPort } from "../../apps/desktop/src/main/device-broker/broker-port.js";
+import type { PersistenceFaultControl } from "../../apps/desktop/src/main/plugins/persistence/worker.js";
+
+import type { PluginController } from "../../apps/desktop/src/main/plugins/controller.js";
+
+type LiveConsumer = {
+  principal: () => Principal;
+  child: PluginProcess;
+};
+type LifecycleCaseInput = {
+  now: () => number;
+  broker: DeviceBrokerPort;
+  host: PersistenceHost;
+  stage3: Stage3RuntimePorts;
+  plugins: Pick<PluginController, "setEnabled">;
+  fault: PersistenceFaultControl;
+  recording: LiveConsumer;
+  settings: LiveConsumer;
+};
+function accepted<T>(result: {ok:true;value:T}|{ok:false;error:unknown}): T {
+  if (!result.ok) throw new Error(`Live operation failed: ${JSON.stringify(result.error)}`);
+  return result.value;
+}
+function pluginPrincipal(consumer: LiveConsumer): Extract<Principal, {kind:"plugin"}> {
+  const principal = consumer.principal();
+  if (principal.kind !== "plugin") throw new Error("Expected admitted plugin channel");
+  return principal;
+}
+function sameExecution(a: ResourceOwner, b: ResourceOwner): boolean {
+  return a.sourceKey === b.sourceKey && a.pluginId === b.pluginId &&
+    a.generation === b.generation && a.hostEpoch === b.hostEpoch && a.processEpoch === b.processEpoch;
+}
+async function within<T>(operation: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Missing live observation: ${label}`)), 15000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+function latch<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return {promise, resolve};
+}
+function eventRecorder(now: () => number) {
+  const events: CaseEvidence["events"] = [];
+  let turn = 0, scheduled = false;
+  return {
+    events,
+    record(kind: string, fields: Pick<CaseEvidence["events"][number], "grant"|"deadline"> = {}) {
+      // One ordinal per observed synchronous segment. The boundary is an actual
+      // microtask, never an ordinal assigned from the expected event order.
+      events.push({kind, turn, time: now(), ...fields});
+      if (!scheduled) {
+        scheduled = true;
+        queueMicrotask(() => { turn++; scheduled = false; });
+      }
+    },
+  };
+}
+async function reserveLiveRecording(input: LifecycleCaseInput) {
+  const signal = new AbortController().signal;
+  const principal = pluginPrincipal(input.recording);
+  const inventory = accepted(await input.broker.request(principal, "devices/list", {}, signal));
+  const provider = inventory.providers.find(row => row.state === "available");
+  if (!provider) throw new Error("No admitted fake provider");
+  let session = inventory.sessions.find(row => row.providerId === provider.providerId && row.state === "connected");
+  if (!session) {
+    const discovered = accepted(await input.broker.request(principal, "devices/discover",
+      {providerId: provider.providerId}, signal));
+    const candidate = discovered.candidates[0];
+    if (!candidate) throw new Error("Fake provider returned no candidate");
+    session = accepted(await input.broker.request(principal, "devices/connect",
+      {target:{kind:"candidate", candidateId:candidate.candidateId}}, signal)).session;
+  }
+  const current = accepted(await input.broker.request(principal, "devices/session",
+    {sessionId:session.sessionId}, signal));
+  const channel = current.sources.channels.find(row => row.state === "ready" && row.kind === "input");
+  if (!channel) throw new Error("Fake provider returned no recording input");
+  return accepted(await input.broker.request(principal, "devices/recording/reserve", {
+    sessionId:session.sessionId, channelIds:[channel.channelId],
+    expectedSourceRevision:current.sources.sourceRevision,
+  }, signal)).reservation;
+}
+
+export async function produceRetirement(input: LifecycleCaseInput): Promise<CaseEvidence> {
+  const participant = input.host.participant;
+  if (input.stage3.persistence !== participant) throw new Error("Detached persistence participant");
+  const principal = pluginPrincipal(input.recording), owner = principal.owner;
+  const signal = new AbortController().signal;
+  await reserveLiveRecording(input);
+  const bytes = randomBytes(4096), sha256 = createHash("sha256").update(bytes).digest("hex");
+  const write = accepted(await input.host.request(principal, "storage/beginWrite", {
+    target:{mode:"create"}, kind:"test.retirement", schemaVersion:1, label:"Retirement payload",
+    mediaType:"application/octet-stream", byteLength:bytes.length, sha256,
+  }, signal));
+  accepted(await input.host.request(principal, "storage/writeChunk",
+    {write:write.write, offset:0, data:bytes.toString("base64")}, signal));
+  accepted(await input.host.request(principal, "storage/sealWrite", {write:write.write}, signal));
+
+  const recorder = eventRecorder(input.now), frozen = latch<DrainOffer>(), exited = latch<ProcessExit>();
+  const retire = input.stage3.device.retire, freeze = participant.freeze,
+    drain = participant.drain, endReservation = participant.endReservation;
+  let firstDeadline: number | undefined;
+  let commit: Promise<unknown> | undefined, disabling: Promise<unknown> | undefined;
+  let armed = false;
+  const onExit = (exit: ProcessExit) => { recorder.record("process-exit"); exited.resolve(exit); };
+  const unsubscribeExit = input.recording.child.onExit(onExit);
+  const remember = (offer: DrainOffer | null) => {
+    if (offer && sameExecution(offer.owner, owner) && firstDeadline === undefined)
+      firstDeadline = offer.deadlineMonotonicMs;
+  };
+  participant.endReservation = function(event, deadline) {
+    const offer = endReservation.call(this, event, deadline); remember(offer); return offer;
+  };
+  input.stage3.device.retire = function(retired, reason) {
+    const result = retire.call(this, retired, reason);
+    if (sameExecution(retired, owner)) recorder.record("retire", {grant:result.drain});
+    return result;
+  };
+  participant.freeze = function(retired, reason, deadline, grant) {
+    const offer = freeze.call(this, retired, reason, deadline, grant);
+    if (sameExecution(retired, owner)) {
+      remember(offer);
+      recorder.record("freeze", {grant, deadline:offer.deadlineMonotonicMs});
+      frozen.resolve(offer);
+    }
+    return offer;
+  };
+  participant.drain = function(offer, dispatch) {
+    if (sameExecution(offer.owner, owner))
+      recorder.record("drain", {deadline:offer.deadlineMonotonicMs});
+    return drain.call(this, offer, dispatch);
+  };
+  try {
+    const traceStart = input.fault.trace().length;
+    const reached = input.fault.reached("before-publish");
+    input.fault.arm("before-publish", "pause"); armed = true;
+    // Install rejection handling immediately; losing the owner can reject this call.
+    commit = input.host.request(principal, "storage/commitWrite", {write:write.write}, signal)
+      .then(result => ({result}), error => ({error}));
+    await within(reached, "retirement publication pause");
+    const trace = input.fault.trace().slice(traceStart);
+    if (!trace.some(row => row.point === "before-publish" && row.ticket !== null))
+      throw new Error("Retirement did not pause a worker publication ticket");
+    disabling = input.plugins.setEnabled(owner.sourceKey, false).then(result => {
+      if (!result.ok) throw new Error(`Retirement refused: ${JSON.stringify(result)}`);
+      return result;
+    });
+    // Observe synchronously fenced state before permitting the worker continuation.
+    await within(Promise.race([frozen.promise, disabling.then(() => {
+      throw new Error("Disable completed without freeze");
+    })]), "retirement freeze");
+    input.fault.release("before-publish"); armed = false;
+    await within(Promise.all([commit, disabling, exited.promise]), "original process exit");
+    if (firstDeadline === undefined) throw new Error("No original drain deadline observed");
+    const evidence: CaseEvidence = {checks:{firstDeadline}, events:recorder.events, samples:{}};
+    assertFoundationEvidence("retirement", evidence);
+    return evidence;
+  } finally {
+    if (armed) input.fault.release("before-publish");
+    // Await any started work before restoring instrumentation; propagate cleanup failure.
+    try { await within(Promise.allSettled([commit, disabling].filter(value => value !== undefined)), "retirement cleanup"); }
+    finally {
+      participant.endReservation = endReservation; participant.freeze = freeze; participant.drain = drain;
+      input.stage3.device.retire = retire;
+      unsubscribeExit();
+    }
+  }
+}
+
+export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<CaseEvidence> {
+  if (input.stage3.persistence !== input.host.participant)
+    throw new Error("Detached persistence participant");
+  const owner = pluginPrincipal(input.recording).owner;
+  const other = pluginPrincipal(input.settings);
+  if (sameExecution(owner, other.owner)) throw new Error("Settings needs an unrelated admitted consumer");
+  const reservation = await reserveLiveRecording(input);
+  const generationBefore = owner.generation;
+  const participant = input.host.participant, retire = input.stage3.device.retire,
+    freeze = participant.freeze, drain = participant.drain;
+  const retireCalls: ResourceOwner[] = [], freezeCalls: ResourceOwner[] = [], exits: ProcessExit[] = [];
+  const drains: Promise<unknown>[] = [];
+  const onExit = (exit: ProcessExit) => { exits.push(exit); };
+  const unsubscribeRecording = input.recording.child.onExit(onExit);
+  const unsubscribeSettings = input.settings.child.onExit(onExit);
+  input.stage3.device.retire = function(retired, reason) {
+    if (sameExecution(retired, owner) || sameExecution(retired, other.owner)) retireCalls.push(retired);
+    return retire.call(this, retired, reason);
+  };
+  participant.freeze = function(retired, reason, deadline, grant) {
+    if (sameExecution(retired, owner) || sameExecution(retired, other.owner)) freezeCalls.push(retired);
+    return freeze.call(this, retired, reason, deadline, grant);
+  };
+  participant.drain = function(offer, dispatch) {
+    const result = drain.call(this, offer, dispatch);
+    // Attach both handlers immediately without swallowing a failed drain observation.
+    if (sameExecution(offer.owner, owner)) drains.push(result.then(value => ({value}), error => ({error})));
+    return result;
+  };
+  try {
+    const signal = new AbortController().signal;
+    const before = accepted(await input.host.request(other, "settings/read", {schemaVersion:1}, signal));
+    const enabled = before.values.find(row => row.key === "fixture.enabled");
+    if (!enabled || typeof enabled.value !== "boolean") throw new Error("Missing live fixture setting");
+    accepted(await input.broker.request(pluginPrincipal(input.recording), "devices/recording/release",
+      {reservationId:reservation.reservationId}, signal));
+    // onEnded schedules its real work after the current synchronous turn.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const settled = await within(Promise.all(drains), "reservation-end drains");
+    for (const result of settled) if (result && typeof result === "object" && "error" in result)
+      throw result.error;
+    const updated = await input.host.request(other, "settings/update", {schemaVersion:before.schemaVersion,
+      expectedRevision:before.revision, changes:[{key:enabled.key, value:!enabled.value}]}, signal);
+    const after = accepted(await input.host.request(other, "settings/read", {schemaVersion:1}, signal));
+    // Fresh traffic must succeed on the still-admitted original channel; it must
+    // not depend on how long the broker retains an ended reservation tombstone.
+    accepted(await input.broker.request(pluginPrincipal(input.recording), "devices/list", {}, signal));
+    const current = pluginPrincipal(input.recording).owner;
+    if (!sameExecution(owner, current) ||
+        !sameExecution(other.owner, pluginPrincipal(input.settings).owner))
+      throw new Error("Healthy release replaced an original execution");
+    const evidence: CaseEvidence = {checks:{
+      retireCalls:retireCalls.length, freezeCalls:freezeCalls.length, processExits:exits.length,
+      unrelatedSettingsCommitted:updated.ok && after.revision === updated.value.snapshot.revision &&
+        after.revision !== before.revision && after.values.some(row => row.key === enabled.key && row.value === !enabled.value),
+      generationBefore, generationAfter:current.generation,
+    }, events:[], samples:{}};
+    assertFoundationEvidence("healthy-release", evidence);
+    return evidence;
+  } finally {
+    input.stage3.device.retire = retire; participant.freeze = freeze; participant.drain = drain;
+    unsubscribeRecording();
+    unsubscribeSettings();
+  }
+}
+```
+
+Use these functions only with the actual channel principals and child objects retained during construction. A report cannot count either function merely because it is exported: `createFoundationFixture().runCase` must call it. In particular, `manager.state()` notices are not process-exit observations, and an assumed generation increment is not a generation observation. Do not fill the other thirteen dispatch entries from this inventory or from the verifier's `validEvidence`.
+
+- [ ] **Step 5b: Execute both reference cases through the factory, then verify retained evidence**
+
+Implement `plugin-persistence-interop.test.mjs` test `BM-20 reference cases execute through createFoundationFixture` under TDD following binding fixture instructions 2, 8 and 9. The outside Node controller builds once, launches retirement in a fresh Electron process/profile, awaits report and OS exit, then repeats for healthy-release in a different process/profile. Each entry configures userData before readiness and calls the inert factory exactly once. Validate exact grants and synchronous turn order inside Electron, original channel/process identity, live evidence, artifact hashes, cleanup and final diagnostics before reporting. Assert failure for every removed required observation, missing producer/control/channel, stale output, unknown diagnostics instance, nonzero teardown count or timeout. Never call the reference producers directly.
+
+- [ ] In `plugin-persistence-interop.test.mjs`, test `BM-20 reference cases execute through createFoundationFixture`, assert both process reports, distinct profiles, successful exits, after-exit child cleanup and zero secondary factory/worker/provider calls.
+- [ ] In `plugin-persistence-interop.test.mjs`, the completeness test validates all fifteen dispatch entries and every required check/event/sample against `FOUNDATION_CHECKS`; every producer must derive values from observed operations. Removing any observation fails; missing values cannot default to zero/true. Two-case success remains separate from the full fifteen-case receipt.
+- [ ] In `plugin-persistence-main.ts` owning tests, assert import-time inactivity and second-factory rejection; normal close obtains final renderer diagnostics before window destruction and zero live workers/listeners after real teardown; failures retain evidence rather than claiming clean shutdown.
+
+```bash
+node --test --test-name-pattern='BM-20 reference cases execute through createFoundationFixture' tests/desktop/plugin-persistence-interop.test.mjs
+```
+
+Expected red before prerequisite implementations; expected green only after both real per-case processes execute. A plan edit is not a runnable-case receipt. R170, T2, D170, B1-T9 browser and K170 attachments plus the controller-run receipt gate acceptance.
+
+- [ ] **Step 5c: Per-case observation sources**
+
+Implement each producer the same way as the two reference producers, with no constants. Each row below is one required observation, not an expected-value initializer. Instrument the named real call, retain its arguments/result or trace, and restore instrumentation in `finally`. A zero count is valid only after the corresponding operation was attempted and the observation interval closed. Event names below are local `eventRecorder` kinds, recorded at the named completion boundary; they are not new AM-22 diagnostic event kinds. AM-22 still exposes only `apply`, `revoke` and `stop-dispatch`.
+
+The existing completeness test must fail for any missing or constant-valued check. Equality to the oracle alone cannot establish observation provenance: a copied expected value can pass that equality. Keep the missing/renamed-key tests and also require the producer-source constant regression test below. Runtime counters that happen to remain zero are observations, not constant initializers.
+
+| Case | Required observation | Exact observation source | Pass condition |
+| --- | --- | --- | --- |
+| contention | check `motionWhileRecording` | `broker.request` motion admission result while `devices/recording/reserve` is live | `busy` |
+| contention | check `recordingWhileMotion` | `broker.request("devices/recording/reserve")` result during live motion | `busy` |
+| contention | check `concurrentActive` | Broker admission/termination trace for the same channel and both owners | No overlapping active motion and recording intervals; count 0 |
+| contention | check `settingsSuccess` | Two `host.request("settings/update")` results with the same `expectedRevision` | Exactly 1 successful result |
+| contention | check `settingsConflict` | The same two update results, `error.code` | Exactly 1 `PLUGIN_E_SETTINGS_CONFLICT` |
+| contention | check `dirtyDraftPreserved` | `attachSettingsControls` field map and `settings/read` after the losing CAS | Losing dirty field remains in the form; true |
+| registration-end | check `finalTargets` | `participant.endReservation` offer and `participant.drain` request `writes`, deduplicated by checkpoint target | 1 |
+| registration-end | check `finalPublications` | `fault.trace()` `after-publish` tickets for that final target | 1 distinct final publication |
+| registration-end | check `pendingRegistrationIncluded` | Registration ticket paused with `fault.arm("before-publish","pause")`; resulting drain `writes` after reservation end and release | Pending target included exactly once; true |
+| registration-end | check `firstDeadline` | First `participant.endReservation` returned `DrainOffer.deadlineMonotonicMs` | Finite original deadline |
+| registration-end | check `lastDeadline` | Final `participant.drain` offer `deadlineMonotonicMs` | Equals `firstDeadline` |
+| disconnect-retry | check `disconnectsBeforeSaved` | Broker/provider disconnect trace compared with `backend.evidence.flush` and journal completion | 0 |
+| disconnect-retry | check `failedSaveBlocker` | `host.recovery.snapshot()` after `fault.arm("before-publish","fail")` | Failed save remains visible; true |
+| disconnect-retry | check `retriesWithFreshAction` | `createCoreActionLedger` mint/claim and `host.recovery` retry dispatch trace | 1 successful retry with a new claimed action |
+| disconnect-retry | check `finalTargets` | Drain request `writes` for current and earlier ended reservations | 2 distinct targets |
+| disconnect-retry | check `finalPublications` | `fault.trace()` `after-publish` ticket IDs matched to final targets | 2, without duplicate publication |
+| disconnect-retry | check `priorSessionIncluded` | Earlier `participant.endReservation` offer compared with final drain request `writes` | Earlier pending final included; true |
+| disconnect-retry | check `firstDeadline` | First `participant.endReservation` offer `deadlineMonotonicMs` | Finite original deadline |
+| disconnect-retry | check `lastDeadline` | Retry drain offer `deadlineMonotonicMs` | Equals `firstDeadline` |
+| disconnect-retry | event `quiesce` | `eventRecorder.record("quiesce")` on real `broker.sessions.quiesce` invocation | Before stop/save/journal/disconnect |
+| disconnect-retry | event `stop-confirmed` | `eventRecorder.record("stop-confirmed")` after provider stop/readback succeeds | After quiesce, before disconnect |
+| disconnect-retry | event `save-failed` | `eventRecorder.record("save-failed")` on actual failed drain/flush result | After quiesce, before successful retry |
+| disconnect-retry | event `save-confirmed` | `eventRecorder.record("save-confirmed")` after `backend.evidence.flush` reports `saved` | After save-failed, before disconnect |
+| disconnect-retry | event `journal-confirmed` | `eventRecorder.record("journal-confirmed")` after durable journal completion | After quiesce, before disconnect |
+| disconnect-retry | event `disconnect` | `eventRecorder.record("disconnect")` at actual provider disconnect dispatch | After stop-confirmed, save-confirmed and journal-confirmed |
+| suspend-wake | check `quiesceReason` | `broker.sessions.quiesce` input `reason` during lifecycle suspend | `suspended` |
+| suspend-wake | check `retireCalls` | Calls to `stage3.device.retire` for the healthy owner | 0 |
+| suspend-wake | check `freezeCalls` | Calls to `host.participant.freeze` for the healthy owner | 0 |
+| suspend-wake | check `processExits` | Original consumer `child` `exit` notifications through wake | 0 |
+| suspend-wake | check `replayedMotion` | Broker request/provider dispatch trace after wake for pre-suspend motion | 0 |
+| suspend-wake | check `replayedRecording` | Broker `devices/recording/reserve` trace after wake for old recording | 0 |
+| suspend-wake | check `replayedCommand` | Original peer command invocation trace after wake | 0 |
+| suspend-wake | check `renewedOldToken` | Original action/drain token and deadline compared before suspend and after wake | 0 renewals |
+| renderer-loss | check `processExited` | Original `child.once("exit")` after actual window destruction | Exit observed; true |
+| renderer-loss | check `explicitRestart` | New channel admission following explicit open/command, with no intervening automatic launch | True |
+| renderer-loss | check `oldActionDenied` | Real action dispatch result using retained old actionRef | Rejected; true |
+| renderer-loss | check `oldGestureDenied` | Real intent admission result using retained old gesture | Rejected; true |
+| renderer-loss | check `oldEpochDenied` | `host.request` result with original channel principal after epoch retirement | Rejected; true |
+| renderer-loss | check `oldCommitDenied` | `storage/commitWrite` result for the original write after retirement | Rejected; true |
+| renderer-loss | check `newGeneration` | New `Stage3ChannelContext.principal()` owner `generation` | Greater than `previousGeneration` |
+| renderer-loss | check `previousGeneration` | Original `Stage3ChannelContext.principal()` owner `generation` captured before loss | Actual original generation |
+| sealed-ttl | check `lastProgressAt` | Controlled monotonic `now` at last successful `storage/writeChunk`/`storage/sealWrite` completion | Finite original progress time |
+| sealed-ttl | check `createdAt` | Controlled monotonic `now` at accepted `storage/beginWrite` | Finite original creation time |
+| sealed-ttl | check `observedExpiry` | `storage/sealWrite` status `expiresAt`, converted using captured wall/monotonic offset | `min(lastProgressAt + 30000, createdAt + 120000)` |
+| sealed-ttl | check `expiryAfterFailedRetry` | Status `expiresAt` after actual failed publication/retry, using the same offset | Equals original expiry |
+| sealed-ttl | check `afterExpiry` | `participant.retry`/drain report after advancing monotonic time across original expiry | `checkpoint-only` |
+| sealed-ttl | check `latePublishCalls` | `fault.trace()` `before-publish` entries for the expired ticket after expiry | 0 |
+| sealed-ttl | check `unresolvedEvidenceDeleted` | `backend.evidence.loadRecovery(id)` and retained ticket/pin after failed retry | false |
+| sealed-ttl | check `originalExpiryPreserved` | Original status expiry and reopened `StoredRecovery.expiresAt` compared with captured clock conversion | Equal; true |
+| sealed-ttl | check `expiredPinRejected` | Actual `storage/readChunk` on expired read handle | Stale-resource rejection; true |
+| sealed-ttl | check `checkpointOnlyNoInventedBytes` | Drain report and exported/read bytes hash for incomplete staging | Checkpoint-only and no synthesized complete payload; true |
+| unknown-publication | check `disposition` | Original publish result after `fault.arm("after-publish","kill")` | `unknown` |
+| unknown-publication | check `oldEvidenceRetained` | Reopened old head/object bytes hash against pre-fault hash | Original evidence retained; true |
+| unknown-publication | check `newEvidenceRetained` | Reopened sealed/new object bytes hash against sealed source hash | New evidence retained; true |
+| unknown-publication | check `namespaceFenced` | Real second namespace write result before reconciliation | Refused while unknown; true |
+| unknown-publication | check `secondPublicationCalls` | `fault.trace()` `before-publish` entries after original dispatch, excluding original ticket's initial attempt | 0 republish calls |
+| unknown-publication | check `reconciledOriginalTicket` | `backend.engine.reconcile(ticket)` argument identity/ID compared with original publication ticket | Same original ticket; true |
+| unknown-publication | check `reconciledDisposition` | Original-ticket `backend.engine.reconcile` result | `committed` |
+| unknown-publication | check `exportOriginalJobReconciled` | `backend.output.reconcile(id)` trace compared with original export job ID | Original job reconciled; true |
+| unknown-publication | check `noRepublish` | `backend.output.commit`/`backend.engine.publish` call traces after unknown result | No second publish; true |
+| unknown-publication | check `destinationIdentityPreserved` | Original `backend.destinations.register` token and `backend.output` job destination across reconcile | Same retained identity, no new registration; true |
+| all-optional-off | check `optionalProcesses` | Optional-source launch/exit trace in cold safe mode | 0 launches |
+| all-optional-off | check `optionalSchemaReads` | `readPackagedJson`/`readBuiltinJson` calls for optional settings resources | 0 |
+| all-optional-off | check `mapperCalls` | `syntheticImportDescriptor` mapper invocation trace | 0 |
+| all-optional-off | check `autoConnects` | Broker/provider `devices/connect` dispatch trace | 0 |
+| all-optional-off | check `coreRecoveryVisible` | `host.recovery.snapshot()` and actual trusted recovery detail render | Retained item visible; true |
+| all-optional-off | check `coreExportSucceeded` | `host.recovery.export` result and actual destination bytes | Successful whole-file export; true |
+| all-optional-off | check `featureActionRefsMinted` | `UserPersistenceActions` mint trace during core recovery actions | 0 |
+| all-optional-off | check `noProcessSettings` | Separate data-only `host.settings.open`/read/update trial plus optional launch trace | Settings work without process launch; true |
+| all-optional-off | check `durableRecoveryRestored` | `backend.evidence.recoveryPage` after fresh hostEpoch compared with pre-restart recovery IDs | Durable items restored; true |
+| all-optional-off | check `committedExportHash` | SHA-256 of actual committed export bytes compared with committed source bytes hash | Equal; true |
+| all-optional-off | check `sealedExportHash` | SHA-256 of actual sealed export bytes compared with sealed source bytes hash | Equal; true |
+| action-replay | check `forgedDestinationWrites` | `backend.output.begin`/`append`/`commit` trace during forged action attempt | 0 writes |
+| action-replay | check `replayedDestinationWrites` | Same output trace during actionRef replay | 0 writes |
+| action-replay | check `expiredDestinationWrites` | Same output trace after original action expiry | 0 writes |
+| action-replay | check `lateDialogWrites` | Same output trace after window retirement before dialog return | 0 writes |
+| action-replay | check `deniedClipboardWrites` | Native `clipboard.writeText` invocation trace after denied permission | 0 |
+| action-replay | check `deviceLocksDuringDialog` | Broker admission/reservation trace between native dialog open and completion | 0 newly acquired locks |
+| action-replay | check `leakedPathsOrValues` | Actual peer responses/events scanned for synthetic native path and settings-value sentinels | 0 matches |
+| action-replay | check `freshCoreAction` | `createCoreActionLedger` mint/claim trace for successful core recovery export | Fresh scope-bound token claimed once; true |
+| action-replay | check `cancelNoWrite` | Output call trace and destination hash before/after native cancellation | No mutation; true |
+| action-replay | check `lateDialogReleased` | `backend.output.release` trace for the registered destination on late completion | Registration released exactly once; true |
+| action-replay | check `identitySwapRejected` | Output result and sentinel file hash after native destination replacement | Rejected and sentinel unchanged; true |
+| import-restart | check `recordCounts` | Public `storage/list` after each of three reopenings | `[50, 50, 50]` |
+| import-restart | check `byteCounts` | Sum actual listed record byte lengths after each reopening | `[419430400, 419430400, 419430400]` |
+| import-restart | check `idsStable` | Sorted `storage/list` IDs across all reopenings | Equal; true |
+| import-restart | check `originalsUnchanged` | Synthetic source file SHA-256 before/after each kill/reopen | Equal; true |
+| import-restart | check `deletedRecordReimported` | Delete a migrated target, reopen completed import, then `storage/list` | false |
+| import-restart | check `missingRendererCompletedEmpty` | Durable import status/marker after missing-renderer trial | No false empty completion; false |
+| import-restart | check `markerBeforeCrashPending` | `fault.arm("import-marker","pause")`, terminate, reopen and read durable import status | Pending; true |
+| import-restart | check `markerAfterCrashCompleteOnce` | Marker ticket `receipt-send` trace, terminate/reopen and read durable marker | Complete exactly once; true |
+| import-restart | check `atomicImportReceipt` | `backend.imports.reconcile(ticket)` and durable item receipt/tag after head-before-receipt kill | Same committed ticket and receipt, no duplicate target; true |
+| import-restart | check `barrierRestored` | `createLegacyWriterBarrier.restore` completion and synthetic writer admission trace after reopening | Writer blocked until durable barrier restored; true |
+| import-restart | check `originalBytesUnchanged` | SHA-256 of original synthetic source bytes before/after head, skip and marker trials | Equal; true |
+| storage-ui-pressure | check `records` | Public `storage/list` complete pagination | 50 |
+| storage-ui-pressure | check `recordBytes` | Actual `storage/openRead` metadata and summed chunk bytes per record | 8388608 |
+| storage-ui-pressure | check `activeJobs` | Worker job start/completion intervals, distinguished from pending queue entries | 4 concurrent executing jobs |
+| storage-ui-pressure | check `liveCounters` | Sum disjoint AM-22 `diagnosticsFor(instance).snapshot()` counters after cleanup | 0 |
+| storage-ui-pressure | check `peakPendingJobs` | T2 worker queue admission/completion trace (`queue.pending`; existing load `pendingJobs`) | At most 32 |
+| storage-ui-pressure | check `peakQueuedHostBytes` | Encoded `PersistenceWorkerRequest` retained bytes from worker send/response trace (existing load `pendingSerializedBytes`) | At most 8388608 |
+| storage-ui-pressure | check `peakQueuedSourceBytes` | Same retained request bytes grouped by original source owner | At most 1048576 per source |
+| storage-ui-pressure | check `mainExtraRss` | Main `process.memoryUsage().rss` peak minus measured baseline | At most 33554432 |
+| storage-ui-pressure | check `workerExtraRss` | Worker memory measurement peak minus baseline, recorded separately from main | At most 67108864 |
+| storage-ui-pressure | check `mainSyncMaxMs` | Monotonic duration around actual main synchronous handlers | At most 16 ms |
+| storage-ui-pressure | check `uiHeapBytes` | Renderer post-GC heap measurement for retained UI objects | At most 67108864 |
+| storage-ui-pressure | check `residualBytes` | Post-GC retained heap after cycles minus initial post-GC baseline | At most 2097152 |
+| storage-ui-pressure | check `cycles` | Completed real UI mount/open/revoke/dispose operation trace | At least 1000 |
+| storage-ui-pressure | check `uiWarmupMs` | Measured warmup start/end timestamps | At least 5000 ms |
+| storage-ui-pressure | check `uiSampleMs` | Measured UI sampling interval timestamps | At least 60000 ms |
+| storage-ui-pressure | check `uiRepeats` | Number of completed independent UI sample intervals | At least 3 |
+| storage-ui-pressure | check `deviceWorkloadMs` | Broker fake-provider workload start/end timestamps | At least 600000 ms |
+| storage-ui-pressure | check `namespaceIncludesSettingsImport` | `backend.evidence.capture({kind:"namespace",owner},deadline)` and `tickets(barrier)` during paused settings/import work | Both pre-barrier tickets included; true |
+| storage-ui-pressure | check `targetExcludesSettings` | `backend.evidence.capture({kind:"target",owner,recordId},deadline)` and `tickets(barrier)` | Unrelated settings ticket absent; true |
+| storage-ui-pressure | check `afterBarrierExcluded` | Original barrier `through` and `tickets(barrier)` compared with later admitted ticket | Later ticket absent; true |
+| storage-ui-pressure | sample `stopExtraMs` | AM-22 `stop-dispatch` timestamp minus trusted stop input timestamp, compared with unloaded baseline | At least 30; p95 ≤ 50 ms |
+| storage-ui-pressure | sample `draftMs` | Trusted field input to actual dirty draft render timestamps | At least 30; p95 ≤ 50 ms |
+| storage-ui-pressure | sample `pageMs` | Actual page input to completed rendered page timestamps | At least 30; p95 ≤ 100 ms |
+| storage-ui-pressure | sample `listMs` | Public `storage/list` request/response duration | At least 30; p95 ≤ 200 ms |
+| storage-ui-pressure | sample `commitMs` | Public `storage/commitWrite` request to committed receipt duration | At least 30; p95 and max ≤ 10000 ms |
+| storage-ui-pressure | sample `uiApplyMs` | Accepted patch timestamp to AM-22 `apply` event | At least 30; p95 ≤ 16 ms, max ≤ 50 ms |
+| storage-ui-pressure | sample `uiInputMs` | Trusted renderer input to visible result timestamps | At least 30; p95 ≤ 100 ms |
+| storage-ui-pressure | sample `uiRevokeMs` | Lifecycle revoke trigger to AM-22 `revoke` event | At least 30; p95 ≤ 50 ms, max ≤ 100 ms |
+| compatibility | check `apiVersions` | Original peers' actual initialize negotiation results | `["1.4.0", "1.5.0", "1.6.0", "1.7.0"]` |
+| compatibility | check `schemasEqual` | Canonical JS/Python schema serialization/hash comparison | Equal; true |
+| compatibility | check `secondGenerationDrift` | Negotiation and payload schema hashes across real consumer restart | false |
+| compatibility | check `legacyExecutePreserved` | Actual legacy execute request/result through public router | Existing result contract preserved; true |
+| compatibility | check `legacyInitializePreserved` | Actual legacy initialize response compared with legacy contract | Preserved; true |
+| compatibility | check `drainSentBelow17` | Original peers' outbound `storage/drain` request trace at API below 1.7 | 0 |
+| compatibility | check `pythonExecuted` | `launchPython` child spawn, public SDK request/reply and successful exit | All observed; true |
+| compatibility | check `publicApi18Published` | Installed protocol/SDK package version and exported negotiated API inventory | false |
+| installed | check `cwdOutsideCheckout` | Actual installed child cwd compared with checkout real path | Outside checkout; true |
+| installed | check `externalNodeUsed` | Actual child executable/spawn trace | No external Node executable; false |
+| installed | check `networkRequired` | Installed offline trial result and network request trace | No required network request; false |
+| installed | check `primaryWorkers` | Primary `startPersistenceWorker` invocation/worker lifecycle trace | 1 |
+| installed | check `secondaryWorkers` | Secondary worker lifecycle trace after single-instance denial | 0 |
+| installed | check `secondaryProviders` | Secondary provider construction/attach trace | 0 |
+| installed | check `secondaryPlugins` | Secondary consumer launch trace | 0 |
+| installed | check `primaryRecordingInterrupted` | Primary broker recording state and provider trace spanning secondary launch | false |
+| installed | check `primaryFocused` | Actual primary BrowserWindow focus event after secondary-instance notification | true |
+| installed | check `childrenAfterFiveSeconds` | Retained child/worker handles and exit events five seconds after shutdown | 0 live children |
+
+Append this source regression to `plugin-persistence-interop.test.mjs` (merge `readFile` and the TypeScript import). It complements report completeness: JSON cannot distinguish a literal `true` from a measured comparison that returned true. Inspect only producer functions, never the vocabulary or verifier fixtures. Resolve constant aliases as well as direct literal initializers. Mutation-test every discovered check with boolean, numeric, string and array literals; the source gate must reject every replacement, including literals that could match the value-only oracle.
+
+```js
+import ts from "typescript";
+import { readFile } from "node:fs/promises";
+
+function assertNoConstantProducerChecks(source) {
+  const file = ts.createSourceFile("plugin-persistence-main.ts", source,
+    ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const constants = new Map();
+  const visitDeclarations = node => {
+    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Const))
+      for (const declaration of node.declarations)
+        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+          // Ambiguous names are not resolved across lexical scopes.
+          const name = declaration.name.text;
+          constants.set(name, constants.has(name) ? null : declaration.initializer);
+        }
+    ts.forEachChild(node, visitDeclarations);
+  };
+  visitDeclarations(file);
+  function constant(node, seen = new Set()) {
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ||
+        ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node))
+      return constant(node.expression, seen);
+    if (ts.isLiteralExpression(node) || [ts.SyntaxKind.TrueKeyword,
+      ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(node.kind)) return true;
+    if (ts.isIdentifier(node)) {
+      if (seen.has(node.text)) return false;
+      const initializer = constants.get(node.text);
+      return initializer ? constant(initializer, new Set([...seen, node.text])) : false;
+    }
+    if (ts.isPrefixUnaryExpression(node)) return constant(node.operand, seen);
+    if (ts.isBinaryExpression(node)) return constant(node.left, seen) && constant(node.right, seen);
+    if (ts.isConditionalExpression(node)) return constant(node.condition, seen) &&
+      constant(node.whenTrue, seen) && constant(node.whenFalse, seen);
+    if (ts.isArrayLiteralExpression(node)) return node.elements.every(value => constant(value, seen));
+    return false;
+  }
+  const checks = [];
+  const name = node => ts.isIdentifier(node) || ts.isStringLiteral(node) ? node.text : undefined;
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && name(node.name) === "checks" &&
+        ts.isObjectLiteralExpression(node.initializer)) {
+      for (const property of node.initializer.properties) {
+        assert.ok(ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property),
+          "Producer checks must have explicit keys; no spread/default evidence");
+        const expression = ts.isPropertyAssignment(property) ? property.initializer : property.name;
+        assert.ok(!constant(expression), `Constant producer check: ${name(property.name)}`);
+        checks.push({key:name(property.name), start:expression.getStart(file), end:expression.end,
+          shorthand:ts.isShorthandPropertyAssignment(property)});
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  assert.ok(checks.length > 0, "Missing producer check expressions");
+  return checks;
+}
+
+test("producer checks reject literal and constant-alias replacements", async () => {
+  const source = await readFile(new URL("./plugin-persistence-main.ts", import.meta.url), "utf8");
+  const checks = assertNoConstantProducerChecks(source);
+  for (const check of checks) {
+    for (const replacement of ["true", "false", "0", '"committed"', "[50, 50, 50]"]) {
+      const value = check.shorthand ? `${check.key}: ${replacement}` : replacement;
+      const changed = source.slice(0, check.start) + value + source.slice(check.end);
+      assert.throws(() => assertNoConstantProducerChecks(changed), /Constant producer check/,
+        `constant substitution for ${check.key}`);
+    }
+  }
+  assert.throws(() => assertNoConstantProducerChecks(
+    "const expected = true; function producer() { return {checks:{observed:expected}}; }"),
+    /Constant producer check/);
+});
+```
+
+This source assertion rejects direct literals and statically constant aliases/expressions; it is not a proof that arbitrary helper calls obtain live data. The remaining producer review must trace every check to its table source, and real fault trials must exercise those sources. Do not describe the source check alone as proof against a helper that returns fabricated evidence.
 
 Implement the 29 B2-N probes from the existing table in the same producer, sharing these live cases and setup, not their expected results. Before/after each fault read actual namespace quota, head/object hashes, handles and core recovery state; reopen under a different hostEpoch. Run kills at every `FAULT_POINTS` boundary using `fault.arm(point,"pause")`, start the real operation, `await fault.reached(point)`, capture `fault.trace()`, then `await fault.terminate()`. Observe worker exit and restart via `startPersistenceWorker` on the same root. Also run `arm(point,"fail")` for I/O failures and `release(point)` for controlled races. Record actual worker/process IDs and exit evidence; use `verifyKills`'s worker-terminate branch for actual worker-thread termination evidence, never fabricate SIGKILL for it. Whole-app process-kill rows retain the OS exit assertions.
 
@@ -12600,7 +14907,7 @@ The receipt lists the two returned producer paths, D170/K170 stop SHAs, T7 stop 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git diff --check
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add tests/desktop/plugin-persistence-interop.test.mjs tests/desktop/plugin-persistence-harness.mjs tests/desktop/plugin-persistence-main.ts tests/desktop/plugin-persistence-kill.test.mjs tests/desktop/plugin-persistence-load.test.mjs tests/desktop/plugin-persistence-import.test.mjs tests/desktop/plugin-persistence-run.mjs tests/desktop/fixtures/plugin-persistence/consumer.ts tests/desktop/fixtures/plugin-persistence/consumer.py tests/desktop/fixtures/plugin-persistence/kobrixa-plugin.json tests/desktop/fixtures/plugin-persistence/settings.json tests/desktop/fixtures/plugin-persistence/kill-worker.mjs tests/desktop/fixtures/plugin-persistence/import-map.ts docs/en/plugin-settings-storage.md docs/zh-TW/plugin-settings-storage.md docs/superpowers/plans/2026-10-17-plugin-system-3b2-acceptance.md
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "test(plugins): add persistence interop and recovery acceptance gates"
+git commit -m "test(plugins): add persistence interop and recovery acceptance gates"
 ```
 
 ### Task 3B2-T8: Assemble and publish Plugin API 1.7.0
@@ -14143,7 +16450,7 @@ D150 introduced the all-or-none `stage3` / `stage3Host` pair in `StartPluginsOpt
 
 The BM-18 `onStage3Runtime` callback already runs inside `startPlugins` immediately after manager construction, before activation/admission, with `manager.stage3Runtime(), manager`. Preserve that callback and its failure cleanup. `composeDesktopMain` owns it; PluginController exposes no manager. Do not change safe-mode-before-directory-read ordering, session markers or other D160 startup options.
 
-R170 reviews that manager uses the existing B1 lifecycle path: device `retire(owner, reason)` followed synchronously by `persistence.freeze(owner, drainReason, deadline, grant)` using the identical non-null grant object. If `retire().drain` is null, omit the fourth argument instead of passing null. No `await`, spread clone or timeout reset between these calls. Device reason `crashed` does not invent a new protocol DrainReason: the already-frozen B1 mapping/ownerLost path applies. Healthy `released`/`disconnected`/`suspended`/provider endings go through `endReservation`, not owner retirement. R170 does not add device, Electron or worker construction to runtime.
+R170 consumes the canonical `retireStage3Owner` in `packages/plugin-runtime/src/ui-lifecycle.ts`, delivered by R150 in `2026-10-17-plugin-system-3a-device-broker.md` Task 3A-T10 and retained by `2026-10-17-plugin-system-3b1-declarative-ui.md` Task 3B1-T3. The device host attachment in A-T8 delegates `Stage3HostAttachment.retireResources` to the existing `LifecycleCoordinator.retire`; that coordinator calls this helper with the shared `Stage3RuntimePorts`. The helper alone maps `OwnerRetirement` to device reasons. Non-crash retirement calls device `retire` and then persistence `freeze` synchronously with the identical non-null grant; a null grant omits argument four. The R170 retained-peer path in Step 2a calls this same attachment on original-channel loss. `crashed` maps to device `crashed` and persistence `ownerLost` exactly once, with no `freeze`, `drain`, replacement-peer callback or new `DrainReason`. Retain both the original disposition and actual exit before collecting its row. Healthy `released`/`disconnected`/`suspended`/provider endings still use `endReservation` and preserve generation. R170 does not construct devices, Electron or workers.
 
 Run the focused test and existing runtime lifecycle suite:
 
@@ -14454,6 +16761,168 @@ it.each(["abort","deadline"] as const)("pending original drain respects %s witho
   }finally{peer.close();child.close();row.disposition();await row.confirmedExit();vi.useRealTimers();}
 });
 ```
+
+- [ ] **Step 2a.1: Pin the canonical crash path through the retained channel and coordinator.**
+
+Append to `apps/desktop/src/main/plugins/controller.test.ts`, merging imports. This integration test uses the real supervisor, retained-peer registry, A-T8 coordinator and R150 retirement helper; only device and persistence I/O are controlled. It does not import Electron's T7 producer or replace `retireStage3Owner` with a spy implementation. The attachment delegates exactly as `composeDesktopMain` does. The blocked variant proves actual process exit alone cannot discard unresolved disposition; the clean variant proves disposition alone cannot invent exit.
+
+```ts
+import { PluginSupervisor, resourceFreePersistence150, unavailableUi150,
+  type DeviceDisposition, type DrainReport,
+  type Stage3HostAttachment } from "@kobrixa/plugin-runtime";
+import type { ResourceOwner, DrainRequest } from "@kobrixa/plugin-protocol";
+import { RetainedPersistenceChannels } from "../../../../../packages/plugin-runtime/src/manager.js";
+import { RetainedPersistenceChannel } from "../../../../../packages/plugin-runtime/src/supervisor.js";
+import { memoryPlugin } from "../../../../../packages/plugin-runtime/src/test-process.js";
+import { LifecycleCoordinator, CleanupBlocked,
+  type CoordinatorInput } from "../device-broker/lifecycle-coordinator.js";
+
+function crashGate170<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+const crashOwner170: ResourceOwner = {
+  sourceKey: "builtin:test.storage", pluginId: "test.storage", generation: 1,
+  hostEpoch: "10000000-0000-4000-8000-000000000001",
+  processEpoch: "10000000-0000-4000-8000-000000000002",
+};
+const crashRequest170: DrainRequest = {
+  token: "10000000-0000-4000-8000-000000000003", reason: "disable",
+  remainingMs: 10000, checkpoints: [], writes: [],
+};
+it.each([false, true])("canonical crashed-owner path retains original disposition; blocked=%s", async blocked => {
+  const owner = crashOwner170;
+  const replacement = { ...owner, generation: 2,
+    processEpoch: "10000000-0000-4000-8000-000000000004" };
+  const device = crashGate170<DeviceDisposition>();
+  const storage = crashGate170<DrainReport>();
+  const lossEntered = crashGate170<void>();
+  const exited = crashGate170<void>();
+  const rows = new RetainedPersistenceChannels();
+  const originalDrain = vi.fn(() => ({ ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] } }));
+  const replacementDrain = vi.fn(originalDrain.getMockImplementation()!);
+  const persistence = {
+    ...resourceFreePersistence150(),
+    freeze: vi.fn<CoordinatorInput["persistence"]["freeze"]>(() => { throw new Error("dead-owner freeze"); }),
+    drain: vi.fn<CoordinatorInput["persistence"]["drain"]>(async () => { throw new Error("dead-owner drain"); }),
+    ownerLost: vi.fn<CoordinatorInput["persistence"]["ownerLost"]>(() => {
+      lossEntered.resolve(); return storage.promise;
+    }),
+  };
+  const resources: CoordinatorInput["resources"] = {
+    retire: vi.fn(() => ({ drain: null, settled: device.promise })),
+    retireProvider: vi.fn(async () => ({ stopConfirmed: true, journalCommitted: true, faultIds: [] })),
+    beginShutdown: vi.fn(() => device.promise),
+  };
+  const ui = unavailableUi150(); const uiRetire = vi.spyOn(ui, "retire");
+  const onEnded = vi.fn<CoordinatorInput["reservations"]["onEnded"]>(() => () => {});
+  let originalRow: RetainedPersistenceChannel | undefined;
+  let nextRow: RetainedPersistenceChannel | undefined;
+  let disposition: Promise<void> | undefined;
+  const coordinator = new LifecycleCoordinator({
+    ports: { device: resources, persistence, ui }, resources, persistence,
+    reservations: { validate: () => null, onEnded },
+    sessions: { quiesce() { throw new Error("unexpected session quiesce"); },
+      disconnect: async () => { throw new Error("unexpected disconnect"); }, resume() {} },
+    dispatch: rows.dispatch, alive: current => current.generation === 1
+      ? !!originalRow && !originalRow.peer.closed : !!nextRow && !nextRow.peer.closed,
+    owners: () => [owner, replacement], now: () => 0,
+    shutdown: async () => {}, legacyFlush: async () => {}, report: () => {},
+  });
+  const attachment: Pick<Stage3HostAttachment, "retireResources"> = {
+    retireResources(current, reason) {
+      const result = coordinator.retire(current, reason);
+      if (current.generation === owner.generation) disposition = result;
+      return result;
+    },
+  };
+  let crash!: () => void;
+  const child = memoryPlugin((peer, control) => {
+    crash = () => control.exit(17);
+    peer.handle("initialize", () => ({ apiVersion: "1.7.0", sdk: { name: "fixture", version: "1" } }));
+    peer.handle("command/execute", () => null);
+    peer.handle("storage/drain", originalDrain);
+  });
+  child.process.onExit(exit => { expect(exit.code).toBe(17); exited.resolve(); });
+  const supervisor = new PluginSupervisor({ id: owner.pluginId, sourceKey: owner.sourceKey,
+    directory: "/fixture", entry: "/fixture/main.cjs", runtime: "node", permissions: [],
+    commands: ["test.storage.run"] }, async () => child.process, {
+    locale: "en", onNotice() {}, hostEpoch: owner.hostEpoch, resourceOwner: () => ({ ...owner }),
+    retireResources: attachment.retireResources,
+    bindChannel(context) {
+      originalRow = new RetainedPersistenceChannel(context.owner, context.peer, () => 0,
+        () => attachment.retireResources(context.owner, "crashed"));
+      rows.retain(originalRow); supervisor.retainPersistenceChannel170(originalRow);
+      return { async initialized(signal) { signal.throwIfAborted(); },
+        async ready(signal) { signal.throwIfAborted(); }, dispose() {} };
+    },
+  });
+  const [nextHost, nextChild] = createMemoryChannelPair();
+  const nextPeer = new RpcPeer(nextHost), nextClient = new RpcPeer(nextChild);
+  const nextLost = vi.fn(async () => {});
+  nextRow = new RetainedPersistenceChannel(replacement, nextPeer, () => 0, nextLost);
+  nextRow.negotiated("1.7.0"); rows.retain(nextRow);
+  nextClient.handle("storage/drain", replacementDrain);
+  try {
+    await supervisor.executeCommand("test.storage.run");
+    expect(originalRow).toBeDefined();
+    const original = originalRow!;
+    // Close the original transport before physical exit; replacement is already available.
+    original.peer.close();
+    const lost = original.closed();
+    const observedLoss = lost.then(() => null, error => error);
+    await lossEntered.promise;
+    expect(resources.retire).toHaveBeenCalledExactlyOnceWith(owner, "crashed");
+    expect(persistence.ownerLost).toHaveBeenCalledExactlyOnceWith(owner);
+    expect(uiRetire).toHaveBeenCalledExactlyOnceWith(owner);
+    expect(onEnded).toHaveBeenCalledOnce();
+    expect(coordinator.retire({ ...owner }, "reload", 50000)).toBe(disposition);
+    const originalDisposition = disposition!;
+    const observedDisposition = originalDisposition.then(() => null, error => error);
+    if (blocked) { crash(); await exited.promise; }
+    expect(original.releasable).toBe(false);
+    device.resolve({ stopConfirmed: true, journalCommitted: true, faultIds: [] });
+    storage.resolve({ state: blocked ? "checkpoint-only" : "saved", blocker: blocked,
+      pendingSettings: false, records: [], errors: [] });
+    const result = await observedDisposition;
+    if (blocked) {
+      expect(result).toBeInstanceOf(CleanupBlocked);
+      expect(await observedLoss).toBe(result);
+      expect(original.releasable).toBe(false);
+      expect(coordinator.retire({ ...owner }, "crashed")).toBe(originalDisposition);
+    } else {
+      expect(result).toBeNull(); expect(await observedLoss).toBeNull();
+      // Enter through the actual supervisor retirement hook; it must mark this row.
+      await supervisor.settleResources("crashed");
+      expect(original.releasable).toBe(false);
+      crash(); await exited.promise; await original.confirmedExit();
+      expect(original.releasable).toBe(true);
+    }
+    await expect(rows.dispatch(owner, crashRequest170, new AbortController().signal)).rejects.toThrow();
+    expect(persistence.freeze).not.toHaveBeenCalled(); expect(persistence.drain).not.toHaveBeenCalled();
+    expect(originalDrain).not.toHaveBeenCalled(); expect(replacementDrain).not.toHaveBeenCalled();
+    expect(nextLost).not.toHaveBeenCalled(); expect(nextRow.releasable).toBe(false);
+    expect(resources.retire).toHaveBeenCalledOnce(); expect(persistence.ownerLost).toHaveBeenCalledOnce();
+    expect(child.killed()).toBe(false);
+  } finally {
+    coordinator.dispose(); nextPeer.close(); nextClient.close();
+    nextRow.disposition(); await nextRow.confirmedExit();
+  }
+});
+```
+
+The existing A-T8 F19 healthy-release/provider/suspend tests remain the non-retirement regression: `endReservation` runs, `retire`/`freeze` stay at zero and the original healthy generation remains usable. Run them alongside this new crash test; do not add `crashed` to `DrainReason` to make it compile.
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/controller.test.ts src/main/device-broker/lifecycle-coordinator.test.ts
+pnpm --filter @kobrixa/plugin-runtime test -- src/manager.test.ts src/supervisor.test.ts src/ui-lifecycle.test.ts
+pnpm check:desktop
+```
+
+Expected: both crash variants pass with exactly one device `crashed`, one `ownerLost`, zero dead/replacement drain callbacks, and retained blocked disposition. Existing F19 cases pass without retiring the healthy owner. Before the R170 retained-channel implementation, the new test fails on the missing retained-channel API; missing A-T8/R150 prerequisites block execution. Step 3's D170 commit stages `controller.test.ts` including this test, with the plain message `feat(desktop): route negotiated persistence requests on original channels`; no separate owner edits A's test file.
 
 - [ ] **Step 2b: Bind every P170 inbound route on the original channel.**
 
@@ -15810,9 +18279,68 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 
 The K170 stopped-owner receipt records exactly `apps/desktop/packaging.ts`, `apps/desktop/src/main/packaging.test.ts`, `apps/desktop/forge.config.ts` and `apps/desktop/vite.main.config.ts`, the commit SHA, selected installed artifact and command/exit evidence. K160 publishes none of these worker values; the initial missing-export red is expected.
 
+- [ ] **Binding D170 prerequisites — BM-24/BM-25/BM-26**
+
+Implement in the existing `apps/desktop/src/main/plugins/controller.ts` and `controller.test.ts` under D170 ownership, after R170 and the T2 worker receipt. These declarations and structural instructions amend Step 13; preserve its production runtime/service construction. T7 cannot patch these paths.
+
+1. D170 uses the **existing** `StartPluginsOptions.launcher` seam, typed `NonNullable<StartPluginsOptions["launcher"]>`, only when BM-26 test observation is enabled. Inside `composeDesktopMain`, wrap `(input.plugins.launcher ?? createDesktopLauncher)(hooks)` with a launcher that awaits the real launch, records its exact returned `PluginProcess` under the complete R150 `plugin.channelOwner` tuple, and returns that same process object to the supervisor. Preserve all hooks and the private launch metadata; no fake launcher, raw `launchJs`, extra process or process wrapper. At the existing `bindChannel(context)` site join by all five owner fields and retain the exact context/process pair. Missing/duplicate/mismatched associations fail; legacy non-stage-3 launches without channelOwner are not admitted fixture rows. Remove active lookup rows on binding failure or when the original binding is disposed; startup/retirement still owns process cleanup, and retained observations continue to refer to the original process through its real exit. Test replacement/exit races in controller.test.ts. No runtime file, manager API or `Stage3ChannelContext` change is needed.
+
+   `PluginProcess` already defines `onExit(listener:(exit:ProcessExit)=>void):()=>void`; it is the production launcher's real child handle for Node and Python. T7 changes only its test-local `LiveConsumer.child` from `UtilityProcess` to `PluginProcess` and uses `onExit`/its unsubscribe return; `ProcessExit.code` may be null. This removes the erroneous dependence on fixture `launchJs`.
+
+2. D170, `apps/desktop/src/main/plugins/controller.ts/test`, defines these types and accessor locally and extends the function with one optional second argument; `DesktopMainCompositionInput`, `DesktopMainComposition` and the AM-21 factory signature remain unchanged:
+
+   ```ts
+   export interface DesktopCompositionTestOptions {
+     worker?: { entry: string; control(control: PersistenceFaultControl): void };
+     legacy?: {
+       descriptors: readonly LegacyImportDescriptor[];
+       writers: readonly LegacyWriterPort[];
+     };
+   }
+   export interface DesktopFoundationTestHandles {
+     readonly profile: ProfileWriterLock;
+     readonly persistenceProfile: ProfileWriterLock;
+     readonly runtime: UiRuntimeAttachment;
+     readonly host: PersistenceHost;
+     readonly backend: PersistenceBackend;
+     readonly recovery: "ready" | "blocked";
+     channels(): readonly Readonly<{
+       context: Stage3ChannelContext;
+       process: PluginProcess;
+     }>[];
+   }
+   export function composeDesktopMain(
+     input: DesktopMainCompositionInput,
+     test?: DesktopCompositionTestOptions,
+   ): Promise<DesktopMainComposition>;
+   export function desktopFoundationTestHandles(
+     composition: DesktopMainComposition,
+   ): DesktopFoundationTestHandles;
+   ```
+
+   These are declarations for the owning implementation, not permission to leave ambient stubs in T7. Use ordinary defining-module type imports, including runtime `PluginProcess` and the existing persistence modules. When `test` is present, register one observation record keyed by the returned composition; unknown/non-test compositions throw on lookup. It contains the exact profile passed to the broker, exact profile passed to `startPersistenceWorker`, callback's actual `runtimeAttachment` (not `runtimePort`), `persistence170.host`, `worker.backend` and `worker.recovery`. Join the launcher observation from item 1 and capture channels only after the normal `bindDesktopChannel` succeeds; its disposal removes the active row, while callers may retain the original row through teardown. The lookup cannot create resources or admit an owner.
+
+   Forward `test.worker.entry` and `test.worker.control` to the **single existing** `startPersistenceWorker` invocation as `workerEntry` and `testControl`. Without `test.worker`, retain K170's `persistenceWorkerPath` and omit `testControl`. `test.legacy` replaces only the local empty descriptor/writer arrays; normal product arrays remain empty. Validate registrations against admitted synthetic source namespaces and worker-installed descriptors; restore barriers before writer/request admission, preserving BM-24/25. For synthetic descriptors, first finish the existing startPlugins static catalog construction and refreshCatalog admission while no controller/window is exposed and no fixture command is activated; then restore the barrier and construct the real import coordinator before returning/exposing composition. Because the host is constructed earlier, D170 may retain a typed internal LegacyImportHostPort forwarding object whose target is assigned at that point; calls before assignment fail closed, never report success. Source admission and importOwner still use the actual controller registry/source projection. No synthetic writer or request is admitted before restoration; failure follows the existing host/backend cleanup. Keep the original stage3/stage3Host pair, original peer routing, safe-mode ordering, native actions and failure disposal. No factory bag or caller-provided host/backend/service callbacks.
+
+3. B1-T9, `tests/desktop/declarative-ui-browser.ts`, defines a test-page collector with the exact signature `foundationDiagnostics():{snapshot:FoundationCounters;events:readonly FoundationDiagnosticEvent[];clock:{origin:number;sampledAt:number}}`. Add it to the existing test `api` object. A separate test-page action `disposeFoundationRenderer():void` calls that same singleton owner's `dispose()`; read foundationDiagnostics afterward, before destroying the window, so observation itself never drives lifecycle. The collector subscribes before tested actions; uses the existing `pluginUiWindow()` singleton, its session/catalog subscriptions and `session.record(entry)` to retain each actual state; registers host/catalog/states once by object identity; keeps their diagnostics until final snapshots after disposal. No new renderer host/store is allocated for observation. Main collects the three non-renderer handles in #7 plus the backend with the existing AM-22 collector. Use one module instance per defining module in each bundle so factory and WeakMap lookup match. The browser returns data, never executable instance proxies. B1-T9 owns this already-listed path; if stopped, resume that owner and record the path/artifact receipt before T7, with no T7 edit grant.
+
+
+
+
+1. Update the B2 plan's T0/interface copies to the amended AM-24/29 signatures. F seeds the declarations in existing `apps/desktop/src/main/plugins/persistence/engine-port.ts`, `import-sources.ts` and `contract.test.ts`. No new source file is needed.
+2. T2 implements BM-24 in its existing `engine-port.ts/test`, `atomic-store.ts/test`, `namespace.ts/test`, `recovery-scan.ts/test`, `worker.ts/test`. T2 implements BM-25's worker method/transport in `worker.ts/test`, importing T6's pure evidence codec from import-sources.ts. Implement these prerequisites in the T2 plan steps that already define import validators, `AtomicStore`, `WorkerSources`, and the worker operation table. No whole-file rewrite or unrelated T2 correction is authorized.
+3. T6's exact implementation write set remains `import-coordinator.ts/test`, `import-journal.ts/test`, `import-sources.ts/test`, `import-fixtures.ts`, all under the persistence directory. T6 does not patch worker/store code. Where a writer has stopped, request a stopped-owner receipt for the exact prerequisite paths; do not delegate their ownership to T6. The plan fixer embeds the complete prerequisite contract and signature declarations in the owning T2 steps; the implementation owner completes and tests them under TDD before T6 acceptance, with no unresolved port.
+4. D170's existing composition passes `descriptors` into `createLegacyWriterBarrier` and provides a trusted current `importOwner`; it waits for barrier restoration before starting writers or exposing ordinary persistence mutation requests. T7 updates the same constructor call in `tests/desktop/plugin-persistence-main.ts` and supplies real restart/nonce evidence through `plugin-persistence-import.test.mjs` and its existing worker wrapper. V170 retains the existing challenge/submit bridge and must not swallow `getItem` exceptions as null.
+5. F type checks come first; T2/T6 unit checks precede T7's real worker checks; D170/K170 attachments precede final T7 acceptance. These changes do not close B2-RF5 using unit mocks alone.
+
+
+- [ ] `controller.test.ts`, test `desktopFoundationTestHandles`: assert original context/process association by all five fields across replacement, binding failure, disposal and exit races; missing/duplicate/mismatched rows reject; retained rows still observe original exit; unknown/non-test composition lookup throws and allocates nothing.
+- [ ] `controller.test.ts`, test `composeDesktopMain`: assert single worker startup, control forwarding, exact profile/runtime/host/backend/recovery identities, production omission of test options uses K170 path and omits control, optional legacy arrays validated, static catalog admission before barrier restoration, and no writer/request exposure before restoration. Preserve native sender checks and failure cleanup.
+- [ ] Existing D170/V170 bridge/composition tests: same fixed descriptors/current-owner callbacks, restoration before writers/ordinary requests, independently validated renderer sender, getItem throw distinct from null, old bootstrap cannot replay nonce, host-only resolver and unchanged public contracts.
+
 - [ ] **Step 13: Complete D170 startup, lifecycle and recovery acceptance at the frozen seam.**
 
-Extend the existing `composeDesktopMain(input:DesktopMainCompositionInput)` body in controller.ts; keep its signature and D160 UI/intent/native cleanup body. The following declarations replace the old resource-free participant construction, after `createFoundation(input.foundationOptions)` and the D160 UI registry/action construction, and before the existing coordinator and `startPlugins` call. Merge imports for `openStoreRoot`, `startPersistenceWorker`, the K170 path resolver, the T6 factories and the defining port types. No code belongs at module top except helper declarations.
+Extend the existing `composeDesktopMain(input:DesktopMainCompositionInput)` body in controller.ts; add the optional BM-26 test argument and retain the D160 UI/intent/native cleanup body. The following declarations replace the old resource-free participant construction, after `createFoundation(input.foundationOptions)` and the D160 UI registry/action construction, and before the existing coordinator and `startPlugins` call. Merge imports for `openStoreRoot`, `startPersistenceWorker`, the K170 path resolver, the T6 factories and the defining port types. No code belongs at module top except helper declarations.
 
 The named existing D160 locals are `foundation`, `catalog`, `states`, `subscriptions`, `ui`, `intent`, `actions` and `stage3Host`: `ui` is the `createUiLifetimePort` result, while `catalog` is the `UiCatalog` instance. Use them directly, preserving their identities. `actions` is D160's sole `UserPersistenceActions` instance. Rename no public option and create no second ledger. Declare the following concrete source adapter in controller.ts:
 
@@ -15895,10 +18423,10 @@ import { createLegacyImportCoordinator } from "./persistence/import-coordinator.
 import { createPersistenceRecoveryBridge170 } from "./core-recovery.js";
 ```
 
-Replace the D160 composeDesktopMain body with the complete P170 extension below. It retains all D160 runtime forwarding, UI execution, events, provider callback, source refresh and teardown. Import the helper implementations from this task's defining modules, `app/dialog/clipboard` from Electron, `readPackagedJson/readBuiltinJson/SourceReadBudget` from runtime, `LegacyWriterPort/LegacyImportDescriptor/LegacyImportHostPort` from import-sources.ts, `createLegacyImportCoordinator` from import-coordinator.ts and `createLegacyWriterBarrier` from import-sources.ts. Retain the existing D160 imports for the body. No code executes at module import.
+Apply the P170 extension below together with the binding D170 prerequisite contract. At its existing launcher, bindChannel and returned-composition sites implement the BM-26 observation/lookup declarations under TDD; these retained construction statements do not replace those required additions. It retains all D160 runtime forwarding, UI execution, events, provider callback, source refresh and teardown. Import the helper implementations from this task's defining modules, `app/dialog/clipboard` from Electron, `readPackagedJson/readBuiltinJson/SourceReadBudget` from runtime, `LegacyWriterPort/LegacyImportDescriptor/LegacyImportHostPort` from import-sources.ts, `createLegacyImportCoordinator` from import-coordinator.ts and `createLegacyWriterBarrier` from import-sources.ts. Retain the existing D160 imports for the body. No code executes at module import.
 
 ```ts
-export async function composeDesktopMain(input: DesktopMainCompositionInput): Promise<DesktopMainComposition> {
+export async function composeDesktopMain(input: DesktopMainCompositionInput, test?: DesktopCompositionTestOptions): Promise<DesktopMainComposition> {
   const { profile, now, coreActions } = input.foundationOptions;
   profile.assertHeld();
   const foundation = await input.createFoundation(input.foundationOptions);
@@ -15945,8 +18473,8 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
     const owner=persistenceSources.coreOwner({sourceKey,scope:input.scope()});
     if(!owner)throw new Error("Import source not admitted");return owner;
   };
-  const legacyWriters:readonly LegacyWriterPort[]=[];
-  const legacyDescriptors:readonly LegacyImportDescriptor[]=[];
+  const legacyWriters:readonly LegacyWriterPort[]=test?.legacy?.writers??[];
+  const legacyDescriptors:readonly LegacyImportDescriptor[]=test?.legacy?.descriptors??[];
   const dispatchDrain:DrainDispatcher=(owner,request,signal)=>{
     if(!runtimeAttachment)return Promise.reject(new Error("Runtime attachment not ready"));
     return runtimeAttachment.dispatchDrain(owner,request,signal);
@@ -15954,8 +18482,9 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
   const worker=await(async()=>{
     try{
       profile.assertHeld();const root=await openStoreRoot({userData:input.plugins.userData,profile});
-      const workerEntry=persistenceWorkerPath({packaged:app.isPackaged,resourcesPath:process.resourcesPath,buildRoot:__dirname});
-      return await startPersistenceWorker({profile,root,workerEntry,now:monotonicNow});
+      const workerEntry=test?.worker?.entry??persistenceWorkerPath({packaged:app.isPackaged,resourcesPath:process.resourcesPath,buildRoot:__dirname});
+      return await startPersistenceWorker({profile,root,workerEntry,now:monotonicNow,
+        ...(test?.worker?{testControl:test.worker.control}:{})});
     }catch(error){subscriptions.dispose();intent.dispose();await foundation.dispose();throw error;}
   })();
   const {backend,recovery}=worker;
@@ -15965,13 +18494,17 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
     choose:async suggestedName=>{const result=await dialog.showSaveDialog({defaultPath:suggestedName});
       return result.canceled||!result.filePath?null:result.filePath;},copy:text=>clipboard.writeText(text)});
   let hostConstructionStarted=false;
-  let imports:LegacyImportHostPort;
+  let imports:LegacyImportHostPort|undefined;
   let persistence170:Awaited<ReturnType<typeof composePersistence170>>;
   try{
-    const barrier=createLegacyWriterBarrier({backend,writers:legacyWriters,importOwner});await barrier.restore();
-    imports=createLegacyImportCoordinator({backend,sources:backend.sources,barrier,descriptors:legacyDescriptors,
-      currentScope,currentSource,importOwner});
-    const composition:PersistenceCompositionInput={backend,sources:persistenceSources,events:broker.events,dispatchDrain,imports};
+    const composition:PersistenceCompositionInput={backend,sources:persistenceSources,events:broker.events,dispatchDrain,
+      imports:{
+        run(descriptor,signal){if(!imports)throw new Error("import-pending");return imports.run(descriptor,signal);},
+        issuePreferences(input){if(!imports)throw new Error("import-pending");return imports.issuePreferences(input);},
+        acceptPreferences(snapshot){if(!imports)throw new Error("import-pending");return imports.acceptPreferences(snapshot);},
+        acceptPreferencesEvidence(snapshot){if(!imports)throw new Error("import-pending");return imports.acceptPreferencesEvidence(snapshot);},
+        retirePreferences(scope){if(!imports)throw new Error("import-pending");imports.retirePreferences(scope);},
+      }};
     hostConstructionStarted=true;
     persistence170=await composePersistence170({profile,composition,reservations:broker.reservations,
       actions:claims.feature,actionAdapter:persistenceActions,coreActions:claims.core,now:monotonicNow,
@@ -16082,6 +18615,11 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
     });
     if (!runtimeAttachment) throw new Error("Missing runtime attachment.");
     await refreshCatalog();
+    // No writer/request/window exposure or fixture activation before this restoration.
+    const barrier=createLegacyWriterBarrier({backend,descriptors:legacyDescriptors,writers:legacyWriters,importOwner});
+    await barrier.restore();
+    imports=createLegacyImportCoordinator({backend,sources:backend.sources,barrier,descriptors:legacyDescriptors,
+      currentScope,currentSource,importOwner});
     plugins.attachPersistence170({settings:persistence170.host.settings,detail,imports,scope:input.scope});
     let disposed = false;
     const composition: DesktopMainComposition = { foundation, plugins, stage3, stage3Host,
@@ -16674,7 +19212,7 @@ Import `FoundationFixture`, `FoundationCase`, `CaseEvidence` and `createFoundati
 Produces these exact test-only exports from `stage-3-foundations-main.ts`:
 
 ```ts
-export const FOUNDATION_CASES: readonly string[];
+export { FOUNDATION_CASES, FOUNDATION_CHECKS, assertFoundationEvidence } from "./plugin-persistence-main.js";
 export function assertFoundationCase(id: string, evidence: CaseEvidence): void;
 export function assertFoundationComposition(input: FoundationFixture["composition"]): void;
 export function runFoundationCases(fixture: FoundationFixture): Promise<FoundationReceipt>;
@@ -16706,7 +19244,7 @@ const compiled = await build({
   external: ["electron"],
 });
 const source = compiled.outputFiles[0].text;
-const { assertFoundationCase, assertFoundationComposition, FOUNDATION_CASES } =
+const { assertFoundationCase, assertFoundationComposition, FOUNDATION_CASES, FOUNDATION_CHECKS, assertFoundationEvidence } =
   await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 
 const handle = (number) => `10000000-0000-4000-8000-${String(number).padStart(12, "0")}`;
@@ -16768,6 +19306,15 @@ function validEvidence(id) {
       uiInputMs: samples(100), uiRevokeMs: samples(50),
     };
   }
+  const extra = {
+    "all-optional-off": { noProcessSettings:true, durableRecoveryRestored:true, committedExportHash:true, sealedExportHash:true },
+    "sealed-ttl": { originalExpiryPreserved:true, expiredPinRejected:true, checkpointOnlyNoInventedBytes:true },
+    "unknown-publication": { exportOriginalJobReconciled:true, noRepublish:true, destinationIdentityPreserved:true },
+    "action-replay": { freshCoreAction:true, cancelNoWrite:true, lateDialogReleased:true, identitySwapRejected:true },
+    "storage-ui-pressure": { namespaceIncludesSettingsImport:true, targetExcludesSettings:true, afterBarrierExcluded:true },
+    "import-restart": { atomicImportReceipt:true, barrierRestored:true, originalBytesUnchanged:true },
+  };
+  Object.assign(evidence.checks, extra[id]);
   return evidence;
 }
 
@@ -16776,6 +19323,55 @@ for (const id of FOUNDATION_CASES) {
     assert.doesNotThrow(() => assertFoundationCase(id, validEvidence(id)));
   });
 }
+
+test("every oracle observation belongs to T7's declared inventory", () => {
+  assert.deepEqual(Object.keys(FOUNDATION_CHECKS).sort(), [...FOUNDATION_CASES].sort());
+  for (const id of FOUNDATION_CASES) {
+    const required = FOUNDATION_CHECKS[id], evidence = validEvidence(id);
+    for (const family of ["checks", "events", "samples"])
+      assert.equal(new Set(required[family]).size, required[family].length, `${id}: duplicate ${family}`);
+    const observed = { checks: new Set(), samples: new Set(), events: new Set() };
+    for (const family of ["checks", "samples"]) evidence[family] = new Proxy(evidence[family], {
+      get(target, key, receiver) {
+        if (typeof key === "string") { observed[family].add(key); assert.ok(required[family].includes(key), `${id}.${family}.${key}`); }
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    evidence.events = evidence.events.map(event => new Proxy(event, {
+      get(target, key, receiver) {
+        if (key === "kind") { observed.events.add(target.kind); assert.ok(required.events.includes(target.kind)); }
+        return Reflect.get(target, key, receiver);
+      },
+    }));
+    assertFoundationCase(id, evidence);
+    for (const family of ["checks", "events", "samples"])
+      assert.deepEqual([...observed[family]].sort(), [...required[family]].sort(), `${id}.${family}`);
+  }
+});
+test("every required observation rejects omission and renaming, without defaults", () => {
+  for (const id of FOUNDATION_CASES) for (const family of ["checks", "events", "samples"])
+    for (const key of FOUNDATION_CHECKS[id][family]) for (const rename of [false, true]) {
+      const evidence = validEvidence(id);
+      if (family === "events") {
+        if (rename) evidence.events = evidence.events.map(event => event.kind === key ? { ...event, kind: `renamed-${key}` } : event);
+        else evidence.events = evidence.events.filter(event => event.kind !== key);
+      } else {
+        if (rename) evidence[family][`renamed-${key}`] = evidence[family][key];
+        delete evidence[family][key];
+      }
+      assert.throws(() => assertFoundationEvidence(id, evidence), `${id}.${family}.${key}`);
+      assert.throws(() => assertFoundationCase(id, evidence), `${id}.${family}.${key}`);
+    }
+});
+test("actual serialized producer coverage includes every declared check, event and sample",
+  { skip: process.env.PERSISTENCE_EVIDENCE ? false : "pure oracle run; real producer evidence not supplied" }, async () => {
+  assert.ok(process.env.PERSISTENCE_EVIDENCE, "real producer report required");
+  const report = JSON.parse(await readFile(process.env.PERSISTENCE_EVIDENCE, "utf8"));
+  assert.equal(report.level, "real-process");
+  assert.deepEqual(Object.keys(report.foundation).sort(), [...FOUNDATION_CASES].sort());
+  for (const id of FOUNDATION_CASES) assertFoundationEvidence(id, report.foundation[id]);
+  // Grant identity is asserted by the Electron executor before serialization.
+});
 
 test("B2-RF3/U12 rejects cloned grants, a microtask gap and renewed deadline", () => {
   for (const change of [
@@ -16903,6 +19499,17 @@ Run:
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; node --test tests/desktop/stage-3-foundations.test.mjs
 ```
 
+The producer completeness gate is also mandatory in the actual run; the pure oracle suite alone does not close it. After T7 and X-T1 implementation, execute:
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+export PERSISTENCE_EVIDENCE="$(mktemp -d)/persistence-evidence.json"
+node tests/desktop/plugin-persistence-run.mjs
+node --test tests/desktop/stage-3-foundations.test.mjs
+```
+
+Expected: the producer writes all fifteen cases only after its live completeness assertions pass; the Node test checks that exact report. Missing/renamed observations fail both the in-process gate and the report test. The sample budgets in `assertFoundationCase` remain unchanged. Step 8's X-T1 commit includes `stage-3-foundations-main.ts` and `stage-3-foundations.test.mjs`; T7's existing producer commit includes its two producer files. No verifier fixture is serialized as acceptance evidence.
+
 Expected failure: missing `stage-3-foundations-main.ts`. After adding it, the CI routing assertion remains red until Step 5. Unit evidence in this file must never be written into an acceptance receipt.
 
 - [ ] **Step 2: Implement the complete cross-plan oracle and actual-fixture executor.**
@@ -16914,15 +19521,11 @@ import assert from "node:assert/strict";
 import { writeFile, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import {
-  createFoundationFixture,
+  createFoundationFixture, FOUNDATION_CASES, FOUNDATION_CHECKS, assertFoundationEvidence,
   type FoundationFixture, type FoundationCase, type CaseEvidence,
 } from "./plugin-persistence-main.js";
-
-export const FOUNDATION_CASES = [
-  "contention", "retirement", "registration-end", "healthy-release", "disconnect-retry",
-  "suspend-wake", "renderer-loss", "sealed-ttl", "unknown-publication", "all-optional-off",
-  "action-replay", "import-restart", "storage-ui-pressure", "compatibility", "installed",
-] as const satisfies readonly FoundationCase[];
+// Re-export the same bindings for the Node oracle-test bundle; T7 is their sole definition.
+export { FOUNDATION_CASES, FOUNDATION_CHECKS, assertFoundationEvidence };
 type CheckValue = CaseEvidence["checks"][string];
 export interface FoundationReceipt {
   format: 1;
@@ -16978,6 +19581,16 @@ export function assertFoundationComposition(input: FoundationFixture["compositio
 
 export function assertFoundationCase(id: string, e: CaseEvidence): void {
   assert.ok(FOUNDATION_CASES.some((value) => value === id), `Unknown case ${id}`);
+  assertFoundationEvidence(id as FoundationCase, e);
+  const extra: Partial<Record<FoundationCase, readonly string[]>> = {
+    "all-optional-off": ["noProcessSettings", "durableRecoveryRestored", "committedExportHash", "sealedExportHash"],
+    "sealed-ttl": ["originalExpiryPreserved", "expiredPinRejected", "checkpointOnlyNoInventedBytes"],
+    "unknown-publication": ["exportOriginalJobReconciled", "noRepublish", "destinationIdentityPreserved"],
+    "action-replay": ["freshCoreAction", "cancelNoWrite", "lateDialogReleased", "identitySwapRejected"],
+    "storage-ui-pressure": ["namespaceIncludesSettingsImport", "targetExcludesSettings", "afterBarrierExcluded"],
+    "import-restart": ["atomicImportReceipt", "barrierRestored", "originalBytesUnchanged"],
+  };
+  for (const key of extra[id as FoundationCase] ?? []) assert.equal(e.checks[key], true, `${id}.${key}`);
   switch (id as FoundationCase) {
     case "contention":
       same(e, { motionWhileRecording: "busy", recordingWhileMotion: "busy", concurrentActive: 0, settingsSuccess: 1, settingsConflict: 1, dirtyDraftPreserved: true });

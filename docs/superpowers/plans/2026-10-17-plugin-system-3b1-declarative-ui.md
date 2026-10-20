@@ -6532,7 +6532,7 @@ Export the delivered lifecycle helpers explicitly:
 
 ```ts
 export {
-  ChannelActivation, createUiLifetimePort, retireStage3Owner, registerActivationDeadline, remainingActivationMs,
+  createUiLifetimePort, retireStage3Owner,
   resourceFreePersistence150, unavailableUi150,
 } from "./ui-lifecycle.js";
 export type {
@@ -6877,7 +6877,7 @@ if (this.#stopping) {
 
 The original process reference stays retained until the actual `onExit`. No new process replaces it and no synthetic exit counts as OS proof. Keep P150's synchronous resource retirement in `#exited`; a real exit releases the fence after its disposition. A late resolution of an abandoned launcher still invokes `late.forceKill()`; T4's launcher retains and kills the late utility child independently of the supervisor's start promise.
 
-The manager retains R150's synchronous `host.retireResources(owner, reason)` call before publishing retirement. Do not add a second helper/cache here. The supervisor awaits that original disposition promise before its existing shutdown/kill/actual-exit path; a rejected disposition remains visible as a blocker. Desktop reconciliation observes the actual original supervisor exit, never recursively calls stop from retireResources.
+The manager retains R150's synchronous `host.retireResources(owner, reason)` call before publishing retirement. Do not add a second helper/cache here. The supervisor awaits that original disposition promise before its existing shutdown/kill/actual-exit path. `retireResources` resolves after disposition; blockers live in coordinator reports. Desktop reconciliation observes the actual original supervisor exit, never recursively calls stop from retireResources.
 
 Keep old owners/channels in the existing R150 cleanup registry until dispositions and real exit arrive. Expose that registry through `PluginManager.stage3Runtime(): UiRuntimeAttachment`; `owners`, `current`, `context`, `commands`, `invoke`, `activateInitialized`, `ready` and `dispatchDrain` use this same registry. Preserve the admitted generation requirements resolver (`null` for retired/unknown, frozen `[]` for no requirements), primary-profile host epoch and pre-launch `channelOwner`. Consumer exit calls `device.retire`, never `retireProvider`.
 
@@ -7163,6 +7163,12 @@ async invoke(invocation: CommandInvocation, signal?: AbortSignal): Promise<Resul
 ```
 
 Keep `executeCommand` and `command/execute` untouched: legacy returns `null` and never receives a context envelope. The manager chooses the new method only for a validated `context-v1` declaration and a host-built invocation. Its management form has `{origin:"management", contextRef, locale, trigger:{kind:"activate"}}`, arguments `{}`, and no binding/form/motionScopeRef; context commands requiring arguments are unavailable in that legacy management route. R170 later supplies `DrainDispatcher` over the **existing original** peer after storage/drain enters P170's wire registry; R160 does not add that method to 1.6.0.
+
+In `packages/plugin-runtime/src/index.ts`, append the values now implemented by Step 10, preserving Step 4's exports:
+
+```ts
+export { ChannelActivation, registerActivationDeadline, remainingActivationMs } from "./ui-lifecycle.js";
+```
 
 ```sh
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; pnpm --filter @kobrixa/plugin-runtime test src/ui-lifecycle.test.ts src/supervisor.test.ts src/manager.test.ts
@@ -8054,7 +8060,7 @@ Modify (D150 modules continue only after its stopped-owner receipt):
 - `apps/desktop/src/shared/plugin-ui.ts` (Modify; D150-created, retain existing cases)
 - `apps/desktop/src/shared/plugin-ui.test.ts` (Modify; D150-created, retain existing cases)
 
-Test: all `.test.ts` paths listed above. H-D also reserves `apps/desktop/src/shared/plugin-persistence.ts` and `apps/desktop/src/shared/plugin-persistence.test.ts` for this role's D170 attachment; D160 does not publish their 1.7 bridge. **Every `apps/desktop/src/main/plugins/persistence/**` file is read-only.** The A lifecycle coordinator and broker internals are also read-only; use their ports, not competing edits.
+Test: all `.test.ts` paths listed above. H-D also reserves `apps/desktop/src/shared/plugin-persistence.ts` and `apps/desktop/src/shared/plugin-persistence.test.ts` for this role's D170 attachment; D160 does not publish their 1.7 bridge. **Every `apps/desktop/src/main/plugins/persistence/**` file is read-only.** Broker internals are read-only; lifecycle-coordinator.ts/test is modified only after A-T8's D150 stopped-owner handoff (BM-06); use their ports, not competing edits.
 
 **Interfaces**
 
@@ -8169,8 +8175,10 @@ Expected red: module absent. Create `apps/desktop/src/main/plugins/user-persiste
 import { randomUUID } from "node:crypto";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
 import {
-  ownerKey, PluginError, type CoreWindowScope, type UserPersistenceActionContext, type UserPersistenceActionPort,
+  PluginError, type CoreWindowScope, type UserPersistenceActionContext, type UserPersistenceActionPort,
 } from "@kobrixa/plugin-runtime";
+
+const ownerKey = (o: ResourceOwner) => JSON.stringify([o.sourceKey, o.pluginId, o.generation, o.hostEpoch, o.processEpoch]);
 
 type Entry = { owner: ResourceOwner; scope: CoreWindowScope; uiResourceGeneration: number; expires: number };
 export class UserPersistenceActions implements UserPersistenceActionPort {
@@ -8458,6 +8466,7 @@ it("U12 reconciliation preserves pending promises and the original deadline", as
   f.storage.resolve({ ...saved, state: "retryable", blocker: true }); f.device.resolve(clean);
   await first; // Disposition is observed; its report still blocks close.
   expect(f.coordinator.reconcile(owner, clean, saved)).toBe(true);
+  expect(await f.coordinator.pendingSession(ended.sessionId)).toEqual([saved]);
   expect(f.coordinator.retire(owner, "shutdown", 99_000)).toBe(first);
   expect(f.coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
   await f.coordinator.close("close");
@@ -8546,7 +8555,14 @@ Runtime supervisor unit tests use that same typed Stage3HostAttachment shape wit
 
 - [ ] **Step 6: Add report/reconciliation projections to that same coordinator.**
 
-Run the preceding tests first; expect missing report/reconciliation methods, while existing F17/F19 remain green. In lifecycle-coordinator.ts extend the existing row types (no new retirement or reservation map):
+Run the preceding tests first; expect missing report/reconciliation methods. Update the retained A-T8 test `F17 crashed original peer reconciles without a drain callback or a second fence` to observe the resolved retirement and authoritative blocker instead of expecting `retired` to reject:
+
+```ts
+await expect(retired).resolves.toBeUndefined();
+expect(f.coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
+```
+
+Retain its ownerLost/no-drain/single-fence assertions. Close still rejects blocked reports through `#retirementDisposition`; retirement completion itself allows the supervisor to proceed to actual process teardown. In lifecycle-coordinator.ts extend the existing row types (no new retirement or reservation map):
 
 ```ts
 export type RetirementReport = { owner: ResourceOwner; device: DeviceDisposition;
@@ -8609,6 +8625,10 @@ reconcile(owner: ResourceOwner, device: DeviceDisposition, storage: DrainReport)
   if (!row?.settled || !row.report) return false;
   // Callers pass actual core recovery results, never a UI-supplied processStopped boolean.
   row.report = { ...row.report, device: structuredClone(device), storage: structuredClone(storage) };
+  for (const work of this.#ends.values()) if (ownerKey(work.event.owner) === ownerKey(owner)) {
+    work.report = structuredClone(storage);
+    work.terminal = !storage.blocker && storage.state === "saved";
+  }
   this.#refresh(row); return true;
 }
 reconcileRecovery(recovery: Handle, report: DrainReport): void {
@@ -9732,7 +9752,7 @@ pnpm --filter @kobrixa/desktop exec vitest run src/main/plugins/ui-bridge.test.t
 pnpm check:desktop
 ```
 
-Expected: the actual downstream import compiles and all named/absent export assertions PASS. T3 stages index.ts in Step 4; T5 stages only its downstream test in the Step 19 commit.
+Expected: the actual downstream import compiles and all named/absent export assertions PASS. Consume both T3 Step 4 and Step 10 before this check; Step 10 publishes the activation/deadline helpers.
 
 
 Implement the complete original-channel adapter in ui-bridge.ts, merging these imports. The published RpcPeer validates params/results on every request; explicit result parsing below also protects direct host phase calls. No plugin-to-host ready/negotiate handler is installed.
@@ -9841,7 +9861,13 @@ A-T7's unchanged `attachDeviceRpc` returns a disposer, so capture its single att
 import type { DeviceChannelAttachment, Stage3ChannelContext, Stage3ChannelBinding } from "@kobrixa/plugin-runtime";
 import type { DeviceBrokerPort } from "../device-broker/broker-port.js";
 function bindDesktopChannel(context: Stage3ChannelContext, broker: DeviceBrokerPort,
-  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment">): Stage3ChannelBinding {
+  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment">,
+  originalChannels: Map<string, Stage3ChannelContext>): Stage3ChannelBinding {
+  const principal = context.principal();
+  const key = (owner: typeof context.owner) => JSON.stringify([owner.sourceKey, owner.pluginId,
+    owner.generation, owner.hostEpoch, owner.processEpoch]);
+  if (principal.kind !== "plugin" || key(principal.owner) !== key(context.owner))
+    throw new Error("Channel owner mismatch.");
   let attachment: DeviceChannelAttachment | undefined;
   const routedBroker = new Proxy(broker, { get(target, key, receiver) {
     if (key === "attachChannel") return (args: Parameters<DeviceBrokerPort["attachChannel"]>[0]) => {
@@ -9854,9 +9880,14 @@ function bindDesktopChannel(context: Stage3ChannelContext, broker: DeviceBrokerP
   if (!attachment) { offDevice(); throw new Error("Device router did not attach the original channel."); }
   try {
     const ui = createUiChannelBinding(context, { ...input, attachment });
+    originalChannels.set(key(context.owner), context);
     let disposed = false;
     return { initialized: signal => ui.initialized(signal), ready: signal => ui.ready(signal),
-      dispose() { if (disposed) return; disposed = true; ui.dispose(); offDevice(); } };
+      dispose() {
+        if (disposed) return; disposed = true;
+        try { ui.dispose(); offDevice(); }
+        finally { originalChannels.delete(key(context.owner)); }
+      } };
   } catch (error) { offDevice(); throw error; }
 }
 ```
@@ -10027,7 +10058,7 @@ pnpm --filter @kobrixa/desktop test src/main/plugins/ui-bridge.test.ts
 pnpm check:desktop
 ```
 
-Commit the owned changes in their respective steps: T2 includes ui-catalog.ts/ui-state.ts in its existing commit; T5 stages ui-bridge.ts/ui-bridge.test.ts in Step 22. Never stage the imported read-only broker ledger in D160.
+Never stage the imported read-only broker ledger in D160.
 
 The T2 state API is used directly; main must not create another data/form store. Add this complete adapter to `ui-bridge.ts`, with `UiCatalog`, `UiStateRegistry`, `currentStatusBindings`, type `UiRuntimeAttachment`, and `sameUiBinding` imports from `@kobrixa/plugin-runtime`:
 
@@ -10182,13 +10213,15 @@ async function channelFixture() {
   const handle = vi.spyOn(h.peer, "handle");
   const binding = createUiChannelBinding(h.context, { ...h, attachment });
   const controller = new AbortController();
-  const deadlineOff = registerActivationDeadline(controller.signal, performance.now() + 10_000, () => performance.now());
+  let clock = 0;
+  const deadlineOff = registerActivationDeadline(controller.signal, 10_000, () => clock);
   h.child.handle("ui/negotiate", () => ({ ok: true, value: { commandEnvelopeVersions: [1], uiResourceVersions: [1] } }));
   h.child.handle("ui/ready", async () => {
     const instances = await h.child.request("ui/instances", {});
     expect(instances.ok).toBe(true); return { ok: true, value: {} };
   });
   return { ...h, descriptor, attachment, handle, binding, controller,
+    advanceClock(ms: number) { clock += ms; },
     dispose() { binding.dispose(); deadlineOff(); handle.mockRestore(); h.dispose(); } };
 }
 it("BM-12 routes all five requests on the original peer and ready can query instances", async () => {
@@ -10309,6 +10342,7 @@ it("BM-12 ready receives the original remaining deadline", async () => {
   vi.useFakeTimers(); const h = await channelFixture();
   try {
     await h.binding.initialized(h.controller.signal);
+    h.advanceClock(9_500);
     await vi.advanceTimersByTimeAsync(9_500);
     h.child.handle("ui/ready", () => new Promise(() => {}));
     const request = vi.spyOn(h.peer, "request");
@@ -10717,6 +10751,9 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
   const foundation = await input.createFoundation(input.foundationOptions);
   const broker = foundation.broker;
   let runtimeAttachment: UiRuntimeAttachment | undefined;
+  const originalChannels = new Map<string, Stage3ChannelContext>();
+  const ownerKey = (owner: import("@kobrixa/plugin-protocol").ResourceOwner) => JSON.stringify([
+    owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
   let plugins: PluginController | undefined;
   const runtime = (): UiRuntimeAttachment => {
     if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached."); return runtimeAttachment;
@@ -10749,7 +10786,8 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
     ui: createUiLifetimePort({ catalog, states, subscriptions, revoke: (_owner, binding) => intent.forget(binding) }) };
   const lifecycle = new LifecycleCoordinator({ ports: stage3, resources: broker.resources,
     sessions: broker.sessions, reservations: broker.reservations, persistence: stage3.persistence,
-    now, alive: owner => runtime().current(owner), owners: () => runtime().owners(),
+    now, alive: owner => { const channel = originalChannels.get(ownerKey(owner)); return !!channel && !channel.peer.closed; },
+    owners: () => runtime().owners(),
     dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
     shutdown: async () => { if (plugins) await plugins.shutdown(); },
     legacyFlush: input.legacyFlush, report: input.report });
@@ -10799,8 +10837,12 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput): Pr
   const stage3Host: Stage3HostAttachment = {
     hostEpoch: profile.hostEpoch, principal: input.principal,
     hasPermission: (owner, permission) => input.foundationOptions.hasPermission(input.principal(owner), permission),
-    requirements: owner => input.foundationOptions.requirements(owner),
-    bindChannel: context => bindDesktopChannel(context, broker, { catalog, states, subscriptions, runtime: runtimePort }),
+    requirements(owner) {
+      const declarations = input.foundationOptions.requirements(owner);
+      return declarations === null ? null : Object.freeze(declarations.map(value => Object.freeze({ ...value })));
+    },
+    bindChannel: context => bindDesktopChannel(context, broker,
+      { catalog, states, subscriptions, runtime: runtimePort }, originalChannels),
     retireResources: (owner, reason) => lifecycle.retire(owner, reason),
   };
   let offSources: (() => void) | undefined;
@@ -10853,6 +10895,11 @@ In primary main, retain its existing `composeDesktopMain({createFoundation:creat
 Append these controller.test.ts cases to D150's existing BM-18 suite. Its real `compositionInput()` fixture retains all named production options and starts no optional process without an explicit open. Merge the desktopUi import and preserve the secondary-instance/callback-failure tests:
 
 ```ts
+// Hoisted partial mock preserves the real factory for the other composition cases.
+vi.mock("../device-broker/lifecycle-coordinator.js", async orig => {
+  const actual = await orig<typeof import("../device-broker/lifecycle-coordinator.js")>();
+  return { ...actual, createDesktopFoundation: vi.fn(actual.createDesktopFoundation) };
+});
 it("BM-18 D160 uses one injected factory/provider and one UI registry", async () => {
   const f = await compositionInput();
   let providers = 0;
@@ -10886,16 +10933,85 @@ it("BM-18 D160 uses one injected factory/provider and one UI registry", async ()
     await composition.dispose();
   } finally { await f.cleanup(); }
 });
+it.each(["live", "closed", "disposed"] as const)(
+  "BM-06 retirement uses the original %s peer even when its owner is not current", async state => {
+    const f = await compositionInput();
+    const composition = await composeDesktopMain(f.input);
+    const [a, b] = createMemoryChannelPair(); const peer = new RpcPeer(a), child = new RpcPeer(b);
+    const owner = { sourceKey: "dev:retained", pluginId: "test.retained", generation: 1,
+      hostEpoch: f.input.foundationOptions.profile.hostEpoch, processEpoch: randomUUID() };
+    const retire = vi.spyOn(composition.stage3.device, "retire");
+    const freeze = vi.spyOn(composition.stage3.persistence, "freeze");
+    const drain = vi.spyOn(composition.stage3.persistence, "drain");
+    const lost = vi.spyOn(composition.stage3.persistence, "ownerLost");
+    const binding = composition.stage3Host.bindChannel({ peer, owner, requirements: [],
+      principal: () => f.input.principal(owner) });
+    try {
+      // This synthetic retained owner has never been in the manager's current registry.
+      if (state === "closed") peer.close();
+      if (state === "disposed") { binding.dispose(); expect(peer.closed).toBe(false); }
+      await composition.stage3Host.retireResources({ ...owner }, "disable");
+      expect(retire).toHaveBeenCalledExactlyOnceWith(owner, state === "live" ? "disabled" : "crashed");
+      if (state === "live") {
+        expect(freeze).toHaveBeenCalledOnce(); expect(drain).toHaveBeenCalledOnce();
+        expect(lost).not.toHaveBeenCalled();
+      } else {
+        expect(lost).toHaveBeenCalledExactlyOnceWith(owner);
+        expect(freeze).not.toHaveBeenCalled(); expect(drain).not.toHaveBeenCalled();
+      }
+    } finally {
+      binding.dispose(); peer.close(); child.close();
+      retire.mockRestore(); freeze.mockRestore(); drain.mockRestore(); lost.mockRestore();
+      await composition.dispose(); await f.cleanup();
+    }
+  });
+it("D160 rejects a channel owner mismatch before installing routes", async () => {
+  const f = await compositionInput(); const composition = await composeDesktopMain(f.input);
+  const [a, b] = createMemoryChannelPair(); const peer = new RpcPeer(a), child = new RpcPeer(b);
+  const owner = { sourceKey: "dev:test", pluginId: "test.ui", generation: 1,
+    hostEpoch: f.input.foundationOptions.profile.hostEpoch, processEpoch: randomUUID() };
+  const attach = vi.spyOn(composition.foundation.broker, "attachChannel");
+  const handle = vi.spyOn(peer, "handle");
+  try {
+    expect(() => composition.stage3Host.bindChannel({ peer, owner, requirements: [],
+      principal: () => f.input.principal({ ...owner, processEpoch: randomUUID() }) }))
+      .toThrow("Channel owner mismatch.");
+    expect(attach).not.toHaveBeenCalled(); expect(handle).not.toHaveBeenCalled();
+  } finally {
+    attach.mockRestore(); handle.mockRestore(); peer.close(); child.close();
+    await composition.dispose(); await f.cleanup();
+  }
+});
+it("D160 requirements are a frozen copy and preserve unknown-owner null", async () => {
+  const f = await compositionInput();
+  const declarations = [{ capability: "motion", required: true }];
+  f.input.foundationOptions.requirements = owner => owner.generation === 1 ? declarations : null;
+  const composition = await composeDesktopMain(f.input);
+  const owner = { sourceKey: "dev:test", pluginId: "test.ui", generation: 1,
+    hostEpoch: f.input.foundationOptions.profile.hostEpoch, processEpoch: randomUUID() };
+  try {
+    const copy = composition.stage3Host.requirements(owner);
+    expect(copy).toEqual([{ capability: "motion", required: true }]);
+    expect(copy).not.toBe(declarations); expect(copy![0]).not.toBe(declarations[0]);
+    expect(Object.isFrozen(copy)).toBe(true); expect(Object.isFrozen(copy![0])).toBe(true);
+    declarations[0]!.required = false; declarations.push({ capability: "files", required: false });
+    expect(copy).toEqual([{ capability: "motion", required: true }]);
+    expect(composition.stage3Host.requirements({ ...owner, generation: 2 })).toBeNull();
+    declarations.length = 0;
+    expect(composition.stage3Host.requirements(owner)).toEqual([]);
+    expect(Object.isFrozen(composition.stage3Host.requirements(owner))).toBe(true);
+  } finally { await composition.dispose(); await f.cleanup(); }
+});
 it("BM-18 D160 import has no provider, process or profile side effects", async () => {
   vi.resetModules();
   const runtime = await import("@kobrixa/plugin-runtime");
   const module = await import("../device-broker/lifecycle-coordinator.js");
   const create = vi.spyOn(runtime.PluginManager, "create");
-  const factory = vi.spyOn(module, "createDesktopFoundation");
+  const factory = vi.mocked(module.createDesktopFoundation); factory.mockClear();
   try {
     await import("./controller.js");
     expect(create).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
-  } finally { create.mockRestore(); factory.mockRestore(); }
+  } finally { create.mockRestore(); factory.mockClear(); }
 });
 ```
 
@@ -13273,8 +13389,8 @@ H-V remains one writer across all three publications. The finite write set below
 | Retain V150 | `apps/desktop/src/renderer/device/remote-files-copy.ts` |
 | Retain V150 | `apps/desktop/src/renderer/execution/execution.ts` |
 | Retain/Test V150 | `apps/desktop/src/renderer/execution/execution.test.ts` |
-| Create in V170 only | `apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts` |
-| Create/Test in V170 only | `apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts` |
+| Created by B2-T9 (V170, same H-V owner); not executed in this task | `apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts` |
+| Created by B2-T9 (V170, same H-V owner); not executed in this task | `apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts` |
 
 **Interfaces**
 
@@ -15574,7 +15690,7 @@ Call `runMotionRace` for the 48 boundary/position/fault combinations from the ma
 
 Import `diagnosticsFor` directly from runtime `ui-state.ts` (T2), `ui-lifecycle.ts` (T3), main `ui-bridge.ts` (T5), renderer `state-store.ts` (T6) and `host-ports.ts` (T7). Pass each module the actual instance returned by its factory in the test composition, once by object identity; never pass `{}` or allocate a parallel store for measurement. Unknown instances must throw. The test-only bundle captures these factory results in main and browser independently; no diagnostic method is added to product preload/RPC. Read browser observations through the test page/debugger only.
 
-Append this collector to `declarative-ui-main.ts`, and use the same collector body in the browser test entry with its direct type import:
+Append this collector to `declarative-ui-main.ts`; Step 5c supplies the dynamic BM-26 browser collector:
 
 ```ts
 import type { FoundationCounters } from "../../packages/plugin-runtime/src/ui-host-ports.js";
@@ -15599,9 +15715,252 @@ function collectDiagnostics(entries: readonly { instance: object; diagnostics: F
 }
 ```
 
-For the browser collector use the existing `check` assertion in place of Node `assert` (identity comparison, integer/nonnegative comparison); do not import Node builtins into the renderer. T3 counts owners; T2 bindings/subscriptions and AM-01 host event queue; T5 pending invocations/action tokens; T6 renderer queue and its timers; T7 resource readers. Each module counts only its own remaining timers and zero for every unowned key. `queuedBytes` is retained encoded payload bytes, subscriptions include terminal-awaiting-ACK, and readers include retained catalog/read pins. B2-T2 worker jobs remain zero until the P170 extension. Sum disjoint instances across processes only after teardown of the measured owners; record baseline and final raw snapshots as well as totals.
+The Step 5c browser collector uses the existing `check` assertion; do not import Node builtins into the renderer. T3 counts owners; T2 bindings/subscriptions and AM-01 host event queue; T5 pending invocations/action tokens; T6 renderer queue and its timers; T7 resource readers. Each module counts only its own remaining timers and zero for every unowned key. `queuedBytes` is retained encoded payload bytes, subscriptions include terminal-awaiting-ACK, and readers include retained catalog/read pins. B2-T2 worker jobs remain zero until the P170 extension. Sum disjoint instances across processes only after teardown of the measured owners; record baseline and final raw snapshots as well as totals.
 
 Events use `performance.timeOrigin + performance.now()` across main and renderer, with the process origin and conversion captured in the evidence. Calibrate through at least 30 debugger round trips, retaining send/receive and renderer timestamps; midpoint offset and half-round-trip uncertainty accompany every cross-process interval. Keep monotonic `now` for deadlines. Apply is an accepted patch visible after render commit; revoke is synchronous intent admission closure; stop-dispatch is the first stop exchange actually sent. Correlate owner/binding with the raw wire revision/challenge log; do not add revision/challenge fields to `FoundationDiagnosticEvent`. Include clock uncertainty in threshold comparisons and fail if the upper bound exceeds a budget. Native input→paint is separately recorded, not inferred from RPC completion. Capture cold setup independently of the 5-second warmup/60-second steady samples.
+
+- [ ] **Step 5c: Bind BM-26 browser diagnostics to the production singleton.**
+
+In `declarative-ui-browser.ts`, use this complete browser collector instead of copying Step 5b's fixed-entry main collector. Merge the type imports. Install it before publishing `api` or running any measured action. Resolve the imports through the same renderer module graph as `index.tsx`, so factory and diagnostics WeakMaps are the same module instances.
+
+```ts
+import { pluginUiWindow } from "../../apps/desktop/src/renderer/settings/settings-state.js";
+import { diagnosticsFor as hostDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
+import { diagnosticsFor as stateDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/state-store.js";
+import type { FoundationCounters, FoundationDiagnostics, FoundationDiagnosticEvent }
+  from "../../packages/plugin-runtime/src/ui-host-ports.js";
+
+const foundationOwner = pluginUiWindow();
+const foundationInstances = new Map<object, FoundationDiagnostics>();
+const foundationEvents: FoundationDiagnosticEvent[] = [];
+const foundationUnsubscribe: (() => void)[] = [];
+const foundationRaw: { clock: { origin: number; sampledAt: number };
+  instances: readonly { id: number; snapshot: FoundationCounters }[] }[] = [];
+function retainFoundation(instance: object, lookup: (instance: object) => FoundationDiagnostics): void {
+  if (foundationInstances.has(instance)) return;
+  const diagnostics = lookup(instance); // Unknown instances fail; never substitute zeros.
+  foundationInstances.set(instance, diagnostics);
+  foundationUnsubscribe.push(diagnostics.onEvent(event => foundationEvents.push(Object.freeze({
+    ...event, owner: Object.freeze({ ...event.owner }),
+    ...(event.binding ? { binding: Object.freeze({ ...event.binding }) } : {}),
+  }))));
+}
+function observeFoundationRecords(): void {
+  for (const entry of foundationOwner.session.catalog.getSnapshot().entries) {
+    const record = foundationOwner.session.record(entry);
+    if (record) retainFoundation(record.state, stateDiagnostics);
+  }
+}
+retainFoundation(foundationOwner.host, hostDiagnostics);
+retainFoundation(foundationOwner.session.catalog, stateDiagnostics);
+foundationUnsubscribe.push(foundationOwner.session.subscribe(observeFoundationRecords));
+foundationUnsubscribe.push(foundationOwner.session.catalog.subscribe(observeFoundationRecords));
+observeFoundationRecords();
+// Retired records stay in this map, with their event subscriptions, through final observation.
+function foundationDiagnostics(): {
+  snapshot: FoundationCounters; events: readonly FoundationDiagnosticEvent[];
+  clock: { origin: number; sampledAt: number };
+} {
+  const clock = Object.freeze({ origin: performance.timeOrigin, sampledAt: performance.now() });
+  const sum = { owners: 0, bindings: 0, subscriptions: 0, queuedEvents: 0, queuedBytes: 0,
+    timers: 0, pendingInvocations: 0, actionTokens: 0, resourceReaders: 0, workerJobs: 0 };
+  const instances = [...foundationInstances.values()].map((diagnostics, id) => {
+    const snapshot = Object.freeze({ ...diagnostics.snapshot() });
+    for (const key of Object.keys(sum) as (keyof FoundationCounters)[]) {
+      check(Number.isSafeInteger(snapshot[key]) && snapshot[key] >= 0, `invalid ${key}`);
+      sum[key] += snapshot[key];
+      check(Number.isSafeInteger(sum[key]), `overflow ${key}`);
+    }
+    return Object.freeze({ id, snapshot });
+  });
+  foundationRaw.push({ clock, instances: Object.freeze(instances) });
+  return Object.freeze({ snapshot: Object.freeze(sum),
+    events: Object.freeze([...foundationEvents]), clock });
+}
+function stopFoundationObservation(): void {
+  for (const off of foundationUnsubscribe.splice(0)) off();
+}
+window.addEventListener("pagehide", stopFoundationObservation, { once: true });
+```
+
+Add this executable test in the same browser file and call it at the start of `api.run()`, before its existing operations. It uses the production session, tests discovery/removal and checks raw disjoint instance sums; no extra host or store is constructed.
+
+```ts
+async function testFoundationCollector(): Promise<void> {
+  await foundationOwner.ready;
+  check(pluginUiWindow() === foundationOwner, "different production singleton");
+  for (const lookup of [hostDiagnostics, stateDiagnostics]) {
+    let threw = false;
+    try { lookup({}); } catch { threw = true; }
+    check(threw, "unknown diagnostics instance accepted");
+  }
+  const entry = foundationOwner.session.catalog.getSnapshot().entries.find(
+    entry => entry.kind === "panel" && entry.availability === "available");
+  check(entry, "missing admitted panel");
+  foundationOwner.session.showPane(true, "sidebar");
+  await foundationOwner.session.open(entry);
+  const record = foundationOwner.session.record(entry);
+  check(record && foundationInstances.has(record.state), "session subscription missed state");
+  const count = foundationInstances.size;
+  observeFoundationRecords(); observeFoundationRecords();
+  check(foundationInstances.size === count, "duplicate instance registration");
+  const before = foundationDiagnostics();
+  const raw = foundationRaw.at(-1)!;
+  for (const key of Object.keys(before.snapshot) as (keyof FoundationCounters)[]) {
+    check(before.snapshot[key] === raw.instances.reduce((sum, row) => sum + row.snapshot[key], 0),
+      `incorrect disjoint sum: ${key}`);
+  }
+  foundationOwner.session.close(entry);
+  check(!foundationOwner.session.record(entry), "record did not close");
+  check(foundationInstances.has(record.state), "retired diagnostics lost");
+  foundationDiagnostics();
+  check(foundationRaw.at(-1)!.instances.length >= count, "final raw observations lost");
+}
+```
+
+Insert this first statement in the existing `async api.run()` body:
+
+```ts
+await testFoundationCollector();
+```
+
+Run after the Step 6 builds:
+
+```bash
+node tests/desktop/declarative-ui-run.mjs
+```
+
+Expected: PASS for JS and Python; host/catalog/actual record diagnostics resolve, unknown objects throw, repeated discovery does not duplicate counts, and removed records remain observable. Missing production diagnostics registration is a failing prerequisite, not permission for T9 to patch another owner's module. Commit:
+
+```bash
+git add tests/desktop/declarative-ui-browser.ts
+git commit -m "test(plugins): collect BM-26 production renderer diagnostics"
+```
+
+- [ ] **Step 5d: Expose and test the two BM-26 test-page actions.**
+
+Add the following function beside the collector, then attach both actions to the existing `api` immediately before `Object.assign(window, { declarativeAcceptance: api })`. Neither action is exported through product preload/RPC. `foundationDiagnostics` only observes; only `disposeFoundationRenderer` drives teardown. Keep raw per-instance samples local in `foundationRaw`, including the final sample.
+
+```ts
+function disposeFoundationRenderer(): void {
+  foundationOwner.dispose();
+}
+Object.assign(api, { foundationDiagnostics, disposeFoundationRenderer });
+```
+
+Use the following complete test helper in `declarative-ui-main.ts`. The call-site block below reads diagnostics before and after measured actions. In the normal close path, after `composition.dispose()` resolves but before removing observers or closing/destroying the window, await `testFoundationRendererDisposal(win)`. Preserve its returned before/after data with the acceptance report. Keep observation alive until that final read; do not treat a crashed renderer's missing snapshot as zeros.
+
+```ts
+type BrowserFoundation = { snapshot: FoundationCounters; events: readonly FoundationDiagnosticEvent[];
+  clock: { origin: number; sampledAt: number } };
+async function foundationPage<T>(win: BrowserWindow, expression: string): Promise<T> {
+  const debuggerApi = win.webContents.debugger;
+  const attachedHere = !debuggerApi.isAttached();
+  if (attachedHere) debuggerApi.attach("1.3");
+  try {
+    const result = await debuggerApi.sendCommand("Runtime.evaluate", {
+      expression, returnByValue: true, awaitPromise: true,
+    });
+    assert.equal(result.exceptionDetails, undefined, "foundation test-page action failed");
+    return result.result.value as T;
+  } finally { if (attachedHere) debuggerApi.detach(); }
+}
+async function readFoundationDiagnostics(win: BrowserWindow): Promise<BrowserFoundation> {
+  const result = await foundationPage<BrowserFoundation>(win,
+    "window.declarativeAcceptance.foundationDiagnostics()");
+  assert.deepEqual(Object.keys(result).sort(), ["clock", "events", "snapshot"]);
+  assert.ok(Number.isFinite(result.clock.origin) && Number.isFinite(result.clock.sampledAt));
+  for (const value of Object.values(result.snapshot)) assert.ok(Number.isSafeInteger(value) && value >= 0);
+  return result;
+}
+async function testFoundationRendererDisposal(win: BrowserWindow) {
+  const before = await readFoundationDiagnostics(win);
+  assert.equal(await foundationPage<boolean>(win, `(() => {
+    const api = window.declarativeAcceptance;
+    const result = api.foundationDiagnostics();
+    if (!Object.isFrozen(result.snapshot) || !Object.isFrozen(result.events)) return false;
+    return api.disposeFoundationRenderer() === undefined;
+  })()`), true);
+  const after = await readFoundationDiagnostics(win);
+  assert.ok(after.events.length >= before.events.length, "disposal events lost");
+  for (const [key, value] of Object.entries(after.snapshot)) assert.equal(value, 0, key);
+  await foundationPage<void>(win, "window.declarativeAcceptance.disposeFoundationRenderer()");
+  assert.deepEqual((await readFoundationDiagnostics(win)).snapshot, after.snapshot);
+  return { before, after };
+}
+```
+
+Replace the existing `const report = await win.webContents.executeJavaScript("window.declarativeAcceptance.run()");` statement with this complete call site; its observation remains in the report written by the existing observer. Take the same before/after samples around each separately measured race through `readFoundationDiagnostics(win)`.
+
+```ts
+const foundationBefore = await readFoundationDiagnostics(win);
+const report = await win.webContents.executeJavaScript("window.declarativeAcceptance.run()");
+const foundationAfter = await readFoundationDiagnostics(win);
+report.foundationActions = { before: foundationBefore, after: foundationAfter };
+```
+
+Merge the three diagnostics type imports into the main file's existing defining-module import. Use Step 5b's 30-round-trip calibration and retain conversion/uncertainty with these samples; deadline `now` remains monotonic. Main independently registers runtime `ui-state.diagnosticsFor(ui.states)`, `ui-lifecycle.diagnosticsFor(handles.runtime)` and main `ui-bridge.diagnosticsFor(ui.bridge)`; P170 T7 also registers `worker.diagnosticsFor(handles.backend)`, using D170's actual returned handles. Those main/worker registrations remain in their owning process. The five non-worker bindings are three main modules and two renderer modules, not a five-object quota.
+
+Run after the Step 6 builds:
+
+```bash
+node tests/desktop/declarative-ui-run.mjs
+```
+
+Expected: PASS; debugger reads the exact frozen data shape before/after actions, explicit singleton disposal precedes a real zero-resource final snapshot, repeated disposal is harmless, and observation retains disposal events. A missing action, crashed normal-reference renderer or nonzero counter fails. Commit:
+
+```bash
+git add tests/desktop/declarative-ui-browser.ts tests/desktop/declarative-ui-main.ts
+git commit -m "test(plugins): expose test-page foundation observation and disposal"
+```
+
+- [ ] **Step 5e: Reuse the native startAcceptanceWindow shell for the BM-26 handoff.**
+
+Keep Step 5a's `startAcceptanceWindow` as the native-shell reference consumed read-only by B2-T7. T7 embeds that shell inside its inert no-argument `createFoundationFixture`, using its own artifacts and D170 options; B1 does not build T7's worker/host/consumer fixture. Reuse `startPrimary`, the actual BrowserWindow sender/frame checks, authority registration and the existing journal constructors. In `startAcceptanceWindow`, immediately before calling `acceptanceComposition`, construct/load the journal explicitly and replace the inline journal expression in `foundationOptions` with `journal`:
+
+```ts
+const journalProfile = profile;
+const journal = createJournal(createJournalFilesystem(app.getPath("userData")), journalProfile);
+await journal.load();
+assert.strictEqual(journalProfile, profile);
+```
+
+Replace the normal successful close branch's `composition.dispose().then(...)` chain with this complete block. It runs the Step 5d test against the same window before closing it, retains the final report and preserves the existing recursion guard and error handler. The primary OS lock remains held until Electron exits; no journal disposal or profile release method is added.
+
+```ts
+void (async () => {
+  await composition.dispose();
+  const foundationRenderer = await testFoundationRendererDisposal(win);
+  const report = JSON.parse(await readFile(output, "utf8"));
+  await writeFile(output, JSON.stringify({ ...report, foundationRenderer }, null, 2));
+  closed = true;
+  off?.(); offRecovery(); offDeviceRecovery();
+  win.close(); app.quit();
+})().catch(error => { closing = false; failure(error); });
+```
+
+In the Step 6 runner, after parsing each browser report, add this test of the shell's completed renderer lifetime (including measure mode, whose controller writes its initial report before closing). The existing runner must still await the actual Electron exit before reading the final report or deleting its temporary profile:
+
+```js
+assert.ok(report.foundationRenderer, "missing native-shell final diagnostics receipt");
+assert.ok(report.foundationRenderer.after.events.length >= report.foundationRenderer.before.events.length);
+for (const [key, value] of Object.entries(report.foundationRenderer.after.snapshot)) {
+  assert.equal(value, 0, `native-shell renderer leak: ${key}`);
+}
+```
+
+Run after the Step 6 builds:
+
+```bash
+node tests/desktop/declarative-ui-run.mjs
+```
+
+Expected: PASS; the original primary shell loads its journal before composition, disposes the actual composition and renderer before window destruction, records final diagnostics and exits with the original lock held. Deliver a stopped-owner receipt containing the `declarative-ui-browser.ts` path, built artifact location/hash and this test result before T7 resumes; T7 receives no edit grant to B1 files. D170/T2 receipts remain prerequisites for T7's P170 composition, and this B1 receipt does not claim either reference case or all fifteen foundation cases passed. Commit:
+
+```bash
+git add tests/desktop/declarative-ui-main.ts tests/desktop/declarative-ui-run.mjs
+git commit -m "test(plugins): retain BM-26 native-shell diagnostics through teardown"
+```
 
 - [ ] **Step 6: Implement the bounded controller runner; rerun both real tests.**
 
