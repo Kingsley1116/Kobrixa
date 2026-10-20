@@ -75,6 +75,28 @@
         "lifetime": null,
         "persistedSha256": null
       }
+    },
+    {
+      "id": "list-empty-result",
+      "schema": "devices/list.result",
+      "phase": "result",
+      "input": {
+        "ok": true,
+        "value": {
+          "revision": 0,
+          "providers": [],
+          "sessions": []
+        }
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
     }
   ]
 }

@@ -20,9 +20,9 @@ function keywords(node: unknown, found = new Set<string>(), inProperties = false
 }
 
 describe("published JSON Schema", () => {
-  it("publishes the 1.4.0 schema and a strict language service declaration", () => {
+  it("publishes the 1.5.0 schema and a strict language service declaration", () => {
     const schema = JSON.parse(serializeJsonSchema());
-    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.4.0.json");
+    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.5.0.json");
     const services = schema.$defs.manifest.properties.contributes.properties.languageServices;
     expect(services.maxItems).toBe(8);
     expect(services.items.additionalProperties).toBe(false);

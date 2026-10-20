@@ -7,10 +7,12 @@ import sys
 import threading
 import time
 
+from ._devices import Devices
+from ._events import bind_event_channel, close_event_channel
 from ._framing import Decoder, FramingError, encode
 from ._schema import SchemaError, Validator
 
-API_VERSION = "1.4.0"
+API_VERSION = "1.5.0"
 SDK_VERSION = "0.1.0"
 _CANCELLED, _INVALID_REQUEST, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = (
     -32800, -32600, -32602, -32601, -32603
@@ -40,12 +42,17 @@ class CommandContext:
         self.plugin_id = plugin.plugin_id
         self.locale = plugin.locale
         self.ui = _Ui(plugin)
+        self.devices = plugin.devices
 
 
 class Plugin:
     def __init__(self) -> None:
         self.plugin_id = ""
         self.locale = "en"
+        self.devices = Devices(self._request)
+        launch_owner = os.environ.get("KOBRIXA_RESOURCE_OWNER")
+        if launch_owner is not None:
+            bind_event_channel(self, json.loads(launch_owner, parse_constant=_reject_json_constant))
         self._commands = {}
         self._tasks = {}
         self._pending = {}
@@ -95,6 +102,7 @@ class Plugin:
                 break  # The host closed stdin: exit so no orphan process remains.
             self._receive(text)
         self._stopping = True  # Nothing is sent after exit or EOF, including cancellation replies.
+        close_event_channel(self)
         for task in list(self._tasks.values()):
             task.cancel()
 
@@ -117,6 +125,7 @@ class Plugin:
                 remaining = remaining[written:]
             self._output.flush()
         except OSError:
+            close_event_channel(self)
             self._stopping = True  # The host closed the pipe; the read loop ends on EOF.
 
     def _finished(self, request_id, method: str, task: "asyncio.Future") -> None:
@@ -152,7 +161,10 @@ class Plugin:
                     task = self._tasks.get(params["id"])
                     if task:
                         task.cancel()
+                elif method == "events/deliver":
+                    self.devices.inbox.accept(params) if self.devices.inbox is not None else None
                 elif method == "exit":
+                    close_event_channel(self)
                     self._stopping = True
             else:
                 future = self._pending.pop(message["id"], None)
@@ -188,6 +200,7 @@ class Plugin:
     async def _dispatch(self, method: str, params: dict):
         if method == "initialize":
             self.plugin_id, self.locale = params["pluginId"], params["locale"]
+            asyncio.get_running_loop().call_soon(self.devices.initialized, params["apiVersion"])
             return {"apiVersion": API_VERSION, "sdk": {"name": "kobrixa-plugin-sdk", "version": SDK_VERSION}}
         if method == "command/execute":
             handler = self._commands.get(params["command"])
@@ -199,7 +212,7 @@ class Plugin:
             return None
         raise RpcError(_METHOD_NOT_FOUND, f"Unknown method {method}.")
 
-    async def _request(self, method: str, params: dict):
+    async def _request(self, method: str, params: dict, timeout: float = 10):
         self._validator.validate(f"{method}.params", params)
         request_id = self._next_id
         self._next_id += 1
@@ -207,7 +220,10 @@ class Plugin:
         self._pending[request_id] = future
         self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
         try:
-            reply = await asyncio.wait_for(future, 10)
+            reply = await asyncio.wait_for(future, timeout)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            self._send({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":request_id}})
+            raise
         finally:
             self._pending.pop(request_id, None)
         if "error" in reply:

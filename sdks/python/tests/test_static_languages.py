@@ -15,9 +15,9 @@ class StaticLanguagesTest(unittest.TestCase):
         self.manifest = json.loads((FIXTURES / "toy" / "kobrixa-plugin.json").read_text("utf-8"))
 
     def test_api_and_schema_identity(self):
-        self.assertEqual(API_VERSION, "1.4.0")
+        self.assertEqual(API_VERSION, "1.5.0")
         document = json.loads(resources.files("kobrixa").joinpath("plugin-protocol.schema.json").read_text("utf-8"))
-        self.assertEqual(document["$id"], "https://kobrixa.com/schemas/plugin-protocol/1.4.0.json")
+        self.assertEqual(document["$id"], "https://kobrixa.com/schemas/plugin-protocol/1.5.0.json")
         for name in ("static-language-tokenizer-v1", "static-language-configuration-v1"):
             self.assertTrue(self.validator.has(name))
             self.assertIs(document["$defs"][name]["additionalProperties"], False)

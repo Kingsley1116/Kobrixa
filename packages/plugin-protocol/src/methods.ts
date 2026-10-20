@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { deviceRequestSchemas } from "./device-methods.js";
+import { eventEnvelopeSchema } from "./events.js";
 import {
   MULTI_LINE,
   namespacedIdSchema,
@@ -14,6 +16,7 @@ export type Severity = z.infer<typeof severitySchema>;
 const empty = z.strictObject({});
 
 export const requestMethods = {
+  ...deviceRequestSchemas,
   initialize: {
     params: z.strictObject({
       apiVersion: semverSchema,
@@ -37,6 +40,7 @@ export const requestMethods = {
   },
 } as const;
 export const notificationMethods = {
+  "events/deliver": eventEnvelopeSchema,
   "$/cancelRequest": z.strictObject({ id: jsonRpcIdSchema }),
   exit: empty,
 } as const;

@@ -113,6 +113,31 @@
         "lifetime": null,
         "persistedSha256": null
       }
+    },
+    {
+      "id": "mismatched-common-failure",
+      "schema": "devices/list.result",
+      "phase": "result",
+      "input": {
+        "ok": false,
+        "error": {
+          "code": "PLUGIN_E_DEVICE_BUSY",
+          "message": "Rejected",
+          "detail": {
+            "kind": "permission",
+            "reason": "permission"
+          }
+        }
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
     }
   ]
 }
