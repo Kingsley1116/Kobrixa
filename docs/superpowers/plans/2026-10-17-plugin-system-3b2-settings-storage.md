@@ -5987,6 +5987,10 @@ Negative-matrix coverage: B2 §10 filesystem aliases, disk/sync/rename/short-wri
 
 - [ ] **Binding T2 prerequisites — BM-24/BM-25/BM-26**
 
+Controller ruling for this rereview: the BM-24/BM-25/BM-26 prerequisite blocks in T2 and D170 may remain contract-only, as may T6 and T7. Implementation owners must supply the code under TDD, with the exact signatures, file ownership, concrete assertions and commands below; this does not claim execution evidence.
+
+Owners: `apps/desktop/src/main/plugins/persistence/engine-port.ts/test` for the port/contract, `atomic-store.ts/test` for `AtomicStore.admitImport`, `namespace.ts/test` and `recovery-scan.ts/test` for validation/reconciliation, and `worker.ts/test` for `WorkerSources.resolvePreferences`, private transport, `sourceRoots` and `persistenceWorkerCount`. T6 owns the defining source-port and pure codecs in `import-sources.ts/test`.
+
 Implement these additions in the existing import validators, AtomicStore, WorkerSources and worker operation-table steps under TDD; retain their compatible code. The owning method signature is `AtomicStore.admitImport(owner:PersistenceOwner,id:string,key:string):Promise<PublicationTicket>`; expose it only as `backend.imports.admit` through strict `imports.admit`. `WorkerSources.resolvePreferences(input:Parameters<LegacySourceResolver["resolvePreferences"]>[0]):Promise<void>` implements the defining source-port signature through strict `sources.resolvePreferences`. F declarations/type checks precede T2; T2 unit receipts precede T6/T7. T6 cannot edit these prerequisite paths.
 
 #### 3. Exact contracts and serialization rules
@@ -6115,6 +6119,16 @@ export declare function persistenceWorkerCount(backend: PersistenceBackend): num
 - [ ] Test `T2 worker.test.ts: transport/budgets`: assert Strict imports.admit/sources.resolvePreferences tuples reject extra fields, functions, paths and malformed IDs; no plugin/preload registration; 32 pending/8 MiB host/1 MiB source/four jobs and scratch limits still enforced; restore creates one worker/uses same lock; unknown worker loss preserves honest outcome.
 - [ ] `worker.test.ts`, test `sourceRoots`: assert matching installed file descriptor roots work; unknown IDs, renderer roots, relative/unsafe paths and conflicting maps fail before ready; registration cannot replace roots; no root fallback; omission in product startup preserves empty shipped mappings.
 - [ ] `worker.test.ts`, test `persistenceWorkerCount`: assert one live worker/control forwarding, count stays live until actual exit then zero after disposal, unknown backend throws, and workerJobs does not determine the count.
+
+- [ ] **T2 prerequisite verification and commit:** after the owning implementation steps below and the F/T6 codec handoff, run the concrete prerequisite tests above and commit these additions with the T2 implementation. Do not claim T6/T7 readiness until this gate passes.
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/persistence/contract.test.ts src/main/plugins/persistence/engine-port.test.ts src/main/plugins/persistence/atomic-store.test.ts src/main/plugins/persistence/namespace.test.ts src/main/plugins/persistence/recovery-scan.test.ts src/main/plugins/persistence/worker.test.ts
+pnpm check:desktop
+git add apps/desktop/src/main/plugins/persistence/engine-port.ts apps/desktop/src/main/plugins/persistence/engine-port.test.ts apps/desktop/src/main/plugins/persistence/atomic-store.ts apps/desktop/src/main/plugins/persistence/atomic-store.test.ts apps/desktop/src/main/plugins/persistence/namespace.ts apps/desktop/src/main/plugins/persistence/namespace.test.ts apps/desktop/src/main/plugins/persistence/recovery-scan.ts apps/desktop/src/main/plugins/persistence/recovery-scan.test.ts apps/desktop/src/main/plugins/persistence/worker.ts apps/desktop/src/main/plugins/persistence/worker.test.ts
+git commit -m "feat(desktop): implement durable import and worker prerequisites"
+```
 
 - [ ] **Step 1: Write filesystem and quota tests before implementation**
 
@@ -11851,19 +11865,14 @@ declare function createLegacyWriterBarrier(input:{backend:PersistenceBackend;
 
 Controller ruling: T6 does not require fully written implementation code in this plan. The implementer writes and completes code under TDD at execution time against this binding contract. Retained compatible code below is implementation material, not evidence that the contract or its tests have executed. All numbered requirements and signatures below are mandatory.
 
-#### 1. Findings and fixed decisions
-
-1. **Objection (a) is real for continuation, but overstates the reconciliation problem.** T2's `AtomicStore.admitted` rejects `ticket.owner.hostEpoch !== profile.hostEpoch`, correctly. T6 Step 5 nevertheless says to reserve the original persisted ticket after restart. T2 already implements a historical `reconcileImport` branch, so read-only reconciliation does not require reviving the old epoch. B2 spec §§6.5,8.3,9.3 distinguish persistent evidence from transient publication rights. BM-24 freezes the original plan ticket as evidence and adds a separately persisted current publication attempt. Never “fix” this by skipping admission, changing the original ticket's owner in place, restoring transient staging, or treating a missing receipt as permission to publish.
-2. **Objection (b) is real.** B2 spec §9.2 and AM-29 require persisted raw preferences/digest and restart recovery, but the existing resolver has no evidence binding, and T2's `WorkerSources` constructs filesystem roots for renderer preferences. BM-25 supplies `LegacySourceResolver.resolvePreferences`, implemented in worker.ts, and pins `ImportPlan.preferencesEvidence`. The worker reads and verifies the durable nonce record itself. Historical scope proves where bytes came from; it is not current renderer authority.
-3. No plugin methods, preload methods, renderer snapshot fields, published schemas, API versions, receipt/tag shapes, product mappings, budget increases or new store are permitted. Internal formatVersion remains 1: these are corrections to unreleased scaffolds. Unknown old formats fail closed, not silently upgraded. Do not edit specs. Preserve the existing `finishImport(imports,owner,plan):Promise<boolean>` implementation and invoke its existing `completionCases` tests with a real nonempty typed fixture.
-
+The internal formatVersion remains 1. Unknown old formats fail closed. Public plugin/preload methods, renderer snapshot fields, published schemas, API versions, receipt/tag shapes, product mappings and budgets remain unchanged by BM-24/25; no new store is introduced. Preserve `finishImport(imports,owner,plan):Promise<boolean>` and invoke its existing `completionCases` tests with a real nonempty typed fixture.
 
 #### 2. Exact ownership and prerequisites
 
-1. Update the B2 plan's T0/interface copies to the amended AM-24/29 signatures. F seeds the declarations in existing `apps/desktop/src/main/plugins/persistence/engine-port.ts`, `import-sources.ts` and `contract.test.ts`. No new source file is needed.
+1. F seeds the declarations in existing `apps/desktop/src/main/plugins/persistence/engine-port.ts`, `import-sources.ts` and `contract.test.ts`. No new source file is needed.
 2. T2 implements BM-24 in its existing `engine-port.ts/test`, `atomic-store.ts/test`, `namespace.ts/test`, `recovery-scan.ts/test`, `worker.ts/test`. T2 implements BM-25's worker method/transport in `worker.ts/test`, importing T6's pure evidence codec from import-sources.ts. Implement these prerequisites in the T2 plan steps that already define import validators, `AtomicStore`, `WorkerSources`, and the worker operation table. No whole-file rewrite or unrelated T2 correction is authorized.
-3. T6's exact implementation write set remains `import-coordinator.ts/test`, `import-journal.ts/test`, `import-sources.ts/test`, `import-fixtures.ts`, all under the persistence directory. T6 does not patch worker/store code. Where a writer has stopped, request a stopped-owner receipt for the exact prerequisite paths; do not delegate their ownership to T6. The plan fixer embeds the complete prerequisite contract and signature declarations in the owning T2 steps; the implementation owner completes and tests them under TDD before T6 acceptance, with no unresolved port.
-4. D170's existing composition passes `descriptors` into `createLegacyWriterBarrier` and provides a trusted current `importOwner`; it waits for barrier restoration before starting writers or exposing ordinary persistence mutation requests. T7 updates the same constructor call in `tests/desktop/plugin-persistence-main.ts` and supplies real restart/nonce evidence through `plugin-persistence-import.test.mjs` and its existing worker wrapper. V170 retains the existing challenge/submit bridge and must not swallow `getItem` exceptions as null.
+3. T6's exact implementation write set remains `import-coordinator.ts/test`, `import-journal.ts/test`, `import-sources.ts/test`, `import-fixtures.ts`, all under the persistence directory. T6 does not patch worker/store code. Where a writer has stopped, request a stopped-owner receipt for the exact prerequisite paths; do not delegate their ownership to T6. The T2 implementation owner completes and tests the prerequisites under TDD before T6 acceptance, with no unresolved port.
+4. D170's existing composition passes `descriptors` into `createLegacyWriterBarrier` and provides a trusted current `importOwner`; it waits for barrier restoration before starting writers or exposing ordinary persistence mutation requests. T7 passes synthetic descriptors/writers through `test.legacy`; D170 constructs and restores the barrier. T7 supplies real restart/nonce evidence through `plugin-persistence-import.test.mjs` and its existing worker wrapper. V170 retains the existing challenge/submit bridge and must not swallow `getItem` exceptions as null.
 5. F type checks come first; T2/T6 unit checks precede T7's real worker checks; D170/K170 attachments precede final T7 acceptance. These changes do not close B2-RF5 using unit mocks alone.
 
 
@@ -12076,7 +12085,7 @@ pnpm check:desktop
 
 Use T7's existing real Electron/worker runner and import verifier commands for integration, not Electron imports inside these Vitest files. Add observations to the existing import-restart execution/assertions without inventing a second producer or changing BM-20's evidence vocabulary. Store detailed assertions in the existing test output.
 
-Step 8 retains the future implementation-owner commit instructions and seven-file T6 write set, but its handoff must name the amended F/T2 prerequisites and T7 changed-epoch/evidence verification. The B2 plan fixer does not run those future commits while editing the plan.
+Step 8 retains the future implementation-owner commit instructions and seven-file T6 write set, but its handoff must name the amended F/T2 prerequisites and T7 changed-epoch/evidence verification.
 
 
 #### Mandatory checkbox test steps (fix8 §12)
@@ -13246,10 +13255,6 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "feat(desktop): add bounded resumable legacy import mechanism"
 ```
 
-- [ ] **Final self-check — fix8 section 13**
-
-Re-read the resulting T0/T2/T6/T7/D170 fragments against BM-24/25. Search for and remove obsolete instructions to reserve original tickets after restart, compare historical scope to the current epoch for evidence reads, parse nonce/barrier keys as import plans, construct a renderer-preferences file root, or replay an old nonce to recover bytes. Keep original-ticket reconciliation language with its evidence-only meaning. Every new method must have a defining type, strict private transport mapping, implementation owner, caller and invoked test. No placeholders or missing worker handoffs remain. Re-run document diff/ownership checks; do not edit specs or commit during the plan-fix pass.
-
 ### Task 3B2-T7: Cross-layer persistence, fault/load evidence and author documentation
 
 **Files**
@@ -14156,7 +14161,7 @@ export const FOUNDATION_CHECKS: Readonly<Record<FoundationCase, {
 };
 ```
 
-Add the following acceptance executor in the same producer. `runPersistenceAcceptance` obtains its `foundation` results by calling `await runFoundationEvidence()` before writing the report; it does not execute a second case loop. These assertions run in the Electron process while object identity is still available. The separate terminal fixture checks idempotent disposal without destroying a fixture needed by later cases.
+Keep these case assertions in the producer, executing them inside each case’s owning Electron process while object identity is available. The outside controller owns `runFoundationEvidence` and report aggregation; each process constructs exactly one fixture. Verify idempotent `close()` on that same fixture after its case.
 
 ```ts
 import assert from "node:assert/strict";
@@ -14211,7 +14216,7 @@ function assertRealComposition(fixture: FoundationFixture): void {
   try { assert.deepEqual(c.host.recovery.snapshot(), c.host.participant.recoverySnapshot()); }
   finally { off(); }
 }
-export declare function runFoundationEvidence(): Promise<Partial<Record<FoundationCase, CaseEvidence>>>;
+// runFoundationEvidence belongs to the outside controller, not this Electron producer.
 ```
 
 Implement `runFoundationEvidence` through the outside controller’s one fresh Electron process/profile per case, collecting each process’s validated report only after `fixture.close()` and OS exit. Never construct a second fixture or separately dispose the host in one Electron process. Run `assertRealComposition` and additional checks inside each owning case before serialization.
@@ -14545,7 +14550,7 @@ The existing completeness test must fail for any missing or constant-valued chec
 | suspend-wake | check `replayedRecording` | Broker `devices/recording/reserve` trace after wake for old recording | 0 |
 | suspend-wake | check `replayedCommand` | Original peer command invocation trace after wake | 0 |
 | suspend-wake | check `renewedOldToken` | Original action/drain token and deadline compared before suspend and after wake | 0 renewals |
-| renderer-loss | check `processExited` | Original `child.once("exit")` after actual window destruction | Exit observed; true |
+| renderer-loss | check `processExited` | Original `child.onExit(listener)` subscription installed before actual window destruction; retain its unsubscribe and call it in `finally` | Exit observed; true |
 | renderer-loss | check `explicitRestart` | New channel admission following explicit open/command, with no intervening automatic launch | True |
 | renderer-loss | check `oldActionDenied` | Real action dispatch result using retained old actionRef | Rejected; true |
 | renderer-loss | check `oldGestureDenied` | Real intent admission result using retained old gesture | Rejected; true |
@@ -14732,45 +14737,23 @@ test("producer checks reject literal and constant-alias replacements", async () 
 
 This source assertion rejects direct literals and statically constant aliases/expressions; it is not a proof that arbitrary helper calls obtain live data. The remaining producer review must trace every check to its table source, and real fault trials must exercise those sources. Do not describe the source check alone as proof against a helper that returns fabricated evidence.
 
-Implement the 29 B2-N probes from the existing table in the same producer, sharing these live cases and setup, not their expected results. Before/after each fault read actual namespace quota, head/object hashes, handles and core recovery state; reopen under a different hostEpoch. Run kills at every `FAULT_POINTS` boundary using `fault.arm(point,"pause")`, start the real operation, `await fault.reached(point)`, capture `fault.trace()`, then `await fault.terminate()`. Observe worker exit and restart via `startPersistenceWorker` on the same root. Also run `arm(point,"fail")` for I/O failures and `release(point)` for controlled races. Record actual worker/process IDs and exit evidence; use `verifyKills`'s worker-terminate branch for actual worker-thread termination evidence, never fabricate SIGKILL for it. Whole-app process-kill rows retain the OS exit assertions.
+Implement the 29 B2-N probes from the existing table in the same producer, sharing these live cases and setup, not their expected results. Before/after each fault read actual namespace quota, head/object hashes, handles and core recovery state; reopen under a different hostEpoch. Run kills at every `FAULT_POINTS` boundary using `fault.arm(point,"pause")`, start the real operation, `await fault.reached(point)`, capture `fault.trace()`, then `await fault.terminate()`. Observe actual worker exit, then exit the owning Electron process and reopen the same profile in a new Electron process through `createFoundationFixture` and D170 composition. Only D170 calls `startPersistenceWorker`; neither the producer nor the controller starts a second worker in the old process. Retain fault traces/disk evidence across these phases and require different hostEpoch values. Also run `arm(point,"fail")` for I/O failures and `release(point)` for controlled races. Record actual worker/process IDs and exit evidence; use `verifyKills`'s worker-terminate branch for actual worker-thread termination evidence, never fabricate SIGKILL for it. Whole-app process-kill rows retain the OS exit assertions.
 
 Map logical import before/after-receipt to the import evidence ticket's reserve/receipt-send trace and before/after-marker to import-marker/receipt-send, distinguishing target ticket IDs; never invent fault-point enum members. Persist and recover explicit skip evidence as a separate trial. Reopened evidence comes from backend reads and the original durable tickets, not from cached pre-kill result objects.
 
-`runPersistenceAcceptance` executes every B2-N row, both consumers, all fault points and all fifteen cases, projects actual observations into the existing `{format:1,level:"real-process",cases,consumers,negotiation,kills,load,imports}` report, adds `foundation` case results, producer bundle hash and environment, runs all five verifier functions and writes only after they pass. Keep the frozen FoundationFixture environment (`ramBytes`) intact; the legacy load report's `ram` string is derived from that measured byte value. Failure writes diagnostic evidence separately and exits nonzero, never a passed report. Constant evidence is permitted only in verifier unit tests.
+The outside controller’s `runPersistenceAcceptance` schedules every B2-N row, both consumers, all fault points and all fifteen cases in their owning processes, projects actual observations into the existing `{format:1,level:"real-process",cases,consumers,negotiation,kills,load,imports}` report, adds `foundation` case results, producer bundle hash and environment, runs all five verifier functions and writes only after they pass. Keep the frozen FoundationFixture environment (`ramBytes`) intact; the legacy load report's `ram` string is derived from that measured byte value. Failure writes diagnostic evidence separately and exits nonzero, never a passed report. Constant evidence is permitted only in verifier unit tests.
 
-Create `plugin-persistence-run.mjs` as the executable owned build/launch entry:
+Create `plugin-persistence-run.mjs` as the executable outside build/launch controller under the T7 contract-only ruling. Implement the following executor contract in that file; the producer stays inert on import. `runFoundationEvidence():Promise<Partial<Record<FoundationCase,CaseEvidence>>>` is the controller operation; it returns observed case receipts, never fixtures or live objects.
 
-```js
-import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { build } from "esbuild";
-import electron from "electron";
-import { verifyMatrix, verifyInterop, verifyKills, verifyLoad, verifyImports } from "./plugin-persistence-harness.mjs";
-const output = process.env.PERSISTENCE_EVIDENCE;
-assert.ok(output && path.isAbsolute(output), "PERSISTENCE_EVIDENCE must be an absolute output path");
-const buildRoot = path.join(path.dirname(output), "persistence-producer");
-await mkdir(buildRoot, {recursive:true});
-for (const [entry, name] of [["plugin-persistence-main.ts", "main.cjs"],
-  ["fixtures/plugin-persistence/consumer.ts", "consumer.cjs"],
-  ["fixtures/plugin-persistence/kill-worker.mjs", "import-worker.cjs"]]) {
-  await build({entryPoints:[fileURLToPath(new URL(entry, import.meta.url))],
-    outfile:path.join(buildRoot,name), bundle:true, platform:"node", format:"cjs",
-    external:["electron"]});
-}
-const child = spawn(electron, [path.join(buildRoot,"main.cjs"), "--persistence-acceptance", output],
-  {stdio:"inherit", env:{...process.env}});
-const [code] = await once(child, "exit");
-assert.equal(code, 0, "real producer failed");
-const report = JSON.parse(await readFile(output,"utf8"));
-verifyMatrix(report); verifyInterop(report); verifyKills(report); verifyLoad(report); verifyImports(report);
-assert.equal(Object.keys(report.foundation).length, 15);
-```
+1. Require absolute `PERSISTENCE_EVIDENCE`. Read the sole `FOUNDATION_CASES` vocabulary from the producer's build metadata without importing Electron code into the Node controller; do not duplicate the case list. Use the existing esbuild dependencies to materialize the producer, JS consumer, worker wrapper with literal `sourceRoots`, and renderer artifacts before Electron starts, as specified by BM-26 above. Record real bundle hashes and artifact locations.
+2. Loop `for (const caseId of FOUNDATION_CASES)`. Allocate a fresh temporary profile and per-case artifact directory for every case. Generate and build a separate Electron entry containing that case's artifact configuration/startup policy and absolute profile. It imports the inert producer, calls `app.setPath("userData", absoluteTestProfile)` before readiness, and then calls `await createFoundationFixture()` exactly once. The factory acquires the primary lock through `startPrimary`; there is no readiness wrapper around that call. Safe-mode/all-optional-off entries select their cold policy before construction.
+3. In each generated entry, call `assertRealComposition(fixture)`, then `await fixture.runCase(caseId)`, validate with `assertFoundationEvidence(caseId,evidence)` and record the actual environment and case-scoped B2-N/interop/fault observations. In `finally`, await the same fixture's `close()` twice to test idempotence; never create a terminal or replacement fixture in that process. Write a successful case receipt only after clean close. Cleanup/close failure writes a diagnostic failure receipt and exits nonzero. Exit Electron after cleanup; the outside controller must await and assert the actual OS exit before consuming the case receipt or deleting its profile.
+4. Restart cases retain their one case profile across phases, but each phase generates/launches a new Electron entry and calls the factory once in that new process. After a real worker termination, record its exit, stop the old Electron process, and reopen the same profile only through D170 in the next process. Require a new hostEpoch and reconcile actual durable bytes/tickets. A blocked/hung close uses the existing controller timeout and retains disk evidence with a failure/expected-fault receipt; it cannot be reported as clean close. Never reacquire a profile while its prior Electron process is alive.
+5. Aggregate only validated per-case receipts after exit. `runPersistenceAcceptance` uses this single loop's foundation results and the associated B2-N/consumer/fault/load/import observations to produce the existing report. Run `verifyMatrix`, `verifyInterop`, `verifyKills`, `verifyLoad`, and `verifyImports`; require exactly the fifteen vocabulary entries with no missing or duplicate case, and write the final report only after all checks pass. The producer has no `--persistence-acceptance` branch running all cases in one Electron process.
 
-The main entry imports safely for X-T1 without running acceptance: only the explicit `--persistence-acceptance` argv branch waits for Electron `app.whenReady`, calls the local `runPersistenceAcceptance`, then exits with its status. On import it only exports the producer, contracts and constants. `runPersistenceAcceptance` closes each fixture in `finally`. Retain output hashes and the reviewed build command in the ledger.
+- [ ] In `plugin-persistence-interop.test.mjs`, execute retirement and healthy-release through distinct generated entries and assert different process IDs/profiles, one factory/composition/worker per entry, `userData` configured before primary lock acquisition/readiness, one `runCase` and idempotent close, and OS exit before profile removal. In a separate negative entry assert a second factory call rejects explicitly without allocating another worker or acquiring another lock.
+- [ ] In `plugin-persistence-kill.test.mjs` and `plugin-persistence-import.test.mjs`, assert restart phases share the case profile but have different Electron PIDs/hostEpochs; every worker startup belongs to that phase's D170 composition, original disk hashes/tickets survive, and no direct producer `startPersistenceWorker` call exists.
+- [ ] In `plugin-persistence-interop.test.mjs`, reject missing/duplicate case receipts, nonzero exits, unsuccessful cleanup, and a passed report emitted before close/exit. Run the existing T7 runner and report-verifier commands below before the T7 commit; retain output hashes and the reviewed build command in its ledger.
 
 Add tests to the owned interop/kill/load/import test files that reject a missing case, constant driver, missing worker trace, duplicate diagnostics counts, absent bundle hash and leaked resources. Run the runner and then the existing four report test files. Expected: real evidence passes every existing verifier and all fifteen cases run; missing adapters or artifacts fail construction and cannot yield success. Manual hardware/OS rows remain pending when unrun.
 
@@ -16572,18 +16555,25 @@ export class RetainedPersistenceChannels {
 }
 ```
 
-Add `private readonly persistenceChannels = new RetainedPersistenceChannels()` and the following method inside `PluginManager`. Import `Stage3ChannelContext`/`Stage3ChannelBinding` from ui-lifecycle.ts. In `#register`, replace only the R160 `bindChannel` option with `bindChannel: context => this.#bindPersistenceChannel170(supervisor, context)`; preserve every other option. The closure is invoked on start, after the supervisor constructor returns.
+Add `private readonly persistenceChannels = new RetainedPersistenceChannels()` inside `PluginManager`. Extend the existing R150 `bindChannel` option in `#register` in place. Preserve its trusted requirements/principal binding and registry body unchanged; insert only the retained persistence row immediately before its final return. The closure runs after the supervisor constructor returns:
 
 ```ts
-#bindPersistenceChannel170(supervisor:PluginSupervisor,context:Stage3ChannelContext):Stage3ChannelBinding{
-  const host=this.options.stage3Host;
-  if(!host)throw new Error("stage3Host required");
-  const row=new RetainedPersistenceChannel(context.owner,context.peer,()=>performance.now(),
-    ()=>host.retireResources(context.owner,"crashed"));
+bindChannel: (context: import("./ui-lifecycle.js").Stage3ChannelContext) => {
+  const host = this.options.stage3Host!;
+  const requirements = this.requirements(context.owner);
+  if (requirements === null) throw new Error("Retired channel owner");
+  const trusted = host.requirements(context.owner);
+  if (trusted === null || JSON.stringify(trusted) !== JSON.stringify(requirements))
+    throw new Error("Registry requirements mismatch");
+  context.principal = () => host.principal(context.owner);
+  context.requirements = requirements;
+  this.#stage3Channels.set(context.owner, context);
+  const row = new RetainedPersistenceChannel(context.owner, context.peer, () => performance.now(),
+    () => host.retireResources(context.owner, "crashed"));
   this.persistenceChannels.retain(row);
   supervisor.retainPersistenceChannel170(row);
   return host.bindChannel(context);
-}
+},
 ```
 
 Replace only `stage3Runtime().dispatchDrain`'s unpublished stub with `this.persistenceChannels.dispatch`. In supervisor.ts add this field/method to `PluginSupervisor`; no new SupervisorOptions or initialize fields are introduced:
@@ -16614,7 +16604,7 @@ const disposition=this.#options.retireResources?.(owner,reason)??Promise.resolve
 void disposition.then(()=>originalPersistenceChannel?.disposition(),()=>{});
 ```
 
-Here `owner`/`reason` are the existing retirement method's captured original arguments, not a sourceKey lookup. Preserve and return `disposition` in that method so the existing coordinator still owns the first retirement and process teardown. Unknown/failed disposition does not mark completion. A channel-close/transport-failure branch calls `void originalPersistenceChannel?.closed().catch(()=>{})` and retains the row; force-kill timeout never calls `confirmedExit`. Actual crash uses the existing cached coordinator `ownerLost` path and executes no `freeze` or plugin callback. A late callback only touches its captured original object.
+Here `owner`/`reason` are the existing retirement method's captured original arguments, not a sourceKey lookup. Preserve and return `disposition` in that method so the existing coordinator still owns the first retirement and process teardown. A rejected or still-pending disposition does not mark completion. D160 retirement resolves after disposition even when reports retain a blocker; that resolved disposition plus confirmed exit permits row collection without clearing the report. A channel-close/transport-failure branch calls `void originalPersistenceChannel?.closed().catch(()=>{})` and retains the row; force-kill timeout never calls `confirmedExit`. Actual crash uses the existing cached coordinator `ownerLost` path and executes no `freeze` or plugin callback. A late callback only touches its captured original object.
 
 Add the explicit value export `export { persistenceChannelApiVersion } from "./supervisor.js";` to runtime index.ts under R170. This read-only host metadata lookup returns the original peer's validated initialize version and is not a public RPC. Include index.ts in R170's commit/receipt. D170 imports it from runtime and calls `apiVersion: () => persistenceChannelApiVersion(context.peer)` when attaching the routes; this avoids inventing a version member on Stage3ChannelContext or using the current package version. The two indexes contain the same retained row object and are removed only after disposition and confirmed exit.
 
@@ -16764,7 +16754,7 @@ it.each(["abort","deadline"] as const)("pending original drain respects %s witho
 
 - [ ] **Step 2a.1: Pin the canonical crash path through the retained channel and coordinator.**
 
-Append to `apps/desktop/src/main/plugins/controller.test.ts`, merging imports. This integration test uses the real supervisor, retained-peer registry, A-T8 coordinator and R150 retirement helper; only device and persistence I/O are controlled. It does not import Electron's T7 producer or replace `retireStage3Owner` with a spy implementation. The attachment delegates exactly as `composeDesktopMain` does. The blocked variant proves actual process exit alone cannot discard unresolved disposition; the clean variant proves disposition alone cannot invent exit.
+Append to `apps/desktop/src/main/plugins/controller.test.ts`, merging imports. This integration test uses the real supervisor, retained-peer registry, A-T8 coordinator and R150 retirement helper; only device and persistence I/O are controlled. It does not import Electron's T7 producer or replace `retireStage3Owner` with a spy implementation. The attachment delegates exactly as `composeDesktopMain` does. The blocked variant proves exit alone cannot collect a row before disposition resolves. After resolved disposition plus confirmed exit the row is collected, while the blocker remains in coordinator reports. The clean variant proves disposition alone cannot invent exit.
 
 ```ts
 import { PluginSupervisor, resourceFreePersistence150, unavailableUi150,
@@ -16774,7 +16764,7 @@ import type { ResourceOwner, DrainRequest } from "@kobrixa/plugin-protocol";
 import { RetainedPersistenceChannels } from "../../../../../packages/plugin-runtime/src/manager.js";
 import { RetainedPersistenceChannel } from "../../../../../packages/plugin-runtime/src/supervisor.js";
 import { memoryPlugin } from "../../../../../packages/plugin-runtime/src/test-process.js";
-import { LifecycleCoordinator, CleanupBlocked,
+import { LifecycleCoordinator,
   type CoordinatorInput } from "../device-broker/lifecycle-coordinator.js";
 
 function crashGate170<T>() {
@@ -16888,9 +16878,12 @@ it.each([false, true])("canonical crashed-owner path retains original dispositio
       pendingSettings: false, records: [], errors: [] });
     const result = await observedDisposition;
     if (blocked) {
-      expect(result).toBeInstanceOf(CleanupBlocked);
-      expect(await observedLoss).toBe(result);
-      expect(original.releasable).toBe(false);
+      await expect(originalDisposition).resolves.toBeUndefined();
+      expect(result).toBeNull(); expect(await observedLoss).toBeNull();
+      expect(coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
+      await supervisor.settleResources("crashed");
+      await original.confirmedExit();
+      expect(original.releasable).toBe(true);
       expect(coordinator.retire({ ...owner }, "crashed")).toBe(originalDisposition);
     } else {
       expect(result).toBeNull(); expect(await observedLoss).toBeNull();
@@ -16926,7 +16919,7 @@ Expected: both crash variants pass with exactly one device `crashed`, one `owner
 
 - [ ] **Step 2b: Bind every P170 inbound route on the original channel.**
 
-Add the following to `controller.ts`. Call it once inside the existing `stage3Host.bindChannel(context)` after A creates `attachment`; add its disposer to that binding's existing disposal list. Pass the original peer's negotiated version captured in its initialized phase, never the current package version. The `admitted` callback uses the original runtime owner; the host remains the final permission/publication gate. Reuse the existing attachment and common ack/unsubscribe routes unchanged.
+Add the following helper to `controller.ts` and test it in isolation now. In Step 13, call it once inside the existing `stage3Host.bindChannel(context)` after A creates `attachment`, and add its disposer to that binding's existing disposal list. Pass the original peer's negotiated version captured in its initialized phase, never the current package version. The `admitted` callback uses the original runtime owner; the host remains the final permission/publication gate. Reuse the existing attachment and common ack/unsubscribe routes unchanged.
 
 ```ts
 import { RPC_ERRORS, RpcError, type SettingsRequestMap, type StorageRequestMap,
@@ -16987,32 +16980,7 @@ export function bindPersistenceRoutes170(input: {
 }
 ```
 
-Replace D160's local `bindDesktopChannel` with this complete extension; it still creates exactly one A attachment and retains the UI phases unchanged:
-
-```ts
-import { persistenceChannelApiVersion } from "@kobrixa/plugin-runtime";
-function bindDesktopChannel(context:Stage3ChannelContext,broker:DeviceBrokerPort,
-  input:Omit<Parameters<typeof createUiChannelBinding>[1],"attachment">,
-  persistence:PersistenceHost):Stage3ChannelBinding{
-  let attachment:DeviceChannelAttachment|undefined;
-  const routedBroker=new Proxy(broker,{get(target,key,receiver){
-    if(key==="attachChannel")return(args:Parameters<DeviceBrokerPort["attachChannel"]>[0])=>{
-      if(attachment)throw new Error("Second channel attachment");attachment=target.attachChannel(args);return attachment;
-    };
-    return Reflect.get(target,key,receiver);
-  }});
-  const offDevice=attachDeviceRpc({peer:context.peer,principal:context.principal,broker:routedBroker});
-  if(!attachment){offDevice();throw new Error("Missing original channel attachment");}
-  try{
-    const ui=createUiChannelBinding(context,{...input,attachment});
-    const offPersistence=bindPersistenceRoutes170({context,host:persistence,attachment,
-      apiVersion:()=>persistenceChannelApiVersion(context.peer),admitted:()=>input.runtime.current(context.owner)});
-    let disposed=false;
-    return {initialized:signal=>ui.initialized(signal),ready:signal=>ui.ready(signal),
-      dispose(){if(disposed)return;disposed=true;offPersistence();ui.dispose();offDevice();}};
-  }catch(error){offDevice();throw error;}
-}
-```
+Keep the current D160 `bindDesktopChannel(context, broker, input, originalChannels)` signature, body and call site unchanged in this step. Step 13 adds the persistence parameter and attaches this tested route helper after constructing the host. Step 3 therefore builds against the existing D160 composition.
 
 Append these route tests to `controller.test.ts`. The typed samples enumerate the entire route union; additions to the public maps fail compilation unless covered. A domain failure is deliberate: it tests forwarding/result validation without pretending that this unit fixture performed disk writes.
 
@@ -17054,7 +17022,7 @@ function routes170() {
   const attachment = {owner,negotiated:vi.fn(),activate:vi.fn(),abandon:vi.fn(),dispose:vi.fn()};
   const dispose = bindPersistenceRoutes170({context:{peer,owner,principal,requirements:[]},host,attachment,
     apiVersion:()=>api,admitted:()=>current});
-  return {peer,client,host,calls,principal,attachment,dispose,
+  return {peer,client,raw:b,host,calls,principal,attachment,dispose,
     api:(value:string)=>{api=value;}, stale:()=>{current=false;}, forge:()=>{principalOwner={...owner,generation:2};},
     close:()=>{dispose();peer.close();client.close();}};
 }
@@ -17080,12 +17048,10 @@ it("rejects malformed wire params and reverse drain with numeric errors", async 
     await expect(f.client.request("storage/drain",{token:h170,reason:"disable",remainingMs:10,checkpoints:[],writes:[]}))
       .rejects.toMatchObject({code:RPC_ERRORS.methodNotFound});
     // Raw wire bypasses caller-side validation, proving the host rejects it too.
-    const [raw,hostRaw]=createMemoryChannelPair(); const receiver=new RpcPeer(hostRaw);
-    const handler=vi.fn(); receiver.handle("settings/read",handler);
-    const response=new Promise<string>(resolve=>raw.onMessage(resolve));
-    raw.send(JSON.stringify({jsonrpc:"2.0",id:17,method:"settings/read",params:{schemaVersion:"bad",owner:{}}}));
+    const response=new Promise<string>(resolve=>f.raw.onMessage(resolve));
+    f.raw.send(JSON.stringify({jsonrpc:"2.0",id:17,method:"settings/read",params:{schemaVersion:"bad",owner:{}}}));
     expect(JSON.parse(await response).error.code).toBe(RPC_ERRORS.invalidParams);
-    expect(handler).not.toHaveBeenCalled(); receiver.close(); expect(f.calls).toHaveLength(0);
+    expect(f.calls).toHaveLength(0);
   } finally {f.close();}
 });
 ```
@@ -17495,11 +17461,17 @@ export function registerLegacyPreferencesIpc170(
   handle: IpcHandle,
   imports: LegacyImportHostPort,
   scopeFor: (event: IpcMainInvokeEvent) => CoreWindowScope,
-): void {
+): () => void {
+  let disposed = false;
+  const bridge = (event: IpcMainInvokeEvent) => {
+    if (disposed) throw new Error("Stale preferences window");
+    return legacyPreferencesFor170(scopeFor(event), imports);
+  };
   handle("persistence:legacy-preferences-challenge", (event, descriptorId: string) =>
-    legacyPreferencesFor170(scopeFor(event), imports).challenge(descriptorId));
+    bridge(event).challenge(descriptorId));
   handle("persistence:legacy-preferences-submit", (event, snapshot: LegacyPreferencesSnapshot) =>
-    legacyPreferencesFor170(scopeFor(event), imports).submit(snapshot));
+    bridge(event).submit(snapshot));
+  return () => { disposed = true; };
 }
 ```
 
@@ -17710,7 +17682,7 @@ export function registerSettingsIpc170(input:{
 }
 ```
 
-In `main/ipc.ts`, register `registerSettingsIpc170` with the existing trusted main-frame `handle`, `persistence170.host.settings`, and the same main-owned workbench `scope` getter. The `publish` callback compares both scope fields against the current renderer scope before `webContents.send`; install the returned disposer in the existing navigation/destroyed cleanup before advancing that scope. Do not create a generic request IPC, accept a sender ID, or register IPC in the worker. The existing trusted wrapper rejects subframes/foreign webContents before these parsers execute.
+`registerPersistenceWindow170` in Step 13a is the sole registrar for these handlers, through the existing trusted main-frame wrapper.
 
 Both `preload/index.ts` and `tests/desktop/preload.cjs` use this identical body (remove only TypeScript annotations in CJS). It exposes synchronous disposer functions while subscription establishment is asynchronous; a read after watch acknowledgement closes the open→subscribe invalidation gap. Transport failure triggers a read, whose error remains visible in the mount.
 
@@ -17813,7 +17785,7 @@ it("disposes a late open after navigation and ignores a late read",async()=>{
 Append this typed IPC handler test to main/plugins/ipc.test.ts. It registers the actual dedicated handlers; main/ipc.test.ts's existing trusted-frame tests remain the sender boundary regression. The test runner does not expose a production request tunnel:
 
 ```ts
-import { registerSettingsIpc170, registerPersistenceRecoveryIpc170 } from "./ipc.js";
+import { registerSettingsIpc170 } from "./ipc.js";
 import type { IpcHandle } from "../ipc.js";
 import type { IpcMainInvokeEvent } from "electron";
 function ipcHandlers170(){
@@ -17843,22 +17815,10 @@ it("dedicated settings IPC validates inputs and an old unwatch cannot cancel the
     await ipc.invoke("plugins:settings:dispose",f.binding);expect(f.service.dispose).toHaveBeenCalledOnce();
   }finally{dispose();}
 });
-it("recovery IPC rejects replaced windows and removes both subscriptions exactly once",async()=>{
-  const ipc=ipcHandlers170();let scope={hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"};
-  const offOpen=vi.fn(),offChanged=vi.fn();let open:(value:{itemId:string})=>void=()=>{};
-  const bridge:PluginsApi["persistenceRecovery"]={snapshot:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
-    act:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),onOpen:listener=>{open=listener;return offOpen;},onChanged:()=>offChanged};
-  const publish=vi.fn();const dispose=registerPersistenceRecoveryIpc170({handle:ipc.handle,bridge,scope:()=>scope,publish});
-  await ipc.invoke("plugins:persistence-recovery:subscribe");
-  const itemId="00000000-0000-4000-8000-000000000003";open({itemId});expect(publish).toHaveBeenCalledOnce();
-  scope={...scope,workbenchInstance:"00000000-0000-4000-8000-000000000004"};open({itemId});
-  expect(publish).toHaveBeenCalledOnce();await expect(ipc.invoke("plugins:persistence-recovery:snapshot",{itemId})).rejects.toThrow("Stale");
-  expect(bridge.snapshot).not.toHaveBeenCalled();dispose();dispose();
-  expect(offOpen).toHaveBeenCalledOnce();expect(offChanged).toHaveBeenCalledOnce();
-});
+
 ```
 
-- [ ] **Step 8b: Mount the complete form locally and mount core persistence detail.**
+- [ ] **Step 8b: Mount the complete form locally; defer core detail to Step 13d.**
 
 Add these imports and the local component to `settings-panel.tsx`; keep the sole `submitLegacyPreferences` effect from Step 8 unchanged. The mount owns one B1 settings-controls instance; `scope` is its display lifetime, never authorization. Add `contributedSettings?: {sourceKey:string;resourceDigest:Sha256;scope:CoreWindowScope}` to SettingsPanelProps and destructure it in SettingsPanel. The admitted settings selection supplies that existing source/digest/scope metadata. Insert `{active && contributedSettings && <ContributedSettingsMount {...contributedSettings} locale={locale} />}` in the panel's settings content. With no selection, no form opens. The synthetic fixture supplies its admitted data-only contribution; product descriptors are not invented.
 
@@ -17906,20 +17866,12 @@ export function ContributedSettingsMount(props:{
     return mountContributedSettings170({api:window.kobrixa.plugins.settings,controls,...props,
       failure:()=>setError(pluginUiCopy[props.locale].unavailable)});
   },[props.sourceKey,props.resourceDigest,props.scope.hostEpoch,props.scope.workbenchInstance,controls,reload,props.locale]);
-  return <>{error && <div role="alert">{error}<button onClick={()=>setReload(value=>value+1)}>{pluginUiCopy[props.locale].reload}</button></div>}
+  return <>{error && <div role="alert">{error}<button onClick={()=>setReload(value=>value+1)}>{pluginUiCopy[props.locale].refresh}</button></div>}
     <SettingsControlsView controls={controls} locale={props.locale} labels={pluginUiCopy[props.locale]} /></>;
 }
 ```
 
 Import `PluginsApi` type-only from `../../shared/plugins.js` and merge `useEffect/useState` with the existing React import. Use the settings shell's existing localized load-error/reload copy in the JSX; this local component adds no Apply control and does not reset drafts on invalidation. T3's `replaceSnapshot` retains dirty fields; only explicit retry/reload changes the pending draft.
-
-In `app.tsx`, add the import and mount immediately beside the existing unconditional `CoreRecoveryView`, with the same `uiLabels`. Do not put it inside optional tools/feature-enabled conditions:
-
-```tsx
-import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
-// Adjacent to the existing CoreRecoveryView in App's JSX:
-<CorePersistenceRecovery port={window.kobrixa.plugins.persistenceRecovery} labels={uiLabels} />
-```
 
 Append to `settings-panel.test.ts`; the controls fixture below implements the real frozen control port and the mount uses the actual B2 form factory (no factory mock). Import the mount from settings-panel, `SettingsControlsPort` from plugin-ui/host-ports and `SettingsDraftState` from runtime, merging existing imports.
 
@@ -17999,43 +17951,24 @@ it("mounted typed choice keeps the conflicting dotted-key draft until explicit r
 });
 ```
 
-Append to `app.test.ts` the actual detail mount test, using B1's existing labels and jsdom root helper; no optional process/catalog fixture is needed:
-
-```tsx
-import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
-import { pluginUiCopy } from "./settings/plugin-copy.js";
-it("mounts persistence detail with all optional features off",async()=>{
-  let open:(input:{itemId:string})=>void=()=>{};
-  const off=vi.fn();const port:PluginsApi["persistenceRecovery"]={
-    snapshot:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
-    act:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
-    onOpen:vi.fn(listener=>{open=listener;return off;}),onChanged:vi.fn(()=>off)};
-  const element=document.createElement("div");const detailRoot=createRoot(element);
-  await act(async()=>detailRoot.render(createElement(CorePersistenceRecovery,{port,labels:pluginUiCopy.en})));
-  await act(async()=>open({itemId:"00000000-0000-4000-8000-000000000001"}));
-  expect(port.snapshot).toHaveBeenCalledWith({itemId:"00000000-0000-4000-8000-000000000001"});
-  await act(async()=>detailRoot.unmount());expect(off).toHaveBeenCalled();
-});
-```
-
 Run all these tests plus the already complete T3 tests for CAS conflicts, explicit retry/reload, numeric/string choices and literal dotted keys. The Step 8 preference integration test must still observe one submission. Run real/smoke preload parity under H-I; do not execute worker/Electron fixtures inside Vitest.
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
-pnpm --filter @kobrixa/desktop test -- src/main/plugins/ipc.test.ts src/main/ipc.test.ts src/preload/index.test.ts src/renderer/settings/settings-panel.test.ts src/renderer/settings/contributed-settings-form.test.ts src/renderer/settings/legacy-preferences-bridge.test.ts src/renderer/app.test.ts
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/ipc.test.ts src/main/ipc.test.ts src/preload/index.test.ts src/renderer/settings/settings-panel.test.ts src/renderer/settings/contributed-settings-form.test.ts src/renderer/settings/legacy-preferences-bridge.test.ts
 node --test tests/desktop/smoke-harness.test.mjs
 pnpm check:desktop
 ```
 
-Expected red: missing bridge/mount exports. Expected green: trusted sender rejection precedes domain calls; six binding fields checked; one open; disposed late opens; no late redraw; no process activation; typed enums/dotted keys and dirty draft conflict tests pass; all-optional-off detail opens; real and smoke preload expose identical nested settings/recovery facets.
+Expected red: missing bridge/mount exports. Expected green: trusted sender rejection precedes domain calls; six binding fields checked; one open; disposed late opens; no late redraw; no process activation; typed enums/dotted keys and dirty draft conflict tests pass; real and smoke preload expose identical nested settings/import facets.
 
 - [ ] **Step 9: Commit D170, V170 and H-I settings/import attachments separately.**
 
 ```bash
 git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/plugins/ipc.ts apps/desktop/src/main/plugins/ipc.test.ts apps/desktop/src/main/ipc.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/shared/plugins.ts apps/desktop/src/shared/plugin-persistence.ts apps/desktop/src/shared/plugin-persistence.test.ts apps/desktop/src/preload/index.ts apps/desktop/src/preload/index.test.ts
 git commit -m "feat(desktop): bind contributed settings to trusted workbench IPC"
-git add apps/desktop/src/renderer/settings/settings-panel.tsx apps/desktop/src/renderer/settings/settings-panel.test.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts apps/desktop/src/renderer/app.tsx apps/desktop/src/renderer/app.test.ts
-git commit -m "feat(desktop): mount contributed settings and core persistence detail"
+git add apps/desktop/src/renderer/settings/settings-panel.tsx apps/desktop/src/renderer/settings/settings-panel.test.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts apps/desktop/src/renderer/settings/legacy-preferences-bridge.test.ts
+git commit -m "feat(desktop): mount contributed settings"
 git add tests/desktop/preload.cjs tests/desktop/smoke-harness.test.mjs
 git commit -m "test(desktop): mirror persistence bridges in smoke preload"
 ```
@@ -18047,16 +17980,13 @@ test("P170 real and smoke preloads expose the same dedicated persistence channel
   const real=readFileSync(new URL("../../apps/desktop/src/preload/index.ts",import.meta.url),"utf8");
   const smoke=readFileSync(new URL("./preload.cjs",import.meta.url),"utf8");
   for(const channel of ["plugins:settings:open","plugins:settings:read","plugins:settings:update",
-    "plugins:settings:reset","plugins:settings:watch","plugins:settings:unwatch","plugins:settings:dispose",
-    "plugins:persistence-recovery:snapshot","plugins:persistence-recovery:act",
-    "plugins:persistence-recovery:subscribe","plugins:persistence-recovery:unsubscribe",
-    "plugins:persistence-recovery:open","plugins:persistence-recovery:changed"]){
+    "persistence:legacy-preferences-challenge","persistence:legacy-preferences-submit",
+    "plugins:settings:reset","plugins:settings:watch","plugins:settings:unwatch","plugins:settings:dispose"]){
     assert.ok(real.includes(channel),`real preload missing ${channel}`);
     assert.ok(smoke.includes(channel),`smoke preload missing ${channel}`);
   }
   for(const source of [real,smoke]){
     assert.match(source,/settings:\s*createSettingsPreload170\(\)/);
-    assert.match(source,/persistenceRecovery:\s*createPersistenceRecoveryPreload170\(\)/);
     assert.ok(!source.includes("plugins:persistence:request"));
   }
 });
@@ -18279,11 +18209,15 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; g
 
 The K170 stopped-owner receipt records exactly `apps/desktop/packaging.ts`, `apps/desktop/src/main/packaging.test.ts`, `apps/desktop/forge.config.ts` and `apps/desktop/vite.main.config.ts`, the commit SHA, selected installed artifact and command/exit evidence. K160 publishes none of these worker values; the initial missing-export red is expected.
 
-- [ ] **Binding D170 prerequisites — BM-24/BM-25/BM-26**
+- [ ] **Step 13: Complete D170 startup, lifecycle and recovery acceptance at the frozen seam.**
+
+- [ ] **Step 13.0: Binding D170 prerequisites — BM-24/BM-25/BM-26**
+
+Controller ruling for this rereview: the BM-24/BM-25/BM-26 prerequisite blocks in T2 and D170 may remain contract-only, as may T6 and T7. Implementation owners must supply the code under TDD, with the exact signatures, file ownership, concrete assertions and commands below; this does not claim execution evidence.
 
 Implement in the existing `apps/desktop/src/main/plugins/controller.ts` and `controller.test.ts` under D170 ownership, after R170 and the T2 worker receipt. These declarations and structural instructions amend Step 13; preserve its production runtime/service construction. T7 cannot patch these paths.
 
-1. D170 uses the **existing** `StartPluginsOptions.launcher` seam, typed `NonNullable<StartPluginsOptions["launcher"]>`, only when BM-26 test observation is enabled. Inside `composeDesktopMain`, wrap `(input.plugins.launcher ?? createDesktopLauncher)(hooks)` with a launcher that awaits the real launch, records its exact returned `PluginProcess` under the complete R150 `plugin.channelOwner` tuple, and returns that same process object to the supervisor. Preserve all hooks and the private launch metadata; no fake launcher, raw `launchJs`, extra process or process wrapper. At the existing `bindChannel(context)` site join by all five owner fields and retain the exact context/process pair. Missing/duplicate/mismatched associations fail; legacy non-stage-3 launches without channelOwner are not admitted fixture rows. Remove active lookup rows on binding failure or when the original binding is disposed; startup/retirement still owns process cleanup, and retained observations continue to refer to the original process through its real exit. Test replacement/exit races in controller.test.ts. No runtime file, manager API or `Stage3ChannelContext` change is needed.
+1. D170 uses the **existing** `StartPluginsOptions.launcher` seam, typed `NonNullable<StartPluginsOptions["launcher"]>`, only when BM-26 test observation is enabled. At the `startPlugins` call inside `composeDesktopMain`, pass `launcher: hooks => observe((input.plugins.launcher ?? createDesktopLauncher)(hooks))` when `test` is present, where `observe` accepts and returns `ReturnType<NonNullable<StartPluginsOptions["launcher"]>>`. The `hooks` parameter belongs to that factory callback supplied by `startPlugins`; it is not a composition local. Implement the observation wrapper as a launcher that awaits the real launch, records its exact returned `PluginProcess` under the complete R150 `plugin.channelOwner` tuple, and returns that same process object to the supervisor. Preserve all hooks and the private launch metadata; no fake launcher, raw `launchJs`, extra process or process wrapper. At the existing `bindChannel(context)` site join by all five owner fields and retain the exact context/process pair. Missing/duplicate/mismatched associations fail; legacy non-stage-3 launches without channelOwner are not admitted fixture rows. Remove active lookup rows on binding failure or when the original binding is disposed; startup/retirement still owns process cleanup, and retained observations continue to refer to the original process through its real exit. Test replacement/exit races in controller.test.ts. No runtime file, manager API or `Stage3ChannelContext` change is needed.
 
    `PluginProcess` already defines `onExit(listener:(exit:ProcessExit)=>void):()=>void`; it is the production launcher's real child handle for Node and Python. T7 changes only its test-local `LiveConsumer.child` from `UtilityProcess` to `PluginProcess` and uses `onExit`/its unsubscribe return; `ProcessExit.code` may be null. This removes the erroneous dependence on fixture `launchJs`.
 
@@ -18327,18 +18261,59 @@ Implement in the existing `apps/desktop/src/main/plugins/controller.ts` and `con
 
 
 
-1. Update the B2 plan's T0/interface copies to the amended AM-24/29 signatures. F seeds the declarations in existing `apps/desktop/src/main/plugins/persistence/engine-port.ts`, `import-sources.ts` and `contract.test.ts`. No new source file is needed.
-2. T2 implements BM-24 in its existing `engine-port.ts/test`, `atomic-store.ts/test`, `namespace.ts/test`, `recovery-scan.ts/test`, `worker.ts/test`. T2 implements BM-25's worker method/transport in `worker.ts/test`, importing T6's pure evidence codec from import-sources.ts. Implement these prerequisites in the T2 plan steps that already define import validators, `AtomicStore`, `WorkerSources`, and the worker operation table. No whole-file rewrite or unrelated T2 correction is authorized.
-3. T6's exact implementation write set remains `import-coordinator.ts/test`, `import-journal.ts/test`, `import-sources.ts/test`, `import-fixtures.ts`, all under the persistence directory. T6 does not patch worker/store code. Where a writer has stopped, request a stopped-owner receipt for the exact prerequisite paths; do not delegate their ownership to T6. The plan fixer embeds the complete prerequisite contract and signature declarations in the owning T2 steps; the implementation owner completes and tests them under TDD before T6 acceptance, with no unresolved port.
-4. D170's existing composition passes `descriptors` into `createLegacyWriterBarrier` and provides a trusted current `importOwner`; it waits for barrier restoration before starting writers or exposing ordinary persistence mutation requests. T7 updates the same constructor call in `tests/desktop/plugin-persistence-main.ts` and supplies real restart/nonce evidence through `plugin-persistence-import.test.mjs` and its existing worker wrapper. V170 retains the existing challenge/submit bridge and must not swallow `getItem` exceptions as null.
-5. F type checks come first; T2/T6 unit checks precede T7's real worker checks; D170/K170 attachments precede final T7 acceptance. These changes do not close B2-RF5 using unit mocks alone.
-
-
 - [ ] `controller.test.ts`, test `desktopFoundationTestHandles`: assert original context/process association by all five fields across replacement, binding failure, disposal and exit races; missing/duplicate/mismatched rows reject; retained rows still observe original exit; unknown/non-test composition lookup throws and allocates nothing.
 - [ ] `controller.test.ts`, test `composeDesktopMain`: assert single worker startup, control forwarding, exact profile/runtime/host/backend/recovery identities, production omission of test options uses K170 path and omits control, optional legacy arrays validated, static catalog admission before barrier restoration, and no writer/request exposure before restoration. Preserve native sender checks and failure cleanup.
 - [ ] Existing D170/V170 bridge/composition tests: same fixed descriptors/current-owner callbacks, restoration before writers/ordinary requests, independently validated renderer sender, getItem throw distinct from null, old bootstrap cannot replay nonce, host-only resolver and unchanged public contracts.
 
-- [ ] **Step 13: Complete D170 startup, lifecycle and recovery acceptance at the frozen seam.**
+- [ ] **Step 13.0 verification:** after implementing these contracts, the composition below and its Step 13a–13c recovery/native dependencies, run the named tests before Step 13d's plain D170 commit. That commit includes `controller.ts` and `controller.test.ts` and the BM-26 observation implementation; no separate untested prerequisite receipt is allowed.
+
+```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/controller.test.ts
+pnpm check:desktop
+```
+
+
+
+Extend the current D160 channel binding in place, preserving its owner check and original-channel registry. Add only the persistence parameter and route binding/disposer; update its composition call in this same step:
+
+```ts
+import { persistenceChannelApiVersion } from "@kobrixa/plugin-runtime";
+function bindDesktopChannel(context: Stage3ChannelContext, broker: DeviceBrokerPort,
+  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment">,
+  originalChannels: Map<string, Stage3ChannelContext>,
+  persistence: PersistenceHost): Stage3ChannelBinding {
+  const principal = context.principal();
+  const key = (owner: typeof context.owner) => JSON.stringify([owner.sourceKey, owner.pluginId,
+    owner.generation, owner.hostEpoch, owner.processEpoch]);
+  if (principal.kind !== "plugin" || key(principal.owner) !== key(context.owner))
+    throw new Error("Channel owner mismatch.");
+  let attachment: DeviceChannelAttachment | undefined;
+  const routedBroker = new Proxy(broker, { get(target, key, receiver) {
+    if (key === "attachChannel") return (args: Parameters<DeviceBrokerPort["attachChannel"]>[0]) => {
+      if (attachment) throw new Error("Second channel attachment.");
+      attachment = target.attachChannel(args); return attachment;
+    };
+    return Reflect.get(target, key, receiver);
+  } });
+  const offDevice = attachDeviceRpc({ peer: context.peer, principal: context.principal, broker: routedBroker });
+  if (!attachment) { offDevice(); throw new Error("Device router did not attach the original channel."); }
+  try {
+    const ui = createUiChannelBinding(context, { ...input, attachment });
+    const offPersistence = bindPersistenceRoutes170({ context, host: persistence, attachment,
+      apiVersion: () => persistenceChannelApiVersion(context.peer),
+      admitted: () => input.runtime.current(context.owner) });
+    originalChannels.set(key(context.owner), context);
+    let disposed = false;
+    return { initialized: signal => ui.initialized(signal), ready: signal => ui.ready(signal),
+      dispose() {
+        if (disposed) return; disposed = true;
+        try { offPersistence(); ui.dispose(); offDevice(); }
+        finally { originalChannels.delete(key(context.owner)); }
+      } };
+  } catch (error) { offDevice(); throw error; }
+}
+```
 
 Extend the existing `composeDesktopMain(input:DesktopMainCompositionInput)` body in controller.ts; add the optional BM-26 test argument and retain the D160 UI/intent/native cleanup body. The following declarations replace the old resource-free participant construction, after `createFoundation(input.foundationOptions)` and the D160 UI registry/action construction, and before the existing coordinator and `startPlugins` call. Merge imports for `openStoreRoot`, `startPersistenceWorker`, the K170 path resolver, the T6 factories and the defining port types. No code belongs at module top except helper declarations.
 
@@ -18432,6 +18407,9 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput, tes
   const foundation = await input.createFoundation(input.foundationOptions);
   const broker = foundation.broker;
   let runtimeAttachment: UiRuntimeAttachment | undefined;
+  const originalChannels = new Map<string, Stage3ChannelContext>();
+  const ownerKey = (owner: import("@kobrixa/plugin-protocol").ResourceOwner) => JSON.stringify([
+    owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
   let plugins: PluginController | undefined;
   const runtime = (): UiRuntimeAttachment => {
     if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached."); return runtimeAttachment;
@@ -18519,7 +18497,8 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput, tes
   if(recovery!=="ready" && recovery!=="blocked")throw new Error("Invalid worker recovery state");
   const lifecycle = new LifecycleCoordinator({ ports: stage3, resources: broker.resources,
     sessions: broker.sessions, reservations: broker.reservations, persistence: stage3.persistence,
-    now, alive: owner => runtime().current(owner), owners: () => runtime().owners(),
+    now, alive: owner => { const channel = originalChannels.get(ownerKey(owner)); return !!channel && !channel.peer.closed; },
+    owners: () => runtime().owners(),
     dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
     shutdown: async () => { if (plugins) await plugins.shutdown(); },
     legacyFlush: input.legacyFlush, report: input.report });
@@ -18569,8 +18548,12 @@ export async function composeDesktopMain(input: DesktopMainCompositionInput, tes
   const stage3Host: Stage3HostAttachment = {
     hostEpoch: profile.hostEpoch, principal: input.principal,
     hasPermission: (owner, permission) => input.foundationOptions.hasPermission(input.principal(owner), permission),
-    requirements: owner => input.foundationOptions.requirements(owner),
-    bindChannel: context => bindDesktopChannel(context, broker, { catalog, states, subscriptions, runtime: runtimePort },persistence170.host),
+    requirements(owner) {
+      const declarations = input.foundationOptions.requirements(owner);
+      return declarations === null ? null : Object.freeze(declarations.map(value => Object.freeze({ ...value })));
+    },
+    bindChannel: context => bindDesktopChannel(context, broker,
+      { catalog, states, subscriptions, runtime: runtimePort }, originalChannels, persistence170.host),
     retireResources: (owner, reason) => lifecycle.retire(owner, reason),
   };
   let offSources: (() => void) | undefined;
@@ -18847,12 +18830,13 @@ export function registerPersistenceWindow170(input:{
         expected.workbenchInstance!==now.workbenchInstance)return;
     original.send(channel,value);
   };
+  const offLegacy=registerLegacyPreferencesIpc170(input.handle,input.facets.imports,()=>scope());
   const offCore=input.coreRecovery.attachPersistence170(input.facets.detail);
   const offSettings=registerSettingsIpc170({handle:input.handle,service:input.facets.settings,scope,publish});
   const offRecovery=registerPersistenceRecoveryIpc170({handle:input.handle,bridge:input.facets.detail.bridge,scope,publish});
   let disposed=false;
   const dispose=()=>{
-    if(disposed)return;disposed=true;offSettings();offRecovery();offCore();
+    if(disposed)return;disposed=true;offLegacy();offSettings();offRecovery();offCore();
     input.facets.imports.retirePreferences(scope());
     original.removeListener("destroyed",dispose);original.removeListener("render-process-gone",dispose);
     original.removeListener("did-start-navigation",navigation);
@@ -18870,6 +18854,67 @@ const facets=plugins.persistence170;
 if(!facets)throw new Error("P170 persistence not attached");
 const disposePersistenceWindow=registerPersistenceWindow170({handle,facets,coreRecovery,renderer:trustedRenderer});
 ```
+
+Append this registration test to `apps/desktop/src/main/ipc.test.ts`, merging imports. Keep its existing trusted-sender/subframe rejection tests. The stubs below reject every unprovided member; this test exercises the actual per-window registrar and both legacy handlers, rather than mocking the renderer API.
+
+```ts
+import { registerPersistenceWindow170, type IpcHandle } from "./ipc.js";
+import type { IpcMainInvokeEvent } from "electron";
+function registrationStub170<T extends object>(members:Partial<T>):T{
+  return new Proxy(members as T,{get(target,key,receiver){
+    if(!Reflect.has(target,key))throw new Error(`Unexpected registration dependency: ${String(key)}`);
+    return Reflect.get(target,key,receiver);
+  }});
+}
+it("registers legacy preferences once with the persistence window and retires both handlers",async()=>{
+  type Input=Parameters<typeof registerPersistenceWindow170>[0];
+  type Facets=Input["facets"];
+  const scope={hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"};
+  const challenge={nonce:"00000000-0000-4000-8000-000000000003",scope,
+    descriptorId:"test.synthetic-preferences",keys:["test.preference"]};
+  const issuePreferences=vi.fn(async()=>challenge);
+  const acceptPreferencesEvidence=vi.fn(async()=>({state:"accepted" as const}));
+  const retirePreferences=vi.fn();
+  const imports=registrationStub170<Facets["imports"]>({issuePreferences,acceptPreferencesEvidence,retirePreferences});
+  const facets:Facets={imports,scope:()=>scope,settings:registrationStub170<Facets["settings"]>({}),
+    detail:registrationStub170<Facets["detail"]>({bridge:registrationStub170<Facets["detail"]["bridge"]>({})})};
+  const offCore=vi.fn();
+  const coreRecovery=registrationStub170<Input["coreRecovery"]>({attachPersistence170:vi.fn(()=>offCore)});
+  const renderer=registrationStub170<Electron.WebContents>({isDestroyed:()=>false,send:vi.fn(),
+    once:vi.fn(),on:vi.fn(),removeListener:vi.fn()});
+  const handlers=new Map<string,(event:IpcMainInvokeEvent,...args:unknown[])=>unknown>();
+  const handle:IpcHandle=<T extends unknown[],R>(name:string,action:(event:IpcMainInvokeEvent,...args:T)=>R)=>{
+    expect(handlers.has(name)).toBe(false);
+    handlers.set(name,(event,...args)=>action(event,...args as T));
+  };
+  const invoke=async(name:string,...args:unknown[])=>{
+    const handler=handlers.get(name);if(!handler)throw new Error("Missing handler");
+    return handler({} as IpcMainInvokeEvent,...args);
+  };
+  const dispose=registerPersistenceWindow170({handle,facets,coreRecovery,renderer:()=>renderer});
+  try{
+    expect([...handlers.keys()].sort()).toEqual([
+      "persistence:legacy-preferences-challenge","persistence:legacy-preferences-submit",
+      "plugins:settings:open","plugins:settings:read","plugins:settings:update","plugins:settings:reset",
+      "plugins:settings:watch","plugins:settings:unwatch","plugins:settings:dispose",
+      "plugins:persistence-recovery:snapshot","plugins:persistence-recovery:act",
+      "plugins:persistence-recovery:subscribe","plugins:persistence-recovery:unsubscribe",
+    ].sort());
+    await expect(invoke("persistence:legacy-preferences-challenge",challenge.descriptorId)).resolves.toEqual(challenge);
+    expect(issuePreferences).toHaveBeenCalledExactlyOnceWith({descriptorId:challenge.descriptorId,scope});
+    const snapshot={nonce:challenge.nonce,scope,entries:[{key:"test.preference",raw:null}]};
+    await expect(invoke("persistence:legacy-preferences-submit",snapshot)).resolves.toEqual({state:"accepted"});
+    expect(acceptPreferencesEvidence).toHaveBeenCalledExactlyOnceWith(snapshot);
+    dispose();dispose();expect(retirePreferences).toHaveBeenCalledExactlyOnceWith(scope);
+    expect(offCore).toHaveBeenCalledOnce();
+    await expect(invoke("persistence:legacy-preferences-challenge",challenge.descriptorId)).rejects.toThrow("Stale");
+    await expect(invoke("persistence:legacy-preferences-submit",snapshot)).rejects.toThrow("Stale");
+    expect(issuePreferences).toHaveBeenCalledOnce();expect(acceptPreferencesEvidence).toHaveBeenCalledOnce();
+  }finally{dispose();}
+});
+```
+
+Run this test with the Step 13d commands before its D170 commit.
 
 No extra root KobrixaApi property, main request tunnel or new DesktopMainComposition field is needed. A recreated native window reruns the existing IPC module setup with its fresh scope and removes prior ipcMain handlers under the existing registration cleanup. Settings and detail handlers refuse the retired scope immediately, even before a late callback returns.
  Both real and smoke preloads use this complete implementation (CJS omits type annotations). Listener registration precedes subscription; the shared listener count prevents one facet from unsubscribing the other:
@@ -19096,14 +19141,90 @@ Expected red: absent adapters/bridge channels. Expected green: existing startup/
 
 - [ ] **Step 13d: Commit all changed attachment paths under their owners.**
 
+After Step 13a defines the recovery API and handlers, append this test to `main/plugins/ipc.test.ts`, importing `registerPersistenceRecoveryIpc170` from `./ipc.js` and `PluginsApi` type-only from shared/plugins.ts. Reuse Step 8a’s `ipcHandlers170`:
+
+```ts
+it("recovery IPC rejects replaced windows and removes both subscriptions exactly once",async()=>{
+  const ipc=ipcHandlers170();let scope={hostEpoch:"00000000-0000-4000-8000-000000000001",workbenchInstance:"00000000-0000-4000-8000-000000000002"};
+  const offOpen=vi.fn(),offChanged=vi.fn();let open:(value:{itemId:string})=>void=()=>{};
+  const bridge:PluginsApi["persistenceRecovery"]={snapshot:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
+    act:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),onOpen:listener=>{open=listener;return offOpen;},onChanged:()=>offChanged};
+  const publish=vi.fn();const dispose=registerPersistenceRecoveryIpc170({handle:ipc.handle,bridge,scope:()=>scope,publish});
+  await ipc.invoke("plugins:persistence-recovery:subscribe");
+  const itemId="00000000-0000-4000-8000-000000000003";open({itemId});expect(publish).toHaveBeenCalledOnce();
+  scope={...scope,workbenchInstance:"00000000-0000-4000-8000-000000000004"};open({itemId});
+  expect(publish).toHaveBeenCalledOnce();await expect(ipc.invoke("plugins:persistence-recovery:snapshot",{itemId})).rejects.toThrow("Stale");
+  expect(bridge.snapshot).not.toHaveBeenCalled();dispose();dispose();
+  expect(offOpen).toHaveBeenCalledOnce();expect(offChanged).toHaveBeenCalledOnce();
+});
+```
+
+In `app.tsx`, add the import and mount immediately beside the existing unconditional `CoreRecoveryView`, with the same `uiLabels`. Do not put it inside optional tools/feature-enabled conditions:
+
+```tsx
+import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
+// Adjacent to the existing CoreRecoveryView in App's JSX:
+<CorePersistenceRecovery port={window.kobrixa.plugins.persistenceRecovery} labels={uiLabels} />
+```
+
+Append to `app.test.ts` the actual detail mount test, using B1's existing labels and jsdom root helper; no optional process/catalog fixture is needed:
+
+```tsx
+import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
+import { pluginUiCopy } from "./settings/plugin-copy.js";
+it("mounts persistence detail with all optional features off",async()=>{
+  let open:(input:{itemId:string})=>void=()=>{};
+  const off=vi.fn();const port:PluginsApi["persistenceRecovery"]={
+    snapshot:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
+    act:vi.fn(async()=>({ok:true,value:{revision:0,items:[]}})),
+    onOpen:vi.fn(listener=>{open=listener;return off;}),onChanged:vi.fn(()=>off)};
+  const element=document.createElement("div");const detailRoot=createRoot(element);
+  await act(async()=>detailRoot.render(createElement(CorePersistenceRecovery,{port,labels:pluginUiCopy.en})));
+  await act(async()=>open({itemId:"00000000-0000-4000-8000-000000000001"}));
+  expect(port.snapshot).toHaveBeenCalledWith({itemId:"00000000-0000-4000-8000-000000000001"});
+  await act(async()=>detailRoot.unmount());expect(off).toHaveBeenCalled();
+});
+```
+
+Before H-I's commit, extend Step 9’s existing regression in `tests/desktop/smoke-harness.test.mjs` to this full list (replace that test, do not duplicate it), retaining all existing preload execution tests. Import readFileSync from node:fs and assert from node:assert/strict with the existing test import. This parity check complements the real preload invocation tests:
+
+```js
+test("P170 real and smoke preloads expose the same dedicated persistence channels",()=>{
+  const real=readFileSync(new URL("../../apps/desktop/src/preload/index.ts",import.meta.url),"utf8");
+  const smoke=readFileSync(new URL("./preload.cjs",import.meta.url),"utf8");
+  for(const channel of ["plugins:settings:open","plugins:settings:read","plugins:settings:update",
+    "persistence:legacy-preferences-challenge","persistence:legacy-preferences-submit",
+    "plugins:settings:reset","plugins:settings:watch","plugins:settings:unwatch","plugins:settings:dispose",
+    "plugins:persistence-recovery:snapshot","plugins:persistence-recovery:act",
+    "plugins:persistence-recovery:subscribe","plugins:persistence-recovery:unsubscribe",
+    "plugins:persistence-recovery:open","plugins:persistence-recovery:changed"]){
+    assert.ok(real.includes(channel),`real preload missing ${channel}`);
+    assert.ok(smoke.includes(channel),`smoke preload missing ${channel}`);
+  }
+  for(const source of [real,smoke]){
+    assert.match(source,/settings:\s*createSettingsPreload170\(\)/);
+    assert.match(source,/persistenceRecovery:\s*createPersistenceRecoveryPreload170\(\)/);
+    assert.ok(!source.includes("plugins:persistence:request"));
+  }
+});
+```
+
+
+
 ```bash
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+pnpm --filter @kobrixa/desktop test -- src/main/plugins/ipc.test.ts src/main/ipc.test.ts src/preload/index.test.ts src/renderer/app.test.ts
+node --test tests/desktop/smoke-harness.test.mjs
+pnpm check:desktop
 git add apps/desktop/src/main/plugins/controller.ts apps/desktop/src/main/plugins/controller.test.ts apps/desktop/src/main/index.ts apps/desktop/src/main/index.test.ts apps/desktop/src/main/plugins/core-recovery.ts apps/desktop/src/main/plugins/core-recovery.test.ts apps/desktop/src/main/plugins/ipc.ts apps/desktop/src/main/plugins/ipc.test.ts apps/desktop/src/main/ipc.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/shared/plugins.ts apps/desktop/src/shared/plugin-persistence.ts apps/desktop/src/shared/plugin-persistence.test.ts apps/desktop/src/preload/index.ts apps/desktop/src/preload/index.test.ts
 git commit -m "feat(desktop): compose trusted persistence recovery and native export"
 git add tests/desktop/preload.cjs tests/desktop/smoke-harness.test.mjs
 git commit -m "test(desktop): expose trusted persistence recovery in smoke preload"
+git add apps/desktop/src/renderer/app.tsx apps/desktop/src/renderer/app.test.ts
+git commit -m "feat(desktop): mount core persistence detail"
 ```
 
-Record each actual changed D170/H-I path and SHA; V170's app/settings paths are recorded in Step 9's separate receipt. Do not stage read-only domain files. Preserve one primary lock, worker, event ledger and coordinator listener, and retain the unknown-outcome blocker until disposition permits host disposal and profile release.
+Record each actual changed D170/H-I/V170 path and SHA; V170's settings paths are recorded in Step 9's separate receipt. Do not stage read-only domain files. Preserve one primary lock, worker, event ledger and coordinator listener, and retain the unknown-outcome blocker until disposition permits host disposal and profile release.
 
 - [ ] **Step 14: Run the actual B2 suites and review the complete negative matrix.**
 
