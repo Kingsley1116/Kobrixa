@@ -111,7 +111,10 @@ describe("SensorLabService", () => {
     const h = await setup();
     const started = await h.service.start(h.request);
     expect(started).toMatchObject({ active: true, saved: true });
-    expect(h.acquire).toHaveBeenCalledWith(h.sessionId);
+    expect(h.acquire).toHaveBeenCalledWith(
+      h.sessionId,
+      h.request.channels.map((value) => value.source),
+    );
     h.request.channels[0]!.calibration.zeroOffset = 99;
     const update = h.emit({ snapshot: snapshot(24.5) });
     h.service.observe(update);
@@ -421,4 +424,16 @@ describe("SensorLabService", () => {
     expect((await next.service.retrySave()).saved).toBe(true);
     expect(await new SensorLabStore(h.directory).listCalibrations()).toHaveLength(1);
   });
+});
+
+it("F12 reservation pins requested channels before the first durable recording save", async () => {
+  const h = await setup();
+  const save = vi.spyOn(h.store, "save");
+  await h.service.start(h.request);
+  expect(h.acquire).toHaveBeenCalledWith(
+    h.sessionId,
+    h.request.channels.map((value) => value.source),
+  );
+  expect(h.acquire.mock.invocationCallOrder[0]).toBeLessThan(save.mock.invocationCallOrder[0]!);
+  await h.service.stop();
 });

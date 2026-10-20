@@ -1,3 +1,4 @@
+import type { LegacyFileSession } from "../device-broker/legacy-files.js";
 import { createHash, randomUUID } from "node:crypto";
 import { open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -6,7 +7,6 @@ import {
   REMOTE_PROJECT_ROOT,
   managedPath,
   remoteChild,
-  type DeviceSession,
   type TransferProgress,
 } from "@kobrixa/device";
 import type { Dialog } from "electron";
@@ -15,7 +15,7 @@ import type { RemoteFileRequest, RemoteFileResult } from "../../shared/api.js";
 /** Native dialogs own local paths; the renderer may only supply managed EV3 paths. */
 export async function remoteFileOperation(
   request: RemoteFileRequest,
-  session: DeviceSession,
+  session: LegacyFileSession,
   signal: AbortSignal,
   dialog: Pick<Dialog, "showOpenDialog" | "showSaveDialog" | "showMessageBox">,
   changed: (paths: string[]) => void,
@@ -47,26 +47,30 @@ export async function remoteFileOperation(
     await session.rename(target, destination, signal);
   } else if (action === "delete") {
     // Confirmation is native, so recursive deletion is always explicitly reviewed.
-    const answer = await dialog.showMessageBox({
-      type: "warning",
-      title: zh ? "刪除 EV3 項目" : "Delete EV3 item",
-      message: zh
-        ? "永久刪除此項目及所有內容？"
-        : "Permanently delete this item and all its contents?",
-      detail: target,
-      buttons: zh ? ["取消", "刪除"] : ["Cancel", "Delete"],
-      defaultId: 0,
-      cancelId: 0,
-    });
+    const answer = await session.confirm(() =>
+      dialog.showMessageBox({
+        type: "warning",
+        title: zh ? "刪除 EV3 項目" : "Delete EV3 item",
+        message: zh
+          ? "永久刪除此項目及所有內容？"
+          : "Permanently delete this item and all its contents?",
+        detail: target,
+        buttons: zh ? ["取消", "刪除"] : ["Cancel", "Delete"],
+        defaultId: 0,
+        cancelId: 0,
+      }),
+    );
     signal.throwIfAborted();
     if (answer.response !== 1) return { ...result, cancelled: true };
     changed([target]);
     await session.delete(target, signal);
   } else if (action === "upload") {
-    const selected = await dialog.showOpenDialog({
-      title: zh ? "上傳檔案至 EV3" : "Upload file to EV3",
-      properties: ["openFile"],
-    });
+    const selected = await session.confirm(() =>
+      dialog.showOpenDialog({
+        title: zh ? "上傳檔案至 EV3" : "Upload file to EV3",
+        properties: ["openFile"],
+      }),
+    );
     signal.throwIfAborted();
     if (selected.canceled || !selected.filePaths[0]) return { ...result, cancelled: true };
     const local = selected.filePaths[0];
@@ -85,15 +89,17 @@ export async function remoteFileOperation(
     if (existing?.kind === "directory")
       throw new DeviceOperationError("device", "A folder with that name already exists.");
     if (existing) {
-      const answer = await dialog.showMessageBox({
-        type: "warning",
-        title: zh ? "覆寫 EV3 檔案" : "Replace EV3 file",
-        message: zh ? "覆寫現有檔案？" : "Replace the existing file?",
-        detail: destination,
-        buttons: zh ? ["取消", "覆寫"] : ["Cancel", "Replace"],
-        defaultId: 0,
-        cancelId: 0,
-      });
+      const answer = await session.confirm(() =>
+        dialog.showMessageBox({
+          type: "warning",
+          title: zh ? "覆寫 EV3 檔案" : "Replace EV3 file",
+          message: zh ? "覆寫現有檔案？" : "Replace the existing file?",
+          detail: destination,
+          buttons: zh ? ["取消", "覆寫"] : ["Cancel", "Replace"],
+          defaultId: 0,
+          cancelId: 0,
+        }),
+      );
       signal.throwIfAborted();
       if (answer.response !== 1) return { ...result, cancelled: true };
     }
@@ -121,10 +127,12 @@ export async function remoteFileOperation(
     );
     if (!entry || entry.kind !== "file")
       throw new DeviceOperationError("not-found", "Select an existing file to download.");
-    const selected = await dialog.showSaveDialog({
-      title: zh ? "下載 EV3 檔案" : "Download EV3 file",
-      defaultPath: entry.name,
-    });
+    const selected = await session.confirm(() =>
+      dialog.showSaveDialog({
+        title: zh ? "下載 EV3 檔案" : "Download EV3 file",
+        defaultPath: entry.name,
+      }),
+    );
     signal.throwIfAborted();
     if (selected.canceled || !selected.filePath) return { ...result, cancelled: true };
     // Same-directory rename atomically delivers only the fully downloaded file.
@@ -160,12 +168,14 @@ export async function remoteFileOperation(
         );
       signal.throwIfAborted();
       await output.sync();
+      signal.throwIfAborted();
       complete = true;
     } finally {
       await output.close();
       if (!complete) await unlink(temporary).catch(() => {});
     }
     try {
+      signal.throwIfAborted();
       await rename(temporary, selected.filePath);
     } catch (error) {
       await unlink(temporary).catch(() => {});

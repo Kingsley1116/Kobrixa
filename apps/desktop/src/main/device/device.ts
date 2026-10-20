@@ -1,425 +1,347 @@
-import { DevicePreferencesStore } from "./preferences.js";
-import type { DevicePreferences } from "../../shared/device-preferences.js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import type { WebContents } from "electron";
 import {
   DeviceOperationError,
-  managedPath,
-  REMOTE_PROJECT_ROOT,
-  remoteChild,
-  UsbTransport,
-  WiFiTransport,
   normalizeDeviceError,
   type DeviceDescriptor,
-  type DeviceSession,
   type RemoteEntry,
-  type DeviceMonitorSnapshot,
-  type DeviceInputModes,
 } from "@kobrixa/device";
-import { remoteFileOperation } from "./remote-files.js";
-import { FileBatchManager } from "./file-batch.js";
-import type { FileBatchRequest, FileBatchRef, FileBatchSnapshot } from "../../shared/api.js";
+import type { DevicePreferences } from "../../shared/device-preferences.js";
 import type {
+  DeviceEvent,
+  FileBatchRef,
+  FileBatchRequest,
+  FileBatchSnapshot,
   RemoteFileRequest,
   RemoteFileResult,
-  DeviceEvent,
-  MonitorResult,
 } from "../../shared/api.js";
 import type { BuildService } from "../workspace/build.js";
-
-interface Deployment {
-  buildId: string;
-  files: Array<{ path: string; size: number; checksum: string }>;
+import { DevicePreferencesStore } from "./preferences.js";
+import { remoteFileOperation } from "./remote-files.js";
+import { FileBatchManager } from "./file-batch.js";
+import type { LegacyDevice } from "../device-broker/legacy-device.js";
+import type { LegacyFiles } from "../device-broker/legacy-files.js";
+import type { CorePrincipal } from "../device-broker/broker-port.js";
+const renewals = new Map<
+  string,
+  { ref: FileBatchRef; owner: CorePrincipal; current: () => CorePrincipal; renew: () => void }
+>();
+function sameCore(a: CorePrincipal, b: CorePrincipal): boolean {
+  return (
+    a.kind === b.kind &&
+    a.adapter === b.adapter &&
+    a.hostEpoch === b.hostEpoch &&
+    a.workbenchInstance === b.workbenchInstance &&
+    a.authorityContext?.ref === b.authorityContext?.ref &&
+    a.authorityContext?.epoch === b.authorityContext?.epoch
+  );
 }
-interface Recovery {
-  id: string;
-  descriptor: DeviceDescriptor;
-  deployment: Deployment | undefined;
-  controller: AbortController;
-  attempt: number;
-  preferences: DevicePreferences;
-  working: boolean;
-  timer?: ReturnType<typeof setTimeout>;
-  candidate?: DeviceSession;
+export function renewFilePlan(ref: FileBatchRef, owner: CorePrincipal): void {
+  const entry = renewals.get(ref.planId);
+  if (
+    !entry ||
+    entry.ref.sessionId !== ref.sessionId ||
+    entry.ref.requestId !== ref.requestId ||
+    !sameCore(entry.owner, owner) ||
+    !sameCore(entry.owner, entry.current())
+  )
+    throw new Error("Unknown or expired file operation.");
+  entry.renew(); // retained session checks state/600s deadline; broker rechecks current authority
 }
-const connectionFailure = (error: unknown): boolean =>
-  ["connection", "timeout", "protocol"].includes(normalizeDeviceError(error).category);
-
 export function mergeDiscoveryResults(
   settled: PromiseSettledResult<DeviceDescriptor[]>[],
 ): DeviceDescriptor[] {
-  const devices = settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+  const devices = settled.flatMap((value) => (value.status === "fulfilled" ? value.value : []));
   if (devices.length) return devices;
-  const rejection = settled.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
+  const rejected = settled.find(
+    (value): value is PromiseRejectedResult => value.status === "rejected",
   );
-  if (rejection) throw rejection.reason;
+  if (rejected) throw rejected.reason;
   return [];
 }
-
 export function deploymentTargets<T extends { path: string; remotePath: string }>(
   files: T[],
   remoteDirectory: string,
 ): T[] {
   return files.map((file) => {
     const relative = file.remotePath.replaceAll("\\", "/");
-    if (relative.startsWith("/") || relative.split("/").some((part) => part === "..")) {
+    if (relative.startsWith("/") || relative.split("/").some((part) => part === ".."))
       throw new DeviceOperationError("transfer", `Unsafe asset deployment path '${relative}'.`);
-    }
     return { ...file, remotePath: path.posix.join(remoteDirectory, relative) };
   });
 }
-
+export interface LegacyDeviceServices {
+  device: LegacyDevice;
+  files: LegacyFiles;
+}
 export class DeviceService {
   private listeners = new Set<(event: DeviceEvent) => void>();
-  subscribe(listener: (event: DeviceEvent) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-  descriptor(id: string): DeviceDescriptor {
-    return { ...this.require(id).descriptor };
-  }
-  readonly #sessions = new Map<string, DeviceSession>();
-  readonly #busy = new Map<string, AbortController>();
-  readonly #monitors = new Map<
-    string,
-    { controller: AbortController; pending: Promise<unknown> }
-  >();
-  readonly #subscriptions = new Map<string, () => void>();
-  readonly #deployments = new Map<string, Deployment>();
-  readonly #recoveries = new Map<string, Recovery>();
-  readonly #recovered = new Map<string, string>();
-  private generation = 0;
-  get busy(): boolean {
-    return (
-      this.#busy.size > 0 ||
-      this.#monitors.size > 0 ||
-      [...this.#recoveries.values()].some((item) => item.working)
-    );
-  }
-  readonly #usb = new UsbTransport();
-  readonly #wifi = new WiFiTransport();
   private batches: FileBatchManager | undefined;
   private batchOwners = new WeakSet<WebContents>();
+  private pending = 0;
   private beforeDisconnect: ((id: string) => Promise<void>) | undefined;
-
+  constructor(
+    private builds: BuildService,
+    private renderer: () => WebContents | undefined,
+    private preferences = new DevicePreferencesStore(),
+    private legacy?: LegacyDeviceServices,
+  ) {}
+  attachLegacy(services: { device: LegacyDevice; files: LegacyFiles }): void {
+    if (this.legacy) throw new Error("Legacy broker already attached.");
+    this.legacy = services;
+  }
+  private get ports(): LegacyDeviceServices {
+    if (!this.legacy) throw new Error("Device broker unavailable.");
+    return this.legacy;
+  }
+  get busy(): boolean {
+    return this.pending > 0;
+  }
+  subscribe(listener: (event: DeviceEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  private send(event: DeviceEvent): void {
+    const renderer = this.renderer();
+    if (renderer && !renderer.isDestroyed?.()) renderer.send("device:event", event);
+    for (const listener of this.listeners) listener(event);
+  }
+  private async track<T>(work: () => Promise<T>): Promise<T> {
+    this.pending++;
+    try {
+      return await work();
+    } finally {
+      this.pending--;
+    }
+  }
+  descriptor(id: string): DeviceDescriptor {
+    return this.ports.device.descriptor(id);
+  }
+  getPreferences = (): DevicePreferences => this.preferences.get();
+  setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences> {
+    return this.preferences.set(patch, () => {});
+  }
   setBeforeDisconnect(stop: (id: string) => Promise<void>): void {
     this.beforeDisconnect = stop;
   }
-
-  /** Keep foreground ownership across the complete motor test, including delays. */
-  withMotorTest<T>(
-    id: string,
-    work: (session: DeviceSession, signal: AbortSignal) => Promise<T>,
-  ): Promise<T> {
-    return this.operation(id, work);
+  discover(signal?: AbortSignal): Promise<DeviceDescriptor[]> {
+    return this.ports.device.discover(signal);
   }
-
-  constructor(
-    private readonly builds: BuildService,
-    private readonly renderer: () => WebContents | undefined,
-    private readonly preferences = new DevicePreferencesStore(),
-  ) {}
-
-  getPreferences = (): DevicePreferences => this.preferences.get();
-
-  monitor(id: string): Promise<MonitorResult<DeviceMonitorSnapshot>> {
-    return this.monitorRead(id, (session, signal, shouldYield) =>
-      session.readMonitor(signal, shouldYield),
-    );
-  }
-
-  inputModes(
-    id: string,
-    port: number,
-    expectedType: number,
-  ): Promise<MonitorResult<DeviceInputModes>> {
-    return this.monitorRead(id, (session, signal, shouldYield) =>
-      session.readInputModes(port, expectedType, signal, shouldYield),
-    );
-  }
-
-  async setInputMode(
-    id: string,
-    port: number,
-    expectedType: number,
-    mode: number,
-  ): Promise<MonitorResult<DeviceMonitorSnapshot>> {
-    try {
-      const value = await this.operation(id, (session, signal) =>
-        session.setInputMode(port, expectedType, mode, signal),
-      );
-      return { status: "ok", value };
-    } catch (error) {
-      const normalized = normalizeDeviceError(error);
-      return { status: "error", category: normalized.category, message: normalized.message };
-    }
-  }
-
-  /** Background reads never take the foreground busy state or queue behind it. */
-  private async monitorRead<T>(
-    id: string,
-    read: (
-      session: DeviceSession,
-      signal: AbortSignal,
-      shouldYield: () => boolean,
-    ) => Promise<T | undefined>,
-  ): Promise<MonitorResult<T>> {
-    try {
-      const session = this.require(id);
-      if (this.#busy.has(id) || this.#monitors.has(id)) return { status: "busy" };
-      const controller = new AbortController();
-      const flight = { controller, pending: Promise.resolve() as Promise<unknown> };
-      this.#monitors.set(id, flight);
-      const result = (async (): Promise<MonitorResult<T>> => {
-        try {
-          const value = await read(
-            session,
-            controller.signal,
-            () => this.#busy.has(id) || this.#sessions.get(id) !== session,
-          );
-          if (this.#sessions.get(id) !== session || value === undefined) return { status: "busy" };
-          return { status: "ok", value };
-        } catch (error) {
-          const normalized = normalizeDeviceError(error);
-          if (connectionFailure(normalized)) await this.lost(id, session, normalized);
-          return { status: "error", category: normalized.category, message: normalized.message };
-        } finally {
-          if (this.#monitors.get(id) === flight) this.#monitors.delete(id);
-        }
-      })();
-      flight.pending = result;
-      return await result;
-    } catch (error) {
-      const normalized = normalizeDeviceError(error);
-      return { status: "error", category: normalized.category, message: normalized.message };
-    }
-  }
-  setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences> {
-    return this.preferences.set(patch, (next) => {
-      if (!next.usbAutoReconnect)
-        for (const recovery of this.#recoveries.values()) this.cancelRecovery(recovery);
+  async connect(descriptor: DeviceDescriptor, signal?: AbortSignal): Promise<string> {
+    return this.track(async () => {
+      const id = await this.ports.device.connect(descriptor, signal);
+      this.send({
+        type: "state",
+        state: "connected",
+        sessionId: id,
+        transport: descriptor.transport,
+      });
+      return id;
     });
   }
-
-  private wifiOptions() {
-    const value = this.getPreferences();
-    return {
-      connectTimeoutMs: value.wifiConnectTimeout,
-      handshakeTimeoutMs: value.wifiHandshakeTimeout,
-    };
+  reconnectForRecovery(previousSessionId: string, signal: AbortSignal): Promise<string> {
+    return this.ports.device.reconnectForRecovery(previousSessionId, signal);
   }
-
-  async discover(signal = new AbortController().signal): Promise<DeviceDescriptor[]> {
-    const settled = await Promise.allSettled([
-      this.#usb.discover(signal),
-      this.#wifi.discover(signal),
-    ]);
-    return mergeDiscoveryResults(settled);
+  async connectWifi(address: string, signal?: AbortSignal): Promise<string> {
+    return this.track(async () => {
+      const id = await this.ports.device.connectWifi(address, signal);
+      this.send({ type: "state", state: "connected", sessionId: id, transport: "wifi" });
+      return id;
+    });
   }
-
-  connect(descriptor: DeviceDescriptor, signal = new AbortController().signal): Promise<string> {
-    const options = this.wifiOptions();
-    return this.connectWith(
-      () =>
-        descriptor.transport === "usb"
-          ? this.#usb.connect(descriptor, signal)
-          : this.#wifi.connect(descriptor, signal, options),
-      descriptor.transport,
-    );
-  }
-
-  connectWifi(address: string, signal = new AbortController().signal): Promise<string> {
-    const descriptor: DeviceDescriptor = {
-      id: `wifi:${address}`,
-      name: `EV3 ${address}`,
-      transport: "wifi",
-      address,
-    };
-    const options = this.wifiOptions();
-    return this.connectWith(() => this.#wifi.connect(descriptor, signal, options), "wifi");
-  }
-
   async disconnect(id: string): Promise<void> {
-    // Follow completed recoveries too: cancellation IPC may arrive just after
-    // the replacement session was published.
-    while (this.#recovered.has(id)) id = this.#recovered.get(id)!;
     await this.beforeDisconnect?.(id);
-    const recovery = this.#recoveries.get(id);
-    if (recovery) this.cancelRecovery(recovery);
-    const session = this.#sessions.get(id);
-    this.#subscriptions.get(id)?.();
-    this.#subscriptions.delete(id);
-    this.#sessions.delete(id);
-    this.#deployments.delete(id);
-    this.#busy.get(id)?.abort();
-    this.#monitors.get(id)?.controller.abort();
-    await session?.disconnect().catch(() => {});
+    await this.ports.device.disconnect(id);
     this.send({ type: "state", state: "disconnected", sessionId: id });
   }
-
   async reset(): Promise<void> {
-    this.generation++;
-    for (const recovery of this.#recoveries.values()) this.cancelRecovery(recovery);
-    const ids = [...this.#sessions.keys()];
-    this.#recovered.clear();
-    await Promise.all(ids.map((id) => this.disconnect(id)));
+    await this.ports.device.reset();
   }
-
+  monitor(id: string) {
+    return this.ports.device.monitor(id);
+  }
+  inputModes(id: string, port: number, type: number) {
+    return this.ports.device.inputModes(id, port, type);
+  }
+  setInputMode(id: string, port: number, type: number, mode: number) {
+    return this.ports.device.setInputMode(id, port, type, mode);
+  }
   upload(id: string, buildId: string, remotePath: string): Promise<void> {
-    return this.operation(id, async (session, signal) => {
-      this.#deployments.delete(id);
-      await session.upload(remotePath, await this.builds.artifactBytes(buildId, signal), signal);
-    });
-  }
-
-  deploy(id: string, buildId: string, remoteDirectory: string): Promise<void> {
-    return this.operation(id, async (session, signal) => {
-      this.#deployments.delete(id);
-      const deployment: Deployment = { buildId, files: [] };
-      const files = await this.builds.deployableArtifacts(buildId, signal);
-      const skipUnchanged = this.getPreferences().skipUnchangedAssets;
-      // Re-read the device on each deployment; another program or computer may
-      // have replaced assets since the previous upload. Share one listing per directory.
-      const listings = new Map<string, RemoteEntry[]>();
-      for (const file of deploymentTargets(files, remoteDirectory)) {
-        try {
-          const bytes = file.bytes;
+    return this.track(() =>
+      this.ports.files.run(
+        id,
+        async (session, signal) => {
+          const bytes = await this.builds.artifactBytes(buildId, signal);
           signal.throwIfAborted();
-          const checksum = createHash("md5").update(bytes).digest("hex");
-          let unchanged = false;
-          if (skipUnchanged && file.role === "deploy-asset") {
-            const directory = path.posix.dirname(file.remotePath);
-            if (!listings.has(directory)) {
-              try {
-                listings.set(directory, await session.list(directory, signal));
-              } catch (error) {
-                signal.throwIfAborted();
-                if (
-                  connectionFailure(error) ||
-                  normalizeDeviceError(error).category === "cancelled"
-                )
-                  throw error;
-                // Missing directories or unavailable checksums fall back to uploading.
-                listings.set(directory, []);
-              }
-            }
-            signal.throwIfAborted();
-            const entry = listings.get(directory)!.find((item) => item.path === file.remotePath);
-            unchanged =
-              entry?.kind === "file" &&
-              entry.size === bytes.length &&
-              entry.checksum?.toLowerCase() === checksum;
-          }
-          if (!unchanged) await session.upload(file.remotePath, bytes, signal);
-          deployment.files.push({
-            path: file.remotePath,
-            size: bytes.length,
-            checksum,
-          });
-        } catch (error) {
-          const normalized = normalizeDeviceError(error, "transfer");
-          throw new DeviceOperationError(
-            normalized.category,
-            `Unable to deploy '${file.remotePath}': ${error instanceof Error ? error.message : String(error)}`,
-            normalized.recoverable,
-            { cause: error },
+          await session.upload(remotePath, bytes, signal);
+        },
+        "deployment",
+      ),
+    );
+  }
+  deploy(id: string, buildId: string, remoteDirectory: string): Promise<void> {
+    return this.track(() =>
+      this.ports.files.run(
+        id,
+        async (session, signal) => {
+          // BuildService verifies the complete immutable snapshot before any upload.
+          const files = deploymentTargets(
+            await this.builds.deployableArtifacts(buildId, signal),
+            remoteDirectory,
           );
-        }
-      }
-      signal.throwIfAborted();
-      if (this.#sessions.get(id) === session) this.#deployments.set(id, deployment);
-    });
+          signal.throwIfAborted();
+          const listings = new Map<string, RemoteEntry[]>();
+          for (const file of files) {
+            signal.throwIfAborted();
+            const checksum = createHash("md5").update(file.bytes).digest("hex");
+            let unchanged = false;
+            if (this.getPreferences().skipUnchangedAssets && file.role === "deploy-asset") {
+              const directory = path.posix.dirname(file.remotePath);
+              if (!listings.has(directory))
+                listings.set(directory, await session.list(directory, signal));
+              signal.throwIfAborted();
+              const entry = listings
+                .get(directory)!
+                .find((value) => value.path === file.remotePath);
+              unchanged =
+                entry?.kind === "file" &&
+                entry.size === file.bytes.length &&
+                entry.checksum?.toLowerCase() === checksum;
+            }
+            if (!unchanged) await session.upload(file.remotePath, file.bytes, signal);
+          }
+          signal.throwIfAborted();
+        },
+        "deployment",
+      ),
+    );
   }
-
   run(id: string, remotePath: string): Promise<void> {
-    return this.operation(id, (session, signal) => session.run(remotePath, signal));
+    return this.track(() =>
+      this.ports.files.run(
+        id,
+        (session, signal) => session.run(remotePath, signal),
+        "program-launch",
+      ),
+    );
   }
-
   stop(id: string): Promise<void> {
-    return this.operation(id, (session, signal) => session.stop(undefined, signal));
+    return this.ports.device.stop(id);
   }
-
   delete(id: string, remotePath: string): Promise<void> {
-    return this.operation(id, (session, signal) => {
-      this.invalidateDeployment(id, [remotePath]);
-      return session.delete(remotePath, signal);
-    });
+    return this.track(() =>
+      this.ports.files.run(
+        id,
+        (session, signal) => session.delete(remotePath, signal),
+        "file-write",
+      ),
+    );
   }
-
   async files(request: RemoteFileRequest): Promise<RemoteFileResult> {
     try {
-      const target = managedPath(
-        request.path,
-        ["rename", "delete", "download"].includes(request.action),
+      const { dialog } = await import("electron");
+      return await this.track(() =>
+        this.ports.files.run(
+          request.sessionId,
+          (session, signal) =>
+            remoteFileOperation(
+              request,
+              session,
+              signal,
+              dialog,
+              (paths) =>
+                this.send({
+                  type: "files-changed",
+                  sessionId: request.sessionId,
+                  requestId: request.requestId,
+                  paths,
+                }),
+              (transferred, total) =>
+                this.send({
+                  type: "file-progress",
+                  sessionId: request.sessionId,
+                  requestId: request.requestId,
+                  transferred,
+                  total,
+                }),
+            ),
+          request.action === "list" || request.action === "download" ? "file-read" : "file-write",
+        ),
       );
-      if (request.action === "mkdir" || request.action === "rename")
-        remoteChild(
-          request.action === "mkdir" ? target : path.posix.dirname(target),
-          request.name ?? "",
-        );
-      return await this.operation(request.sessionId, async (session, signal) => {
-        const { dialog } = await import("electron");
-        return remoteFileOperation(
-          request,
-          session,
-          signal,
-          dialog,
-          (paths) =>
-            this.send({
-              type: "files-changed",
-              sessionId: request.sessionId,
-              requestId: request.requestId,
-              paths,
-            }),
-          (transferred, total) =>
-            this.send({
-              type: "file-progress",
-              sessionId: request.sessionId,
-              requestId: request.requestId,
-              transferred,
-              total,
-            }),
-        );
-      });
     } catch (error) {
-      const normalized = normalizeDeviceError(error);
+      const value = normalizeDeviceError(error);
       return {
         ok: false,
         sessionId: request.sessionId,
         requestId: request.requestId,
-        category: normalized.category,
-        message: normalized.message,
+        category: value.category,
+        message: value.message,
       };
     }
   }
-
   async prepareFiles(request: FileBatchRequest, owner: WebContents): Promise<FileBatchSnapshot> {
+    const current = (): CorePrincipal => {
+      const value = this.ports.device.dependencies.principal();
+      if (value.kind !== "core") throw new Error("Core file owner required.");
+      return { ...value, adapter: "remote-files" };
+    };
+    const original = structuredClone(current());
     const { dialog } = await import("electron");
     this.batches ??= new FileBatchManager(
-      (id, work) => this.operation(id, work),
+      (id, work, operationClass) =>
+        this.track(() => this.ports.files.run(id, work, operationClass)),
       dialog,
-      (snapshot) => this.send({ type: "file-batch", snapshot }),
-      (request, paths) =>
+      (snapshot) => {
+        if (snapshot.phase !== "ready") renewals.delete(snapshot.planId);
+        this.send({ type: "file-batch", snapshot });
+      },
+      (value, paths) =>
         this.send({
           type: "files-changed",
-          sessionId: request.sessionId,
-          requestId: request.requestId,
+          sessionId: value.sessionId,
+          requestId: value.requestId,
           paths,
         }),
     );
     if (!this.batchOwners.has(owner)) {
       this.batchOwners.add(owner);
-      const ownerId = owner.id;
-      owner.once("destroyed", () => this.batches?.abandonOwner(ownerId));
-      owner.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
-        if (isMainFrame) this.batches?.abandonOwner(ownerId);
+      const id = owner.id;
+      const abandon = () => {
+        this.batches?.abandonOwner(id);
+        for (const [key, entry] of renewals)
+          if (
+            entry.owner.hostEpoch === original.hostEpoch &&
+            entry.owner.workbenchInstance === original.workbenchInstance
+          )
+            renewals.delete(key);
+      };
+      owner.once("destroyed", abandon);
+      owner.on("did-start-navigation", (_event, _url, _inPlace, mainFrame) => {
+        if (mainFrame) abandon();
       });
     }
-    return this.batches.prepare(request, owner.id);
+    const snapshot = await this.batches.prepare(request, owner.id);
+    if (snapshot.phase === "ready" && !owner.isDestroyed() && sameCore(original, current())) {
+      const ref = {
+        sessionId: snapshot.sessionId,
+        requestId: snapshot.requestId,
+        planId: snapshot.planId,
+      };
+      renewals.set(ref.planId, {
+        ref,
+        owner: original,
+        current,
+        renew: () => {
+          this.batches!.renew(ref, owner.id);
+        },
+      });
+    }
+    return snapshot;
   }
-  async executeFiles(
+  executeFiles(
     ref: FileBatchRef,
     policy: "skip" | "replace",
     owner: number,
@@ -427,297 +349,11 @@ export class DeviceService {
     if (!this.batches) throw new Error("Unknown file operation.");
     return this.batches.execute(ref, policy, owner);
   }
-  async stopFiles(ref: FileBatchRef, owner: number): Promise<void> {
+  stopFiles(ref: FileBatchRef, owner: number): Promise<void> {
     if (!this.batches) throw new Error("Unknown file operation.");
     return this.batches.stop(ref, owner);
   }
-
-  private async connectWith(
-    connect: () => Promise<DeviceSession>,
-    transport: string,
-  ): Promise<string> {
-    const reset = this.reset();
-    const generation = this.generation;
-    await reset;
-    if (generation !== this.generation)
-      throw new DeviceOperationError("cancelled", "Connection cancelled.");
-    this.send({ type: "state", state: "connecting", transport });
-    try {
-      const session = await connect();
-      if (generation !== this.generation || !session.connected) {
-        await session.disconnect().catch(() => {});
-        throw new DeviceOperationError("cancelled", "Connection cancelled.");
-      }
-      const id = this.register(session);
-      this.send({ type: "state", state: "connected", sessionId: id, transport });
-      return id;
-    } catch (error) {
-      if (generation === this.generation) this.report(error);
-      throw error;
-    }
-  }
-
-  private async operation<T>(
-    id: string,
-    work: (session: DeviceSession, signal: AbortSignal) => Promise<T>,
-  ): Promise<T> {
-    const session = this.require(id);
-    if (this.#busy.has(id))
-      throw new DeviceOperationError("device", "Another EV3 operation is in progress.");
-    const controller = new AbortController();
-    this.#busy.set(id, controller);
-    let aborted!: () => void;
-    const cancelled = new Promise<never>((_resolve, reject) => {
-      aborted = () => reject(controller.signal.reason);
-      controller.signal.addEventListener("abort", aborted, { once: true });
-    });
-    this.send({
-      type: "state",
-      state: "busy",
-      sessionId: id,
-      transport: session.descriptor.transport,
-    });
-    try {
-      // Reserve foreground ownership before waiting so no new monitor exchange
-      // can jump ahead. Do not abort the in-flight USB read to make room.
-      const monitor = this.#monitors.get(id)?.pending;
-      const run = async () => {
-        if (monitor) await monitor;
-        controller.signal.throwIfAborted();
-        if (this.#sessions.get(id) !== session)
-          throw new DeviceOperationError("connection", "The EV3 session changed.");
-        return work(session, controller.signal);
-      };
-      const result = await Promise.race([run(), cancelled]);
-      controller.signal.throwIfAborted();
-      this.send({
-        type: "state",
-        state: "connected",
-        sessionId: id,
-        transport: session.descriptor.transport,
-      });
-      return result;
-    } catch (error) {
-      const normalized = normalizeDeviceError(error);
-      if (connectionFailure(normalized)) await this.lost(id, session, normalized);
-      throw normalized;
-    } finally {
-      controller.signal.removeEventListener("abort", aborted);
-      this.#busy.delete(id);
-    }
-  }
-
-  private register(session: DeviceSession): string {
-    const id = randomUUID();
-    this.#sessions.set(id, session);
-    const unsubscribe = session.onDisconnect?.((error) => {
-      void this.lost(id, session, error);
-    });
-    if (unsubscribe) this.#subscriptions.set(id, unsubscribe);
-    return id;
-  }
-
-  private async lost(id: string, session: DeviceSession, error: Error): Promise<void> {
-    if (this.#sessions.get(id) !== session) return;
-    this.#sessions.delete(id);
-    this.#subscriptions.get(id)?.();
-    this.#subscriptions.delete(id);
-    const deployment = this.#deployments.get(id);
-    this.#deployments.delete(id);
-    this.#busy.get(id)?.abort(error);
-    this.#monitors.get(id)?.controller.abort(error);
-    let recovery: Recovery | undefined;
-    if (session.descriptor.transport === "usb") {
-      if (this.getPreferences().usbAutoReconnect && session.descriptor.serialNumber?.trim()) {
-        recovery = {
-          id,
-          descriptor: session.descriptor,
-          deployment,
-          controller: new AbortController(),
-          attempt: 0,
-          preferences: this.getPreferences(),
-          working: false,
-        };
-        this.#recoveries.set(id, recovery);
-        this.recoveryEvent(recovery, "waiting");
-      } else {
-        this.send({
-          type: "usb-recovery",
-          state: "unavailable",
-          previousSessionId: id,
-          descriptor: session.descriptor,
-        });
-      }
-    } else {
-      this.send({ type: "state", state: "disconnected", sessionId: id, message: error.message });
-    }
-    await session.disconnect().catch(() => {});
-    if (recovery) void this.recover(recovery);
-  }
-
-  private recoveryEvent(
-    recovery: Recovery,
-    state: "waiting" | "connecting" | "cancelled" | "unavailable" | "exhausted",
-  ): void {
-    this.send({
-      type: "usb-recovery",
-      state,
-      previousSessionId: recovery.id,
-      descriptor: recovery.descriptor,
-    });
-  }
-
-  private cancelRecovery(recovery: Recovery, unavailable = false): void {
-    this.#recoveries.delete(recovery.id);
-    clearTimeout(recovery.timer);
-    recovery.controller.abort();
-    void recovery.candidate?.disconnect().catch(() => {});
-    this.recoveryEvent(recovery, unavailable ? "unavailable" : "cancelled");
-  }
-
-  private async recover(recovery: Recovery): Promise<void> {
-    const current = () => this.#recoveries.get(recovery.id) === recovery;
-    if (!current()) return;
-    recovery.working = true;
-    recovery.attempt++;
-    const signal = recovery.controller.signal;
-    let candidate: DeviceSession | undefined;
-    let unsubscribe: (() => void) | undefined;
-    let transferred = false;
-    try {
-      const devices = await this.#usb.discover(signal);
-      if (!current()) return;
-      const matches = devices.filter(
-        (item) => item.serialNumber?.trim() === recovery.descriptor.serialNumber?.trim(),
-      );
-      if (matches.length > 1) {
-        this.cancelRecovery(recovery, true);
-        return;
-      }
-      if (!matches.length) return;
-      if (!matches[0]!.metadata?.path) {
-        this.cancelRecovery(recovery, true);
-        return;
-      }
-      this.recoveryEvent(recovery, "connecting");
-      candidate = await this.#usb.connect(matches[0]!, signal);
-      recovery.candidate = candidate;
-      if (!current()) return;
-      let failure: Error | undefined;
-      unsubscribe = candidate.onDisconnect?.((error) => {
-        failure = error;
-      });
-      let verified = false;
-      try {
-        // A read-only round trip verifies the replacement handle even when no
-        // uploaded version is available. Never send run/stop during recovery.
-        const root = await candidate.list(REMOTE_PROJECT_ROOT, signal);
-        if (recovery.deployment) {
-          const listings = new Map<string, RemoteEntry[]>([[REMOTE_PROJECT_ROOT, root]]);
-          verified = true;
-          for (const file of recovery.deployment.files) {
-            const directory = path.posix.dirname(file.path);
-            if (!listings.has(directory))
-              listings.set(directory, await candidate.list(directory, signal));
-            const entry = listings.get(directory)!.find((item) => item.path === file.path);
-            if (
-              entry?.kind !== "file" ||
-              entry.size !== file.size ||
-              entry.checksum?.toLowerCase() !== file.checksum
-            ) {
-              verified = false;
-              break;
-            }
-          }
-        }
-      } catch (error) {
-        if (connectionFailure(error)) throw error;
-        verified = false;
-      }
-      if (failure) throw failure;
-      if (!candidate.connected)
-        throw new DeviceOperationError("connection", "USB connection lost.");
-      if (!current()) return;
-      unsubscribe?.();
-      unsubscribe = undefined;
-      const id = this.register(candidate);
-      transferred = true;
-      this.#recoveries.delete(recovery.id);
-      this.#recovered.set(recovery.id, id);
-      if (verified && recovery.deployment) this.#deployments.set(id, recovery.deployment);
-      this.send({
-        type: "usb-recovery",
-        state: "restored",
-        previousSessionId: recovery.id,
-        sessionId: id,
-        descriptor: candidate.descriptor,
-        deployment: recovery.deployment ? (verified ? "verified" : "changed") : "none",
-        ...(verified && recovery.deployment ? { buildId: recovery.deployment.buildId } : {}),
-      });
-    } catch {
-      // Keep waiting quietly. Permission/open failures can be transient while
-      // the OS is still enumerating a reinserted device.
-    } finally {
-      unsubscribe?.();
-      if (!transferred) await candidate?.disconnect().catch(() => {});
-      delete recovery.candidate;
-      recovery.working = false;
-      if (current()) {
-        const { usbRetryLimit, usbRetryInterval } = recovery.preferences;
-        if (usbRetryLimit !== "unlimited" && recovery.attempt >= usbRetryLimit) {
-          this.#recoveries.delete(recovery.id);
-          recovery.controller.abort();
-          this.recoveryEvent(recovery, "exhausted");
-        } else {
-          this.recoveryEvent(recovery, "waiting");
-          const delay =
-            usbRetryInterval === "backoff"
-              ? [1000, 2000, 5000][Math.min(recovery.attempt - 1, 2)]!
-              : usbRetryInterval;
-          recovery.timer = setTimeout(() => void this.recover(recovery), delay);
-          recovery.timer.unref?.();
-        }
-      }
-    }
-  }
-
-  private invalidateDeployment(id: string, paths: string[]): void {
-    const deployment = this.#deployments.get(id);
-    if (
-      deployment?.files.some((file) =>
-        paths.some(
-          (target) =>
-            file.path === target ||
-            file.path.startsWith(`${target}/`) ||
-            target.startsWith(`${path.posix.dirname(file.path)}/`),
-        ),
-      )
-    )
-      this.#deployments.delete(id);
-  }
-
-  private require(id: string): DeviceSession {
-    const session = this.#sessions.get(id);
-    if (!session)
-      throw new DeviceOperationError("connection", "Unknown or disconnected EV3 session.");
-    return session;
-  }
-
-  private report(error: unknown): void {
-    const normalized = normalizeDeviceError(error);
-    this.send({
-      type: "error",
-      category: normalized.category,
-      message: normalized.message,
-      recoverable: normalized.recoverable,
-    });
-    this.send({ type: "state", state: "error" });
-  }
-
-  private send(event: DeviceEvent): void {
-    if (event.type === "files-changed") this.invalidateDeployment(event.sessionId, event.paths);
-    const renderer = this.renderer();
-    if (renderer && !renderer.isDestroyed?.()) renderer.send("device:event", event);
-    for (const listener of this.listeners) listener(event);
+  renewFilePlan(ref: FileBatchRef, owner: CorePrincipal): void {
+    renewFilePlan(ref, owner);
   }
 }

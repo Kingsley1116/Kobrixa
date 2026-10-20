@@ -274,7 +274,22 @@ export class EventLedger implements CommonEventLedgerPort {
           data: {
             ...event.data,
             frames: event.data.frames.map((frame, index) =>
-              index === 0 ? { ...frame, gap: row.telemetryGap! } : frame,
+              index === 0
+                ? {
+                    ...frame,
+                    gap: {
+                      fromSequence: Math.min(
+                        row.telemetryGap!.fromSequence,
+                        frame.gap?.fromSequence ?? row.telemetryGap!.fromSequence,
+                      ),
+                      toSequence: Math.max(
+                        row.telemetryGap!.toSequence,
+                        frame.gap?.toSequence ?? row.telemetryGap!.toSequence,
+                      ),
+                      reason: frame.gap?.reason ?? row.telemetryGap!.reason,
+                    },
+                  }
+                : frame,
             ),
           },
         };
@@ -284,7 +299,22 @@ export class EventLedger implements CommonEventLedgerPort {
           data: {
             ...event.data,
             frames: event.data.frames.map((frame, index) =>
-              index === 0 ? { ...frame, gap: row.telemetryGap! } : frame,
+              index === 0
+                ? {
+                    ...frame,
+                    gap: {
+                      fromSequence: Math.min(
+                        row.telemetryGap!.fromSequence,
+                        frame.gap?.fromSequence ?? row.telemetryGap!.fromSequence,
+                      ),
+                      toSequence: Math.max(
+                        row.telemetryGap!.toSequence,
+                        frame.gap?.toSequence ?? row.telemetryGap!.toSequence,
+                      ),
+                      reason: frame.gap?.reason ?? row.telemetryGap!.reason,
+                    },
+                  }
+                : frame,
             ),
           },
         };

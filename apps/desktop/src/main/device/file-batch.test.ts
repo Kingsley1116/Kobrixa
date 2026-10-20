@@ -1,3 +1,4 @@
+import type { LegacyFileSession } from "../device-broker/legacy-files.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, symlink } from "node:fs/promises";
 import os from "node:os";
@@ -27,6 +28,10 @@ async function setup() {
   let locked = false;
   const abort = new AbortController();
   const session = {
+    confirm: async <T>(work: () => Promise<T>): Promise<T> => work(),
+    renewConfirmation() {},
+    remaining: () => ({ idleRemainingMs: 120000, totalRemainingMs: 600000 }),
+    cancel: async () => {},
     descriptor: { id: "mock", name: "EV3", transport: "mock" as const },
     connected: true,
     list: vi.fn(async (directory: string): Promise<RemoteEntry[]> => {
@@ -75,7 +80,8 @@ async function setup() {
     readMonitor: vi.fn(),
     readInputModes: vi.fn(),
     setInputMode: vi.fn(),
-  } satisfies DeviceSession;
+  } satisfies DeviceSession &
+    Pick<LegacyFileSession, "confirm" | "renewConfirmation" | "remaining" | "cancel">;
   const dialog = { showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: [dir] })) };
   const changed = vi.fn();
   const manager = new FileBatchManager(

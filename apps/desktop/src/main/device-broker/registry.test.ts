@@ -307,3 +307,57 @@ it("reports host and source subscription quota limits", () => {
   expect(ledger.create(owner)).toMatchObject({ ok: false, error: { detail: { limit: 32 } } });
   ledger.dispose();
 });
+
+it.each(["busy", "read-error"] as const)(
+  "overflow preserves an existing %s gap and the widest range",
+  (reason) => {
+    const sent: Stage3EventEnvelope[] = [];
+    const ledger = new EventLedger(
+      () => 0,
+      (event) => sent.push(event),
+      () => {},
+    );
+    const created = ledger.create(owner);
+    if (!created.ok) throw new Error("create");
+    const id = created.value.subscriptionId;
+    ledger.activate(owner, id);
+    const publish = (sequence: number, existing = false) =>
+      ledger.publish(
+        owner,
+        id,
+        {
+          kind: "devices.telemetry",
+          data: {
+            sessionId: ID,
+            frames: [
+              {
+                ...frame(),
+                sequence,
+                values: Array.from({ length: 38 }, () => ({ channelId: ID, value: 1 })),
+                ...(existing ? { gap: { fromSequence: 1, toSequence: 201, reason } } : {}),
+              },
+            ],
+            snapshot: {
+              sessionId: ID,
+              revision: 1,
+              status: "unavailable",
+              ageMs: null,
+              frame: null,
+            },
+          },
+        },
+        "telemetry",
+      );
+    try {
+      for (let sequence = 1; sequence <= 200; sequence++) publish(sequence);
+      expect(sent.length).toBeLessThan(200);
+      ledger.ack(owner, id, sent.at(-1)!.sequence);
+      publish(201, true);
+      const next = sent.at(-1)!;
+      if (next.kind !== "devices.telemetry") throw new Error("telemetry");
+      expect(next.data.frames[0]!.gap).toEqual({ fromSequence: 1, toSequence: 201, reason });
+    } finally {
+      ledger.dispose();
+    }
+  },
+);
