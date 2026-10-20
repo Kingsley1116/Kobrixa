@@ -1,0 +1,340 @@
+{
+  "formatVersion": 1,
+  "family": "declarative-ui-v1",
+  "cases": [
+    {
+      "id": "U01 all fourteen components",
+      "schema": "ui-resource-case",
+      "phase": "resource",
+      "input": {
+        "version": 1,
+        "resource": {
+          "kind": "panel",
+          "data": {
+            "message": {
+              "schema": {
+                "type": "string",
+                "maxLength": 4000,
+                "nullable": true
+              },
+              "initial": "Ready"
+            },
+            "progress": {
+              "schema": {
+                "type": "number",
+                "min": 0,
+                "max": 100,
+                "integer": false,
+                "nullable": true
+              },
+              "initial": null
+            }
+          },
+          "fields": {
+            "name": {
+              "schema": {
+                "type": "string",
+                "maxLength": 4000,
+                "nullable": true
+              },
+              "initial": "",
+              "required": true
+            },
+            "amount": {
+              "schema": {
+                "type": "number",
+                "min": 0,
+                "max": 100,
+                "integer": false,
+                "nullable": true
+              },
+              "initial": 0,
+              "required": true
+            },
+            "level": {
+              "schema": {
+                "type": "number",
+                "min": 0,
+                "max": 100,
+                "integer": false,
+                "nullable": true
+              },
+              "initial": 0,
+              "required": true
+            },
+            "mode": {
+              "schema": {
+                "type": "enum",
+                "values": [
+                  "one",
+                  "two"
+                ],
+                "nullable": false
+              },
+              "initial": "one",
+              "required": true
+            },
+            "enabled": {
+              "schema": {
+                "type": "boolean",
+                "nullable": false
+              },
+              "initial": false,
+              "required": true
+            }
+          },
+          "root": "root",
+          "nodes": [
+            {
+              "id": "root",
+              "type": "group",
+              "layout": "stack",
+              "children": [
+                "text",
+                "help",
+                "input",
+                "number",
+                "range",
+                "choice",
+                "boolean",
+                "action",
+                "hold",
+                "status",
+                "alert",
+                "progress",
+                "values"
+              ]
+            },
+            {
+              "id": "text",
+              "type": "text",
+              "value": {
+                "text": {
+                  "en": "Example",
+                  "zh-TW": "範例"
+                }
+              },
+              "emphasis": "normal"
+            },
+            {
+              "id": "help",
+              "type": "help",
+              "value": {
+                "text": {
+                  "en": "<b>plain text</b>"
+                }
+              }
+            },
+            {
+              "id": "input",
+              "type": "textInput",
+              "field": "name",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              }
+            },
+            {
+              "id": "number",
+              "type": "number",
+              "field": "amount",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              },
+              "step": 0.5
+            },
+            {
+              "id": "range",
+              "type": "range",
+              "field": "level",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              },
+              "step": 1
+            },
+            {
+              "id": "choice",
+              "type": "choice",
+              "field": "mode",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              },
+              "presentation": "segmented",
+              "options": [
+                {
+                  "value": "one",
+                  "label": {
+                    "en": "one"
+                  }
+                },
+                {
+                  "value": "two",
+                  "label": {
+                    "en": "two"
+                  }
+                }
+              ]
+            },
+            {
+              "id": "boolean",
+              "type": "boolean",
+              "field": "enabled",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              }
+            },
+            {
+              "id": "action",
+              "type": "action",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              },
+              "variant": "normal",
+              "action": {
+                "kind": "core",
+                "action": "openRecovery"
+              }
+            },
+            {
+              "id": "hold",
+              "type": "holdAction",
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              },
+              "command": "acme.ui.hold",
+              "arguments": {}
+            },
+            {
+              "id": "status",
+              "type": "status",
+              "text": {
+                "ref": {
+                  "scope": "data",
+                  "key": "message"
+                }
+              },
+              "tone": "neutral"
+            },
+            {
+              "id": "alert",
+              "type": "alert",
+              "text": {
+                "text": {
+                  "en": "Example",
+                  "zh-TW": "範例"
+                }
+              },
+              "severity": "warning"
+            },
+            {
+              "id": "progress",
+              "type": "progress",
+              "value": {
+                "ref": {
+                  "scope": "data",
+                  "key": "progress"
+                }
+              },
+              "max": 100,
+              "label": {
+                "en": "Example",
+                "zh-TW": "範例"
+              }
+            },
+            {
+              "id": "values",
+              "type": "keyValue",
+              "rows": [
+                {
+                  "id": "value",
+                  "label": {
+                    "en": "Example",
+                    "zh-TW": "範例"
+                  },
+                  "value": {
+                    "literal": null
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "raw": "{\"kind\":\"panel\",\"data\":{\"message\":{\"schema\":{\"type\":\"string\",\"maxLength\":4000,\"nullable\":true},\"initial\":\"Ready\"},\"progress\":{\"schema\":{\"type\":\"number\",\"min\":0,\"max\":100,\"integer\":false,\"nullable\":true},\"initial\":null}},\"fields\":{\"name\":{\"schema\":{\"type\":\"string\",\"maxLength\":4000,\"nullable\":true},\"initial\":\"\",\"required\":true},\"amount\":{\"schema\":{\"type\":\"number\",\"min\":0,\"max\":100,\"integer\":false,\"nullable\":true},\"initial\":0,\"required\":true},\"level\":{\"schema\":{\"type\":\"number\",\"min\":0,\"max\":100,\"integer\":false,\"nullable\":true},\"initial\":0,\"required\":true},\"mode\":{\"schema\":{\"type\":\"enum\",\"values\":[\"one\",\"two\"],\"nullable\":false},\"initial\":\"one\",\"required\":true},\"enabled\":{\"schema\":{\"type\":\"boolean\",\"nullable\":false},\"initial\":false,\"required\":true}},\"root\":\"root\",\"nodes\":[{\"id\":\"root\",\"type\":\"group\",\"layout\":\"stack\",\"children\":[\"text\",\"help\",\"input\",\"number\",\"range\",\"choice\",\"boolean\",\"action\",\"hold\",\"status\",\"alert\",\"progress\",\"values\"]},{\"id\":\"text\",\"type\":\"text\",\"value\":{\"text\":{\"en\":\"Example\",\"zh-TW\":\"範例\"}},\"emphasis\":\"normal\"},{\"id\":\"help\",\"type\":\"help\",\"value\":{\"text\":{\"en\":\"<b>plain text</b>\"}}},{\"id\":\"input\",\"type\":\"textInput\",\"field\":\"name\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"}},{\"id\":\"number\",\"type\":\"number\",\"field\":\"amount\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"},\"step\":0.5},{\"id\":\"range\",\"type\":\"range\",\"field\":\"level\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"},\"step\":1},{\"id\":\"choice\",\"type\":\"choice\",\"field\":\"mode\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"},\"presentation\":\"segmented\",\"options\":[{\"value\":\"one\",\"label\":{\"en\":\"one\"}},{\"value\":\"two\",\"label\":{\"en\":\"two\"}}]},{\"id\":\"boolean\",\"type\":\"boolean\",\"field\":\"enabled\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"}},{\"id\":\"action\",\"type\":\"action\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"},\"variant\":\"normal\",\"action\":{\"kind\":\"core\",\"action\":\"openRecovery\"}},{\"id\":\"hold\",\"type\":\"holdAction\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"},\"command\":\"acme.ui.hold\",\"arguments\":{}},{\"id\":\"status\",\"type\":\"status\",\"text\":{\"ref\":{\"scope\":\"data\",\"key\":\"message\"}},\"tone\":\"neutral\"},{\"id\":\"alert\",\"type\":\"alert\",\"text\":{\"text\":{\"en\":\"Example\",\"zh-TW\":\"範例\"}},\"severity\":\"warning\"},{\"id\":\"progress\",\"type\":\"progress\",\"value\":{\"ref\":{\"scope\":\"data\",\"key\":\"progress\"}},\"max\":100,\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"}},{\"id\":\"values\",\"type\":\"keyValue\",\"rows\":[{\"id\":\"value\",\"label\":{\"en\":\"Example\",\"zh-TW\":\"範例\"},\"value\":{\"literal\":null}}]}]}",
+        "rawBytes": 2425,
+        "commands": [
+          {
+            "id": "acme.ui.hold",
+            "title": {
+              "en": "Example",
+              "zh-TW": "範例"
+            },
+            "invocation": "context-v1",
+            "arguments": {}
+          }
+        ],
+        "panels": [
+          "acme.ui.panel"
+        ]
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "U01 narrow status",
+      "schema": "ui-resource-case",
+      "phase": "resource",
+      "input": {
+        "version": 1,
+        "resource": {
+          "kind": "status",
+          "text": {
+            "text": {
+              "en": "Example",
+              "zh-TW": "範例"
+            }
+          },
+          "tone": "info",
+          "data": {}
+        },
+        "raw": "{\"kind\":\"status\",\"text\":{\"text\":{\"en\":\"Example\",\"zh-TW\":\"範例\"}},\"tone\":\"info\",\"data\":{}}",
+        "rawBytes": 91,
+        "commands": [
+          {
+            "id": "acme.ui.hold",
+            "title": {
+              "en": "Example",
+              "zh-TW": "範例"
+            },
+            "invocation": "context-v1",
+            "arguments": {}
+          }
+        ],
+        "panels": [
+          "acme.ui.panel"
+        ]
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}

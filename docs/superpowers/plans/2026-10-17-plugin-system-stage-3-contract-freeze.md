@@ -95,3 +95,30 @@ protocol/runtime/SDK/device builds, runtime contract typechecks, desktop contrac
 tests and check:desktop. Local Vitest execution is not proof of TypeScript
 expectTypeOf assertions or completed F. Record the actual assembly commit and
 all per-file stopped-owner SHA receipts before recording final F.
+
+### B1 freeze portion
+
+Published API remains 1.4.0. UI v1 and command envelope 1 are module-local only.
+B1 portions completed: declarations, fixed limits, strict method-map types,
+resource fixture inventory, core/action/renderer/launch/lifecycle host ports.
+B1 source read budget 5000 ms; UI query 5000 ms; initialize/negotiate/ready share
+10000 ms; command 30000 ms; challenge 100 ms; expiry at now >= issuedAt+350 ms.
+Retirement gate: storage 10000 ms parallel with stop 15000 ms plus journal
+5000 ms, then manager 4000 ms (request 2000 ms); cleanup 24000 ms; outer 25000 ms.
+Forward persistence imports are resolved only by 3B2-T0 before F.
+
+Successors:
+- protocol ui-resource/ui-types/ui-methods/ui-limits/ui-contract and the three UI fixture JSON files: 3B1-T1.
+- runtime ui-host-ports and ui-contract: 3B1-T2.
+- runtime ui-lifecycle/core-actions: 3B1-T3.
+- runtime ui-subscriptions: 3B1-T2.
+- protocol ui-validation: 3B1-T1.
+- desktop main/plugins/core-recovery: 3A-T8/D150, then 3B1-T5/D160.
+- desktop shared/plugin-persistence: 3A-T8/D150, then 3B2-T9/D170; preserve the F type-only bridge.
+- runtime index.ts: B2-T0/H-R final assembly after all defining modules, before F checks.
+- runtime builtin-launch: 3B1-T4.
+- renderer plugin-ui/host-ports: 3B1-T7; renderer contract.test.ts: 3B1-T6.
+- this receipt: shared integration owner after F.
+
+Budgets are assertions to measure, not measured performance. P160 requires real
+3A ports and installed synthetic process; U12 real persistence remains open to X-T1.
