@@ -1,4 +1,4 @@
-import type { BusinessResult, Counter, DeviceErrorDetail, Handle, PermissionErrorDetail, ResourceErrorDetail } from "@kobrixa/plugin-protocol";
+import type { BusinessResult, Counter, Handle } from "@kobrixa/plugin-protocol";
 import type { CoreActionReference, CoreActionTarget, CoreActionValidationPort, PhysicalIdentity } from "@kobrixa/plugin-runtime";
 import type { IdleObservation, ProviderOutcome } from "./provider.js";
 import type { DeviceRecoverySnapshot, JournalPort } from "./journal-port.js";
