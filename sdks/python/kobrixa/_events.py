@@ -16,17 +16,23 @@ class EventInbox:
             self._pending-=1
             if not self._pending: self._early=[]
         return finish
-    def open(self,id,listener,resync):
+    def open(self,id,listener,resync,sequence=0):
         if len(self._slots)>=32: raise ValueError('Subscription queue full')
-        self._slots[id]={'last':0,'owner':None,'queue':[],'bytes':0,'controls':0,'task':None,'listener':listener,'resync':resync}
+        self._slots[id]={'last':sequence,'watermark':sequence,'owner':None,'queue':[],'bytes':0,'controls':0,'task':None,'listener':listener,'resync':resync}
         early,self._early=self._early,[]
         for event in early:
             if event['subscriptionId']==id: self.accept(event)
             else: self._early.append(event)
+    def reconcile(self,id,sequence):
+        slot=self._slots.get(id)
+        if slot is None or sequence < slot['watermark']: return
+        slot['watermark']=sequence
+        slot['last']=max(slot['last'],sequence)
     def last(self,id): return self._slots.get(id,{}).get('last',0)
     def close(self,id):
         slot=self._slots.pop(id,None)
-        if slot and slot['task']: slot['task'].cancel()
+        self._early=[event for event in self._early if event['subscriptionId']!=id]
+        if slot and slot['task'] and slot['task'] is not asyncio.current_task(): slot['task'].cancel()
     def accept(self,event):
         if not self._enabled: return False
         try: self._validator.validate('events/deliver.params',event)
@@ -56,8 +62,11 @@ class EventInbox:
                 event,gap=slot['queue'][0]
                 try:
                     if gap or event['kind']=='events.resyncRequired':await slot['resync']()
-                    result=slot['listener'](event)
-                    if inspect.isawaitable(result):await result
+                    if self._slots.get(event['subscriptionId']) is not slot: return
+                    if event['sequence']>slot['watermark']:
+                        result=slot['listener'](event)
+                        if inspect.isawaitable(result):await result
+                    if self._slots.get(event['subscriptionId']) is not slot: return
                 except Exception: pass
                 slot['queue'].pop(0);slot['bytes']-=_size(event)
                 if event['delivery']=='control':slot['controls']-=1
@@ -86,5 +95,29 @@ def close_event_channel(peer):
         inbox._acks.clear()
         peer.devices.inbox = None
 
+class _UiEventClientPort:
+    def __init__(self, peer):
+        self.peer = peer
+
+    def begin(self):
+        _BOUND[self.peer].enable()
+        return _BOUND[self.peer].begin_subscription()
+
+    def adopt(self, subscription_id, sequence, snapshot, listener):
+        inbox = _BOUND[self.peer]
+        inbox.enable()
+        async def resync():
+            result = await snapshot()
+            if not result["ok"]:
+                raise ValueError(result["error"]["message"])
+            inbox.reconcile(subscription_id, result["value"]["sequence"])
+        def receive(event):
+            if event["kind"].startswith("ui."):
+                return listener(event)
+        inbox.open(subscription_id, receive, resync, sequence)
+
+    def forget(self, subscription_id):
+        _BOUND[self.peer].close(subscription_id)
+
 def ui_event_client_port(peer):
-    raise NotImplementedError("UI event client is unavailable before B1-T1")
+    return _UiEventClientPort(peer)

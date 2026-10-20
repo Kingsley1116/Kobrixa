@@ -1,3 +1,4 @@
+import { validUiWire } from "./ui-validation.js";
 import type { z } from "zod";
 import { validateDeviceWire } from "./device-validation.js";
 import { RPC_ERRORS } from "./errors.js";
@@ -61,6 +62,7 @@ export interface RpcPeerOptions {
 type Definition = { params: z.ZodType; result: z.ZodType };
 type AnyHandler = (params: unknown, context: RequestContext) => unknown;
 interface Pending {
+  uiInput?: unknown;
   method: RequestMethod;
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -150,6 +152,10 @@ export class RpcPeer {
       return Promise.reject(new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`));
     const parsed = (requestMethods[method].params as z.ZodType).parse(params);
     validateDeviceWire(`${method}.params`, parsed);
+    if (!validUiWire(method, "params", parsed))
+      return Promise.reject(
+        new RpcError(RPC_ERRORS.invalidParams, `Invalid parameters for ${method}.`),
+      );
     const id = this.#nextId++;
     return new Promise<ResultOf<M>>((resolve, reject) => {
       const timeoutMs = options.timeoutMs ?? this.options.timeoutMs ?? 30_000;
@@ -177,6 +183,7 @@ export class RpcPeer {
       );
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.#pending.set(id, {
+        uiInput: method === "command/invoke" ? structuredClone(parsed) : undefined,
         method,
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -291,7 +298,7 @@ export class RpcPeer {
         error: { code: RPC_ERRORS.invalidRequest, message: "Duplicate request id." },
       });
     const input = definition.params.safeParse(params);
-    if (!input.success)
+    if (!input.success || !validUiWire(method, "params", input.data))
       return this.#trySend({
         jsonrpc: "2.0",
         id,
@@ -326,6 +333,8 @@ export class RpcPeer {
     };
     try {
       const result = definition.result.parse(await handler(input.data, context));
+      if (!validUiWire(method, "result", result, input.data))
+        throw new RpcError(RPC_ERRORS.internalError, `Invalid result for ${method}.`);
       validateDeviceWire(`${method}.result`, result);
       if (controller.signal.aborted)
         throw new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`);
@@ -389,7 +398,7 @@ export class RpcPeer {
     if ("error" in outcome)
       return pending.reject(new RpcError(outcome.error.code, outcome.error.message));
     const result = requestMethods[pending.method].result.safeParse(outcome.result);
-    if (result.success) {
+    if (result.success && validUiWire(pending.method, "result", result.data, pending.uiInput)) {
       try {
         validateDeviceWire(`${pending.method}.result`, result.data, serialized);
         pending.resolve(result.data);

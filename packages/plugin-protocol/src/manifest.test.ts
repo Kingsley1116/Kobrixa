@@ -44,3 +44,44 @@ describe("plugin manifest", () => {
     expect(accepts({ ...valid, contributes: { commands } })).toBe(false);
   });
 });
+
+import { uiDeclarationProblems, staticLanguageDeclarationProblems } from "./manifest.js";
+it("U02 distinguishes source errors from quarantined resource headers", () => {
+  const value = {
+    id: "acme.ui",
+    version: "1.0.0",
+    apiVersion: "^1.6.0",
+    runtime: { kind: "node", entry: "main.js" },
+    permissions: ["ui.panels"],
+    contributes: {
+      panels: [
+        {
+          id: "acme.ui.main",
+          title: { en: "Panel" },
+          location: "right",
+          resource: { version: 99, path: "../outside.json" },
+        },
+      ],
+    },
+  };
+  const manifest = pluginManifestSchema.parse(value);
+  expect(uiDeclarationProblems(manifest)).toEqual([]);
+  expect(
+    uiDeclarationProblems(pluginManifestSchema.parse({ ...value, permissions: [] })),
+  ).not.toEqual([]);
+  expect(
+    uiDeclarationProblems(
+      pluginManifestSchema.parse({ ...value, activationEvents: ["onPanel:foreign.ui.panel"] }),
+    ),
+  ).not.toEqual([]);
+  for (const key of ["panels", "status"]) {
+    const parsed = pluginManifestSchema.parse({
+      ...value,
+      runtime: { kind: "static" },
+      contributes: { [key]: [] },
+    });
+    expect(staticLanguageDeclarationProblems(parsed).some((message) => message.includes(key))).toBe(
+      true,
+    );
+  }
+});

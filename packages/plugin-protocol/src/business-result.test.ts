@@ -59,3 +59,59 @@ it("future resource projections compile but are rejected by the P150 schema", ()
     }).success,
   ).toBe(false);
 });
+
+import { PLUGIN_API_VERSION } from "./limits.js";
+it("keeps public P150 closed while isolated UI results compile", () => {
+  const failure = {
+    ok: false,
+    error: {
+      code: "PLUGIN_E_STALE_RESOURCE",
+      message: "stale",
+      detail: { kind: "resource", reason: "stale", resource: "ui-binding" },
+    },
+  };
+  expect(commonFailureSchemaFor("1.5.0").safeParse(failure).success).toBe(false);
+  expect(commonFailureSchemaFor("1.6.0").safeParse(failure).success).toBe(true);
+  expect(commonFailureSchema.safeParse(failure).success).toBe(
+    String(PLUGIN_API_VERSION) !== "1.5.0",
+  );
+  expect(
+    commonFailureSchemaFor("1.6.0").safeParse({
+      ...failure,
+      error: { ...failure.error, detail: { ...failure.error.detail, resource: "storage-watch" } },
+    }).success,
+  ).toBe(false);
+});
+
+it("keeps every persistence code and resource outside the P160 publication", () => {
+  for (const resource of [
+    "storage-write",
+    "storage-read",
+    "storage-list",
+    "storage-export",
+    "storage-watch",
+  ]) {
+    expect(
+      commonFailureSchema.safeParse({
+        ok: false,
+        error: {
+          code: "PLUGIN_E_STALE_RESOURCE",
+          message: "stale",
+          detail: { kind: "resource", reason: "stale", resource },
+        },
+      }).success,
+    ).toBe(false);
+  }
+  for (const code of [
+    "PLUGIN_E_SETTINGS_SCHEMA",
+    "PLUGIN_E_SETTINGS_CONFLICT",
+    "PLUGIN_E_SETTINGS_SAVE",
+    "PLUGIN_E_STORAGE_QUOTA",
+    "PLUGIN_E_STORAGE_CONFLICT",
+    "PLUGIN_E_STORAGE_IO",
+    "PLUGIN_E_STORAGE_VERSION",
+  ]) {
+    expect(pluginErrorCodeSchema.safeParse(code).success).toBe(false);
+  }
+});
+import { pluginErrorCodeSchema } from "./business-result.js";

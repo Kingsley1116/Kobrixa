@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -97,7 +98,7 @@ class PluginProcessTest(unittest.TestCase):
             "apiVersion": "1.1.0", "pluginId": "acme.behaviors", "locale": "zh-TW",
             "grantedPermissions": ["ui.notifications"]}})
         reply = self.receive()
-        self.assertEqual(reply["result"]["apiVersion"], "1.5.0")
+        self.assertEqual(reply["result"]["apiVersion"], "1.6.0")
 
     def test_command_round_trip_with_print_redirected(self):
         self.initialize()
@@ -302,3 +303,78 @@ class PluginReceiveTest(unittest.TestCase):
         self.assertIn("injected receive failure", stderr.getvalue())
         plugin._receive(json.dumps(message))
         future.set_result.assert_called_once_with(message)
+
+class UiHandshakeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_negotiate_ready_and_legacy(self):
+        import sys
+        from kobrixa import Plugin
+        original = sys.stdout
+        plugin = Plugin()
+        sys.stdout = original
+        calls = []
+        @plugin.command("acme.ui.old")
+        async def old(ctx):
+            calls.append("old")
+        @plugin.ready
+        async def ready(ctx):
+            calls.append("ready")
+        try:
+            await plugin._dispatch("initialize", {"apiVersion": "1.6.0", "pluginId": "acme.ui",
+                                                   "locale": "en", "grantedPermissions": ["ui.panels"]})
+            self.assertFalse((await plugin._dispatch("ui/ready", {}))["ok"])
+            await plugin._dispatch("ui/negotiate", {"commandEnvelopeVersions": [1], "uiResourceVersions": [1]})
+            self.assertTrue((await plugin._dispatch("ui/ready", {}))["ok"])
+            self.assertTrue((await plugin._dispatch("ui/ready", {}))["ok"])
+            self.assertIsNone(await plugin._dispatch("command/execute", {"command": "acme.ui.old"}))
+            self.assertEqual(calls, ["ready", "old"])
+        finally:
+            sys.stdout = original
+
+class InvocationFactoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_overlapping_contexts_are_isolated(self):
+        from types import SimpleNamespace
+        from kobrixa import create_invocation_context
+        base = SimpleNamespace(plugin_id="acme.ui")
+        first = {"context": {"actionRef": "first"}}
+        a = create_invocation_context(base, first)
+        b = create_invocation_context(base, {"context": {"actionRef": "second"}})
+        c = create_invocation_context(base, {"context": {}})
+        first["context"]["actionRef"] = "changed"
+        seen = []
+        async def read(context):
+            await asyncio.sleep(0)
+            seen.append(context.invocation["context"].get("actionRef"))
+        await asyncio.gather(read(b), read(a), read(c))
+        self.assertEqual(seen, ["second", "first", None])
+        a.invocation["context"]["actionRef"] = "changed again"
+        self.assertEqual(a.invocation["context"]["actionRef"], "first")
+        self.assertEqual(vars(base), {"plugin_id": "acme.ui"})
+        for context in (base, a, b, c):
+            for name in ("actions", "settings", "storage", "drain"):
+                self.assertFalse(hasattr(context, name))
+
+    async def test_panel_dispatch_uses_factory_with_nested_immutable_context(self):
+        from kobrixa import Plugin
+        from tests.test_commands import invocation
+        original = sys.stdout
+        plugin = Plugin()
+        sys.stdout = original
+        seen = []
+        @plugin.context_command("acme.ui.run")
+        async def command(ctx):
+            seen.append(ctx.invocation)
+            self.assertEqual(ctx.context["form"]["values"]["field"], "value")
+            return {"output": {}, "fieldErrors": []}
+        try:
+            await plugin._dispatch("initialize", {"apiVersion":"1.6.0", "pluginId":"acme.ui", "locale":"en", "grantedPermissions":[]})
+            await plugin._dispatch("ui/negotiate", {"commandEnvelopeVersions":[1], "uiResourceVersions":[1]})
+            await plugin._dispatch("ui/ready", {})
+            call = invocation()
+            call["context"]["origin"] = "panel"
+            call["context"]["binding"] = {"contributionId":"acme.ui.panel", "panelInstance":call["invocationId"], "kind":"panel", "uiResourceGeneration":1, "generation":1, "hostEpoch":call["invocationId"], "processEpoch":call["invocationId"]}
+            call["context"]["form"] = {"revision":0,"values":{"field":"value"}}
+            result = await plugin._dispatch("command/invoke", call)
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(seen, [call])
+        finally:
+            sys.stdout = original

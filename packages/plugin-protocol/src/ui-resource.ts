@@ -32,7 +32,6 @@ export type StatusResourceV1 = {
   visibleWhen?: Condition;
 };
 
-
 export type Condition =
   | { op: "eq" | "ne"; left: ValueRef; right: Scalar }
   | { op: "lt" | "lte" | "gt" | "gte"; left: ValueRef; right: number }
@@ -86,3 +85,204 @@ export type UiNodeV1 = UiNodeBase &
     | { type: "progress"; value: DisplayValue; max: number; label: Text }
     | { type: "keyValue"; rows: { id: LocalId; label: Text; value: DisplayValue; unit?: Text }[] }
   );
+
+import { z } from "zod";
+import { namespacedIdSchema } from "./common.js";
+export const localIdSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z][a-z0-9-]{0,31}$/);
+const stringBody = z.string().min(1).max(8000);
+const stringLabel = z.string().min(1).max(400);
+export const uiTextSchema = z.strictObject({ en: stringBody, "zh-TW": stringBody.exactOptional() });
+export const uiLabelSchema = z.strictObject({
+  en: stringLabel,
+  "zh-TW": stringLabel.exactOptional(),
+});
+export const uiScalarSchema = z.union([z.string().max(8000), z.number(), z.boolean(), z.null()]);
+export const valueSpecSchema = z.union([
+  z.strictObject({
+    type: z.literal("string"),
+    maxLength: z.number().int().min(1).max(4000),
+    nullable: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal("number"),
+    min: z.number(),
+    max: z.number(),
+    integer: z.boolean(),
+    nullable: z.boolean(),
+  }),
+  z.strictObject({ type: z.literal("boolean"), nullable: z.boolean() }),
+  z.strictObject({
+    type: z.literal("enum"),
+    values: z.array(z.string().min(1).max(256)).min(1).max(32),
+    nullable: z.boolean(),
+  }),
+]);
+export const valueRefSchema = z.strictObject({
+  scope: z.enum(["data", "form"]),
+  key: localIdSchema,
+});
+const dataRefSchema = z.strictObject({ scope: z.literal("data"), key: localIdSchema });
+export const displayValueSchema = z.union([
+  z.strictObject({ literal: uiScalarSchema }),
+  z.strictObject({ ref: valueRefSchema }),
+]);
+export const displayTextSchema = z.union([
+  z.strictObject({ text: uiTextSchema }),
+  z.strictObject({ ref: dataRefSchema }),
+]);
+function conditionAt(depth: number): z.ZodType<Condition, Condition> {
+  const leaf = z.union([
+    z.strictObject({ op: z.enum(["eq", "ne"]), left: valueRefSchema, right: uiScalarSchema }),
+    z.strictObject({
+      op: z.enum(["lt", "lte", "gt", "gte"]),
+      left: valueRefSchema,
+      right: z.number(),
+    }),
+  ]);
+  if (depth === 1) return leaf;
+  const child = conditionAt(depth - 1);
+  return z.union([
+    leaf,
+    z.strictObject({ op: z.enum(["all", "any"]), items: z.array(child).min(1).max(8) }),
+    z.strictObject({ op: z.literal("not"), item: child }),
+  ]);
+}
+export const conditionSchema = conditionAt(4);
+export const argumentBindingsSchema = z.record(localIdSchema, displayValueSchema);
+export const uiActionSchema = z.union([
+  z.strictObject({
+    kind: z.literal("command"),
+    command: namespacedIdSchema,
+    arguments: argumentBindingsSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("core"),
+    action: z.literal("openPanel"),
+    panelId: namespacedIdSchema,
+  }),
+  z.strictObject({ kind: z.literal("core"), action: z.literal("stop"), operation: dataRefSchema }),
+  z.strictObject({
+    kind: z.literal("core"),
+    action: z.literal("disconnect"),
+    session: dataRefSchema,
+  }),
+  z.strictObject({ kind: z.literal("core"), action: z.literal("openRecovery") }),
+]);
+const base = {
+  id: localIdSchema,
+  visibleWhen: conditionSchema.exactOptional(),
+  enabledWhen: conditionSchema.exactOptional(),
+};
+const input = { field: localIdSchema, label: uiLabelSchema, help: uiTextSchema.exactOptional() };
+const numberInput = {
+  ...input,
+  step: z.number().min(Number.MIN_VALUE),
+  unit: uiLabelSchema.exactOptional(),
+};
+const tone = z.enum(["neutral", "info", "success", "warning", "error"]);
+export const uiNodeV1Schema = z.union([
+  z.strictObject({
+    ...base,
+    type: z.literal("group"),
+    label: uiLabelSchema.exactOptional(),
+    help: uiTextSchema.exactOptional(),
+    layout: z.enum(["stack", "row"]),
+    children: z.array(localIdSchema).min(1).max(32),
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal("text"),
+    value: displayTextSchema,
+    emphasis: z.enum(["normal", "strong"]),
+  }),
+  z.strictObject({ ...base, type: z.literal("help"), value: displayTextSchema }),
+  z.strictObject({
+    ...base,
+    ...input,
+    type: z.literal("textInput"),
+    placeholder: uiLabelSchema.exactOptional(),
+  }),
+  z.strictObject({ ...base, ...numberInput, type: z.literal("number") }),
+  z.strictObject({ ...base, ...numberInput, type: z.literal("range") }),
+  z.strictObject({
+    ...base,
+    ...input,
+    type: z.literal("choice"),
+    presentation: z.enum(["select", "segmented"]),
+    options: z
+      .array(z.strictObject({ value: z.string().min(1).max(256), label: uiLabelSchema }))
+      .min(1)
+      .max(32),
+  }),
+  z.strictObject({ ...base, ...input, type: z.literal("boolean") }),
+  z.strictObject({
+    ...base,
+    type: z.literal("action"),
+    label: uiLabelSchema,
+    action: uiActionSchema,
+    variant: z.enum(["normal", "primary", "danger"]),
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal("holdAction"),
+    label: uiLabelSchema,
+    command: namespacedIdSchema,
+    arguments: argumentBindingsSchema,
+    help: uiTextSchema.exactOptional(),
+  }),
+  z.strictObject({ ...base, type: z.literal("status"), text: displayTextSchema, tone }),
+  z.strictObject({
+    ...base,
+    type: z.literal("alert"),
+    text: displayTextSchema,
+    severity: z.enum(["info", "warning", "error"]),
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal("progress"),
+    value: displayValueSchema,
+    max: z.number().min(Number.MIN_VALUE),
+    label: uiLabelSchema,
+  }),
+  z.strictObject({
+    ...base,
+    type: z.literal("keyValue"),
+    rows: z
+      .array(
+        z.strictObject({
+          id: localIdSchema,
+          label: uiLabelSchema,
+          value: displayValueSchema,
+          unit: uiLabelSchema.exactOptional(),
+        }),
+      )
+      .min(1)
+      .max(16),
+  }),
+]);
+const dataSlotSchema = z.strictObject({ schema: valueSpecSchema, initial: uiScalarSchema });
+const fieldSchema = z.strictObject({
+  schema: valueSpecSchema,
+  initial: uiScalarSchema,
+  required: z.boolean(),
+  requiredWhen: conditionSchema.exactOptional(),
+});
+export const panelResourceV1Schema = z.strictObject({
+  kind: z.literal("panel"),
+  data: z.record(localIdSchema, dataSlotSchema),
+  fields: z.record(localIdSchema, fieldSchema),
+  root: localIdSchema,
+  nodes: z.array(uiNodeV1Schema).min(1).max(256),
+});
+export const statusResourceV1Schema = z.strictObject({
+  kind: z.literal("status"),
+  text: displayTextSchema,
+  tone,
+  data: z.record(localIdSchema, dataSlotSchema),
+  visibleWhen: conditionSchema.exactOptional(),
+});
+export const uiResourceV1Schema = z.union([panelResourceV1Schema, statusResourceV1Schema]);

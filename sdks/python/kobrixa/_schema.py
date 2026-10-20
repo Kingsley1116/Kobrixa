@@ -18,6 +18,8 @@ SUPPORTED_KEYWORDS = frozenset({
 })
 
 
+SUPPORTED_KEYWORDS = SUPPORTED_KEYWORDS | frozenset({"propertyNames", "minProperties", "maxProperties", "not", "prefixItems"})
+
 class SchemaError(ValueError):
     pass
 
@@ -71,9 +73,13 @@ class Validator:
         _device_semantics(name, value)
 
     def _check(self, schema: dict, value, path: str) -> list:
+        if schema is False: return [f"{path}: forbidden value"]
+        if schema is True: return []
         unknown = set(schema) - SUPPORTED_KEYWORDS
         if unknown:
             raise SchemaError(f"Unsupported schema keywords: {sorted(unknown)}")
+        if "not" in schema and not self._check(schema["not"], value, path):
+            return [f"{path}: forbidden alternative"]
         if "anyOf" in schema and not any(not self._check(item, value, path) for item in schema["anyOf"]):
             return [f"{path}: no alternative matched"]
         if "oneOf" in schema and sum(1 for item in schema["oneOf"] if not self._check(item, value, path)) != 1:
@@ -99,10 +105,18 @@ class Validator:
         if isinstance(value, list):
             if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", len(value)):
                 errors.append(f"{path}: wrong number of items")
-            if "items" in schema:
-                for index, item in enumerate(value):
+            prefix = schema.get("prefixItems", [])
+            for index, item in enumerate(value):
+                if index < len(prefix):
+                    errors += self._check(prefix[index], item, f"{path}[{index}]")
+                elif "items" in schema:
                     errors += self._check(schema["items"], item, f"{path}[{index}]")
         if isinstance(value, dict):
+            if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", len(value)):
+                errors.append(f"{path}: wrong number of properties")
+            if "propertyNames" in schema:
+                for key in value:
+                    errors += self._check(schema["propertyNames"], key, f"{path}.key")
             properties = schema.get("properties", {})
             for key in schema.get("required", []):
                 if key not in value:

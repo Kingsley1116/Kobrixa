@@ -19,7 +19,7 @@ function connect(definition: Parameters<typeof runPlugin>[0]) {
 
 describe("JS plugin SDK", () => {
   it("exposes the same API version as its initialize response", () => {
-    expect(API_VERSION).toBe("1.5.0");
+    expect(API_VERSION).toBe("1.6.0");
   });
   it("activates during initialize and runs registered commands", async () => {
     const messages: unknown[] = [];
@@ -37,7 +37,7 @@ describe("JS plugin SDK", () => {
       return null;
     });
     await expect(host.request("initialize", init)).resolves.toMatchObject({
-      apiVersion: "1.5.0",
+      apiVersion: "1.6.0",
       sdk: { name: "@kobrixa/plugin-sdk" },
     });
     await host.request("command/execute", { command: "acme.hello.greet" });
@@ -99,4 +99,137 @@ describe("JS plugin SDK", () => {
     expect(port.postMessage).toHaveBeenCalledWith("x");
     expect(port.start).toHaveBeenCalled();
   });
+});
+
+it("U06 ready can query host after negotiation, and legacy remains null", async () => {
+  let pluginReceive: ((text: string) => void) | undefined;
+  let hostReceive: ((text: string) => void) | undefined;
+  const host = new RpcPeer({
+    send: (text) => queueMicrotask(() => pluginReceive?.(text)),
+    onMessage: (listener) => {
+      hostReceive = listener;
+      return () => {
+        hostReceive = undefined;
+      };
+    },
+  });
+  let legacy = 0;
+  let ready = 0;
+  const plugin = await runPlugin(
+    {
+      activate(context) {
+        context.commands.register("acme.ui.old", () => {
+          legacy++;
+        });
+        context.commands.registerContext("acme.ui.run", {}, async (invocation) => {
+          expect(invocation).toHaveProperty(
+            "invocation.context.actionRef",
+            "00000000-0000-4000-8000-000000000099",
+          );
+          expect(invocation).not.toHaveProperty("invocation.signal");
+          expect(Object.isFrozen(invocation)).toBe(true);
+          return { output: {}, fieldErrors: [] };
+        });
+      },
+      async ready(context) {
+        const instances = await context.ui.instances();
+        expect(instances.ok).toBe(true);
+        ready++;
+      },
+    },
+    {
+      channel: {
+        send: (text) => queueMicrotask(() => hostReceive?.(text)),
+        onMessage: (listener) => {
+          pluginReceive = listener;
+          return () => {
+            pluginReceive = undefined;
+          };
+        },
+      },
+      exit() {},
+    },
+  );
+  host.handle("ui/instances", async () => ({ ok: true, value: { instances: [] } }));
+  try {
+    await host.request("initialize", {
+      apiVersion: "1.6.0",
+      pluginId: "acme.ui",
+      locale: "en",
+      grantedPermissions: ["ui.panels"],
+    });
+    expect(ready).toBe(0);
+    expect((await host.request("ui/ready", {})).ok).toBe(false);
+    await host.request("ui/negotiate", { commandEnvelopeVersions: [1], uiResourceVersions: [1] });
+    expect((await host.request("ui/ready", {})).ok).toBe(true);
+    expect((await host.request("ui/ready", {})).ok).toBe(true);
+    expect(ready).toBe(1);
+    expect(
+      await host.request("command/invoke", {
+        version: 1,
+        invocationId: "00000000-0000-4000-8000-000000000001",
+        command: "acme.ui.run",
+        arguments: {},
+        context: {
+          contextRef: null,
+          origin: "management",
+          locale: "en",
+          actionRef: "00000000-0000-4000-8000-000000000099",
+          trigger: { kind: "activate" },
+        },
+      }),
+    ).toEqual({ ok: true, value: { output: {}, fieldErrors: [] } });
+    expect(await host.request("command/execute", { command: "acme.ui.old" })).toBeNull();
+    expect(legacy).toBe(1);
+  } finally {
+    host.close();
+    plugin.close();
+  }
+});
+
+import { createInvocationContext, type PluginContext } from "./index.js";
+import type { CommandInvocation } from "@kobrixa/plugin-protocol";
+it("isolates overlapping invocation factories without mutating the base context", async () => {
+  let base!: PluginContext;
+  const { host } = connect({
+    activate(context) {
+      base = context;
+    },
+  });
+  try {
+    await host.request("initialize", init);
+    const invocation = (n: number): CommandInvocation => ({
+      version: 1,
+      invocationId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+      command: "acme.hello.run",
+      arguments: {},
+      context: {
+        contextRef: null,
+        origin: "management",
+        locale: "en",
+        actionRef: `00000000-0000-4000-8000-${String(n + 10).padStart(12, "0")}`,
+        trigger: { kind: "activate" },
+      },
+    });
+    const before = Object.keys(base);
+    const a = createInvocationContext(base, invocation(1), new AbortController().signal);
+    const b = createInvocationContext(base, invocation(2), new AbortController().signal);
+    const absent = invocation(3);
+    delete absent.context.actionRef;
+    const c = createInvocationContext(base, absent, new AbortController().signal);
+    const seen: unknown[] = [];
+    await Promise.all([
+      Promise.resolve().then(() => seen.push(b.invocation.context.actionRef)),
+      Promise.resolve().then(() => seen.push(a.invocation.context.actionRef)),
+    ]);
+    expect(seen).toEqual([invocation(2).context.actionRef, invocation(1).context.actionRef]);
+    expect(c.invocation.context).not.toHaveProperty("actionRef");
+    expect(Object.keys(base)).toEqual(before);
+    for (const context of [base, a, b, c])
+      for (const key of ["actions", "storage", "settings", "drain"])
+        expect(context).not.toHaveProperty(key);
+    expect(base).not.toHaveProperty("invocation");
+  } finally {
+    host.close();
+  }
 });

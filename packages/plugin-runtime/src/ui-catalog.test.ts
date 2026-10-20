@@ -135,26 +135,3 @@ it("U04 explicit retry preserves unrelated source resource generations", async (
   expect(after.value.entries[0]!.uiResourceGeneration).toBeGreaterThan(before.value.entries[0]!.uiResourceGeneration);
   expect(after.value.entries[1]!.uiResourceGeneration).toBe(before.value.entries[1]!.uiResourceGeneration);
 });
-
-// Explicit W1-only projection fixtures. Default runs require the real T1 exports.
-// These fixtures do not establish protocol validation or P160 acceptance.
-vi.mock("@kobrixa/plugin-protocol", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@kobrixa/plugin-protocol")>();
-  if (process.env.KOBRIXA_UI_W1 !== "1") return actual;
-  const { UI_LIMITS_V1 } = await import("../../plugin-protocol/dist/ui-limits.js");
-  const uiBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
-  const uiFailure = (reason: string) => ({ ok: false as const, error: {
-    code: "PLUGIN_E_UI_RESOURCE", message: "W1 fixture validation failed.", detail: { kind: "ui", reason },
-  } });
-  const resourceFailure = (reason: string, limit?: number) => ({ ok: false as const, error: {
-    code: reason === "stale" ? "PLUGIN_E_STALE_RESOURCE" : "PLUGIN_E_RESOURCE_LIMIT",
-    message: "W1 resource failure.", detail: { kind: "resource", reason, resource: "ui-binding",
-      ...(limit === undefined ? {} : { limit }) },
-  } });
-  const validateUiResource = (value: unknown) => {
-    const fixture = { kind: "status", text: { text: { en: "Ready" } }, tone: "neutral", data: {} };
-    return JSON.stringify(value) === JSON.stringify(fixture)
-      ? { ok: true as const, value: structuredClone(value) } : uiFailure("schema");
-  };
-  return { ...actual, UI_LIMITS_V1, uiBytes, uiFailure, resourceFailure, validateUiResource };
-});

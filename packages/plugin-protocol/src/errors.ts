@@ -13,7 +13,10 @@ export const RPC_ERRORS = {
 } as const;
 
 // Type-only cumulative contracts; RPC_ERRORS remains the legacy numeric envelope.
-export type PluginErrorCodeV150 = PluginErrorCode;
+export type PluginErrorCodeV150 = Exclude<
+  PluginErrorCode,
+  "PLUGIN_E_UI_RESOURCE" | "PLUGIN_E_UI_VERSION"
+>;
 export type PluginErrorCodeV160 =
   PluginErrorCodeV150 | "PLUGIN_E_UI_RESOURCE" | "PLUGIN_E_UI_VERSION";
 export type PluginErrorCodeV170 =

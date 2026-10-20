@@ -1,3 +1,9 @@
+import { ContextCommands, type ContextCommandHandler } from "./commands.js";
+import { UiClient } from "./ui.js";
+import { uiEventClientPort } from "./events.js";
+import { type ValueSpec, type CommandInvocation, uiFailure } from "@kobrixa/plugin-protocol";
+export type { ContextCommandContext, ContextCommandHandler } from "./commands.js";
+export { UiClient } from "./ui.js";
 import { bindEventChannel } from "./events.js";
 import { resourceOwnerSchema } from "@kobrixa/plugin-protocol";
 import { createDevicesClient, type DevicesClient } from "./devices.js";
@@ -10,7 +16,6 @@ import {
   RpcPeer,
   type MessageChannelLike,
   type PluginLocale,
-  type Severity,
 } from "@kobrixa/plugin-protocol";
 
 export const API_VERSION = PLUGIN_API_VERSION;
@@ -20,10 +25,18 @@ export interface PluginContext {
   readonly devices: DevicesClient;
   readonly pluginId: string;
   readonly locale: PluginLocale;
-  readonly commands: { register(commandId: string, handler: CommandHandler): void };
-  readonly ui: { showMessage(message: string, severity?: Severity): Promise<void> };
+  readonly commands: {
+    register(commandId: string, handler: CommandHandler): void;
+    registerContext(
+      commandId: string,
+      argumentsSchema: Record<string, ValueSpec>,
+      handler: ContextCommandHandler,
+    ): void;
+  };
+  readonly ui: UiClient;
 }
 export interface PluginDefinition {
+  ready?(context: PluginContext): void | Promise<void>;
   activate(context: PluginContext): void | Promise<void>;
   deactivate?(): void | Promise<void>;
 }
@@ -75,13 +88,55 @@ export async function runPlugin(
   if (launchOwner !== undefined)
     bindEventChannel(peer, resourceOwnerSchema.parse(JSON.parse(launchOwner)));
   const commands = new Map<string, CommandHandler>();
+  const ui = new UiClient(peer.request.bind(peer), uiEventClientPort(peer));
+  let contextCommands: ContextCommands | undefined;
+  let pluginContext: PluginContext | undefined;
+  let negotiated = false;
+  let readyResult:
+    Promise<import("@kobrixa/plugin-protocol").Result<Record<string, never>>> | undefined;
+  peer.handle("ui/negotiate", async (params) => {
+    if (!pluginContext) return uiFailure("negotiation");
+    negotiated = params.commandEnvelopeVersions.includes(1);
+    return {
+      ok: true as const,
+      value: {
+        commandEnvelopeVersions: negotiated ? [1] : [],
+        uiResourceVersions: params.uiResourceVersions.includes(1) ? [1] : [],
+      },
+    };
+  });
+  peer.handle("ui/ready", async () => {
+    if (!negotiated || !pluginContext) return uiFailure("negotiation");
+    if (!readyResult) {
+      ui.markReady();
+      const context = pluginContext;
+      readyResult = Promise.resolve()
+        .then(() => definition.ready?.(context))
+        .then(
+          () => ({ ok: true as const, value: {} }),
+          () => {
+            ui.retire();
+            return uiFailure<Record<string, never>>("negotiation");
+          },
+        );
+    }
+    return readyResult;
+  });
+  peer.handle("command/invoke", async (invocation, { signal }) => {
+    if (!negotiated || !readyResult || !contextCommands) return uiFailure("negotiation");
+    const ready = await readyResult;
+    if (!ready.ok) return ready;
+    return contextCommands.invoke(invocation, signal);
+  });
+
   let initialized!: (version: string) => void;
   const ready = new Promise<string>((resolve) => {
     initialized = resolve;
   });
   const devices = createDevicesClient(peer, ready);
   peer.handle("initialize", async ({ pluginId, locale, apiVersion }) => {
-    await definition.activate({
+    contextCommands = new ContextCommands(pluginId);
+    pluginContext = {
       devices,
       pluginId,
       locale,
@@ -91,13 +146,29 @@ export async function runPlugin(
             throw new Error(`Command ${commandId} is already registered.`);
           commands.set(commandId, handler);
         },
-      },
-      ui: {
-        async showMessage(message, severity = "info") {
-          await peer.request("ui/showMessage", { severity, message }, { timeoutMs: 10_000 });
+        registerContext(commandId, argumentsSchema, handler) {
+          if (commands.has(commandId))
+            throw new Error(`Command ${commandId} is already registered.`);
+          contextCommands!.registerContext(commandId, argumentsSchema, (invocation) => {
+            const { signal, ...wireInvocation } = invocation;
+            const local = createInvocationContext(pluginContext!, wireInvocation, signal);
+            return handler(
+              Object.freeze(
+                Object.assign(local, {
+                  version: invocation.version,
+                  invocationId: invocation.invocationId,
+                  command: invocation.command,
+                  arguments: invocation.arguments,
+                  context: invocation.context,
+                }),
+              ),
+            );
+          });
         },
       },
-    });
+      ui,
+    };
+    await definition.activate(pluginContext);
     setTimeout(() => initialized(apiVersion), 0);
     return {
       apiVersion: PLUGIN_API_VERSION,
@@ -112,9 +183,21 @@ export async function runPlugin(
     return null;
   });
   peer.handle("shutdown", async () => {
+    ui.retire();
     await definition.deactivate?.();
     return null;
   });
   peer.onNotification("exit", () => exit(0));
   return peer;
+}
+
+export function createInvocationContext(
+  base: PluginContext,
+  invocation: CommandInvocation,
+  signal: AbortSignal,
+): PluginContext & { readonly invocation: CommandInvocation; readonly signal: AbortSignal } {
+  return Object.create(base, {
+    invocation: { value: Object.freeze(structuredClone(invocation)), enumerable: true },
+    signal: { value: signal, enumerable: true },
+  });
 }

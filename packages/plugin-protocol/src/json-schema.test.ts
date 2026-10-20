@@ -20,9 +20,9 @@ function keywords(node: unknown, found = new Set<string>(), inProperties = false
 }
 
 describe("published JSON Schema", () => {
-  it("publishes the 1.5.0 schema and a strict language service declaration", () => {
+  it("publishes the 1.6.0 schema and a strict language service declaration", () => {
     const schema = JSON.parse(serializeJsonSchema());
-    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.5.0.json");
+    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.6.0.json");
     const services = schema.$defs.manifest.properties.contributes.properties.languageServices;
     expect(services.maxItems).toBe(8);
     expect(services.items.additionalProperties).toBe(false);
@@ -70,4 +70,24 @@ describe("published JSON Schema", () => {
     ).toBe(2048);
     expect(serializeJsonSchema()).not.toContain("\\p{");
   });
+});
+
+it("publishes exactly the 1.6.0 UI batch without future persistence methods", () => {
+  const schema = JSON.parse(serializeJsonSchema());
+  expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.6.0.json");
+  for (const name of [
+    "ui/negotiate",
+    "ui/ready",
+    "ui/instances",
+    "ui/state",
+    "ui/patch",
+    "ui/subscribe",
+    "ui/snapshot",
+    "command/invoke",
+  ])
+    expect(schema.$defs).toHaveProperty([`${name}.params`]);
+  for (const name of ["ui/copyText", "settings/read", "storage/drain", "storage/exportBegin"])
+    expect(schema.$defs).not.toHaveProperty([`${name}.params`]);
+  expect(Object.keys(requestMethods)).not.toContain("ui/ack");
+  expect(Object.keys(notificationMethods)).not.toContain("ui/event");
 });

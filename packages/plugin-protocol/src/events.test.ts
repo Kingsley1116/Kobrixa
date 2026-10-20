@@ -37,9 +37,34 @@ it("F13 kind/data/delivery is closed and sequence starts at one", () => {
 });
 
 it("pairs every published event kind with its data schema regardless of union order", () => {
-  expect(Object.keys(deviceEventDataSchemas).sort()).toEqual(
+  expect(Object.keys({ ...deviceEventDataSchemas, ...uiEventDataSchemas }).sort()).toEqual(
     eventEnvelopeSchema.options.map((option) => option.shape.kind.value).sort(),
   );
   for (const option of eventEnvelopeSchema.options)
-    expect(deviceEventDataSchemas[option.shape.kind.value]).toBe(option.shape.data);
+    expect({ ...deviceEventDataSchemas, ...uiEventDataSchemas }[option.shape.kind.value]).toBe(
+      option.shape.data,
+    );
+});
+
+import { PLUGIN_API_VERSION } from "./limits.js";
+it("gates the UI environment envelope on the published batch", () => {
+  expect(
+    eventEnvelopeSchema.safeParse({
+      ...event,
+      kind: "ui.environment",
+      data: { locale: "en", theme: "dark" },
+    }).success,
+  ).toBe(String(PLUGIN_API_VERSION) !== "1.5.0");
+});
+
+import { uiEventDataSchemas } from "./events.js";
+
+it("does not publish settings events in P160", () => {
+  expect(
+    eventEnvelopeSchema.safeParse({
+      ...event,
+      kind: "settings.changed",
+      data: { revision: 1, schemaVersion: 1, changedKeys: [], cause: "update" },
+    }).success,
+  ).toBe(false);
 });

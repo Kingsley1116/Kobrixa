@@ -50,6 +50,8 @@ export const PLUGIN_ERROR_CODES = [
   "PLUGIN_E_DEVICE_AUTHORITY",
   "PLUGIN_E_DEVICE_OPERATION",
   "PLUGIN_E_DEVICE_STOP_UNCONFIRMED",
+  "PLUGIN_E_UI_RESOURCE",
+  "PLUGIN_E_UI_VERSION",
 ] as const;
 export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 // 新增；每個方法以具體 Value／Detail union 匯出 schema，沒有 any JSON detail。
@@ -71,7 +73,7 @@ export type PermissionErrorDetail = {
 };
 export type ResourceKindV150 =
   "operation" | "subscription" | "candidate" | "reservation" | "journal" | "rpc";
-export type ResourceKind = ResourceKindV150; // 1.5.0；後續批次依下表擴充閉合 union。
+export type ResourceKind = ResourceKindV160; // 1.5.0；後續批次依下表擴充閉合 union。
 export type ResourceErrorDetail = {
   kind: "resource";
   reason: "stale" | "quota" | "rate" | "queue";
@@ -188,7 +190,15 @@ export const permissionErrorDetailSchema = z.strictObject({
 export const resourceErrorDetailSchema = z.strictObject({
   kind: z.literal("resource"),
   reason: z.enum(["stale", "quota", "rate", "queue"]),
-  resource: z.enum(["operation", "subscription", "candidate", "reservation", "journal", "rpc"]),
+  resource: z.enum([
+    "operation",
+    "subscription",
+    "candidate",
+    "reservation",
+    "journal",
+    "rpc",
+    "ui-binding",
+  ]),
   limit: counterSchema.exactOptional(),
 });
 export const deviceFailureDetailSchema = z.union([
@@ -292,7 +302,7 @@ export const commonFailureSchema: z.ZodType<PublishedCommonFailure> = z.union([
       detail: z.strictObject({
         kind: z.literal("resource"),
         reason: z.literal("stale"),
-        resource: z.enum(resources150),
+        resource: z.enum(resources160),
         limit: counterSchema.exactOptional(),
       }),
     }),
@@ -305,7 +315,7 @@ export const commonFailureSchema: z.ZodType<PublishedCommonFailure> = z.union([
       detail: z.strictObject({
         kind: z.literal("resource"),
         reason: z.enum(["quota", "rate", "queue"]),
-        resource: z.enum(resources150),
+        resource: z.enum(resources160),
         limit: counterSchema.exactOptional(),
       }),
     }),

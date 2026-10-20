@@ -1,3 +1,4 @@
+import { uiRequestSchemas } from "./ui-methods.js";
 import { z } from "zod";
 import { deviceRequestSchemas } from "./device-methods.js";
 import { eventEnvelopeSchema } from "./events.js";
@@ -16,6 +17,7 @@ export type Severity = z.infer<typeof severitySchema>;
 const empty = z.strictObject({});
 
 export const requestMethods = {
+  ...uiRequestSchemas,
   ...deviceRequestSchemas,
   initialize: {
     params: z.strictObject({

@@ -1,3 +1,9 @@
+import {
+  panelDeclarationSchema,
+  statusDeclarationSchema,
+  contextCommandDeclarationSchema,
+} from "./ui-types.js";
+import { validValueSpec, validString } from "./ui-validation.js";
 import { z } from "zod";
 import { capabilitySchema, requirementCapabilitySchema } from "./device-types.js";
 import { staticLanguageText } from "./static-language-schemas.js";
@@ -119,7 +125,7 @@ export const pluginManifestSchema = z.looseObject({
       z
         .string()
         .max(160)
-        .regex(/^onCommand:[a-z0-9.-]+$/),
+        .regex(/^(?:onCommand|onPanel):[a-z0-9.-]+$/),
     )
     .max(PLUGIN_LIMITS.activationEvents)
     .optional(),
@@ -136,8 +142,21 @@ export const pluginManifestSchema = z.looseObject({
         .min(1)
         .max(1)
         .optional(),
+      panels: z.array(panelDeclarationSchema).max(4).optional(),
+      status: z.array(statusDeclarationSchema).max(2).optional(),
+
       commands: z
-        .array(z.looseObject({ id: namespacedIdSchema, title: localizedTextSchema }))
+        .array(
+          z.union([
+            z.looseObject({
+              id: namespacedIdSchema,
+              title: localizedTextSchema,
+              invocation: z.never().optional(),
+              arguments: z.never().optional(),
+            }),
+            contextCommandDeclarationSchema,
+          ]),
+        )
         .max(PLUGIN_LIMITS.commandsPerPlugin)
         .optional(),
       frontends: z.array(frontendDeclSchema).max(8).optional(),
@@ -210,7 +229,14 @@ export function staticLanguageDeclarationProblems(manifest: PluginManifest): str
   if (manifest.runtime.kind === "static") {
     for (const key of ["activationEvents", "permissions"] as const)
       if (Object.hasOwn(manifest, key)) problems.push(`Static runtime must not declare ${key}.`);
-    for (const key of ["commands", "frontends", "backends", "languageServices"] as const)
+    for (const key of [
+      "commands",
+      "frontends",
+      "backends",
+      "languageServices",
+      "panels",
+      "status",
+    ] as const)
       if (contributes && Object.hasOwn(contributes, key))
         problems.push(`Static runtime must not declare contributes.${key}.`);
     if (languages.length === 0 && !contributes?.diagnosticHelp)
@@ -263,5 +289,54 @@ export function deviceDeclarationProblems(manifest: PluginManifest): string[] {
     Object.hasOwn(manifest.contributes, "deviceProviders")
   )
     problems.push("Static runtime must not declare deviceProviders.");
+  return problems;
+}
+
+export function uiDeclarationProblems(manifest: PluginManifest): string[] {
+  const problems: string[] = [];
+  const contributes = manifest.contributes;
+  const panels = contributes?.panels ?? [];
+  const status = contributes?.status ?? [];
+  const commands = contributes?.commands ?? [];
+  const ids = new Set<string>();
+  for (const entry of [...panels, ...status, ...commands]) {
+    if (!entry.id.startsWith(`${manifest.id}.`) || ids.has(entry.id))
+      problems.push("Invalid or duplicate UI contribution identity.");
+    ids.add(entry.id);
+  }
+  if (panels.length && !manifest.permissions?.includes("ui.panels"))
+    problems.push("Panels require ui.panels.");
+  if (status.length && !manifest.permissions?.includes("ui.status"))
+    problems.push("Status requires ui.status.");
+  for (const event of manifest.activationEvents ?? []) {
+    if (event.startsWith("onPanel:") && !panels.some((panel) => panel.id === event.slice(8)))
+      problems.push("Panel activation must name a local panel.");
+    if (
+      event.startsWith("onCommand:") &&
+      !commands.some((command) => command.id === event.slice(10))
+    )
+      problems.push("Command activation must name a local command.");
+  }
+  for (const entry of [...panels, ...status])
+    if (Object.values(entry.title).some((text) => !validString(text, 200, false, true)))
+      problems.push("Invalid UI title.");
+  for (const command of commands)
+    if (command.invocation === "context-v1") {
+      const checked = contextCommandDeclarationSchema.safeParse(command);
+      if (!checked.success) {
+        problems.push("Invalid context command.");
+        continue;
+      }
+      if (
+        Object.keys(checked.data.arguments).length > 32 ||
+        Object.entries(checked.data.arguments).some(
+          ([key, spec]) =>
+            ["constructor", "prototype", "__proto__"].includes(key) || !validValueSpec(spec),
+        )
+      )
+        problems.push("Invalid context command arguments.");
+      if (Object.values(checked.data.title).some((text) => !validString(text, 200, false, true)))
+        problems.push("Invalid command title.");
+    }
   return problems;
 }
