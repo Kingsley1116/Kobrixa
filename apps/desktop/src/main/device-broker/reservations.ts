@@ -7,23 +7,29 @@ import type {
   ResourceOwner,
   RecordingReadValue,
 } from "@kobrixa/plugin-protocol";
-import type {
-  ReservationBindingPort,
-  ReservationBinding,
-  ReservationEnded,
-} from "@kobrixa/plugin-runtime";
+import type { JournalOwner, ReservationBinding, ReservationEnded } from "@kobrixa/plugin-runtime";
 import { resourceOwnerKey, stale, deviceFailure, quota } from "./registry.js";
-type Row = {
-  binding: ReservationBinding;
+type CoreOwner = Extract<JournalOwner, { kind: "core" }>;
+type Binding<Owner> = Omit<ReservationBinding, "owner"> & { owner: Owner };
+type Ended<Owner> = Omit<ReservationEnded, "owner" | "drain"> & {
+  owner: Owner;
+  drain: (Omit<NonNullable<ReservationEnded["drain"]>, "owner"> & { owner: Owner }) | null;
+};
+const reservationOwnerKey = (owner: ResourceOwner | CoreOwner) =>
+  "kind" in owner
+    ? JSON.stringify([owner.kind, owner.adapter, owner.hostEpoch, owner.workbenchInstance])
+    : resourceOwnerKey(owner);
+type Row<Owner> = {
+  binding: Binding<Owner>;
   snapshot: ReservationSnapshot;
   frames: TelemetryFrame[];
   bytes: number;
   started: number;
   sourceRevision: number;
-  ended: ReservationEnded | null;
+  ended: Ended<Owner> | null;
 };
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-export class Reservations implements ReservationBindingPort {
+export class Reservations<Owner extends ResourceOwner | CoreOwner = ResourceOwner> {
   #changes = new Set<(snapshot: ReservationSnapshot) => void>();
   subscribe(listener: (snapshot: ReservationSnapshot) => void): () => void {
     this.#changes.add(listener);
@@ -31,19 +37,24 @@ export class Reservations implements ReservationBindingPort {
       this.#changes.delete(listener);
     };
   }
-  #changed(row: Row) {
+  #changed(row: Row<Owner>) {
     for (const listener of this.#changes) listener(structuredClone(row.snapshot));
   }
-  #rows = new Map<string, Row>();
+  #rows = new Map<string, Row<Owner>>();
   #active: string | null = null;
   #reserving = false;
-  #listeners = new Set<(event: ReservationEnded) => void>();
+  #listeners = new Set<(event: Ended<Owner>) => void>();
   constructor(private readonly now: () => number) {}
+  get size(): number {
+    for (const [id, row] of this.#rows)
+      if (row.ended && this.now() >= row.ended.endedMonotonicMs + 10000) this.#rows.delete(id);
+    return this.#rows.size;
+  }
   get active(): boolean {
     return this.#active !== null || this.#reserving;
   }
   async reserve(input: {
-    owner: ResourceOwner;
+    owner: Owner;
     sessionId: string;
     providerGeneration: number;
     channels: ChannelDefinition[];
@@ -146,16 +157,16 @@ export class Reservations implements ReservationBindingPort {
     row.snapshot.revision++;
     this.#changed(row);
   }
-  #owned(owner: ResourceOwner, id: string): Row {
+  #owned(owner: Owner, id: string): Row<Owner> {
     const row = this.#rows.get(id);
-    if (!row || resourceOwnerKey(owner) !== resourceOwnerKey(row.binding.owner))
+    if (!row || reservationOwnerKey(owner) !== reservationOwnerKey(row.binding.owner))
       return stale("reservation");
     return row;
   }
-  query(owner: ResourceOwner, id: string): ReservationSnapshot {
+  query(owner: Owner, id: string): ReservationSnapshot {
     return structuredClone(this.#owned(owner, id).snapshot);
   }
-  read(owner: ResourceOwner, id: string, afterSequence: number, limit: number): RecordingReadValue {
+  read(owner: Owner, id: string, afterSequence: number, limit: number): RecordingReadValue {
     const row = this.#owned(owner, id);
     if (row.ended && this.now() >= row.ended.endedMonotonicMs + 10000) {
       row.frames = [];
@@ -187,19 +198,21 @@ export class Reservations implements ReservationBindingPort {
     result.hasMore = candidates.length > frames.length;
     return result;
   }
-  validate(owner: ResourceOwner, id: string): ReservationBinding | null {
+  validate(owner: Owner, id: string): Binding<Owner> | null {
     const row = this.#rows.get(id);
-    return row && !row.ended && resourceOwnerKey(owner) === resourceOwnerKey(row.binding.owner)
+    return row &&
+      !row.ended &&
+      reservationOwnerKey(owner) === reservationOwnerKey(row.binding.owner)
       ? structuredClone(row.binding)
       : null;
   }
-  onEnded(listener: (event: ReservationEnded) => void): () => void {
+  onEnded(listener: (event: Ended<Owner>) => void): () => void {
     this.#listeners.add(listener);
     return () => {
       this.#listeners.delete(listener);
     };
   }
-  end(id: string, reason: ReservationEnded["reason"], healthy: boolean): ReservationEnded | null {
+  end(id: string, reason: ReservationEnded["reason"], healthy: boolean): Ended<Owner> | null {
     const row = this.#rows.get(id);
     if (!row) return null;
     if (row.ended) return row.ended;
@@ -232,13 +245,9 @@ export class Reservations implements ReservationBindingPort {
       }
     return row.ended;
   }
-  endOwner(
-    owner: ResourceOwner,
-    reason: ReservationEnded["reason"],
-    healthy: boolean,
-  ): ReservationEnded[] {
+  endOwner(owner: Owner, reason: ReservationEnded["reason"], healthy: boolean): Ended<Owner>[] {
     return [...this.#rows.values()]
-      .filter((r) => resourceOwnerKey(owner) === resourceOwnerKey(r.binding.owner))
+      .filter((r) => reservationOwnerKey(owner) === reservationOwnerKey(r.binding.owner))
       .map((r) => this.end(r.binding.reservationId, reason, healthy)!)
       .filter(Boolean);
   }
@@ -246,7 +255,7 @@ export class Reservations implements ReservationBindingPort {
     sessionId: string,
     reason: ReservationEnded["reason"],
     healthy: boolean,
-  ): ReservationEnded[] {
+  ): Ended<Owner>[] {
     return [...this.#rows.values()]
       .filter((r) => r.binding.sessionId === sessionId)
       .map((r) => this.end(r.binding.reservationId, reason, healthy)!)

@@ -35,19 +35,29 @@ export class MonitorService {
       if (this.disposed) throw new Error("Monitor is closed.");
       const entry = { cancelled: false, ready: Promise.resolve(async () => {}) };
       this.demands.set(key, entry);
-      entry.ready = this.devices.watch(id, 500, (snapshot, sources) => {
-        if (entry.cancelled || this.disposed) return;
-        const value =
-          snapshot.frame && snapshot.status === "fresh"
-            ? monitorProjection(sources, snapshot.frame)
-            : undefined;
-        this.emit({
-          sessionId: id,
-          sequence: ++this.sequence,
-          status: value ? "live" : "waiting",
-          snapshot: value ?? this.latest(id)?.snapshot,
-        });
-      });
+      entry.ready = this.devices.watch(
+        id,
+        500,
+        (snapshot, sources) => {
+          if (entry.cancelled || this.disposed) return;
+          const value =
+            snapshot.frame && snapshot.status === "fresh"
+              ? monitorProjection(sources, snapshot.frame)
+              : undefined;
+          this.emit({
+            sessionId: id,
+            sequence: ++this.sequence,
+            status: value ? "live" : "waiting",
+            snapshot: value ?? this.latest(id)?.snapshot,
+          });
+        },
+        () => {
+          if (entry.cancelled || this.demands.get(key) !== entry) return;
+          entry.cancelled = true;
+          this.demands.delete(key);
+          this.emit({ sessionId: id, sequence: ++this.sequence, status: "paused" });
+        },
+      );
       try {
         await entry.ready;
       } catch (error) {

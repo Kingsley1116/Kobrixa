@@ -21,6 +21,7 @@ import { DevicePreferencesStore } from "./preferences.js";
 import { remoteFileOperation } from "./remote-files.js";
 import { FileBatchManager } from "./file-batch.js";
 import type { LegacyDevice } from "../device-broker/legacy-device.js";
+import { canFallbackAfterListing } from "../device-broker/legacy-files.js";
 import type { LegacyFiles } from "../device-broker/legacy-files.js";
 import type { CorePrincipal } from "../device-broker/broker-port.js";
 const renewals = new Map<
@@ -86,10 +87,32 @@ export class DeviceService {
     private renderer: () => WebContents | undefined,
     private preferences = new DevicePreferencesStore(),
     private legacy?: LegacyDeviceServices,
-  ) {}
+  ) {
+    if (legacy) this.observe(legacy.device);
+  }
+  private observe(device: LegacyDevice): void {
+    device.subscribe((event) => {
+      if (event.type === "state" && event.state === "disconnected" && event.sessionId) {
+        void this.beforeDisconnect?.(event.sessionId).catch((error: unknown) =>
+          this.reportError(error),
+        );
+      }
+      this.send(event);
+    });
+  }
+  private reportError(error: unknown): void {
+    const failure = normalizeDeviceError(error, "connection");
+    this.send({
+      type: "error",
+      category: failure.category,
+      message: failure.message,
+      recoverable: failure.recoverable,
+    });
+  }
   attachLegacy(services: { device: LegacyDevice; files: LegacyFiles }): void {
     if (this.legacy) throw new Error("Legacy broker already attached.");
     this.legacy = services;
+    this.observe(services.device);
   }
   private get ports(): LegacyDeviceServices {
     if (!this.legacy) throw new Error("Device broker unavailable.");
@@ -130,27 +153,37 @@ export class DeviceService {
   discover(signal?: AbortSignal): Promise<DeviceDescriptor[]> {
     return this.ports.device.discover(signal);
   }
-  async connect(descriptor: DeviceDescriptor, signal?: AbortSignal): Promise<string> {
+  private async connectWith(transport: string, connect: () => Promise<string>): Promise<string> {
     return this.track(async () => {
-      const id = await this.ports.device.connect(descriptor, signal);
-      this.send({
-        type: "state",
-        state: "connected",
-        sessionId: id,
-        transport: descriptor.transport,
-      });
-      return id;
+      try {
+        // Preserve teardown ordering; a failed stop must prevent replacement.
+        for (const id of this.ports.device.sessionIds()) await this.disconnect(id);
+        this.send({ type: "state", state: "connecting", transport });
+        const id = await connect();
+        this.send({ type: "state", state: "connected", sessionId: id, transport });
+        return id;
+      } catch (error) {
+        this.send({
+          type: "state",
+          state: "error",
+          message: error instanceof Error ? error.message : String(error),
+          transport,
+        });
+        this.reportError(error);
+        throw error;
+      }
     });
+  }
+  connect(descriptor: DeviceDescriptor, signal?: AbortSignal): Promise<string> {
+    return this.connectWith(descriptor.transport, () =>
+      this.ports.device.connect(descriptor, signal),
+    );
   }
   reconnectForRecovery(previousSessionId: string, signal: AbortSignal): Promise<string> {
     return this.ports.device.reconnectForRecovery(previousSessionId, signal);
   }
-  async connectWifi(address: string, signal?: AbortSignal): Promise<string> {
-    return this.track(async () => {
-      const id = await this.ports.device.connectWifi(address, signal);
-      this.send({ type: "state", state: "connected", sessionId: id, transport: "wifi" });
-      return id;
-    });
+  connectWifi(address: string, signal?: AbortSignal): Promise<string> {
+    return this.connectWith("wifi", () => this.ports.device.connectWifi(address, signal));
   }
   async disconnect(id: string): Promise<void> {
     await this.beforeDisconnect?.(id);
@@ -158,7 +191,7 @@ export class DeviceService {
     this.send({ type: "state", state: "disconnected", sessionId: id });
   }
   async reset(): Promise<void> {
-    await this.ports.device.reset();
+    await Promise.allSettled(this.ports.device.sessionIds().map((id) => this.disconnect(id)));
   }
   monitor(id: string) {
     return this.ports.device.monitor(id);
@@ -195,23 +228,40 @@ export class DeviceService {
           signal.throwIfAborted();
           const listings = new Map<string, RemoteEntry[]>();
           for (const file of files) {
-            signal.throwIfAborted();
-            const checksum = createHash("md5").update(file.bytes).digest("hex");
-            let unchanged = false;
-            if (this.getPreferences().skipUnchangedAssets && file.role === "deploy-asset") {
-              const directory = path.posix.dirname(file.remotePath);
-              if (!listings.has(directory))
-                listings.set(directory, await session.list(directory, signal));
+            try {
               signal.throwIfAborted();
-              const entry = listings
-                .get(directory)!
-                .find((value) => value.path === file.remotePath);
-              unchanged =
-                entry?.kind === "file" &&
-                entry.size === file.bytes.length &&
-                entry.checksum?.toLowerCase() === checksum;
+              const checksum = createHash("md5").update(file.bytes).digest("hex");
+              let unchanged = false;
+              if (this.getPreferences().skipUnchangedAssets && file.role === "deploy-asset") {
+                const directory = path.posix.dirname(file.remotePath);
+                if (!listings.has(directory)) {
+                  try {
+                    listings.set(directory, await session.list(directory, signal));
+                  } catch (error) {
+                    signal.throwIfAborted();
+                    if (!canFallbackAfterListing(error)) throw error;
+                    listings.set(directory, []);
+                  }
+                }
+                signal.throwIfAborted();
+                const entry = listings
+                  .get(directory)!
+                  .find((value) => value.path === file.remotePath);
+                unchanged =
+                  entry?.kind === "file" &&
+                  entry.size === file.bytes.length &&
+                  entry.checksum?.toLowerCase() === checksum;
+              }
+              if (!unchanged) await session.upload(file.remotePath, file.bytes, signal);
+            } catch (error) {
+              const failure = normalizeDeviceError(error, "transfer");
+              throw new DeviceOperationError(
+                failure.category,
+                `Unable to deploy '${file.path}': ${failure.message}`,
+                failure.recoverable,
+                { cause: error },
+              );
             }
-            if (!unchanged) await session.upload(file.remotePath, file.bytes, signal);
           }
           signal.throwIfAborted();
         },

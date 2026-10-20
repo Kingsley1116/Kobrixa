@@ -172,7 +172,12 @@ export class MotorTestService {
     return this.getState();
   }
   async stopAll(sessionId?: string): Promise<void> {
-    const active = this.current ?? this.retained;
+    const active =
+      this.current ??
+      (this.state.phase === "unconfirmed" ||
+      !["completed", "stopped", "timeout", "failed", "idle"].includes(this.state.phase)
+        ? this.retained
+        : undefined);
     if (active && (!sessionId || active.request.sessionId === sessionId))
       await this.stop(active.request, active.owner, true);
   }

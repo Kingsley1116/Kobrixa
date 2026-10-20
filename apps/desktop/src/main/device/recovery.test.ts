@@ -81,3 +81,231 @@ it("F11 stale descriptor/native path cannot reconnect or replay deployment/run",
   expect(f.begin).not.toHaveBeenCalled();
   expect(f.request.mock.calls).toHaveLength(1);
 });
+
+import { createDeviceBroker, type DeviceBrokerOptions } from "../device-broker/broker-port.js";
+import { operationHarness, ID } from "../device-broker/fake-provider.js";
+import { createLegacyMonitorFeed } from "../device-broker/legacy-device.js";
+async function realFixture(autoReconnect = false) {
+  const h = operationHarness();
+  const principal: Principal = {
+    kind: "core",
+    adapter: "deployment",
+    hostEpoch: ID,
+    workbenchInstance: ID,
+    authorityContext: { ref: ID, epoch: ID },
+  };
+  let policy: ReturnType<DeviceBrokerOptions["connectionPolicy"]> = {
+    wifiConnectTimeoutMs: 5000,
+    wifiHandshakeTimeoutMs: 3000,
+    usbAutoReconnect: autoReconnect,
+    usbRetryInterval: 1000,
+    usbRetryLimit: 3,
+  };
+  const broker = createDeviceBroker({
+    journal: h.dependencies.journal,
+    profile: h.dependencies.profile,
+    now: h.dependencies.now,
+    authority: {
+      current: () => ({
+        ref: ID,
+        epoch: ID,
+        workbenchInstance: ID,
+        state: "local",
+        roomBinding: null,
+        connected: false,
+        synced: true,
+        role: null,
+        isHolder: true,
+      }),
+      assertContinuation() {},
+      subscribe: () => () => {},
+    },
+    coreActions: { claim: () => true, isClaimed: () => true, complete() {} },
+    hasPermission: () => true,
+    requirements: () => [],
+    operationGate: () => ({ ok: true, value: null }),
+    connectionPolicy: () => policy,
+  });
+  h.provider.describe = () => ({
+    key: h.provider.session,
+    descriptor: { ...h.provider.descriptor, transport: "usb" },
+    physical: h.provider.physical,
+    capabilities: [...h.provider.capabilities],
+  });
+  h.provider.discover = async () => ({
+    value: [
+      {
+        key: h.provider.candidate,
+        descriptor: { ...h.provider.descriptor, transport: "usb" },
+        physical: h.provider.physical,
+      },
+    ],
+    dispatch: "not-sent",
+    error: null,
+    stopConfirmation: "not-required",
+  });
+  const unregister = broker.registerProvider(h.provider);
+  const disconnect = vi.fn(async (sessionId: string) => {
+    const result = await broker.request(
+      principal,
+      "devices/disconnect",
+      { sessionId },
+      new AbortController().signal,
+    );
+    if (!result.ok) throw new Error(result.error.message);
+  });
+  const legacy = new LegacyDevice({
+    broker,
+    principal: () => principal,
+    disconnect,
+    stop: async () => {},
+    feed: createLegacyMonitorFeed(broker),
+  });
+  const service = new DeviceService(
+    {} as BuildService,
+    () => undefined,
+    {} as DevicePreferencesStore,
+    { device: legacy, files: new LegacyFiles(broker, () => principal) },
+  );
+  const events = vi.fn(),
+    teardown = vi.fn(async () => {});
+  service.subscribe(events);
+  service.setBeforeDisconnect(teardown);
+  const [candidate] = await service.discover();
+  const id = await service.connect(candidate!);
+  return {
+    ...h,
+    broker,
+    cancelRecovery: () => {
+      policy = { ...policy, usbAutoReconnect: false };
+    },
+    legacy,
+    service,
+    id,
+    events,
+    teardown,
+    disconnect,
+    unregister,
+  };
+}
+it("T5fix unplug emits disconnected with a message and runs teardown hooks", async () => {
+  const f = await realFixture();
+  try {
+    f.provider.lose();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.events).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "state",
+        state: "disconnected",
+        sessionId: f.id,
+        message: expect.any(String),
+      }),
+    );
+    expect(f.teardown).toHaveBeenCalledWith(f.id);
+    expect(() => f.service.descriptor(f.id)).toThrow();
+  } finally {
+    f.unregister();
+  }
+});
+it("T5fix connect emits connecting/error and disconnects the existing session first", async () => {
+  const f = await realFixture();
+  try {
+    await expect(
+      f.service.connect({ id: "stale", name: "EV3", transport: "usb" }),
+    ).rejects.toThrow();
+    expect(f.teardown).toHaveBeenCalledWith(f.id);
+    expect(f.disconnect).toHaveBeenCalledWith(f.id);
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual([
+      "connecting",
+      "connected",
+      "disconnected",
+      "connecting",
+      "error",
+      undefined,
+    ]);
+  } finally {
+    f.unregister();
+  }
+});
+it("T5fix USB auto-recovery translates waiting, connecting and restored with no deployment replay", async () => {
+  vi.useFakeTimers();
+  const f = await realFixture(true);
+  try {
+    f.provider.lose();
+    await vi.advanceTimersByTimeAsync(1000);
+    const recovery = f.events.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.type === "usb-recovery");
+    expect(recovery.map((event) => event.state)).toEqual(["waiting", "connecting", "restored"]);
+    expect(recovery.at(-1)).toMatchObject({
+      previousSessionId: f.id,
+      deployment: "none",
+      sessionId: expect.any(String),
+    });
+    expect(f.service.descriptor(recovery.at(-1).sessionId).transport).toBe("usb");
+    expect(f.provider.calls).not.toContain("run");
+  } finally {
+    f.unregister();
+    vi.useRealTimers();
+  }
+});
+it("T5fix reset attempts every descriptor through disconnect even if one hook fails", async () => {
+  const descriptors = new Set(["first", "second"]);
+  const disconnect = vi.fn(async (id: string) => {
+    descriptors.delete(id);
+  });
+  const legacy = {
+    sessionIds: () => [...descriptors],
+    disconnect,
+    subscribe: () => () => {},
+  } as unknown as LegacyDevice;
+  const service = new DeviceService(
+    {} as BuildService,
+    () => undefined,
+    {} as DevicePreferencesStore,
+    { device: legacy, files: {} as LegacyFiles },
+  );
+  const before = vi.fn(async (id: string) => {
+    if (id === "first") throw new Error("stop failed");
+  });
+  const events = vi.fn();
+  service.setBeforeDisconnect(before);
+  service.subscribe(events);
+  await service.reset();
+  expect(before.mock.calls.map(([id]) => id)).toEqual(["first", "second"]);
+  expect(disconnect).toHaveBeenCalledExactlyOnceWith("second");
+  expect(events).toHaveBeenCalledWith({
+    type: "state",
+    state: "disconnected",
+    sessionId: "second",
+  });
+});
+it.each(["cancelled", "exhausted"])(
+  "T5fix USB recovery reports %s without replay",
+  async (state) => {
+    vi.useFakeTimers();
+    const f = await realFixture(true);
+    try {
+      f.provider.lose();
+      if (state === "cancelled") f.cancelRecovery();
+      else
+        f.provider.discover = async () => ({
+          value: [],
+          dispatch: "not-sent",
+          error: null,
+          stopConfirmation: "not-required",
+        });
+      await vi.advanceTimersByTimeAsync(state === "cancelled" ? 1000 : 3000);
+      const states = f.events.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.type === "usb-recovery")
+        .map((event) => event.state);
+      expect(states.at(-1)).toBe(state);
+      if (state === "exhausted") expect(states).toContain("unavailable");
+      expect(states).not.toContain("restored");
+    } finally {
+      f.unregister();
+      vi.useRealTimers();
+    }
+  },
+);

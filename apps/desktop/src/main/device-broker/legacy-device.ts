@@ -15,13 +15,15 @@ import type {
   DeviceParams,
   DeviceResult,
 } from "./broker-port.js";
-import type { MonitorResult } from "../../shared/api.js";
+import type { DeviceEvent, MonitorResult } from "../../shared/api.js";
+import { observeBrokerLifecycle, observeCoreTelemetryClosed } from "./broker.js";
 export interface LegacyMonitorFeed {
   subscribe(input: {
     principal: Principal;
     sessionId: string;
     intervalMs: 500 | 30000;
     receive: (snapshot: ReadSnapshot, sources: SourceCatalog) => void;
+    onClosed?: (reason: string) => void;
   }): Promise<() => Promise<void>>;
 }
 export interface LegacyDeviceDependencies {
@@ -60,12 +62,11 @@ export function createLegacyMonitorFeed(broker: DeviceBrokerPort): LegacyMonitor
         bytes: number;
       };
       const queue: Queued[] = [];
-      // Remain undefined during registration so an early callback cannot access an uninitialized binding.
-      // eslint-disable-next-line prefer-const
       let subscription: CoreTelemetrySubscription | undefined;
+      let removeClosure = () => {};
       let closed = false,
-        scheduled = false,
-        last = 0;
+        scheduled = false;
+      let replacement: Promise<void> | undefined;
       let disposal: Promise<void> | undefined;
       const release = (bytes: number) => {
         const next = (bytesByOwner.get(ownerKey) ?? 0) - bytes;
@@ -74,8 +75,21 @@ export function createLegacyMonitorFeed(broker: DeviceBrokerPort): LegacyMonitor
       };
       const dispose = (): Promise<void> => {
         closed = true;
+        removeClosure();
         for (const value of queue.splice(0)) release(value.bytes);
-        return (disposal ??= subscription?.dispose() ?? Promise.resolve());
+        return (disposal ??= (async () => {
+          await subscription?.dispose();
+          await replacement;
+        })());
+      };
+      const close = (reason: string) => {
+        if (closed) return;
+        void dispose().catch(() => {});
+        try {
+          input.onClosed?.(reason);
+        } catch {
+          /* Closure must still release the demand. */
+        }
       };
       const drain = () => {
         scheduled = false;
@@ -86,7 +100,7 @@ export function createLegacyMonitorFeed(broker: DeviceBrokerPort): LegacyMonitor
         try {
           input.receive(value.snapshot, value.sources);
         } catch {
-          void dispose().catch(() => {});
+          close("consumer-error");
           return;
         }
         if (queue.length) {
@@ -94,48 +108,75 @@ export function createLegacyMonitorFeed(broker: DeviceBrokerPort): LegacyMonitor
           setImmediate(drain);
         }
       };
-      subscription = await broker.subscribeCoreTelemetry({
-        principal,
-        sessionId: input.sessionId,
-        channelIds: catalog.value.sources.channels.map((channel) => channel.channelId),
-        intervalMs: input.intervalMs,
-        receive(value) {
-          if (closed || !subscription) return;
-          if (
-            !Number.isSafeInteger(value.sequence) ||
-            value.sequence <= last ||
-            value.snapshot.sessionId !== input.sessionId ||
-            value.sources.sessionId !== input.sessionId
-          ) {
-            void dispose().catch(() => {});
-            return;
-          }
-          const copy = structuredClone(value);
-          const bytes = Buffer.byteLength(JSON.stringify(copy), "utf8");
-          const used = bytesByOwner.get(ownerKey) ?? 0;
-          if (bytes > 65536 || used + bytes > 262144 || queue.length >= 64) {
-            // No ACK of rejected data. Retire this demand; a new subscription
-            // obtains a fresh snapshot. The broker retains recording gap evidence.
-            void dispose().catch(() => {});
-            return;
-          }
-          queue.push({ ...copy, bytes });
-          bytesByOwner.set(ownerKey, used + bytes);
-          last = value.sequence;
-          subscription.ack(value.sequence); // bounded enqueue precedes ACK, callback follows it
-          if (!scheduled) {
-            scheduled = true;
-            setImmediate(drain);
-          }
-        },
-      });
-      try {
-        input.receive(subscription.initial.snapshot, subscription.initial.sources);
-        subscription.activate();
-      } catch (error) {
-        await dispose();
-        throw error;
-      }
+      const attach = async (sources: SourceCatalog, initial: boolean): Promise<void> => {
+        let last = 0,
+          registered = false;
+        const revision = sources.sourceRevision;
+        const demand = await broker.subscribeCoreTelemetry({
+          principal,
+          sessionId: input.sessionId,
+          channelIds: sources.channels.map((channel) => channel.channelId),
+          intervalMs: input.intervalMs,
+          receive(value) {
+            if (closed || !registered || subscription !== demand) return;
+            if (
+              !Number.isSafeInteger(value.sequence) ||
+              value.sequence <= last ||
+              value.snapshot.sessionId !== input.sessionId ||
+              value.sources.sessionId !== input.sessionId
+            ) {
+              close("invalid-sequence");
+              return;
+            }
+            const copy = structuredClone(value);
+            const bytes = Buffer.byteLength(JSON.stringify(copy), "utf8");
+            const used = bytesByOwner.get(ownerKey) ?? 0;
+            if (bytes > 65536 || used + bytes > 262144 || queue.length >= 64) {
+              close("overflow");
+              return;
+            }
+            queue.push({ ...copy, bytes });
+            bytesByOwner.set(ownerKey, used + bytes);
+            last = value.sequence;
+            demand.ack(value.sequence);
+            if (!scheduled) {
+              scheduled = true;
+              setImmediate(drain);
+            }
+            if (value.sources.sourceRevision !== revision && !replacement) {
+              const old = demand;
+              subscription = undefined;
+              removeClosure();
+              replacement = (async () => {
+                await old.dispose();
+                if (!closed) await attach(value.sources, false);
+              })()
+                .catch(() => {
+                  close("broker-ended");
+                })
+                .finally(() => {
+                  replacement = undefined;
+                });
+            }
+          },
+        });
+        registered = true;
+        if (closed) {
+          await demand.dispose();
+          return;
+        }
+        subscription = demand;
+        removeClosure = observeCoreTelemetryClosed(demand, () => close("broker-ended"));
+        if (closed) return;
+        try {
+          if (initial) input.receive(demand.initial.snapshot, demand.initial.sources);
+          demand.activate();
+        } catch (error) {
+          close("consumer-error");
+          throw error;
+        }
+      };
+      await attach(catalog.value.sources, true);
       return dispose;
     },
   };
@@ -198,7 +239,68 @@ export function monitorProjection(
 export class LegacyDevice {
   private candidates = new Map<string, DeviceCandidate>();
   private descriptors = new Map<string, DeviceDescriptor>();
-  constructor(readonly dependencies: LegacyDeviceDependencies) {}
+  private lost = new Map<string, DeviceDescriptor>();
+  private listeners = new Set<(event: DeviceEvent) => void>();
+  constructor(readonly dependencies: LegacyDeviceDependencies) {
+    observeBrokerLifecycle(dependencies.broker, (event) => {
+      if (event.kind === "lost") {
+        const id = event.session.sessionId;
+        const descriptor = this.descriptors.get(id);
+        if (!descriptor) return;
+        this.descriptors.delete(id);
+        this.lost.clear();
+        this.lost.set(id, descriptor);
+        this.emit({ type: "state", state: "disconnected", sessionId: id, message: event.message });
+        return;
+      }
+      const descriptor = this.lost.get(event.previousSessionId);
+      if (!descriptor) return;
+      if (event.state === "restored" && event.session) {
+        const session = event.session;
+        this.descriptors.set(session.sessionId, {
+          id: session.sessionId,
+          name: session.name,
+          transport: session.transport,
+        });
+        this.emit({
+          type: "state",
+          state: "connected",
+          sessionId: session.sessionId,
+          transport: session.transport,
+        });
+        this.emit({
+          type: "usb-recovery",
+          state: "restored",
+          previousSessionId: event.previousSessionId,
+          sessionId: session.sessionId,
+          descriptor: this.descriptor(session.sessionId),
+          deployment: "none",
+        });
+        this.lost.delete(event.previousSessionId);
+      } else if (event.state !== "restored") {
+        this.emit({
+          type: "usb-recovery",
+          state: event.state,
+          previousSessionId: event.previousSessionId,
+          descriptor,
+        });
+        if (event.state === "cancelled" || event.state === "exhausted")
+          this.lost.delete(event.previousSessionId);
+      }
+    });
+  }
+  private emit(event: DeviceEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+  subscribe(listener: (event: DeviceEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  sessionIds(): string[] {
+    return [...this.descriptors.keys()];
+  }
   async request<M extends DeviceMethod>(
     method: M,
     params: DeviceParams<M>,
@@ -289,7 +391,7 @@ export class LegacyDevice {
     this.descriptors.delete(id);
   }
   async reset(): Promise<void> {
-    for (const id of this.descriptors.keys()) await this.disconnect(id);
+    await Promise.allSettled(this.sessionIds().map((id) => this.disconnect(id)));
   }
   stop(id: string): Promise<void> {
     return this.dependencies.stop(id);
@@ -380,12 +482,14 @@ export class LegacyDevice {
     id: string,
     intervalMs: 500 | 30000,
     receive: Parameters<LegacyMonitorFeed["subscribe"]>[0]["receive"],
+    onClosed?: (reason: string) => void,
   ): Promise<() => Promise<void>> {
     return this.dependencies.feed.subscribe({
       principal: this.dependencies.principal(),
       sessionId: id,
       intervalMs,
       receive,
+      ...(onClosed ? { onClosed } : {}),
     });
   }
 }

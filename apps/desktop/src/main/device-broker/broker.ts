@@ -21,6 +21,7 @@ import {
 } from "@kobrixa/plugin-protocol";
 import type {
   Principal,
+  JournalOwner,
   DeviceDisposition,
   SessionQuiescence,
   SafetyFaultEntry,
@@ -29,6 +30,7 @@ import type {
   Stage3Event,
 } from "@kobrixa/plugin-runtime";
 import type {
+  CoreTelemetrySubscription,
   DeviceBrokerOptions,
   DeviceBrokerPort,
   LegacyOperationPort,
@@ -60,6 +62,49 @@ import { Sampler, CoreTelemetryLedger } from "./sampler.js";
 import { Reservations } from "./reservations.js";
 import type { createDeviceRecovery, RecoveryDriver } from "./recovery-port.js";
 import type { createDeviceResourceParticipant, ResourceDriver } from "./resource-participant.js";
+export type BrokerLifecycleEvent =
+  | { kind: "lost"; session: DeviceSessionSnapshot; message: string }
+  | {
+      kind: "recovery";
+      previousSessionId: string;
+      state: "waiting" | "connecting" | "restored" | "cancelled" | "unavailable" | "exhausted";
+      session?: DeviceSessionSnapshot;
+    };
+const lifecycleListeners = new WeakMap<
+  DeviceBrokerPort,
+  Set<(event: BrokerLifecycleEvent) => void>
+>();
+export function observeBrokerLifecycle(
+  broker: DeviceBrokerPort,
+  listener: (event: BrokerLifecycleEvent) => void,
+): () => void {
+  const listeners = lifecycleListeners.get(broker);
+  listeners?.add(listener);
+  return () => {
+    listeners?.delete(listener);
+  };
+}
+const legacyAdmissions = new WeakMap<LegacyOperation, () => void>();
+/** Consume the host file plan's confirmation without adding a plugin wire method. */
+export function admitLegacyExecution(operation: LegacyOperation): void {
+  legacyAdmissions.get(operation)?.();
+}
+// Host-only closure observation keeps the frozen wire and telemetry port unchanged.
+const coreClosures = new WeakMap<
+  CoreTelemetrySubscription,
+  { ended: boolean; listeners: Set<() => void> }
+>();
+export function observeCoreTelemetryClosed(
+  subscription: CoreTelemetrySubscription,
+  listener: () => void,
+): () => void {
+  const state = coreClosures.get(subscription);
+  if (state?.ended) listener();
+  else state?.listeners.add(listener);
+  return () => {
+    state?.listeners.delete(listener);
+  };
+}
 type Options = DeviceBrokerOptions;
 type Session = {
   snapshot: DeviceSessionSnapshot;
@@ -116,6 +161,27 @@ export function createBroker(
 ): DeviceBrokerPort & LegacyOperationPort {
   const wallNow = () => Date.now(); // Broker has no injected wall clock; recovery determinism is pinned through RecoveryDriver.wallNow test doubles.
   input.profile.assertHeld();
+  const lifecycle = new Set<(event: BrokerLifecycleEvent) => void>();
+  const notifyLifecycle = (event: BrokerLifecycleEvent) => {
+    for (const listener of [...lifecycle]) {
+      try {
+        listener(structuredClone(event));
+      } catch {
+        /* Observers cannot block safety cleanup. */
+      }
+    }
+  };
+  const recoveryState = (
+    previousSessionId: string,
+    state: Extract<BrokerLifecycleEvent, { kind: "recovery" }>["state"],
+    restored?: DeviceSessionSnapshot,
+  ) =>
+    notifyLifecycle({
+      kind: "recovery",
+      previousSessionId,
+      state,
+      ...(restored ? { session: restored } : {}),
+    });
   const providers = new ProviderRegistry(),
     candidates = new OwnerLedger<Candidate>(64, 64, "candidate"),
     subscriptions = new Map<
@@ -128,6 +194,7 @@ export function createBroker(
       }
     >(),
     reservations = new Reservations(input.now),
+    coreReservations = new Reservations<Extract<JournalOwner, { kind: "core" }>>(input.now),
     retired = new Set<string>();
   let session: Session | null = null,
     connecting = false,
@@ -156,10 +223,11 @@ export function createBroker(
     }
   >();
 
-  const forgetUsb = (id: string) => {
+  const forgetUsb = (id: string, state: "cancelled" | "exhausted" | null = "cancelled") => {
     const row = lostUsb.get(id);
     if (row?.timer) clearTimeout(row.timer);
     lostUsb.delete(id);
+    if (row && state) recoveryState(id, state);
   };
   const usbLive = (row: NonNullable<ReturnType<typeof lostUsb.get>>) => {
     if (closing || !input.connectionPolicy().usbAutoReconnect) return false;
@@ -185,13 +253,14 @@ export function createBroker(
     }
     const policy = input.connectionPolicy();
     if (policy.usbRetryLimit !== "unlimited" && row.attempts >= policy.usbRetryLimit) {
-      forgetUsb(id);
+      forgetUsb(id, "exhausted");
       return;
     }
     const delay =
       policy.usbRetryInterval === "backoff"
         ? [1000, 2000, 5000][Math.min(row.attempts, 2)]!
         : policy.usbRetryInterval;
+    recoveryState(id, "waiting");
     row.timer = setTimeout(() => {
       row.timer = null;
       if (!usbLive(row)) {
@@ -260,6 +329,24 @@ export function createBroker(
     }
     return current;
   };
+  const validCore = (principal: Extract<Principal, { kind: "core" }>, current: Session) => {
+    const ref = principal.authorityContext?.ref;
+    const context = ref ? input.authority.current(principal, ref) : null;
+    return (
+      !closing &&
+      session === current &&
+      !current.quiescence &&
+      principal.hostEpoch === input.profile.hostEpoch &&
+      !!context &&
+      context.state !== "invalid" &&
+      context.epoch === principal.authorityContext?.epoch &&
+      context.workbenchInstance === principal.workbenchInstance
+    );
+  };
+  const checkCore = (principal: Extract<Principal, { kind: "core" }>, current: Session) => {
+    assertPrincipal(principal);
+    if (!validCore(principal, current)) return stale("reservation");
+  };
   const gate = (
     principal: Principal,
     operationClass: OperationClass,
@@ -279,7 +366,8 @@ export function createBroker(
       ensureCapability(current, "finiteMotion.v1");
       if (current.generation !== admission.generation || current.connection.key !== admission.key)
         return stale();
-      if (reservations.active) return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      if (reservations.active || coreReservations.active)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       gate(admission.principal, "finite-motion", admission.sessionId, "continuation");
       input.authority.assertContinuation(admission.principal, admission.contextRef);
       if (admission.principal.kind !== "plugin")
@@ -390,7 +478,14 @@ export function createBroker(
     current.snapshot.state = reason === "disconnected" ? "disconnected" : "disconnecting";
     current.snapshot.revision++;
     current.sampler.dispose();
+    if (reason === "disconnected")
+      notifyLifecycle({
+        kind: "lost",
+        session: current.snapshot,
+        message: "The EV3 connection was lost.",
+      });
     changed();
+    coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
     for (const operation of legacy.values())
@@ -515,7 +610,8 @@ export function createBroker(
     async occupy(sessionId, work) {
       const current = session;
       if (!current || current.snapshot.sessionId !== sessionId) return stale();
-      if (reservations.active) return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      if (reservations.active || coreReservations.active)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
       current.lane.reserve(id);
       const originalGeneration = current.generation,
@@ -569,7 +665,7 @@ export function createBroker(
     return {
       ...structuredClone(current.snapshot),
       state: current.lane.quarantined ? "quarantined" : current.snapshot.state,
-      recording: reservations.active,
+      recording: reservations.active || coreReservations.active,
       foreground:
         foreground === null
           ? "none"
@@ -610,6 +706,35 @@ export function createBroker(
     if (method === "devices/motion/stop") {
       const p = parse(method);
       return { operation: operations.stop(principal, p.operationId, p.stopMode) };
+    }
+    if (
+      principal.kind === "core" &&
+      ["devices/recording/query", "devices/recording/read", "devices/recording/release"].includes(
+        method,
+      )
+    ) {
+      const p = parse(method as "devices/recording/read");
+      const snapshot = coreReservations.query(principal, p.reservationId);
+      if (!session || session.snapshot.sessionId !== snapshot.sessionId)
+        return stale("reservation");
+      // A healthy ended reservation retains its bounded drain, but a retired window never does.
+      const ref = principal.authorityContext?.ref;
+      const context = ref ? input.authority.current(principal, ref) : null;
+      assertPrincipal(principal);
+      if (
+        principal.hostEpoch !== input.profile.hostEpoch ||
+        !context ||
+        context.state === "invalid" ||
+        context.epoch !== principal.authorityContext?.epoch ||
+        context.workbenchInstance !== principal.workbenchInstance
+      )
+        return stale("reservation");
+      permission(principal, "devices.read");
+      if (method === "devices/recording/read")
+        return coreReservations.read(principal, p.reservationId, p.afterSequence, p.limit);
+      if (method === "devices/recording/release")
+        coreReservations.end(p.reservationId, "released", true);
+      return { reservation: coreReservations.query(principal, p.reservationId) };
     }
     if (method === "devices/recording/query") {
       if (principal.kind !== "plugin") return stale("reservation");
@@ -846,7 +971,10 @@ export function createBroker(
           unregister: () => {},
         };
         session = current;
-        current.sampler.subscribe((frame) => reservations.append(frame));
+        current.sampler.subscribe((frame) => {
+          reservations.append(frame);
+          coreReservations.append(frame);
+        });
         try {
           current.sources = sourceCatalogSchema.parse(
             value(
@@ -885,6 +1013,8 @@ export function createBroker(
               pending: false,
             });
             scheduleUsb(id);
+          } else if (current.snapshot.transport === "usb") {
+            recoveryState(id, "unavailable");
           }
           current.snapshot.state = "disconnected";
           revision++;
@@ -1072,7 +1202,7 @@ export function createBroker(
     const current = getSession(principal, params.sessionId);
     if (method === "devices/disconnect") {
       forgetUsb(current.snapshot.sessionId);
-      if (current.lane.foreground !== null || reservations.active)
+      if (current.lane.foreground !== null || reservations.active || coreReservations.active)
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
       const ctx = contexts(principal, current, "connection", 60000);
       const result = await current.provider.disconnect(current.connection.key, ctx.cleanup);
@@ -1110,10 +1240,10 @@ export function createBroker(
     }
     if (method === "devices/recording/reserve") {
       ensureCapability(current, "recordingReservation.v1");
-      if (principal.kind !== "plugin") return stale("reservation");
       const p = parse(method);
       const check = () => {
         getSession(principal, p.sessionId);
+        if (principal.kind === "core") checkCore(principal, current);
         ensureCapability(current, "recordingReservation.v1");
         permission(principal, "devices.read");
         gate(principal, "recording-reservation", p.sessionId, "admission");
@@ -1128,23 +1258,47 @@ export function createBroker(
       const channels = p.channelIds.map(
         (id) => current.sources.channels.find((c) => c.channelId === id) ?? stale("reservation"),
       );
-      const result = await reservations.reserve({
-        owner: principal.owner,
+      if (reservations.active || coreReservations.active)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      if (reservations.size + coreReservations.size >= 256) quota("reservation", 256);
+      const args = {
         sessionId: p.sessionId,
         providerGeneration: current.generation,
         channels,
         sourceRevision: p.expectedSourceRevision,
         check,
         fresh: () => current.sampler.fresh(),
-      });
+      };
+      const result =
+        principal.kind === "plugin"
+          ? await reservations.reserve({ ...args, owner: principal.owner })
+          : await coreReservations.reserve({
+              ...args,
+              owner: {
+                kind: "core",
+                adapter: principal.adapter,
+                hostEpoch: principal.hostEpoch,
+                workbenchInstance: principal.workbenchInstance,
+              },
+            });
+      const store = principal.kind === "plugin" ? reservations : coreReservations;
       const undemand = current.sampler.demand(result.reservation.reservationId, 500);
-      const unlisten = reservations.onEnded((event) => {
+      const unlisten = store.onEnded((event) => {
         if (event.reservationId === result.reservation.reservationId) {
           undemand();
           unlisten();
+          clearInterval(coreWatch);
           current.snapshot.recording = false;
         }
       });
+      const coreWatch =
+        principal.kind === "core"
+          ? setInterval(() => {
+              if (!validCore(principal, current))
+                coreReservations.end(result.reservation.reservationId, "renderer-lost", false);
+            }, 500)
+          : undefined;
+      coreWatch?.unref();
       current.snapshot.recording = true;
       return result;
     }
@@ -1158,7 +1312,7 @@ export function createBroker(
       );
       const p = parse(method);
       if (p.expectedSourceRevision !== current.sources.sourceRevision) return stale();
-      if (method === "devices/inputModes/set" && reservations.active)
+      if (method === "devices/inputModes/set" && (reservations.active || coreReservations.active))
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
       current.lane.reserve(id);
@@ -1290,6 +1444,7 @@ export function createBroker(
         const previous = lostUsb.get(previousSessionId);
         if (!previous || previous.pending || signal.aborted || !usbLive(previous)) return stale();
         previous.pending = true;
+        recoveryState(previousSessionId, "connecting");
         if (previous.timer) {
           clearTimeout(previous.timer);
           previous.timer = null;
@@ -1319,8 +1474,10 @@ export function createBroker(
             candidate.physical.basis === "serial" &&
             candidate.physical.digest === previous.digest,
         );
-        if (matches.length !== 1)
+        if (matches.length !== 1) {
+          recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
+        }
         const candidateId = candidates.add(ownerKey(previous.principal), {
           candidate: matches[0]!,
           generation: previous.generation,
@@ -1333,7 +1490,8 @@ export function createBroker(
           signal,
         );
         if (!connected.ok) return connected;
-        forgetUsb(previousSessionId);
+        forgetUsb(previousSessionId, null);
+        recoveryState(previousSessionId, "restored", connected.value.session);
         return { ok: true, value: { sessionId: connected.value.session.sessionId } };
       } catch (error) {
         if (error instanceof BrokerFailure) return error.result;
@@ -1450,23 +1608,38 @@ export function createBroker(
         )
       )
         return stale();
-      const valid = () => {
-        if (
-          closing ||
-          session !== current ||
-          current.quiescence ||
-          principal.hostEpoch !== input.profile.hostEpoch
-        )
-          return false;
-        const ref = principal.authorityContext?.ref;
-        const context = ref ? input.authority.current(principal, ref) : null;
-        return (
-          !!context &&
-          context.state !== "invalid" &&
-          context.workbenchInstance === principal.workbenchInstance
-        );
-      };
-      return coreTelemetry.subscribe({
+      const valid = () => validCore(principal, current);
+      const closure = { ended: false, listeners: new Set<() => void>() };
+      let callerDisposed = false;
+      // The ledger releases its sampler demand on every termination, including owner
+      // invalidation, quota overflow and ACK timeout. Observe that existing teardown.
+      const sampler = new Proxy(current.sampler, {
+        get(target, property, receiver) {
+          if (property === "snapshot") return () => target.snapshot();
+          if (property === "subscribe")
+            return (listener: Parameters<Sampler["subscribe"]>[0]) => target.subscribe(listener);
+          if (property === "demand")
+            return (id: string, interval: 500 | 30000) => {
+              const remove = target.demand(id, interval);
+              return () => {
+                remove();
+                if (!callerDisposed && !closure.ended) {
+                  closure.ended = true;
+                  for (const listener of [...closure.listeners]) {
+                    try {
+                      listener();
+                    } catch {
+                      /* A consumer cannot interrupt ledger teardown. */
+                    }
+                  }
+                  closure.listeners.clear();
+                }
+              };
+            };
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const subscription = coreTelemetry.subscribe({
         owner: {
           kind: "core",
           adapter: principal.adapter,
@@ -1474,13 +1647,23 @@ export function createBroker(
           workbenchInstance: principal.workbenchInstance,
         },
         id: randomUUID(),
-        sampler: current.sampler,
+        sampler,
         channelIds,
         intervalMs,
         sources: () => current.sources,
         valid,
         receive,
       });
+      const result: CoreTelemetrySubscription = {
+        ...subscription,
+        dispose: async () => {
+          callerDisposed = true;
+          closure.listeners.clear();
+          await subscription.dispose();
+        },
+      };
+      coreClosures.set(result, closure);
+      return result;
     },
     attachChannel({ owner, principal, send }) {
       const key = resourceOwnerKey(owner),
@@ -1591,22 +1774,29 @@ export function createBroker(
         id = randomUUID();
       gate(principal, operationClass, sessionId, "admission");
       current.lane.reserve(id);
-      const ctx = contexts(principal, current, operationClass, 600000, id);
       const hardDeadline = input.now() + 600000;
       let confirmationDeadline = Math.min(hardDeadline, input.now() + 120000),
         closed = false,
+        executionAdmitted = false,
         launched = false;
+      const assertPlan = () => {
+        if (
+          closed ||
+          (!executionAdmitted &&
+            (input.now() >= hardDeadline || input.now() >= confirmationDeadline))
+        )
+          return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
+      };
+      // Confirmation clocks bound planning only. Every execution exchange still uses
+      // ExchangeLane's 5 s / 10 s budget and the same authority/cancellation checks.
+      const ctx = contexts(principal, current, operationClass, Infinity, id, assertPlan);
       let risk: SafetyFaultEntry | null = null;
       let inFlight: Promise<ProviderOutcome<LegacyProviderValue>> | null = null;
       let resolve!: (value: DeviceDisposition) => void;
       const done = new Promise<DeviceDisposition>((r) => {
         resolve = r;
       });
-      const check = () => {
-        if (closed || input.now() >= hardDeadline || input.now() >= confirmationDeadline)
-          return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
-        ctx.work.assertContinuation("file-begin");
-      };
+      const check = () => ctx.work.assertContinuation("file-begin");
       const finish = async () => {
         if (closed) {
           await done;
@@ -1614,7 +1804,7 @@ export function createBroker(
         }
         if (launched) return;
         closed = true;
-        const cleanupDeadline = Math.min(hardDeadline, ctx.cleanup.deadlineMonotonicMs);
+        const cleanupDeadline = ctx.cleanup.deadlineMonotonicMs;
         try {
           if (inFlight)
             await bounded(
@@ -1701,6 +1891,7 @@ export function createBroker(
         operationId: id,
         async execute(request) {
           check();
+          if (request.kind !== "list") executionAdmitted = true;
           if (
             operationClass === "file-read" &&
             request.kind !== "list" &&
@@ -1802,6 +1993,10 @@ export function createBroker(
         finish,
         cancel,
       };
+      legacyAdmissions.set(operation, () => {
+        check();
+        executionAdmitted = true;
+      });
       return operation;
     },
     async legacy(principal, sessionId, request, signal) {
@@ -1826,5 +2021,6 @@ export function createBroker(
       }
     },
   };
+  lifecycleListeners.set(broker, lifecycle);
   return broker;
 }

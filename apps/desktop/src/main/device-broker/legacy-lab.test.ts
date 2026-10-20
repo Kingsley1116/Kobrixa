@@ -174,3 +174,179 @@ it.each(["coalesced", "overflow", "unavailable"])(
     expect(remove).toHaveBeenCalledOnce();
   },
 );
+
+import { createDeviceBroker, type CorePrincipal } from "./broker-port.js";
+import { operationHarness, createFakeDeviceProvider, ID } from "./fake-provider.js";
+import { LegacyDevice as RealLegacyDevice, createLegacyMonitorFeed } from "./legacy-device.js";
+it("T5fix core Lab reserves, reads and releases through the real broker and formal provider", async () => {
+  const h = operationHarness();
+  const principal: CorePrincipal = {
+    kind: "core",
+    adapter: "lab",
+    hostEpoch: ID,
+    workbenchInstance: ID,
+    authorityContext: { ref: ID, epoch: ID },
+  };
+  const broker = createDeviceBroker({
+    journal: h.dependencies.journal,
+    profile: h.dependencies.profile,
+    now: h.dependencies.now,
+    authority: {
+      current: () => ({
+        ref: ID,
+        epoch: ID,
+        workbenchInstance: ID,
+        state: "local",
+        roomBinding: null,
+        connected: false,
+        synced: true,
+        role: null,
+        isHolder: true,
+      }),
+      assertContinuation() {},
+      subscribe: () => () => {},
+    },
+    coreActions: { claim: () => true, isClaimed: () => true, complete() {} },
+    hasPermission: () => true,
+    requirements: () => [],
+    operationGate: () => ({ ok: true, value: null }),
+    connectionPolicy: () => ({
+      wifiConnectTimeoutMs: 5000,
+      wifiHandshakeTimeoutMs: 3000,
+      usbAutoReconnect: false,
+      usbRetryInterval: "backoff",
+      usbRetryLimit: 3,
+    }),
+  });
+  const { provider } = createFakeDeviceProvider({
+    catalog: broker.providerCatalog(h.provider.id),
+    now: h.dependencies.now,
+  });
+  // The formal provider's channels use portable IDs; adapt only its legacy EV3 metadata.
+  const sources = provider.sources.bind(provider);
+  vi.spyOn(provider, "sources").mockImplementation(async (...args) => {
+    const result = await sources(...args);
+    result.value!.channels[0] = {
+      ...result.value!.channels[0]!,
+      portId: "input:0",
+      typeId: "ev3:29",
+      modeId: "mode:0",
+    };
+    return result;
+  });
+  const unregister = broker.registerProvider(provider);
+  const device = new RealLegacyDevice({
+    broker,
+    principal: () => principal,
+    stop: async () => {},
+    disconnect: async () => {},
+    feed: createLegacyMonitorFeed(broker),
+  });
+  const publish = vi.fn();
+  const lab = new LegacyLab(device, publish);
+  try {
+    const id = await device.connectWifi("127.0.0.1");
+    const request = vi.spyOn(device, "request");
+    await lab.acquire(id, [
+      {
+        id: "old",
+        kind: "input",
+        port: 0,
+        type: 29,
+        mode: 0,
+        channel: 0,
+        name: "Light",
+        modeName: "Reflect",
+        unit: "%",
+        decimals: 0,
+      },
+    ]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "live",
+        snapshot: expect.objectContaining({ inputs: [expect.objectContaining({ values: [42] })] }),
+      }),
+    );
+    const reserve = request.mock.results.find(
+      (_, i) => request.mock.calls[i]![0] === "devices/recording/reserve",
+    )!;
+    const { reservation } = await reserve.value;
+    expect(
+      await device.request("devices/recording/query", { reservationId: reservation.reservationId }),
+    ).toMatchObject({ reservation: { state: "active" } });
+    expect(
+      await device.request("devices/recording/read", {
+        reservationId: reservation.reservationId,
+        afterSequence: 0,
+        limit: 1,
+      }),
+    ).toMatchObject({
+      frames: [expect.objectContaining({ values: [{ channelId: expect.any(String), value: 42 }] })],
+    });
+    await lab.release(id);
+    expect(
+      await device.request("devices/recording/query", { reservationId: reservation.reservationId }),
+    ).toMatchObject({ reservation: { state: "ended", reason: "released" } });
+  } finally {
+    unregister();
+    await broker.resources.beginShutdown();
+  }
+});
+
+function cleanupFixture() {
+  const sources = { sessionId: "s", sourceRevision: 1, channels: [], actuators: [] };
+  const frame = {
+    sequence: 1,
+    sampledAt: 1,
+    elapsedMs: 0,
+    sourceRevision: 1,
+    status: "ok",
+    program: "stopped",
+    values: [],
+  };
+  const request = vi.fn(async (method: string) => {
+    if (method === "devices/session") return { sources };
+    if (method === "devices/recording/reserve")
+      return { reservation: { reservationId: "r", channels: [] }, firstFrame: frame };
+    if (method === "devices/recording/release") return { reservation: { lastSequence: 1 } };
+    throw new Error(method);
+  });
+  const remove = vi.fn(async () => {});
+  let closed: ((reason: string) => void) | undefined;
+  const watch = vi.fn(
+    async (_id: string, _interval: number, _receive: unknown, onClosed?: typeof closed) => {
+      closed = onClosed;
+      return remove;
+    },
+  );
+  const publish = vi.fn();
+  const lab = new LegacyLab({ request, watch } as unknown as LegacyDevice, publish);
+  return { lab, request, watch, remove, publish, close: () => closed?.("overflow") };
+}
+it("T5fix Lab emits paused when its feed closes", async () => {
+  const f = cleanupFixture();
+  await f.lab.acquire("s", []);
+  f.close();
+  expect(f.lab.latest("s")?.status).toBe("paused");
+  await f.lab.release("s");
+});
+it("T5fix failed feed removal does not leave Lab permanently ending", async () => {
+  const f = cleanupFixture();
+  await f.lab.acquire("s", []);
+  f.remove.mockRejectedValueOnce(new Error("remove failed"));
+  await expect(f.lab.release("s")).rejects.toThrow("remove failed");
+  await expect(f.lab.acquire("s", [])).resolves.toBeUndefined();
+  await f.lab.release("s");
+});
+it("T5fix failed acquisition cleanup preserves the original failure", async () => {
+  const f = cleanupFixture();
+  const failure = new Error("watch failed");
+  f.watch.mockRejectedValueOnce(failure);
+  const original = f.request.getMockImplementation()!;
+  f.request.mockImplementation(async (method) => {
+    if (method === "devices/recording/release") throw new Error("release failed");
+    return original(method);
+  });
+  await expect(f.lab.acquire("s", [])).rejects.toBe(failure);
+});

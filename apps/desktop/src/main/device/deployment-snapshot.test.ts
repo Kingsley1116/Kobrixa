@@ -11,7 +11,7 @@ import { LegacyFiles } from "../device-broker/legacy-files.js";
 import { DeviceService } from "./device.js";
 import type { BuildService } from "../workspace/build.js";
 import type { DevicePreferencesStore } from "./preferences.js";
-function fixture() {
+function fixture(skipUnchangedAssets = false) {
   const principal: Principal = {
     kind: "core",
     adapter: "deployment",
@@ -62,7 +62,7 @@ function fixture() {
     deployableArtifacts: artifacts,
   } as unknown as BuildService;
   const preferences = {
-    get: () => ({ skipUnchangedAssets: false }),
+    get: () => ({ skipUnchangedAssets }),
     set: async () => ({}),
   } as unknown as DevicePreferencesStore;
   const service = new DeviceService(builds, () => undefined, preferences, {
@@ -83,5 +83,60 @@ it("F14 rejects a changed immutable build before upload and preserves asset-befo
   expect(f.execute.mock.calls.map(([value]) => value.remotePath)).toEqual([
     "/home/root/lms2012/prjs/demo/asset.rgf",
     "/home/root/lms2012/prjs/demo/main.rbf",
+  ]);
+});
+it("T5fix missing checksum listing falls back to both artifact uploads", async () => {
+  const f = fixture(true);
+  f.execute.mockRejectedValueOnce(new Error("Missing directory"));
+  await expect(f.service.deploy("s", "build", "/project")).resolves.toBeUndefined();
+  expect(f.execute.mock.calls.map(([request]) => request.kind)).toEqual([
+    "list",
+    "upload",
+    "upload",
+  ]);
+  expect(f.operation.cancel).not.toHaveBeenCalled();
+});
+it("T5fix deployment errors retain the failing artifact path", async () => {
+  const f = fixture();
+  f.execute.mockRejectedValueOnce(new Error("transfer failed"));
+  await expect(f.service.deploy("s", "build", "/project")).rejects.toThrow(
+    "Unable to deploy '/asset': transfer failed",
+  );
+});
+it.each(["authority-changed", "connection-lost", "cancelled"] as const)(
+  "T5fix %s listing errors never admit fallback uploads",
+  async (reason) => {
+    const f = fixture(true);
+    f.execute.mockResolvedValueOnce({
+      value: null,
+      dispatch: "sent",
+      stopConfirmation: "not-required",
+      error: { reason, message: reason },
+    });
+    await expect(f.service.deploy("s", "build", "/project")).rejects.toThrow(reason);
+    expect(f.execute).toHaveBeenCalledOnce();
+  },
+);
+it("T5fix native connection errors never trigger deployment upload fallback", async () => {
+  const f = fixture(true);
+  f.execute.mockRejectedValueOnce(Object.assign(new Error("socket lost"), { code: "ECONNRESET" }));
+  await expect(f.service.deploy("s", "build", "/project")).rejects.toMatchObject({
+    category: "connection",
+  });
+  expect(f.execute).toHaveBeenCalledOnce();
+});
+it("T5fix unavailable checksum capability falls back to uploading", async () => {
+  const f = fixture(true);
+  f.execute.mockResolvedValueOnce({
+    value: null,
+    dispatch: "not-sent",
+    stopConfirmation: "not-required",
+    error: { reason: "unsupported-capability", message: "Checksums unavailable" },
+  });
+  await expect(f.service.deploy("s", "build", "/project")).resolves.toBeUndefined();
+  expect(f.execute.mock.calls.map(([request]) => request.kind)).toEqual([
+    "list",
+    "upload",
+    "upload",
   ]);
 });

@@ -37,3 +37,20 @@ it("F07 close during subscription registration disposes a late subscription", as
   await closing;
   expect(remove).toHaveBeenCalledOnce();
 });
+it("T5fix a closed feed pauses Monitor and allows the same owner to watch again", async () => {
+  let closed: ((reason: string) => void) | undefined;
+  const watch = vi.fn(
+    async (_id: string, _interval: number, _receive: unknown, onClosed?: typeof closed) => {
+      closed = onClosed;
+      return async () => {};
+    },
+  );
+  const publish = vi.fn();
+  const service = new MonitorService({ watch } as unknown as LegacyDevice, publish);
+  await service.watch("s", true, 1);
+  closed?.("overflow");
+  expect(service.latest("s")?.status).toBe("paused");
+  await service.watch("s", true, 1);
+  expect(watch).toHaveBeenCalledTimes(2);
+  await service.dispose();
+});

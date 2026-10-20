@@ -1,8 +1,39 @@
-import type { DeviceSession } from "@kobrixa/device";
+import { normalizeDeviceError, type DeviceSession } from "@kobrixa/device";
 import type { Principal } from "@kobrixa/plugin-runtime";
 import type { Handle } from "@kobrixa/plugin-protocol";
 import type { LegacyOperationPort } from "./broker-port.js";
 import type { LegacyProviderRequest } from "./provider.js";
+import { BrokerFailure } from "./registry.js";
+import { RpcError } from "@kobrixa/plugin-protocol";
+import { admitLegacyExecution } from "./broker.js";
+export function canFallbackAfterListing(error: unknown): boolean {
+  if (error instanceof BrokerFailure || error instanceof RpcError) return false;
+  if (typeof error !== "object" || error === null) return true;
+  if ("name" in error && error.name === "AbortError") return false;
+  if (["cancelled", "permission", "connection"].includes(normalizeDeviceError(error).category))
+    return false;
+  return (
+    !("reason" in error) ||
+    ![
+      "cancelled",
+      "authority-changed",
+      "unbound",
+      "joining",
+      "unsynced",
+      "not-holder",
+      "viewer",
+      "scope-expired",
+      "disconnected",
+      "connection-lost",
+      "quarantined",
+      "provider-disabled",
+      "disabled",
+      "process-lost",
+      "shutting-down",
+      "safe-mode",
+    ].includes(String(error.reason))
+  );
+}
 export interface LegacyFileSession extends Pick<
   DeviceSession,
   "list" | "download" | "upload" | "uploadStream" | "createDirectory" | "rename" | "delete" | "run"
@@ -36,6 +67,7 @@ export class LegacyFiles {
     });
     let idleDeadline: number | null = null,
       ended = false,
+      executionAdmitted = false,
       cancelled: Promise<void> | undefined;
     let rejectExpiry!: (error: Error) => void;
     const expiry = new Promise<never>((_, reject) => {
@@ -54,13 +86,14 @@ export class LegacyFiles {
       if (
         ended ||
         controller.signal.aborted ||
-        this.now() >= hardDeadline ||
+        (!executionAdmitted && this.now() >= hardDeadline) ||
         (idleDeadline !== null && this.now() >= idleDeadline)
       )
         throw new Error("File operation expired; partial device changes may remain.");
     };
     const schedule = () => {
       clearTimeout(timer);
+      if (executionAdmitted && idleDeadline === null) return;
       const deadline = Math.min(hardDeadline, idleDeadline ?? hardDeadline);
       timer = setTimeout(
         () => {
@@ -73,10 +106,18 @@ export class LegacyFiles {
     };
     const execute = async (request: LegacyProviderRequest) => {
       assert();
+      if (request.kind !== "list" && !executionAdmitted) {
+        admitLegacyExecution(operation);
+        executionAdmitted = true;
+        schedule();
+      }
       const result = await operation.execute(request);
       assert();
       if (result.error || !result.value)
-        throw new Error(result.error?.message ?? "Device operation outcome is unknown.");
+        throw Object.assign(
+          new Error(result.error?.message ?? "Device operation outcome is unknown."),
+          { reason: result.error?.reason ?? "unknown" },
+        );
       return result.value;
     };
     const session: LegacyFileSession = {
@@ -144,6 +185,8 @@ export class LegacyFiles {
         try {
           const value = await Promise.race([dialog(), expiry]);
           assert();
+          admitLegacyExecution(operation);
+          executionAdmitted = true;
           return value;
         } finally {
           idleDeadline = null;

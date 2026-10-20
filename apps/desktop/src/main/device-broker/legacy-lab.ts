@@ -112,53 +112,69 @@ export class LegacyLab {
       };
       this.active = active;
       this.emit(active, result.firstFrame);
-      active.remove = await this.device.watch(sessionId, 500, (snapshot, currentSources) => {
-        if (this.active !== active) return;
-        if (snapshot.status === "unavailable") {
-          this.update(sessionId, "paused");
-          return;
-        }
-        const changed = result.reservation.channels.some(
-          (pinned) =>
-            !currentSources.channels.some(
-              (current) =>
-                current.channelId === pinned.channelId &&
-                current.typeId === pinned.typeId &&
-                current.modeId === pinned.modeId &&
-                current.unit === pinned.unit,
-            ),
-        );
-        if (changed) {
-          // Let the unchanged legacy recorder detect the metadata change before
-          // accepting any new-source sample. This never extends a reservation.
-          if (snapshot.frame)
-            this.update(sessionId, "live", monitorProjection(currentSources, snapshot.frame));
-          else this.update(sessionId, "paused");
-          return;
-        }
-        // Telemetry is only a wake-up. Read the original reservation ring so a
-        // coalesced event cannot silently lose samples or overflow evidence.
-        active.again = true;
-        if (active.reading) return;
-        active.reading = true;
-        active.reads = (async () => {
-          do {
-            active.again = false;
-            await this.read(active);
-          } while (active.again && this.active === active);
-        })()
-          .catch(() => {
-            if (this.active === active) this.update(sessionId, "paused");
-          })
-          .finally(() => {
-            active.reading = false;
-          });
-      });
+      active.remove = await this.device.watch(
+        sessionId,
+        500,
+        (snapshot, currentSources) => {
+          if (this.active !== active) return;
+          if (snapshot.status === "unavailable") {
+            this.update(sessionId, "paused");
+            return;
+          }
+          const changed = result.reservation.channels.some(
+            (pinned) =>
+              !currentSources.channels.some(
+                (current) =>
+                  current.channelId === pinned.channelId &&
+                  current.typeId === pinned.typeId &&
+                  current.modeId === pinned.modeId &&
+                  current.unit === pinned.unit,
+              ),
+          );
+          if (changed) {
+            // Let the unchanged legacy recorder detect the metadata change before
+            // accepting any new-source sample. This never extends a reservation.
+            if (snapshot.frame)
+              this.update(sessionId, "live", monitorProjection(currentSources, snapshot.frame));
+            else this.update(sessionId, "paused");
+            return;
+          }
+          // Telemetry is only a wake-up. Read the original reservation ring so a
+          // coalesced event cannot silently lose samples or overflow evidence.
+          active.again = true;
+          if (active.reading) return;
+          active.reading = true;
+          active.reads = (async () => {
+            do {
+              active.again = false;
+              await this.read(active);
+            } while (active.again && this.active === active);
+          })()
+            .catch(() => {
+              if (this.active === active) this.update(sessionId, "paused");
+            })
+            .finally(() => {
+              active.reading = false;
+            });
+        },
+        () => {
+          if (this.active === active) this.update(sessionId, "paused");
+        },
+      );
     } catch (error) {
       const active = this.active;
       this.active = undefined;
-      if (reservationId) await this.device.request("devices/recording/release", { reservationId });
-      await active?.remove();
+      try {
+        if (reservationId)
+          await this.device.request("devices/recording/release", { reservationId });
+      } catch {
+        /* Preserve the acquisition failure; cleanup remains independent. */
+      }
+      try {
+        await active?.remove();
+      } catch {
+        /* Preserve the original error. */
+      }
       throw error;
     } finally {
       this.opening = false;
@@ -176,8 +192,11 @@ export class LegacyLab {
       await active.reads;
       await this.read(active, end.reservation.lastSequence);
     })().finally(async () => {
-      await active.remove();
-      this.ending = undefined;
+      try {
+        await active.remove();
+      } finally {
+        this.ending = undefined;
+      }
     });
     this.ending = work;
     return work;

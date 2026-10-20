@@ -1177,3 +1177,221 @@ it.each(["success", "failure", "late"] as const)(
     }
   },
 );
+
+it("T5fix retained operations permit further execute calls after a recoverable provider error", async () => {
+  const h = setup(),
+    principal = pluginPrincipal();
+  const connected = await h.broker.request(
+    principal,
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect");
+  const original = h.provider.legacy.bind(h.provider);
+  vi.spyOn(h.provider, "legacy").mockImplementation(async (key, request, ctx) =>
+    request.kind === "list"
+      ? {
+          value: null,
+          dispatch: "sent",
+          stopConfirmation: "not-required",
+          error: { reason: "provider-failure", message: "Missing directory" },
+        }
+      : original(key, request, ctx),
+  );
+  const operation = await h.broker.begin({
+    principal,
+    sessionId: connected.value.session.sessionId,
+    operationClass: "deployment",
+    signal: signal(),
+  });
+  try {
+    expect((await operation.execute({ kind: "list", remotePath: "/missing" })).error?.reason).toBe(
+      "provider-failure",
+    );
+    expect((await operation.execute({ kind: "mkdir", remotePath: "/missing" })).error).toBeNull();
+    expect((await operation.execute({ kind: "mkdir", remotePath: "/second" })).error).toBeNull();
+  } finally {
+    await operation.finish();
+    h.unregister();
+  }
+});
+import { LegacyFiles } from "./legacy-files.js";
+it("T5fix real broker execution remains exchange-bounded after confirmation expires", async () => {
+  vi.useFakeTimers();
+  const h = setup(),
+    principal = pluginPrincipal();
+  try {
+    const connected = await h.broker.request(
+      principal,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const files = new LegacyFiles(h.broker, () => principal, h.dependencies.now);
+    const result = files
+      .run(connected.value.session.sessionId, async (session, cancellation) => {
+        await session.confirm(async () => true);
+        await new Promise<void>((resolve) => setTimeout(resolve, 600001));
+        h.setNow(600001);
+        await session.createDirectory("/late", cancellation);
+      })
+      .then(
+        () => "ok",
+        () => "expired",
+      );
+    await vi.advanceTimersByTimeAsync(600002);
+    expect(await result).toBe("ok");
+  } finally {
+    h.unregister();
+    vi.useRealTimers();
+  }
+});
+import { observeCoreTelemetryClosed } from "./broker.js";
+import type { CorePrincipal } from "./broker-port.js";
+it.each(["ack-deadline", "session-loss", "caller"])(
+  "T5fix core telemetry reports %s closure once",
+  async (reason) => {
+    vi.useFakeTimers();
+    const h = setup();
+    const principal: CorePrincipal = {
+      kind: "core",
+      adapter: "monitor",
+      hostEpoch: ID,
+      workbenchInstance: ID,
+      authorityContext: { ref: ID, epoch: ID },
+    };
+    try {
+      const connected = await h.broker.request(
+        principal,
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+        signal(),
+      );
+      if (!connected.ok) throw new Error("connect");
+      const subscription = await h.broker.subscribeCoreTelemetry({
+        principal,
+        sessionId: connected.value.session.sessionId,
+        channelIds: [ID],
+        intervalMs: 500,
+        receive() {},
+      });
+      const closed = vi.fn();
+      observeCoreTelemetryClosed(subscription, closed);
+      subscription.activate();
+      await vi.advanceTimersByTimeAsync(0);
+      if (reason === "caller") await subscription.dispose();
+      else if (reason === "session-loss") h.provider.lose();
+      else h.setNow(10000);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(closed).toHaveBeenCalledTimes(reason === "caller" ? 0 : 1);
+      await subscription.dispose();
+      expect(closed).toHaveBeenCalledTimes(reason === "caller" ? 0 : 1);
+    } finally {
+      h.unregister();
+      vi.useRealTimers();
+    }
+  },
+);
+it("T5fix core reservations retain core identity and share recording exclusion with plugins", async () => {
+  const h = setup();
+  const principal: CorePrincipal = {
+    kind: "core",
+    adapter: "lab",
+    hostEpoch: ID,
+    workbenchInstance: ID,
+    authorityContext: { ref: ID, epoch: ID },
+  };
+  try {
+    const connected = await h.broker.request(
+      principal,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const params = {
+      sessionId: connected.value.session.sessionId,
+      channelIds: [ID],
+      expectedSourceRevision: 1,
+    };
+    const reserved = await h.broker.request(
+      principal,
+      "devices/recording/reserve",
+      params,
+      signal(),
+    );
+    if (!reserved.ok) throw new Error("reserve");
+    const ref = { reservationId: reserved.value.reservation.reservationId };
+    expect(
+      await h.broker.request(
+        { ...principal, adapter: "monitor" },
+        "devices/recording/query",
+        ref,
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+    expect(
+      await h.broker.request(
+        {
+          ...principal,
+          authorityContext: { ref: ID, epoch: "00000000-0000-4000-8000-000000000002" },
+        },
+        "devices/recording/read",
+        { ...ref, afterSequence: 0, limit: 1 },
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+    await h.broker.request(pluginPrincipal(), "devices/list", {}, signal());
+    expect(
+      await h.broker.request(pluginPrincipal(), "devices/recording/reserve", params, signal()),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+    expect(
+      await h.broker.request(pluginPrincipal(), "devices/recording/query", ref, signal()),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+    expect((await h.broker.request(principal, "devices/recording/release", ref, signal())).ok).toBe(
+      true,
+    );
+    expect(
+      (await h.broker.request(pluginPrincipal(), "devices/recording/reserve", params, signal())).ok,
+    ).toBe(true);
+  } finally {
+    h.unregister();
+  }
+});
+it("T5fix confirmation expiry still blocks exchanges during planning", async () => {
+  const h = setup(),
+    principal = pluginPrincipal();
+  const connected = await h.broker.request(
+    principal,
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect");
+  const sent = vi.fn(async () => {});
+  vi.spyOn(h.provider, "legacy").mockImplementation(async (_key, _request, ctx) => {
+    h.setNow(120000);
+    await ctx.exchange("read", sent);
+    return {
+      value: { kind: "entries", entries: [] },
+      dispatch: "sent",
+      error: null,
+      stopConfirmation: "not-required",
+    };
+  });
+  const operation = await h.broker.begin({
+    principal,
+    sessionId: connected.value.session.sessionId,
+    operationClass: "file-read",
+    signal: signal(),
+  });
+  try {
+    await expect(operation.execute({ kind: "list", remotePath: "/plan" })).rejects.toThrow();
+    expect(sent).not.toHaveBeenCalled();
+  } finally {
+    await operation.finish();
+    h.unregister();
+  }
+});

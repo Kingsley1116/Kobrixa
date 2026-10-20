@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
 import type { MonitorResult } from "../../shared/api.js";
 import { MonitorController } from "./monitor-controller.js";
-import { MonitorService } from "../../main/device/monitor-service.js";
+import type { MonitorUpdate } from "../../shared/sensor-lab.js";
 
-const samplers: MonitorService[] = [];
+const samplers: Array<{ dispose(): Promise<void> }> = [];
 
 function snapshot(
   status: DeviceMonitorSnapshot["program"]["status"] = "stopped",
@@ -73,7 +73,91 @@ function setup() {
       },
     ),
   };
-  const sampler = new MonitorService(api, () => {});
+  // Watch-based broker fixture: only this fake owns sampling and foreground arbitration.
+  // The renderer receives updates and disposes demand; it owns no polling clock.
+  const listeners = new Set<(update: MonitorUpdate) => void>();
+  const updates = new Map<string, MonitorUpdate>();
+  let demanded: string | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: Promise<void> | undefined;
+  let foreground = false;
+  let sequence = 0;
+  const schedule = () => {
+    clearTimeout(timer);
+    if (demanded && !foreground)
+      timer = setTimeout(() => {
+        void sample(demanded!);
+      }, 500);
+  };
+  const sample = (id: string): Promise<void> => {
+    if (pending) return pending;
+    clearTimeout(timer);
+    pending = (async () => {
+      let result: MonitorResult<DeviceMonitorSnapshot>;
+      try {
+        result = await api.monitor(id);
+      } catch (error) {
+        result = { status: "error", category: "connection", message: (error as Error).message };
+      }
+      const update: MonitorUpdate = {
+        sessionId: id,
+        sequence: ++sequence,
+        status: result.status === "ok" ? "live" : result.status === "error" ? "error" : "waiting",
+        snapshot: result.status === "ok" ? result.value : updates.get(id)?.snapshot,
+        ...(result.status === "error" ? { error: result.message } : {}),
+      };
+      updates.set(id, update);
+      if (demanded === id) for (const listener of listeners) listener(update);
+    })().finally(() => {
+      pending = undefined;
+      schedule();
+    });
+    return pending;
+  };
+  const mode = async <T>(
+    id: string,
+    work: () => Promise<MonitorResult<T>>,
+  ): Promise<MonitorResult<T>> => {
+    foreground = true;
+    clearTimeout(timer);
+    try {
+      await pending;
+      if (updates.get(id)?.snapshot?.program.status !== "stopped") return { status: "busy" };
+      return await work();
+    } finally {
+      foreground = false;
+      schedule();
+    }
+  };
+  const sampler = {
+    async watch(id: string, enabled: boolean): Promise<MonitorUpdate> {
+      if (!enabled) {
+        if (demanded === id) demanded = undefined;
+        clearTimeout(timer);
+        await pending;
+      } else {
+        demanded = id;
+        await sample(id);
+      }
+      return updates.get(id) ?? { sessionId: id, sequence: ++sequence, status: "paused" };
+    },
+    subscribe(listener: (update: MonitorUpdate) => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    inputModes: (id: string, port: number, type: number) =>
+      mode(id, () => api.inputModes(id, port, type)),
+    setInputMode: (id: string, port: number, type: number, value: number) =>
+      mode(id, () => api.setInputMode(id, port, type, value)),
+    async dispose() {
+      demanded = undefined;
+      clearTimeout(timer);
+      await pending;
+      listeners.clear();
+    },
+  };
   samplers.push(sampler);
   const controller = new MonitorController({
     watchMonitor: (id, active) => sampler.watch(id, active),

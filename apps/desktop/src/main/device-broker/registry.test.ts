@@ -308,56 +308,76 @@ it("reports host and source subscription quota limits", () => {
   ledger.dispose();
 });
 
-it.each(["busy", "read-error"] as const)(
-  "overflow preserves an existing %s gap and the widest range",
-  (reason) => {
-    const sent: Stage3EventEnvelope[] = [];
-    const ledger = new EventLedger(
-      () => 0,
-      (event) => sent.push(event),
-      () => {},
-    );
-    const created = ledger.create(owner);
-    if (!created.ok) throw new Error("create");
-    const id = created.value.subscriptionId;
-    ledger.activate(owner, id);
-    const publish = (sequence: number, existing = false) =>
-      ledger.publish(
-        owner,
-        id,
-        {
-          kind: "devices.telemetry",
-          data: {
-            sessionId: ID,
-            frames: [
-              {
-                ...frame(),
-                sequence,
-                values: Array.from({ length: 38 }, () => ({ channelId: ID, value: 1 })),
-                ...(existing ? { gap: { fromSequence: 1, toSequence: 201, reason } } : {}),
-              },
-            ],
-            snapshot: {
+it.each([
+  ["devices.telemetry", "busy"],
+  ["devices.telemetry", "read-error"],
+  ["devices.recordingFrames", "busy"],
+  ["devices.recordingFrames", "read-error"],
+] as const)("%s overflow widens a narrower %s gap and preserves its reason", (kind, reason) => {
+  const sent: Stage3EventEnvelope[] = [];
+  const ledger = new EventLedger(
+    () => 0,
+    (event) => sent.push(event),
+    () => {},
+  );
+  const created = ledger.create(owner);
+  if (!created.ok) throw new Error("create");
+  const id = created.value.subscriptionId;
+  ledger.activate(owner, id);
+  const publish = (sequence: number, existing = false) => {
+    const frames = [
+      {
+        ...frame(),
+        sequence,
+        values: Array.from({ length: 38 }, () => ({ channelId: ID, value: 1 })),
+        ...(existing ? { gap: { fromSequence: 201, toSequence: 201, reason } } : {}),
+      },
+    ];
+    return ledger.publish(
+      owner,
+      id,
+      kind === "devices.telemetry"
+        ? {
+            kind,
+            data: {
               sessionId: ID,
-              revision: 1,
-              status: "unavailable",
-              ageMs: null,
-              frame: null,
+              frames,
+              snapshot: {
+                sessionId: ID,
+                revision: 1,
+                status: "unavailable",
+                ageMs: null,
+                frame: null,
+              },
             },
-          },
-        },
-        "telemetry",
-      );
-    try {
-      for (let sequence = 1; sequence <= 200; sequence++) publish(sequence);
-      expect(sent.length).toBeLessThan(200);
-      ledger.ack(owner, id, sent.at(-1)!.sequence);
-      publish(201, true);
-      const next = sent.at(-1)!;
-      if (next.kind !== "devices.telemetry") throw new Error("telemetry");
-      expect(next.data.frames[0]!.gap).toEqual({ fromSequence: 1, toSequence: 201, reason });
-    } finally {
-      ledger.dispose();
-    }
-  },
-);
+          }
+        : { kind, data: { reservationId: ID, frames, gap: null } },
+      "telemetry",
+    );
+  };
+  try {
+    for (let sequence = 1; sequence <= 200; sequence++) publish(sequence);
+    expect(sent.length).toBeLessThan(200);
+    const lastDelivered = sent.at(-1)!;
+    if (
+      lastDelivered.kind !== "devices.telemetry" &&
+      lastDelivered.kind !== "devices.recordingFrames"
+    )
+      throw new Error("frames");
+    const firstDropped = lastDelivered.data.frames.at(-1)!.sequence + 1;
+    expect(firstDropped).toBeLessThan(201);
+    ledger.ack(owner, id, lastDelivered.sequence);
+    publish(201, true);
+    const next = sent.at(-1)!;
+    if (next.kind !== kind) throw new Error("wrong event");
+    if (next.kind !== "devices.telemetry" && next.kind !== "devices.recordingFrames")
+      throw new Error("frames");
+    expect(next.data.frames[0]!.gap).toEqual({
+      fromSequence: firstDropped,
+      toSequence: 201,
+      reason,
+    });
+  } finally {
+    ledger.dispose();
+  }
+});

@@ -210,3 +210,162 @@ it("AM-08 uses the host serial-match reconnect seam and never replays legacy mut
   expect(request).toHaveBeenCalledOnce();
   expect(legacyCall).not.toHaveBeenCalled();
 });
+
+it("T5fix source revision changes replace channel demand inside the original disposer", async () => {
+  const f = feedFixture();
+  const receive = vi.fn();
+  const dispose = await f.feed.subscribe({
+    principal: f.principal,
+    sessionId: "s",
+    intervalMs: 500,
+    receive,
+  });
+  const sources: SourceCatalog = {
+    ...f.sources,
+    sourceRevision: 2,
+    channels: [
+      {
+        channelId: "new",
+        kind: "input",
+        portId: "input:0",
+        typeId: "ev3:29",
+        modeId: "mode:1",
+        component: 0,
+        name: "Light",
+        modeName: "Ambient",
+        unit: "%",
+        decimals: 0,
+        state: "ready",
+      },
+    ],
+  };
+  f.demands[0]!.input.receive({ sequence: 1, snapshot: f.snapshot, sources });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(f.demands).toHaveLength(2);
+  expect(f.demands[1]!.input.channelIds).toEqual(["new"]);
+  const frame = {
+    sequence: 2,
+    sampledAt: 2,
+    elapsedMs: 2,
+    sourceRevision: 2,
+    status: "ok" as const,
+    program: "stopped" as const,
+    values: [{ channelId: "new", value: 73 }],
+  };
+  f.demands[1]!.input.receive({
+    sequence: 1,
+    snapshot: { ...f.snapshot, revision: 2, status: "fresh", frame, ageMs: 0 },
+    sources,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const [snapshot, catalog] = receive.mock.calls.at(-1)!;
+  expect(monitorProjection(catalog, snapshot.frame).inputs[0]!.values).toEqual([73]);
+  await dispose();
+  expect(f.demands.map((d) => vi.mocked(d.subscription.dispose).mock.calls.length)).toEqual([1, 1]);
+});
+it.each(["overflow", "consumer-error", "invalid-sequence"])(
+  "T5fix %s reports closure exactly once; caller disposal is silent",
+  async (reason) => {
+    const f = feedFixture();
+    const onClosed = vi.fn();
+    const dispose = await f.feed.subscribe({
+      principal: f.principal,
+      sessionId: "s",
+      intervalMs: 500,
+      onClosed,
+      receive(snapshot) {
+        if (reason === "consumer-error" && snapshot.revision) throw new Error("consumer");
+      },
+    });
+    for (let sequence = 1; sequence <= (reason === "overflow" ? 65 : 1); sequence++)
+      f.demands[0]!.input.receive({
+        sequence: reason === "invalid-sequence" ? 0 : sequence,
+        snapshot: { ...f.snapshot, revision: 1 },
+        sources: f.sources,
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith(reason);
+    await dispose();
+    expect(onClosed).toHaveBeenCalledOnce();
+    const callerClosed = vi.fn();
+    const remove = await f.feed.subscribe({
+      principal: f.principal,
+      sessionId: "s",
+      intervalMs: 500,
+      onClosed: callerClosed,
+      receive() {},
+    });
+    await remove();
+    expect(callerClosed).not.toHaveBeenCalled();
+  },
+);
+
+import { MonitorService } from "../device/monitor-service.js";
+import { LegacyLab } from "./legacy-lab.js";
+it.each(["overflow", "throwing-consumer"])(
+  "T5fix real feed %s lets Monitor restart",
+  async (reason) => {
+    const f = feedFixture();
+    const device = new LegacyDevice({
+      broker: f.broker,
+      principal: () => f.principal,
+      disconnect: async () => {},
+      stop: async () => {},
+      feed: f.feed,
+    });
+    const publish = vi.fn();
+    const service = new MonitorService(device, publish);
+    await service.watch("s", true, 7);
+    if (reason === "throwing-consumer")
+      publish.mockImplementationOnce(() => {
+        throw new Error("renderer failed");
+      });
+    for (let sequence = 1; sequence <= (reason === "overflow" ? 65 : 1); sequence++)
+      f.demands[0]!.input.receive({ sequence, snapshot: f.snapshot, sources: f.sources });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(service.latest("s")?.status).toBe("paused");
+    await service.watch("s", true, 7);
+    expect(f.demands).toHaveLength(2);
+    await service.dispose();
+  },
+);
+it("T5fix real feed overflow pauses Lab for the recorder's disconnected auto-stop", async () => {
+  const f = feedFixture();
+  const device = new LegacyDevice({
+    broker: f.broker,
+    principal: () => ({ ...f.principal, adapter: "lab" }),
+    disconnect: async () => {},
+    stop: async () => {},
+    feed: f.feed,
+  });
+  vi.spyOn(device, "request").mockImplementation(async (method) => {
+    if (method === "devices/session") return { sources: f.sources } as never;
+    if (method === "devices/recording/reserve")
+      return {
+        reservation: { reservationId: "r", channels: [] },
+        firstFrame: {
+          sequence: 1,
+          sampledAt: 1,
+          elapsedMs: 0,
+          sourceRevision: 1,
+          status: "ok",
+          program: "stopped",
+          values: [],
+        },
+      } as never;
+    return {
+      reservation: { lastSequence: 1 },
+      frames: [],
+      hasMore: false,
+      gap: null,
+      nextSequence: 1,
+    } as never;
+  });
+  const lab = new LegacyLab(device, () => {});
+  await lab.acquire("s", []);
+  for (let sequence = 1; sequence <= 65; sequence++)
+    f.demands[0]!.input.receive({ sequence, snapshot: f.snapshot, sources: f.sources });
+  expect(lab.latest("s")?.status).toBe("paused");
+  await lab.release("s");
+  expect(f.demands[0]!.subscription.dispose).toHaveBeenCalledOnce();
+});

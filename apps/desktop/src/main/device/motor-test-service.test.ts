@@ -74,3 +74,42 @@ it("F11 no real UI binding means unavailable; reconnected never rewrites uncerta
   ).toThrow("unavailable");
   expect(service.getState().phase).toBe("idle");
 });
+it("T5fix stopAll and flush ignore an already-terminal retained operation after eviction", async () => {
+  const operation = {
+    operationId: randomUUID(),
+    sessionId: randomUUID(),
+    phase: "completed",
+    angle: null,
+    displacement: null,
+    elapsedMs: 0,
+  } as MotionSnapshot;
+  const call = vi.fn(async (method: string) => {
+    if (method === "devices/motion/stop") throw new Error("stale");
+    return { operation };
+  });
+  const bindings = {
+    call,
+    prepare: () => ({}),
+    pulse() {},
+    hasBlocker: () => false,
+  } as unknown as MotorBrokerBindings;
+  const service = new MotorTestService({ bindings, publish() {} });
+  service.start(
+    {
+      sessionId: operation.sessionId,
+      testId: randomUUID(),
+      port: 0,
+      mode: "timed",
+      power: 10,
+      direction: 1,
+      brake: true,
+      durationMs: 100,
+    },
+    1,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(service.busy).toBe(false);
+  await expect(service.stopAll()).resolves.toBeUndefined();
+  await expect(service.flush()).resolves.toBeUndefined();
+  expect(call.mock.calls.map(([method]) => method)).not.toContain("devices/motion/stop");
+});

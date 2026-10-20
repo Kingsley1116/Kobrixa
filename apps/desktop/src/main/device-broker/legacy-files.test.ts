@@ -145,3 +145,37 @@ it("F14 cancellation retains original cleanup and refuses a late chunk", async (
   expect(f.op.execute).not.toHaveBeenCalled();
   expect(f.op.cancel).toHaveBeenCalledOnce();
 });
+it("T5fix confirmed execution outlives the 600 s plan deadline", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const f = fixture();
+  let finish!: () => void;
+  let aborted = false;
+  vi.mocked(f.op.execute).mockImplementation(async () => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return {
+      value: { kind: "mutation", verified: true },
+      dispatch: "sent",
+      stopConfirmation: "not-required",
+      error: null,
+    };
+  });
+  const result = f.files
+    .run("s", async (session, signal) => {
+      await session.confirm(async () => true);
+      signal.addEventListener("abort", () => {
+        aborted = true;
+      });
+      await session.delete("/a", signal);
+    })
+    .then(
+      () => "ok",
+      () => "expired",
+    );
+  await vi.advanceTimersByTimeAsync(600001);
+  expect(aborted).toBe(false);
+  finish();
+  expect(await result).toBe("ok");
+  expect(f.op.cancel).not.toHaveBeenCalled();
+});
