@@ -27,6 +27,7 @@ export class RpcError extends Error {
 }
 export interface RequestContext {
   readonly signal: AbortSignal;
+  afterReply(published: () => void, abandoned: () => void): void;
 }
 export interface RpcPeerOptions {
   timeoutMs?: number;
@@ -262,7 +263,15 @@ export class RpcPeer {
     this.#incoming.set(id, controller);
     try {
       const result = definition.result.parse(
-        await handler(input.data, { signal: controller.signal }),
+        await handler(input.data, {
+          signal: controller.signal,
+          // A-T1 replaces this unavailable scaffold with request-local publication.
+          // No stage-3 route is registered during the 1.4.0 freeze.
+          afterReply(_published, abandoned) {
+            abandoned();
+            throw new Error("Reply publication continuations are unavailable before A-T1.");
+          },
+        }),
       );
       if (controller.signal.aborted)
         throw new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`);

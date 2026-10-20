@@ -1,0 +1,80 @@
+{
+  "formatVersion": 1,
+  "family": "device-broker-v1",
+  "cases": [
+    {
+      "id": "valid-1",
+      "schema": "devices/negotiate.params",
+      "phase": "params",
+      "input": {},
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "valid-2",
+      "schema": "devices/motion/start.params",
+      "phase": "params",
+      "input": {
+        "operationId": "00000000-0000-4000-8000-000000000001"
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "valid-3",
+      "schema": "devices/connect.params",
+      "phase": "params",
+      "input": {
+        "target": {
+          "kind": "wifi-address",
+          "providerId": "kobrixa.device-ev3",
+          "address": "192.168.1.10"
+        }
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "valid-4",
+      "schema": "devices/connect.params",
+      "phase": "params",
+      "input": {
+        "target": {
+          "kind": "wifi-address",
+          "providerId": "kobrixa.device-ev3",
+          "address": "2001:db8::1"
+        }
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}

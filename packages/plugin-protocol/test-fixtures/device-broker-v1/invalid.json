@@ -1,0 +1,118 @@
+{
+  "formatVersion": 1,
+  "family": "device-broker-v1",
+  "cases": [
+    {
+      "id": "invalid-1",
+      "schema": "devices/negotiate.params",
+      "phase": "params",
+      "input": {
+        "provider": true
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "invalid-2",
+      "schema": "devices/motion/start.params",
+      "phase": "params",
+      "input": {
+        "operationId": "00000000-0000-4000-8000-00000000000A"
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "invalid-3",
+      "schema": "events/ack.params",
+      "phase": "params",
+      "input": {
+        "subscriptionId": "00000000-0000-4000-8000-000000000001",
+        "sequence": true
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "invalid-4",
+      "schema": "events/ack.params",
+      "phase": "params",
+      "input": {
+        "subscriptionId": "00000000-0000-4000-8000-000000000001",
+        "sequence": 9007199254740992
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "invalid-5",
+      "schema": "devices/connect.params",
+      "phase": "params",
+      "input": {
+        "target": {
+          "kind": "wifi-address",
+          "providerId": "kobrixa.device-ev3",
+          "address": "localhost"
+        }
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "invalid-6",
+      "schema": "devices/connect.params",
+      "phase": "params",
+      "input": {
+        "target": {
+          "kind": "wifi-address",
+          "providerId": "kobrixa.device-ev3",
+          "address": "fe80::1%en0"
+        }
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}

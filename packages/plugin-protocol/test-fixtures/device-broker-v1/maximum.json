@@ -1,0 +1,42 @@
+{
+  "formatVersion": 1,
+  "family": "device-broker-v1",
+  "cases": [
+    {
+      "id": "counter-limit",
+      "schema": "events/ack.params",
+      "phase": "params",
+      "input": {
+        "subscriptionId": "00000000-0000-4000-8000-000000000001",
+        "sequence": 9007199254740991
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "counter-limit-plus-1",
+      "schema": "events/ack.params",
+      "phase": "params",
+      "input": {
+        "subscriptionId": "00000000-0000-4000-8000-000000000001",
+        "sequence": 9007199254740992
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}
