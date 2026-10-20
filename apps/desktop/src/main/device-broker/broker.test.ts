@@ -1395,3 +1395,105 @@ it("T5fix confirmation expiry still blocks exchanges during planning", async () 
     h.unregister();
   }
 });
+
+import { admitLegacyExecution } from "./broker.js";
+it("T5fix2 legacy waits for an in-flight sampler exchange with finite provider deadlines", async () => {
+  const h = setup(),
+    principal: CorePrincipal = {
+      kind: "core",
+      adapter: "deployment",
+      hostEpoch: ID,
+      workbenchInstance: ID,
+      authorityContext: { ref: ID, epoch: ID },
+    };
+  const warnings: Error[] = [];
+  const listener = (warning: Error) => warnings.push(warning);
+  process.on("warning", listener);
+  try {
+    const connected = await h.broker.request(
+      principal,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const id = connected.value.session.sessionId;
+    const original = h.provider.read.bind(h.provider);
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    h.provider.read = async (session, ctx) => {
+      await ctx.exchange("read", async () => {
+        started();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      return original(session, ctx);
+    };
+    const catalog = await h.broker.request(
+      principal,
+      "devices/session",
+      { sessionId: id },
+      signal(),
+    );
+    if (!catalog.ok) throw new Error("catalog");
+    const demand = await h.broker.subscribeCoreTelemetry({
+      principal,
+      sessionId: id,
+      channelIds: catalog.value.sources.channels.map((c) => c.channelId),
+      intervalMs: 500,
+      receive: () => {},
+    });
+    demand.activate();
+    const reading = h.broker.request(
+      principal,
+      "devices/read",
+      {
+        sessionId: id,
+        channelIds: catalog.value.sources.channels.map((c) => c.channelId),
+        freshness: "fresh",
+      },
+      signal(),
+    );
+    await entered;
+    h.provider.legacy = async (_session, _request, ctx) => {
+      expect(Number.isFinite(ctx.deadlineMonotonicMs)).toBe(true);
+      expect(ctx.deadlineMonotonicMs).toBeGreaterThan(h.dependencies.now());
+      await ctx.exchange("read", async () => {});
+      return {
+        value: { kind: "entries", entries: [] },
+        dispatch: "not-sent",
+        error: null,
+        stopConfirmation: "not-required",
+      };
+    };
+    const op = await h.broker.begin({
+      principal,
+      sessionId: id,
+      operationClass: "file-read",
+      signal: signal(),
+    });
+    await expect(op.execute({ kind: "list", remotePath: "/" })).resolves.toMatchObject({
+      error: null,
+    });
+    admitLegacyExecution(op);
+    h.setNow(600001);
+    await expect(op.execute({ kind: "list", remotePath: "/later" })).resolves.toMatchObject({
+      error: null,
+    });
+    await op.finish();
+    const next = await h.broker.begin({
+      principal,
+      sessionId: id,
+      operationClass: "file-read",
+      signal: signal(),
+    });
+    await next.finish();
+    await reading;
+    await demand.dispose();
+    expect(warnings.filter((warning) => warning.name === "TimeoutOverflowWarning")).toEqual([]);
+  } finally {
+    process.off("warning", listener);
+    h.unregister();
+  }
+});

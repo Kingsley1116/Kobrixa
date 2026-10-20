@@ -85,7 +85,7 @@ it("F11 stale descriptor/native path cannot reconnect or replay deployment/run",
 import { createDeviceBroker, type DeviceBrokerOptions } from "../device-broker/broker-port.js";
 import { operationHarness, ID } from "../device-broker/fake-provider.js";
 import { createLegacyMonitorFeed } from "../device-broker/legacy-device.js";
-async function realFixture(autoReconnect = false) {
+async function realFixture(autoReconnect = false, transport: "usb" | "wifi" = "usb") {
   const h = operationHarness();
   const principal: Principal = {
     kind: "core",
@@ -128,7 +128,7 @@ async function realFixture(autoReconnect = false) {
   });
   h.provider.describe = () => ({
     key: h.provider.session,
-    descriptor: { ...h.provider.descriptor, transport: "usb" },
+    descriptor: { ...h.provider.descriptor, transport },
     physical: h.provider.physical,
     capabilities: [...h.provider.capabilities],
   });
@@ -136,7 +136,7 @@ async function realFixture(autoReconnect = false) {
     value: [
       {
         key: h.provider.candidate,
-        descriptor: { ...h.provider.descriptor, transport: "usb" },
+        descriptor: { ...h.provider.descriptor, transport },
         physical: h.provider.physical,
       },
     ],
@@ -188,25 +188,32 @@ async function realFixture(autoReconnect = false) {
     unregister,
   };
 }
-it("T5fix unplug emits disconnected with a message and runs teardown hooks", async () => {
-  const f = await realFixture();
-  try {
-    f.provider.lose();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(f.events).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "state",
-        state: "disconnected",
-        sessionId: f.id,
-        message: expect.any(String),
-      }),
-    );
-    expect(f.teardown).toHaveBeenCalledWith(f.id);
-    expect(() => f.service.descriptor(f.id)).toThrow();
-  } finally {
-    f.unregister();
-  }
-});
+it.each(["usb", "wifi"] as const)(
+  "T5fix2 %s loss preserves exact events without stopping gone motors",
+  async (transport) => {
+    const f = await realFixture(false, transport);
+    try {
+      f.events.mockClear();
+      f.teardown.mockRejectedValue(new Error("stale motor stop"));
+      f.provider.lose();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(f.events.mock.calls.map(([event]) => event)).toEqual([
+        transport === "usb"
+          ? {
+              type: "usb-recovery",
+              state: "unavailable",
+              previousSessionId: f.id,
+              descriptor: expect.objectContaining({ transport }),
+            }
+          : { type: "state", state: "disconnected", sessionId: f.id, message: expect.any(String) },
+      ]);
+      expect(f.teardown).not.toHaveBeenCalled();
+      expect(() => f.service.descriptor(f.id)).toThrow();
+    } finally {
+      f.unregister();
+    }
+  },
+);
 it("T5fix connect emits connecting/error and disconnects the existing session first", async () => {
   const f = await realFixture();
   try {
@@ -231,11 +238,17 @@ it("T5fix USB auto-recovery translates waiting, connecting and restored with no 
   vi.useFakeTimers();
   const f = await realFixture(true);
   try {
+    f.events.mockClear();
     f.provider.lose();
     await vi.advanceTimersByTimeAsync(1000);
     const recovery = f.events.mock.calls
       .map(([event]) => event)
       .filter((event) => event.type === "usb-recovery");
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual([
+      "waiting",
+      "connecting",
+      "restored",
+    ]);
     expect(recovery.map((event) => event.state)).toEqual(["waiting", "connecting", "restored"]);
     expect(recovery.at(-1)).toMatchObject({
       previousSessionId: f.id,
@@ -301,7 +314,7 @@ it.each(["cancelled", "exhausted"])(
         .filter((event) => event.type === "usb-recovery")
         .map((event) => event.state);
       expect(states.at(-1)).toBe(state);
-      if (state === "exhausted") expect(states).toContain("unavailable");
+      if (state === "exhausted") expect(states).toEqual(["waiting", "exhausted"]);
       expect(states).not.toContain("restored");
     } finally {
       f.unregister();
@@ -309,3 +322,57 @@ it.each(["cancelled", "exhausted"])(
     }
   },
 );
+
+import { ExecutionController } from "../../renderer/execution/execution.js";
+import type { KobrixaApi } from "../../shared/api.js";
+it("T5fix2 DeviceService waiting -> restored is adopted by ExecutionController", async () => {
+  vi.useFakeTimers();
+  const f = await realFixture(true);
+  const controller = new ExecutionController({
+    build: { onEvent: () => () => {} },
+    device: {
+      onEvent: (listener: Parameters<DeviceService["subscribe"]>[0]) =>
+        f.service.subscribe(listener),
+      connect: async () => f.id,
+    },
+  } as unknown as KobrixaApi);
+  const detach = controller.attach();
+  try {
+    await controller.connect(f.service.descriptor(f.id));
+    f.provider.lose();
+    expect(controller.getSnapshot().recovery?.state).toBe("waiting");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(controller.getSnapshot().recovery).toBeUndefined();
+    const restored = f.events.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.state === "restored");
+    expect(controller.getSnapshot().session?.id).toBe(restored.sessionId);
+    expect(controller.getSnapshot().session?.id).not.toBe(f.id);
+  } finally {
+    detach();
+    f.unregister();
+    vi.useRealTimers();
+  }
+});
+
+it("T5fix2 ambiguous USB recovery is terminal and emits unavailable once", async () => {
+  vi.useFakeTimers();
+  const f = await realFixture(true);
+  try {
+    const discover = f.provider.discover.bind(f.provider);
+    f.provider.discover = async (ctx) => {
+      const result = await discover(ctx);
+      return { ...result, value: [...result.value!, ...result.value!] };
+    };
+    f.events.mockClear();
+    f.provider.lose();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.events.mock.calls.map(([event]) => [event.type, event.state])).toEqual([
+      ["usb-recovery", "waiting"],
+      ["usb-recovery", "unavailable"],
+    ]);
+  } finally {
+    f.unregister();
+    vi.useRealTimers();
+  }
+});

@@ -92,11 +92,6 @@ export class DeviceService {
   }
   private observe(device: LegacyDevice): void {
     device.subscribe((event) => {
-      if (event.type === "state" && event.state === "disconnected" && event.sessionId) {
-        void this.beforeDisconnect?.(event.sessionId).catch((error: unknown) =>
-          this.reportError(error),
-        );
-      }
       this.send(event);
     });
   }

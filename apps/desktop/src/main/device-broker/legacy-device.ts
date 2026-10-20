@@ -250,7 +250,13 @@ export class LegacyDevice {
         this.descriptors.delete(id);
         this.lost.clear();
         this.lost.set(id, descriptor);
-        this.emit({ type: "state", state: "disconnected", sessionId: id, message: event.message });
+        if (descriptor.transport !== "usb")
+          this.emit({
+            type: "state",
+            state: "disconnected",
+            sessionId: id,
+            message: event.message,
+          });
         return;
       }
       const descriptor = this.lost.get(event.previousSessionId);
@@ -260,12 +266,6 @@ export class LegacyDevice {
         this.descriptors.set(session.sessionId, {
           id: session.sessionId,
           name: session.name,
-          transport: session.transport,
-        });
-        this.emit({
-          type: "state",
-          state: "connected",
-          sessionId: session.sessionId,
           transport: session.transport,
         });
         this.emit({

@@ -260,7 +260,7 @@ export function createBroker(
       policy.usbRetryInterval === "backoff"
         ? [1000, 2000, 5000][Math.min(row.attempts, 2)]!
         : policy.usbRetryInterval;
-    recoveryState(id, "waiting");
+    if (row.attempts === 0) recoveryState(id, "waiting");
     row.timer = setTimeout(() => {
       row.timer = null;
       if (!usbLive(row)) {
@@ -428,6 +428,7 @@ export function createBroker(
     duration: number,
     id = randomUUID(),
     validate: () => void = () => {},
+    rearmMs?: number,
   ) =>
     createContexts({
       id,
@@ -435,6 +436,7 @@ export function createBroker(
       generation: current?.generation ?? 0,
       operationClass,
       deadline: input.now() + duration,
+      ...(rearmMs === undefined ? {} : { rearmMs }),
       now: input.now,
       lane: current?.lane ?? connectionLane,
       check: () => {
@@ -715,7 +717,10 @@ export function createBroker(
     ) {
       const p = parse(method as "devices/recording/read");
       const snapshot = coreReservations.query(principal, p.reservationId);
-      if (!session || session.snapshot.sessionId !== snapshot.sessionId)
+      if (
+        snapshot.state !== "ended" &&
+        (!session || session.snapshot.sessionId !== snapshot.sessionId)
+      )
         return stale("reservation");
       // A healthy ended reservation retains its bounded drain, but a retired window never does.
       const ref = principal.authorityContext?.ref;
@@ -1444,7 +1449,6 @@ export function createBroker(
         const previous = lostUsb.get(previousSessionId);
         if (!previous || previous.pending || signal.aborted || !usbLive(previous)) return stale();
         previous.pending = true;
-        recoveryState(previousSessionId, "connecting");
         if (previous.timer) {
           clearTimeout(previous.timer);
           previous.timer = null;
@@ -1474,10 +1478,14 @@ export function createBroker(
             candidate.physical.basis === "serial" &&
             candidate.physical.digest === previous.digest,
         );
-        if (matches.length !== 1) {
+        if (matches.length === 0)
+          return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
+        if (matches.length > 1) {
+          forgetUsb(previousSessionId, null);
           recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
         }
+        recoveryState(previousSessionId, "connecting");
         const candidateId = candidates.add(ownerKey(previous.principal), {
           candidate: matches[0]!,
           generation: previous.generation,
@@ -1789,7 +1797,7 @@ export function createBroker(
       };
       // Confirmation clocks bound planning only. Every execution exchange still uses
       // ExchangeLane's 5 s / 10 s budget and the same authority/cancellation checks.
-      const ctx = contexts(principal, current, operationClass, Infinity, id, assertPlan);
+      const ctx = contexts(principal, current, operationClass, 600000, id, assertPlan, 600000);
       let risk: SafetyFaultEntry | null = null;
       let inFlight: Promise<ProviderOutcome<LegacyProviderValue>> | null = null;
       let resolve!: (value: DeviceDisposition) => void;

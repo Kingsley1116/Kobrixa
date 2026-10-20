@@ -176,123 +176,170 @@ it.each(["coalesced", "overflow", "unavailable"])(
 );
 
 import { createDeviceBroker, type CorePrincipal } from "./broker-port.js";
-import { operationHarness, createFakeDeviceProvider, ID } from "./fake-provider.js";
+import { operationHarness, createFakeDeviceProvider, FakeProvider, ID } from "./fake-provider.js";
 import { LegacyDevice as RealLegacyDevice, createLegacyMonitorFeed } from "./legacy-device.js";
-it("T5fix core Lab reserves, reads and releases through the real broker and formal provider", async () => {
-  const h = operationHarness();
-  const principal: CorePrincipal = {
-    kind: "core",
-    adapter: "lab",
-    hostEpoch: ID,
-    workbenchInstance: ID,
-    authorityContext: { ref: ID, epoch: ID },
-  };
-  const broker = createDeviceBroker({
-    journal: h.dependencies.journal,
-    profile: h.dependencies.profile,
-    now: h.dependencies.now,
-    authority: {
-      current: () => ({
-        ref: ID,
-        epoch: ID,
-        workbenchInstance: ID,
-        state: "local",
-        roomBinding: null,
-        connected: false,
-        synced: true,
-        role: null,
-        isHolder: true,
-      }),
-      assertContinuation() {},
-      subscribe: () => () => {},
-    },
-    coreActions: { claim: () => true, isClaimed: () => true, complete() {} },
-    hasPermission: () => true,
-    requirements: () => [],
-    operationGate: () => ({ ok: true, value: null }),
-    connectionPolicy: () => ({
-      wifiConnectTimeoutMs: 5000,
-      wifiHandshakeTimeoutMs: 3000,
-      usbAutoReconnect: false,
-      usbRetryInterval: "backoff",
-      usbRetryLimit: 3,
-    }),
-  });
-  const { provider } = createFakeDeviceProvider({
-    catalog: broker.providerCatalog(h.provider.id),
-    now: h.dependencies.now,
-  });
-  // The formal provider's channels use portable IDs; adapt only its legacy EV3 metadata.
-  const sources = provider.sources.bind(provider);
-  vi.spyOn(provider, "sources").mockImplementation(async (...args) => {
-    const result = await sources(...args);
-    result.value!.channels[0] = {
-      ...result.value!.channels[0]!,
-      portId: "input:0",
-      typeId: "ev3:29",
-      modeId: "mode:0",
+import { MonitorService } from "../device/monitor-service.js";
+it.each(["release", "loss", "epoch"])(
+  "T5fix2 core Lab drain and Monitor/Lab epoch closure: %s",
+  async (scenario) => {
+    const lost = scenario === "loss";
+    let epoch = ID;
+    const h = operationHarness();
+    const principal: CorePrincipal = {
+      kind: "core",
+      adapter: "lab",
+      hostEpoch: ID,
+      workbenchInstance: ID,
+      authorityContext: { ref: ID, epoch: ID },
     };
-    return result;
-  });
-  const unregister = broker.registerProvider(provider);
-  const device = new RealLegacyDevice({
-    broker,
-    principal: () => principal,
-    stop: async () => {},
-    disconnect: async () => {},
-    feed: createLegacyMonitorFeed(broker),
-  });
-  const publish = vi.fn();
-  const lab = new LegacyLab(device, publish);
-  try {
-    const id = await device.connectWifi("127.0.0.1");
-    const request = vi.spyOn(device, "request");
-    await lab.acquire(id, [
-      {
-        id: "old",
-        kind: "input",
-        port: 0,
-        type: 29,
-        mode: 0,
-        channel: 0,
-        name: "Light",
-        modeName: "Reflect",
-        unit: "%",
-        decimals: 0,
+    const broker = createDeviceBroker({
+      journal: h.dependencies.journal,
+      profile: h.dependencies.profile,
+      now: h.dependencies.now,
+      authority: {
+        current: () => ({
+          ref: ID,
+          epoch,
+          workbenchInstance: ID,
+          state: "local",
+          roomBinding: null,
+          connected: false,
+          synced: true,
+          role: null,
+          isHolder: true,
+        }),
+        assertContinuation() {},
+        subscribe: () => () => {},
       },
-    ]);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "live",
-        snapshot: expect.objectContaining({ inputs: [expect.objectContaining({ values: [42] })] }),
+      coreActions: { claim: () => true, isClaimed: () => true, complete() {} },
+      hasPermission: () => true,
+      requirements: () => [],
+      operationGate: () => ({ ok: true, value: null }),
+      connectionPolicy: () => ({
+        wifiConnectTimeoutMs: 5000,
+        wifiHandshakeTimeoutMs: 3000,
+        usbAutoReconnect: false,
+        usbRetryInterval: "backoff",
+        usbRetryLimit: 3,
       }),
-    );
-    const reserve = request.mock.results.find(
-      (_, i) => request.mock.calls[i]![0] === "devices/recording/reserve",
-    )!;
-    const { reservation } = await reserve.value;
-    expect(
-      await device.request("devices/recording/query", { reservationId: reservation.reservationId }),
-    ).toMatchObject({ reservation: { state: "active" } });
-    expect(
-      await device.request("devices/recording/read", {
-        reservationId: reservation.reservationId,
-        afterSequence: 0,
-        limit: 1,
-      }),
-    ).toMatchObject({
-      frames: [expect.objectContaining({ values: [{ channelId: expect.any(String), value: 42 }] })],
     });
-    await lab.release(id);
-    expect(
-      await device.request("devices/recording/query", { reservationId: reservation.reservationId }),
-    ).toMatchObject({ reservation: { state: "ended", reason: "released" } });
-  } finally {
-    unregister();
-    await broker.resources.beginShutdown();
-  }
-});
+    const { provider } = createFakeDeviceProvider({
+      catalog: broker.providerCatalog(h.provider.id),
+      now: h.dependencies.now,
+    });
+    // The formal provider's channels use portable IDs; adapt only its legacy EV3 metadata.
+    const sources = provider.sources.bind(provider);
+    vi.spyOn(provider, "sources").mockImplementation(async (...args) => {
+      const result = await sources(...args);
+      result.value!.channels[0] = {
+        ...result.value!.channels[0]!,
+        portId: "input:0",
+        typeId: "ev3:29",
+        modeId: "mode:0",
+      };
+      return result;
+    });
+    const unregister = broker.registerProvider(provider);
+    const device = new RealLegacyDevice({
+      broker,
+      principal: () => principal,
+      stop: async () => {},
+      disconnect: async () => {},
+      feed: createLegacyMonitorFeed(broker),
+    });
+    const publish = vi.fn();
+    const lab = new LegacyLab(device, publish);
+    const monitor = new MonitorService(device, vi.fn());
+    try {
+      const id = await device.connectWifi("127.0.0.1");
+      const request = vi.spyOn(device, "request");
+      await lab.acquire(id, [
+        {
+          id: "old",
+          kind: "input",
+          port: 0,
+          type: 29,
+          mode: 0,
+          channel: 0,
+          name: "Light",
+          modeName: "Reflect",
+          unit: "%",
+          decimals: 0,
+        },
+      ]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "live",
+          snapshot: expect.objectContaining({
+            inputs: [expect.objectContaining({ values: [42] })],
+          }),
+        }),
+      );
+      const reserve = request.mock.results.find(
+        (_, i) => request.mock.calls[i]![0] === "devices/recording/reserve",
+      )!;
+      const { reservation } = await reserve.value;
+      expect(
+        await device.request("devices/recording/query", {
+          reservationId: reservation.reservationId,
+        }),
+      ).toMatchObject({ reservation: { state: "active" } });
+      expect(
+        await device.request("devices/recording/read", {
+          reservationId: reservation.reservationId,
+          afterSequence: 0,
+          limit: 1,
+        }),
+      ).toMatchObject({
+        frames: [
+          expect.objectContaining({ values: [{ channelId: expect.any(String), value: 42 }] }),
+        ],
+      });
+      if (scenario === "epoch") {
+        await monitor.watch(id, true);
+        epoch = "00000000-0000-4000-8000-000000000002";
+        await new Promise((resolve) => setTimeout(resolve, 550));
+        expect(monitor.latest(id)?.status).toBe("paused");
+        expect(lab.latest(id)?.status).toBe("paused");
+        return;
+      }
+      if (lost) {
+        if (!(provider instanceof FakeProvider)) throw new Error("Expected fake provider");
+        provider.lose();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await device.connectWifi("127.0.0.1");
+        expect(
+          await device.request("devices/recording/read", {
+            reservationId: reservation.reservationId,
+            afterSequence: 0,
+            limit: 64,
+          }),
+        ).toMatchObject({ frames: expect.arrayContaining([expect.any(Object)]) });
+      }
+      await lab.release(id);
+      expect(
+        await device.request("devices/recording/query", {
+          reservationId: reservation.reservationId,
+        }),
+      ).toMatchObject({
+        reservation: { state: "ended", reason: lost ? "disconnected" : "released" },
+      });
+      h.setNow(10000);
+      await expect(
+        device.request("devices/recording/read", {
+          reservationId: reservation.reservationId,
+          afterSequence: 0,
+          limit: 64,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await monitor.dispose();
+      unregister();
+      await broker.resources.beginShutdown();
+    }
+  },
+);
 
 function cleanupFixture() {
   const sources = { sessionId: "s", sourceRevision: 1, channels: [], actuators: [] };

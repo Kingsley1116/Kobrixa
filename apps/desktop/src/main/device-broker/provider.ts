@@ -231,7 +231,8 @@ export class ExchangeLane {
     if (this.#inflight) await this.#bounded(this.#inflight, deadline);
   }
   async #bounded<T>(promise: Promise<T>, deadline: number): Promise<T> {
-    const remaining = deadline - this.now();
+    const delay = deadline - this.now();
+    const remaining = Number.isNaN(delay) ? 2147483647 : Math.min(delay, 2147483647);
     if (remaining <= 0) return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -262,7 +263,8 @@ export class ExchangeLane {
     if (this.foreground !== null && this.foreground !== id)
       return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
     check();
-    const timeout = Math.min(limit, deadline - this.now());
+    const delay = Math.min(limit, deadline - this.now());
+    const timeout = Number.isNaN(delay) ? 2147483647 : Math.min(delay, 2147483647);
     if (timeout <= 0) return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
@@ -301,6 +303,7 @@ export function createContexts(input: {
   generation: number;
   operationClass: OperationClass;
   deadline: number;
+  rearmMs?: number;
   now: () => number;
   lane: ExchangeLane;
   check: () => void;
@@ -320,10 +323,11 @@ export function createContexts(input: {
     cancellation.abort();
     if (changed) input.onStop(reason);
   };
+  let deadline = input.deadline;
   const check = () => {
     if (requested || cancellation.signal.aborted)
       return deviceFailure("PLUGIN_E_CANCELLED", "cancelled");
-    if (input.now() >= input.deadline) {
+    if (input.now() >= deadline && input.rearmMs === undefined) {
       stop("deadline", true);
       return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
     }
@@ -335,16 +339,19 @@ export function createContexts(input: {
     providerGeneration: input.generation,
     operationClass: input.operationClass,
     cancellation: cancellation.signal,
-    deadlineMonotonicMs: input.deadline,
+    get deadlineMonotonicMs() {
+      return input.rearmMs === undefined ? deadline : input.now() + input.rearmMs;
+    },
     now: input.now,
     assertContinuation: (step) =>
       step === "file-close" ? cleanup.assertCleanup("file-close") : check(),
     shouldYield: () => requested,
     stopState: () => ({ requested, brakeRequired: brake }),
-    exchange: (step, invoke) =>
-      step === "file-close"
-        ? cleanup.exchange("file-close", invoke)
-        : input.lane.exchange(input.id, input.deadline, exchangeBudget(step), check, invoke),
+    exchange: (step, invoke) => {
+      if (step === "file-close") return cleanup.exchange("file-close", invoke);
+      if (input.rearmMs !== undefined) deadline = input.now() + input.rearmMs;
+      return input.lane.exchange(input.id, deadline, exchangeBudget(step), check, invoke);
+    },
     publishProgress: input.progress,
     requestSafetyStop: (reason) => stop(reason, true),
   };

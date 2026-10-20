@@ -161,3 +161,33 @@ it("concurrent exchanges never overlap a lane after the shared await", async () 
   await Promise.all([first, second]);
   expect(calls).toEqual(["first", "second"]);
 });
+
+it.each([Infinity, Number.MAX_SAFE_INTEGER, NaN])(
+  "T5fix2 drain clamps unsafe deadline %s",
+  async (deadline) => {
+    const lane = new ExchangeLane(() => 0);
+    const warnings: Error[] = [];
+    const listener = (warning: Error) => warnings.push(warning);
+    process.on("warning", listener);
+    try {
+      const first = lane.exchange(
+        "sampler",
+        5000,
+        5000,
+        () => {},
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const drained = lane.drain(deadline);
+      await expect(drained).resolves.toBeUndefined();
+      await first;
+      expect(lane.quarantined).toBe(false);
+      expect(warnings.filter((warning) => warning.name === "TimeoutOverflowWarning")).toEqual([]);
+    } finally {
+      process.off("warning", listener);
+    }
+  },
+);
