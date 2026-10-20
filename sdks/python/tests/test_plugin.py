@@ -97,7 +97,7 @@ class PluginProcessTest(unittest.TestCase):
             "apiVersion": "1.1.0", "pluginId": "acme.behaviors", "locale": "zh-TW",
             "grantedPermissions": ["ui.notifications"]}})
         reply = self.receive()
-        self.assertEqual(reply["result"]["apiVersion"], "1.4.0")
+        self.assertEqual(reply["result"]["apiVersion"], "1.5.0")
 
     def test_command_round_trip_with_print_redirected(self):
         self.initialize()
@@ -133,6 +133,7 @@ class PluginProcessTest(unittest.TestCase):
         self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 3, "error": {
             "code": -32600, "message": "Duplicate request id."}})
         self.send({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 3}})
+        self.assertEqual(self.receive(), {"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": 1}})
         self.assertEqual(self.receive(), {"jsonrpc": "2.0", "id": 3, "error": {
             "code": _CANCELLED, "message": "command/execute was cancelled."}})
 

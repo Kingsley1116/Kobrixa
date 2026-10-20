@@ -202,6 +202,176 @@ export type DeviceErrorReason =
   | "protocol"
   | "provider-conflict";
 
-import type { z } from "zod";
-export declare const handleSchema: z.ZodType<Handle>;
-export declare const counterSchema: z.ZodType<Counter>;
+import { z } from "zod";
+import { namespacedIdSchema, SINGLE_LINE } from "./common.js";
+export const handleSchema: z.ZodType<Handle, Handle> = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+export const counterSchema: z.ZodType<Counter, Counter> = z
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER);
+export const boundedIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9:._-]*$/);
+export const wireText = (min: number, max: number) =>
+  z
+    .string()
+    .min(min)
+    .max(2 * max)
+    .regex(SINGLE_LINE);
+export const capabilitySchema = z.enum([
+  "connection.v1",
+  "telemetry.v1",
+  "inputModes.v1",
+  "finiteMotion.v1",
+  "recordingReservation.v1",
+]);
+export const requirementCapabilitySchema = z
+  .string()
+  .max(64)
+  .regex(/^[A-Za-z][A-Za-z0-9]*\.v[1-9][0-9]*$/);
+export const resourceOwnerSchema = z.strictObject({
+  sourceKey: z
+    .string()
+    .max(160)
+    .regex(/^(?:builtin:[a-z0-9.-]+|dev:[0-9a-f]{16})$/),
+  pluginId: namespacedIdSchema,
+  generation: counterSchema,
+  hostEpoch: handleSchema,
+  processEpoch: handleSchema,
+});
+export const addressSchema = z
+  .string()
+  .min(2)
+  .max(45)
+  .regex(/^[0-9a-f:.]+$/);
+export const deviceCandidateSchema = z.strictObject({
+  candidateId: handleSchema,
+  providerId: namespacedIdSchema,
+  name: wireText(1, 200),
+  transport: z.enum(["usb", "wifi", "mock"]),
+  address: addressSchema.exactOptional(),
+  identity: z.enum(["stable", "session-only", "ambiguous"]),
+  expiresInMs: z.number().int().min(0).max(30000),
+});
+export const deviceSessionSnapshotSchema = z.strictObject({
+  sessionId: handleSchema,
+  providerId: namespacedIdSchema,
+  providerGeneration: counterSchema,
+  revision: counterSchema,
+  name: wireText(1, 200),
+  transport: z.enum(["usb", "wifi", "mock"]),
+  capabilities: z.array(capabilitySchema).max(5),
+  state: z.enum(["connected", "quarantined", "disconnecting", "disconnected"]),
+  foreground: z.enum(["none", "motion", "program", "file", "mode", "recovery"]),
+  recording: z.boolean(),
+  sourceRevision: counterSchema,
+});
+const sourceState = z.enum(["ready", "empty", "initializing", "unknown", "error"]);
+export const channelDefinitionSchema = z.strictObject({
+  channelId: handleSchema,
+  kind: z.enum(["input", "output-angle", "battery-percent", "battery-voltage"]),
+  portId: boundedIdSchema.nullable(),
+  typeId: boundedIdSchema,
+  modeId: boundedIdSchema.nullable(),
+  component: z.number().int().min(0).max(7),
+  name: wireText(1, 80),
+  modeName: wireText(0, 80),
+  unit: wireText(0, 32),
+  decimals: z.number().int().min(0).max(9),
+  state: sourceState,
+});
+export const actuatorDefinitionSchema = z.strictObject({
+  actuatorId: handleSchema,
+  portId: boundedIdSchema,
+  name: wireText(1, 80),
+  typeId: boundedIdSchema,
+  state: sourceState,
+});
+export const sourceCatalogSchema = z.strictObject({
+  sessionId: handleSchema,
+  sourceRevision: counterSchema,
+  channels: z.array(channelDefinitionSchema).max(38),
+  actuators: z.array(actuatorDefinitionSchema).max(4),
+});
+export const overflowGapSchema = z.strictObject({
+  fromSequence: counterSchema,
+  toSequence: counterSchema,
+  reason: z.literal("overflow"),
+});
+export const telemetryFrameSchema = z.strictObject({
+  sequence: counterSchema,
+  sampledAt: counterSchema,
+  elapsedMs: z.number().min(0),
+  sourceRevision: counterSchema,
+  status: z.enum(["ok", "busy", "error", "gap"]),
+  values: z
+    .array(z.strictObject({ channelId: handleSchema, value: z.number().nullable() }))
+    .max(38),
+  program: z.enum(["stopped", "running", "unknown"]),
+  gap: z
+    .strictObject({
+      fromSequence: counterSchema,
+      toSequence: counterSchema,
+      reason: z.enum(["busy", "overflow", "read-error"]),
+    })
+    .exactOptional(),
+});
+export const readSnapshotSchema = z.strictObject({
+  sessionId: handleSchema,
+  revision: counterSchema,
+  status: z.enum(["fresh", "stale", "busy", "unavailable"]),
+  ageMs: z.number().min(0).nullable(),
+  frame: telemetryFrameSchema.nullable(),
+});
+export const inputModesValueSchema = z.strictObject({
+  sourceRevision: counterSchema,
+  portId: boundedIdSchema,
+  typeId: boundedIdSchema,
+  currentModeId: boundedIdSchema.nullable(),
+  modes: z.array(z.strictObject({ modeId: boundedIdSchema, name: wireText(1, 80) })).max(8),
+});
+const motionBase = {
+  actuatorId: handleSchema,
+  power: z.number().int().min(1).max(100),
+  direction: z.union([z.literal(1), z.literal(-1)]),
+  brake: z.boolean(),
+};
+export const motionSpecSchema: z.ZodType<MotionSpec, MotionSpec> = z.discriminatedUnion("mode", [
+  z.strictObject({ ...motionBase, mode: z.literal("jog") }),
+  z.strictObject({
+    ...motionBase,
+    mode: z.literal("timed"),
+    durationMs: z.number().int().min(100).max(5000),
+  }),
+  z.strictObject({
+    ...motionBase,
+    mode: z.literal("relative-angle"),
+    degrees: z.number().int().min(1).max(3600),
+  }),
+]);
+export const reservationSnapshotSchema = z.strictObject({
+  reservationId: handleSchema,
+  sessionId: handleSchema,
+  revision: counterSchema,
+  state: z.enum(["active", "ending", "ended"]),
+  channels: z.array(channelDefinitionSchema).min(1).max(4),
+  firstSequence: counterSchema,
+  lastSequence: counterSchema,
+  reason: z.enum([
+    "active",
+    "released",
+    "source-changed",
+    "disconnected",
+    "suspended",
+    "core-disconnect",
+    "retired",
+    "renderer-lost",
+    "limit",
+    "overflow",
+  ]),
+});

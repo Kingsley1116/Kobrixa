@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { validateDeviceWire } from "./device-validation.js";
 import { RPC_ERRORS } from "./errors.js";
 import { PLUGIN_LIMITS } from "./limits.js";
 import {
@@ -11,6 +12,28 @@ import {
   type ResultOf,
 } from "./methods.js";
 import { jsonRpcMessageSchema, type JsonRpcId } from "./rpc.js";
+
+// The envelope has already passed JSON.parse. Preserve the last top-level member's
+// original whitespace and escape expansion for the payload byte budget.
+function serializedMember(text: string, field: string): string | undefined {
+  let depth = 0,
+    key = "";
+  let start: number | undefined, found: string | undefined;
+  for (const match of text.matchAll(/"(?:\\.|[^"\\])*"|[{}[\]:,]/g)) {
+    const token = match[0];
+    if (depth === 1) {
+      if (token === "," || token === "}") {
+        if (start !== undefined && key === field) found = text.slice(start, match.index);
+        start = undefined;
+        key = "";
+      } else if (token === ":") start = match.index + 1;
+      else if (start === undefined && token.startsWith('"')) key = JSON.parse(token) as string;
+    }
+    if (token === "{" || token === "[") depth++;
+    else if (token === "}" || token === "]") depth--;
+  }
+  return found;
+}
 
 export interface MessageChannelLike {
   send(text: string): void;
@@ -126,6 +149,7 @@ export class RpcPeer {
     if (options.signal?.aborted)
       return Promise.reject(new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`));
     const parsed = (requestMethods[method].params as z.ZodType).parse(params);
+    validateDeviceWire(`${method}.params`, parsed);
     const id = this.#nextId++;
     return new Promise<ResultOf<M>>((resolve, reject) => {
       const timeoutMs = options.timeoutMs ?? this.options.timeoutMs ?? 30_000;
@@ -198,6 +222,8 @@ export class RpcPeer {
   }
 
   #send(message: object): void {
+    const wire = message as { method?: string; params?: unknown };
+    if (wire.method) validateDeviceWire(`${wire.method}.params`, wire.params);
     const text = JSON.stringify(message);
     if (tooLarge(text)) throw new RpcError(RPC_ERRORS.internalError, "Message exceeds 1 MiB.");
     this.channel.send(text);
@@ -230,14 +256,26 @@ export class RpcPeer {
     if (!parsed.success) return this.#protocolError("Message is not a valid JSON-RPC 2.0 message.");
     const message = parsed.data;
     if ("method" in message) {
-      if ("id" in message) void this.#onRequest(message.id, message.method, message.params);
-      else this.#onNotification(message.method, message.params);
-    } else if ("result" in message) this.#onResponse(message.id, { result: message.result });
+      if ("id" in message)
+        void this.#onRequest(
+          message.id,
+          message.method,
+          message.params,
+          serializedMember(text, "params"),
+        );
+      else this.#onNotification(message.method, message.params, serializedMember(text, "params"));
+    } else if ("result" in message)
+      this.#onResponse(message.id, { result: message.result }, serializedMember(text, "result"));
     else if (message.id === null) this.#protocolError(`Peer reported: ${message.error.message}`);
     else this.#onResponse(message.id, { error: message.error });
   }
 
-  async #onRequest(id: JsonRpcId, method: string, params: unknown): Promise<void> {
+  async #onRequest(
+    id: JsonRpcId,
+    method: string,
+    params: unknown,
+    serialized?: string,
+  ): Promise<void> {
     const handler = this.#handlers.get(method);
     const definition = own<Definition>(requestMethods, method);
     if (!handler || !definition)
@@ -259,24 +297,43 @@ export class RpcPeer {
         id,
         error: { code: RPC_ERRORS.invalidParams, message: `Invalid parameters for ${method}.` },
       });
+    try {
+      validateDeviceWire(`${method}.params`, input.data, serialized);
+    } catch {
+      return this.#trySend({
+        jsonrpc: "2.0",
+        id,
+        error: { code: RPC_ERRORS.invalidParams, message: `Invalid parameters for ${method}.` },
+      });
+    }
     const controller = new AbortController();
     this.#incoming.set(id, controller);
+    let outcome: "pending" | "published" | "abandoned" = "pending";
+    const callbacks: Array<{ published: () => void; abandoned: () => void }> = [];
+    const settle = (next: "published" | "abandoned") => {
+      if (outcome !== "pending") return;
+      outcome = next;
+      for (const pair of callbacks.splice(0)) invokeCallback(pair[next]);
+    };
+    const onAbort = () => settle("abandoned");
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    const context: RequestContext = {
+      signal: controller.signal,
+      afterReply(published, abandoned) {
+        if (outcome === "pending") callbacks.push({ published, abandoned });
+        else invokeCallback(outcome === "published" ? published : abandoned);
+      },
+    };
     try {
-      const result = definition.result.parse(
-        await handler(input.data, {
-          signal: controller.signal,
-          // A-T1 replaces this unavailable scaffold with request-local publication.
-          // No stage-3 route is registered during the 1.4.0 freeze.
-          afterReply(_published, abandoned) {
-            abandoned();
-            throw new Error("Reply publication continuations are unavailable before A-T1.");
-          },
-        }),
-      );
+      const result = definition.result.parse(await handler(input.data, context));
+      validateDeviceWire(`${method}.result`, result);
       if (controller.signal.aborted)
         throw new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`);
-      if (!this.#closed) this.#trySend({ jsonrpc: "2.0", id, result });
+      if (this.#closed) throw this.#closed;
+      this.#send({ jsonrpc: "2.0", id, result });
+      settle("published");
     } catch (error) {
+      settle("abandoned");
       const code = controller.signal.aborted
         ? RPC_ERRORS.requestCancelled
         : error instanceof RpcError
@@ -292,15 +349,22 @@ export class RpcPeer {
           },
         });
     } finally {
+      settle("abandoned");
+      controller.signal.removeEventListener("abort", onAbort);
       this.#incoming.delete(id);
     }
   }
 
-  #onNotification(method: string, params: unknown): void {
+  #onNotification(method: string, params: unknown, serialized?: string): void {
     const schema = own<z.ZodType>(notificationMethods, method);
     if (!schema) return; // Unknown notifications are ignored, as JSON-RPC allows.
     const input = schema.safeParse(params);
     if (!input.success) return this.#protocolError(`Invalid parameters for ${method}.`);
+    try {
+      validateDeviceWire(`${method}.params`, input.data, serialized);
+    } catch {
+      return this.#protocolError(`Invalid parameters for ${method}.`);
+    }
     if (method === "$/cancelRequest")
       this.#incoming.get((input.data as { id: JsonRpcId }).id)?.abort();
     else this.#notificationHandlers.get(method)?.(input.data);
@@ -309,6 +373,7 @@ export class RpcPeer {
   #onResponse(
     id: JsonRpcId,
     outcome: { result: unknown } | { error: { code: number; message: string } },
+    serialized?: string,
   ): void {
     const pending = this.#pending.get(id);
     if (!pending) {
@@ -324,8 +389,16 @@ export class RpcPeer {
     if ("error" in outcome)
       return pending.reject(new RpcError(outcome.error.code, outcome.error.message));
     const result = requestMethods[pending.method].result.safeParse(outcome.result);
-    if (result.success) pending.resolve(result.data);
-    else
+    if (result.success) {
+      try {
+        validateDeviceWire(`${pending.method}.result`, result.data, serialized);
+        pending.resolve(result.data);
+      } catch {
+        pending.reject(
+          new RpcError(RPC_ERRORS.internalError, `Invalid result for ${pending.method}.`),
+        );
+      }
+    } else
       pending.reject(
         new RpcError(RPC_ERRORS.internalError, `Invalid result for ${pending.method}.`),
       );
