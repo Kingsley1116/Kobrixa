@@ -101,6 +101,8 @@ async function realFixture(autoReconnect = false, transport: "usb" | "wifi" = "u
     usbRetryInterval: 1000,
     usbRetryLimit: 3,
   };
+  let authorityValid = true;
+  let gateOpen = true;
   const broker = createDeviceBroker({
     journal: h.dependencies.journal,
     profile: h.dependencies.profile,
@@ -110,7 +112,7 @@ async function realFixture(autoReconnect = false, transport: "usb" | "wifi" = "u
         ref: ID,
         epoch: ID,
         workbenchInstance: ID,
-        state: "local",
+        state: authorityValid ? "local" : "invalid",
         roomBinding: null,
         connected: false,
         synced: true,
@@ -123,7 +125,22 @@ async function realFixture(autoReconnect = false, transport: "usb" | "wifi" = "u
     coreActions: { claim: () => true, isClaimed: () => true, complete() {} },
     hasPermission: () => true,
     requirements: () => [],
-    operationGate: () => ({ ok: true, value: null }),
+    operationGate: () =>
+      gateOpen
+        ? { ok: true, value: null }
+        : {
+            ok: false,
+            error: {
+              code: "PLUGIN_E_DEVICE_UNAVAILABLE",
+              message: "Gate closed",
+              detail: {
+                kind: "device",
+                reason: "disconnected",
+                dispatch: "not-sent",
+                stopConfirmation: "not-required",
+              },
+            },
+          },
     connectionPolicy: () => policy,
   });
   h.provider.describe = () => ({
@@ -176,6 +193,15 @@ async function realFixture(autoReconnect = false, transport: "usb" | "wifi" = "u
   return {
     ...h,
     broker,
+    invalidateAuthority: () => {
+      authorityValid = false;
+    },
+    closeGate: () => {
+      gateOpen = false;
+    },
+    enableRecovery: () => {
+      policy = { ...policy, usbAutoReconnect: true };
+    },
     cancelRecovery: () => {
       policy = { ...policy, usbAutoReconnect: false };
     },
@@ -370,6 +396,153 @@ it("T5fix2 ambiguous USB recovery is terminal and emits unavailable once", async
     expect(f.events.mock.calls.map(([event]) => [event.type, event.state])).toEqual([
       ["usb-recovery", "waiting"],
       ["usb-recovery", "unavailable"],
+    ]);
+  } finally {
+    f.unregister();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["policy", "authority", "provider", "gate"] as const)(
+  "T5fix3 USB loss with unavailable %s emits unavailable and tears down once",
+  async (cause) => {
+    const f = await realFixture(true);
+    const teardown = vi.fn();
+    // The loss predicate used by index.ts.
+    const unsubscribe = f.service.subscribe((event) => {
+      if (
+        (event.type === "state" && event.state === "disconnected") ||
+        (event.type === "usb-recovery" && ["waiting", "unavailable"].includes(event.state))
+      )
+        teardown();
+    });
+    try {
+      f.events.mockClear();
+      if (cause === "policy") f.cancelRecovery();
+      if (cause === "authority") f.invalidateAuthority();
+      if (cause === "gate") f.closeGate();
+      if (cause === "provider") await f.broker.resources.retireProvider(f.provider.id, 1);
+      else f.provider.lose();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(f.events.mock.calls.map(([event]) => [event.type, event.state])).toEqual([
+        ["usb-recovery", "unavailable"],
+      ]);
+      expect(teardown).toHaveBeenCalledOnce();
+    } finally {
+      unsubscribe();
+      f.unregister();
+    }
+  },
+);
+
+it("T5fix3 failed connecting returns to waiting before a successful retry", async () => {
+  vi.useFakeTimers();
+  const f = await realFixture(true);
+  try {
+    vi.spyOn(f.provider, "connect").mockRejectedValueOnce(new Error("connect failed"));
+    f.events.mockClear();
+    f.provider.lose();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual([
+      "waiting",
+      "connecting",
+      "waiting",
+    ]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual([
+      "waiting",
+      "connecting",
+      "waiting",
+      "connecting",
+      "restored",
+    ]);
+  } finally {
+    f.unregister();
+    vi.useRealTimers();
+  }
+});
+
+it("T5fix3 journal identity ambiguity is terminal unavailable", async () => {
+  vi.useFakeTimers();
+  const f = await realFixture(true);
+  try {
+    const document = await f.dependencies.journal.load();
+    vi.spyOn(f.dependencies.journal, "load").mockResolvedValue({
+      ...document,
+      entries: [
+        {
+          sessionId: f.id,
+          physical: { ...f.provider.physical, digest: "f".repeat(64) },
+        } as (typeof document.entries)[number],
+      ],
+    });
+    const discover = vi.spyOn(f.provider, "discover");
+    f.events.mockClear();
+    f.provider.lose();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual(["waiting", "unavailable"]);
+    expect(discover).toHaveBeenCalledOnce();
+  } finally {
+    f.unregister();
+    vi.useRealTimers();
+  }
+});
+
+it("T5fix3 ended core reservation drains before reconnect with no live session", async () => {
+  const f = await realFixture(false);
+  try {
+    const { sources } = await f.legacy.request("devices/session", { sessionId: f.id });
+    const { reservation } = await f.legacy.request("devices/recording/reserve", {
+      sessionId: f.id,
+      channelIds: [sources.channels[0]!.channelId],
+      expectedSourceRevision: sources.sourceRevision,
+    });
+    f.provider.lose();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.legacy.sessionIds()).toEqual([]);
+    // Finish core cleanup so the broker has no retained session either.
+    expect(
+      await f.broker.sessions.disconnect(f.id, {
+        actionToken: ID,
+        scope: { hostEpoch: ID, workbenchInstance: ID },
+      }),
+    ).toMatchObject({ ok: true });
+    const drained = await f.legacy.request("devices/recording/read", {
+      reservationId: reservation.reservationId,
+      afterSequence: 0,
+      limit: 64,
+    });
+    expect(drained.reservation).toMatchObject({ state: "ended", reason: "disconnected" });
+    expect(drained.frames.length).toBeGreaterThan(0);
+    await f.legacy.request("devices/recording/release", {
+      reservationId: reservation.reservationId,
+    });
+    f.setNow(10000);
+    await expect(
+      f.legacy.request("devices/recording/read", {
+        reservationId: reservation.reservationId,
+        afterSequence: 0,
+        limit: 64,
+      }),
+    ).rejects.toThrow();
+  } finally {
+    f.unregister();
+  }
+});
+
+it("T5fix3 USB loss uses policy enabled after connect", async () => {
+  vi.useFakeTimers();
+  const f = await realFixture(false);
+  try {
+    f.enableRecovery();
+    f.events.mockClear();
+    f.provider.lose();
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual(["waiting"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.events.mock.calls.map(([event]) => event.state)).toEqual([
+      "waiting",
+      "connecting",
+      "restored",
     ]);
   } finally {
     f.unregister();

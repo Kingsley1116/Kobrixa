@@ -248,7 +248,9 @@ export function createBroker(
     const row = lostUsb.get(id);
     if (!row || row.timer || row.pending) return;
     if (!row.policy.usbAutoReconnect || !usbLive(row)) {
-      forgetUsb(id);
+      const initial = row.attempts === 0;
+      forgetUsb(id, initial ? null : "cancelled");
+      if (initial) recoveryState(id, "unavailable");
       return;
     }
     const policy = input.connectionPolicy();
@@ -476,6 +478,7 @@ export function createBroker(
   const finishSession = (
     current: Session,
     reason: "disconnected" | "suspended" | "core-disconnect",
+    recoveryFollows = false,
   ) => {
     current.snapshot.state = reason === "disconnected" ? "disconnected" : "disconnecting";
     current.snapshot.revision++;
@@ -486,6 +489,8 @@ export function createBroker(
         session: current.snapshot,
         message: "The EV3 connection was lost.",
       });
+    if (reason === "disconnected" && current.snapshot.transport === "usb" && !recoveryFollows)
+      recoveryState(current.snapshot.sessionId, "unavailable");
     changed();
     coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
@@ -999,12 +1004,14 @@ export function createBroker(
         }
         current.unregister = current.provider.onDisconnect((key) => {
           if (key !== connection.key) return;
-          current.quiescence ??= finishSession(current, "disconnected");
+          if (current.quiescence) return;
+          current.quiescence = finishSession(current, "disconnected", true);
+          const lossPolicy = input.connectionPolicy();
           if (
             current.snapshot.transport === "usb" &&
             current.connection.physical.basis === "serial" &&
             current.connection.physical.digest !== null &&
-            policy.usbAutoReconnect
+            lossPolicy.usbAutoReconnect
           ) {
             lostUsb.set(id, {
               principal,
@@ -1012,7 +1019,7 @@ export function createBroker(
               generation,
               digest: current.connection.physical.digest,
               settled: current.quiescence.settled,
-              policy,
+              policy: lossPolicy,
               attempts: 0,
               timer: null,
               pending: false,
@@ -1445,6 +1452,7 @@ export function createBroker(
     events,
     providerCatalog,
     async reconnectForRecovery({ previousSessionId, signal }) {
+      let attemptedConnection = false;
       try {
         const previous = lostUsb.get(previousSessionId);
         if (!previous || previous.pending || signal.aborted || !usbLive(previous)) return stale();
@@ -1470,8 +1478,11 @@ export function createBroker(
               entry.sessionId === previousSessionId &&
               (entry.physical.basis !== "serial" || entry.physical.digest !== previous.digest),
           )
-        )
+        ) {
+          forgetUsb(previousSessionId, null);
+          recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
+        }
         const matches = found.filter(
           (candidate) =>
             candidate.descriptor.transport === "usb" &&
@@ -1485,6 +1496,7 @@ export function createBroker(
           recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
         }
+        attemptedConnection = true;
         recoveryState(previousSessionId, "connecting");
         const candidateId = candidates.add(ownerKey(previous.principal), {
           candidate: matches[0]!,
@@ -1506,7 +1518,10 @@ export function createBroker(
         throw error;
       } finally {
         const previous = lostUsb.get(previousSessionId);
-        if (previous) previous.pending = false;
+        if (previous) {
+          previous.pending = false;
+          if (attemptedConnection && usbLive(previous)) recoveryState(previousSessionId, "waiting");
+        }
       }
     },
     async stopCurrentDevice({ sessionId, action }) {
