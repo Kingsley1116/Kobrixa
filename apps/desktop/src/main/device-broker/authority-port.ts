@@ -1,6 +1,6 @@
 import type { Handle } from "@kobrixa/plugin-protocol";
 import type { Principal } from "@kobrixa/plugin-runtime";
-// host-only；不得從 plugin JSON 建立。
+
 export type AuthorityContextRecord = {
   ref: Handle;
   epoch: Handle;

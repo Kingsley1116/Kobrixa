@@ -1,6 +1,6 @@
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState, useSyncExternalStore, useRef, useCallback } from "react";
 import type { Locale } from "../i18n/copy.js";
-import type { CollabApi } from "../../shared/collab.js";
+import type { CollabApi, DeviceAuthorityReport } from "../../shared/collab.js";
 import { collabCopy } from "./collab-copy.js";
 import type { CollabStore } from "./store.js";
 import {
@@ -13,50 +13,61 @@ import "./device-control.css";
 const subscribeNothing = (): (() => void) => () => {};
 const getNothing = (): null => null;
 
-/**
- * Tracks device control for the store's current session and reports it to the
- * main process (`null` outside a room). Returns `null` when there is no session.
- */
+type AuthorityApi = Pick<CollabApi, "deviceControlContext" | "setDeviceControl">;
 export function useDeviceControl(
   store: CollabStore,
-  api: Pick<CollabApi, "setDeviceControl">,
+  api: AuthorityApi,
 ): { control: DeviceControl; state: DeviceControlSnapshot } | null {
   const session = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const [control, setControl] = useState<DeviceControl | null>(null);
+  const document = useRef<string | null>(null);
+  const sequence = useRef(0);
+  const currentReport = useRef<() => void>(() => {});
+  const send = useCallback((value: Omit<DeviceAuthorityReport, "document" | "sequence">) => {
+    if (!document.current) return;
+    const report = { ...value, document: document.current, sequence: ++sequence.current };
+    try { void api.setDeviceControl(report).catch(() => undefined); } catch { /* teardown */ }
+  }, [api]);
+  useEffect(() => {
+    let disposed = false;
+    void api.deviceControlContext().then((value) => {
+      if (disposed) return;
+      document.current = value.document;
+      currentReport.current();
+    }).catch(() => { document.current = null; });
+    return () => {
+      disposed = true;
+      send({ state: "invalid", roomId: null, connected: false, synced: false, role: null, isHolder: false });
+      document.current = null;
+    };
+  }, [api, send]);
   useEffect(() => {
     if (!session) {
       setControl(null);
-      report(api, null);
+      currentReport.current = () => send({ state: "local", roomId: null,
+        connected: true, synced: true, role: null, isHolder: true });
+      currentReport.current();
       return;
     }
-    report(api, false);
     const next = new DeviceControl(session);
-    // Report revocations in the shared-document notification itself instead of
-    // waiting for a React paint; subsequent device IPC sees the new gate first.
-    const reportState = () => report(api, next.getSnapshot().isHolder);
-    const unsubscribe = next.subscribe(reportState);
-    reportState();
-    setControl(next);
-    return () => {
-      unsubscribe();
-      next.dispose();
+    const reportState = () => {
+      const snapshot = session.getSnapshot();
+      const connected = snapshot.status === "connected";
+      const state = connected && snapshot.synced ? "room" :
+        snapshot.status === "connecting" || snapshot.status === "syncing" ? "joining" : "unsynced";
+      send({ state, roomId: session.connection.roomId, connected, synced: snapshot.synced,
+        role: snapshot.role, isHolder: next.getSnapshot().isHolder });
     };
-  }, [session, api]);
+    currentReport.current = reportState;
+    const offControl = next.subscribe(reportState);
+    const offSession = session.subscribe(reportState);
+    reportState(); setControl(next);
+    return () => { offControl(); offSession(); next.dispose(); };
+  }, [session, send]);
   const current = control && control.session === session ? control : null;
-  const state = useSyncExternalStore(
-    current?.subscribe ?? subscribeNothing,
-    current?.getSnapshot ?? getNothing,
-  );
-  useEffect(() => () => report(api, null), [api]);
+  const state = useSyncExternalStore(current?.subscribe ?? subscribeNothing,
+    current?.getSnapshot ?? getNothing);
   return current && state ? { control: current, state } : null;
-}
-
-function report(api: Pick<CollabApi, "setDeviceControl">, holder: boolean | null): void {
-  try {
-    void Promise.resolve(api.setDeviceControl(holder)).catch(() => undefined);
-  } catch {
-    // Avoid an unhandled rejection when the bridge disappears during teardown.
-  }
 }
 
 /** Holder notice for disabled device actions, or `undefined` when allowed. */
