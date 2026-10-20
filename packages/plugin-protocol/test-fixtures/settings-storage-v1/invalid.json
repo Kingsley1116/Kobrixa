@@ -3,13 +3,133 @@
   "family": "settings-storage-v1",
   "cases": [
     {
-      "id": "unknown-field",
-      "schema": "settings/read",
-      "phase": "params",
+      "id": "resource-0",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": true,
+        "title": {
+          "en": "Bad"
+        },
+        "fields": [
+          {
+            "key": "a",
+            "label": {
+              "en": "A"
+            },
+            "type": "boolean",
+            "default": true
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "resource-1",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
       "input": {
         "schemaVersion": 1,
-        "namespace": "foreign"
+        "title": {
+          "en": "Bad"
+        },
+        "fields": [
+          {
+            "key": "a.constructor",
+            "label": {
+              "en": "A"
+            },
+            "type": "boolean",
+            "default": true
+          }
+        ]
       },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "resource-2",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Bad"
+        },
+        "fields": [
+          {
+            "key": "a",
+            "label": {
+              "en": "A"
+            },
+            "type": "number",
+            "minimum": 2,
+            "maximum": 1,
+            "default": 1
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "resource-3",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Bad"
+        },
+        "fields": [
+          {
+            "key": "a",
+            "label": {
+              "en": "A"
+            },
+            "type": "boolean",
+            "default": true,
+            "unknown": 1
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-0",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zh==",
       "valid": false,
       "expected": {
         "numericCode": -32602,
@@ -21,7 +141,82 @@
       }
     },
     {
-      "id": "bool-version",
+      "id": "chunk-1",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zg",
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-2",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zg===",
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-3",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zg==\n",
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-4",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "_w==",
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-5",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zm9=",
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "version-0",
       "schema": "settings/read",
       "phase": "params",
       "input": {
@@ -38,10 +233,12 @@
       }
     },
     {
-      "id": "noncanonical-base64",
-      "schema": "chunk",
+      "id": "version-1",
+      "schema": "settings/read",
       "phase": "params",
-      "input": "Zh==",
+      "input": {
+        "schemaVersion": 0
+      },
       "valid": false,
       "expected": {
         "numericCode": -32602,
@@ -53,30 +250,51 @@
       }
     },
     {
-      "id": "dangerous-key",
-      "schema": "settingsResourceV1",
-      "phase": "resource",
+      "id": "version-2",
+      "schema": "settings/read",
+      "phase": "params",
       "input": {
-        "schemaVersion": 1,
-        "title": {
-          "en": "Settings"
-        },
-        "fields": [
-          {
-            "key": "x.constructor",
-            "label": {
-              "en": "X"
-            },
-            "type": "boolean",
-            "default": false
-          }
-        ]
+        "schemaVersion": -1
       },
       "valid": false,
       "expected": {
-        "numericCode": null,
-        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
-        "reason": "invalid-resource",
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "version-3",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": {
+        "schemaVersion": 1.5
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "version-4",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": {
+        "schemaVersion": 2147483648
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
         "permission": null,
         "lifetime": null,
         "persistedSha256": null

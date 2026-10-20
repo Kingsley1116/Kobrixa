@@ -3,17 +3,17 @@
   "family": "settings-storage-v1",
   "cases": [
     {
-      "id": "settings-boolean",
+      "id": "resource-0",
       "schema": "settingsResourceV1",
       "phase": "resource",
       "input": {
         "schemaVersion": 1,
         "title": {
-          "en": "Settings"
+          "en": "Boolean"
         },
         "fields": [
           {
-            "key": "connection.enabled",
+            "key": "device.enabled",
             "label": {
               "en": "Enabled"
             },
@@ -33,17 +33,17 @@
       }
     },
     {
-      "id": "mixed-enum",
+      "id": "resource-1",
       "schema": "settingsResourceV1",
       "phase": "resource",
       "input": {
         "schemaVersion": 1,
         "title": {
-          "en": "Settings"
+          "en": "Mixed enum"
         },
         "fields": [
           {
-            "key": "connection.mode",
+            "key": "mode",
             "label": {
               "en": "Mode"
             },
@@ -59,7 +59,7 @@
               {
                 "value": "1",
                 "label": {
-                  "en": "Text"
+                  "en": "String"
                 }
               }
             ]
@@ -77,7 +77,52 @@
       }
     },
     {
-      "id": "read",
+      "id": "chunk-0",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zg==",
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-1",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zm8=",
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "chunk-2",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zm9v",
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "version-0",
       "schema": "settings/read",
       "phase": "params",
       "input": {
@@ -94,10 +139,12 @@
       }
     },
     {
-      "id": "empty-quota",
-      "schema": "storage/quota",
+      "id": "version-1",
+      "schema": "settings/read",
       "phase": "params",
-      "input": {},
+      "input": {
+        "schemaVersion": 2147483647
+      },
       "valid": true,
       "expected": {
         "numericCode": null,
