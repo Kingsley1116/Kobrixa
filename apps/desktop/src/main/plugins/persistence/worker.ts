@@ -1,4 +1,4 @@
-import { Worker, MessageChannel, parentPort, workerData, isMainThread, type MessagePort } from "node:worker_threads";
+import { Worker, MessageChannel, parentPort, workerData, type MessagePort } from "node:worker_threads";
 import { createHash,randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
@@ -104,6 +104,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   function releaseSlot(id:string){const e=ledger.get(id);if(!e)return;ledger.delete(id);Atomics.store(inUse,e.slot,0);freeSlots.push(e.slot);}
   function pruneLedger(){for(const [id,e] of ledger)if(e.settledAt!==null && e.settledAt+120000<=input.now())releaseSlot(id);}
   const retired=new Set<string>(),targets=new Set<string>(),barriers=new Map<string,{barrier:PersistenceBarrier;tickets:readonly PublicationTicket[]}>();
+  function pruneBarriers(){for(const [id,e] of barriers)if(e.barrier.deadlineMonotonicMs<=input.now())barriers.delete(id);}
   const destinations=new WeakMap<ExportDestination,string>();let sequence=0,next=0,dead=false,closing:Promise<void>|null=null;
   const pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:unknown)=>void;ticketId?:string}>();
   const lost=()=>{dead=true;Atomics.store(new Int32Array(held),0,0);for(const e of ledger.values())e.gate.shorten(input.now(),input.now());for(const p of pending.values())p.reject(new Error("worker-lost"));pending.clear();};
@@ -170,9 +171,9 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   const backend:PersistenceBackend={engine,
     reads:{settings:o=>send("reads.settings",[o]),stat:(o,id)=>send("reads.stat",[o,id]),list:(o,p)=>send("reads.list",[o,p]),open:(o,id,r)=>send("reads.open",[o,id,r]),read:(o,p,n,m)=>send("reads.read",[o,p,n,m]),close:(o,p)=>send("reads.close",[o,p])},
     evidence:{
-      capture(scope,deadline){input.profile.assertHeld();pruneLedger();const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});barriers.set(barrier.id,{barrier,tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});return barrier;},
-      tickets(b){const saved=barriers.get(b.id);if(!saved || JSON.stringify(saved.barrier)!==JSON.stringify(b))throw new Error("stale");return structuredClone(saved.tickets);},
-      flush(b){backend.evidence.tickets(b);return send("evidence.flush",[b,backend.evidence.tickets(b)]);},quota:o=>send("evidence.quota",[o]),settingsDigest:o=>send("evidence.settingsDigest",[o]),
+      capture(scope,deadline){input.profile.assertHeld();pruneLedger();pruneBarriers();if(barriers.size>=1024)throw new Error("barrier-limit");const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});barriers.set(barrier.id,{barrier,tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});return barrier;},
+      tickets(b){pruneBarriers();const saved=barriers.get(b.id);if(!saved || JSON.stringify(saved.barrier)!==JSON.stringify(b))throw new Error("stale");return structuredClone(saved.tickets);},
+      async flush(b){const tickets=backend.evidence.tickets(b);try{return await send("evidence.flush",[b,tickets]);}finally{barriers.delete(b.id);pruneBarriers();}},quota:o=>send("evidence.quota",[o]),settingsDigest:o=>send("evidence.settingsDigest",[o]),
       auxiliary:(o,k,key)=>send("evidence.auxiliary",[o,k,key]),auxiliaryKeys:(o,k,c)=>send("evidence.auxiliaryKeys",[o,k,c]),recoveryPage:c=>send("evidence.recoveryPage",[c]),
       loadRecovery:id=>send("evidence.loadRecovery",[id]),saveRecovery:v=>send("evidence.saveRecovery",[v]),removeRecovery:id=>send("evidence.removeRecovery",[id]),
     },
@@ -180,7 +181,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     destinations:{async register(i){const id=await send("destinations.register",[i]) as unknown as string;const token=Object.freeze({}) as ExportDestination;destinations.set(token,id);return token;},release:d=>{const id=destinations.get(d);if(!id)throw new Error("stale");return send("destinations.release",[id]);}},
     output:{begin:(id,o,d,n,h,deadline)=>{const token=destinations.get(d);if(!token)throw new Error("stale");return send("output.begin",[id,o,token,n,h,deadline]);},append:(id,o,b)=>send("output.append",[id,o,b]),commit:id=>send("output.commit",[id]),reconcile:id=>send("output.reconcile",[id]),abort:id=>send("output.abort",[id])},
     sources:{resolvePreferences:i=>send("sources.resolvePreferences",[i]),register:i=>send("sources.register",[i]),map:(d,k)=>send("sources.map",[d,k]),appendMapped:i=>send("sources.appendMapped",[i]),releaseMapped:m=>send("sources.releaseMapped",[m]),inventory:d=>send("sources.inventory",[d]),read:(d,k,o,n)=>send("sources.read",[d,k,o,n])},
-    dispose(){return closing??=new Promise<void>((resolve,reject)=>{if(exited || dead){Atomics.store(new Int32Array(held),0,0);channel?.port1.close();exitCode===0?resolve():reject(new Error("worker-dispose-unknown"));return;}input.profile.assertHeld();for(const e of ledger.values())e.gate.shorten(input.now(),input.now());worker.once("exit",code=>{channel?.port1.close();Atomics.store(new Int32Array(held),0,0);code===0?resolve():reject(new Error("worker-dispose-unknown"));});worker.postMessage({version:1,kind:"close"});});},
+    dispose(){return closing??=new Promise<void>((resolve,reject)=>{if(exited || dead){Atomics.store(new Int32Array(held),0,0);channel?.port1.close();if(exitCode===0)resolve();else reject(new Error("worker-dispose-unknown"));return;}input.profile.assertHeld();for(const e of ledger.values())e.gate.shorten(input.now(),input.now());worker.once("exit",code=>{channel?.port1.close();Atomics.store(new Int32Array(held),0,0);if(code===0)resolve();else reject(new Error("worker-dispose-unknown"));});worker.postMessage({version:1,kind:"close"});});},
   };
   workerInstances.set(backend,()=>exited?0:1);
   diagnosticInstances.set(backend,{snapshot:()=>({owners:0,bindings:0,subscriptions:0,queuedEvents:0,queuedBytes:0,timers:0,pendingInvocations:0,actionTokens:0,resourceReaders:0,workerJobs:queue.pending}),onEvent:()=>()=>{}});
@@ -255,7 +256,10 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
         }
         const settled=collectSettled();
         port.postMessage({version:1,id:r.id,ok:true,value,settled});
-      }).catch(error=>port.postMessage({version:1,id:r.id,ok:false,error:privateError(error),settled:collectSettled()})).finally(()=>requests.delete(r.id));
+      }).catch(error=>{
+        if(r.operation==="engine.reserve")store.recordUnadmittedReserve(r.args[0] as PublicationTicket);
+        port.postMessage({version:1,id:r.id,ok:false,error:privateError(error),settled:collectSettled()});
+      }).finally(()=>requests.delete(r.id));
     });
     port.postMessage({version:1,kind:"ready",recovery});
   });

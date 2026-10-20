@@ -1,20 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
+import type { EventEmitter } from 'node:events';
+import type * as WorkerThreads from 'node:worker_threads';
+import { WorkQueue } from './quota.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { PublicationGate, type PublicationTicket } from './engine-port.js';
 
-const harness = vi.hoisted(() => ({ worker: null as any, hold: false, disposition: 'committed', settledId: null as string|null }));
+type TestFrame = {kind?:string;held:SharedArrayBuffer;operation?:string;id:number;args:[{id:string},...unknown[]];gate?:{slot:number;sequence:number}};
+type TestPort = EventEmitter & {postMessage(frame:unknown):void;close():void};
+type TestWorker = EventEmitter & {held:SharedArrayBuffer;frames:TestFrame[];gates:Map<string,PublicationGate>;terminate():Promise<number>};
+const harness = vi.hoisted(() => ({ worker: null as unknown as TestWorker, hold: false, disposition: 'committed', settledId: null as string|null, runner: null as null|(()=>void), port: null as unknown as TestPort }));
 vi.mock('node:worker_threads', async importOriginal => {
   const { EventEmitter } = await import('node:events');
-  const original = await importOriginal<typeof import('node:worker_threads')>();
+  const original = await importOriginal<typeof WorkerThreads>();
+  const port = new EventEmitter() as TestPort;
+  port.postMessage = (frame: unknown) => queueMicrotask(() => harness.worker.emit('message', frame));
+  port.close = () => queueMicrotask(() => harness.worker.emit('exit', 0));
+  harness.port = port;
   class Worker extends EventEmitter {
     held!: SharedArrayBuffer;
-    frames: any[] = [];
+    frames: TestFrame[] = [];
     gates = new Map<string, PublicationGate>();
     exited=false;
-    postMessage(frame: any) {
+    postMessage(frame: TestFrame) {
       if(this.exited)return;
+      if(harness.runner){this.frames.push(frame);queueMicrotask(()=>port.emit('message',frame));return;}
       if (frame.kind === 'boot') { this.held = frame.held; queueMicrotask(() => this.emit('message', {version:1,kind:'ready',recovery:'ready'})); return; }
       if (frame.kind === 'close') { queueMicrotask(() => this.emit('exit', 0)); return; }
       if (frame.kind === 'cancel') return;
@@ -32,16 +44,16 @@ vi.mock('node:worker_threads', async importOriginal => {
       queueMicrotask(() => this.emit('message', {version:1,id:frame.id,ok:true,value,...(harness.settledId || settled ? {settled:[{id:harness.settledId??frame.args[0].id,disposition:settled??'committed'}]} : {})}));
     }
     async terminate() { this.exited=true;this.emit('exit', 1); return 1; }
-    constructor(..._args: unknown[]) { super(); harness.worker = this; }
+    constructor(..._args: unknown[]) { super(); harness.worker = this; harness.runner?.(); }
   }
-  return {...original, Worker};
+  return {...original, Worker, parentPort: port, workerData: {}};
 });
-import { startPersistenceWorker, PersistenceWorkerRequest, privateError, reserveGateOffset } from './worker.js';
+import { startPersistenceWorker, runPersistenceWorker, privateError, reserveGateOffset } from './worker.js';
 import { openStoreRoot } from './filesystem.js';
 const roots: string[] = [];
-afterEach(async () => { harness.hold=false; harness.disposition='committed'; harness.settledId=null; vi.useRealTimers(); for (const root of roots.splice(0)) await rm(root,{recursive:true,force:true}); });
+afterEach(async () => { harness.runner=null; harness.port.removeAllListeners(); vi.restoreAllMocks(); harness.hold=false; harness.disposition='committed'; harness.settledId=null; vi.useRealTimers(); for (const root of roots.splice(0)) await rm(root,{recursive:true,force:true}); });
 async function setup() {
-  const root=await realpath(await mkdtemp(path.join(process.cwd(),'.transport-'))); roots.push(root);
+  const root=await realpath(await mkdtemp(path.join(await realpath(tmpdir()),'.transport-'))); roots.push(root);
   const profile={hostEpoch:randomUUID(),assertHeld(){}}; let now=0;
   const result=await startPersistenceWorker({profile,root:await openStoreRoot({userData:root,profile}),workerEntry:path.join(root,'unused.cjs'),now:()=>now});
   const owner={sourceKey:'builtin:kobrixa.lab',pluginId:'kobrixa.lab',generation:1,hostEpoch:profile.hostEpoch,processEpoch:randomUUID()};
@@ -57,10 +69,10 @@ it('queue-rejected reserve releases its slot; the next frame shares the fenced g
   for (const frame of harness.worker.frames) harness.worker.emit('message',{version:1,id:frame.id,ok:true,value:null});
   await Promise.all(jobs);
   const t=env.ticket(); await env.backend.engine.reserve(t,0);
-  const frame=harness.worker.frames.at(-1); expect(frame.gate).toEqual({slot:0,sequence:2});
+  const frame=harness.worker.frames.at(-1)!; expect(frame.gate).toEqual({slot:0,sequence:2});
   expect(reserveGateOffset(harness.worker.held,frame.gate)).toBe(16);
   env.backend.engine.fenceTarget(env.owner,t.target.kind==='record'?t.target.id:'',0);
-  expect(harness.worker.gates.get(t.id).dispatch(0)).toBe(false);
+  expect(harness.worker.gates.get(t.id)!.dispatch(0)).toBe(false);
   await env.backend.dispose();
 });
 it('validates explicit gate slots and rejects slots main never allocated', () => {
@@ -74,7 +86,8 @@ it('recycles settled slots only after 120 seconds and prunes captured ledger tic
   const env=await setup(); vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
   for(let i=0;i<1026;i++) {
     const t=env.ticket(); await env.backend.engine.reserve(t,0); await env.backend.engine.publish(t); env.advance(); await vi.advanceTimersByTimeAsync(120001);
-    expect(env.backend.evidence.tickets(env.backend.evidence.capture({kind:'namespace',owner:env.owner},1e9))).toEqual([]);
+    const barrier=env.backend.evidence.capture({kind:'namespace',owner:env.owner},1e9);
+    expect(env.backend.evidence.tickets(barrier)).toEqual([]);await env.backend.evidence.flush(barrier);
   }
   await env.backend.dispose();
 });
@@ -106,7 +119,7 @@ it('drops invalid unposted reserve identities before the next valid reserve',asy
   await expect(env.backend.engine.reserve(bad,0)).rejects.toThrow();
   expect(env.backend.evidence.tickets(env.backend.evidence.capture({kind:'namespace',owner:env.owner},10000))).toEqual([]);
   const t=env.ticket();await env.backend.engine.reserve(t,0);
-  expect(harness.worker.frames.at(-1).gate.slot).toBe(0);await env.backend.dispose();
+  expect(harness.worker.frames.at(-1)!.gate!.slot).toBe(0);await env.backend.dispose();
 });
 
 it('applies worker settlement to the actual attempt when historical reconciliation uses a different id',async()=>{
@@ -118,5 +131,50 @@ it('applies worker settlement to the actual attempt when historical reconciliati
 });
 it('invalid gate deadlines cannot consume an unposted slot',async()=>{
   const env=await setup();await expect(env.backend.engine.reserve({...env.ticket(),deadlineMonotonicMs:Infinity},0)).rejects.toThrow();
-  await env.backend.engine.reserve(env.ticket(),0);expect(harness.worker.frames.at(-1).gate.slot).toBe(0);await env.backend.dispose();
+  await env.backend.engine.reserve(env.ticket(),0);expect(harness.worker.frames.at(-1)!.gate!.slot).toBe(0);await env.backend.dispose();
+});
+
+it('settles expired worker reserve jobs, preserves incomplete evidence, and reclaims the slot',async()=>{
+  harness.runner=()=>runPersistenceWorker({mappers:new Map()});
+  const env=await setup();
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+  const original=WorkQueue.prototype.run;let calls=0;
+  const spy=vi.spyOn(WorkQueue.prototype,'run').mockImplementation(function<T>(this:WorkQueue,source:string,bytes:number,deadline:number,run:()=>Promise<T>){
+    calls++;return original.call(this,source,bytes,calls===2?0:deadline,run) as Promise<T>;
+  });
+  const t=env.ticket(),responses:{ok:boolean;settled?:unknown}[]=[];harness.worker.on('message',(r:{ok:boolean;settled?:unknown})=>responses.push(r));
+  await expect(env.backend.engine.reserve(t,0)).rejects.toThrow();spy.mockRestore();
+  expect(calls).toBe(2);expect(responses.at(-1)!.ok).toBe(false);
+  expect(responses.at(-1)!.settled).toContainEqual({id:t.id,disposition:'aborted'});
+  const barrier=env.backend.evidence.capture({kind:'namespace',owner:env.owner},10000);
+  const evidence=await env.backend.evidence.flush(barrier);
+  expect(evidence).toMatchObject({incomplete:[t.id],unknown:[]});
+  env.advance();await vi.advanceTimersByTimeAsync(120001);
+  expect(env.backend.evidence.tickets(env.backend.evidence.capture({kind:'namespace',owner:env.owner},1e9))).toEqual([]);
+  // The reclaimed slot is reused even though worker-side admission rejects this expired ticket.
+  await env.backend.engine.reserve(env.ticket(),0).catch(()=>{});
+  expect(harness.worker.frames.filter((f)=>f.operation==='engine.reserve').at(-1)!.gate!.slot).toBe(0);
+  await env.backend.dispose();
+});
+it('bounds barrier snapshots and prunes expired and flushed captures',async()=>{
+  const env=await setup(),scope={kind:'namespace' as const,owner:env.owner};
+  const first=env.backend.evidence.capture(scope,1e9);
+  for(let i=1;i<1024;i++)env.backend.evidence.capture(scope,1e9);
+  expect(()=>env.backend.evidence.capture(scope,1e9)).toThrow('barrier-limit');
+  await env.backend.evidence.flush(first);
+  expect(()=>env.backend.evidence.tickets(first)).toThrow('stale');
+  const expiring=env.backend.evidence.capture(scope,10000);env.advance();
+  expect(()=>env.backend.evidence.tickets(expiring)).toThrow('stale');
+  expect(()=>env.backend.evidence.capture(scope,1e9)).not.toThrow();
+  await env.backend.dispose();
+});
+
+it('prunes a barrier when flush rejects',async()=>{
+  const env=await setup(),barrier=env.backend.evidence.capture({kind:'namespace',owner:env.owner},10000);
+  harness.hold=true;const result=env.backend.evidence.flush(barrier);
+  const frame=harness.worker.frames.at(-1)!;
+  harness.worker.emit('message',{version:1,id:frame.id,ok:false,error:{code:'io',message:'persistence-io'}});
+  await expect(result).rejects.toThrow('persistence-io');
+  expect(()=>env.backend.evidence.tickets(barrier)).toThrow('stale');
+  await env.backend.dispose();
 });

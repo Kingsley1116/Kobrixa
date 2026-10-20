@@ -63,12 +63,19 @@ it("classifies a recovered import metadata candidate before cleaning staging",as
     await ns.writeNew(ns.object(loc,head),body);await ns.writeNew(loc.head,head);await fs.mkdir(ns.path("staging",ticket.id));
     await ns.writeNew(ns.path("staging",ticket.id,"intent.json"),{formatVersion:1,ticket,byteLength:raw.length,predecessor:null});
     await ns.writeNew(ns.path("staging",ticket.id,"publication.json"),head);
+    const payload=ns.path("staging",ticket.id,"payload.tmp");
+    await ns.writeNew(payload,{leftover:true});
+    const replace=fs.atomicReplace.bind(fs);
+    fs.atomicReplace=async(from,to)=>{if(fs.name(to).endsWith("resolved.json"))expect(await fs.exists(payload)).toBe(false);await replace(from,to);};
     const scan=await scanNamespace(ns,epoch);expect(scan.problems).toEqual([]);
     expect(await fs.exists(ns.path("staging",ticket.id,"intent.json"))).toBe(true);
     const resolved={formatVersion:1,disposition:"committed",receipt:head.receipt};
     expect(JSON.parse(Buffer.from(await fs.bytes(ns.path("staging",ticket.id,"resolved.json"),8192)).toString())).toEqual(resolved);
+    // Recreate the state left by older writers crashing after verdict publication.
+    await ns.writeNew(payload,{leftover:true});
     await fs.unlink(loc.head);await ns.writeNew(loc.head,{...head,receipt:{...head.receipt,commitId:randomUUID()}});
     expect((await scanNamespace(ns,epoch)).problems).toEqual([]);
+    expect(await fs.exists(payload)).toBe(false);
     const store=new AtomicStore(fs);await store.initialize();
     expect(await store.reconcileImport(ticket)).toEqual({disposition:"committed",receipt:head.receipt});await store.dispose();
   }finally{await rm(root,{recursive:true,force:true});}

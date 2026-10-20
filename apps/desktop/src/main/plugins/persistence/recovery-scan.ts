@@ -2,7 +2,7 @@ import { z } from "zod";
 import { receiptSchema } from "../../../../../../packages/plugin-protocol/src/persistence-validation.js";
 import { randomUUID } from "node:crypto";
 import type { StorePath } from "./filesystem.js";
-import { Namespace, parseHead, liveRecord, publicationTicketSchema, sameImportValue, type DiskHead } from "./namespace.js";
+import { type Namespace, parseHead, liveRecord, publicationTicketSchema, sameImportValue, type DiskHead } from "./namespace.js";
 import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
 export type NamespaceScan = { heads: DiskHead[]; problems: string[]; totals: { committed: number; records: number; metadata: number; temporary: number } };
 const contentError = (e: unknown): boolean => e instanceof Error && (e.message === "corrupt" || e instanceof SyntaxError || e instanceof TypeError);
@@ -70,7 +70,8 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
     if (value.ticket?.owner?.sourceKey !== ns.sourceKey) throw new Error("identity-mismatch");
     const checkedTicket=publicationTicketSchema.parse(value.ticket);
     if(checkedTicket.target.kind==="import") {
-      if(await resolvedImport(ns,entry.name))continue;
+      const payload=ns.path("staging",entry.name,"payload.tmp");
+      if(await resolvedImport(ns,entry.name)){if(await fs.exists(payload))await fs.unlink(payload);continue;}
       // Classify verified heads before touching the only persisted association.
       const loc=await ns.location(checkedTicket.target),head=await ns.head(loc);
       if(head)await ns.verify(loc,head);
@@ -90,6 +91,7 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
         const document=checkedTicket.target.key.startsWith("nonce/")?parseNonceDocument(bytes):parseBarrierDocument(bytes);
         matching=sameImportValue(document.ticket,checkedTicket);
       }
+      if(await fs.exists(payload))await fs.unlink(payload);
       if(matching) {
         await fs.syncDirectory(loc.directory);
         await persistResolution(ns,entry.name,{formatVersion:1,disposition:"committed",receipt:head!.receipt});
@@ -97,8 +99,6 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
         await persistResolution(ns,entry.name,{formatVersion:1,disposition:"not-committed",receipt:null});
       } else result.problems.push("import-uncertain");
       // Retain bounded metadata association under the existing metadata quota. Never promote payload.tmp.
-      const payload=ns.path("staging",entry.name,"payload.tmp");
-      if(await fs.exists(payload))await fs.unlink(payload);
       continue;
     }
     if (value.ticket.owner.hostEpoch !== hostEpoch) {

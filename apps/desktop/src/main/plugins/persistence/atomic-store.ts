@@ -2,7 +2,7 @@ import { createHash, randomUUID, type Hash } from "node:crypto";
 import type { Handle, RecordId, RecordRevision, RecordMeta, SettingsSnapshot } from "@kobrixa/plugin-protocol";
 import type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 import { PublicationGate, ownerKey, type PublicationTicket, type PersistenceEnginePort, type PersistenceReadPort, type ImportTag } from "./engine-port.js";
-import { NodePersistenceFs, writeAll, type StoreFd, type StorePath } from "./filesystem.js";
+import { type NodePersistenceFs, writeAll, type StoreFd, type StorePath } from "./filesystem.js";
 import { Namespace, parseHead, liveRecord, importTagSchema, type DiskHead, type Location } from "./namespace.js";
 import { QuotaLedger } from "./quota.js";
 import { scanNamespace, garbageCandidates, resolvedImport } from "./recovery-scan.js";
@@ -116,12 +116,15 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     }
     if(blocked && !associated)throw new Error("import-pending");
   }
-  async reserve(ticket: PublicationTicket, byteLength: number, memory?: SharedArrayBuffer, byteOffset=0): Promise<void> {
-    try {await this.reserveOne(ticket,byteLength,memory,byteOffset);}catch(error) {
+  recordUnadmittedReserve(ticket:PublicationTicket):void {
       if(!this.entries.has(ticket.id) && !this.failedReserves.has(ticket.id) && !this.tombstones.has(ticket.id)) {
         this.tombstones.set(ticket.id,{signature:JSON.stringify(ticket),disposition:"aborted",until:this.fs.now()+120000});
         while(this.tombstones.size>1024)this.tombstones.delete(this.tombstones.keys().next().value!);
       }
+  }
+  async reserve(ticket: PublicationTicket, byteLength: number, memory?: SharedArrayBuffer, byteOffset=0): Promise<void> {
+    try {await this.reserveOne(ticket,byteLength,memory,byteOffset);}catch(error) {
+      this.recordUnadmittedReserve(ticket);
       throw error;
     }
   }
@@ -493,7 +496,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         await this.seal(ticket,bytes.length,createHash("sha256").update(bytes).digest("hex"));
         const outcome=await this.publish(ticket);
         return outcome.disposition==="unknown"?await this.reconcile(ticket):outcome;
-      } catch(error) {
+      } catch {
         if(this.entries.has(ticket.id)) {
           const disposition=await this.abort(ticket);
           if(disposition!=="aborted")return this.reconcile(ticket);
