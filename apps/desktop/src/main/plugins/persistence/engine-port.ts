@@ -136,3 +136,27 @@ export interface PersistenceEvidencePort {
   saveRecovery(value:StoredRecovery): Promise<void>;
   removeRecovery(id:Handle): Promise<void>;
 }
+
+import type { PersistenceFsPort } from "./filesystem.js";
+import { performance } from "node:perf_hooks";
+export const ownerKey = (owner: PersistenceOwner): string => JSON.stringify([owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
+export class PublicationGate {
+  readonly memory: SharedArrayBuffer; private readonly words: BigInt64Array;
+  constructor(deadline: number, memory?: SharedArrayBuffer, byteOffset=0, initialize=memory===undefined) {
+    this.memory = memory ?? new SharedArrayBuffer(16); this.words = new BigInt64Array(this.memory,byteOffset,2);
+    if (initialize) { Atomics.store(this.words, 0, 0n); Atomics.store(this.words, 1, BigInt(Math.floor(deadline))); }
+  }
+  get deadline(): number { return Number(Atomics.load(this.words, 1)); }
+  get dispatched(): boolean { return Atomics.load(this.words, 0) === 1n; }
+  shorten(deadline: number, now = performance.now()): void {
+    if (deadline <= now) Atomics.compareExchange(this.words, 0, 0n, 2n);
+    const value = BigInt(Math.floor(deadline)); let old = Atomics.load(this.words, 1);
+    while (value < old) { const seen = Atomics.compareExchange(this.words, 1, old, value); if (seen === old) break; old = seen; }
+  }
+  dispatch(now: number): boolean {
+    if (now >= this.deadline) return false;
+    if (Atomics.compareExchange(this.words, 0, 0n, 1n) !== 0n) return false;
+    // fence() only shortens time; the atomic state transition is the authority boundary.
+    return true;
+  }
+}

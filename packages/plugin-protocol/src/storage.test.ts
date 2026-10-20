@@ -13,6 +13,7 @@ it("checks base64 without allocating decoded bytes", () => {
   for (const data of ["Zh==", "Zg", "Zg===", "Zg==\n", "_w==", "Zm9=", ""]) expect(() => canonicalBase64Length(data)).toThrow();
   expect(canonicalBase64Length("Zg==")).toBe(1);
   expect(canonicalBase64Length("Zm8=")).toBe(2);
+  expect(canonicalBase64Length("Zm9v")).toBe(3);
   expect(canonicalBase64Length("", true)).toBe(0);
   const max = Buffer.alloc(262144).toString("base64");
   expect(max.length).toBe(349528);

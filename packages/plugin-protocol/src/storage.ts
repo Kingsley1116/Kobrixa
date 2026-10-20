@@ -76,12 +76,12 @@ export const recordMetaSchema = z.strictObject({ id: h, revision: r, ...metadata
 export const recordWriteSchema = z.strictObject({ target: z.discriminatedUnion("mode", [z.strictObject({ mode: z.literal("create") }), z.strictObject({ mode: z.literal("replace"), id: h, expectedRevision: r })]),
   ...metadata, checkpoint: z.strictObject({ handle: h, phase: z.enum(["checkpoint", "final"]) }).optional(), drainToken: h.optional() });
 export const writeProgressSchema = z.strictObject({ write: h, id: h, state: z.enum(["receiving", "sealed", "publishing", "committed", "aborted", "expired", "failed"]), receivedBytes: n.max(8388608), expiresAt: n, receipt: receiptSchema.optional(), error: persistenceErrorSchema.optional() });
-export const drainRequestSchema = z.strictObject({ token: h,
+export const drainRequestSchema: z.ZodType<DrainRequest, DrainRequest> = z.strictObject({ token: h,
   reason: z.enum(["disable", "reload", "remove", "renderer-crash", "window-destroyed", "shutdown", "update", "safe-mode", "reservation-ended"]), remainingMs: n.max(10000),
   checkpoints: z.array(z.strictObject({ checkpoint: h, record: recordMetaSchema,
-    reservationEnd: z.strictObject({ reservationId: h, reason: z.enum(["released", "source-changed", "disconnected", "suspended", "core-disconnect", "retired", "renderer-lost", "limit", "overflow"]), lastSequence: n }).optional() })).max(2),
+    reservationEnd: z.strictObject({ reservationId: h, reason: z.enum(["released", "source-changed", "disconnected", "suspended", "core-disconnect", "retired", "renderer-lost", "limit", "overflow"]), lastSequence: n }).exactOptional() })).max(2),
   writes: z.array(z.strictObject({ write: h, id: h, state: z.enum(["receiving", "sealed"]) })).max(2),
-}) as z.ZodType<DrainRequest, DrainRequest>;
+});
 const request = <P extends z.ZodType, V extends z.ZodType>(params: P, value: V) => ({ params, result: persistenceResultSchema(value) });
 const empty = z.strictObject({}) as z.ZodType<Record<string, never>, Record<string, never>>;
 export const storageRequestSchemas = {
