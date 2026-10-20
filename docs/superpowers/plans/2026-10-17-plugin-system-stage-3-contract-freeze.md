@@ -164,4 +164,12 @@ T0 ownership transfers at F; implementation worktrees are cut from F. Fixtures t
 
 Integrated F blockers (2026-10-20): `packages/plugin-protocol/src/errors.ts:14:35` forbids an inline `import()` type under `@typescript-eslint/consistent-type-imports` (3A-T0); `packages/plugin-protocol/src/ui-types.ts:1:32` imports unused `ResourceOwner` under `@typescript-eslint/no-unused-vars` (3B1-T0). Neither defining file is assigned to B2-T0. The controller ruled both one-line fixes as stopped-owner corrections, applied them (a top-level `import type` of `PluginErrorCode` in errors.ts; `ResourceOwner` removed from the ui-types.ts import), and reran the integrated gate: `pnpm check:desktop` exit 0; device, UI and persistence desktop contract suites 6/6; protocol suite 454/454. The new settings scaffold's unused import was also removed.
 
-Protocol/runtime/SDK/device builds, runtime and desktop typechecks, and all device/UI/persistence contract suites passed. The full command/exit-code ledger is `.superpowers/sdd/stage-3-exec/3B2-T0-report.md`. API and wire registry remain 1.4.0; no generator ran. AM-32 corrections remain with the spec owners: canonical device fixture/fake-provider paths, exact opaque `<revision>.bin` payloads, and formatVersion:1 JSON envelopes.
+Protocol/runtime/SDK/device builds, runtime and desktop typechecks, and all device/UI/persistence contract suites passed, as did the integrated `pnpm check:desktop` after the two fixes above. API and wire registry remain 1.4.0; no generator ran. AM-32 corrections remain with the spec owners: canonical device fixture/fake-provider paths, exact opaque `<revision>.bin` payloads, and formatVersion:1 JSON envelopes.
+
+## Completed freeze receipt
+
+F: `828918770d4911e59bbe65f179d1c8de6dbcc2cf`
+
+- `feat/plugin-3a` cut at `828918770d4911e59bbe65f179d1c8de6dbcc2cf`
+- `feat/plugin-3b1` cut at `828918770d4911e59bbe65f179d1c8de6dbcc2cf`
+- `feat/plugin-3b2` cut at `828918770d4911e59bbe65f179d1c8de6dbcc2cf`
