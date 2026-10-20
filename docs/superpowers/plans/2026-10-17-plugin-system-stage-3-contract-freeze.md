@@ -122,3 +122,46 @@ Successors:
 
 Budgets are assertions to measure, not measured performance. P160 requires real
 3A ports and installed synthetic process; U12 real persistence remains open to X-T1.
+
+## B2 freeze step 3
+
+Pre-F parent: `070492916b1baa3712d29c998cdf1801baa5064c`.
+
+F is published by the commit that contains this receipt. Every Step 5 gate, including the integrated `pnpm check:desktop`, passed on 2026-10-20 after the controller resolved two earlier-portion lint defects (see "Integrated F blockers" below). The actual F SHA is recorded in the receipt-only follow-up. The table records successor ownership, which transfers at F.
+
+| Path | Successor |
+|---|---|
+| `packages/plugin-protocol/src/settings.ts` | 3B2-T1 |
+| `packages/plugin-protocol/src/storage.ts` | 3B2-T1 |
+| `packages/plugin-protocol/src/persistence-actions.ts` | 3B2-T1 |
+| `packages/plugin-protocol/src/persistence-validation.ts` | 3B2-T1 |
+| `packages/plugin-protocol/src/persistence-contract.test.ts` | 3B2-T1 |
+| `packages/plugin-protocol/test-fixtures/settings-storage-v1/valid.json` | 3B2-T1 |
+| `packages/plugin-protocol/test-fixtures/settings-storage-v1/invalid.json` | 3B2-T1 |
+| `packages/plugin-protocol/test-fixtures/settings-storage-v1/maximum.json` | 3B2-T1 |
+| `apps/desktop/src/main/plugins/persistence/filesystem.ts` | 3B2-T2 |
+| `apps/desktop/src/main/plugins/persistence/engine-port.ts` | 3B2-T2 |
+| `apps/desktop/src/main/plugins/persistence/contract.test.ts` | 3B2-T2 |
+| `apps/desktop/src/main/plugins/persistence/worker.ts` | 3B2-T2 |
+| `packages/plugin-runtime/src/settings-form-port.ts` | 3B2-T3 |
+| `apps/desktop/src/main/plugins/persistence/settings-service.ts` | 3B2-T3 |
+| `apps/desktop/src/renderer/settings/contributed-settings-form.tsx` | 3B2-T3 |
+| `apps/desktop/src/main/plugins/persistence/record-port.ts` | 3B2-T4 |
+| `packages/plugin-runtime/src/persistence-participant.ts` | 3B2-T5 |
+| `packages/plugin-runtime/src/persistence-participant.test.ts` | 3B2-T5 |
+| `apps/desktop/src/main/plugins/persistence/host-port.ts` | 3B2-T5 |
+| `apps/desktop/src/main/plugins/persistence/actions.ts` | 3B2-T5 |
+| `apps/desktop/src/main/plugins/persistence/recovery-port.ts` | 3B2-T5 |
+| `apps/desktop/src/main/plugins/persistence/import-sources.ts` | 3B2-T6 |
+| `tests/desktop/plugin-persistence-main.ts` | 3B2-T7 |
+| `packages/plugin-protocol/src/index.ts` | H-P |
+| `packages/plugin-runtime/src/index.ts` | H-R |
+| `docs/superpowers/plans/2026-10-17-plugin-system-stage-3-contract-freeze.md` | H-I |
+
+H-R assembled packages/plugin-runtime/src/index.ts once after all three T0 portions: device-resources.ts, profile-writer-lock.ts, core-actions.ts, builtin-launch.ts, ui-lifecycle.ts, ui-subscriptions.ts, ui-host-ports.ts, persistence-participant.ts and settings-form-port.ts. These are type-only exports; no constructors or 1.7 wire registrations were published.
+
+T0 ownership transfers at F; implementation worktrees are cut from F. Fixtures transfer T1 → T8 only after T1 stops. P150 → P160 → P170 publication order is unchanged. No performance, Electron, hardware, or manual result is claimed.
+
+Integrated F blockers (2026-10-20): `packages/plugin-protocol/src/errors.ts:14:35` forbids an inline `import()` type under `@typescript-eslint/consistent-type-imports` (3A-T0); `packages/plugin-protocol/src/ui-types.ts:1:32` imports unused `ResourceOwner` under `@typescript-eslint/no-unused-vars` (3B1-T0). Neither defining file is assigned to B2-T0. The controller ruled both one-line fixes as stopped-owner corrections, applied them (a top-level `import type` of `PluginErrorCode` in errors.ts; `ResourceOwner` removed from the ui-types.ts import), and reran the integrated gate: `pnpm check:desktop` exit 0; device, UI and persistence desktop contract suites 6/6; protocol suite 454/454. The new settings scaffold's unused import was also removed.
+
+Protocol/runtime/SDK/device builds, runtime and desktop typechecks, and all device/UI/persistence contract suites passed. The full command/exit-code ledger is `.superpowers/sdd/stage-3-exec/3B2-T0-report.md`. API and wire registry remain 1.4.0; no generator ran. AM-32 corrections remain with the spec owners: canonical device fixture/fake-provider paths, exact opaque `<revision>.bin` payloads, and formatVersion:1 JSON envelopes.

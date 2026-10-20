@@ -1,4 +1,4 @@
-import type { Handle, Counter, ResourceOwner } from "./device-types.js";
+import type { Handle, Counter } from "./device-types.js";
 import type { BusinessResult, PermissionErrorDetail, ResourceErrorDetailFor, ResourceKindV160 } from "./business-result.js";
 import type { PluginErrorCodeV160 } from "./errors.js";
 import type { EventEnvelope } from "./events.js";
