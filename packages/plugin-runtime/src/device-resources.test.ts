@@ -16,3 +16,9 @@ it("F19 retire returns synchronously with the original nullable grant", () => {
     (sessionId: string, cause: SessionQuiesceCause) => SessionQuiescence
   >();
 });
+
+it("F19 retire revokes synchronously and returns the original optional grant", () => {
+  expectTypeOf<DeviceResourceParticipant["retire"]>().toEqualTypeOf<
+    (owner: ResourceOwner, reason: RetirementReason) => { drain: DeviceDrainGrant | null; settled: Promise<DeviceDisposition> }
+  >();
+});
