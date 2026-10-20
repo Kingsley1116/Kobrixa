@@ -33,7 +33,7 @@ def text_valid(value, maximum=4000, multiline=True, nonempty=False):
 
 
 def number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (isinstance(value, int) or math.isfinite(value))
 
 
 def safe_integer(value):
@@ -99,7 +99,7 @@ def validate_resource(value, context, raw_bytes, version=1):
         raise UiValidationError(classify(value) or "schema") from error
     data = value["data"]
     fields = value.get("fields", {})
-    require(len(data) <= 64 and len(fields) <= 32)
+    require(len(data) <= 64 and len(fields) <= 32, "limit")
     for record in (data, fields):
         for key, slot in record.items():
             require(key_valid(key) and valid_spec(slot["schema"]) and accepts(slot["schema"], slot["initial"]))
@@ -120,7 +120,7 @@ def validate_resource(value, context, raw_bytes, version=1):
             nonlocal count, total
             count += 1
             total += 1
-            require(depth <= 4 and count <= 32 and total <= 256)
+            require(depth <= 4 and count <= 32 and total <= 256, "limit")
             op = current["op"]
             if op == "not":
                 walk(current["item"], depth + 1)
@@ -132,9 +132,9 @@ def validate_resource(value, context, raw_bytes, version=1):
                 expected = "string" if spec["type"] == "enum" else spec["type"]
                 require(spec["nullable"] if right is None else
                         text_valid(right) if expected == "string" else
-                        number(right) if expected == "number" else isinstance(right, bool))
+                        number(right) if expected == "number" else isinstance(right, bool), "reference")
             else:
-                require(ref(current["left"])["type"] == "number")
+                require(ref(current["left"])["type"] == "number", "reference")
         walk(item, 1)
 
     def display(item):
@@ -149,12 +149,12 @@ def validate_resource(value, context, raw_bytes, version=1):
 
     def command(command_id, arguments):
         target = next((c for c in context["commands"] if c["id"] == command_id), None)
-        require(command_id.startswith(context["pluginId"] + ".") and target is not None)
-        require(set(arguments) == set(target["arguments"]) and len(arguments) <= 32 and size(arguments) <= 16384)
+        require(command_id.startswith(context["pluginId"] + ".") and target is not None, "reference")
+        require(len(arguments) == len(target["arguments"]) and len(arguments) <= 32 and size(arguments) <= 16384, "limit")
         for key, item in arguments.items():
-            require(key_valid(key))
+            require(key_valid(key) and key in target["arguments"], "reference")
             require(accepts(target["arguments"][key], item["literal"]) if "literal" in item else
-                    compatible(ref(item["ref"]), target["arguments"][key]))
+                    compatible(ref(item["ref"]), target["arguments"][key]), "reference")
 
     if value["kind"] == "status":
         display_text(value["text"])
@@ -185,12 +185,12 @@ def validate_resource(value, context, raw_bytes, version=1):
             kind = node["type"]
             if "field" in node:
                 key = node["field"]
-                require(key in fields and key not in used)
+                require(key in fields and key not in used, "reference")
                 used.add(key)
                 field = fields[key]
                 spec = field["schema"]
                 expected = {"textInput": "string", "number": "number", "range": "number", "choice": "enum", "boolean": "boolean"}[kind]
-                require(spec["type"] == expected)
+                require(spec["type"] == expected, "reference")
                 if kind == "textInput" and field["initial"] is not None:
                     require(text_valid(field["initial"], 4000, False))
                 if kind in ("number", "range"):
@@ -200,8 +200,8 @@ def validate_resource(value, context, raw_bytes, version=1):
                         require(abs(q - round(q)) <= 1e-9 * max(1, abs(q)))
                 if kind == "choice":
                     options = [o["value"] for o in node["options"]]
-                    require(len(set(options)) == len(options) and set(options) == set(spec["values"]))
-                    require(node["presentation"] != "segmented" or len(options) <= 8)
+                    require(len(set(options)) == len(options) and set(options) == set(spec["values"]), "reference")
+                    require(node["presentation"] != "segmented" or len(options) <= 8, "reference")
                     for option in node["options"]:
                         text(option["label"], True)
             if kind in ("text", "help"):
@@ -212,10 +212,10 @@ def validate_resource(value, context, raw_bytes, version=1):
                 item = node["value"]
                 display(item)
                 if "ref" in item:
-                    require(ref(item["ref"])["type"] == "number")
+                    require(ref(item["ref"])["type"] == "number", "reference")
                     slots = data if item["ref"]["scope"] == "data" else fields
                     initial = slots[item["ref"]["key"]]["initial"]
-                    require(initial is None or number(initial) and 0 <= initial <= node["max"])
+                    require(initial is None or number(initial) and 0 <= initial <= node["max"], "reference")
                 else:
                     require(item["literal"] is None or number(item["literal"]) and 0 <= item["literal"] <= node["max"])
             if kind == "keyValue":
@@ -234,15 +234,15 @@ def validate_resource(value, context, raw_bytes, version=1):
                     command(action["command"], action["arguments"])
                 elif action["action"] == "openPanel":
                     require(action["panelId"].startswith(context["pluginId"] + ".") and
-                            any(p["id"] == action["panelId"] for p in context["panels"]))
+                            any(p["id"] == action["panelId"] for p in context["panels"]), "reference")
                 elif action["action"] in ("stop", "disconnect"):
                     spec = ref(action["operation"] if action["action"] == "stop" else action["session"])
-                    require(spec["type"] == "string" and spec["nullable"])
-        require(used == set(fields))
+                    require(spec["type"] == "string" and spec["nullable"], "reference")
+        require(used == set(fields), "reference")
         for field in fields.values():
             if "requiredWhen" in field:
                 condition(field["requiredWhen"])
-        require(size({k: f["initial"] for k, f in fields.items()}) <= 16384)
+        require(size({k: f["initial"] for k, f in fields.items()}) <= 16384, "limit")
     validate_data(value, {key: slot["initial"] for key, slot in data.items()})
     return value
 

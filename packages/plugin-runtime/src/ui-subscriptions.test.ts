@@ -6,10 +6,10 @@ function initializedChannel(): Stage3ChannelContext {
   return { peer: new RpcPeer(channel), owner, requirements: [],
     principal: () => ({ kind: "plugin", owner, authorityContext: null }) };
 }
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { UiSubscriptions, type UiEventLedgerPort } from "./ui-subscriptions.js";
 import { UiStateRegistry } from "./ui-state.js";
-import { resourceFailure, type ResourceOwner, type UiEvent, type Result, type UiSubscriptionSnapshot } from "@kobrixa/plugin-protocol";
+import { resourceFailure, type ResourceOwner, type UiEvent } from "@kobrixa/plugin-protocol";
 const h = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const owner: ResourceOwner = { sourceKey: "source", pluginId: "test.ui", generation: 1, hostEpoch: h(1), processEpoch: h(2) };
 function sharedLedgerFixture() {

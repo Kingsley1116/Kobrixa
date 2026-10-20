@@ -198,7 +198,8 @@ class Plugin:
                     if isinstance(value, Mapping): return {key: copy_wire(item) for key, item in value.items()}
                     if isinstance(value, tuple): return [copy_wire(item) for item in value]
                     return value
-                local = create_invocation_context(context, {"version": context.version, "invocationId": context.invocation_id, "command": context.command, "arguments": copy_wire(context.arguments), "context": copy_wire(context.context)})
+                local = create_invocation_context(CommandContext(self), {"version": context.version, "invocationId": context.invocation_id, "command": context.command, "arguments": copy_wire(context.arguments), "context": copy_wire(context.context)})
+                local._command_context = context
                 return await handler(local)
             self._context_commands.register(command_id, schema, invoke)
             return handler
@@ -337,6 +338,9 @@ class _InvocationContext:
         return copy.deepcopy(self._invocation)
 
     def __getattr__(self, name):
+        record = self.__dict__.get("_command_context")
+        if record is not None and hasattr(record, name):
+            return getattr(record, name)
         return getattr(self._base, name)
 
 def create_invocation_context(base, invocation):

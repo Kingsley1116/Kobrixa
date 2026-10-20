@@ -126,7 +126,6 @@ import { spawnSync } from "node:child_process";
 import {
   uiResourceV1Schema,
   validateUiResource,
-  uiFailure,
   type ContextCommandDeclaration,
 } from "@kobrixa/plugin-protocol";
 it("matches Zod, exported JSON Schema and Python semantics on every materialized UI fixture", () => {
@@ -143,6 +142,41 @@ it("matches Zod, exported JSON Schema and Python semantics on every materialized
         ),
       ).cases,
   );
+  const leaf = { op: "eq", left: { scope: "data", key: "flag" }, right: true };
+  const inlineCases = [
+    { reason: "reference", condition: { ...leaf, right: 1 } },
+    {
+      reason: "limit",
+      condition: {
+        op: "all",
+        items: Array.from({ length: 4 }, () => ({
+          op: "all",
+          items: Array.from({ length: 8 }, () => leaf),
+        })),
+      },
+    },
+  ];
+  for (const { reason, condition } of inlineCases) {
+    const resource = {
+      kind: "status",
+      tone: "neutral",
+      text: { text: { en: "Status" } },
+      data: { flag: { schema: { type: "boolean", nullable: false }, initial: true } },
+      visibleWhen: condition,
+    };
+    records.push({
+      id: `inline ${reason}`,
+      valid: false,
+      input: {
+        resource,
+        version: 1,
+        rawBytes: Buffer.byteLength(JSON.stringify(resource)),
+        commands: [],
+        panels: [],
+      },
+      expected: { businessCode: "PLUGIN_E_UI_RESOURCE", reason },
+    });
+  }
   const python = spawnSync(
     "python3",
     [
@@ -188,10 +222,7 @@ print(json.dumps(rows))
         resource: { version: 1, path: "panel.json" },
       })),
     };
-    const result =
-      fixture.version === 1
-        ? validateUiResource(fixture.resource, context, fixture.rawBytes)
-        : uiFailure("version");
+    const result = validateUiResource(fixture.resource, context, fixture.rawBytes, fixture.version);
     expect(result.ok, record.id).toBe(record.valid);
     expect(outcomes[index], record.id).toEqual({
       structural: uiResourceV1Schema.safeParse(fixture.resource).success,

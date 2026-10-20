@@ -359,7 +359,7 @@ const uiEnvelopeFields = {
   subscriptionId: handleSchema,
   owner: resourceOwnerSchema,
   sequence: counterSchema,
-  delivery: z.enum(["control", "telemetry"]),
+  delivery: z.literal("control"),
 };
 export const uiEventEnvelopeSchema = z.union([
   uiEventSchema.options[0].extend(uiEnvelopeFields),

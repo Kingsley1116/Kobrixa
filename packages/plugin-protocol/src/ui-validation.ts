@@ -177,7 +177,9 @@ export function validateUiResource(
   value: unknown,
   context: UiValidationContext,
   rawBytes: number,
+  version: number = 1,
 ): Result<Resource> {
+  if (version !== 1) return uiFailure("version");
   if (!Number.isSafeInteger(rawBytes) || rawBytes < 0 || rawBytes > L.resourceBytes)
     return uiFailure(
       "limit",

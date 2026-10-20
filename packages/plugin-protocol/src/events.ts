@@ -83,24 +83,14 @@ export const deviceEventDataSchemas = {
     affected: z.array(h).max(32),
   }),
 } as const satisfies Record<EventKindV150, z.ZodType>;
-import { uiBindingSchema, uiRevokeReasonSchema } from "./ui-types.js";
-import { localIdSchema, uiScalarSchema } from "./ui-resource.js";
-import { counterSchema } from "./device-types.js";
-import { pluginLocaleSchema } from "./common.js";
+import { uiEventSchema } from "./ui-types.js";
 export const uiEventDataSchemas = {
-  "ui.instances": z.strictObject({ instances: z.array(uiBindingSchema).max(6) }),
-  "ui.visibility": z.strictObject({ binding: uiBindingSchema, visible: z.boolean() }),
-  "ui.environment": z.strictObject({
-    locale: pluginLocaleSchema,
-    theme: z.enum(["light", "dark"]),
-  }),
-  "ui.form": z.strictObject({
-    binding: uiBindingSchema,
-    revision: counterSchema,
-    values: z.record(localIdSchema, uiScalarSchema),
-  }),
-  "ui.state": z.strictObject({ binding: uiBindingSchema, revision: counterSchema }),
-  "ui.revoked": z.strictObject({ binding: uiBindingSchema, reason: uiRevokeReasonSchema }),
+  "ui.instances": uiEventSchema.options[0].shape.data,
+  "ui.visibility": uiEventSchema.options[1].shape.data,
+  "ui.environment": uiEventSchema.options[2].shape.data,
+  "ui.form": uiEventSchema.options[3].shape.data,
+  "ui.state": uiEventSchema.options[4].shape.data,
+  "ui.revoked": uiEventSchema.options[5].shape.data,
 } as const satisfies Record<UiEvent["kind"], z.ZodType>;
 export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
   event("devices.catalog", "control", deviceEventDataSchemas["devices.catalog"]),

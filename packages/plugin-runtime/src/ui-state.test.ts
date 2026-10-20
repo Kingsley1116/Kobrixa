@@ -6,7 +6,7 @@ function initializedChannel(): Stage3ChannelContext {
   return { peer: new RpcPeer(channel), owner, requirements: [],
     principal: () => ({ kind: "plugin", owner, authorityContext: null }) };
 }
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { UiStateRegistry } from "./ui-state.js";
 import type { PanelResourceV1, ResourceOwner, UiOwner, UiStateSnapshot } from "@kobrixa/plugin-protocol";
 const h = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;

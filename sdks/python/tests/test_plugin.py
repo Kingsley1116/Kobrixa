@@ -363,6 +363,17 @@ class InvocationFactoryTests(unittest.IsolatedAsyncioTestCase):
         @plugin.context_command("acme.ui.run")
         async def command(ctx):
             seen.append(ctx.invocation)
+            self.assertIs(ctx.ui, plugin.ui)
+            self.assertIs(ctx.devices, plugin.devices)
+            self.assertEqual(ctx.plugin_id, "acme.ui")
+            self.assertEqual(ctx.command, "acme.ui.run")
+            self.assertEqual(ctx.version, 1)
+            self.assertEqual(ctx.invocation_id, ctx.invocation["invocationId"])
+            self.assertEqual(dict(ctx.arguments), {})
+            self.assertEqual(set(vars(ctx._base)), {"plugin_id", "locale", "ui", "devices"})
+            self.assertEqual(set(vars(ctx._command_context)), {"version", "invocation_id", "command", "arguments", "context"})
+            with self.assertRaises(TypeError):
+                ctx.context["form"]["values"]["field"] = "changed"
             self.assertEqual(ctx.context["form"]["values"]["field"], "value")
             return {"output": {}, "fieldErrors": []}
         try:

@@ -31,6 +31,35 @@ class UiResourceTests(unittest.TestCase):
                         self.assertEqual(caught.exception.business_code, record["expected"]["businessCode"])
                         self.assertEqual(caught.exception.reason, record["expected"]["reason"])
 
+    def test_inline_semantic_reasons(self):
+        leaf = {"op": "eq", "left": {"scope": "data", "key": "flag"}, "right": True}
+        cases = [
+            ("reference", {**leaf, "right": 1}),
+            ("limit", {"op": "all", "items": [{"op": "all", "items": [leaf] * 8}] * 4}),
+        ]
+        for reason, condition in cases:
+            resource = {"kind": "status", "tone": "neutral", "text": {"text": {"en": "Status"}},
+                        "data": {"flag": {"schema": {"type": "boolean", "nullable": False}, "initial": True}},
+                        "visibleWhen": condition}
+            with self.subTest(reason=reason), self.assertRaises(SchemaError) as caught:
+                validate_resource(resource, {"pluginId": "acme.ui", "commands": [], "panels": []}, len(json.dumps(resource).encode()))
+            self.assertEqual(caught.exception.reason, reason)
+            self.assertEqual(caught.exception.business_code, "PLUGIN_E_UI_RESOURCE")
+
+    def test_huge_integer_is_rejected_without_overflow(self):
+        from kobrixa._ui import number, safe_integer, valid_spec, accepts
+        huge = 10 ** 400
+        self.assertTrue(number(huge))
+        self.assertFalse(safe_integer(huge))
+        spec = {"type": "number", "min": 0, "max": huge, "integer": True, "nullable": False}
+        self.assertFalse(valid_spec(spec))
+        self.assertFalse(accepts(spec, huge))
+        resource = {"kind": "status", "tone": "neutral", "text": {"text": {"en": "Status"}},
+                    "data": {"count": {"schema": spec, "initial": 0}}}
+        with self.assertRaises(SchemaError) as caught:
+            validate_resource(resource, {"pluginId": "acme.ui", "commands": [], "panels": []}, 1000)
+        self.assertEqual(caught.exception.reason, "schema")
+
     def test_context_spoof_and_unicode(self):
         value = {"version": 1, "invocationId": "00000000-0000-4000-8000-000000000001",
                  "command": "acme.ui.run", "arguments": {}, "context": {

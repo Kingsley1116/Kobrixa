@@ -5,7 +5,7 @@ import {
   evaluateCondition,
   acceptsValue,
 } from "./ui-validation.js";
-import type { PanelResourceV1, Condition } from "./ui-resource.js";
+import type { PanelResourceV1, Condition, ValueSpec } from "./ui-resource.js";
 const context = { pluginId: "test.ui", panels: [], commands: [] };
 const make = (): PanelResourceV1 => ({
   kind: "panel",
@@ -95,7 +95,7 @@ describe("U01/U02/U03/U05 semantic pass", () => {
       { type: "number", min: 0, max: Number.MAX_SAFE_INTEGER + 1, integer: true, nullable: true },
     ]) {
       const p = make();
-      p.fields.count!.schema = schema as import("./ui-resource.js").ValueSpec;
+      p.fields.count!.schema = schema as ValueSpec;
       expect(check(p).ok).toBe(false);
     }
   });
@@ -132,10 +132,12 @@ it("U01/U02/U03 executes the shared materialized corpus", () => {
           resource: { version: 1, path: "panel.json" },
         })),
       };
-      const result =
-        fixture.version === 1
-          ? validateUiResource(fixture.resource, context, fixture.rawBytes)
-          : uiFailure("version");
+      const result = validateUiResource(
+        fixture.resource,
+        context,
+        fixture.rawBytes,
+        fixture.version,
+      );
       if (!record.valid && !result.ok) {
         expect(result.error.code, record.id).toBe(record.expected.businessCode);
         expect(result.error.detail?.reason, record.id).toBe(record.expected.reason);
@@ -145,5 +147,3 @@ it("U01/U02/U03 executes the shared materialized corpus", () => {
     }
   }
 });
-
-import { uiFailure } from "./ui-validation.js";
