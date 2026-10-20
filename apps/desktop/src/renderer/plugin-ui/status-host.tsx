@@ -21,7 +21,7 @@ function StatusItem({ session, entry, locale, labels }: { session: RendererSessi
       if (!live || !session.catalog.current(entry)) return;
       try { if (value?.resource.kind === "status") { assertRenderable(value.resource, value.validationContext, value.rawBytes); setResource(value.resource); } }
       catch { session.quarantine(entry, "validation"); }
-    });
+    }).catch(() => { if (live) session.quarantine(entry, "renderer"); });
     return () => { live = false; };
   }, [session, entry]);
   if (entry.availability === "unavailable" || session.failed(entry) || session.statusUnavailable(entry)) return <span role="status">{translated(entry.title, locale)}: {labels.unavailable}</span>;

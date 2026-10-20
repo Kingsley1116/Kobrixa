@@ -1,3 +1,5 @@
+import { recoveryTimers } from "./recovery-support.js";
+export { registerRecoveryDiagnostics } from "./recovery-support.js";
 import type { CoreRecoveryPort, PluginUiBridge, SettingsFormBinding, ContributedSettingsForm, SettingsFieldMap, FoundationDiagnostics } from "@kobrixa/plugin-runtime";
 import type { UiBinding, SettingsSnapshot, SettingsResourceV1, SettingsScalar, SettingsText, SettingKey, Values } from "@kobrixa/plugin-protocol";
 import { RendererSession, bootstrapPluginUi } from "./bootstrap.js";
@@ -15,12 +17,7 @@ export interface SettingsControlsPort {
   onChange(listener: (binding: SettingsFormBinding, key: SettingKey, value: SettingsScalar, phase: "change" | "blur" | "enter" | "reset") => void): () => void;
   dispose(binding: SettingsFormBinding): void;
 }
-export type UiLabels = {
-  tools: string; open: string; close: string; empty: string; unavailable: string; loading: string;
-  invalid: string; recovery: string; refresh: string; reset: string; previous: string; next: string;
-  retry: string; export: string; discard: string; checkpoint: string; holdHint: string;
-  actions: Record<"stop" | "reconcile" | "clear-resolved" | "retry-save" | "manage", string>;
-};
+export type { UiLabels } from "./recovery-support.js";
 type SettingsAttachment = {
   retry: ContributedSettingsForm["retry"]; reload: ContributedSettingsForm["reload"];
   fieldMap: (resource: SettingsResourceV1) => SettingsFieldMap;
@@ -34,14 +31,10 @@ export function attachSettingsControls(controls: SettingsControlsPort, input: Se
 export function settingsAttachment(controls: SettingsControlsPort): SettingsAttachment | undefined {
   return attachments.get(controls);
 }
-const viewTimers = new WeakMap<object, () => number>();
-export function registerRecoveryDiagnostics(instance: object, timers: () => number): void {
-  viewTimers.set(instance, timers);
-}
 const sessions = new WeakMap<PluginUiRendererHost, RendererSession>();
 export function diagnosticsFor(instance: object): FoundationDiagnostics {
   const session = sessions.get(instance as PluginUiRendererHost);
-  const timers = viewTimers.get(instance);
+  const timers = recoveryTimers(instance);
   if (!session && !timers) throw new Error("Unknown renderer host instance");
   return Object.freeze({
     snapshot: () => Object.freeze({ owners: 0, bindings: 0, subscriptions: 0, queuedEvents: 0,

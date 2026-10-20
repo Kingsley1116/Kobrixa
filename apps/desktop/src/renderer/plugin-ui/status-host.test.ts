@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { fixture, entry, handle, binding, snapshot } from "./contract.test.js";
 import { RendererSession } from "./bootstrap.js";
 import { PluginStatusHost } from "./status-host.js";
@@ -23,4 +23,20 @@ it("U01/U15 shows replayed current status text without spawning and exposes no f
   expect(div.textContent).toContain("Stopped"); expect(div.querySelector("button")).toBeNull();
   expect(f.bridge.open).not.toHaveBeenCalled(); expect(f.bridge.invoke).not.toHaveBeenCalled();
   await act(async () => root.unmount()); session.dispose(); div.remove();
+});
+
+it.each([false, true])("quarantines rejected status resources only while live (unmounted=%s)", async (unmounted) => {
+  const f = fixture(); const status = { ...entry, kind: "status" as const };
+  f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: handle(1), revision: 1, entries: [status], nextCursor: null } });
+  const session = new RendererSession(f.bridge); await session.start();
+  let reject!: (error: Error) => void;
+  vi.spyOn(session.catalog, "resource").mockReturnValue(new Promise((_, fail) => { reject = fail; }));
+  const quarantine = vi.spyOn(session, "quarantine");
+  const div = document.createElement("div"); const root = createRoot(div);
+  await act(async () => root.render(createElement(PluginStatusHost, { session, locale: "en", labels })));
+  if (unmounted) await act(async () => root.unmount());
+  await act(async () => { reject(new Error("resource failed")); });
+  if (unmounted) expect(quarantine).not.toHaveBeenCalled();
+  else { expect(quarantine).toHaveBeenCalledWith(status, "renderer"); await act(async () => root.unmount()); }
+  session.dispose(); vi.restoreAllMocks();
 });

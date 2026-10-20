@@ -83,5 +83,39 @@ it("AM-28 attaches frozen mappings and routes retry/reload to the retained form"
   await act(async () => [...div.querySelectorAll("button")].find((b) => b.textContent === labels.refresh)!.click());
   expect(reload).toHaveBeenCalledWith(binding); expect(change).toHaveBeenCalledTimes(1);
   expect(() => map.value("editor.mode", "foreign")).toThrow(); expect(() => map.key("foreign")).toThrow();
+  await act(async () => controls.render(binding, resource, { baseline, draft: [{ key: "editor.mode", value: "foreign" }], busyKeys: [], errors: [] }));
+  expect(select.value).toBe(""); expect(select.getAttribute("aria-invalid")).toBe("true");
+  expect(select.selectedOptions[0]?.textContent).toBe(labels.invalid);
   await act(async () => root.unmount()); detach(); detach(); controls.destroy();
+});
+
+it.each(["string", "number"] as const)("defers %s IME drafts and Enter/blur saves until composition ends", async (type) => {
+  const controls = new SettingsControls(); const change = vi.fn(); controls.onChange(change);
+  const field = type === "string"
+    ? { key: "value", type, label: { en: "Value" }, default: "", minLength: 0, maxLength: 100, maxBytes: 400 }
+    : { key: "value", type, label: { en: "Value" }, default: 1, minimum: 0, maximum: 100 };
+  const baseline = { schemaVersion: 1, revision: null, values: [{ key: "value", value: field.default }] };
+  controls.render(binding, { ...resource, fields: [field] }, { baseline, draft: baseline.values, busyKeys: [], errors: [] });
+  const div = document.createElement("div"); document.body.append(div); const root = createRoot(div);
+  try {
+    await act(async () => root.render(createElement(SettingsControlsView, { controls, locale: "en", labels })));
+    const input = div.querySelector("input")!;
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+    await act(async () => { set.call(input, "2"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(controls.getSnapshot()!.raw.value).toBeUndefined();
+    for (const init of [{ isComposing: true }, { keyCode: 229 }, {}]) {
+      await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...init })));
+    }
+    await act(async () => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(change).not.toHaveBeenCalled();
+    const final = type === "string" ? "中文" : "23";
+    await act(async () => { set.call(input, final); input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: final })); });
+    for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+      await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, ...init })));
+    }
+    expect(change).not.toHaveBeenCalled();
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(change).toHaveBeenCalledExactlyOnceWith(binding, "value", type === "string" ? final : 23, "enter");
+  } finally { await act(async () => root.unmount()); div.remove(); controls.destroy(); }
 });

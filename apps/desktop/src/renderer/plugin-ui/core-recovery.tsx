@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { CoreRecoveryPort, CoreRecoverySnapshot } from "@kobrixa/plugin-runtime";
-import { translated } from "./components.js";
-import { registerRecoveryDiagnostics, type UiLabels } from "./host-ports.js";
+import { translated, registerRecoveryDiagnostics, type UiLabels } from "./recovery-support.js";
 type RecoveryView = { hostEpoch: string | null; revision: number; items: CoreRecoverySnapshot["items"]; nextCursor: string | null; problem: boolean; busy: string[] };
 export class CoreRecoveryStore {
   private view: RecoveryView = { hostEpoch: null, revision: -1, items: [], nextCursor: null, problem: false, busy: [] };

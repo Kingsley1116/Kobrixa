@@ -1,9 +1,12 @@
+import { CompositionInput, composingKey } from "./composition-input.js";
+import { translated } from "./recovery-support.js";
+export { translated } from "./recovery-support.js";
 import { Component, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { DisplayText, DisplayValue, Text, UiScalar } from "@kobrixa/plugin-protocol";
 import type { UiLabels } from "./host-ports.js";
 import { condition, numericDraft, type UiStateStore } from "./state-store.js";
 import type { UiIntentController } from "./intent-controller.js";
-export const translated = (text: Text, locale: "en" | "zh-TW"): string => locale === "zh-TW" ? text["zh-TW"] ?? text.en : text.en;
+
 export function displayText(value: DisplayText, data: Record<string, UiScalar>, locale: "en" | "zh-TW"): string {
   return "text" in value ? translated(value.text, locale) : String(data[value.ref.key] ?? "");
 }
@@ -65,12 +68,12 @@ export function PanelTree({ state, intent, locale, labels }: { state: UiStateSto
         {node.label && <h3>{text(node.label)}</h3>}{node.help && <p>{text(node.help)}</p>}{node.children.map(render)}</section>; break;
       case "text": content = node.emphasis === "strong" ? <strong>{displayText(node.value, view.snapshot.data, locale)}</strong> : <span>{displayText(node.value, view.snapshot.data, locale)}</span>; break;
       case "help": content = <p className="plugin-ui-help">{displayText(node.value, view.snapshot.data, locale)}</p>; break;
-      case "textInput": content = <><label htmlFor={domId}>{text(node.label)}</label><input {...common} type="text" maxLength={8000} value={raw(node.field)} placeholder={node.placeholder && text(node.placeholder)} onChange={(event) => state.edit(node.field, event.target.value, event.target.value)} /></>; break;
+      case "textInput": content = <><label htmlFor={domId}>{text(node.label)}</label><CompositionInput key={domId} {...common} type="text" maxLength={8000} value={raw(node.field)} placeholder={node.placeholder && text(node.placeholder)} onValue={(value) => state.edit(node.field, value, value)} /></>; break;
       case "number": case "range": {
         const schema = state.resource.fields[node.field]!.schema;
         if (schema.type !== "number") throw new Error("Numeric field mismatch");
         content = <><label htmlFor={domId}>{text(node.label)}{node.unit && ` (${text(node.unit)})`}</label>
-          <input {...common} type="text" maxLength={8000} inputMode="decimal" value={raw(node.field)} onChange={(event) => state.edit(node.field, numericDraft(event.target.value), event.target.value)} />
+          <CompositionInput key={domId} {...common} type="text" maxLength={8000} inputMode="decimal" value={raw(node.field)} onValue={(value) => state.edit(node.field, numericDraft(value), value)} />
           {node.type === "range" && <input type="range" aria-label={text(node.label)} disabled={disabled} min={schema.min} max={schema.max} step={node.step}
             value={typeof view.draft[node.field] === "number" ? view.draft[node.field] as number : schema.min}
             onChange={(event) => state.edit(node.field, Number(event.target.value), event.target.value)} />}</>; break;
@@ -87,7 +90,7 @@ export function PanelTree({ state, intent, locale, labels }: { state: UiStateSto
         onPointerDown={(event) => { if (intent.begin(node.id, { trusted: event.nativeEvent.isTrusted, kind: "pointer", id: String(event.pointerId), primary: event.isPrimary && event.button === 0, repeat: false })) event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerUp={(event) => intent.release("pointer", String(event.pointerId), false)} onPointerCancel={() => intent.cancel()} onLostPointerCapture={() => intent.cancel()}
         onContextMenu={(event) => { event.preventDefault(); intent.cancel(); }} onBlur={() => intent.cancel()}
-        onKeyDown={(event) => { if (event.key === "Escape") { intent.cancel(); return; } if (event.key === " " || event.key === "Enter") { event.preventDefault(); intent.begin(node.id, { trusted: event.nativeEvent.isTrusted, kind: "key", id: event.key, primary: true, repeat: event.repeat }); } }}
+        onKeyDown={(event) => { if (composingKey(event.nativeEvent)) return; if (event.key === "Escape") { intent.cancel(); return; } if (event.key === " " || event.key === "Enter") { event.preventDefault(); intent.begin(node.id, { trusted: event.nativeEvent.isTrusted, kind: "key", id: event.key, primary: true, repeat: event.repeat }); } }}
         onKeyUp={(event) => intent.release("key", event.key, false)}>{text(node.label)}</button>; break;
       case "status": content = <span data-tone={node.tone}><LiveText text={displayText(node.text, view.snapshot.data, locale)} /></span>; break;
       case "alert": content = <span data-tone={node.severity}><LiveText text={displayText(node.text, view.snapshot.data, locale)} alert /></span>; break;

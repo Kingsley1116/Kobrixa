@@ -1,3 +1,4 @@
+import { CompositionInput } from "./composition-input.js";
 import { useState, useSyncExternalStore } from "react";
 import type { SettingsFormBinding } from "@kobrixa/plugin-runtime";
 import type { SettingsResourceV1, SettingsScalar } from "@kobrixa/plugin-protocol";
@@ -83,15 +84,15 @@ export function SettingsControlsView({ controls, locale, labels }: { controls: S
       const id = `setting-${view.binding.scope.workbenchInstance}-${fieldId}`;
       const value = view.state.draft.find((item) => item.key === field.key)?.value ?? field.default;
       const error = view.state.errors.find((item) => item.key === field.key);
-      const invalid = view.invalid.includes(field.key); const disabled = view.state.busyKeys.includes(field.key);
+      const invalid = view.invalid.includes(field.key) || field.type === "enum" && !settingValid(field, value); const disabled = view.state.busyKeys.includes(field.key);
       const description = [field.help && `${id}-help`, (error || invalid) && `${id}-error`].filter(Boolean).join(" ") || undefined;
       const commit = (phase: "blur" | "enter") => controls.commit(field.key, phase);
       return <div key={field.key} className="plugin-ui-node"><label htmlFor={id}>{translated(field.label, locale)}</label>
         {field.type === "boolean" ? <input id={id} type="checkbox" disabled={disabled} checked={value === true} aria-describedby={description} onChange={(event) => controls.commit(field.key, "change", event.target.checked)} />
-          : field.type === "enum" ? <select id={id} disabled={disabled} aria-describedby={description} value={map ? map.option(key, value) : `option${field.options.findIndex((option) => option.value === value)}`}
-            onChange={(event) => { const value = map ? map.value(key, event.target.value) : field.options[Number(event.target.value.slice(6))]?.value; if (value !== undefined) controls.commit(key, "change", value); }}>{field.options.map((option, optionIndex) => <option key={optionIndex} value={map ? map.option(key, option.value) : `option${optionIndex}`}>{translated(option.label, locale)}</option>)}</select>
-            : <input id={id} type="text" maxLength={8000} inputMode={field.type === "string" ? "text" : "decimal"} disabled={disabled} aria-invalid={!!error || invalid} aria-describedby={description}
-              value={view.raw[field.key] ?? String(value)} onChange={(event) => controls.raw(field.key, event.target.value)} onBlur={() => commit("blur")}
+          : field.type === "enum" ? <select id={id} disabled={disabled} aria-invalid={!!error || invalid} aria-describedby={description} value={invalid ? "" : map ? map.option(key, value) : `option${field.options.findIndex((option) => option.value === value)}`}
+            onChange={(event) => { const value = map ? map.value(key, event.target.value) : field.options[Number(event.target.value.slice(6))]?.value; if (value !== undefined) controls.commit(key, "change", value); }}>{invalid && <option value="" disabled>{labels.invalid}</option>}{field.options.map((option, optionIndex) => <option key={optionIndex} value={map ? map.option(key, option.value) : `option${optionIndex}`}>{translated(option.label, locale)}</option>)}</select>
+            : <CompositionInput key={keyOf(view.binding)} id={id} type="text" maxLength={8000} inputMode={field.type === "string" ? "text" : "decimal"} disabled={disabled} aria-invalid={!!error || invalid} aria-describedby={description}
+              value={view.raw[field.key] ?? String(value)} onValue={(value) => controls.raw(field.key, value)} onBlur={() => commit("blur")}
               onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit("enter"); } }} />}
         {field.help && <p id={`${id}-help`}>{translated(field.help, locale)}</p>}
         {(error || invalid) && <p id={`${id}-error`} role="alert">{error ? translated(error.message, locale) : labels.invalid}</p>}
