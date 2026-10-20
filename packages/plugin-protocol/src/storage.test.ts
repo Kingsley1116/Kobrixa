@@ -26,3 +26,13 @@ it("does not confuse a drain submission with a host saved report", () => {
   expect(schema.safeParse({ ok: true, value: { status: "saved", writes: [] } }).success).toBe(false);
   expect(schema.safeParse({ ok: true, value: { status: "submitted", writes: [h, h, h] } }).success).toBe(false);
 });
+
+import { expectTypeOf } from "vitest";
+import { z } from "zod";
+import { drainRequestBase, drainRequestSchema, type DrainRequest } from "./storage.js";
+it("checks the inferred drain base input and output against the frozen contract",()=>{
+  expectTypeOf<z.output<typeof drainRequestBase>>().toEqualTypeOf<DrainRequest>();
+  expectTypeOf<z.input<typeof drainRequestBase>>().toEqualTypeOf<DrainRequest>();
+  expect(drainRequestSchema).toBe(drainRequestBase);
+  expect(drainRequestBase.shape.checkpoints.element.shape.reservationEnd).toBeDefined();
+});

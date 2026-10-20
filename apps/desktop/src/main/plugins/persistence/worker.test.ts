@@ -1,5 +1,5 @@
 import { createHash,randomUUID } from "node:crypto";
-import { mkdtemp,rm,mkdir,readFile,realpath } from "node:fs/promises";
+import { mkdtemp,rm,mkdir,readFile,realpath,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,12 +40,15 @@ function make(owner:PublicationTicket["owner"],bytes:Uint8Array):PublicationTick
 }
 const ownerFor=(epoch:string)=>({sourceKey:"builtin:kobrixa.lab",pluginId:"kobrixa.lab",generation:1,hostEpoch:epoch,processEpoch:randomUUID()});
 async function stage(backend:PersistenceBackend,t:PublicationTicket,bytes:Uint8Array){await backend.engine.reserve(t,bytes.length);for(let n=0;n<bytes.length;n+=262144)await backend.engine.append(t,n,bytes.subarray(n,n+262144));await backend.engine.seal(t,bytes.length,hash(bytes));}
-it.skipIf(!hasT6Handoff)("rejects malformed private messages and missing capabilities",async()=>{
+it("rejects malformed private messages and missing capabilities",async()=>{
+  const directory=await realpath(await mkdtemp(path.join(tmpdir(),"malformed-worker-")));
+  try {
   expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"engine.fence",args:[]}).success).toBe(false);
   expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"reads.settings",args:[{sourceKey:"forged"}]}).success).toBe(false);
   expect(PersistenceWorkerResponse.safeParse({version:1,id:1,ok:false,error:{code:"io",message:"io",path:"private"}}).success).toBe(false);
   await expect(openStoreRoot({userData:directory,profile:{hostEpoch:randomUUID(),assertHeld(){throw new Error("not-primary");}}})).rejects.toThrow("not-primary");
-  await expect(startPersistenceWorker({profile:{hostEpoch:randomUUID(),assertHeld(){}},root:{} as never,workerEntry:entry,now:()=>0})).rejects.toThrow("unsafe-root");
+  await expect(startPersistenceWorker({profile:{hostEpoch:randomUUID(),assertHeld(){}},root:{} as never,workerEntry:path.join(directory,"unused.cjs"),now:()=>0})).rejects.toThrow("unsafe-root");
+  }finally{await rm(directory,{recursive:true,force:true});}
 });
 it.skipIf(!hasT6Handoff)("preserves exact opaque bytes, scoped barriers and one idempotent disposal",async()=>{
   const env=await launch(path.join(directory,randomUUID())),bytes=new Uint8Array([0,255,123,0,10]),owner=ownerFor(env.profile.hostEpoch),t=make(owner,bytes);
@@ -174,6 +177,57 @@ it("persistenceWorkerCount rejects objects that are not registered backends",()=
 });
 it("accepts finite fractional monotonic deadlines without relaxing integer counters",()=>{
   const owner=ownerFor(randomUUID()),t={...make(owner,new Uint8Array()),deadlineMonotonicMs:1234.5};
-  expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"engine.reserve",args:[t,0]}).success).toBe(true);
-  expect(PersistenceWorkerRequest.safeParse({version:1,id:1.5,operation:"engine.reserve",args:[t,0]}).success).toBe(false);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"engine.reserve",args:[t,0],gate:{slot:0,sequence:1}}).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:1.5,operation:"engine.reserve",args:[t,0],gate:{slot:0,sequence:1}}).success).toBe(false);
+});
+
+it("T6 codec and fixture handoff must arrive together",()=>{
+  expect("parseNonceDocument" in importCodecs).toBe(existsSync(fileURLToPath(new URL("./import-fixtures.ts",import.meta.url))));
+});
+async function mappedSetup(options:{hash?:string;schema?:number;large?:boolean}={}) {
+  const root=await realpath(await mkdtemp(path.join(tmpdir(),"mapped-source-")));
+  const profile={hostEpoch:randomUUID(),assertHeld(){}},fs=await createNodePersistenceFs(root,profile,{now:()=>0}),store=new AtomicStore(fs);
+  const legacy=path.join(root,"legacy");await mkdir(legacy);await writeFile(path.join(legacy,"item"),'{"formatVersion":1}');
+  const payload=new Uint8Array(options.large?262145:3).fill(7),owner=ownerFor(profile.hostEpoch),original=make(owner,payload);
+  if(original.metadata.kind!=="record")throw new Error("test-target");
+  if(options.hash)original.metadata.record.sha256=options.hash;
+  const descriptor:LegacyImportDescriptor={id:"test.mapped",mappingVersion:1,targetSourceKey:owner.sourceKey,sourceKind:"sensor-lab",sourceFormatVersions:[1],targetRecordSchemaVersions:[1],validate:()=>true,
+    map:()=>({kind:"record",bytes:payload,metadata:{kind:"test",schemaVersion:options.schema??1,label:"Mapped",mediaType:"application/octet-stream",byteLength:payload.length,sha256:hash(payload)}})};
+  const sources=new WorkerSources(fs.root,store,new Map([[descriptor.id,descriptor]]),new Map([[descriptor.id,legacy]]));await sources.validateRoots();
+  await sources.register({descriptorId:descriptor.id,mapperId:descriptor.id,sourceKind:descriptor.sourceKind});
+  const mapped=await sources.map(descriptor.id,"item"),id="import/"+hash(Buffer.from(JSON.stringify([descriptor.id,owner.sourceKey]))),tag={importId:id,itemKey:"item",sourceSha256:mapped.sourceSha256};
+  const plan:ImportPlan={formatVersion:1,id,descriptorId:descriptor.id,preferencesEvidence:null,mappingVersion:1,targetSourceKey:owner.sourceKey,
+    items:[{key:"item",sourceFormat:1,sourceSha256:mapped.sourceSha256,mappedSha256:options.hash??mapped.mappedSha256,byteLength:payload.length,ticket:original,tag}]};
+  await store.planImport(owner,plan);const attempt=await store.admitImport(owner,id,"item");await store.reserve(attempt,payload.length);
+  return {sources,store,mapped,attempt,tag,payload,close:async()=>{await store.dispose();await rm(root,{recursive:true,force:true});}};
+}
+it("appendMapped requires the matching tag before the first byte",async()=>{
+  const env=await mappedSetup();try {
+    await expect(env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).rejects.toThrow("input-changed");
+    await env.store.tagImport(env.attempt,env.tag);
+    expect(await env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).toEqual({nextOffset:3,done:true});
+  }finally{await env.close();}
+});
+it("file mapping binds attempt, sequential offset, bounded chunks and unresolved release",async()=>{
+  const env=await mappedSetup({large:true});try {
+    await env.store.tagImport(env.attempt,env.tag);
+    const input={mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144};
+    for(const invalid of [{...input,ticket:{...env.attempt,id:randomUUID()}},{...input,offset:1},{...input,maxBytes:262145}])await expect(env.sources.appendMapped(invalid)).rejects.toThrow();
+    expect(await env.sources.appendMapped(input)).toEqual({nextOffset:262144,done:false});
+    expect(await env.sources.appendMapped({...input,offset:262144})).toEqual({nextOffset:262145,done:true});
+    await env.store.seal(env.attempt,env.payload.length,hash(env.payload));
+    const replace=env.store.fs.atomicReplace.bind(env.store.fs);let resume!:()=>void,entered!:()=>void;
+    const reached=new Promise<void>(r=>{entered=r;}),release=new Promise<void>(r=>{resume=r;});
+    env.store.fs.atomicReplace=async(a,b)=>{if(env.store.fs.name(b).endsWith('head.json')){entered();await release;}return replace(a,b);};
+    const publish=env.store.publish(env.attempt);await reached;
+    try{await expect(env.sources.releaseMapped(env.mapped.mapped)).rejects.toThrow("publish-uncertain");}finally{resume();}
+    expect((await publish).disposition).toBe("committed");await env.sources.releaseMapped(env.mapped.mapped);
+    await expect(env.sources.appendMapped(input)).rejects.toThrow("stale");
+  }finally{await env.close();}
+});
+it.each([{hash:"0".repeat(64)},{schema:2}])("rejects mismatched plan hash or schema %j",async options=>{
+  const env=await mappedSetup(options);try {
+    await env.store.tagImport(env.attempt,env.tag);
+    await expect(env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).rejects.toThrow("input-changed");
+  }finally{await env.close();}
 });

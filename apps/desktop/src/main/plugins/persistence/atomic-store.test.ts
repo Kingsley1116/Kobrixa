@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 import type { PublicationTicket } from "./engine-port.js";
 import { AtomicStore } from "./atomic-store.js";
-import { createNodePersistenceFs, type PersistenceFaultPoint } from "./filesystem.js";
+import { createNodePersistenceFs, NodePersistenceFs, type PersistenceFaultPoint } from "./filesystem.js";
 const owner: PersistenceOwner = { sourceKey: "builtin:kobrixa.lab", pluginId: "kobrixa.lab", generation: 1, hostEpoch: "00000000-0000-4000-8000-000000000001", processEpoch: "00000000-0000-4000-8000-000000000002" };
 const hash = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 function ticket(bytes: Uint8Array, id: string = randomUUID(), expectedRevision: string | null = null): PublicationTicket {
@@ -48,6 +48,7 @@ it("B2-RF1: cancellation before dispatch wins; after dispatch stays unknown unti
     const pending = env2.store.publish(t); await atRename;
     env2.store.fence(owner, 0);
     expect(await env2.store.abort(t)).toBe("unknown");
+    expect(env2.store.settledDisposition(t.id)).toBeNull();
     expect((await env2.store.reconcile(t)).disposition).toBe("unknown");
     await expect(env2.store.reserve(ticket(new Uint8Array([8])), 1)).rejects.toThrow();
     resume(); const result = await pending;
@@ -260,4 +261,110 @@ it("loss of the held profile denies import admission and all payload mutation",a
     await expect(env.store.append(a,0,new Uint8Array([1]))).rejects.toThrow("not-primary");
     env.fs.profile.assertHeld=()=>{};
   }finally{await env.close();}
+});
+
+it('retains committed and aborted tombstones for captured evidence after entry pruning',async()=>{
+  const env=await setup();try {
+    const a=ticket(new Uint8Array([1])),b=ticket(new Uint8Array([2]));
+    await stage(env.store,a,new Uint8Array([1]));await env.store.publish(a);
+    await env.store.reserve(b,1);await env.store.abort(b);env.advance(120001);
+    const c={...ticket(new Uint8Array()),deadlineMonotonicMs:240001};await env.store.reserve(c,0);
+    const barrier={id:randomUUID(),scope:{kind:'namespace' as const,owner},through:2,deadlineMonotonicMs:240000};
+    expect(await env.store.flushEvidence(barrier,[a,b])).toEqual({state:'failed',accepted:[a.id,b.id],incomplete:[b.id],unknown:[]});
+    await env.store.abort(c);
+  }finally{await env.close();}
+});
+it.each(['owner','target'] as const)('reserve rechecks %s fence after awaited temp creation',async kind=>{
+  const env=await setup();try {
+    const t=ticket(new Uint8Array([1])),open=env.fs.open.bind(env.fs);
+    env.fs.open=async(p,mode)=>{const fd=await open(p,mode);if(env.fs.name(p).endsWith('payload.tmp')) {
+      if(kind==='owner')env.store.fence(owner,0);else env.store.fenceTarget(owner,t.target.kind==='record'?t.target.id:'',0);
+    }return fd;};
+    await expect(env.store.reserve(t,1)).rejects.toThrow('stale');
+    expect(env.store.quota.snapshot(owner.sourceKey).reservedBytes).toBe(0);
+    await expect(env.store.append(t,0,new Uint8Array([1]))).rejects.toThrow('stale');
+  }finally{await env.close();}
+});
+it.each(['document','admit','pruned'] as const)('clears failed reserve identity before retrying %s metadata',async mode=>{
+  const env=await setup();try {
+    const p=await planned(env),open=env.fs.open.bind(env.fs),unlink=env.fs.unlink.bind(env.fs);let fail=true;
+    env.fs.open=async(path,access)=>{if(fail && env.fs.name(path).endsWith('payload.tmp'))throw new Error('injected');return open(path,access);};
+    env.fs.unlink=async path=>{if(fail && env.fs.name(path).endsWith('intent.json'))throw new Error('injected-cleanup');return unlink(path);};
+    const run=()=>mode==='admit'?env.store.admitImport(owner,p.id,'one'):env.store.recordImport(owner,p.id,{key:'one',state:'skipped',receipt:null,skipReason:'skip',publicationTicket:null});
+    await expect(run()).rejects.toThrow('publish-uncertain');fail=false;
+    if(mode==='pruned') {
+      // Unrelated work prunes the failed reserve before its owning document retries.
+      await env.store.settings(owner);env.advance(240001);await env.store.settings(owner);
+    }
+    await run();
+  }finally{await env.close().catch(()=>rm(path.dirname(path.dirname(env.fs.root)),{recursive:true,force:true}));}
+});
+it('a skipped item cannot admit a publication',async()=>{
+  const env=await setup();try {const p=await planned(env);await env.store.recordImport(owner,p.id,{key:'one',state:'skipped',receipt:null,skipReason:'skip',publicationTicket:null});await expect(env.store.admitImport(owner,p.id,'one')).rejects.toThrow('stale');}finally{await env.close();}
+});
+it.each(['foreign-tag','newer-untagged'] as const)('a %s destination head remains unknown and cannot admit',async kind=>{
+  const env=await setup();try {
+    const p=await planned(env),a=await env.store.admitImport(owner,p.id,'one');
+    await env.store.reserve(a,1);await env.store.tagImport(a,p.tag);await env.store.append(a,0,new Uint8Array([1]));await env.store.seal(a,1,p.tag.sourceSha256);await env.store.publish(a);
+    const ns=await Namespace.open(env.fs,owner.sourceKey),loc=await ns.location(a.target),head=(await ns.head(loc))!;
+    const {importTag,...untagged}=head;
+    await env.fs.unlink(loc.head);await ns.writeNew(loc.head,kind==='foreign-tag'?{...head,importTag:{...importTag,itemKey:'foreign'}}:{...untagged,receipt:{...head.receipt,commitId:randomUUID()}});
+    const fs=new NodePersistenceFs(env.fs.root,{hostEpoch:randomUUID(),assertHeld(){}},{now:()=>500}),next=new AtomicStore(fs);await next.initialize();
+    const current={...owner,hostEpoch:fs.profile.hostEpoch,processEpoch:randomUUID()};
+    expect(await next.reconcileImport(p.original)).toEqual({disposition:'unknown'});
+    await expect(next.admitImport(current,p.id,'one')).rejects.toThrow('publish-uncertain');await next.dispose();
+  }finally{await env.close();}
+});
+it.each(['permission','corrupt'] as const)('%s failure reading the plan head yields unknown',async kind=>{
+  const env=await setup();try {
+    const p=await planned(env),bytes=env.fs.bytes.bind(env.fs);
+    env.fs.bytes=async(path,max)=>{if(env.fs.name(path).includes('/imports/') && !env.fs.name(path).includes('/objects/')) {
+      if(kind==='permission')throw Object.assign(new Error('denied'),{code:'EACCES'});return Buffer.from('{}');
+    }return bytes(path,max);};
+    expect(await env.store.reconcileImport(p.original)).toEqual({disposition:'unknown'});
+    await expect(env.store.admitImport(owner,p.id,'one')).rejects.toThrow();env.fs.bytes=bytes;
+  }finally{await env.close();}
+});
+it('restart after tagged destination head before receipt reconciles original without reviving write rights',async()=>{
+  const env=await setup();try {
+    const p=await planned(env),a=await env.store.admitImport(owner,p.id,'one');
+    await env.store.reserve(a,1);await env.store.tagImport(a,p.tag);await env.store.append(a,0,new Uint8Array([1]));await env.store.seal(a,1,p.tag.sourceSha256);
+    const receipt=await env.store.publish(a);expect((await env.store.loadImport(owner,p.id))?.items[0]?.state).toBe('pending');
+    const fs=new NodePersistenceFs(env.fs.root,{hostEpoch:randomUUID(),assertHeld(){}},{now:()=>500}),next=new AtomicStore(fs);await next.initialize();
+    const current={...owner,hostEpoch:fs.profile.hostEpoch,processEpoch:randomUUID()};
+    expect(await next.reconcileImport(p.original)).toEqual(receipt);expect(await next.reconcileImport(a)).toEqual(receipt);
+    expect((await next.importReceipts(current,p.id))[0]?.ticket).toEqual(a);
+    for(const t of [p.original,a])for(const run of [()=>next.reserve(t,1),()=>next.append(t,0,new Uint8Array([1])),()=>next.seal(t,1,p.tag.sourceSha256),()=>next.publish(t)])await expect(run()).rejects.toThrow();
+    await expect(next.admitImport(current,p.id,'one')).rejects.toThrow('already-committed');await next.dispose();
+  }finally{await env.close();}
+});
+
+it('reports terminal attempts settled by import replacement, but never receiving or unknown attempts',async()=>{
+  const env=await setup();try {
+    const p=await planned(env),a=await env.store.admitImport(owner,p.id,'one');await env.store.reserve(a,1);
+    expect(env.store.settledDisposition(a.id)).toBeNull();
+    await env.store.admitImport(owner,p.id,'one');expect(env.store.settledDisposition(a.id)).toBe('aborted');
+  }finally{await env.close();}
+});
+it('reports a clean rejected reserve as terminal without settling an unclean reserve',async()=>{
+  const env=await setup();try {
+    const t=ticket(new Uint8Array([1])),open=env.fs.open.bind(env.fs),unlink=env.fs.unlink.bind(env.fs);let unclean=false;
+    env.fs.open=async(p,mode)=>{if(env.fs.name(p).endsWith('payload.tmp'))throw new Error('open-failed');return open(p,mode);};
+    env.fs.unlink=async p=>{if(unclean)throw new Error('unlink-failed');return unlink(p);};
+    await expect(env.store.reserve(t,1)).rejects.toThrow('open-failed');expect(env.store.settledDisposition(t.id)).toBe('aborted');
+    unclean=true;const uncertain=ticket(new Uint8Array([1]));await expect(env.store.reserve(uncertain,1)).rejects.toThrow('open-failed');
+    expect(env.store.settledDisposition(uncertain.id)).toBeNull();unclean=false;await env.store.abort(uncertain);
+  }finally{await env.close();}
+});
+it('late operations on a settled uncleaned entry cannot fence a recycled shared gate',async()=>{
+  let fail=false;const env=await setup(async point=>{if(fail && point==='cleanup')throw new Error('cleanup-failed');});
+  try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes),memory=new SharedArrayBuffer(16);
+    const {PublicationGate}=await import('./engine-port.js');new PublicationGate(t.deadlineMonotonicMs,memory,0,true);
+    await env.store.reserve(t,1,memory);await env.store.append(t,0,bytes);await env.store.seal(t,1,hash(bytes));fail=true;
+    expect((await env.store.publish(t)).disposition).toBe('committed');env.advance(120001);
+    const recycled=new PublicationGate(240000,memory,0,true);
+    expect(await env.store.abort(t)).toBe('committed');env.store.fenceTargetOrTicket(t);
+    expect(recycled.dispatch(120001)).toBe(true);
+  }finally{fail=false;await env.close();}
 });

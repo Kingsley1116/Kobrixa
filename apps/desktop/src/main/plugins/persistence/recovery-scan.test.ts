@@ -5,6 +5,7 @@ import path from "node:path";
 import { expect, it } from "vitest";
 import { createNodePersistenceFs } from "./filesystem.js";
 import { Namespace, type DiskHead } from "./namespace.js";
+import { AtomicStore } from "./atomic-store.js";
 import { scanNamespace, garbageCandidates } from "./recovery-scan.js";
 it("keeps a complete new head, protects pins, and refuses unknown format without destructive repair", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "recover-"));
@@ -64,6 +65,11 @@ it("classifies a recovered import metadata candidate before cleaning staging",as
     await ns.writeNew(ns.path("staging",ticket.id,"publication.json"),head);
     const scan=await scanNamespace(ns,epoch);expect(scan.problems).toEqual([]);
     expect(await fs.exists(ns.path("staging",ticket.id,"intent.json"))).toBe(true);
-    expect((await scanNamespace(ns,epoch)).heads).toEqual(scan.heads);
+    const resolved={formatVersion:1,disposition:"committed",receipt:head.receipt};
+    expect(JSON.parse(Buffer.from(await fs.bytes(ns.path("staging",ticket.id,"resolved.json"),8192)).toString())).toEqual(resolved);
+    await fs.unlink(loc.head);await ns.writeNew(loc.head,{...head,receipt:{...head.receipt,commitId:randomUUID()}});
+    expect((await scanNamespace(ns,epoch)).problems).toEqual([]);
+    const store=new AtomicStore(fs);await store.initialize();
+    expect(await store.reconcileImport(ticket)).toEqual({disposition:"committed",receipt:head.receipt});await store.dispose();
   }finally{await rm(root,{recursive:true,force:true});}
 });

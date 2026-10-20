@@ -45,7 +45,7 @@ const args={
   "reads.settings":z.tuple([owner]),"reads.stat":z.tuple([owner,handle]),
   "reads.list":z.tuple([owner,z.strictObject({kind:z.string().optional(),limit:count.min(1).max(64),cursor:handle.optional()})]),
   "reads.open":z.tuple([owner,handle,revision]),"reads.read":z.tuple([owner,handle,count,count.min(1).max(262144)]),"reads.close":z.tuple([owner,handle]),
-  "evidence.flush":z.tuple([persistenceBarrierSchema]),"evidence.quota":z.tuple([owner]),"evidence.settingsDigest":z.tuple([owner]),
+  "evidence.flush":z.tuple([persistenceBarrierSchema,z.array(ticket).max(1024)]),"evidence.quota":z.tuple([owner]),"evidence.settingsDigest":z.tuple([owner]),
   "evidence.auxiliary":z.tuple([owner,z.enum(["import","recovery"]),text]),"evidence.auxiliaryKeys":z.tuple([owner,z.enum(["import","recovery"]),handle.optional()]),
   "evidence.recoveryPage":z.tuple([handle.optional()]),"evidence.loadRecovery":z.tuple([handle]),"evidence.saveRecovery":z.tuple([storedRecoverySchema]),"evidence.removeRecovery":z.tuple([handle]),
   "imports.admit":z.tuple([owner,text,text]),
@@ -59,34 +59,64 @@ const args={
   "sources.map":z.tuple([text,text]),"sources.appendMapped":z.tuple([z.strictObject({mapped:handle,ticket,offset:count,maxBytes:count.min(1).max(262144)})]),
   "sources.releaseMapped":z.tuple([handle]),"sources.inventory":z.tuple([text]),"sources.read":z.tuple([text,text,count,count.min(1).max(262144)]),
 } satisfies Record<Operation,z.ZodType>;
-const envelope=z.strictObject({version:z.literal(1),id:count.min(1),operation:z.enum(Object.keys(args) as [Operation,...Operation[]]),args:z.array(z.unknown())});
-export const PersistenceWorkerRequest=envelope.superRefine((r,ctx)=>{if(!args[r.operation].safeParse(r.args).success)ctx.addIssue({code:"custom",message:"invalid-args"});});
-export type PersistenceWorkerRequest<K extends Operation=Operation>={version:1;id:Counter;operation:K;args:Parameters<WorkerOperations[K]>};
+const gateBinding=z.strictObject({slot:count.max(1023),sequence:count.min(1)});
+const envelope=z.strictObject({gate:gateBinding.optional(),version:z.literal(1),id:count.min(1),operation:z.enum(Object.keys(args) as [Operation,...Operation[]]),args:z.array(z.unknown())});
+export const PersistenceWorkerRequest=envelope.superRefine((r,ctx)=>{if((r.operation==="engine.reserve")!==!!r.gate || !args[r.operation].safeParse(r.args).success)ctx.addIssue({code:"custom",message:"invalid-args"});});
+export type PersistenceWorkerRequest<K extends Operation=Operation>=K extends Operation?
+  {version:1;id:Counter;operation:K;args:K extends "evidence.flush"?[PersistenceBarrier,readonly PublicationTicket[]]:Parameters<WorkerOperations[K]>} &
+  (K extends "engine.reserve"?{gate:z.infer<typeof gateBinding>}:{gate?:never}):never;
+const settledMarkers=z.array(z.strictObject({id:handle,disposition:z.enum(["committed","not-committed","aborted"])})).max(1024);
 export const PersistenceWorkerResponse=z.union([
-  z.strictObject({version:z.literal(1),id:count.min(1),ok:z.literal(true),value:z.unknown()}),
-  z.strictObject({version:z.literal(1),id:count.min(1),ok:z.literal(false),error:z.strictObject({code:z.enum(["io","invalid","stale","quota","unknown"]),message:z.string().max(128)})}),
+  z.strictObject({version:z.literal(1),id:count.min(1),ok:z.literal(true),value:z.unknown(),settled:settledMarkers.optional()}),
+  z.strictObject({version:z.literal(1),id:count.min(1),ok:z.literal(false),settled:settledMarkers.optional(),error:z.strictObject({code:z.enum(["io","invalid","stale","quota","unknown"]),message:z.string().max(128)})}),
 ]);
-export type PersistenceWorkerResponse<K extends Operation=Operation>={version:1;id:Counter;ok:true;value:Awaited<ReturnType<WorkerOperations[K]>>}|{version:1;id:Counter;ok:false;error:{code:"io"|"invalid"|"stale"|"quota"|"unknown";message:string}};
+export type PersistenceWorkerResponse<K extends Operation=Operation>={version:1;id:Counter;ok:true;value:Awaited<ReturnType<WorkerOperations[K]>>;settled?:readonly {id:Handle;disposition:"committed"|"not-committed"|"aborted"}[]}|{version:1;id:Counter;ok:false;settled?:readonly {id:Handle;disposition:"committed"|"not-committed"|"aborted"}[];error:{code:"io"|"invalid"|"stale"|"quota"|"unknown";message:string}};
 const bootSchema=z.strictObject({version:z.literal(1),kind:z.literal("boot"),hostEpoch:handle,root:z.string().min(1),held:z.instanceof(SharedArrayBuffer)});
 const readySchema=z.strictObject({version:z.literal(1),kind:z.literal("ready"),recovery:z.enum(["ready","blocked"])});
 const matches=(scope:PersistenceScope,t:PublicationTicket)=>ownerKey(scope.owner)===ownerKey(t.owner) && (scope.kind==="namespace" || t.target.kind==="record" && t.target.id===scope.recordId);
-const gateOffset=(sequence:number)=>16+16*((sequence-1)%1024);
+const gateBytes=16+1024*16, sharedBytes=gateBytes+1024*4;
+const gateOffset=(slot:number)=>16+16*slot;
+export function reserveGateOffset(memory:SharedArrayBuffer,binding:unknown):number {
+  const {slot}=gateBinding.parse(binding);
+  if(memory.byteLength!==sharedBytes || Atomics.load(new Int32Array(memory,gateBytes,1024),slot)!==1)throw new Error("invalid-gate");
+  return gateOffset(slot);
+}
+export function privateError(error:unknown):{code:"io"|"invalid"|"stale"|"quota"|"unknown";message:string} {
+  const message=error instanceof Error?error.message:"";
+  if(message.length>128 || !/^[a-z]+(?:-[a-z]+)*$/.test(message))return {code:"io",message:"persistence-io"};
+  const code=["stale","expired","not-primary"].includes(message)?"stale":
+    ["quota","queue"].includes(message) || /-(limit|bytes)$/.test(message)?"quota":
+    message==="publish-uncertain"?"unknown":
+    ["input-changed","revision-mismatch","already-committed"].includes(message) || message.startsWith("invalid-")?"invalid":"io";
+  return {code,message:code==="io"?"persistence-io":message};
+}
 const charge=(value:unknown):number=>value instanceof Uint8Array?value.byteLength:Array.isArray(value)?value.reduce((n,v)=>n+charge(v),0):Buffer.byteLength(JSON.stringify(value)??"null");
 
 export async function startPersistenceWorker(input:{profile:ProfileWriterLock;root:StoreRoot;workerEntry:string;now:()=>number;testControl?:(control:PersistenceFaultControl)=>void}):Promise<{backend:PersistenceBackend;recovery:"ready"|"blocked"}> {
   input.profile.assertHeld();const root=await storeRootPath(input.root,input.profile);
   if(!path.isAbsolute(input.workerEntry))throw new Error("invalid-worker-entry");
-  const held=new SharedArrayBuffer(16+1024*16);Atomics.store(new Int32Array(held),0,1);
+  const held=new SharedArrayBuffer(sharedBytes);Atomics.store(new Int32Array(held),0,1);
   const channel=input.testControl?new MessageChannel():null;
   const worker=new Worker(input.workerEntry,{workerData:channel?{faultPort:channel.port2}:{},transferList:channel?[channel.port2]:[]});
-  let exited=false;worker.once("exit",()=>{exited=true;channel?.port1.close();});
-  const queue=new WorkQueue(input.now),ledger=new Map<string,{ticket:PublicationTicket;gate:PublicationGate;sequence:number}>(),slots=new Set<number>();
+  let exited=false,exitCode:number|undefined;worker.once("exit",code=>{exited=true;exitCode=code;channel?.port1.close();});
+  const queue=new WorkQueue(input.now),ledger=new Map<string,{ticket:PublicationTicket;gate:PublicationGate;sequence:number;slot:number;settledAt:number|null}>(),freeSlots=Array.from({length:1024},(_,i)=>1023-i);
+  const inUse=new Int32Array(held,gateBytes,1024);
+  function releaseSlot(id:string){const e=ledger.get(id);if(!e)return;ledger.delete(id);Atomics.store(inUse,e.slot,0);freeSlots.push(e.slot);}
+  function pruneLedger(){for(const [id,e] of ledger)if(e.settledAt!==null && e.settledAt+120000<=input.now())releaseSlot(id);}
   const retired=new Set<string>(),targets=new Set<string>(),barriers=new Map<string,{barrier:PersistenceBarrier;tickets:readonly PublicationTicket[]}>();
   const destinations=new WeakMap<ExportDestination,string>();let sequence=0,next=0,dead=false,closing:Promise<void>|null=null;
-  const pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:unknown)=>void}>();
+  const pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:unknown)=>void;ticketId?:string}>();
   const lost=()=>{dead=true;Atomics.store(new Int32Array(held),0,0);for(const e of ledger.values())e.gate.shorten(input.now(),input.now());for(const p of pending.values())p.reject(new Error("worker-lost"));pending.clear();};
   worker.once("error",lost);worker.once("exit",lost);
-  worker.on("message",raw=>{const parsed=PersistenceWorkerResponse.safeParse(raw);if(!parsed.success)return;const r=parsed.data,p=pending.get(r.id);if(!p)return;pending.delete(r.id);if(r.ok)p.resolve(r.value);else p.reject(new Error(r.error.message));});
+  worker.on("message",raw=>{
+    const parsed=PersistenceWorkerResponse.safeParse(raw);if(!parsed.success)return;
+    const r=parsed.data,p=pending.get(r.id);if(!p)return;pending.delete(r.id);
+    for(const marker of r.settled??[]) {const settled=ledger.get(marker.id);if(settled)settled.settledAt??=input.now();}
+    if(!r.ok){p.reject(new Error(r.error.message));return;}
+    const e=p.ticketId?ledger.get(p.ticketId):undefined;
+    if(e && ((r.value as {disposition?:string}|null)?.disposition==="unknown" || r.value==="unknown"))e.settledAt=null;
+    p.resolve(r.value);
+  });
   if(channel){
     const trace:Array<{point:PersistenceFaultPoint;time:number;ticket:string|null}>=[],waiters=new Map<string,Array<()=>void>>();
     channel.port1.on("message",(e:{point:PersistenceFaultPoint;time:number;ticket:string|null})=>{trace.push(e);for(const resolve of waiters.get(e.point)??[])resolve();waiters.delete(e.point);});
@@ -98,27 +128,38 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     worker.on("message",onMessage);worker.once("error",e=>{clearTimeout(timer);reject(e);});worker.once("exit",()=>{clearTimeout(timer);reject(new Error("worker-before-ready"));});
     worker.postMessage({version:1,kind:"boot",hostEpoch:input.profile.hostEpoch,root,held});
   });
-  function send<K extends Operation>(operation:K,parameters:unknown[]):Promise<Awaited<ReturnType<WorkerOperations[K]>>> {
+  function send<K extends Operation>(operation:K,parameters:unknown[],gate?:z.infer<typeof gateBinding>,posted?:()=>void):Promise<Awaited<ReturnType<WorkerOperations[K]>>> {
     input.profile.assertHeld();if(dead)return Promise.reject(new Error("worker-lost"));
     const first=parameters[0] as {owner?:PersistenceOwner;sourceKey?:string}|undefined,source=first?.owner?.sourceKey??first?.sourceKey??"core";
-    let requestId:number|undefined;
+    let requestId:number|undefined,cancelled=false;
     const work=queue.run(source,charge(parameters)+256,input.now()+10000,()=>new Promise<Awaited<ReturnType<WorkerOperations[K]>>>((resolve,reject)=>{
-      const id=++next;requestId=id;const request=PersistenceWorkerRequest.parse({version:1,id,operation,args:parameters});pending.set(id,{resolve:resolve as (v:unknown)=>void,reject});worker.postMessage(request);
+      if(cancelled || dead || closing){reject(new Error("worker-lost"));return;}
+      const id=++next;
+      try {
+        const request=PersistenceWorkerRequest.parse({version:1,id,operation,args:parameters,...(gate?{gate}:{})});
+        const ticketId=(parameters[0] as {id?:string}|undefined)?.id;
+        pending.set(id,{resolve:resolve as (v:unknown)=>void,reject,...(ticketId?{ticketId}:{})});
+        worker.postMessage(request);requestId=id;posted?.();
+      }catch(e){pending.delete(id);reject(e);}
     }));
     let timer:ReturnType<typeof setTimeout>;
     const timeout=new Promise<never>((_,reject)=>{timer=setTimeout(()=>{
-      const t=parameters[0] as PublicationTicket|undefined;if(t?.id)ledger.get(t.id)?.gate.shorten(input.now(),input.now());
+      cancelled=true;const t=parameters[0] as PublicationTicket|undefined;if(t?.id)ledger.get(t.id)?.gate.shorten(input.now(),input.now());
       if(requestId!==undefined)worker.postMessage({version:1,kind:"cancel",id:requestId});reject(new Error("timeout"));
     },10000);});
     return Promise.race([work,timeout]).finally(()=>clearTimeout(timer));
   }
   const engine:PersistenceBackend["engine"]={
     async reserve(t,size){
-      input.profile.assertHeld();const slot=gateOffset(sequence+1);
-      if(ready.recovery!=="ready" || retired.has(ownerKey(t.owner)) || t.target.kind==="record" && targets.has(JSON.stringify([ownerKey(t.owner),t.target.id])) || ledger.has(t.id) || slots.has(slot))throw new Error("stale");
-      slots.add(slot);const gate=new PublicationGate(t.deadlineMonotonicMs,held,slot,true);
-      ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:++sequence});
-      await send("engine.reserve",[t,size]);
+      input.profile.assertHeld();pruneLedger();
+      if(ready.recovery!=="ready" || retired.has(ownerKey(t.owner)) || t.target.kind==="record" && targets.has(JSON.stringify([ownerKey(t.owner),t.target.id])) || ledger.has(t.id))throw new Error("stale");
+      args["engine.reserve"].parse([t,size]);
+      const slot=freeSlots.pop();if(slot===undefined)throw new Error("gate-slot-limit");
+      Atomics.store(inUse,slot,1);const gate=new PublicationGate(t.deadlineMonotonicMs,held,gateOffset(slot),true);
+      const accepted=++sequence;ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:accepted,slot,settledAt:null});
+      let posted=false;
+      try{await send("engine.reserve",[t,size],{slot,sequence:accepted},()=>{posted=true;});}
+      catch(e){if(!posted)releaseSlot(t.id);throw e;}
     },
     append:(t,o,b)=>send("engine.append",[t,o,b]),seal:(t,n,h)=>send("engine.seal",[t,n,h]),
     async publish(t){try{return await send("engine.publish",[t]);}catch(e){if(ledger.get(t.id)?.gate.dispatched)return {disposition:"unknown"};throw e;}},
@@ -129,9 +170,9 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   const backend:PersistenceBackend={engine,
     reads:{settings:o=>send("reads.settings",[o]),stat:(o,id)=>send("reads.stat",[o,id]),list:(o,p)=>send("reads.list",[o,p]),open:(o,id,r)=>send("reads.open",[o,id,r]),read:(o,p,n,m)=>send("reads.read",[o,p,n,m]),close:(o,p)=>send("reads.close",[o,p])},
     evidence:{
-      capture(scope,deadline){input.profile.assertHeld();const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});barriers.set(barrier.id,{barrier,tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});return barrier;},
+      capture(scope,deadline){input.profile.assertHeld();pruneLedger();const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});barriers.set(barrier.id,{barrier,tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});return barrier;},
       tickets(b){const saved=barriers.get(b.id);if(!saved || JSON.stringify(saved.barrier)!==JSON.stringify(b))throw new Error("stale");return structuredClone(saved.tickets);},
-      flush(b){backend.evidence.tickets(b);return send("evidence.flush",[b]);},quota:o=>send("evidence.quota",[o]),settingsDigest:o=>send("evidence.settingsDigest",[o]),
+      flush(b){backend.evidence.tickets(b);return send("evidence.flush",[b,backend.evidence.tickets(b)]);},quota:o=>send("evidence.quota",[o]),settingsDigest:o=>send("evidence.settingsDigest",[o]),
       auxiliary:(o,k,key)=>send("evidence.auxiliary",[o,k,key]),auxiliaryKeys:(o,k,c)=>send("evidence.auxiliaryKeys",[o,k,c]),recoveryPage:c=>send("evidence.recoveryPage",[c]),
       loadRecovery:id=>send("evidence.loadRecovery",[id]),saveRecovery:v=>send("evidence.saveRecovery",[v]),removeRecovery:id=>send("evidence.removeRecovery",[id]),
     },
@@ -139,7 +180,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     destinations:{async register(i){const id=await send("destinations.register",[i]) as unknown as string;const token=Object.freeze({}) as ExportDestination;destinations.set(token,id);return token;},release:d=>{const id=destinations.get(d);if(!id)throw new Error("stale");return send("destinations.release",[id]);}},
     output:{begin:(id,o,d,n,h,deadline)=>{const token=destinations.get(d);if(!token)throw new Error("stale");return send("output.begin",[id,o,token,n,h,deadline]);},append:(id,o,b)=>send("output.append",[id,o,b]),commit:id=>send("output.commit",[id]),reconcile:id=>send("output.reconcile",[id]),abort:id=>send("output.abort",[id])},
     sources:{resolvePreferences:i=>send("sources.resolvePreferences",[i]),register:i=>send("sources.register",[i]),map:(d,k)=>send("sources.map",[d,k]),appendMapped:i=>send("sources.appendMapped",[i]),releaseMapped:m=>send("sources.releaseMapped",[m]),inventory:d=>send("sources.inventory",[d]),read:(d,k,o,n)=>send("sources.read",[d,k,o,n])},
-    dispose(){return closing??=new Promise<void>((resolve,reject)=>{input.profile.assertHeld();for(const e of ledger.values())e.gate.shorten(input.now(),input.now());worker.once("exit",code=>{channel?.port1.close();Atomics.store(new Int32Array(held),0,0);code===0?resolve():reject(new Error("worker-dispose-unknown"));});worker.postMessage({version:1,kind:"close"});});},
+    dispose(){return closing??=new Promise<void>((resolve,reject)=>{if(exited || dead){Atomics.store(new Int32Array(held),0,0);channel?.port1.close();exitCode===0?resolve():reject(new Error("worker-dispose-unknown"));return;}input.profile.assertHeld();for(const e of ledger.values())e.gate.shorten(input.now(),input.now());worker.once("exit",code=>{channel?.port1.close();Atomics.store(new Int32Array(held),0,0);code===0?resolve():reject(new Error("worker-dispose-unknown"));});worker.postMessage({version:1,kind:"close"});});},
   };
   workerInstances.set(backend,()=>exited?0:1);
   diagnosticInstances.set(backend,{snapshot:()=>({owners:0,bindings:0,subscriptions:0,queuedEvents:0,queuedBytes:0,timers:0,pendingInvocations:0,actionTokens:0,resourceReaders:0,workerJobs:queue.pending}),onEvent:()=>()=>{}});
@@ -149,7 +190,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
 export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>;sourceRoots?:ReadonlyMap<string,string>}):void {
   if(!parentPort)throw new Error("worker-port-missing");const port=parentPort;
   port.once("message",async raw=>{
-    const boot=bootSchema.parse(raw);if(!path.isAbsolute(boot.root) || boot.held.byteLength!==16+1024*16)throw new Error("invalid-boot");
+    const boot=bootSchema.parse(raw);if(!path.isAbsolute(boot.root) || boot.held.byteLength!==sharedBytes)throw new Error("invalid-boot");
     const profile:ProfileWriterLock={hostEpoch:boot.hostEpoch,assertHeld(){if(Atomics.load(new Int32Array(boot.held),0)!==1)throw new Error("not-primary");}};
     profile.assertHeld();const faultPort=(workerData as {faultPort?:MessagePort}).faultPort;
     const armed=new Map<PersistenceFaultPoint,"pause"|"fail"|"kill">(),paused=new Map<PersistenceFaultPoint,()=>void>();
@@ -164,11 +205,22 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
     await fs.check(fs.path());const store=new AtomicStore(fs),output=new NativeOutput(profile,store.quota,()=>performance.now(),fs),sources=new WorkerSources(boot.root,store,input.mappers,input.sourceRoots??new Map());
     await sources.validateRoots();
     let recovery:"ready"|"blocked"="ready";try{await store.initialize();}catch{recovery="blocked";}
-    const queue=new WorkQueue(()=>performance.now()),accepted:Array<{sequence:number;ticket:PublicationTicket}>=[],destinations=new Map<string,ExportDestination>();let seq=0,closed=false;const requests=new Map<number,z.infer<typeof PersistenceWorkerRequest>>();
+    const queue=new WorkQueue(()=>performance.now()),accepted=new Map<number,{ticket:PublicationTicket;until:number|null}>(),destinations=new Map<string,ExportDestination>();let closed=false;const requests=new Map<number,z.infer<typeof PersistenceWorkerRequest>>();
+    function collectSettled() {
+      const settled:Array<{id:string;disposition:"committed"|"aborted"}>=[];
+      // Admission and historical reconciliation may settle a different, actual attempt.
+      // Include attempts settled indirectly by the store's pruning.
+      for(const e of accepted.values()) {
+        const terminal=store.settledDisposition(e.ticket.id);
+        if(terminal) {e.until??=performance.now()+120000;settled.push({id:e.ticket.id,disposition:terminal});}
+        else if(store.unresolvedTicket(e.ticket.id))e.until=null;
+      }
+      return settled;
+    }
     const api={
-      "engine.reserve":(t:PublicationTicket,n:number)=>store.reserve(t,n,boot.held,gateOffset(accepted.find(e=>e.ticket.id===t.id)!.sequence)),"engine.append":store.append.bind(store),"engine.seal":store.seal.bind(store),"engine.publish":store.publish.bind(store),"engine.reconcile":store.reconcile.bind(store),"engine.abort":store.abort.bind(store),
+      "engine.reserve":(t:PublicationTicket,n:number)=>store.reserve(t,n,boot.held,gateOffset([...accepted].find(([,e])=>e.ticket.id===t.id)![0])),"engine.append":store.append.bind(store),"engine.seal":store.seal.bind(store),"engine.publish":store.publish.bind(store),"engine.reconcile":store.reconcile.bind(store),"engine.abort":store.abort.bind(store),
       "reads.settings":store.settings.bind(store),"reads.stat":store.stat.bind(store),"reads.list":store.list.bind(store),"reads.open":store.open.bind(store),"reads.read":store.read.bind(store),"reads.close":store.close.bind(store),
-      "evidence.flush":(b:PersistenceBarrier)=>store.flushEvidence(b,accepted.filter(e=>e.sequence<=b.through && matches(b.scope,e.ticket)).map(e=>e.ticket)),
+      "evidence.flush":(b:PersistenceBarrier,tickets:PublicationTicket[])=>store.flushEvidence(b,tickets.filter(t=>matches(b.scope,t))),
       "evidence.quota":async(o:PersistenceOwner)=>({ok:true as const,value:store.quota.snapshot(o.sourceKey)}),"evidence.settingsDigest":store.settingsDigest.bind(store),"evidence.auxiliary":store.auxiliary.bind(store),"evidence.auxiliaryKeys":store.auxiliaryKeys.bind(store),"evidence.recoveryPage":store.recoveryPage.bind(store),"evidence.loadRecovery":store.loadRecovery.bind(store),"evidence.saveRecovery":store.saveRecovery.bind(store),"evidence.removeRecovery":store.removeRecovery.bind(store),
       "imports.admit":store.admitImport.bind(store),"imports.load":store.loadImport.bind(store),"imports.plan":store.planImport.bind(store),"imports.tagImport":store.tagImport.bind(store),"imports.importReceipts":store.importReceipts.bind(store),"imports.record":store.recordImport.bind(store),"imports.reconcile":store.reconcileImport.bind(store),"imports.complete":store.completeImport.bind(store),
       "destinations.register":async(i:Parameters<NativeOutput["register"]>[0])=>{const value=await output.register(i),id=randomUUID();destinations.set(id,value);return id;},"destinations.release":async(id:string)=>{const d=destinations.get(id);if(!d)throw new Error("stale");await output.release(d);},
@@ -183,12 +235,27 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       const r=parsed.data;
       requests.set(r.id,r);
       if(recovery==="blocked" && !["evidence.recoveryPage","evidence.loadRecovery","evidence.auxiliary","evidence.auxiliaryKeys","imports.load","imports.importReceipts","imports.reconcile"].includes(r.operation)){port.postMessage({version:1,id:r.id,ok:false,error:{code:"io",message:"unsupported-format"}});return;}
-      if(r.operation==="engine.reserve")accepted.push({sequence:++seq,ticket:publicationTicketSchema.parse(r.args[0])});
+      if(r.operation==="engine.reserve") {
+        try {
+          reserveGateOffset(boot.held,r.gate);
+          for(const [slot,e] of accepted)if(e.until!==null && e.until<=performance.now())accepted.delete(slot);
+          if(accepted.has(r.gate!.slot))throw new Error("invalid-gate");
+          accepted.set(r.gate!.slot,{ticket:publicationTicketSchema.parse(r.args[0]),until:null});
+        }catch(error){requests.delete(r.id);port.postMessage({version:1,id:r.id,ok:false,error:privateError(error)});return;}
+      }
       const first=r.args[0] as {owner?:PersistenceOwner;sourceKey?:string;id?:string}|undefined;
       void queue.run(first?.owner?.sourceKey??first?.sourceKey??"core",charge(r.args)+256,performance.now()+10000,async()=>{
         profile.assertHeld();
         const fn=api[r.operation] as (...parameters:unknown[])=>Promise<unknown>;return activeTicket.run(first?.owner?first.id??null:null,()=>fn(...r.args));
-      }).then(value=>port.postMessage({version:1,id:r.id,ok:true,value}),()=>port.postMessage({version:1,id:r.id,ok:false,error:{code:"io",message:"persistence-io"}})).finally(()=>requests.delete(r.id));
+      }).then(async value=>{
+        const disposition=typeof value==="string"?value:(value as {disposition?:string})?.disposition;
+        if(["engine.publish","engine.reconcile"].includes(r.operation) && disposition==="not-committed") {
+          // A pre-dispatch observation becomes terminal only after revocation and cleanup.
+          await store.abort(publicationTicketSchema.parse(r.args[0]));
+        }
+        const settled=collectSettled();
+        port.postMessage({version:1,id:r.id,ok:true,value,settled});
+      }).catch(error=>port.postMessage({version:1,id:r.id,ok:false,error:privateError(error),settled:collectSettled()})).finally(()=>requests.delete(r.id));
     });
     port.postMessage({version:1,kind:"ready",recovery});
   });
@@ -327,7 +394,7 @@ export class WorkerSources implements LegacySourceResolver {
     for(;;){for(const key of keys){
         if(!key.startsWith("import/"))continue;
         const plan=await this.store.loadImport(input.ticket.owner,key);
-        if(plan?.plan.items.some(i=>sameImportValue(plan.items.find(e=>e.key===i.key)?.publicationTicket,input.ticket) &&
+        if(plan?.plan.items.some(i=>this.store.taggedImport(input.ticket,i.tag) && sameImportValue(plan.items.find(e=>e.key===i.key)?.publicationTicket,input.ticket) &&
           sameImportAttempt(i.ticket,input.ticket) && i.byteLength===p.bytes.length &&
           i.mappedSha256===p.mappedSha256 && i.sourceSha256===p.sourceSha256 &&
           (p.metadata.kind==="settings"?input.ticket.metadata.kind==="settings" &&
