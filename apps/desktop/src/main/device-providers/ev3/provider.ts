@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import {
+  DeviceOperationError,
   UsbTransport,
   WiFiTransport,
   type DeviceDescriptor,
@@ -28,6 +29,7 @@ import { Ev3Catalog, EV3_PROVIDER_ID, physicalIdentity } from "./catalog.js";
 import { executeLegacy } from "./legacy.js";
 import { Ev3MotionEngine } from "./motion.js";
 import type { IdleObservation } from "../../device-broker/provider.js";
+import type { BrokerFailure } from "../../device-broker/registry.js";
 function isIdle(value: IdleObservation): boolean {
   return (
     value.programStopped &&
@@ -131,6 +133,12 @@ export function buildEv3Provider(
     return record;
   };
   const reason = (error: unknown): DeviceErrorReason => {
+    // Session methods normalize exchange failures while preserving their cause.
+    if (error instanceof DeviceOperationError && error.cause instanceof Error) error = error.cause;
+    if (error instanceof Error && "result" in error) {
+      const detail = (error as BrokerFailure).result.error.detail;
+      if (detail?.kind === "device") return detail.reason;
+    }
     const message = error instanceof Error ? error.message : "";
     const valid = [
       "authority-changed",
@@ -235,7 +243,7 @@ export function buildEv3Provider(
       return {
         value: null,
         dispatch,
-        stopConfirmation: "not-required",
+        stopConfirmation: closeFailure ? "unconfirmed" : "not-required",
         error: {
           reason: reason(closeFailure ?? late ?? error),
           message: closeFailure

@@ -1091,3 +1091,89 @@ it.each(["throw", "outcome"] as const)(
     await h.broker.resources.beginShutdown();
   },
 );
+
+it.each(["success", "failure", "late"] as const)(
+  "cancel preserves settled provider evidence and bounds %s outcomes",
+  async (outcomeKind) => {
+    vi.useFakeTimers();
+    try {
+      const h = setup(),
+        principal = pluginPrincipal();
+      const connected = await h.broker.request(
+        principal,
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+        signal(),
+      );
+      if (!connected.ok) throw new Error("connect");
+      const outcome = {
+        value: outcomeKind === "failure" ? null : { kind: "mutation" as const, verified: true },
+        dispatch: "unknown" as const,
+        stopConfirmation: "unconfirmed" as const,
+        error:
+          outcomeKind === "failure"
+            ? { reason: "readback-failed" as const, message: "Original handle close failed" }
+            : null,
+      };
+      let release!: () => void;
+      h.provider.legacy = () =>
+        new Promise((resolve) => {
+          release = () => resolve(outcome);
+        });
+      const op = await h.broker.begin({
+        principal,
+        sessionId: connected.value.session.sessionId,
+        operationClass: "file-write",
+        signal: signal(),
+      });
+      const work = op.execute({ kind: "mkdir", remotePath: "test" });
+      const settled = work.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      const cancel = op.cancel();
+      if (outcomeKind === "late") {
+        h.setNow(15000);
+        await vi.advanceTimersByTimeAsync(15000);
+        await cancel;
+        expect(await settled).toMatchObject({
+          error: {
+            result: { error: { code: "PLUGIN_E_TIMEOUT", detail: { reason: "deadline" } } },
+          },
+        });
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(await settled).toMatchObject({
+          error: {
+            result: { error: { code: "PLUGIN_E_TIMEOUT", detail: { reason: "deadline" } } },
+          },
+        });
+      } else {
+        release();
+        await cancel;
+        if (outcomeKind === "success") expect(await settled).toEqual({ value: outcome });
+        else
+          expect(await settled).toMatchObject({
+            error: {
+              result: {
+                error: {
+                  message: outcome.error!.message,
+                  detail: {
+                    kind: "device",
+                    reason: "readback-failed",
+                    dispatch: "unknown",
+                    stopConfirmation: "unconfirmed",
+                  },
+                },
+              },
+            },
+          });
+      }
+      await op.cancel();
+      await op.finish();
+      await h.broker.resources.beginShutdown();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

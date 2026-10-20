@@ -1746,9 +1746,31 @@ export function createBroker(
           inFlight = execution;
           let result: ProviderOutcome<LegacyProviderValue>;
           try {
-            result = await execution;
+            result = await Promise.race([
+              execution,
+              done.then(() => deviceFailure("PLUGIN_E_TIMEOUT", "deadline")),
+            ]);
           } finally {
             if (inFlight === execution) inFlight = null;
+          }
+          // Closing revokes continuation, not evidence from work already dispatched.
+          // finish() bounds the wait above when the provider never settles.
+          if (closed || ctx.work.cancellation.aborted) {
+            if (result.error)
+              throw new BrokerFailure({
+                ok: false,
+                error: {
+                  code: "PLUGIN_E_DEVICE_OPERATION",
+                  message: result.error.message,
+                  detail: {
+                    kind: "device",
+                    reason: result.error.reason,
+                    dispatch: result.dispatch,
+                    stopConfirmation: result.stopConfirmation,
+                  },
+                },
+              });
+            return result;
           }
           check();
           if (risk) {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import { EV3DeviceSession } from "@kobrixa/device";
+import { createContexts, ExchangeLane } from "../../device-broker/provider.js";
 import type { ProviderOperationContext, ProviderStep } from "../../device-broker/provider.js";
 import { buildEv3Provider } from "./provider.js";
 function ctx(sessionId: string | null = null): ProviderOperationContext {
@@ -520,3 +521,88 @@ it("AM-06 read and mode-change snapshots both use the unpublished zero sentinel"
   );
   expect(changed.value?.snapshot.frame).toMatchObject({ sequence: 0, sampledAt: 0, elapsedMs: 0 });
 });
+
+it.each(["cancelled-upload", "cleanup-deadline"] as const)(
+  "classifies real broker failures: %s",
+  async (scenario) => {
+    let now = 0;
+    const contexts = createContexts({
+      id: randomUUID(),
+      sessionId: randomUUID(),
+      generation: 1,
+      operationClass: "file-write",
+      deadline: 600000,
+      now: () => now,
+      lane: new ExchangeLane(() => now),
+      check() {},
+      progress() {},
+      onStop() {},
+    });
+    const descriptor = { id: "usb:real-context", name: "Brick", transport: "usb" as const };
+    const commands: number[] = [];
+    const raw = new EV3DeviceSession(descriptor, {
+      async exchange(payload) {
+        commands.push(payload[1]!);
+        if (scenario === "cleanup-deadline") {
+          // Expire during the dispatched stop, so the real lane's post-check fails.
+          now = contexts.cleanup.deadlineMonotonicMs;
+          return Uint8Array.of(2);
+        }
+        if (payload[1] === 0x92) return Uint8Array.of(3, 0x92, 0, 7);
+        if (payload[1] === 0x93) {
+          contexts.stop("cancelled", true);
+          return Uint8Array.of(3, 0x93, 0, 7);
+        }
+        return Uint8Array.of(3, 0x98, 0);
+      },
+      transmit: async () => {},
+      close: async () => {},
+    });
+    const transport = { discover: async () => [descriptor], connect: async () => raw };
+    const provider = buildEv3Provider(
+      {
+        identify: () => randomUUID(),
+        connectionPolicy: () => ({
+          wifiConnectTimeoutMs: 5000,
+          wifiHandshakeTimeoutMs: 3000,
+          usbAutoReconnect: true,
+          usbRetryInterval: "backoff",
+          usbRetryLimit: "unlimited",
+        }),
+      },
+      { usb: transport, wifi: transport },
+    );
+    const found = await provider.discover(ctx());
+    const connected = await provider.connect(found.value![0]!.key, ctx());
+    if (scenario === "cancelled-upload") {
+      const result = await provider.legacy(
+        connected.value!.key,
+        {
+          kind: "upload",
+          remotePath: "/home/root/lms2012/prjs/a",
+          size: 1801,
+          chunks: (async function* () {
+            yield new Uint8Array(1801);
+          })(),
+          progress() {},
+        },
+        contexts.work,
+      );
+      expect(commands).toEqual([0x92, 0x93, 0x98]);
+      expect(result.error?.reason).toBe("cancelled");
+    } else {
+      contexts.stop("cancelled", true);
+      const result = await provider.stopAndReadback(
+        connected.value!.key,
+        { kind: "current-device" },
+        contexts.cleanup,
+      );
+      expect(commands).toHaveLength(1);
+      expect(result).toMatchObject({
+        dispatch: "unknown",
+        stopConfirmation: "unconfirmed",
+        error: { reason: "stop-deadline" },
+      });
+    }
+  },
+);

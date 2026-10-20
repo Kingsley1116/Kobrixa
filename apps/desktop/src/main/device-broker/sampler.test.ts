@@ -323,6 +323,7 @@ it("AM-05/06 real EV3 receipts share one origin and cancelled uploads retain occ
       })(),
       progress() {},
     });
+    const failure = work.catch((error: unknown) => error);
     const rejected = expect(work).rejects.toThrow();
     await chunkStarted;
     let cancelled = false;
@@ -339,12 +340,24 @@ it("AM-05/06 real EV3 receipts share one origin and cancelled uploads retain occ
     await cancel;
     const evidence = await legacySpy.mock.results[0]!.value;
     expect(commands).toEqual([0x92, 0x93, 0x98]);
-    if (closeFails)
+    if (closeFails) {
       expect(evidence).toMatchObject({
         dispatch: "unknown",
         error: { message: expect.stringContaining("close failed") },
       });
-    else expect(evidence.error).not.toBeNull();
+      expect(await failure).toMatchObject({
+        result: {
+          error: {
+            detail: {
+              kind: "device",
+              dispatch: "unknown",
+              stopConfirmation: "unconfirmed",
+              reason: "readback-failed",
+            },
+          },
+        },
+      });
+    } else expect(evidence.error).not.toBeNull();
     const next = await broker.begin(input);
     await next.finish();
     await raw.disconnect();

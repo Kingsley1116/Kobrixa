@@ -40,7 +40,7 @@ export function bindDeviceConnection(
       remaining,
       step === "motor" ? 2000 : step === "file-transfer" ? 10000 : 5000,
     );
-    if (!Number.isFinite(limit) || limit <= 0) throw new Error("Device exchange deadline.");
+    if (!Number.isFinite(limit) || limit <= 0) throw new Error("deadline");
     const value = await binding.exchange(payload, (signal, remaining) =>
       invoke(signal, Math.min(limit, remaining)),
     );

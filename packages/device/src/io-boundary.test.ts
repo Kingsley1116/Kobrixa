@@ -81,3 +81,20 @@ it("F21 an expired work budget cannot suppress original-operation file-close", a
   await bound.exchange(Uint8Array.of(1, 0x98, 7), new AbortController().signal);
   expect(exchange).toHaveBeenCalledOnce();
 });
+
+it("F21 expired exchange budget reports deadline without dispatch", async () => {
+  const exchange = vi.fn(async () => Uint8Array.of(2));
+  const bound = bindDeviceConnection(
+    { exchange, transmit: async () => {}, close: async () => {} },
+    {
+      step: "ordinary",
+      signal: new AbortController().signal,
+      boundary: { beforeExchange() {}, afterExchange() {}, timeoutMs: () => 0 },
+      exchange: async (_payload, invoke) => invoke(new AbortController().signal, 5000),
+    },
+  );
+  await expect(bound.exchange(Uint8Array.of(0), new AbortController().signal)).rejects.toThrow(
+    /^deadline$/,
+  );
+  expect(exchange).not.toHaveBeenCalled();
+});
