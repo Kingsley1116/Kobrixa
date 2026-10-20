@@ -304,3 +304,79 @@ describe("RpcPeer", () => {
     }
   });
 });
+
+it.each(["success", "send-failure", "cancel", "invalid-result", "close"] as const)(
+  "afterReply settles once: %s",
+  async (mode) => {
+    let receive: (text: string) => void = () => {};
+    const order: string[] = [];
+    const channel: MessageChannelLike = {
+      onMessage(listener) {
+        receive = listener;
+        return () => {};
+      },
+      send(text) {
+        const reply = JSON.parse(text);
+        if ("result" in reply) {
+          if (mode === "send-failure") throw new Error("lost channel");
+          order.push("reply-delivered");
+        }
+      },
+    };
+    const peer = new RpcPeer(channel);
+    peer.handle("command/execute", async (_params, context) => {
+      context.afterReply(
+        () => {
+          order.push("published");
+          throw new Error("consumer callback");
+        },
+        () => {
+          order.push("abandoned");
+        },
+      );
+      expect(order).toEqual([]);
+      if (mode === "cancel")
+        receive(JSON.stringify({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id: 1 } }));
+      if (mode === "close") peer.close();
+      if (mode === "invalid-result") return JSON.parse('{"invalid":true}');
+      return null;
+    });
+    receive(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "command/execute",
+        params: { command: "acme.test" },
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(mode === "success" ? ["reply-delivered", "published"] : ["abandoned"]);
+    peer.close();
+    expect(order.filter((value) => value === "published" || value === "abandoned")).toHaveLength(1);
+  },
+);
+it("enforces device parameter bytes before whitespace is discarded", async () => {
+  let receive: (text: string) => void = () => {};
+  const sent: string[] = [];
+  const peer = new RpcPeer({
+    send(text) {
+      sent.push(text);
+    },
+    onMessage(listener) {
+      receive = listener;
+      return () => {};
+    },
+  });
+  const handler = vi.fn(() => ({
+    ok: true as const,
+    value: { revision: 0, providers: [], sessions: [] },
+  }));
+  peer.handle("devices/list", handler);
+  receive('{"jsonrpc":"2.0","id":1,"method":"devices/list","params":{' + " ".repeat(16383) + "}}");
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(handler).not.toHaveBeenCalled();
+  expect(JSON.parse(sent[0]!).error.code).toBe(RPC_ERRORS.invalidParams);
+  peer.close();
+});

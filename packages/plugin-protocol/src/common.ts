@@ -21,7 +21,12 @@ export const semverSchema = z
   );
 export const pluginLocaleSchema = z.enum(["en", "zh-TW"]);
 export type PluginLocale = z.infer<typeof pluginLocaleSchema>;
-export const permissionSchema = z.enum(["ui.notifications"]);
+export const permissionSchema = z.enum([
+  "ui.notifications",
+  "devices.read",
+  "devices.connect",
+  "devices.control",
+]);
 export type Permission = z.infer<typeof permissionSchema>;
 const text = z.string().min(1).max(PLUGIN_LIMITS.textLength).regex(SINGLE_LINE);
 export const localizedTextSchema = z.union([

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { resourceOwnerSchema } from "./device-types.js";
+import { commonFailureSchema } from "./business-result.js";
 import { PLUGIN_API_VERSION } from "./limits.js";
 import { pluginDiagnosticHelpFileSchema } from "./diagnostic-help.js";
 import { pluginManifestSchema } from "./manifest.js";
@@ -11,6 +13,8 @@ import {
 } from "./static-languages.js";
 
 export const SCHEMA_DEFINITIONS: Record<string, z.ZodType> = {
+  resourceOwner: resourceOwnerSchema,
+  commonFailure: commonFailureSchema,
   manifest: pluginManifestSchema,
   "diagnostic-help": pluginDiagnosticHelpFileSchema,
   "static-language-tokenizer-v1": staticLanguageTokenizerV1Schema,

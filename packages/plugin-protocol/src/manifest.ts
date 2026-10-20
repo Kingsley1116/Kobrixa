@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { capabilitySchema, requirementCapabilitySchema } from "./device-types.js";
 import { staticLanguageText } from "./static-language-schemas.js";
 import { PLUGIN_LIMITS } from "./limits.js";
 import { diagnosticHelpDeclSchema } from "./diagnostic-help.js";
@@ -105,6 +106,14 @@ export const pluginManifestSchema = z.looseObject({
     .regex(/^[\^~]?(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/),
   displayName: localizedTextSchema.optional(),
   runtime: runtimeSchema,
+  requires: z
+    .strictObject({
+      devices: z
+        .array(z.strictObject({ capability: requirementCapabilitySchema, required: z.boolean() }))
+        .min(1)
+        .max(5),
+    })
+    .optional(),
   activationEvents: z
     .array(
       z
@@ -117,6 +126,16 @@ export const pluginManifestSchema = z.looseObject({
   permissions: z.array(permissionSchema).max(16).optional(),
   contributes: z
     .looseObject({
+      deviceProviders: z
+        .array(
+          z.strictObject({
+            id: namespacedIdSchema,
+            capabilities: z.array(capabilitySchema).min(1).max(5),
+          }),
+        )
+        .min(1)
+        .max(1)
+        .optional(),
       commands: z
         .array(z.looseObject({ id: namespacedIdSchema, title: localizedTextSchema }))
         .max(PLUGIN_LIMITS.commandsPerPlugin)
@@ -226,5 +245,23 @@ export function staticLanguageDeclarationProblems(manifest: PluginManifest): str
           `Static language ${language.id} extensions must match language service extensions.`,
         );
   }
+  return problems;
+}
+
+export function deviceDeclarationProblems(manifest: PluginManifest): string[] {
+  const problems: string[] = [];
+  const required = manifest.requires?.devices ?? [];
+  if (new Set(required.map((r) => r.capability)).size !== required.length)
+    problems.push("Device requirements must be unique.");
+  for (const provider of manifest.contributes?.deviceProviders ?? []) {
+    if (new Set(provider.capabilities).size !== provider.capabilities.length)
+      problems.push("Provider capabilities must be unique.");
+  }
+  if (
+    manifest.runtime.kind === "static" &&
+    manifest.contributes &&
+    Object.hasOwn(manifest.contributes, "deviceProviders")
+  )
+    problems.push("Static runtime must not declare deviceProviders.");
   return problems;
 }
