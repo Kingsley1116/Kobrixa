@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { eventEnvelopeSchema } from "./events.js";
+import { deviceEventDataSchemas, eventEnvelopeSchema } from "./events.js";
 import { validateDeviceWire } from "./device-validation.js";
 const id = "00000000-0000-4000-8000-000000000001";
 const event = {
@@ -34,4 +34,12 @@ it("F13 kind/data/delivery is closed and sequence starts at one", () => {
       data: { reason: "overflow", affected: [id, id] },
     }),
   ).toThrow();
+});
+
+it("pairs every published event kind with its data schema regardless of union order", () => {
+  expect(Object.keys(deviceEventDataSchemas).sort()).toEqual(
+    eventEnvelopeSchema.options.map((option) => option.shape.kind.value).sort(),
+  );
+  for (const option of eventEnvelopeSchema.options)
+    expect(deviceEventDataSchemas[option.shape.kind.value]).toBe(option.shape.data);
 });

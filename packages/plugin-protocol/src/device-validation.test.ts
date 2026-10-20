@@ -228,3 +228,37 @@ it("rejects malformed portable fixture envelopes and unknown schema keys", () =>
   ])
     expect(() => parseFixtureFile(value)).toThrow();
 });
+
+import { RpcPeer, type MessageChannelLike } from "./index.js";
+it("reports the fixture's numeric error for a mismatched common failure result", async () => {
+  const fixtures = parseFixtureFile(
+    JSON.parse(
+      readFileSync(
+        new URL("../test-fixtures/device-broker-v1/invalid.json", import.meta.url),
+        "utf8",
+      ),
+    ),
+  );
+  const fixture = fixtures.cases.find((entry) => entry.id === "mismatched-common-failure")!;
+  let receive: (text: string) => void = () => {};
+  const channel: MessageChannelLike = {
+    send(text) {
+      const request = JSON.parse(text);
+      queueMicrotask(() =>
+        receive(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: fixture.input })),
+      );
+    },
+    onMessage(listener) {
+      receive = listener;
+      return () => {};
+    },
+  };
+  const peer = new RpcPeer(channel);
+  try {
+    await expect(peer.request("devices/list", {})).rejects.toMatchObject({
+      code: fixture.expected.numericCode,
+    });
+  } finally {
+    peer.close();
+  }
+});

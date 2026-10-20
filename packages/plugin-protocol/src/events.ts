@@ -62,41 +62,35 @@ const event = <K extends EventKindV150, D extends z.ZodType>(
   delivery: "control" | "telemetry",
   data: D,
 ) => z.strictObject({ ...base, kind: z.literal(kind), delivery: z.literal(delivery), data });
+export const deviceEventDataSchemas = {
+  "devices.catalog": deviceListValueSchema,
+  "devices.session": z.strictObject({ session, sourcesChanged: z.boolean() }),
+  "devices.telemetry": z.strictObject({
+    sessionId: h,
+    frames: z.array(frame).max(64),
+    snapshot: readSnapshotSchema,
+  }),
+  "devices.motion": motionSnapshotSchema,
+  "devices.reservation": reservationSnapshotSchema,
+  "devices.recordingFrames": z.strictObject({
+    reservationId: h,
+    frames: z.array(frame).max(64),
+    gap: overflowGapSchema.nullable(),
+  }),
+  "devices.authority": authoritySnapshotSchema,
+  "events.resyncRequired": z.strictObject({
+    reason: z.enum(["overflow", "ack-timeout"]),
+    affected: z.array(h).max(32),
+  }),
+} as const satisfies Record<EventKindV150, z.ZodType>;
 export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
-  event("devices.catalog", "control", deviceListValueSchema),
-  event("devices.session", "control", z.strictObject({ session, sourcesChanged: z.boolean() })),
-  event(
-    "devices.telemetry",
-    "telemetry",
-    z.strictObject({ sessionId: h, frames: z.array(frame).max(64), snapshot: readSnapshotSchema }),
-  ),
-  event("devices.motion", "control", motionSnapshotSchema),
-  event("devices.reservation", "control", reservationSnapshotSchema),
-  event(
-    "devices.recordingFrames",
-    "telemetry",
-    z.strictObject({
-      reservationId: h,
-      frames: z.array(frame).max(64),
-      gap: overflowGapSchema.nullable(),
-    }),
-  ),
-  event("devices.authority", "control", authoritySnapshotSchema),
-  event(
-    "events.resyncRequired",
-    "control",
-    z.strictObject({ reason: z.enum(["overflow", "ack-timeout"]), affected: z.array(h).max(32) }),
-  ),
+  event("devices.catalog", "control", deviceEventDataSchemas["devices.catalog"]),
+  event("devices.session", "control", deviceEventDataSchemas["devices.session"]),
+  event("devices.telemetry", "telemetry", deviceEventDataSchemas["devices.telemetry"]),
+  event("devices.motion", "control", deviceEventDataSchemas["devices.motion"]),
+  event("devices.reservation", "control", deviceEventDataSchemas["devices.reservation"]),
+  event("devices.recordingFrames", "telemetry", deviceEventDataSchemas["devices.recordingFrames"]),
+  event("devices.authority", "control", deviceEventDataSchemas["devices.authority"]),
+  event("events.resyncRequired", "control", deviceEventDataSchemas["events.resyncRequired"]),
 ]);
 export type DeviceEvent = z.output<typeof eventEnvelopeSchema>;
-
-export const deviceEventDataSchemas = {
-  "devices.catalog": eventEnvelopeSchema.options[0].shape.data,
-  "devices.session": eventEnvelopeSchema.options[1].shape.data,
-  "devices.telemetry": eventEnvelopeSchema.options[2].shape.data,
-  "devices.motion": eventEnvelopeSchema.options[3].shape.data,
-  "devices.reservation": eventEnvelopeSchema.options[4].shape.data,
-  "devices.recordingFrames": eventEnvelopeSchema.options[5].shape.data,
-  "devices.authority": eventEnvelopeSchema.options[6].shape.data,
-  "events.resyncRequired": eventEnvelopeSchema.options[7].shape.data,
-} as const;

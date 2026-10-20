@@ -63,10 +63,16 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
     )
       return unavailable;
     if (!negotiation)
-      negotiation = send("devices/negotiate", {}).then((result) => {
-        if (result.ok && eventChannelBound(peer)) inbox().enable();
-        return result;
-      });
+      negotiation = send("devices/negotiate", {})
+        .then((result) => {
+          if (!result.ok) negotiation = null;
+          else if (eventChannelBound(peer)) inbox().enable();
+          return result;
+        })
+        .catch((error: unknown) => {
+          negotiation = null;
+          throw error;
+        });
     return negotiation;
   }
   const call =

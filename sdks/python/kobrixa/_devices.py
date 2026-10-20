@@ -40,7 +40,16 @@ class Devices:
     async def _ack(self,id,sequence):await self._send('events/ack',{'subscriptionId':id,'sequence':sequence})
     async def negotiate(self):
         if self._version is None or tuple(map(int,self._version.split('.')[:2]))<(1,5):return _UNAVAILABLE
-        if self._negotiation is None:self._negotiation=asyncio.create_task(self._send('devices/negotiate',{}))
+        if self._negotiation is None:
+            async def attempt():
+                successful=False
+                try:
+                    result=await self._send('devices/negotiate',{})
+                    successful=result['ok']
+                    return result
+                finally:
+                    if not successful:self._negotiation=None
+            self._negotiation=asyncio.create_task(attempt())
         result=await asyncio.shield(self._negotiation)
         if result['ok'] and self.inbox is not None:self.inbox.enable()
         return result

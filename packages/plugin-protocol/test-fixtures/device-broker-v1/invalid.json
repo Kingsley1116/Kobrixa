@@ -131,7 +131,7 @@
       },
       "valid": false,
       "expected": {
-        "numericCode": -32602,
+        "numericCode": -32603,
         "businessCode": null,
         "reason": null,
         "permission": null,
