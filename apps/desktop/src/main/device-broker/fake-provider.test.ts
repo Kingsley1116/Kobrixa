@@ -116,6 +116,7 @@ it("control pressure immediately revokes motion intent before any ACK", () => {
       "control",
     );
   expect(() => intent.assert(owner, scope, ID)).toThrow();
-  expect(events.diagnostics().queuedEvents).toBe(8);
+  // Resync replaces superseded control entries and retains its own ACK deadline.
+  expect(events.diagnostics().queuedEvents).toBe(1);
   events.disposeOwner(owner);
 });

@@ -74,7 +74,13 @@ export class Sampler {
         program: "unknown",
         gap: { fromSequence: this.#sequence, toSequence: this.#sequence, reason: "busy" },
       };
-      for (const listener of this.#listeners) listener(gap);
+      for (const listener of this.#listeners) {
+        try {
+          listener(structuredClone(gap));
+        } catch {
+          /* Isolate shared sampler consumers. */
+        }
+      }
       this.#schedule(Math.min(...this.#demands.values(), 30000));
       try {
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
@@ -105,7 +111,13 @@ export class Sampler {
             program: "unknown",
             gap: { fromSequence: this.#sequence, toSequence: this.#sequence, reason: "read-error" },
           };
-          for (const listener of this.#listeners) listener(sample);
+          for (const listener of this.#listeners) {
+            try {
+              listener(structuredClone(sample));
+            } catch {
+              /* Isolate shared sampler consumers. */
+            }
+          }
           throw error;
         },
       )
@@ -131,7 +143,13 @@ export class Sampler {
       this.#frame = sample;
       this.#receipt = receipt;
     }
-    for (const listener of this.#listeners) listener(structuredClone(sample));
+    for (const listener of this.#listeners) {
+      try {
+        listener(structuredClone(sample));
+      } catch {
+        /* Isolate shared sampler consumers. */
+      }
+    }
     return this.snapshot();
   }
   dispose(): void {

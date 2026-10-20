@@ -180,6 +180,7 @@ type EventRow = {
   active: boolean;
   terminal: boolean;
   removed: boolean;
+  telemetryGap?: { fromSequence: number; toSequence: number; reason: "overflow" };
   pending: Array<{ event: Stage3EventEnvelope; at: number; bytes: number }>;
 };
 const encodedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -226,7 +227,7 @@ export class EventLedger implements CommonEventLedgerPort {
             kind: "resource" as const,
             reason: "quota" as const,
             resource: "subscription" as const,
-            limit: 32,
+            limit: active.length >= 256 ? 256 : 32,
           },
         },
       };
@@ -266,6 +267,29 @@ export class EventLedger implements CommonEventLedgerPort {
   publish(owner: ResourceOwner, id: Handle, event: Stage3Event, delivery: "control" | "telemetry") {
     const row = this.#row(owner, id);
     if (row.removed || row.terminal) return stale("subscription");
+    if (delivery === "telemetry" && row.telemetryGap) {
+      if (event.kind === "devices.telemetry") {
+        event = {
+          ...event,
+          data: {
+            ...event.data,
+            frames: event.data.frames.map((frame, index) =>
+              index === 0 ? { ...frame, gap: row.telemetryGap! } : frame,
+            ),
+          },
+        };
+      } else if (event.kind === "devices.recordingFrames") {
+        event = {
+          ...event,
+          data: {
+            ...event.data,
+            frames: event.data.frames.map((frame, index) =>
+              index === 0 ? { ...frame, gap: row.telemetryGap! } : frame,
+            ),
+          },
+        };
+      }
+    }
     const envelope: Stage3EventEnvelope = {
       version: 1,
       subscriptionId: id,
@@ -287,8 +311,23 @@ export class EventLedger implements CommonEventLedgerPort {
       pending.filter((r) => r.event.delivery === "telemetry").reduce((sum, r) => sum + r.bytes, 0) +
         bytes >
         262144
+    ) {
+      if (event.kind === "devices.telemetry" || event.kind === "devices.recordingFrames") {
+        const frames = event.data.frames;
+        if (frames.length)
+          row.telemetryGap = {
+            fromSequence: row.telemetryGap?.fromSequence ?? frames[0]!.sequence,
+            toSequence: frames.at(-1)!.sequence,
+            reason: "overflow",
+          };
+      }
+      return eventSuccess({ accepted: true as const });
+    }
+    if (
+      (event.kind === "devices.telemetry" || event.kind === "devices.recordingFrames") &&
+      event.data.frames.length
     )
-      return this.resync(owner, id);
+      delete row.telemetryGap;
     row.pending.push({ event: envelope, at: this.now(), bytes });
     if (row.active) this.#send(row, envelope);
     return eventSuccess({ accepted: true as const });
@@ -315,7 +354,8 @@ export class EventLedger implements CommonEventLedgerPort {
       kind: "events.resyncRequired",
       data: { reason, affected },
     };
-    row.pending.push({ event, at: this.now(), bytes: encodedBytes(event) });
+    // The resync replaces this row's old queue and owns a fresh ACK deadline.
+    row.pending = [{ event, at: this.now(), bytes: encodedBytes(event) }];
     if (row.active) this.#send(row, event);
     return eventSuccess({ accepted: true as const });
   }

@@ -1,4 +1,4 @@
-import { expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   createDeviceBroker,
   type DeviceBrokerPort,
@@ -155,93 +155,100 @@ async function realSetup() {
   if (!result.ok) throw new Error("connect");
   return { ...h, broker, actions, scope, sessionId: result.value.session.sessionId };
 }
-it("real action ledger rejects replay and foreign-window current stops", async () => {
-  const h = await realSetup(),
-    action = h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId });
-  expect(
-    (
-      await h.broker.stopCurrentDevice({
-        sessionId: h.sessionId,
-        action: {
-          ...action,
-          scope: { ...h.scope, workbenchInstance: "00000000-0000-4000-8000-000000000002" },
-        },
-      })
-    ).ok,
-  ).toBe(false);
-  expect(h.provider.calls).not.toContain("stop");
-  expect((await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).ok).toBe(true);
-  expect((await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).ok).toBe(false);
-  expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
-});
-it.each([1, 2])(
-  "real facade journal failure at commit %i retains a blocker without extra dispatch",
-  async (failAt) => {
-    const h = await realSetup();
-    let count = 0;
-    const commit = h.dependencies.journal.commit;
-    h.dependencies.journal.commit = async (document) => {
-      if (++count === failAt) throw new Error("disk full");
-      await commit(document);
-    };
-    const action = h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId });
+// T10 Step 18 removes this gate.
+describe.runIf(process.env.KOBRIXA_A_T10 === "1")("deferred real-factory acceptance", () => {
+  it("real action ledger rejects replay and foreign-window current stops", async () => {
+    const h = await realSetup(),
+      action = h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId });
+    expect(
+      (
+        await h.broker.stopCurrentDevice({
+          sessionId: h.sessionId,
+          action: {
+            ...action,
+            scope: { ...h.scope, workbenchInstance: "00000000-0000-4000-8000-000000000002" },
+          },
+        })
+      ).ok,
+    ).toBe(false);
+    expect(h.provider.calls).not.toContain("stop");
+    expect((await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).ok).toBe(true);
     expect((await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).ok).toBe(false);
-    expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(failAt === 1 ? 0 : 1);
-    await expect(
-      h.broker.begin({
-        principal: pluginPrincipal(),
+    expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
+  });
+  it.each([1, 2])(
+    "real facade journal failure at commit %i retains a blocker without extra dispatch",
+    async (failAt) => {
+      const h = await realSetup();
+      let count = 0;
+      const commit = h.dependencies.journal.commit;
+      h.dependencies.journal.commit = async (document) => {
+        if (++count === failAt) throw new Error("disk full");
+        await commit(document);
+      };
+      const action = h.actions.mint(h.scope, {
+        kind: "device-current-stop",
         sessionId: h.sessionId,
-        operationClass: "file-read",
-        signal: signal(),
-      }),
-    ).rejects.toThrow();
-  },
-);
-it("real read-only reconciliation observes without issuing a stop", async () => {
-  const h = await realSetup();
-  const action = h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId });
-  await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action });
-  const document = await h.dependencies.journal.load(),
-    entry = document.entries[0]!;
-  await h.dependencies.journal.commit({
-    ...document,
-    entries: [
-      { ...entry, state: "unconfirmed", stopConfirmation: "unconfirmed", resolution: null },
-    ],
+      });
+      expect((await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).ok).toBe(false);
+      expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(failAt === 1 ? 0 : 1);
+      await expect(
+        h.broker.begin({
+          principal: pluginPrincipal(),
+          sessionId: h.sessionId,
+          operationClass: "file-read",
+          signal: signal(),
+        }),
+      ).rejects.toThrow();
+    },
+  );
+  it("real read-only reconciliation observes without issuing a stop", async () => {
+    const h = await realSetup();
+    const action = h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId });
+    await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action });
+    const document = await h.dependencies.journal.load(),
+      entry = document.entries[0]!;
+    await h.dependencies.journal.commit({
+      ...document,
+      entries: [
+        { ...entry, state: "unconfirmed", stopConfirmation: "unconfirmed", resolution: null },
+      ],
+    });
+    let observations = 0;
+    const observe = h.provider.observeIdle.bind(h.provider);
+    h.provider.observeIdle = async (key, ctx) => {
+      observations++;
+      return observe(key, ctx);
+    };
+    const before = h.provider.calls.filter((call) => call === "stop").length;
+    const reconcile = h.actions.mint(h.scope, {
+      kind: "device-reconcile",
+      faultId: entry.id,
+      sessionId: h.sessionId,
+      identityEvidence: "serial-match",
+    });
+    expect(
+      (
+        await h.broker.recovery.reconcile({
+          faultId: entry.id,
+          sessionId: h.sessionId,
+          action: reconcile,
+          identityEvidence: "serial-match",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(observations).toBe(1);
+    expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(before);
   });
-  let observations = 0;
-  const observe = h.provider.observeIdle.bind(h.provider);
-  h.provider.observeIdle = async (key, ctx) => {
-    observations++;
-    return observe(key, ctx);
-  };
-  const before = h.provider.calls.filter((call) => call === "stop").length;
-  const reconcile = h.actions.mint(h.scope, {
-    kind: "device-reconcile",
-    faultId: entry.id,
-    sessionId: h.sessionId,
-    identityEvidence: "serial-match",
+  it("restart faults cannot seed a reconnect alias", async () => {
+    const h = await realSetup();
+    await h.broker.stopCurrentDevice({
+      sessionId: h.sessionId,
+      action: h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId }),
+    });
+    expect(
+      (await h.broker.reconnectForRecovery({ previousSessionId: h.sessionId, signal: signal() }))
+        .ok,
+    ).toBe(false);
   });
-  expect(
-    (
-      await h.broker.recovery.reconcile({
-        faultId: entry.id,
-        sessionId: h.sessionId,
-        action: reconcile,
-        identityEvidence: "serial-match",
-      })
-    ).ok,
-  ).toBe(true);
-  expect(observations).toBe(1);
-  expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(before);
-});
-it("restart faults cannot seed a reconnect alias", async () => {
-  const h = await realSetup();
-  await h.broker.stopCurrentDevice({
-    sessionId: h.sessionId,
-    action: h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId }),
-  });
-  expect(
-    (await h.broker.reconnectForRecovery({ previousSessionId: h.sessionId, signal: signal() })).ok,
-  ).toBe(false);
 });

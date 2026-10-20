@@ -917,3 +917,177 @@ it("conflicting and replaced provider generations cannot reuse a catalog allocat
   expect(() => old.identify(tuple)).toThrow();
   expect(next.identify({ ...tuple, sessionId: reconnected.value.session.sessionId })).not.toBe(id);
 });
+
+it("a connect settling after its deadline permits a later connection", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = setup(),
+      original = h.provider.connect.bind(h.provider);
+    let release!: () => void;
+    h.provider.connect = async (_target, ctx) =>
+      ctx.exchange("connect", async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          value: h.provider.describe(h.provider.session),
+          dispatch: "not-sent",
+          stopConfirmation: "not-required",
+          error: null,
+        };
+      });
+    const connect = () =>
+      h.broker.request(
+        pluginPrincipal(),
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+        signal(),
+      );
+    const first = connect();
+    await vi.advanceTimersByTimeAsync(0);
+    h.setNow(5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect((await first).ok).toBe(false);
+    expect(await connect()).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    h.provider.connect = original;
+    expect((await connect()).ok).toBe(true);
+    await h.broker.resources.beginShutdown();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it.each(["provider", "lane"] as const)(
+  "finish bounds stalled %s cleanup and subsequent cancel",
+  async (failure) => {
+    vi.useFakeTimers();
+    try {
+      const h = setup(),
+        p = pluginPrincipal();
+      const connected = await h.broker.request(
+        p,
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+        signal(),
+      );
+      if (!connected.ok) throw new Error("connect");
+      const input = {
+        principal: p,
+        sessionId: connected.value.session.sessionId,
+        operationClass: "file-write" as const,
+        signal: signal(),
+      };
+      h.provider.legacy = async (_session, _request, ctx) => {
+        if (failure === "provider") return new Promise(() => {});
+        return ctx.exchange("file-chunk", () => new Promise(() => {}));
+      };
+      const op = await h.broker.begin(input);
+      const work = op.execute({
+        kind: "upload",
+        remotePath: "test",
+        size: 1,
+        chunks: (async function* () {
+          yield new Uint8Array([1]);
+        })(),
+        progress() {},
+      });
+      void work.catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      let finished = false;
+      const finish = op.finish().then(
+        () => {
+          finished = true;
+        },
+        () => {},
+      );
+      const retirement = h.broker.resources.retire(p.owner, "disabled");
+      let disposition: unknown;
+      void retirement.settled.then((value) => {
+        disposition = value;
+      });
+      h.setNow(15000);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(finished).toBe(true);
+      expect(disposition).toMatchObject({ stopConfirmed: false, journalCommitted: true });
+      await finish;
+      await op.cancel();
+      const other = pluginPrincipal(2);
+      const listed = await h.broker.request(other, "devices/list", {}, signal());
+      expect(listed).toMatchObject({ ok: true, value: { sessions: [{ state: "quarantined" }] } });
+      await expect(h.broker.begin({ ...input, principal: other })).rejects.toMatchObject({
+        result: {
+          error: { code: "PLUGIN_E_DEVICE_UNAVAILABLE", detail: { reason: "quarantined" } },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+it.each(["throw", "outcome"] as const)(
+  "failed input mode %s preserves source revision and notifies subscribers",
+  async (failure) => {
+    const h = setup(),
+      p = pluginPrincipal();
+    const connected = await h.broker.request(
+      p,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const sessionId = connected.value.session.sessionId;
+    const sent: unknown[] = [];
+    const channel = h.broker.attachChannel({
+      owner: p.owner,
+      principal: () => p,
+      send: (event) => sent.push(event),
+    });
+    channel.negotiated("devices", 1);
+    const sub = await h.broker.request(
+      p,
+      "devices/subscribe",
+      { topic: "session", sessionId },
+      signal(),
+    );
+    if (!sub.ok) throw new Error("subscribe");
+    channel.activate(sub.value.subscriptionId);
+    const before = await h.broker.request(p, "devices/session", { sessionId }, signal());
+    if (!before.ok) throw new Error("session");
+    h.provider.setInputMode = async () => {
+      if (failure === "throw") throw new Error("mode failed");
+      return {
+        value: null,
+        dispatch: "not-sent",
+        stopConfirmation: "not-required",
+        error: { message: "mode failed", reason: "provider-contract" },
+      };
+    };
+    const result = await h.broker.request(
+      p,
+      "devices/inputModes/set",
+      {
+        sessionId,
+        portId: "1",
+        modeId: "1",
+        expectedSourceRevision: before.value.sources.sourceRevision,
+        contextRef: ID,
+      },
+      signal(),
+    );
+    expect(result.ok).toBe(false);
+    const after = await h.broker.request(p, "devices/session", { sessionId }, signal());
+    if (!after.ok) throw new Error("session");
+    expect(after.value.session.sourceRevision).toBe(after.value.sources.sourceRevision);
+    expect(after.value.sources.sourceRevision).toBe(before.value.sources.sourceRevision);
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        kind: "devices.session",
+        data: expect.objectContaining({ sourcesChanged: true }),
+      }),
+    );
+    channel.dispose();
+    await h.broker.resources.beginShutdown();
+  },
+);

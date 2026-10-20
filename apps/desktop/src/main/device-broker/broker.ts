@@ -752,13 +752,10 @@ export function createBroker(
       return { candidates: result };
     }
     if (method === "devices/connect") {
-      if (
-        connecting ||
-        connectionLane.occupied ||
-        connectionLane.quarantined ||
-        session?.snapshot.state === "connected"
-      )
+      if (connecting || connectionLane.occupied || session?.snapshot.state === "connected")
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "connecting");
+      // A pre-session timeout blocks admission only until its I/O actually settles.
+      connectionLane.quarantined = false;
       connecting = true;
       try {
         const p = parse(method);
@@ -999,26 +996,31 @@ export function createBroker(
         const current = getSession(principal, params.sessionId),
           undemand = current.sampler.demand(id, params.intervalMs);
         const unlisten = current.sampler.subscribe((frame) => {
-          events.publish(
-            owner,
-            id,
-            {
-              kind: "devices.telemetry",
-              data: {
-                sessionId: params.sessionId,
-                frames: [
-                  {
-                    ...frame,
-                    values: frame.values.filter((value) =>
-                      params.channelIds.includes(value.channelId),
-                    ),
-                  },
-                ],
-                snapshot: current.sampler.snapshot(),
+          if (!events.owns(owner, id)) return;
+          try {
+            events.publish(
+              owner,
+              id,
+              {
+                kind: "devices.telemetry",
+                data: {
+                  sessionId: params.sessionId,
+                  frames: [
+                    {
+                      ...frame,
+                      values: frame.values.filter((value) =>
+                        params.channelIds.includes(value.channelId),
+                      ),
+                    },
+                  ],
+                  snapshot: current.sampler.snapshot(),
+                },
               },
-            },
-            "telemetry",
-          );
+              "telemetry",
+            );
+          } catch {
+            /* Terminal rows and transport failures are local to this consumer. */
+          }
         });
         dispose = () => {
           unlisten();
@@ -1186,6 +1188,12 @@ export function createBroker(
             ? current.sampler.receive(result.snapshot.frame)
             : result.snapshot,
         };
+      } catch (error) {
+        if (method === "devices/inputModes/set") {
+          current.snapshot.sourceRevision = current.sources.sourceRevision;
+          changed(true);
+        }
+        throw error;
       } finally {
         current.lane.release(id);
       }
@@ -1600,27 +1608,41 @@ export function createBroker(
         ctx.work.assertContinuation("file-begin");
       };
       const finish = async () => {
-        if (closed || launched) return;
+        if (closed) {
+          await done;
+          return;
+        }
+        if (launched) return;
         closed = true;
-        if (inFlight)
-          await bounded(
-            inFlight.then(
-              () => {},
-              () => {},
-            ),
-            Math.max(1, ctx.cleanup.deadlineMonotonicMs - input.now()),
-          );
-        await current.lane.drain(Math.min(hardDeadline, input.now() + 15000));
-        current.lane.release(id);
-        legacy.delete(id);
-        signal.removeEventListener("abort", onAbort);
-        resolve({
-          stopConfirmed: !current.lane.quarantined,
-          journalCommitted: true,
-          faultIds: current.lane.quarantined && risk ? [risk.id] : [],
-        });
+        const cleanupDeadline = Math.min(hardDeadline, ctx.cleanup.deadlineMonotonicMs);
+        try {
+          if (inFlight)
+            await bounded(
+              inFlight.then(
+                () => {},
+                () => {},
+              ),
+              Math.max(1, cleanupDeadline - input.now()),
+            );
+          await current.lane.drain(cleanupDeadline);
+          current.lane.release(id);
+        } catch {
+          current.lane.quarantined = true;
+        } finally {
+          legacy.delete(id);
+          signal.removeEventListener("abort", onAbort);
+          resolve({
+            stopConfirmed: !current.lane.quarantined,
+            journalCommitted: true,
+            faultIds: current.lane.quarantined && risk ? [risk.id] : [],
+          });
+        }
       };
       const cancel = async () => {
+        if (closed) {
+          await done;
+          return;
+        }
         ctx.stop("cancelled", true);
         try {
           if (risk) {

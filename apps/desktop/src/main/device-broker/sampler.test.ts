@@ -54,3 +54,71 @@ it("provider frames have one receipt origin and mode snapshots use the same sequ
   expect(() => sampler.receive({ ...raw, sequence: 9 })).toThrow();
   sampler.dispose();
 });
+
+import { EventLedger } from "./registry.js";
+import { pluginPrincipal } from "./fake-provider.js";
+it("terminal telemetry and throwing consumers cannot break shared fresh reads", async () => {
+  const owner = pluginPrincipal().owner,
+    ledger = new EventLedger(
+      () => 0,
+      () => {},
+      () => {},
+    );
+  const created = ledger.create(owner);
+  if (!created.ok) throw new Error("create");
+  const id = created.value.subscriptionId;
+  ledger.publish(
+    owner,
+    id,
+    { kind: "devices.catalog", data: { revision: 0, providers: [], sessions: [] } },
+    "control",
+  );
+  ledger.closeAfterControl(owner, id);
+  const sampler = new Sampler({
+    sessionId: ID,
+    now: () => 0,
+    busy: () => false,
+    read: async () => ({ ...frame(), sequence: 0, sampledAt: 0, elapsedMs: 0 }),
+  });
+  sampler.subscribe((sample) => {
+    ledger.publish(
+      owner,
+      id,
+      {
+        kind: "devices.telemetry",
+        data: { sessionId: ID, frames: [sample], snapshot: sampler.snapshot() },
+      },
+      "telemetry",
+    );
+  });
+  const healthy = vi.fn();
+  sampler.subscribe(healthy);
+  await expect(sampler.fresh()).resolves.toMatchObject({ status: "fresh" });
+  expect(healthy).toHaveBeenCalledTimes(1);
+  sampler.dispose();
+  ledger.dispose();
+});
+it.each(["busy", "read-error"] as const)("isolates listeners on %s frames", async (mode) => {
+  const failure = new Error("read failed");
+  const sampler = new Sampler({
+    sessionId: ID,
+    now: () => 0,
+    busy: () => mode === "busy",
+    read: async () => {
+      throw failure;
+    },
+  });
+  sampler.subscribe(() => {
+    throw new Error("consumer failed");
+  });
+  const healthy = vi.fn();
+  sampler.subscribe(healthy);
+  const result = Promise.resolve().then(() => sampler.fresh());
+  if (mode === "busy")
+    await expect(result).rejects.toMatchObject({
+      result: { error: { code: "PLUGIN_E_DEVICE_BUSY" } },
+    });
+  else await expect(result).rejects.toBe(failure);
+  expect(healthy).toHaveBeenCalledTimes(1);
+  sampler.dispose();
+});
