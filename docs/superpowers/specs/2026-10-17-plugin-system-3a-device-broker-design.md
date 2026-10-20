@@ -1275,7 +1275,7 @@ JS AbortSignal 及 Python asyncio cancellation 對未完成 request 發 `$/cance
 
 新增可重用 harness 以同一 `BuiltinDeviceProvider` interface 驗證 fake 與 EV3 adapter，不為 fake 另開 broker 特權。fixture 提供可控 monotonic clock、journal fault injector、authority／intent port、recorded exchange trace、deferred read／reply 與 process/channel lifecycle。每一 fixture 記錄輸入、host transition、provider step order、dispatch evidence、wire snapshot 與 cleanup outcome；兩 SDK 使用同一份 JSON 正反例。
 
-新增 fixtures 置於 `packages/plugin-protocol/conformance/devices-v1/`（wire）與 `apps/desktop/src/main/device-broker/fixtures/`（host-only fake），由各自唯一 owner 管理。fake 只能 test composition 註冊；產品不得用 manifest 的 `transport: mock` 繞過 allowlist。
+新增共用 wire fixtures 置於 `packages/plugin-protocol/test-fixtures/device-broker-v1/valid.json`、`invalid.json`、`maximum.json`，由唯一 protocol integrator 管理並接入既有 conformance runner。正式 host-only fake provider 與直接測試置於 `apps/desktop/src/main/device-broker/fake-provider.ts`、`fake-provider.test.ts`，由 broker owner 管理；consumer／stall harness fixtures 置於實作計畫具名的 `tests/desktop/fixtures/device-broker/` 檔案。不另建 `conformance/devices-v1/` 或 `main/device-broker/fixtures/` 副本。fake 只能 test composition 註冊；產品不得用 manifest 的 `transport: mock` 繞過 allowlist。
 
 | 組別                 | 必備 cases／斷言                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1317,7 +1317,7 @@ wire conformance 加入 unknown fields、額外 duration／degrees、非 finite 
 
 ### 13.3 MANUAL acceptance
 
-各項結果記在未來新增 `docs/superpowers/reports/2026-10-17-plugin-system-3a-acceptance.md`；其任務 owner 為 §15 T7。格式每列包含 criterion、app artifact／commit、OS／architecture、brick／firmware、transport、測試時間、觀察者、動作、實際觀察、fault／log、通過／失敗／未驗。不得把本文的設計決定當證據。
+各項結果記在未來新增 `docs/superpowers/plans/2026-10-17-plugin-system-3a-acceptance.md`；由實作計畫 3A-T9 建立，停止後具名交接給 3A-T10 維護整合驗收；本文 §15 的任務分組由實作計畫細分。格式每列包含 criterion、app artifact／commit、OS／architecture、brick／firmware、transport、測試時間、觀察者、動作、實際觀察、fault／log、通過／失敗／未驗。不得把本文的設計決定當證據。
 
 | 編號  | 人工操作／必要證據                                                                                                                                                                                                                                                                                               |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

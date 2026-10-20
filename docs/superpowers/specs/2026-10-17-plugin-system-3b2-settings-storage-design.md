@@ -394,7 +394,7 @@ profile exclusivity 唯一消費 [3A §7.2／§9](2026-10-17-plugin-system-3a-de
 
 `sha256(sourceKey)` 為完整 64 hex；identity 必須與 registry 身分完全一致，不以資料夾名稱 alone 授權。來源移動時沿用既有 host 管理身分規則，不自動依 pluginId 合併；此案不新增 dev source relink 的跨 namespace 授權。
 
-`identity.json`／head／objects／intent 均帶 `formatVersion:1`；未知較新格式只讀保留並回 unsupported-format。head 是 strict bounded JSON，包含 current 的 metadata、object basename、hash、receipt，delete 則 tombstone＋receipt；internal import receipt tag 可選、最多 256 bytes，不公開為可由 plugin 填寫的欄位。head 中不儲存任意 path；object 路徑從驗證過的 ID／revision 組成。
+`identity.json`、head、intent、settings object 與 import／recovery JSON envelopes 均帶 `formatVersion:1`；record 的 `objects/<revision>.bin` 保持精確 opaque payload bytes，不加 prefix 或 JSON wrapper，其 disk format 由 head 的 `formatVersion:1`、payload schema 由 `RecordMeta.schemaVersion` 表示。未知較新的 JSON envelope／head format 只讀保留並回 unsupported-format，不改寫原 payload bytes。head 是 strict bounded JSON，包含 current 的 metadata、object basename、hash、receipt，delete 則 tombstone＋receipt；internal import receipt tag 可選、最多 256 bytes，不公開為可由 plugin 填寫的欄位。head 中不儲存任意 path；object 路徑從驗證過的 ID／revision 組成。
 
 每個 publication 暫時有 `head.<ticket>.tmp`、`head.previous`；後者是上次確認 head 的完整副本，不是另一個 current。settings object 最多 64 KiB values＋4 KiB envelope。recovery state 每 source 最多 2 checkpoint entries、16 fault summaries／每筆 2 KiB；同 target 故障合併。滿額拒絕新可能產生無法追蹤資料的工作，不淘汰 unresolved entry。imports 每 source 2 MiB；其他 metadata、tombstones 與 quarantine overhead 合計上限見 §6.4。
 
@@ -767,7 +767,9 @@ protocol integrator 在 1.6.0 基底加入所有本案 schema／methods／permis
 
 ### 12.1 自動化與邊界 fixtures
 
-新增共用 fixture family `settings-storage-v1`，由 protocol integrator 持有正式 conformance；各 task 自備 unit fixtures，不跨寫別人的 mocks。每個 fixture 記錄 input、有效／無效、預期 numeric 或 business code／reason、permission、lifetime 與最終 persisted hash。至少包含：
+新增共用 fixture family 固定為 `packages/plugin-protocol/test-fixtures/settings-storage-v1/valid.json`、`invalid.json`、`maximum.json`，由 B2 protocol／SDK module owner 建立，停止後具名交接給唯一 protocol integrator 接入正式 conformance；各 task 自備 unit fixtures，不跨寫別人的 mocks。每個 fixture 記錄 input、有效／無效、預期 numeric 或 business code／reason、permission、lifetime 與最終 persisted hash。至少包含：
+
+三個共用 fixture 檔的 outer format、schema key 與預期欄位由共同 T0 凍結；所有語言與 schema runner 消費同一檔案，不另建同名 conformance tree。驗收報告唯一位置為 `docs/superpowers/plans/2026-10-17-plugin-system-3b2-acceptance.md`，由實作計畫 3B2-T7 建立，停止後交接給 3B2-T9；跨案 X-T1 報告使用 umbrella 指定的 foundation verification 路徑。
 
 1. 逐欄 immediate：boolean／enum change、text／number blur／Enter、單欄 Reset、無 Apply 按鈕；invalid 不提交、快速輸入只合併未送值、兩欄序列 CAS、外部 watch conflict／unknown 對帳與 field retry；每種 setting type、mixed enum（1 與 "1" 不混淆）、dotted key↔LocalId／option ID map、stale map 拒絕、defaults／reset、128 keys 與 129 keys、schema／values 64 KiB 邊界、單字串 4 KiB 邊界、未知欄位／重複鍵、危險 key segments、非法 default／range、相同版本變更語意、upgrade／downgrade、損壞檔。
 2. 0 byte／8 MiB／8 MiB＋1 records、256／257 筆、source 512 MiB／host 1 GiB 邊界，replacement double reservation、2／3 staging、16／17 host staging，另同時允許 source 1／host 4 exports 而不占 write slots、僅加 bytes reservation，scratch／metadata budget、50 最大 Lab-size synthetic records。

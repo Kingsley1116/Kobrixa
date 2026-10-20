@@ -686,6 +686,8 @@ index 列 `main.cjs`、`kobrixa-plugin.json` 及所有宣告 resources，按 pat
 
 本專案的 fixture packaging gate 使用相同 builder／index format；三個產品 build entries 的接入依內容交付序列：3C 後 motor 必填，3D 後 Lab 必填，3E 後 device 必填。在相應 feature 尚未合入前，host allowlist 將它列未交付而不 publish contribution，不能用空 handler 假裝 feature 可用。3E 最終產物必須三份齊全，檢查不允許跳過缺檔。
 
+Synthetic input 為 `tests/desktop/fixtures/builtin-process`，plugin ID `acceptance.ui`，可信 resolver slug `acceptance-builtin`；fixture config 使用 Vite 最終解析的 `build.outDir`，同目錄輸出 `main.cjs`、`kobrixa-plugin.json`、`resource-index.json` 與 declared resources。不新增產品 builtin registry entry。
+
 Forge 現有 whitelist 已包含 `.vite`；packaging owner 明確加入 feature payload 驗證，ASAR unpack 規則同時保留 `.node` 與整個 `.vite/build/plugins/**`（使用能同時涵蓋二者的 glob，例如 `{**/*.node,**/.vite/build/plugins/**}`，以產物 manifest 實測）。Node feature entry、SDK bundled code、manifest、index、UI JSON 全部位於 `app.asar.unpacked/.vite/build/plugins/<slug>/`。`node-hid` 維持原 provider native packaging，不進 feature leaf；不得藉 bundle external 依賴開發機 `node_modules`。
 
 ### 12.3 Installed resolution 與 launch
@@ -813,7 +815,9 @@ process isolation 僅提供故障隔離；Node／Python 本機程式仍可直接
 
 ### 14.3 Conformance fixtures 與自動化
 
-新增 fixtures 歸 protocol integrator 的 `packages/plugin-protocol/conformance/` 與 UI resource test fixtures；以下 ID 是計畫名稱。每個 limit 交付 limit−1／limit／limit+1，對 UTF-8 bytes 和 code points 分別測；Zod、exported JSON Schema、JS SDK、Python bundled validator 皆跑相同結構案例，host semantic validator 另跑 reference／owner／timing cases。
+新增共用 wire／resource fixtures 置於 protocol integrator 的 `packages/plugin-protocol/test-fixtures/declarative-ui-v1/valid.json`、`invalid.json`、`maximum.json`，接入既有 conformance runner；各 host／renderer owner 的直接 unit fixtures 留在其具名 test 檔案，不另建第二套共用 fixture tree。以下 ID 是計畫名稱。每個 limit 交付 limit−1／limit／limit+1，對 UTF-8 bytes 和 code points 分別測；Zod、exported JSON Schema、JS SDK、Python bundled validator 皆跑相同結構案例，host semantic validator 另跑 reference／owner／timing cases。
+
+本案驗收報告的唯一位置為 `docs/superpowers/plans/2026-10-17-plugin-system-3b1-acceptance.md`，由實作計畫 3B1-T9 建立，停止後交接給 3B1-T10。U12 的真實 persistence 部分由跨案 X-T1 在 1.7.0 整合後補證，不以空 participant 宣告通過。
 
 | Fixture／測試群          | 必要證據                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
