@@ -10,10 +10,10 @@ export interface MotorTestImageOptions {
   brake: boolean;
 }
 
-const ARM_TIMEOUT_MS = 2_000;
-const MOVEMENT_TIMEOUT_MS = 10_000;
-const RESULT_GRACE_MS = 2_000;
-const POLL_MS = 10;
+export const ARM_TIMEOUT_MS = 2_000;
+export const MOVEMENT_TIMEOUT_MS = 10_000;
+export const RESULT_GRACE_MS = 2_000;
+export const POLL_MS = 10;
 const LOCAL = {
   started: 0,
   now: 4,
