@@ -19336,8 +19336,8 @@ Produces these exact test-only exports from `stage-3-foundations-main.ts`:
 export { FOUNDATION_CASES, FOUNDATION_CHECKS, assertFoundationEvidence } from "./plugin-persistence-main.js";
 export function assertFoundationCase(id: string, evidence: CaseEvidence): void;
 export function assertFoundationComposition(input: FoundationFixture["composition"]): void;
-export function runFoundationCases(fixture: FoundationFixture): Promise<FoundationReceipt>;
-export function runElectronAcceptance(outputFile: string): Promise<void>;
+export function runFoundationCase(fixture: FoundationFixture, caseId: FoundationCase): Promise<FoundationReceipt>;
+export function runElectronAcceptance(outputFile: string, caseId: FoundationCase): Promise<void>;
 ```
 
 **Preconditions**
@@ -19808,14 +19808,16 @@ export function assertFoundationCase(id: string, e: CaseEvidence): void {
   }
 }
 
-export async function runFoundationCases(fixture: FoundationFixture): Promise<FoundationReceipt> {
+export async function runFoundationCase(fixture: FoundationFixture, caseId: FoundationCase): Promise<FoundationReceipt> {
   assertFoundationComposition(fixture.composition);
   assert.match(fixture.environment.commit, /^[0-9a-f]{40}$/);
   assert.match(fixture.environment.artifactSha256, /^[0-9a-f]{64}$/);
   for (const value of Object.values(fixture.environment))
     assert.ok(typeof value === "number" ? value > 0 : value.length > 0, "Missing environment field");
   const cases: FoundationReceipt["cases"] = [];
-  for (const id of FOUNDATION_CASES) {
+  {
+    const id = caseId;
+    assert.ok(FOUNDATION_CASES.includes(id), "Unknown foundation case");
     const evidence = await fixture.runCase(id);
     // Object identity and synchronous-turn assertions run before JSON serialization.
     assertFoundationCase(id, evidence);
@@ -19836,29 +19838,31 @@ export async function runFoundationCases(fixture: FoundationFixture): Promise<Fo
   return { format: 1, kind: "actual-electron", environment: fixture.environment, cases };
 }
 
-export async function runElectronAcceptance(outputFile: string): Promise<void> {
+export async function runElectronAcceptance(outputFile: string, caseId: FoundationCase): Promise<void> {
   const { app } = await import("electron");
   const profile = app.commandLine.getSwitchValue("user-data-dir");
   assert.ok(profile, "Acceptance requires an isolated profile");
   app.setPath("userData", profile);
-  await app.whenReady();
+  // T7 selects this case's cold startup policy before construction.
   const fixture = await createFoundationFixture();
+  let receipt: FoundationReceipt;
   try {
     const artifactHash = createHash("sha256").update(await readFile(fixture.environment.artifact)).digest("hex");
     assert.equal(artifactHash, fixture.environment.artifactSha256);
-    const receipt = await runFoundationCases(fixture);
-    await fixture.close();
-    await writeFile(outputFile, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
-    app.exit(0);
-  } catch (error) {
-    try { await fixture.close(); } catch { /* Keep the original acceptance failure. */ }
-    console.error(error);
-    app.exit(1);
+    receipt = await runFoundationCase(fixture, caseId);
+  } finally {
+    try { await fixture.close(); } finally { await fixture.close(); }
   }
+  await writeFile(outputFile, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
+  app.exit(0);
 }
 
 const output = process.argv.find((value) => value.startsWith("--stage3-output="))?.slice("--stage3-output=".length);
-if (output) void runElectronAcceptance(output).catch(async (error: unknown) => {
+const caseId = process.argv.find((value) => value.startsWith("--stage3-case="))?.slice("--stage3-case=".length);
+if (output) void (async () => {
+  assert.ok(FOUNDATION_CASES.includes(caseId as FoundationCase), "Require --stage3-case from FOUNDATION_CASES");
+  await runElectronAcceptance(output, caseId as FoundationCase);
+})().catch(async (error: unknown) => {
   console.error(error);
   const { app } = await import("electron");
   app.exit(1);
@@ -19871,7 +19875,7 @@ The imported T7 producer supplies actual observations from faults, traces, files
 
 - [ ] **Step 3: Write the actual Electron launcher with isolated artifacts and no skip-to-pass.**
 
-Create the complete `tests/desktop/stage-3-foundations-run.mjs`. Bundle the statically imported T7 producer with the executor and record producer source/commit plus bundle SHA-256 in the invocation receipt. The application profile is isolated, and failed evidence is retained.
+Create the complete `tests/desktop/stage-3-foundations-run.mjs`. Bundle the statically imported T7 producer with the executor and record producer source/commit plus bundle SHA-256 in the invocation receipt. Every case has its own Electron process, profile and artifact directory, and failed evidence is retained. Read `FOUNDATION_CASES` from T7's producer build metadata (the same producer bundle used by T7); do not import Electron into the Node controller or duplicate the vocabulary. The reviewed T7 build metadata path is supplied as `STAGE3_PRODUCER_METADATA`. Materialize its case phase schedule as `CASE_PHASES[caseId]`: a nonempty ordered array of `{ entry, code, signal }`, with an absolute generated Electron entry and the expected OS exit for each phase. Entries use the reviewed T7 artifact/startup configuration; the final entry invokes this executor, while preceding fault/reopen entries retain T7's phase diagnostics. This is launcher metadata, not a new evidence vocabulary or fixture API.
 
 ```js
 import assert from "node:assert/strict";
@@ -19903,54 +19907,103 @@ await build({
   external: ["electron"],
 });
 const producerBundleSha256 = createHash("sha256").update(await readFile(main)).digest("hex");
-const startedAt = new Date().toISOString();
-const child = spawn(electron, [
-  main,
-  `--user-data-dir=${path.join(directory, "profile")}`,
-  `--stage3-output=${output}`,
-], { cwd: directory, stdio: "inherit", env: process.env, detached: process.platform !== "win32" });
-let timedOut = false;
-const result = await new Promise((resolve, reject) => {
-  // Harness wall-clock budget only; it never changes any operation/drain deadline.
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (!child.pid) return;
-    if (process.platform === "win32") {
-      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "inherit" });
-      killer.once("error", reject);
-    } else {
-      try { process.kill(-child.pid, "SIGKILL"); } catch (error) {
-        if (error?.code !== "ESRCH") reject(error);
+const { FOUNDATION_CASES, CASE_PHASES } = JSON.parse(await readFile(process.env.STAGE3_PRODUCER_METADATA, "utf8"));
+assert.equal(FOUNDATION_CASES.length, 15);
+assert.equal(new Set(FOUNDATION_CASES).size, 15);
+const receipts = [];
+
+async function launchCase(caseId, profile, caseDirectory, phase, final) {
+  const phaseDirectory = await mkdtemp(path.join(caseDirectory, "phase-"));
+  const output = path.join(phaseDirectory, "receipt.json");
+  const startedAt = new Date().toISOString();
+  assert.ok(path.isAbsolute(phase.entry), "Require the reviewed generated phase entry");
+  const args = [
+    phase.entry,
+    `--stage3-executor=${main}`,
+    `--user-data-dir=${profile}`,
+    `--stage3-case=${caseId}`,
+    `--stage3-output=${output}`,
+  ];
+  const child = spawn(electron, args, { cwd: phaseDirectory, stdio: "inherit", env: process.env, detached: process.platform !== "win32" });
+  let timedOut = false;
+  const result = await new Promise((resolve, reject) => {
+    // Harness wall-clock budget only; it never changes any operation/drain deadline.
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (!child.pid) return;
+      if (process.platform === "win32") {
+        const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "inherit" });
+        killer.once("error", reject);
+      } else {
+        try { process.kill(-child.pid, "SIGKILL"); } catch (error) {
+          if (error?.code !== "ESRCH") reject(error);
+        }
       }
-    }
-  }, 25 * 60_000);
-  child.once("error", (error) => { clearTimeout(timer); reject(error); });
-  child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
-});
-await writeFile(path.join(directory, "invocation.json"), `${JSON.stringify({
-  command: [electron, main, `--stage3-output=${output}`],
-  producerCommit, producerSource, producerSourceSha256, producerBundleSha256,
-  startedAt,
-  endedAt: new Date().toISOString(),
-  result,
-  timedOut,
-}, null, 2)}\n`, { flag: "wx" });
-assert.equal(timedOut, false, `Harness deadline exceeded; inspect ${directory}`);
-assert.equal(result.code, 0, `Stage-3 acceptance failed; inspect ${directory}`);
-const receipt = JSON.parse(await readFile(output, "utf8"));
-assert.equal(receipt.kind, "actual-electron");
-assert.equal(receipt.cases.length, 15);
-assert.equal(new Set(receipt.cases.map((row) => row.id)).size, 15);
+    }, 25 * 60_000);
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+  });
+  await writeFile(path.join(phaseDirectory, "invocation.json"), `${JSON.stringify({
+    command: [electron, ...args],
+    caseId, profile, phase, pid: child.pid,
+    producerCommit, producerSource, producerSourceSha256, producerBundleSha256,
+    startedAt,
+    endedAt: new Date().toISOString(),
+    result,
+    timedOut,
+  }, null, 2)}\n`, { flag: "wx" });
+  assert.equal(timedOut, false, `Harness deadline exceeded; inspect ${directory}`);
+  assert.equal(result.code, phase.code, `Stage-3 acceptance failed; inspect ${phaseDirectory}`);
+  assert.equal(result.signal, phase.signal);
+  // Expected-fault phases retain diagnostics; they never count as passed cases.
+  if (!final) return;
+  assert.equal(result.code, 0);
+  assert.equal(result.signal, null);
+  const receipt = JSON.parse(await readFile(output, "utf8"));
+  assert.equal(receipt.kind, "actual-electron");
+  assert.deepEqual(receipt.cases.map((row) => row.id), [caseId]);
+  return receipt;
+}
+
+for (const caseId of FOUNDATION_CASES) {
+  const caseDirectory = await mkdtemp(path.join(directory, `${caseId}-`));
+  const profile = await mkdtemp(path.join(caseDirectory, "profile-"));
+  const phases = CASE_PHASES[caseId];
+  assert.ok(Array.isArray(phases) && phases.length > 0, "Missing reviewed T7 phase schedule");
+  for (const [index, phase] of phases.entries()) {
+    const final = index === phases.length - 1;
+    const receipt = await launchCase(caseId, profile, caseDirectory, phase, final);
+    if (final) receipts.push(receipt);
+  }
+}
+assert.equal(receipts.length, 15);
+const cases = receipts.flatMap((receipt) => receipt.cases);
+assert.equal(cases.length, 15);
+assert.deepEqual(cases.map((row) => row.id).sort(), [...FOUNDATION_CASES].sort());
+const receipt = {
+  format: 1, kind: "actual-electron",
+  environment: receipts[0].environment,
+  caseEnvironments: receipts.map((receipt) => ({ id: receipt.cases[0].id, environment: receipt.environment })),
+  cases,
+};
+await writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
 console.log(`Stage-3 actual evidence retained at ${directory}`);
 ```
+
+The generated entries and `CASE_PHASES` must implement T7's reviewed restart protocol: retain the case profile, fault traces and durable tickets, await/assert the old Electron OS exit, then call `launchCase` for the next phase in a new process. Each phase sets `userData` and its case startup policy before its sole factory call; only D170 starts the worker. Require different PIDs/hostEpochs and reconcile actual durable bytes. Expected-fault phase receipts are diagnostics, not successful case receipts; aggregate only the final validated case receipt. Never restart inside `runFoundationCase` or allocate a second fixture in a process. Apply T7's generated entry/artifact configuration and safe-mode/all-optional-off cold policies before construction; a missing phase/startup binding fails the gate.
 
 T7's fixture supervisor must impose bounded operation/drain/process deadlines and retain its child PID manifest. The outer launcher terminates its fixture process tree after 25 minutes and records failure; this harness limit does not extend any product deadline. The controller can also stop a hung run. No termination produces a passing receipt. A missing reviewed producer commit or imported producer fails rather than skipping. An installed acceptance bundle must still launch the actual packaged application for the `installed` case; launching the Electron harness itself is not installed-app evidence.
 
 After the T7 producer receipt is recorded, **controller runs outside sandbox**:
 
 ```bash
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; node tests/desktop/stage-3-foundations-run.mjs
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+: "${STAGE3_PRODUCER_COMMIT:?Set the reviewed T7 producer commit}"
+: "${STAGE3_PRODUCER_METADATA:?Set the reviewed T7 producer bundle metadata path}"
+node tests/desktop/stage-3-foundations-run.mjs
 ```
+
+Expected: exactly fifteen validated case receipts, each from its own profile/process with one fixture lifetime per phase and two closes of the same fixture; restart phases reuse only that case profile after OS exit. Missing/duplicate cases, cleanup failures or unexpected exits prevent the final receipt.
 
 Set `STAGE3_PRODUCER_COMMIT` to the actual reviewed T7 source commit from the P170 receipt. Compare that receipt's producer/artifact hashes before running. The launcher imports the producer at its frozen path; there is no selectable external driver. Missing Electron/Python or producer evidence is an unrun gate. The installed case verifies the actual artifact SHA-256 against `fixture.environment.artifactSha256`; source or bundle hashes cannot replace it.
 
@@ -20022,11 +20075,11 @@ export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; p
 
 Expected: oracle and routing tests pass. Then run the full verification section once on the merged candidate. Actual producer acceptance remains separate; the root unit suite does not fabricate or skip it.
 
-- [ ] **Step 6: Commit the cross-plan oracle and launcher.**
+- [ ] **Step 6: Commit the cross-plan oracle and per-case Electron launcher after all fifteen case receipts pass.**
 
 ```bash
 export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git add tests/desktop/stage-3-foundations.test.mjs tests/desktop/stage-3-foundations-main.ts tests/desktop/stage-3-foundations-run.mjs package.json
-export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "test(plugins): gate merged stage 3 foundation evidence"
+export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false; git commit -m "test(plugins): gate stage 3 evidence with per-case Electron lifetimes"
 ```
 
 - [ ] **Step 7: Update bilingual architecture/roadmap and smoke instructions without closing future stages.**
