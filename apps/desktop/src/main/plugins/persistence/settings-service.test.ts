@@ -657,3 +657,78 @@ it("settings scalar validation rejects NUL and accepts complete Unicode code poi
     ),
   ).toMatchObject({ ok: true });
 });
+
+import { createContributedSettingsForm } from "../../../renderer/settings/contributed-settings-form.js";
+it("same-binding remount keeps the newly opened real service alive", async () => {
+  const f = boundFixture();
+  const controls = { render: vi.fn(), dispose: vi.fn(), onChange: () => () => {} };
+  const form = createContributedSettingsForm(controls, f.bound);
+  const first = await f.open();
+  form.open(first.binding, first.resource, first.snapshot);
+  const next = await f.open();
+  expect(() => form.open(next.binding, next.resource, next.snapshot)).not.toThrow();
+  expect(await f.bound.read(next.binding)).toMatchObject({ ok: true });
+  form.dispose(next.binding);
+  await expect(f.bound.read(next.binding)).rejects.toThrow();
+});
+it("stale watch notifies a pristine form before disposing its service", async () => {
+  const f = boundFixture();
+  const opened = await f.open();
+  const render = vi.fn();
+  const form = createContributedSettingsForm(
+    { render, dispose: vi.fn(), onChange: () => () => {} },
+    f.bound,
+  );
+  f.changeDigest();
+  form.open(opened.binding, opened.resource, opened.snapshot);
+  await vi.waitFor(() => expect(render.mock.calls.at(-1)![2].errors.length).toBeGreaterThan(0));
+  form.dispose(opened.binding);
+});
+it("local commit notifications survive public publication failure", async () => {
+  const f = boundFixture();
+  const { binding } = await f.open();
+  const changed = vi.fn();
+  f.bound.watch(binding, changed);
+  await settingsRequests(f.backend).request(
+    principal,
+    "settings/watch",
+    { schemaVersion: 1 },
+    signal(),
+  );
+  vi.mocked(f.events.publish).mockImplementation(() => {
+    throw new Error("queue failed");
+  });
+  expect(
+    await f.bound.update(binding, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).toMatchObject({ ok: true });
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  f.bound.dispose(binding);
+});
+
+it("throwing local observers neither silence peers nor invalidate public subscriptions", async () => {
+  const f = boundFixture();
+  const { binding } = await f.open();
+  f.bound.watch(binding, () => {
+    throw new Error("observer failed");
+  });
+  const changed = vi.fn();
+  f.bound.watch(binding, changed);
+  await settingsRequests(f.backend).request(
+    principal,
+    "settings/watch",
+    { schemaVersion: 1 },
+    signal(),
+  );
+  await f.bound.update(binding, {
+    schemaVersion: 1,
+    expectedRevision: null,
+    changes: [{ key: "enabled", value: false }],
+  });
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  expect(f.events.unsubscribe).not.toHaveBeenCalled();
+  f.bound.dispose(binding);
+});

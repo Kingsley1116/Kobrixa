@@ -148,3 +148,55 @@ it("B1 attach: old bindings cannot submit; invalid scalar drafts stay local; con
   await form.reload(next);
   expect(state.draft).toEqual(snapshot.values);
 });
+
+it("failed watch setup disposes controls and permits another open", () => {
+  const snapshot = {
+    schemaVersion: 1,
+    revision: null,
+    values: [{ key: "connection.mode", value: 1 }],
+  };
+  const service: BoundSettingsService = {
+    open: vi.fn(),
+    read: vi.fn(),
+    update: vi.fn(),
+    reset: vi.fn(),
+    dispose: vi.fn(),
+    watch: vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("Stale settings binding.");
+      })
+      .mockReturnValue(() => {}),
+  };
+  const controls = { render: vi.fn(), dispose: vi.fn(), onChange: vi.fn(() => () => {}) };
+  const form = createContributedSettingsForm(controls, service);
+  expect(() => form.open(binding, resource, snapshot)).toThrow("Stale settings binding.");
+  expect(controls.dispose).toHaveBeenCalledWith(binding);
+  expect(service.dispose).toHaveBeenCalledWith(binding);
+  expect(controls.onChange).not.toHaveBeenCalled();
+  form.open(binding, resource, snapshot);
+  expect(controls.render).toHaveBeenCalledOnce();
+});
+
+it("renderer browser bundle resolves the cross-package T1 validators", async () => {
+  const { build } = await import("vite");
+  const { fileURLToPath } = await import("node:url");
+  const built = await build({
+    configFile: false,
+    logLevel: "silent",
+    build: {
+      write: false,
+      minify: false,
+      lib: {
+        entry: fileURLToPath(new URL("./contributed-settings-form.tsx", import.meta.url)),
+        formats: ["es"],
+      },
+    },
+  });
+  const outputs = Array.isArray(built) ? built : [built];
+  const chunks = outputs.flatMap((output) => ("output" in output ? output.output : []));
+  expect(chunks.length).toBeGreaterThan(0);
+  for (const chunk of chunks) {
+    if (chunk.type === "chunk") expect(chunk.imports).toEqual([]);
+  }
+});

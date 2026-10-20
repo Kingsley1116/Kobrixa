@@ -560,6 +560,18 @@ export function createBoundSettingsService(input: {
         throw new Error("Stale settings binding.");
       const form = active;
       form.callbacks.add(changed);
+      const invalidateForm = () => {
+        if (active !== form) return;
+        const callbacks = [...form.callbacks];
+        dispose(binding);
+        for (const callback of callbacks) {
+          try {
+            callback();
+          } catch {
+            /* One observer cannot silence the others. */
+          }
+        }
+      };
       void resolve(binding)
         .then(() => {
           if (active !== form || !form.callbacks.has(changed) || form.subscription) return;
@@ -568,13 +580,19 @@ export function createBoundSettingsService(input: {
           form.subscription = result.value.subscriptionId;
           input.events.activate(form.owner, form.subscription);
         })
-        .catch(() => dispose(binding));
+        .catch(invalidateForm);
       const off = service.onCommitted(form.owner, () => {
         void resolve(binding)
           .then(() => {
-            if (active === form && form.callbacks.has(changed)) changed();
+            if (active === form && form.callbacks.has(changed)) {
+              try {
+                changed();
+              } catch {
+                /* Observer failure does not invalidate the service. */
+              }
+            }
           })
-          .catch(() => dispose(binding));
+          .catch(invalidateForm);
       });
       form.cleanups.add(off);
       let removed = false;
@@ -674,6 +692,13 @@ function makeSettingsComposition(input: CompositionInput) {
         return result.value.subscriptionId;
       },
       changed(owner, event) {
+        for (const listener of listeners.get(owner.sourceKey) ?? []) {
+          try {
+            listener();
+          } catch {
+            /* Local observers do not own public subscriptions. */
+          }
+        }
         for (const [id, subscriber] of subscriptions) {
           if (subscriber.sourceKey !== owner.sourceKey) continue;
           const result = input.events.publish(
@@ -684,7 +709,6 @@ function makeSettingsComposition(input: CompositionInput) {
           );
           if (!result.ok) input.events.unsubscribe(subscriber, id);
         }
-        for (const listener of listeners.get(owner.sourceKey) ?? []) listener();
       },
       invalidate(owner) {
         for (const [id, subscriber] of subscriptions)

@@ -188,3 +188,59 @@ it("retry waits for the outstanding mutation instead of creating a second writer
     expectedRevision: receipt(1).receipt.revision,
   });
 });
+
+it("paused edits and queued fields remain visibly unsaved through retry", async () => {
+  const mutate = vi
+    .fn<SettingsStoreTransport["mutate"]>()
+    .mockResolvedValueOnce({
+      ok: false,
+      error: { code: "PLUGIN_E_SETTINGS_SAVE", message: "Failed" },
+    })
+    .mockResolvedValue({ ok: true, value: receipt(1) });
+  const store = createContributedSettingsStore(initial, {
+    validate: () => true,
+    mutate,
+    read: async () => initial,
+  });
+  store.edit("enabled", false, "change", true);
+  store.edit("name", "queued", "enter", false);
+  await store.idle();
+  expect(store.state().errors.map((x) => x.key)).toContain("name");
+  store.edit("name", "paused", "enter", false);
+  expect(store.state().errors.map((x) => x.key)).toContain("name");
+  store.fail("Unavailable");
+  expect(store.state().errors).toContainEqual({ key: "name", message: { en: "Unavailable" } });
+  await store.retry("enabled");
+  expect(store.state().errors.map((x) => x.key)).toContain("name");
+  expect(mutate).toHaveBeenCalledTimes(2);
+});
+it("reload preserves edits made while the read is pending with an unsaved marker", async () => {
+  let finish!: (value: SettingsSnapshot) => void;
+  const read = vi.fn(
+    () =>
+      new Promise<SettingsSnapshot>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const mutate = vi.fn();
+  const store = createContributedSettingsStore(initial, { validate: () => true, mutate, read });
+  const reload = store.reload();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  store.edit("name", "during reload", "enter", false);
+  finish(initial);
+  await reload;
+  expect(store.state().draft).toContainEqual({ key: "name", value: "during reload" });
+  expect(store.state().errors.map((x) => x.key)).toContain("name");
+  expect(mutate).not.toHaveBeenCalled();
+});
+it("failure is visible even with no dirty fields", () => {
+  const store = createContributedSettingsStore(initial, {
+    validate: () => true,
+    mutate: vi.fn(),
+    read: async () => initial,
+  });
+  store.fail("Catalog unavailable");
+  expect(store.state().errors).toEqual(
+    initial.values.map(({ key }) => ({ key, message: { en: "Catalog unavailable" } })),
+  );
+});

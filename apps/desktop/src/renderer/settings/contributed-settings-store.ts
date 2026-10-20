@@ -33,6 +33,13 @@ export function createContributedSettingsStore(
     paused = false,
     disposed = false;
   let reconciling = false;
+  let editVersion = 0;
+  const editedAt = new Map<string, number>();
+  const pausedMessage = "Saved values changed or save failed. Retry or reload.";
+  function markPending() {
+    for (const key of new Set([...dirty, ...queued.keys()]))
+      if (!errors.has(key)) errors.set(key, pausedMessage);
+  }
   let deferredWatch: SettingsSnapshot | undefined;
   let running: Promise<void> = Promise.resolve();
   const notify = () => {
@@ -118,6 +125,7 @@ export function createContributedSettingsStore(
         }
       } finally {
         busy = null;
+        if (paused) markPending();
         const observed = deferredWatch;
         deferredWatch = undefined;
         if (observed) external(observed);
@@ -132,6 +140,7 @@ export function createContributedSettingsStore(
     immediate: boolean,
   ) {
     if (disposed || !draft.has(key)) return;
+    editedAt.set(key, ++editVersion);
     draft.set(key, value);
     dirty.add(key);
     if (
@@ -151,6 +160,7 @@ export function createContributedSettingsStore(
       return;
     }
     if (phase !== "change" || immediate) queued.set(key, { value, reset: phase === "reset" });
+    if (paused) errors.set(key, pausedMessage);
     notify();
     if (busy === null) running = pump();
   }
@@ -167,13 +177,15 @@ export function createContributedSettingsStore(
     idle: () => running,
     fail(message: string) {
       paused = true;
-      for (const key of dirty) errors.set(key, message);
+      for (const key of new Set([...draft.keys(), ...dirty, ...queued.keys()]))
+        errors.set(key, message);
       notify();
     },
     async retry(key: string) {
       if (disposed || reconciling || !dirty.has(key)) return;
       reconciling = true;
       paused = true;
+      markPending();
       queued.clear();
       try {
         await running;
@@ -187,6 +199,7 @@ export function createContributedSettingsStore(
         if (disposed) return;
         const value = draft.get(key)!;
         if (!io.validate(key, value)) return;
+        markPending();
         queued.clear();
         queued.set(key, { value, reset: false });
         paused = false;
@@ -198,14 +211,17 @@ export function createContributedSettingsStore(
     },
     async reload() {
       if (disposed || reconciling) return;
+      const startedAt = editVersion;
       reconciling = true;
       paused = true;
+      markPending();
       queued.clear();
       try {
         await running;
         if (disposed) return;
         const value = await io.read();
         if (disposed) return;
+        const retained = [...draft].filter(([key]) => (editedAt.get(key) ?? 0) > startedAt);
         dirty.clear();
         queued.clear();
         errors.clear();
@@ -213,6 +229,12 @@ export function createContributedSettingsStore(
         baseline = structuredClone(value);
         draft.clear();
         for (const entry of value.values) draft.set(entry.key, entry.value);
+        for (const [key, value] of retained) {
+          draft.set(key, value);
+          dirty.add(key);
+          errors.set(key, pausedMessage);
+        }
+        paused = retained.length > 0;
         notify();
       } finally {
         reconciling = false;

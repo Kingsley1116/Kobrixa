@@ -81,18 +81,19 @@ export function createContributedSettingsForm(
   function matches(binding: SettingsFormBinding) {
     return current && identity(current.binding) === identity(binding);
   }
-  function close() {
+  function close(incoming?: SettingsFormBinding) {
     if (!current) return;
     current.off();
     current.change();
     current.store.dispose();
-    service.dispose(current.binding);
+    if (!incoming || identity(current.binding) !== identity(incoming))
+      service.dispose(current.binding);
     controls.dispose(current.binding);
     current = undefined;
   }
   return {
     open(binding, resource, snapshot) {
-      close();
+      close(binding);
       createSettingsFieldMap(resource);
       const store = createContributedSettingsStore(snapshot, {
         validate: (key, value) => {
@@ -123,18 +124,27 @@ export function createContributedSettingsForm(
       });
       const draw = () => controls.render(binding, resource, store.state());
       const offDraw = store.subscribe(draw);
-      const offWatch = service.watch(binding, () => {
-        void service
-          .read(binding)
-          .then((result) => {
-            if (!matches(binding)) return;
-            if (result.ok) store.external(result.value);
-            else store.fail(result.error.message);
-          })
-          .catch(() => {
-            if (matches(binding)) store.fail("Current saved values are unavailable.");
-          });
-      });
+      let offWatch: () => void;
+      try {
+        offWatch = service.watch(binding, () => {
+          void service
+            .read(binding)
+            .then((result) => {
+              if (!matches(binding)) return;
+              if (result.ok) store.external(result.value);
+              else store.fail(result.error.message);
+            })
+            .catch(() => {
+              if (matches(binding)) store.fail("Current saved values are unavailable.");
+            });
+        });
+      } catch (error) {
+        offDraw();
+        store.dispose();
+        service.dispose(binding);
+        controls.dispose(binding);
+        throw error;
+      }
       const off = () => {
         offDraw();
         offWatch();
