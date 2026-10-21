@@ -1527,6 +1527,10 @@ it("F17 manager starts its process timer only after device and owner disposition
 });
 
 it("F20 safe mode suppresses optional registration before any process launch", async () => {
+  const ordinary = await create([{ ...builtin, policy: "optional" }]);
+  expect(ordinary.state().plugins[0]).toMatchObject({ status: "enabled" });
+  await ordinary.shutdown();
+  // This provider-only source has no launchable process before K160.
   const fixture = stage3Fixture();
   const manager = await PluginManager.create({
     sources: [{ ...builtin, policy: "optional" }],
@@ -1582,4 +1586,111 @@ it("F17 shutdown fences an idle source before waiting for device disposition", a
     finish();
     await shutdown;
   }
+});
+
+it("keeps optional builtins disabled after leaving safe mode with a corrupt store", async () => {
+  const store = memoryStore();
+  store.load = async () => ({
+    disabled: new Set(),
+    legacyDisabledIds: new Set(),
+    problem: "corrupt",
+  });
+  const manager = await create([{ ...builtin, policy: "optional" }], store);
+  expect(manager.state().safeMode).toBe(true);
+  await manager.leaveSafeMode();
+  expect(manager.state().plugins[0]).toMatchObject({ status: "disabled", disabledBy: "user" });
+  await manager.shutdown();
+});
+
+it.each([false, true])(
+  "shutdown tears down all processes after rejected disposition (retiring=%s)",
+  async (retiring) => {
+    const source = await devPlugin("failure");
+    const fixture = stage3Fixture();
+    let reject!: (error: Error) => void;
+    const retirement = new Promise<void>((_, no) => {
+      reject = no;
+    });
+    vi.mocked(fixture.host.retireResources).mockReturnValue(retirement);
+    const manager = await PluginManager.create({
+      sources: [source],
+      store: memoryStore(),
+      launcher,
+      locale: "en",
+      safeMode: false,
+      stage3: fixture.stage3,
+      stage3Host: fixture.host,
+    });
+    fixture.assign(manager);
+    const runtime = manager.stage3Runtime();
+    const signal = new AbortController().signal;
+    const context = await runtime.activateInitialized(keyOf(source), signal);
+    await runtime.ready(context.owner, signal);
+    const change = retiring
+      ? manager.setEnabled(keyOf(source), false).catch(() => undefined)
+      : undefined;
+    if (retiring)
+      await vi.waitFor(() => expect(fixture.host.retireResources).toHaveBeenCalledOnce());
+    const shutdown = manager.shutdown();
+    const failed = expect(shutdown).rejects.toThrow("retirement failed");
+    expect(manager.active).toBe(true);
+    expect(context.peer.closed).toBe(false);
+    reject(new Error("retirement failed"));
+    await failed;
+    await change;
+    expect(context.peer.closed).toBe(true);
+    expect(manager.active).toBe(false);
+  },
+);
+
+it("waits for every disposition after a failure before force-killing every hung process", async () => {
+  const sources = await Promise.all([devPlugin("first"), devPlugin("second")]);
+  const fixture = stage3Fixture();
+  let rejectDevice!: (error: Error) => void;
+  let finishOwners!: () => void;
+  const owners = new Promise<void>((resolve) => {
+    finishOwners = resolve;
+  });
+  vi.mocked(fixture.host.retireResources).mockReturnValue(owners);
+  vi.mocked(fixture.stage3.device.beginShutdown).mockReturnValue(
+    new Promise((_, reject) => {
+      rejectDevice = reject;
+    }),
+  );
+  const children: ReturnType<typeof memoryPlugin>[] = [];
+  const manager = await PluginManager.create({
+    sources,
+    store: memoryStore(),
+    launcher: async () => {
+      const child = memoryPlugin((peer) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.0.0",
+          sdk: { name: "test", version: "1" },
+        }));
+        peer.handle("shutdown", () => new Promise(() => {}));
+      });
+      children.push(child);
+      return child.process;
+    },
+    locale: "en",
+    safeMode: false,
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  for (const source of sources) {
+    const signal = new AbortController().signal;
+    const context = await runtime.activateInitialized(keyOf(source), signal);
+    await runtime.ready(context.owner, signal);
+  }
+  const shutdown = manager.shutdown(50);
+  const failed = expect(shutdown).rejects.toThrow("device disposition failed");
+  rejectDevice(new Error("device disposition failed"));
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  expect(children.every((child) => !child.killed())).toBe(true);
+  finishOwners();
+  await failed;
+  expect(children.every((child) => child.killed())).toBe(true);
+  expect(manager.active).toBe(false);
 });

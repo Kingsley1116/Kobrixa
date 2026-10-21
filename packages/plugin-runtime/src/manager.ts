@@ -340,7 +340,11 @@ export class PluginManager {
       this.#stateProblem = { code: "PLUGIN_E_STATE_CORRUPT", message: stored.problem };
       // Fail closed: the unreadable file may have kept a problem plugin disabled.
       for (const { read } of this.#entries)
-        if (read.source === "development") this.#disabled.add(read.sourceKey);
+        if (
+          read.source === "development" ||
+          (read.source === "builtin" && read.policy === "optional")
+        )
+          this.#disabled.add(read.sourceKey);
     }
   }
 
@@ -754,10 +758,11 @@ export class PluginManager {
   }
 
   /**
-   * Stops every plugin process, including plugins still being disabled, within deadlineMs.
-   * Graceful stops run first; whatever is still alive at deadlineMs - PLUGIN_FORCE_MARGIN_MS is
-   * force-killed, so callers can quit as soon as this resolves. Idempotent; afterwards commands
-   * and changes are refused.
+   * Stops every plugin process, including plugins still being disabled. With stage3 attached,
+   * deadlineMs bounds process teardown only after device/owner dispositions settle. Graceful
+   * stops run first; remaining processes are force-killed at deadlineMs - PLUGIN_FORCE_MARGIN_MS.
+   * The A-T8 coordinator owns the outer watchdog and decides whether quitting is safe.
+   * Idempotent; afterwards commands and changes are refused.
    */
   shutdown(deadlineMs: number = PLUGIN_SHUTDOWN_DEADLINE_MS): Promise<void> {
     this.#staticOperation += 1;
@@ -765,14 +770,18 @@ export class PluginManager {
       const supervisors = [...new Set([...this.#supervisors.values(), ...this.#retiring])];
       // Device beginShutdown and every owner retirement start in the same turn.
       const deviceShutdown = this.options.stage3?.device.beginShutdown();
-      await Promise.all([
+      const dispositions = await Promise.allSettled([
         deviceShutdown,
         ...supervisors.map((supervisor) => supervisor.settleResources("shutdown")),
       ]);
       // Only now starts the existing bounded process-teardown phase.
-      this.#supervisorsStopped = Promise.all(
+      let teardownResults: PromiseSettledResult<void>[] = [];
+      const teardowns = Promise.allSettled(
         supervisors.map((supervisor) => supervisor.stop("shutdown")),
-      ).then(() => undefined);
+      );
+      this.#supervisorsStopped = teardowns.then((results) => {
+        teardownResults = results;
+      });
       const stopped = this.#supervisorsStopped.then(() => true);
       const waitForStop = async (ms: number) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -788,9 +797,14 @@ export class PluginManager {
         }
       };
       const forceAt = Math.max(0, deadlineMs - PLUGIN_FORCE_MARGIN_MS);
-      if (await waitForStop(forceAt)) return;
-      for (const supervisor of supervisors) supervisor.forceKill();
-      await waitForStop(deadlineMs - forceAt);
+      if (!(await waitForStop(forceAt))) {
+        for (const supervisor of supervisors) supervisor.forceKill();
+        await waitForStop(deadlineMs - forceAt);
+      }
+      const failed = [...dispositions, ...teardownResults].find(
+        (result) => result.status === "rejected",
+      );
+      if (failed?.status === "rejected") throw failed.reason;
     })();
     return this.#shutdown;
   }

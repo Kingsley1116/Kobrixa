@@ -723,3 +723,80 @@ it("F02 applies one activation deadline even when a host ready callback ignores 
   expect(child.killed()).toBe(true);
   pending.resolve();
 });
+
+it.each(["stop", "forceKill", "handshake", "binding", "ready", "crash"] as const)(
+  "tears down after rejected retirement during %s without unhandled rejections",
+  async (mode) => {
+    const disposition = latch();
+    const retired = vi.fn(() => disposition.promise);
+    const shutdown = vi.fn();
+    let crash!: () => void;
+    const child = memoryPlugin((peer, { exit }) => {
+      crash = () => exit(1);
+      ready(peer, exit);
+      peer.handle("shutdown", () => {
+        shutdown();
+        return null;
+      });
+      if (mode === "handshake")
+        peer.handle("initialize", () => {
+          throw new Error("handshake failed");
+        });
+    });
+    let launched = false;
+    const supervisor = new PluginSupervisor(
+      plugin,
+      async () => {
+        if (launched) throw new Error("next launch reached");
+        launched = true;
+        return child.process;
+      },
+      {
+        locale: "en",
+        onNotice() {},
+        resourceOwner: () => channelOwner,
+        hostEpoch: channelOwner.hostEpoch,
+        retireResources: retired,
+        bindChannel: () => {
+          if (mode === "binding") throw new Error("binding failed");
+          return {
+            initialized: async () => {},
+            ready: async () => {
+              if (mode === "ready") throw new Error("ready failed");
+            },
+            dispose() {},
+          };
+        },
+      },
+    );
+    const started = supervisor.ready(new AbortController().signal);
+    let result: Promise<unknown>;
+    if (["handshake", "binding", "ready"].includes(mode)) {
+      result = expect(started).rejects.toThrow(`${mode} failed`);
+    } else {
+      await started;
+      if (mode === "stop") result = expect(supervisor.stop()).rejects.toThrow("retirement failed");
+      else {
+        if (mode === "forceKill") supervisor.forceKill();
+        else crash();
+        result = Promise.resolve();
+      }
+    }
+    await vi.waitFor(() => expect(retired).toHaveBeenCalledOnce());
+    expect(child.killed()).toBe(false);
+    expect(shutdown).not.toHaveBeenCalled();
+    disposition.reject(new Error("retirement failed"));
+    await result;
+    await vi.waitFor(() => expect(supervisor.state).toBe("idle"));
+    if (mode === "stop") expect(shutdown).toHaveBeenCalledOnce();
+    else if (mode !== "crash") expect(child.killed()).toBe(true);
+    // A failed retirement must not leave the stopping/terminating admission fence stuck.
+    if (["stop", "forceKill", "crash"].includes(mode)) {
+      await vi.waitFor(async () => {
+        await expect(supervisor.ready(new AbortController().signal)).rejects.toThrow(
+          "next launch reached",
+        );
+      });
+    }
+  },
+);

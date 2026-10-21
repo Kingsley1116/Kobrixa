@@ -215,7 +215,13 @@ export class PluginSupervisor {
             : reason;
     const stop = () =>
       this.#resourceOwner
-        ? this.#retireResources(retirement).then(() => this.#stop())
+        ? this.#retireResources(retirement).then(
+            () => this.#stop(),
+            async (error: unknown) => {
+              await this.#stop();
+              throw error;
+            },
+          )
         : this.#stop();
     this.#stoppingRun ??= stop().finally(() => {
       this.#stoppingRun = undefined;
@@ -299,7 +305,9 @@ export class PluginSupervisor {
       child?.forceKill();
       return;
     }
-    void this.#retireResources("shutdown").then(() => child?.forceKill());
+    void this.#retireResources("shutdown")
+      .catch(() => undefined)
+      .then(() => child?.forceKill());
   }
 
   #ensureStarted(): Promise<RpcPeer> {
@@ -323,7 +331,7 @@ export class PluginSupervisor {
         if (this.#resourceOwner) {
           // Includes launcher/bind failures and either activation barrier. Never release
           // the shared start promise while the original process can still be alive.
-          await this.#retireResources("crashed");
+          await this.#retireResources("crashed").catch(() => undefined);
           const child = this.#process;
           const peer = this.#peer;
           if (child && peer) {
@@ -455,7 +463,7 @@ export class PluginSupervisor {
         // Otherwise a retry could replace #process while the failed child is still alive.
         const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
         this.#terminate(child, { code: "PLUGIN_E_HANDSHAKE", message: messageOf(error) });
-        await this.#retireResources("crashed");
+        await this.#retireResources("crashed").catch(() => undefined);
         if (!(await this.#within(exited, this.#stopBoundMs)))
           this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
       }
@@ -486,7 +494,7 @@ export class PluginSupervisor {
           throw this.#stopError("Retired during activation");
       } catch (error) {
         this.#activation!.abort();
-        await this.#retireResources("crashed");
+        await this.#retireResources("crashed").catch(() => undefined);
         child.kill();
         throw error;
       }
@@ -503,7 +511,9 @@ export class PluginSupervisor {
       return;
     }
     this.#terminatingChannel = true;
-    void this.#retireResources("crashed").then(() => child.kill());
+    void this.#retireResources("crashed")
+      .catch(() => undefined)
+      .then(() => child.kill());
   }
 
   #exited(child: PluginProcess, peer: RpcPeer, exit: ProcessExit): void {
@@ -511,9 +521,11 @@ export class PluginSupervisor {
     // An OS-reported exit cannot be delayed. Revoke synchronously before clearing identity.
     if (this.#resourceOwner) {
       this.#terminatingChannel = true;
-      void this.#retireResources("crashed").finally(() => {
-        this.#terminatingChannel = false;
-      });
+      void this.#retireResources("crashed")
+        .catch(() => undefined)
+        .finally(() => {
+          this.#terminatingChannel = false;
+        });
     }
     this.#activation?.abort();
     this.#initialized.reject(new Error("Channel retired during initialize"));
