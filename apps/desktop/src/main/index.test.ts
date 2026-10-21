@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 it("starts all desktop services under the primary callback", async () => {
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
-  const gate = source.indexOf("const primary = startPrimary(app");
+  const gate = /const primary = startPrimary\(\s*app\b/.exec(source)?.index ?? -1;
   expect(gate).toBeGreaterThan(0);
   for (const construction of [
     "new WorkspaceService(",
@@ -18,7 +18,7 @@ it("starts all desktop services under the primary callback", async () => {
 });
 it("never lets renderer handshake success bypass the main disposition guard", async () => {
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
-  expect(source).toContain("() => { void mainClose.request(); }");
+  expect(source).toMatch(/\(\)\s*=>\s*\{\s*void mainClose\.request\(\);\s*\}/);
   expect(source).not.toContain("updates?.installing || handshake.ready");
 });
 
