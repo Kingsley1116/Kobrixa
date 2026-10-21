@@ -49,7 +49,15 @@ After returned-path review, the controller may use `--references` with an absolu
 
 Remaining attachment/type risks: A/B1 constructors are declaration-only or absent on F; D170 composition/accessors and native registrar/facets are absent; P170 SDK contexts are unpublished; B1-T9 browser collector/preload and K160 shared fixture builder/resolver are absent. The original K160 plan resolver uses an allowlist: the two role IDs must be supported by the delivered test artifact rules without altering the product registry. SDK watch callback and invocation/action wiring must be verified against T8's final public exports. No private service/SDK transport or product adapter was added to bypass these gaps.
 
-Controller owns final ledger disposition and commit. No T7 commit or uploaded T7 artifact exists in this authoring session. T5's origin backup does not include the T7 dirty work.
+### Reviewed authoring checkpoint — 2026-10-22
+
+T7 authoring is committed at `cf8ad42`, followed by harness corrections `48b8be4` and `12bc4ad2933f8015b3056965d0aa1f192ec5d479`; all three are backed up on `origin/feat/plugin-3b2`. Independent scoped Codex review closed the original three findings and both residual cleanup findings: Spec PASS / Quality PASS, zero remaining findings. This closes the authoring review, not real acceptance or prerequisite handoffs.
+
+The runner now rejects new heads at pre-publication kill frontiers, keeps owned process identities by PID plus start identity, and preserves the original case error before potentially hanging cleanup. Preliminary failure evidence remains failed/pending; it cannot certify successful cleanup. A separate final record retains cleanup errors, with preliminary fallback if the final write is absent or torn.
+
+At `12bc4ad`, the focused command `node --test --test-name-pattern='T7fix|verifier negatives|percentiles|evidence gates|producer checks' tests/desktop/plugin-persistence-*.test.mjs` exited 0: **36 passed, zero failed/skipped**. Scoped lint, formatting and diff checks passed. The independent reviewer replayed the two residual pure helper probes successfully. These are modeled IO/controller checks, not actual PID reuse or Electron acceptance.
+
+Historical POSIX Node probes at `48b8be4` exercised actual parent exit 7 and the unchanged 60-second timeout with a child process. Both retained failure diagnostics and verified all owned PIDs absent after cleanup. They establish only those ordinary native cleanup paths at that revision, not public P170 composition, hung-close/PID-reuse behavior, installed or Windows acceptance. The actual reference build and all full acceptance rows above remain BLOCKED.
 
 ## Thirteen deferred cases: required observations
 
