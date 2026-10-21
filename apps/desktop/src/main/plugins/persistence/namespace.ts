@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RecordMeta, Receipt, RecordRevision } from "@kobrixa/plugin-protocol";
 import type { PublicationTicket, ImportTag } from "./engine-port.js";
-import { NodePersistenceFs, writeAll, type StorePath } from "./filesystem.js";
+import type { NodePersistenceFs} from "./filesystem.js";
+import { writeAll, type StorePath } from "./filesystem.js";
 import { persistenceErrorSchema } from "../../../../../../packages/plugin-protocol/src/persistence-validation.js";
 import path from "node:path";
 const scopedPaths=new WeakMap<NodePersistenceFs,WeakMap<StorePath,string>>();
@@ -17,6 +18,7 @@ const r = z.string().regex(/^r_[0-9a-f]{32}$/), hash = z.string().regex(/^[0-9a-
 const n = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), v = n.min(1).max(2147483647);
 const key = z.string().min(1).refine(s => Buffer.byteLength(s) <= 128 && !s.includes("\0"));
 const record = z.strictObject({ id: h, revision: r, kind: z.string().regex(/^[a-z][a-z0-9.-]{0,63}$/), schemaVersion: v,
+  // eslint-disable-next-line no-control-regex -- Persisted labels must reject the full C0 control range and DEL.
   label: z.string().refine(s => [...s].length <= 160 && Buffer.byteLength(s) <= 640 && !/[\u0000-\u001f\u007f]/.test(s)),
   mediaType: z.enum(["application/json", "text/plain", "text/csv", "application/octet-stream"]), byteLength: n.max(8388608), sha256: hash,
   createdAt: n, updatedAt: n, checkpoint: z.enum(["none", "open", "final"]), interrupted: z.boolean() });

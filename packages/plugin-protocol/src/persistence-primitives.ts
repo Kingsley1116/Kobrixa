@@ -39,6 +39,7 @@ export const wellFormedText = (text: string): boolean => !text.includes("\0") &&
   const n = c.codePointAt(0)!; return n < 0xd800 || n > 0xdfff;
 });
 export function boundedText(min: number, max: number, bytes: number, singleLine = false) {
+  // eslint-disable-next-line no-control-regex -- Single-line text explicitly excludes C0 controls, DEL and line separators.
   return z.string().refine(s => wellFormedText(s) && [...s].length >= min && [...s].length <= max && utf8Bytes(s) <= bytes && (!singleLine || !/[\u0000-\u001f\u007f\u2028\u2029]/u.test(s)));
 }
 const reasons = [...new Set(Object.values(persistenceCodeReasons).flat())] as [PersistenceReason, ...PersistenceReason[]];

@@ -19,7 +19,6 @@ it("preserves F types and isolates the unpublished method maps", () => {
 
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { settingsResourceV1Schema } from "./settings.js";
 import { chunkSchema, validateSettingsResource, jsonBytes } from "./persistence-validation.js";
 const fixtureCase = z.strictObject({id:z.string(),schema:z.string(),phase:z.enum(["params","result","resource","event"]),
   input:z.unknown(),valid:z.boolean(),expected:z.strictObject({numericCode:z.number().nullable(),businessCode:z.string().nullable(),

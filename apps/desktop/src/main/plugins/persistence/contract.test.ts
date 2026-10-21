@@ -3,7 +3,7 @@ import type { Handle, RecordId, RecordRevision } from "@kobrixa/plugin-protocol"
 import type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 import { type PersistenceBackend, type PersistenceEnginePort, type PersistenceReadPort, type PublicationTicket } from "./engine-port.js";
 import type { PersistenceFsPort, StoreFd, StorePath } from "./filesystem.js";
-import { AtomicStore } from "./atomic-store.js";
+import type { AtomicStore } from "./atomic-store.js";
 it("keeps the frozen host ports unchanged", () => {
   expectTypeOf<PersistenceFsPort["open"]>().toEqualTypeOf<(p: StorePath, mode: "read" | "create-exclusive") => Promise<StoreFd>>();
   expectTypeOf<PersistenceEnginePort["fence"]>().toEqualTypeOf<(owner: PersistenceOwner, deadline: number) => readonly Handle[]>();

@@ -28,7 +28,7 @@ it("does not confuse a drain submission with a host saved report", () => {
 });
 
 import { expectTypeOf } from "vitest";
-import { z } from "zod";
+import type { z } from "zod";
 import { drainRequestBase, drainRequestSchema, type DrainRequest } from "./storage.js";
 it("checks the inferred drain base input and output against the frozen contract",()=>{
   expectTypeOf<z.output<typeof drainRequestBase>>().toEqualTypeOf<DrainRequest>();
