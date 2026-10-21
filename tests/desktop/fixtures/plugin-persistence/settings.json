@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "title": { "en": "Persistence fixture", "zh-TW": "持久化測試" },
+  "fields": [
+    {
+      "key": "fixture.enabled",
+      "label": { "en": "Enabled", "zh-TW": "啟用" },
+      "type": "boolean",
+      "default": false
+    }
+  ]
+}

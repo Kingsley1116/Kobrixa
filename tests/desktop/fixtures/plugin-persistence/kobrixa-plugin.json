@@ -1,0 +1,25 @@
+{
+  "id": "test.persistence",
+  "version": "1.0.0",
+  "apiVersion": "^1.7.0",
+  "runtime": { "kind": "node", "entry": "consumer.cjs" },
+  "activationEvents": ["onCommand:test.persistence.run"],
+  "permissions": [
+    "ui.notifications",
+    "settings.read",
+    "settings.write",
+    "storage.read",
+    "storage.write",
+    "storage.export",
+    "ui.clipboard"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "test.persistence.run",
+        "title": { "en": "Run persistence fixture", "zh-TW": "執行持久化測試" }
+      }
+    ],
+    "settings": { "version": 1, "path": "settings.json" }
+  }
+}
