@@ -254,7 +254,7 @@ export class EventLedger implements CommonEventLedgerPort {
     try {
       this.send(event);
     } catch (error) {
-      this.unsubscribe(row.owner, event.subscriptionId);
+      if (!row.removed) this.unsubscribe(row.owner, event.subscriptionId);
       throw error;
     }
   }

@@ -390,6 +390,7 @@ export function createBroker(
       principal: () => Principal;
       send: (event: Stage3EventEnvelope) => void;
       domains: Set<"devices" | "ui" | "settings">;
+      dispose: () => void;
     }
   >();
   const events = new EventLedger(
@@ -412,7 +413,12 @@ export function createBroker(
             ? "devices"
             : null;
       if (domain && !channel.domains.has(domain)) return stale("subscription");
-      channel.send(event);
+      try {
+        channel.send(event);
+      } catch (error) {
+        channel.dispose();
+        throw error;
+      }
     },
     (owner) => {
       intent.retire(owner);
@@ -1698,14 +1704,21 @@ export function createBroker(
         input.requirements(owner) === null
       )
         return stale("subscription");
+      let disposed = false;
       const channel = {
         owner: Object.freeze(structuredClone(owner)),
         principal,
         send,
         domains: new Set<"devices" | "ui" | "settings">(),
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          events.disposeOwner(owner);
+          channel.domains.clear();
+          channels.delete(key);
+        },
       };
       channels.set(key, channel);
-      let disposed = false;
       return {
         owner: channel.owner,
         negotiated(domain, version) {
@@ -1718,13 +1731,7 @@ export function createBroker(
         abandon(id) {
           events.unsubscribe(owner, id);
         },
-        dispose() {
-          if (disposed) return;
-          disposed = true;
-          events.disposeOwner(owner);
-          channel.domains.clear();
-          channels.delete(key);
-        },
+        dispose: channel.dispose,
       };
     },
     async request<M extends DeviceMethod>(

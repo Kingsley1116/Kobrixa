@@ -1497,3 +1497,87 @@ it("T5fix2 legacy waits for an in-flight sampler exchange with finite provider d
     h.unregister();
   }
 });
+
+it("send failure disposes every channel subscription while preserving another owner", async () => {
+  const h = setup();
+  const failed = pluginPrincipal();
+  const healthy = pluginPrincipal(2);
+  const nativeError = new Error("private native transport detail");
+  const failedSend = vi.fn(() => {
+    throw nativeError;
+  });
+  const healthySend = vi.fn();
+  const failedChannel = h.broker.attachChannel({
+    owner: failed.owner,
+    principal: () => failed,
+    send: failedSend,
+  });
+  const healthyChannel = h.broker.attachChannel({
+    owner: healthy.owner,
+    principal: () => healthy,
+    send: healthySend,
+  });
+  const removed = vi.fn();
+  const detachRemoved = h.broker.events.onRemoved(removed);
+  const subscribe = async (principal: typeof failed) => {
+    const result = await h.broker.request(
+      principal,
+      "devices/subscribe",
+      { topic: "catalog" },
+      signal(),
+    );
+    if (!result.ok) throw new Error("subscribe");
+    return result.value.subscriptionId;
+  };
+  const publish = (principal: typeof failed, id: string) =>
+    h.broker.events.publish(
+      principal.owner,
+      id,
+      { kind: "devices.catalog", data: { revision: 1, providers: [], sessions: [] } },
+      "control",
+    );
+  try {
+    failedChannel.negotiated("devices", 1);
+    healthyChannel.negotiated("devices", 1);
+    const first = await subscribe(failed);
+    const inactive = await subscribe(failed);
+    const other = await subscribe(healthy);
+    publish(failed, inactive);
+    failedChannel.activate(first);
+    healthyChannel.activate(other);
+    expect(() => publish(failed, first)).toThrow(nativeError);
+    expect(h.broker.events.diagnostics()).toEqual({
+      subscriptions: 1,
+      queuedEvents: 0,
+      queuedBytes: 0,
+    });
+    expect(removed.mock.calls.map(([id]) => id).sort()).toEqual([first, inactive].sort());
+    expect(() => failedChannel.negotiated("devices", 1)).toThrow();
+    failedChannel.activate(inactive);
+    expect(() => publish(failed, inactive)).toThrow();
+    expect(failedSend).toHaveBeenCalledTimes(1);
+    const denied = await h.broker.request(
+      failed,
+      "devices/subscribe",
+      { topic: "catalog" },
+      signal(),
+    );
+    expect(denied).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_UNAVAILABLE" } });
+    expect(JSON.stringify(denied)).not.toContain(nativeError.message);
+    publish(healthy, other);
+    expect(healthySend).toHaveBeenCalledTimes(1);
+    healthyChannel.dispose();
+    failedChannel.dispose();
+    expect(removed).toHaveBeenCalledTimes(3);
+    expect(h.broker.events.diagnostics()).toEqual({
+      subscriptions: 0,
+      queuedEvents: 0,
+      queuedBytes: 0,
+    });
+  } finally {
+    failedChannel.dispose();
+    healthyChannel.dispose();
+    detachRemoved();
+    await h.broker.resources.beginShutdown();
+  }
+});
