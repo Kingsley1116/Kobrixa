@@ -1,0 +1,1344 @@
+{
+  "command": "node tests/desktop/device-broker-run.mjs --load",
+  "exitCode": 0,
+  "observedDate": "2026-10-22 Asia/Taipei",
+  "rawLogSha256": "c32596f65926c9e2d650ad619bd29f2345b55c1d49865c5689c2cb1049d1fb10",
+  "metrics": [
+    {
+      "phase": "stopDispatch",
+      "samples": 1100,
+      "p50": 0.32445800001733005,
+      "p95": 0.6911250000121072,
+      "max": 1.0312919999705628
+    },
+    {
+      "phase": "transport",
+      "samples": 256,
+      "p50": 7.184999999997672,
+      "p95": 10.826708000036888,
+      "max": 19.629917000012938
+    },
+    {
+      "phase": "readback",
+      "samples": 256,
+      "p50": 11.241500000003725,
+      "p95": 12.607333999942057,
+      "max": 14.067999999970198
+    },
+    {
+      "phase": "journal",
+      "samples": 256,
+      "p50": 0.28025000006891787,
+      "p95": 0.3935830000555143,
+      "max": 0.4535840000025928
+    }
+  ],
+  "identityNote": "Clean source and nested load environment both identify 8b1f4d7. Actual Electron MessagePort/Content-Length transport and synthetic load are distinct checks in the same runner. No hardware, durable-journal latency or installed-app claim. Exit 0 was observed by the controller before recording this artifact.",
+  "report": {
+    "commit": "8b1f4d785b0164aa2f4527c625168422a600a660",
+    "artifact": {
+      "dirty": false,
+      "sha256": {
+        "main.cjs": "8d2abebd95094a54d024145062ddc214ac1a784878e59b4f243bec435674b457",
+        "js/consumer.cjs": "f78153cd50cf38a064426dbfebf253c15a00036d4df607df020acdcc4407f199",
+        "python/consumer.py": "5432101bf8185420b0a537d813ae1be1d66c34b3c542458292f800d7440dbfbe",
+        "stall.cjs": "f91e0b6389df6e6b2ca4125239dd153f637e436b9b2025493c80a7086f5a9b9e"
+      }
+    },
+    "transports": [
+      {
+        "ok": true,
+        "scenario": [
+          "negotiate",
+          "list",
+          "session",
+          "read",
+          "subscribe",
+          "mode-query",
+          "mode-set",
+          "reserve",
+          "recording-read",
+          "release",
+          "prepare",
+          "start",
+          "stop",
+          "query",
+          "unsubscribe"
+        ],
+        "eventReceipt": {
+          "kind": "devices.telemetry",
+          "subscriptionId": "508753c1-aa78-4d37-a50b-3c98bd1af627",
+          "sequence": 1,
+          "sessionId": "e3c1724f-97cf-40e5-ad8b-a50f66162b8a",
+          "owner": {
+            "sourceKey": "dev:e620d7e16c6dfa9c",
+            "pluginId": "kobrixa-fixture.devices",
+            "generation": 0,
+            "hostEpoch": "4313b9db-a4c1-42cc-b066-18eb201d6144",
+            "processEpoch": "8896e03f-ae0a-4247-83a8-f4688eb0d15d"
+          }
+        },
+        "acknowledged": {
+          "subscriptionId": "508753c1-aa78-4d37-a50b-3c98bd1af627",
+          "sequence": 1
+        },
+        "language": "js",
+        "transport": "electron-message-port"
+      },
+      {
+        "ok": true,
+        "scenario": [
+          "negotiate",
+          "list",
+          "session",
+          "read",
+          "subscribe",
+          "mode-query",
+          "mode-set",
+          "reserve",
+          "recording-read",
+          "release",
+          "prepare",
+          "start",
+          "stop",
+          "query",
+          "unsubscribe"
+        ],
+        "eventReceipt": {
+          "kind": "devices.telemetry",
+          "subscriptionId": "e399dd38-4e8b-49bc-a863-674bab8d605f",
+          "sequence": 1,
+          "sessionId": "8962fdde-7d58-4065-9953-c3a4fcaaca81",
+          "owner": {
+            "sourceKey": "dev:eaebfb2ee4422e07",
+            "pluginId": "kobrixa-fixture.devices",
+            "generation": 14,
+            "hostEpoch": "4313b9db-a4c1-42cc-b066-18eb201d6144",
+            "processEpoch": "ef5d14cb-0147-47c2-ad7c-c15f6fccffaa"
+          }
+        },
+        "acknowledged": {
+          "subscriptionId": "e399dd38-4e8b-49bc-a863-674bab8d605f",
+          "sequence": 1
+        },
+        "language": "python",
+        "transport": "content-length"
+      }
+    ],
+    "negotiations": [
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "required-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "optional-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "required-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "optional-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "required-disabled",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "required-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "optional-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "required-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "optional-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "required-disabled",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      }
+    ],
+    "channelChecks": [
+      {
+        "language": "js",
+        "name": "reply-before-delivery",
+        "ok": true,
+        "events": 4
+      },
+      {
+        "language": "js",
+        "name": "retired:absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "event-delivery-withheld",
+        "ok": true,
+        "withheldEvents": 2
+      },
+      {
+        "language": "js",
+        "name": "retired:event-delivery-withheld",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:required-supported",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:optional-supported",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:required-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:optional-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:required-disabled",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "metadata-retired",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:metadata-retired",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "reply-before-delivery",
+        "ok": true,
+        "events": 4
+      },
+      {
+        "language": "python",
+        "name": "retired:absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "event-delivery-withheld",
+        "ok": true,
+        "withheldEvents": 2
+      },
+      {
+        "language": "python",
+        "name": "retired:event-delivery-withheld",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:required-supported",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:optional-supported",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:required-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:optional-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:required-disabled",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "metadata-retired",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:metadata-retired",
+        "ok": true
+      }
+    ],
+    "load": {
+      "durationMs": 600373.5662499999,
+      "retainedHeap": [
+        {
+          "elapsedMs": 13.016374999999243,
+          "bytes": 9524272
+        },
+        {
+          "elapsedMs": 60489.160542,
+          "bytes": 10498164
+        },
+        {
+          "elapsedMs": 120489.8395,
+          "bytes": 10654876
+        },
+        {
+          "elapsedMs": 180056.910667,
+          "bytes": 10825564
+        },
+        {
+          "elapsedMs": 240246.837959,
+          "bytes": 9773872
+        },
+        {
+          "elapsedMs": 300105.73225,
+          "bytes": 9881416
+        },
+        {
+          "elapsedMs": 360011.179584,
+          "bytes": 9967628
+        },
+        {
+          "elapsedMs": 420023.529042,
+          "bytes": 10015336
+        },
+        {
+          "elapsedMs": 480075.013125,
+          "bytes": 10075104
+        },
+        {
+          "elapsedMs": 540076.408125,
+          "bytes": 10126284
+        },
+        {
+          "elapsedMs": 600373.450417,
+          "bytes": 10206928
+        }
+      ],
+      "stopDispatchMs": [
+        0.4117500000011205, 0.5677500000001601, 0.3360000000011496, 0.6124589999999444,
+        0.3510000000005675, 0.6724169999997684, 0.15570800000023155, 0.4635419999995065,
+        0.1939170000005106, 0.22249999999985448, 0.300041999998939, 0.5423330000012356,
+        0.28070800000023155, 0.2046250000003056, 0.635958999999275, 0.3187500000021828,
+        0.16820799999914016, 0.23241600000255858, 0.8322910000024422, 0.24041700000088895,
+        0.6072079999976268, 0.2062499999992724, 0.7261250000010477, 0.3619169999983569,
+        0.238707999997132, 0.32170899999982794, 0.3392500000009022, 0.5410830000000715,
+        0.25962499999877764, 0.8162499999998545, 0.5129589999996824, 0.3349579999994603,
+        0.23670900000070105, 0.634249999999156, 0.373834000001807, 0.3919999999998254,
+        0.7947910000002594, 0.2842500000006112, 0.49904199999946286, 0.31883400000151596,
+        0.7004579999993439, 0.28295799999978044, 0.5774170000004233, 0.2665420000012091,
+        0.4602920000033919, 0.3179169999930309, 0.23920899999939138, 0.22512499999720603,
+        0.23683400000300026, 0.5490419999987353, 0.5129999999990105, 0.5897079999995185,
+        0.24504200000228593, 0.38875000000552973, 0.25629099999787286, 0.5552919999972801,
+        0.26533300000301097, 0.2601250000006985, 0.5192079999978887, 0.24949999999807915,
+        0.49812499999825377, 0.2620000000024447, 0.43804200000158744, 0.13666599999851314,
+        0.4807500000024447, 0.326374999996915, 0.5380420000001322, 0.28812500000640284,
+        0.22875000000203727, 0.18908299999748124, 0.2600410000013653, 0.4041670000005979,
+        0.5448749999995925, 0.5637920000008307, 0.23470900000393158, 0.3717499999984284,
+        0.18337500000052387, 0.33224999999947613, 0.2103339999957825, 0.6061659999977564,
+        0.3109580000018468, 0.4567079999978887, 0.8340420000022277, 0.32733400000142865,
+        0.7382080000024871, 0.39575000000331784, 0.4264580000017304, 0.2675420000014128,
+        0.7823340000031749, 0.3536669999957667, 0.26158399999985704, 0.2528339999989839,
+        0.2093749999985448, 0.21037500000238651, 0.33570899999904213, 0.540832999999111,
+        0.3899590000000899, 0.7399589999986347, 0.3598329999949783, 0.29866600000241306,
+        0.2807089999987511, 0.34758299999521114, 0.23162500000034925, 0.44112500000483124,
+        0.49624999999650754, 0.3063750000001164, 0.6596669999998994, 0.21679199999198318,
+        0.7604169999976875, 0.5062920000054874, 0.3446249999979045, 0.19279200000164565,
+        0.20233299999381416, 0.18454199998814147, 0.4963750000024447, 0.5297499999869615,
+        0.21933399999397807, 0.6138339999888558, 0.15829200000735, 0.48916599999938626,
+        0.2565840000024764, 0.5368750000052387, 0.5938329999917187, 0.4522080000024289,
+        0.18716699999640696, 0.17545900000550319, 0.44729100000404287, 0.4224580000009155,
+        0.3467079999973066, 0.2886670000007143, 0.4305420000018785, 0.3285420000029262,
+        0.18454200000269338, 0.2807919999904698, 0.5061669999995502, 0.2584590000042226,
+        0.29399999999441206, 0.7423340000095777, 0.2722910000011325, 0.30975000000034925,
+        0.27187499999126885, 0.698208000001614, 0.22562500000640284, 0.31529199999931734,
+        0.19849999999860302, 0.5734169999923324, 0.2419579999987036, 0.21645800000987947,
+        0.4520419999898877, 0.39445900000282563, 0.6403750000026776, 0.3434160000033444,
+        0.6095830000122078, 0.28500000000349246, 0.5886659999960102, 0.5368749999906868,
+        0.24112500000046566, 0.25891600000613835, 0.46799999999348074, 0.4979170000005979,
+        0.28199999999196734, 0.650458999996772, 0.23525000001245644, 0.35104199999477714,
+        0.20633300000918098, 0.4722080000065034, 0.14279099999112077, 0.5061249999998836,
+        0.3054169999959413, 0.24345899999025278, 0.31433300000207964, 0.2998329999973066,
+        0.7053330000053393, 0.23079099999449681, 0.9182500000024447, 0.1753329999919515,
+        0.32241700000304263, 0.51358299999265, 0.6606659999961266, 0.1909579999919515,
+        0.44833400000061374, 0.4419999999954598, 0.33162500000617, 0.49070799999753945,
+        0.21091599999635946, 0.3146660000056727, 0.25862499998766, 0.4800000000104774,
+        0.19841599999926984, 0.6628329999948619, 0.4581250000046566, 0.3487499999901047,
+        0.4335419999988517, 0.36929100000998005, 0.7640000000101281, 0.3013340000034077,
+        0.6125000000029104, 0.21187499999359716, 0.6185409999889089, 0.23200000000360887,
+        0.2787499999976717, 0.2646249999961583, 0.2082500000105938, 0.3809999999939464,
+        0.37166699999943376, 0.5062499999912689, 0.2166670000005979, 0.3635409999988042,
+        0.44879199999559205, 0.5033330000005662, 0.17445799999404699, 0.2521249999990687,
+        0.21495799999684095, 0.44683300000906456, 0.22387499999604188, 0.29508299998997245,
+        0.7117080000025453, 0.21895900000527035, 0.6490829999966081, 0.32195800000044983,
+        0.6805829999939306, 0.26745800000207964, 0.48054200000478886, 0.18787500000325963,
+        0.35591699997894466, 0.48362499999348074, 0.5772920000017621, 0.27749999999650754,
+        0.286500000016531, 0.53825000001234, 0.27608300000429153, 0.7233330000017304,
+        0.2686669999966398, 0.21708300002501346, 0.30025000000023283, 0.4078330000047572,
+        0.3271660000027623, 0.2429579999879934, 0.620582999981707, 0.2562080000061542,
+        0.21245799999451265, 0.3827080000191927, 0.20633399998769164, 0.31783400001586415,
+        0.34699999997974373, 0.2184160000178963, 0.7916669999831356, 0.42462499998509884,
+        0.5430840000044554, 0.4469999999855645, 0.2853340000147, 0.7300410000025295,
+        0.2568749999918509, 0.6238749999902211, 0.34916599999996834, 0.4532079999917187,
+        0.24062500000582077, 0.19041599999764003, 0.4385830000101123, 0.2822079999896232,
+        0.5025000000023283, 0.5629590000025928, 0.5452079999959096, 0.27512500001466833,
+        0.4385840000177268, 0.37704200000735, 0.4200410000048578, 0.19787499998346902,
+        0.5215420000022277, 0.21600000001490116, 0.3428340000100434, 0.5874170000024606,
+        0.2614579999935813, 0.5080000000016298, 0.2619589999958407, 0.6401250000053551,
+        0.22087499999906868, 0.7405000000144355, 0.2318329999980051, 0.14241699999547563,
+        0.2332499999902211, 0.1719580000208225, 0.6553339999809396, 0.19641699999920093,
+        0.5632089999853633, 0.3222079999977723, 0.7307499999878928, 0.28754099999787286,
+        0.692708999995375, 0.26020900000003166, 0.35916600000928156, 0.43387500001699664,
+        0.20116699999198318, 0.23420800000894815, 0.1985829999903217, 0.2258330000040587,
+        0.24454200000036508, 0.4078750000044238, 0.32437499999650754, 0.7861250000132713,
+        0.3614579999994021, 0.23012500000186265, 0.46258300001500174, 0.30275000000256114,
+        0.3408329999947455, 0.4904170000227168, 0.6206250000104774, 0.5372079999942798,
+        0.49566600000252947, 0.24208299999008887, 0.5458750000107102, 0.34554100001696497,
+        0.9511669999919832, 0.25700000001234, 0.27958299999590963, 0.7442080000182614,
+        0.4197500000009313, 0.6732079999928828, 0.6059580000001006, 0.7747080000117421,
+        0.20133300000452437, 0.5860410000022966, 0.16708300000755116, 0.6620419999817386,
+        0.3590410000178963, 0.22420799999963492, 0.3932500000228174, 0.3395829999935813,
+        0.45045800000661984, 0.22141699999338016, 0.2081659999967087, 0.5184170000138693,
+        0.4670840000035241, 0.34583399997791275, 0.24691700001130812, 0.5123750000202563,
+        0.2775829999882262, 0.6416250000183936, 0.347749999986263, 0.5698329999868292,
+        0.5044580000103451, 0.3332499999960419, 0.5795830000133719, 0.484375, 0.36366599999018945,
+        0.4905420000141021, 0.7741249999962747, 0.25524999998742715, 0.6593750000174623,
+        0.21345800001290627, 0.6919579999812413, 0.20212499998160638, 0.47099999999045394,
+        0.5459589999809396, 0.5325830000219867, 0.4642910000111442, 0.16512499999953434,
+        0.4486249999899883, 0.36829100002069026, 0.48212500000954606, 0.26829199999338016,
+        0.5294169999833684, 0.20841699998709373, 0.23820900000282563, 0.24725000001490116,
+        0.49483400001190603, 0.29895899997791275, 0.38433400000212714, 0.4885409999988042,
+        0.3058749999909196, 0.5509169999859296, 0.18525000000954606, 0.19920799997635186,
+        0.2509159999899566, 0.4470839999848977, 0.4424590000126045, 0.5240000000048894,
+        0.2782089999818709, 0.5480419999803416, 0.6940000000176951, 0.23908299999311566,
+        0.3760419999889564, 0.21933399999397807, 0.5535840000084136, 0.26579099998343736,
+        0.24275000000488944, 0.6169999999983702, 0.22612499998649582, 0.32587500000954606,
+        0.2565419999882579, 0.7021250000107102, 0.266165999986697, 0.8010830000275746,
+        0.3052499999757856, 0.6197500000125729, 0.5381250000209548, 0.678249999997206,
+        0.6126660000008997, 0.2691669999912847, 0.1990419999929145, 0.2353749999892898,
+        0.6593749999883585, 0.15116599999601021, 0.9377499999827705, 0.18162499999743886,
+        0.5418749999953434, 0.34241700000711717, 0.7126660000067204, 0.20483400000375696,
+        0.43208299999241717, 0.24312499997904524, 0.24412499999743886, 0.6360829999903217,
+        0.3620410000148695, 0.7541669999773148, 0.4698750000097789, 0.7702920000010636,
+        0.3195419999829028, 0.31529100000625476, 0.31870899998466484, 0.3194169999915175,
+        0.3225420000089798, 0.23016700000152923, 0.4210000000020955, 0.19083400000818074,
+        0.5392909999936819, 0.21895799998310395, 0.3506249999918509, 0.6341250000114087,
+        0.5029999999969732, 0.19570799998473376, 0.25974999999743886, 0.17166600000928156,
+        0.2970410000125412, 0.29458299998077564, 0.23383300000568852, 0.4097079999919515,
+        0.2126669999852311, 0.19912499998463318, 0.22191699998802505, 0.30070800002431497,
+        0.8599589999939781, 0.24637500001699664, 0.18233300000429153, 0.16708399998606183,
+        0.2758750000211876, 0.35599999999976717, 0.21491700000478886, 0.20133400001213886,
+        0.6672500000277068, 0.25391600001603365, 0.51358299999265, 0.19058399999630637,
+        0.24766600001021288, 0.24866700000711717, 0.65625, 0.639208000007784, 0.3114169999898877,
+        0.7275420000078157, 0.2046660000050906, 0.6609999999927823, 0.23012500000186265,
+        0.2228330000070855, 0.21670799999265, 0.2595829999772832, 0.23020900000119582,
+        0.1424169999663718, 0.4107920000096783, 0.5123749999911524, 1.0225420000497252,
+        0.27012500003911555, 0.3226659999927506, 0.41945899999700487, 0.40304200001992285,
+        0.23387499997625127, 0.1573750000097789, 0.25624999997671694, 0.6007079999544658,
+        0.24720899999374524, 0.2654579999507405, 0.5804169999901205, 0.14520799997262657,
+        0.4020419999724254, 0.3215409999829717, 0.37733300001127645, 0.3152500000433065,
+        0.3695420000003651, 0.18083299999125302, 0.3697919999831356, 0.26079199998639524,
+        0.16724999999860302, 0.5758330000098795, 0.21875, 0.44266600004630163, 0.2759170000208542,
+        0.20133399998303503, 0.31695899995975196, 0.46291599998949096, 0.2753339999471791,
+        0.2502500000409782, 0.408832999994047, 0.2318749999976717, 0.49458299996331334,
+        0.18191700003808364, 0.669292000005953, 0.3573340000002645, 0.6435000000055879,
+        0.23562500003026798, 0.4807499999878928, 0.2890840000472963, 0.5931670000427403,
+        0.19774999999208376, 0.3159159999922849, 0.23949999996693805, 0.3497499999939464,
+        0.2887079999782145, 0.24808299995493144, 0.16741699998965487, 0.2573749999864958,
+        0.4850420000148006, 0.4518750000279397, 0.15795799996703863, 0.3616250000195578,
+        0.2348340000025928, 0.7316250000149012, 0.24466699996264651, 0.3583329999819398,
+        0.26712499995483086, 0.3718339999904856, 0.17749999999068677, 0.3122499999590218,
+        0.30408299999544397, 0.6615830000373535, 0.29433399997651577, 0.2573749999864958,
+        0.43575000000419095, 0.349166999978479, 0.5876249999855645, 0.32479199999943376,
+        0.1925000000046566, 0.22933400003239512, 0.2687080000177957, 0.26933400001144037, 0.546875,
+        0.2091249999939464, 0.5239169999840669, 0.22154200001386926, 0.19200000003911555,
+        0.28754099999787286, 0.3680420000455342, 0.215916000015568, 0.1825420000241138,
+        0.5948750000097789, 0.21779200003948063, 0.322790999955032, 0.18062499997904524,
+        0.28800000000046566, 0.5794999999925494, 0.14604200003668666, 0.6785410000011325,
+        0.3200829999987036, 0.7239580000168644, 0.48916599998483434, 0.6377079999656416,
+        0.36666699999477714, 0.28141699999105185, 0.34445799997774884, 0.5885830000042915,
+        0.28766700002597645, 0.6257500000065193, 0.6455420000129379, 0.3124170000082813,
+        0.1519169999519363, 0.3889580000541173, 0.2747920000110753, 0.6376250000321306,
+        0.40595899999607354, 0.25120800000149757, 0.31083299999590963, 0.597042000037618,
+        0.19691699999384582, 0.23579100001370534, 0.23520799999823794, 0.4238749999785796,
+        0.24104200000874698, 0.5190419999998994, 0.21895900001982227, 0.21049999998649582,
+        0.2579169999808073, 0.3685830000322312, 0.22608300001593307, 0.22170799999730662,
+        0.18325000000186265, 0.2920410000369884, 0.25795800000196323, 0.3175829999963753,
+        0.4558340000221506, 0.4782499999855645, 0.37708299997029826, 0.3040410000248812,
+        0.4567910000332631, 0.20229200000176206, 0.6491249999962747, 0.18954200000735,
+        0.24670799996238202, 0.23387499997625127, 0.24791699997149408, 0.3008750000153668,
+        0.21183300000848249, 0.44537500001024455, 0.3440000000409782, 0.25274999998509884,
+        0.3378329999977723, 0.7352499999688007, 0.2715420000022277, 0.22320900001795962,
+        0.7315829999861307, 0.2760419999831356, 0.2719579999684356, 0.16508400003658608,
+        0.5423750000190921, 0.19333400001050904, 0.33033299999078736, 0.19908399996347725,
+        0.22658299998147413, 0.1996250000083819, 0.13050000002840534, 0.4583330000168644,
+        0.27754099998855963, 0.7851249999948777, 0.3428330000024289, 0.5246669999905862,
+        0.28129199997056276, 0.6399160000146367, 0.32787500001722947, 0.7731250000069849,
+        0.3033329999889247, 0.23191699996823445, 0.4530829999712296, 0.19929099996807054,
+        0.36420800001360476, 0.1848749999771826, 0.1778749999939464, 0.2688330000382848,
+        0.3264590000035241, 0.6694589999970049, 0.5246669999905862, 0.1476249999832362,
+        0.17399999999906868, 0.44720900000538677, 0.14620799996191636, 0.2790000000386499,
+        0.23037499998463318, 0.2388749999809079, 0.2251659999601543, 0.6000409999978729,
+        0.42658299999311566, 0.2728750000242144, 0.19995799998287112, 0.22583300003316253,
+        0.2033750000409782, 0.2313330000033602, 0.4476250000298023, 0.21516699995845556,
+        0.4759170000324957, 0.5354999999981374, 0.4124590000137687, 0.3564590000314638,
+        0.14816700003575534, 0.49579200003063306, 0.2157080000033602, 0.5518330000340939,
+        0.30179200001293793, 0.653416000015568, 0.42083300004014745, 0.5716249999823049,
+        0.2910829999600537, 0.44529200001852587, 0.2561660000355914, 0.2534999999916181,
+        0.5319169999565929, 0.44062500004656613, 0.2534169999998994, 0.15687499998603016,
+        0.33100000000558794, 0.35762500000419095, 0.6184169999905862, 0.33737500000279397,
+        0.30554099997971207, 0.26216699997894466, 0.4529169999877922, 0.6130410000332631,
+        0.25325000000884756, 0.2345000000204891, 0.22720800002571195, 0.2891659999731928,
+        0.30362500000046566, 0.45612500002607703, 0.20179199997801334, 0.6049580000108108,
+        0.5675000000046566, 0.4071249999688007, 0.3352500000037253, 0.5859170000185259,
+        0.29070800001500174, 0.192916999978479, 0.4386670000385493, 0.36858299997402355,
+        0.7352499999688007, 0.2308750000083819, 0.3671250000479631, 0.20704100001603365,
+        0.38879200001247227, 0.46074999996926636, 0.21708299999590963, 0.43066700000781566,
+        0.2636250000214204, 0.4299590000300668, 0.25874999997904524, 0.22662500001024455,
+        0.22412500000791624, 0.4817499999771826, 0.31874999997671694, 0.14383399998769164,
+        0.2636669999919832, 0.665999999968335, 0.4585829999996349, 0.2789999999804422,
+        0.6644170000217855, 0.2641670000157319, 0.5794590000296012, 0.32466599997133017,
+        0.58179199998267, 0.23641700000735, 0.3756670000148006, 0.5841659999568947,
+        0.5246669999905862, 0.34833299997262657, 0.4247080000350252, 0.44512499996926636,
+        0.3217080000322312, 0.82608299999265, 0.25866699998732656, 0.5577090000151657,
+        0.30370799999218434, 0.6649169999873266, 0.26537500001722947, 0.49266599997645244,
+        0.28604199999244884, 0.22008300002198666, 0.14670799998566508, 0.3008329999865964,
+        0.3829590000095777, 0.3991249999962747, 0.32445800001733005, 0.2819170000148006,
+        0.3977500000037253, 0.48466600000392646, 0.36270800000056624, 0.34858300001360476,
+        0.16637500002980232, 0.6504589999676682, 0.35583300003781915, 0.679874999972526,
+        0.2984590000123717, 0.4593750000349246, 0.4816249999566935, 0.5092909999657422,
+        0.1979999999748543, 0.6452079999726266, 0.21950000000651926, 0.19545900000957772,
+        0.41912500001490116, 0.23141700000269338, 0.26829199999338016, 0.2231669999891892,
+        0.2600830000010319, 0.2782920000026934, 0.27291699999477714, 0.1958329999470152,
+        0.456666000012774, 0.4822089999797754, 0.27100000000791624, 0.6551249999902211,
+        0.2711249999701977, 0.46045900002354756, 0.27641699998639524, 0.24641700001666322,
+        0.2102500000037253, 0.4233750000130385, 0.3648329999996349, 0.3928750000195578,
+        0.24549999996088445, 0.2642090000445023, 0.5530830000061542, 0.24566700001014397,
+        0.5818750000325963, 0.37008399999467656, 0.28037499997299165, 0.24108299997169524,
+        0.5715000000200234, 0.17358399997465312, 0.5637080000014976, 0.42762500001117587,
+        0.1891250000335276, 0.6337080000084825, 0.3019590000039898, 0.28016600001137704,
+        0.17341700004180893, 0.4587920000194572, 0.2715420000022277, 0.316041000012774, 0.203125,
+        0.3914170000352897, 0.26158299995586276, 0.5706249999930151, 0.7095420000259764,
+        0.19041700003435835, 0.7020830000401475, 0.36733300000196323, 0.25887499999953434,
+        0.3490829999791458, 0.476375000027474, 0.2599589999881573, 0.554500000027474,
+        0.12741600000299513, 0.3216670000110753, 0.37395800004014745, 0.29070800001500174,
+        0.23270799999590963, 0.22479200002271682, 0.5227920000324957, 0.3634169999859296,
+        0.21145900001283735, 0.3157499999506399, 0.6018339999718592, 0.19387499999720603,
+        0.2910000000265427, 0.6277920000138693, 0.3090000000083819, 0.2648339999723248,
+        0.22841699997661635, 0.3048340000095777, 0.19570799998473376, 0.4494169999961741,
+        0.5579170000273734, 0.3191660000011325, 0.17954199999803677, 0.2755829999805428,
+        0.6535000000149012, 0.3890419999952428, 0.3156670000171289, 0.2660840000025928,
+        0.697249999968335, 0.6144579999963753, 0.4717090000049211, 0.27720899996347725,
+        0.6534579999861307, 0.5053339999867603, 0.21183300000848249, 0.3003339999704622,
+        0.21395800000755116, 0.32491700001992285, 0.2605420000036247, 0.44675000000279397,
+        0.3055000000167638, 0.48075000004610047, 0.3043750000069849, 0.2076670000096783,
+        0.2600830000010319, 0.44387499999720603, 0.4032909999950789, 0.6374590000486933,
+        0.47208300000056624, 0.25479199999244884, 0.30699999997159466, 0.3544170000241138,
+        0.21908300003269687, 0.23395800002617761, 0.44841700000688434, 0.2760829999460839,
+        0.3574159999843687, 0.33916699996916577, 0.2230419999687001, 0.5155000000377186,
+        0.18537500000093132, 0.46833399997558445, 0.33133299998007715, 0.13429199997335672,
+        0.25491700001293793, 0.3110830000368878, 0.30645800003549084, 0.30120899999747053,
+        0.38591599999926984, 0.30158299999311566, 0.9001670000143349, 0.2569999999832362,
+        0.42099999997299165, 0.17404099996201694, 0.3524170000455342, 0.35170800000196323,
+        0.32850000000325963, 0.38466699997661635, 0.16920800000661984, 0.6545419999747537,
+        0.5163330000359565, 0.12437499995576218, 0.19166700000641868, 0.5905420000199229,
+        0.3589159999974072, 0.5748750000493601, 0.20533299999078736, 0.35999999998603016,
+        0.21895800001220778, 0.19391600001836196, 0.6452090000384487, 0.1679160000057891,
+        0.16608300001826137, 0.1607920000096783, 0.2730000000447035, 0.39699999999720603,
+        0.4412500000325963, 0.2485410000081174, 0.2864590000244789, 0.23829100001603365,
+        0.18187499995110556, 0.23591699998360127, 0.28179200005251914, 0.6379579999484122,
+        0.2105829999782145, 0.4072910000104457, 0.3405000000493601, 0.6439159999717958,
+        0.31612499995389953, 0.2137910000164993, 0.13512499997159466, 0.3809170000022277,
+        0.23358400003053248, 0.2436660000239499, 0.5348750000121072, 0.32579199998872355,
+        0.3786250000121072, 0.41237499995622784, 0.2454589999979362, 0.37691700004506856,
+        0.46354200004134327, 0.7564160000765696, 0.3510000000242144, 0.22404200001619756,
+        0.16679099993780255, 0.4993749998975545, 0.415582999936305, 0.3497920000227168,
+        0.20987500005867332, 0.41841599997133017, 0.19954199995845556, 0.5094169999938458,
+        0.30062499991618097, 0.13737499993294477, 0.24537499994039536, 0.7678749999031425,
+        0.32175000000279397, 0.2649580000434071, 0.3260000000009313, 0.46587499999441206,
+        0.4808750000083819, 0.40641699999105185, 0.35979200003203005, 0.21058300009462982,
+        0.40324999997392297, 0.2381250000325963, 0.22441699996124953, 0.1445829999865964,
+        0.29683400003705174, 0.37716599996201694, 0.2029999999795109, 0.6375000000698492,
+        0.23558300000149757, 0.3182090000482276, 0.22479200002271682, 0.3762920000590384,
+        0.19745800003875047, 0.16412500001024455, 0.3100420000264421, 0.20054200000595301,
+        0.6189170000143349, 0.3014160000020638, 0.2571250000037253, 0.2192500000819564,
+        0.45262500003445894, 0.2496670000255108, 0.22104199999012053, 0.19024999998509884,
+        0.4844999999040738, 0.46879199997056276, 0.3778340000426397, 0.4195420000469312,
+        0.24050000007264316, 0.2470830000238493, 0.22358300001360476, 1.0312919999705628,
+        0.2731250000651926, 0.27666600001975894, 0.49516699998639524, 0.1491249999962747,
+        0.6310829999856651, 0.25591599999461323, 0.5913750000763685, 0.18279200000688434,
+        0.4580420000711456, 0.22700000007171184, 0.3577499999664724, 0.3017920000711456,
+        0.30299999995622784, 0.17287499993108213, 0.6270840000361204, 0.49037499993573874,
+        0.3405829999828711, 0.3804999999701977, 0.43999999994412065, 0.6864170000189915,
+        0.31291700003203005, 0.4154169999528676, 0.3902499999385327, 0.31583300000056624,
+        0.34337500005494803, 0.21029199997428805, 0.5819580000825226, 0.2544999999227002,
+        0.4209159999154508, 0.40691700007300824, 0.3532090000808239, 0.24374999990686774,
+        0.34858300001360476, 0.18229199992492795, 0.27045800001360476, 0.547584000043571,
+        0.20512499997857958, 0.43558400007896125, 0.3553749999264255, 0.48291600006632507,
+        0.2645829999819398, 0.6089159999974072, 0.37037499994039536, 0.4738750000251457,
+        0.1717499999795109, 0.5615830000024289, 0.22358300001360476, 0.4984590000240132,
+        0.6155840000137687, 0.25808299996424466, 0.44654200004879385, 0.2602499999338761,
+        0.33566700003575534, 0.18954199994914234, 0.5737919999519363, 0.4618329999502748,
+        0.24687499995343387, 0.3566669999854639, 0.4763340000063181, 0.4139169999398291,
+        0.5363749999087304, 0.5897080000722781, 0.3997090000193566, 0.5726250000298023,
+        0.2456669999519363, 0.33937500009778887, 0.23008400003891438, 0.3065410000272095,
+        0.25462500005960464, 0.565000000060536, 0.29891699994914234, 0.19854100001975894,
+        0.5857919999398291, 0.5598749999189749, 0.5913329999893904, 0.3855840000323951,
+        0.540999999968335, 0.6911250000121072, 0.30099999997764826, 0.3522499999962747,
+        0.2558330000611022, 0.18525000009685755, 0.22016699996311218, 0.724250000086613,
+        0.2973329999949783, 0.3895829999819398, 0.2592919999733567, 0.18066699989140034,
+        0.20979200000874698, 0.27545900002587587, 0.2920829999493435, 0.3261669999919832,
+        0.5901249999878928, 0.21016600006259978, 0.713249999913387, 0.44933299999684095,
+        0.29112499998882413, 0.28808399999979883, 0.2299580000108108
+      ],
+      "scale": {
+        "channels": 38,
+        "actuators": 4,
+        "providers": 8,
+        "candidatesPerProvider": 32,
+        "candidatesGlobal": 64,
+        "subscriptions": 32,
+        "queueBytes": 262144,
+        "journalEntries": 64
+      },
+      "measurements": {
+        "transport": [
+          7.410249999957159, 9.21712500002468, 5.228499999968335, 6.906666999973822,
+          19.629917000012938, 5.963166999979876, 9.20595900004264, 7.787624999997206,
+          7.510959000035655, 6.462457999994513, 8.785083000024315, 4.732583000033628,
+          6.888875000004191, 6.305583999957889, 9.23679200001061, 3.4637499999953434,
+          3.6056249999674037, 4.961875000037253, 2.9434170000022277, 8.287250000052154,
+          6.512250000028871, 9.05058400001144, 5.798792000045069, 8.965625000011642,
+          4.204582999984268, 7.200874999980442, 18.007415999949444, 7.5559579999535345,
+          9.559042000037152, 6.518166999972891, 8.339541000023019, 5.21404099999927,
+          8.237666000030003, 8.236124999995809, 3.398457999981474, 5.78224999998929,
+          8.739165999984834, 7.568124999990687, 6.513999999966472, 5.162125000031665,
+          5.473708000034094, 4.141582999960519, 7.303124999976717, 7.2633330000098795,
+          2.260333999991417, 8.749542000005022, 7.50633399997605, 7.91920800000662,
+          15.333332999958657, 7.184999999997672, 8.022499999962747, 6.007790999952704,
+          9.210292000032496, 5.822249999968335, 2.8127089999616146, 5.638500000000931,
+          8.248041999991983, 5.847917000006419, 9.656957999977749, 5.863207999966107,
+          6.8195830000331625, 8.811667000001762, 2.046459000033792, 8.849541999981739,
+          6.9748750000144355, 9.099417000019457, 6.5166669999598525, 6.427832999965176,
+          5.65770900005009, 7.580750000022817, 18.63625000003958, 8.497124999994412,
+          6.706541000050493, 3.845499999995809, 4.177832999965176, 4.890707999991719,
+          9.086582999967504, 7.59133299998939, 6.41816599998856, 4.9546250000130385,
+          5.987124999985099, 1.7469580000033602, 7.070416999980807, 6.516084000002593,
+          7.235832999984268, 6.948334000015166, 6.338166999979876, 8.113000000012107,
+          5.320084000006318, 7.09412500000326, 8.11645899998257, 11.329541000013705,
+          6.457959000021219, 7.993917000014335, 9.440583000017796, 6.987292000034358,
+          11.258791000000201, 8.248083000013139, 9.458999999973457, 3.068874999997206,
+          8.604707999969833, 6.524458999978378, 7.827291000052355, 5.717084000003524,
+          5.749625000054948, 9.244166999938898, 5.922332999994978, 9.479459000052884,
+          6.637749999994412, 7.20920899999328, 5.172209000098519, 8.799750000005588,
+          7.5791250000474975, 8.50954100000672, 2.513249999959953, 8.319459000020288,
+          8.571041999966837, 5.090416999999434, 8.058957999921404, 6.635957999969833,
+          8.966833000071347, 6.677167000016198, 8.755707999924198, 8.803707999992184,
+          7.077667000005022, 6.620374999940395, 6.226000000024214, 9.207707999972627,
+          7.894917000085115, 8.63179199991282, 8.378207999980077, 7.383416999946348,
+          6.890125000034459, 6.234540999983437, 7.1295000000391155, 5.799708000035025,
+          5.628290999913588, 6.643959000008181, 7.1965419999323785, 5.476750000030734,
+          8.934624999994412, 6.707916000043042, 9.529290999984369, 7.599166000029072,
+          6.184584000031464, 6.712917000055313, 8.761582999955863, 3.9269999999087304,
+          5.801624999963678, 9.555082999984734, 5.843500000075437, 9.434417000040412,
+          5.071082999929786, 8.707999999984168, 2.9668340000789613, 8.860583000001498,
+          8.04529099992942, 9.131290999939665, 7.6736670000245795, 9.457458000048064,
+          5.233166999998502, 6.116541999974288, 8.66024999995716, 7.115875000017695,
+          6.563750000088476, 7.387290999991819, 6.411833999911323, 6.390583000029437,
+          6.530333000002429, 4.8362090000882745, 5.572417000075802, 8.784708000021055,
+          7.400416999938898, 9.775249999947846, 6.940624999930151, 8.930832999991253,
+          7.01029100001324, 7.344749999931082, 6.888917000032961, 9.076791999978013,
+          5.921165999956429, 9.569125000038184, 8.211584000033326, 6.404499999945983,
+          8.82758299994748, 5.178916999953799, 9.129542000009678, 6.680541999987327,
+          8.030957999988459, 4.558874999987893, 4.8723330000648275, 17.473541000043042,
+          6.076791999978013, 10.889666999923065, 6.307832999969833, 8.460332999937236,
+          6.249082999886014, 6.983000000007451, 7.683916999958456, 7.253999999957159,
+          6.740542000043206, 12.930875000078231, 10.098291000002064, 6.538416999974288,
+          9.303040999919176, 5.002749999985099, 7.493041999987327, 6.8326250000391155,
+          7.473291000002064, 6.939833999960683, 7.772583000012673, 6.572000000043772,
+          9.857583000091836, 8.831749999895692, 4.602834000019357, 10.826708000036888,
+          7.078374999924563, 8.66358300007414, 6.288958000019193, 9.380791999981739,
+          6.625250000040978, 8.246583000058308, 16.611000000033528, 2.1858750000828877,
+          10.870665999944322, 8.137374999932945, 10.117042000056244, 4.093208999955095,
+          9.461499999975786, 5.8912500001024455, 10.082999999984168, 7.048125000088476,
+          9.44316699996125, 16.19324999989476, 6.2522919999901205, 8.774165999959223,
+          5.529834000044502, 8.328250000020489, 1.8002500000875443, 8.862333000055514,
+          6.162165999994613, 9.27316699991934, 7.756958000012673, 8.727542000007816,
+          9.259917000075802, 3.0042920000851154, 9.706000000005588, 1.7630829999689013,
+          6.212583000073209, 5.5204999999841675, 7.116665999987163, 6.827749999938533,
+          9.140499999979511, 6.187999999965541, 7.679125000024214, 7.364166999934241
+        ],
+        "readback": [
+          12.00037500000326, 10.678332999988925, 10.346083000011276, 10.99466600001324,
+          11.266084000002593, 11.391208999964874, 10.853667000017595, 10.850458000029903,
+          10.385834000015166, 10.858667000022251, 11.268209000001661, 10.778292000002693,
+          11.275250000006054, 11.474583000002895, 11.869624999992084, 10.819458000012673,
+          10.396833000006154, 10.984791000024416, 11.310667000012472, 10.150332999997772,
+          11.98499999998603, 10.815083000052255, 11.080916000006255, 10.82887500000652,
+          9.843624999979511, 11.50095799996052, 10.612375000026077, 11.023417000018526,
+          10.18783299997449, 11.224459000048228, 11.647916999994777, 11.319250000000466,
+          10.321374999999534, 10.955040999979246, 11.815125000022817, 12.12575000000652,
+          10.8899579999852, 11.68570799997542, 10.585000000020955, 11.14087499998277,
+          11.074250000005122, 10.824459000024945, 10.821666999952868, 10.964542000030633,
+          11.265499999979511, 10.258708000008482, 10.775625000009313, 10.780665999976918,
+          11.475875000003725, 11.484625000040978, 10.115625000034925, 11.87533299997449,
+          10.670792000018992, 10.750708999985363, 10.663832999998704, 11.347958000027575,
+          11.182333000004292, 11.109708999982104, 10.420084000041243, 10.930290999996942,
+          10.76216599997133, 11.505082999996375, 10.724041000008583, 11.476834000030067,
+          10.587124999961816, 10.917167000006884, 10.51891699997941, 11.342124999966472,
+          11.113458000007086, 10.28008299996145, 10.638166000018828, 11.079084000026342,
+          10.749583000026178, 10.706624999991618, 11.33012499997858, 9.759582999977283,
+          11.324958000041079, 11.580833999963943, 11.224749999993946, 10.26620799995726,
+          11.065708000038285, 10.678167000005487, 10.759791999997105, 11.258458000025712,
+          11.27166699996451, 10.449000000022352, 10.360875000013039, 11.118124999979045,
+          10.400499999988824, 11.572999999974854, 10.538709000044037, 11.786375000025146,
+          10.309624999994412, 10.813332999998238, 10.841917000012472, 11.64179200003855,
+          11.055041999963578, 11.956957999966107, 11.062375000037719, 11.140959000040311,
+          10.761667000013404, 10.747457999968901, 11.115292000002228, 10.777999999932945,
+          10.426541000022553, 10.83429199992679, 10.967291999957524, 12.146707999985665,
+          11.101332999998704, 11.374500000034459, 11.192875000066124, 10.64387499995064,
+          11.482000000076368, 11.446042000083253, 10.284041999955662, 10.09104200010188,
+          10.483250000048429, 11.229874999960884, 10.924624999985099, 10.742583999992348,
+          11.302665999974124, 10.435874999966472, 10.749084000010043, 10.777957999962382,
+          11.257208000053652, 11.256832999992184, 11.146417000098154, 11.665541999973357,
+          11.403166999923997, 11.241500000003725, 11.614667000016198, 10.170999999972992,
+          10.231541999964975, 11.132374999928288, 10.303957999916747, 11.727833000011742,
+          11.695416000089608, 11.345291999983601, 11.11533399997279, 11.640083000063896,
+          10.663541999994777, 10.649875000002794, 10.787790999980643, 11.170665999990888,
+          11.231374999973923, 10.354708999977447, 11.397583000012673, 11.43612500000745,
+          11.083875000011176, 11.286958000040613, 11.333833000040613, 11.586292000021785,
+          11.252166999969631, 11.34041599999182, 11.153833999997005, 10.814833000069484,
+          14.067999999970198, 10.726541999960318, 10.670874999952503, 11.063666999922134,
+          12.827875000075437, 11.880832999944687, 12.115708000026643, 11.312249999959022,
+          10.893917000037618, 12.254874999984168, 12.09187500004191, 11.025541999959387,
+          10.11158299993258, 12.306457999977283, 11.417459000018425, 11.45879199996125,
+          12.070874999975786, 12.400541999959387, 11.866334000020288, 10.716207999968901,
+          11.271167000057176, 11.076000000000931, 10.991208999999799, 12.178750000079162,
+          12.100124999997206, 11.725750000099652, 12.314958000089973, 12.57874999998603,
+          11.35108300007414, 12.27758300001733, 11.523125000065193, 12.782791999983601,
+          11.349667000002228, 10.028167000040412, 11.68362500006333, 11.073959000059403,
+          11.842958000022918, 11.660167000023648, 10.574541999958456, 11.37562499998603,
+          12.073250000015832, 12.286333000054583, 11.823084000032395, 13.018750000046566,
+          11.587249999982305, 11.552041999995708, 11.065082999994047, 12.654499999945983,
+          11.532665999955498, 11.57750000001397, 11.695540999993682, 11.68308300001081,
+          11.719375000102445, 13.021958000026643, 12.532125000027008, 11.068542000022717,
+          12.632708999910392, 11.35666599997785, 11.72704199992586, 11.675625000032596,
+          9.593583000008948, 11.406416999991052, 11.69212499994319, 11.850416000001132,
+          11.17283400008455, 11.06574999995064, 11.667207999969833, 12.868625000002794,
+          10.43520800000988, 12.609832999994978, 13.063333999947645, 11.282125000027008,
+          12.29866700002458, 12.031583000090905, 12.259083999902941, 12.392041999963112,
+          11.108874999918044, 11.668458000058308, 12.133999999961816, 11.166874999995343,
+          11.201083000050858, 12.57308300002478, 11.682666999986395, 11.48145800002385,
+          11.990916999988258, 12.446708000032231, 11.280374999972992, 12.1834159999853,
+          12.202958000008948, 12.607333999942057, 10.043583999969997, 11.918458999949507,
+          12.914833000046201, 11.083250000025146, 13.035833999980241, 11.814125000033528,
+          10.403457999927923, 11.017208999954164, 11.343833000049926, 12.050792000023648
+        ],
+        "journal": [
+          0.269334000069648, 0.266416999977082, 0.2643339999485761, 0.23095799994189292,
+          0.34020800003781915, 0.3792080000275746, 0.29425000003539026, 0.26662500004749745,
+          0.33645800000522286, 0.37204099993687123, 0.23400000005494803, 0.2694589999737218,
+          0.341084000072442, 0.31804200005717576, 0.21704100002534688, 0.2035000000614673,
+          0.3427920000394806, 0.38554099993780255, 0.23645800002850592, 0.2927090000594035,
+          0.23158299992792308, 0.2669999999925494, 0.27641699998639524, 0.21158300002571195,
+          0.2728329999372363, 0.32433299999684095, 0.36104200000409037, 0.3407080000033602,
+          0.2882500000996515, 0.3246250000083819, 0.23929199995473027, 0.2661669999361038,
+          0.23783300002105534, 0.27245799999218434, 0.3390839999774471, 0.38179199991282076,
+          0.17058300005737692, 0.16891699994448572, 0.2702499999431893, 0.2661250000819564,
+          0.2104579999577254, 0.28970800002571195, 0.2679579999530688, 0.3383749999338761,
+          0.3051669999258593, 0.3378329999977723, 0.2735419999808073, 0.24658299994189292,
+          0.27129199996124953, 0.32679199997801334, 0.24995799991302192, 0.27545899990946054,
+          0.2336669999640435, 0.28483300004154444, 0.2500839999411255, 0.26745800010394305,
+          0.32499999995343387, 0.3927499999990687, 0.2726249999832362, 0.28387499996460974,
+          0.3765409999759868, 0.30112499999813735, 0.277957999962382, 0.32874999998603016,
+          0.2047499999171123, 0.22879199997987598, 0.30487500003073364, 0.34195799997542053,
+          0.23300000000745058, 0.2704999999841675, 0.400666999979876, 0.3804999999701977,
+          0.231000000028871, 0.26591600000392646, 0.3049999999348074, 0.39033299998845905,
+          0.24600000004284084, 0.2737920000217855, 0.331499999971129, 0.39954100002069026,
+          0.23349999997299165, 0.2419590000063181, 0.28004199999850243, 0.2741670000832528,
+          0.2022080000024289, 0.22745799995027483, 0.3293749999720603, 0.4001670000143349,
+          0.35383400006685406, 0.23820800008252263, 0.3543749999953434, 0.27324999996926636,
+          0.35499999998137355, 0.38412499998230487, 0.1297920000506565, 0.15145800006575882,
+          0.3887910000048578, 0.39316600002348423, 0.2771659999853, 0.24470899999141693,
+          0.3322080000070855, 0.38437500002328306, 0.30883300001733005, 0.27212500001769513,
+          0.3438339999411255, 0.33899999991990626, 0.3496670000022277, 0.2370419999351725,
+          0.26254200004041195, 0.26720899995416403, 0.4194170000264421, 0.2787919999100268,
+          0.27474999998230487, 0.2695000000530854, 0.33166699996218085, 0.35258400009479374,
+          0.3299999999580905, 0.3465840000426397, 0.39570799993816763, 0.38683299999684095,
+          0.274500000057742, 0.27037500008009374, 0.3208749999757856, 0.3225000000093132,
+          0.1943749999627471, 0.12425000010989606, 0.2937089999904856, 0.2756250000093132,
+          0.36525000003166497, 0.3149579999735579, 0.2910420000553131, 0.31245800002943724,
+          0.32329100009519607, 0.4135000000242144, 0.268207999994047, 0.23412500007543713,
+          0.34395900007802993, 0.35441700008232147, 0.2415000000037253, 0.27208399993833154,
+          0.31220899999607354, 0.3794169999891892, 0.23549999995157123, 0.23479100002441555,
+          0.34295799990650266, 0.3364999999757856, 0.2123340000398457, 0.21050000004470348,
+          0.2692500000121072, 0.3407080000033602, 0.3376670000143349, 0.3201669999398291,
+          0.2721669999882579, 0.3302090000361204, 0.27862499991897494, 0.35099999990779907,
+          0.23779099993407726, 0.23304199997801334, 0.2671250000130385, 0.3352089999243617,
+          0.23479100002441555, 0.2817919999361038, 0.3426250000484288, 0.21891600009985268,
+          0.23095799994189292, 0.26441599999088794, 0.3897920000599697, 0.38145799993071705,
+          0.2753329999977723, 0.3499580000061542, 0.26658399996813387, 0.2711249999701977,
+          0.2772910000057891, 0.32679099997039884, 0.2736670000012964, 0.33904200000688434,
+          0.3445829999400303, 0.37983400002121925, 0.23479200003203005, 0.26895800000056624,
+          0.2931249999674037, 0.30937499995343387, 0.32154200004879385, 0.19887500000186265,
+          0.35733399994205683, 0.3586660000728443, 0.2506659999489784, 0.25287500000558794,
+          0.3055829999502748, 0.3218330000527203, 0.15708299994003028, 0.13933400006499141,
+          0.28970800002571195, 0.20762500003911555, 0.24320799997076392, 0.2692500000121072,
+          0.4170830000657588, 0.34825000003911555, 0.2827500000130385, 0.2799579999409616,
+          0.3023329999996349, 0.29412500001490116, 0.3606659999350086, 0.3997919999528676,
+          0.3935830000555143, 0.3486659999471158, 0.3390000000363216, 0.3937920000171289,
+          0.3326249999227002, 0.2687499999301508, 0.2844170000171289, 0.31225000007543713,
+          0.4077500000130385, 0.4535840000025928, 0.27674999996088445, 0.2687920000171289,
+          0.4038329999893904, 0.2704169999342412, 0.27362500003073364, 0.2706250000046566,
+          0.14358299993909895, 0.12441600009333342, 0.27512500004377216, 0.3216669999528676,
+          0.37833300000056624, 0.3604170000180602, 0.28004199999850243, 0.2717089999932796,
+          0.35970800009090453, 0.3276659999974072, 0.23649999999906868, 0.2768330000108108,
+          0.2695829999865964, 0.16820899990852922, 0.17429200001060963, 0.18637500004842877,
+          0.2742500000167638, 0.3232500000158325, 0.1293340000556782, 0.1457500000251457,
+          0.233665999956429, 0.20162499998696148, 0.3224169999593869, 0.3488749999087304,
+          0.28679199994076043, 0.23433300002943724, 0.34637499996460974, 0.34883299993816763,
+          0.28025000006891787, 0.30741700006183237, 0.3404999999329448, 0.36887500004377216,
+          0.23579199996311218, 0.29166699992492795, 0.24570899992249906, 0.26558400003705174
+        ]
+      },
+      "environment": {
+        "commit": "8b1f4d785b0164aa2f4527c625168422a600a660",
+        "bundle": {
+          "dirty": false,
+          "sha256": {
+            "main.cjs": "8d2abebd95094a54d024145062ddc214ac1a784878e59b4f243bec435674b457",
+            "js/consumer.cjs": "f78153cd50cf38a064426dbfebf253c15a00036d4df607df020acdcc4407f199",
+            "python/consumer.py": "5432101bf8185420b0a537d813ae1be1d66c34b3c542458292f800d7440dbfbe",
+            "stall.cjs": "f91e0b6389df6e6b2ca4125239dd153f637e436b9b2025493c80a7086f5a9b9e"
+          }
+        },
+        "artifact": "source-bundled synthetic-provider load",
+        "os": "darwin",
+        "arch": "arm64",
+        "cpu": "Apple M4",
+        "ramBytes": 17179869184,
+        "filesystem": "in-memory journal; no durability claim",
+        "node": "v24.21.0",
+        "electron": "44.7.0",
+        "warmCold": "5s warmup then 600s measurement",
+        "memoryMethod": "forced GC retained heap, 60s samples; latency arrays retain last 256 observations"
+      },
+      "traffic": {
+        "deliveredBytes": 158787662,
+        "peakQueuedBytes": 262139,
+        "overflowFrames": 18210,
+        "acknowledgement": "batched at 1000 ms; ACK-timeout revocation tested by F13",
+        "queueBudgetAssertion": "F13 owner test"
+      }
+    },
+    "stall": "child-entered-and-killed"
+  }
+}

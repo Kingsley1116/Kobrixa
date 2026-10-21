@@ -1,28 +1,28 @@
 # API 1.5.0 device foundation acceptance
 
-Status: IN REVIEW — CHANGES REQUIRED (2026-10-21). Automated evidence below has been executed; this is not a P150 publication or merge approval. Native Codex took over after the Claude review quota ended. Independent T9 corrections passed at `e1845a0`. Final cross-slice review of F through `90a2b39` reproduced four Important defects: clean wake admission, EV3 mode-change preflight identity, reconnect after native loss, and broker catalog reconciliation after observed source changes. Their correction and independent re-review remain pending. Physical/manual and installed-app acceptance remains open.
+Status: REVIEW FIXES CLOSED; AUTOMATED FOUNDATION EVIDENCE RECORDED (2026-10-22). Independent Codex review closed the four integration findings and both residual identity/wake cases at `8b1f4d7`, with no remaining findings in that scoped review. This is a feature-branch integration candidate, not blanket acceptance or shared-line merge approval. The general desktop smoke and packaged static-language gate remain failed as documented below; physical/manual, installed-app and future real persistence acceptance remain open.
 
-| Gate                         | Status                                         | Evidence required                                                                                                |
-| ---------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| F baseline                   | verified                                       | Exact real 40-character SHA, freeze receipt and ancestor check                                                   |
-| R150 / K150 / V150           | reviewed; receipt below                        | Three owner commits, exact touched paths, stopped-owner receipts                                                 |
-| P150 schema and two SDKs     | schema/SDK tests pass                          | Generated TS/Python schema equality, clean second generation, exact 1.5.0 registry                               |
-| F01–F21 automated matrix     | PASS including corrected F09 fault attribution | Nonempty named assertions in all mapped owner suites, command and exit code                                      |
-| Actual JS / Python transport | PASS including SDK callback receipt and ACK    | Electron MessagePort / Content-Length reports at the accepted commit                                             |
-| Ten-minute maximum workload  | PASS at clean 892bdb6                          | Measured occupancy, retained heap after GC, stop-dispatch p95 ≤50 ms and separate exchange/readback/journal data |
-| A-RF1–A-RF4                  | owner tests pass; physical acceptance open     | Named owner tests, public-path reproduction and reviewed trace                                                   |
-| A-RF5 / F19 fixture          | fixture tests pass                             | Reservation end during registration, original grant/deadline, healthy generation retained                        |
-| A-RF5 / F19 real persistence | pending X-T1                                   | Real B2 participant after P170; fixture evidence cannot close this row                                           |
-| A-M01                        | unverified                                     | USB/Wi-Fi physical motion bounds and readback                                                                    |
-| A-M02                        | unverified                                     | Release/hide/hang/kill/disable during pending start/arm                                                          |
-| A-M03                        | unverified                                     | Lost transport/reply, identity and reconciliation                                                                |
-| A-M04                        | unverified                                     | Collaboration roles and authority loss at consequential boundaries                                               |
-| A-M05                        | unverified                                     | Four-channel reservation, Disconnect/suspend final-read behavior; 3D save separately                             |
-| A-M06                        | unverified                                     | 120/600-second file confirmation, partial transfer, weak Wi-Fi                                                   |
-| A-M07                        | unverified                                     | Disk failure and crash/restart journal recovery                                                                  |
-| A-M08                        | unverified                                     | Installed native provider, no checkout/external Node, second instance and delivered OS matrix                    |
-| Stage-2 V01–V04              | carried forward                                | Preserve original exception status and evidence; no automatic closure                                            |
-| 3C / 3D / 3E                 | outside foundation acceptance                  | Product motor proof / Lab migration / final closeout                                                             |
+| Gate                         | Status                                          | Evidence required                                                                                                |
+| ---------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| F baseline                   | verified                                        | Exact real 40-character SHA, freeze receipt and ancestor check                                                   |
+| R150 / K150 / V150           | reviewed; receipt below                         | Three owner commits, exact touched paths, stopped-owner receipts                                                 |
+| P150 schema and two SDKs     | schema/SDK tests pass                           | Generated TS/Python schema equality, clean second generation, exact 1.5.0 registry                               |
+| F01–F21 automated matrix     | PASS including corrected F09 fault attribution  | Nonempty named assertions in all mapped owner suites, command and exit code                                      |
+| Actual JS / Python transport | PASS at clean 8b1f4d7 including SDK receipt/ACK | Electron MessagePort / Content-Length reports at the accepted commit                                             |
+| Ten-minute maximum workload  | PASS at clean 8b1f4d7                           | Measured occupancy, retained heap after GC, stop-dispatch p95 ≤50 ms and separate exchange/readback/journal data |
+| A-RF1–A-RF4                  | owner tests pass; physical acceptance open      | Named owner tests, public-path reproduction and reviewed trace                                                   |
+| A-RF5 / F19 fixture          | fixture tests pass                              | Reservation end during registration, original grant/deadline, healthy generation retained                        |
+| A-RF5 / F19 real persistence | pending X-T1                                    | Real B2 participant after P170; fixture evidence cannot close this row                                           |
+| A-M01                        | unverified                                      | USB/Wi-Fi physical motion bounds and readback                                                                    |
+| A-M02                        | unverified                                      | Release/hide/hang/kill/disable during pending start/arm                                                          |
+| A-M03                        | unverified                                      | Lost transport/reply, identity and reconciliation                                                                |
+| A-M04                        | unverified                                      | Collaboration roles and authority loss at consequential boundaries                                               |
+| A-M05                        | unverified                                      | Four-channel reservation, Disconnect/suspend final-read behavior; 3D save separately                             |
+| A-M06                        | unverified                                      | 120/600-second file confirmation, partial transfer, weak Wi-Fi                                                   |
+| A-M07                        | unverified                                      | Disk failure and crash/restart journal recovery                                                                  |
+| A-M08                        | unverified                                      | Installed native provider, no checkout/external Node, second instance and delivered OS matrix                    |
+| Stage-2 V01–V04              | carried forward                                 | Preserve original exception status and evidence; no automatic closure                                            |
+| 3C / 3D / 3E                 | outside foundation acceptance                   | Product motor proof / Lab migration / final closeout                                                             |
 
 For each executed row record command, exit code, commit, artifact identity, OS/architecture, CPU/RAM/filesystem, Node/Electron, fixture bytes/records/limits, warm/cold, sample count, p50/p95/max and memory metric/GC method. For hardware also record brick/firmware, transport, timestamp, observer, action, observed physical outcome and fault/log references. Missing Python or skipped manual work remains unverified.
 
@@ -30,7 +30,33 @@ Safety disposition: unresolved stop, journal failure or pending legacy Lab save 
 
 Publication: F → D150/R150/K150/V150 + T1–T9 → P150 → user no-ff merge to stage-3 → B1/B2 synchronize. Do not publish 1.6/1.7 in this batch. Real persistence integration is checked by X-T1 after the user has merged P150, P160 and P170.
 
-## Executed evidence — 2026-10-21
+## Final correction and measured evidence — 2026-10-22
+
+Tested implementation: `8b1f4d785b0164aa2f4527c625168422a600a660`; baseline F remains an ancestor. The subsequent acceptance commit only stores this evidence. No stage/main merge, history rewrite or API 1.6/1.7 publication occurred.
+
+- Final integration corrections `4a03d74` and `8b1f4d7` reconcile clean/later recovery wake, broker admission and EV3 catalog identity, and retire native-loss state before reconnect. Independent scoped Codex re-review of `a21f079..8b1f4d7`: **Spec PASS / Quality PASS, 0 Critical / 0 Important / 0 Minor**. The original two residual probes passed against the real broker/EV3/coordinator composition with controlled native IO/journal seams; they do not establish physical or installed-app acceptance.
+- `pnpm test:desktop` at 8b1f4d7: the retained log records **3,509 Vitest PASS / 9 historical skips**, followed by **164 bytecode / 34 release / 38 Python / 39 static-language / 13 device Node passes**. The combined command's final exit object was lost when the user interrupted the session; these are logged suite results, not an invented observed overall exit code. The earlier two formatting-sensitive source-assertion failures were corrected separately in `a21f079` without changing their guard requirements.
+- `pnpm check:desktop` at 8b1f4d7: observed **exit 0**, including dependent type checks and ESLint. The fix implementer also recorded 190 focused passes, including 15 new cases; unchanged broad gates were not repeated solely for receipt updates.
+- `node tests/desktop/device-broker-run.mjs --load`: observed **exit 0** at clean 8b1f4d7. [Raw transport/load report, hashes and environment](../evidence/2026-10-22-3a-device-broker.json) preserves the actual measured arrays and artifact identities. Both outer source identity and nested load environment agree with the fixed commit. Actual JS Electron MessagePort/Python Content-Length checks retain negotiation, SDK callback/ACK, withheld-event and retired-owner assertions. The separate synchronous-stall child entered its marker and was killed, with absence checked.
+
+After the unchanged 5-second warmup, maximum synthetic workload ran **600,374 ms**. The queue peaked at **262,139/262,144 bytes** with **18,210 overflow frames** under responsive batched ACK pressure. All 11 forced-GC heap samples satisfied the specified bounded-growth guard. The workload uses the same 8 providers, 32 candidates each/64 global, 38 channels, 4 actuators, 32 subscriptions and 64 journal entries.
+
+| Measurement  | Samples |  p50 ms |  p95 ms | Maximum ms |
+| ------------ | ------: | ------: | ------: | ---------: |
+| stopDispatch |    1100 |  0.3245 |  0.6911 |     1.0313 |
+| transport    |     256 |  7.1850 | 10.8267 |    19.6299 |
+| readback     |     256 | 11.2415 | 12.6073 |    14.0680 |
+| journal      |     256 |  0.2803 |  0.3936 |     0.4536 |
+
+Stop dispatch is measured at the guarded dispatch boundary, not physical motor stop. Transport/readback and in-memory journal are separate observations; durable disk latency, firmware, native memory and installed OS behavior are not inferred. The interrupted load at 4a03d74 remains incomplete and is superseded by this successful fixed-commit run, not relabelled as passed.
+
+### Remaining integration and acceptance work
+
+The general smoke still requires the D160 fixture migration from obsolete monitor/Lab/motor dependencies. The packaged smoke still exposes the pre-existing 2C workspace text-file admission policy gap. Their failed outcomes and later unreached phases remain recorded in the historical evidence below. No assertion was skipped to close either gate. A-M01–A-M08, X-T1 with real B2 persistence, stage-2 V01–V04 and future 3C/3D/3E remain open.
+
+Stopped-owner handoffs retain their exact historical commits below. Follow-up D150/broker/provider corrections are `4a03d74` and `8b1f4d7`; source-assertion correction is `a21f079`. No concurrent writer owns these A slices. This receipt does not authorize a new H-D/H-R/H-K/H-V writer before the user-approved P150 stage synchronization. B1 must preserve P160/API 1.6 and combine both SDK index.ts changes during that synchronization.
+
+## Historical executed evidence — 2026-10-21
 
 Baseline F is `828918770d4911e59bbe65f179d1c8de6dbcc2cf`; it is an ancestor of the tested A branch. The shared stage branch remains `6abbdf266047f64b2928f427b3499bedc6fae5a2` (plans). No shared-line merge or history rewrite was performed.
 
