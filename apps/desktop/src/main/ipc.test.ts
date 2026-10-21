@@ -325,6 +325,7 @@ async function foundationIpc(legacyMetadata = false) {
       beforeClose: () => coordinator.close("close") });
   const event = { sender: renderer, senderFrame: renderer.mainFrame };
   return { composition, controller, broker, coordinator, control, peer, owner, principal, scope,
+    providerGeneration: connected.value.session.providerGeneration,
     ledger, journal, fs, legacyFlush, shutdown, commands, authority, report, renderer, event, sessionId, root, update, installer, connectionBudgets, catalogs, controls,
     advance: (ms: number) => { elapsed += ms; },
     dropStartResponse: () => { dropStartReply = true; }, droppedReplies: () => droppedReplies,
@@ -706,6 +707,99 @@ it("D150 Disconnect also waits for a concurrent current-stop's final journal pub
     finally { allowSync.resolve(); await Promise.all([stop, disconnect]); sync.mockRestore(); }
     expect(f.journal.snapshot().blockers).toEqual([]);
   } finally { await f.cleanup(); }
+});
+
+it.each(["shutdown", "disconnect", "provider"] as const)("D150 later recovery after blocked Disconnect keeps %s pending through its final journal", async teardown => {
+  const f = await foundationIpc();
+  const quiesce = vi.spyOn(f.broker.sessions, "quiesce");
+  const physical = vi.spyOn(f.broker.sessions, "disconnect");
+  const synced = deferredIpc<void>(), allowSync = deferredIpc<void>();
+  let stop: Promise<unknown> | undefined, pending: Promise<unknown> | undefined;
+  let releaseReadback = false;
+  let restoreSync = () => {};
+  try {
+    f.legacyFlush.mockRejectedValueOnce(new Error("Lab save failed"));
+    await expect(f.call("device:disconnect", f.sessionId)).rejects.toThrow("Lab save failed");
+    const first = quiesce.mock.results[0]!.value;
+    await expect(first.settled).resolves.toMatchObject({ stopConfirmed: true, journalCommitted: true });
+    f.control.block("after-exchange", "readback"); releaseReadback = true;
+    stop = Promise.resolve(f.call("device:stop", f.sessionId));
+    await f.control.reached("after-exchange", "readback");
+    const original = f.fs.syncDirectory.bind(f.fs);
+    const sync = vi.spyOn(f.fs, "syncDirectory").mockImplementation(async () => {
+      synced.resolve(); await allowSync.promise; await original();
+    });
+    restoreSync = () => sync.mockRestore();
+    let settled = false;
+    pending = Promise.resolve(teardown === "shutdown" ? f.composition.dispose() : teardown === "provider"
+      ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration) : f.call("device:disconnect", f.sessionId))
+      .finally(() => { settled = true; });
+    void pending.catch(() => {});
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(f.shutdown).not.toHaveBeenCalled();
+    f.control.release("after-exchange", "readback"); releaseReadback = false;
+    await synced.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(physical).not.toHaveBeenCalled();
+    expect(f.shutdown).not.toHaveBeenCalled();
+    expect(f.journal.snapshot().blockers).toHaveLength(1);
+    if (teardown === "disconnect") expect(quiesce.mock.results[1]!.value).toBe(first);
+    allowSync.resolve(); await stop; await pending;
+    expect(f.journal.snapshot().blockers).toEqual([]);
+    expect(f.control.trace().filter(row => row.step === "stop" && row.dispatch === "sent")).toHaveLength(1);
+    if (teardown === "shutdown") expect(f.shutdown).toHaveBeenCalledOnce();
+    else if (teardown === "disconnect") expect(physical).toHaveBeenCalledOnce();
+    else await expect(pending).resolves.toMatchObject({ stopConfirmed: true, journalCommitted: true });
+  } finally {
+    if (releaseReadback) f.control.release("after-exchange", "readback");
+    allowSync.resolve();
+    await Promise.allSettled([stop, pending]); restoreSync(); await f.cleanup();
+  }
+});
+it("D150 later failed recovery after blocked Disconnect prevents actual composition disposal", async () => {
+  const f = await foundationIpc();
+  let blocked = false;
+  try {
+    f.legacyFlush.mockRejectedValueOnce(new Error("Lab save failed"));
+    await expect(f.call("device:disconnect", f.sessionId)).rejects.toThrow("Lab save failed");
+    f.control.block("after-exchange", "readback");
+    const stop = expect(f.call("device:stop", f.sessionId)).rejects.toThrow();
+    await f.control.reached("after-exchange", "readback");
+    const sync = vi.spyOn(f.fs, "sync").mockRejectedValueOnce(new Error("final sync failed"));
+    f.control.release("after-exchange", "readback"); await stop; sync.mockRestore();
+    expect(f.journal.snapshot().journalHealth).toBe("unwritable");
+    expect(f.journal.snapshot().blockers).toHaveLength(1);
+    const outcome = await f.composition.dispose().then(() => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }));
+    blocked = !outcome.ok;
+    expect(outcome.ok).toBe(false);
+    expect(f.shutdown).not.toHaveBeenCalled();
+    await expect(f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration))
+      .resolves.toMatchObject({ stopConfirmed: false, journalCommitted: false, faultIds: f.journal.snapshot().blockers });
+    await expect(f.call("device:disconnect", f.sessionId)).rejects.toThrow("disposition");
+    expect(f.control.trace().some(row => row.step === "disconnect")).toBe(false);
+    expect(await f.fs.read("faults.json")).not.toBeNull();
+  } finally { await f.cleanup(blocked); }
+});
+it("D150 a clean teardown receipt fences new recovery while legacy saving is pending", async () => {
+  const f = await foundationIpc();
+  const saving = deferredIpc<void>();
+  let dispose: Promise<void> | undefined;
+  try {
+    f.legacyFlush.mockImplementationOnce(() => saving.promise);
+    const shutdown = vi.spyOn(f.broker.resources, "beginShutdown");
+    dispose = f.composition.dispose();
+    await expect(shutdown.mock.results[0]!.value).resolves.toMatchObject({ stopConfirmed: true, journalCommitted: true });
+    expect(f.shutdown).not.toHaveBeenCalled();
+    const before = f.control.trace().length;
+    await expect(f.call("device:stop", f.sessionId)).rejects.toThrow();
+    expect(f.control.trace()).toHaveLength(before);
+    expect(f.journal.snapshot().faults).toEqual([]);
+    saving.resolve(); await dispose;
+    expect(f.shutdown).toHaveBeenCalledOnce();
+  } finally { saving.resolve(); await dispose; await f.cleanup(); }
 });
 
 import type { ProviderCatalogPort } from "./device-broker/provider.js";

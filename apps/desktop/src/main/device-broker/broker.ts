@@ -109,6 +109,7 @@ export function observeCoreTelemetryClosed(
 type Options = DeviceBrokerOptions;
 type Session = {
   recoveryDisposition?: Promise<DeviceDisposition>;
+  recoveryClosed?: boolean;
   snapshot: DeviceSessionSnapshot;
   sources: SourceCatalog;
   connection: ProviderConnection;
@@ -129,6 +130,19 @@ const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisp
     faultIds: [...new Set(all.flatMap((v) => v.faultIds))],
   };
 };
+// The first quiescence keeps its identity and original operation receipts. New
+// explicit recovery can add evidence, but never restarts those operations/clocks.
+async function settleRecovery(current: Session, original: Promise<DeviceDisposition>, close = false): Promise<DeviceDisposition> {
+  for (;;) {
+    const recovery = current.recoveryDisposition;
+    const disposition = await merge(recovery ? [original, recovery] : [original]);
+    if (recovery !== current.recoveryDisposition) continue;
+    // A clean teardown receipt must not be invalidated by a newly admitted Stop
+    // while its caller awaits storage or process exit. Existing recovery is done.
+    if (close && disposition.stopConfirmed && disposition.journalCommitted) current.recoveryClosed = true;
+    return disposition;
+  }
+}
 const permissionFailure = (): never => {
   throw new BrokerFailure({
     ok: false,
@@ -503,13 +517,14 @@ export function createBroker(
     coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
-    if (current.recoveryDisposition) promises.push(current.recoveryDisposition);
     for (const operation of legacy.values())
       if (operation.session === current.snapshot.sessionId) {
         void operation.cancel();
         promises.push(operation.done);
       }
-    return { sessionId: current.snapshot.sessionId, ended, settled: merge(promises) };
+    const original = merge(promises);
+    return { sessionId: current.snapshot.sessionId, ended,
+      get settled() { return settleRecovery(current, original); } };
   };
   const sessions: DeviceBrokerPort["sessions"] = {
     quiesce(id, cause) {
@@ -533,7 +548,7 @@ export function createBroker(
           actionFailure();
         const quiescence = current.quiescence;
         if (!quiescence) return actionFailure();
-        const disposition = await quiescence.settled;
+        const disposition = await settleRecovery(current, quiescence.settled, true);
         if (!disposition.stopConfirmed || !disposition.journalCommitted)
           return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "readback-failed", "unknown");
         const core: Principal = {
@@ -598,7 +613,7 @@ export function createBroker(
       const current = session;
       if (!current || current.provider.id !== id || current.generation !== generation) return [];
       current.quiescence ??= finishSession(current, "disconnected");
-      return [current.quiescence.settled];
+      return [settleRecovery(current, current.quiescence.settled, true)];
     },
     revokeAll() {
       closing = true;
@@ -607,7 +622,7 @@ export function createBroker(
       events.dispose();
       if (!session) return [];
       session.quiescence ??= finishSession(session, "suspended");
-      return [session.quiescence.settled];
+      return [settleRecovery(session, session.quiescence.settled, true)];
     },
   };
   const resources = factories.participant(resourceDriver);
@@ -626,6 +641,7 @@ export function createBroker(
     async occupy(sessionId, work) {
       const current = session;
       if (!current || current.snapshot.sessionId !== sessionId) return stale();
+      if (current.recoveryClosed) return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
       if (reservations.active || coreReservations.active)
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
@@ -633,7 +649,9 @@ export function createBroker(
       // Session teardown must join recovery through final journal publication, not
       // merely wait for the last transport exchange to leave the lane.
       let settle!: (value: DeviceDisposition) => void;
-      current.recoveryDisposition = new Promise(resolve => { settle = resolve; });
+      const disposition = new Promise<DeviceDisposition>(resolve => { settle = resolve; });
+      current.recoveryDisposition = current.recoveryDisposition
+        ? merge([current.recoveryDisposition, disposition]) : disposition;
       let confirmed = false;
       const originalGeneration = current.generation,
         originalKey = current.connection.key;

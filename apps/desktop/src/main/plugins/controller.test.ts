@@ -2292,7 +2292,10 @@ it.each([false, true])("D150 native retirement destroyed=%s fences the old chann
   try {
     expect(await controller.execute("acme.window.greet")).toMatchObject({ ok: true });
     const oldOwner = owner;
-    const action = ledger.mint(scope, { kind: "device-current-stop", sessionId: randomUUID() });
+    const target = { kind: "device-current-stop" as const, sessionId: randomUUID() };
+    const action = ledger.mint(scope, target);
+    const claimed = ledger.mint(scope, target);
+    expect(ledger.claim(claimed, target)).toBe(true);
     let finish!: () => void;
     const disposition = new Promise<void>(resolve => { finish = resolve; });
     const resources = composition.foundation.broker.resources;
@@ -2314,7 +2317,8 @@ it.each([false, true])("D150 native retirement destroyed=%s fences the old chann
       scope: () => scope, invalidate, flush: async () => {}, pause });
     const pending = handler(destroyed);
     expect(invalidate).toHaveBeenCalledOnce();
-    expect(ledger.claim(action, { kind: "device-current-stop", sessionId: randomUUID() })).toBe(false);
+    expect(ledger.claim(action, target)).toBe(false);
+    expect(ledger.isClaimed(claimed, target)).toBe(false);
     expect(shutdown).not.toHaveBeenCalled(); expect(pause).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalledOnce(); expect(commands).toHaveBeenCalledOnce();
     finish(); await pending;
