@@ -1,3 +1,4 @@
+import type { SealedPayloadPin } from "./engine-port.js";
 import { randomUUID } from "node:crypto";
 import { RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
 import type {
@@ -19,7 +20,7 @@ import {
   ownerKey,
   stale,
   type RecordDependencies,
-  type RecordServicePort,
+  type RecordServiceHostPort,
 } from "./record-port.js";
 
 type Progress = Extract<StorageRequestMap["storage/writeStatus"]["result"], { ok: true }>["value"];
@@ -37,6 +38,7 @@ type Write = {
   last?: { offset: number; data: string; expiresAt: number };
   error?: Progress["error"];
   pending: Promise<unknown>;
+  retained?: SealedPayloadPin;
 };
 type Read = {
   owner: ResourceOwner;
@@ -57,8 +59,17 @@ type List = {
   bytes: number;
   closed: boolean;
 };
-export function createRecordService(deps: RecordDependencies): RecordServicePort {
+export function createRecordService(deps: RecordDependencies): RecordServiceHostPort {
   const writes = new Map<string, Write>();
+  const closingPins = new Set<Promise<void>>();
+  function releaseRetained(write: Write) {
+    if (!write.retained) return;
+    const pin = write.retained.pin;
+    delete write.retained;
+    const operation = deps.read.close(write.owner, pin);
+    closingPins.add(operation);
+    void operation.finally(() => closingPins.delete(operation)).catch(() => {});
+  }
   const targets = new Map<string, string>();
   const reads = new Map<string, Read>();
   const lists = new Map<string, List>();
@@ -105,6 +116,7 @@ export function createRecordService(deps: RecordDependencies): RecordServicePort
       }
       write.state = disposition === "committed" ? "publishing" : "expired";
       if (write.state === "expired") {
+        releaseRetained(write);
         write.terminal = deps.now();
         targets.delete(targetKey(write.owner, write.record.id));
       }
@@ -128,6 +140,7 @@ export function createRecordService(deps: RecordDependencies): RecordServicePort
   function committed(write: Write, receipt: Receipt<RecordRevision>) {
     delete write.error;
     write.state = "committed";
+    releaseRetained(write);
     write.receipt = receipt;
     write.terminal = deps.now();
     targets.delete(targetKey(write.owner, write.record.id));
@@ -228,8 +241,16 @@ export function createRecordService(deps: RecordDependencies): RecordServicePort
       writes.set(writeId, write);
       admitting.set(owner.sourceKey, admitting.get(owner.sourceKey)! - 1);
       admitted = false;
-      await deps.engine.reserve(ticket, input.byteLength);
-      await gate(write, signal);
+      const admission = (async () => {
+        const grant = deps.checkpoint.finalGrant?.(owner, input);
+        if (grant) {
+          if (!deps.engine.reserveFinal) stale();
+          await deps.engine.reserveFinal(ticket, input.byteLength, grant);
+        } else await deps.engine.reserve(ticket, input.byteLength);
+        await gate(write, signal);
+      })();
+      write.pending = admission;
+      await admission;
       return {
         ok: true as const,
         value: { write: writeId, id, expiresAt: wallExpiry(expiry(write)) },
@@ -321,6 +342,9 @@ export function createRecordService(deps: RecordDependencies): RecordServicePort
       write.state = "sealed";
       delete write.error;
       write.progress = deps.now();
+      if (deps.retainForRecovery && deps.evidence.retainSealed) {
+        write.retained = await deps.evidence.retainSealed(write.ticket);
+      }
       return { ok: true, value: status(write) };
     },
     "storage/commitWrite": async (owner, p, signal) => {
@@ -365,6 +389,7 @@ export function createRecordService(deps: RecordDependencies): RecordServicePort
         return { ok: true, value: { disposition: "committed", receipt: write.receipt } };
       const disposition = await deps.engine.abort(write.ticket);
       if (disposition === "aborted") {
+        releaseRetained(write);
         write.state = "aborted";
         write.terminal = deps.now();
         targets.delete(targetKey(owner, write.record.id));
@@ -609,6 +634,46 @@ export function createRecordService(deps: RecordDependencies): RecordServicePort
     },
   };
   return {
+    admittedWrites(owner) {
+      return [...writes.values()]
+        .filter((w) => !owner || ownerKey(w.owner) === ownerKey(owner))
+        .map((w) => ({
+          ...structuredClone({
+            owner: w.owner,
+            input: w.input,
+            ticket: w.ticket,
+            record: w.record,
+            state: w.state,
+            created: w.created,
+            progress: w.progress,
+            ...(w.retained ? { retained: w.retained } : {}),
+          }),
+          pending: w.pending,
+        }));
+    },
+    async settle(tickets) {
+      for (const id of tickets) {
+        const write = writes.get(id);
+        if (!write) continue;
+        await write.pending.catch(() => {});
+        if (write.state === "sealed") {
+          const result = await deps.engine.reconcile(write.ticket);
+          if (result.disposition === "committed" && result.receipt)
+            committed(write, result.receipt);
+        } else await reconcile(write);
+      }
+    },
+    async close() {
+      await Promise.allSettled([...writes.values()].map((w) => w.pending));
+      for (const read of reads.values())
+        if (!read.closed) {
+          await deps.read.close(read.owner, read.pin);
+          read.closed = true;
+        }
+      reads.clear();
+      lists.clear();
+      await Promise.allSettled([...closingPins]);
+    },
     async request<M extends keyof StorageRequestMap>(
       principal: Principal,
       method: M,

@@ -1,3 +1,5 @@
+import type { WriteProgress } from "@kobrixa/plugin-protocol";
+import type { FinalWriteGrant, PublicationTicket, SealedPayloadPin } from "./engine-port.js";
 import { RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
 import type {
   PersistenceFailureDetail,
@@ -78,6 +80,7 @@ export function decodeChunk(text: string): Uint8Array {
   return bytes;
 }
 export type RecordDependencies = {
+  retainForRecovery?: boolean;
   now(): number;
   wall(): number;
   live(owner: ResourceOwner): boolean;
@@ -86,6 +89,7 @@ export type RecordDependencies = {
   read: PersistenceReadPort;
   evidence: PersistenceEvidencePort;
   checkpoint: {
+    finalGrant?(owner: ResourceOwner, input: RecordWrite): FinalWriteGrant | undefined;
     authorize(owner: ResourceOwner, input: RecordWrite, token?: string): RecordMeta["checkpoint"];
     committed(owner: ResourceOwner, input: RecordWrite, record: RecordMeta): void;
     open(owner: ResourceOwner): boolean;
@@ -99,3 +103,21 @@ export type RecordDependencies = {
     ): Promise<StorageRequestMap["storage/abandonCheckpoint"]["result"]>;
   };
 };
+
+/** Main-only projections of the existing admission ledger; no new plugin method. */
+export type AdmittedRecordWrite = Readonly<{
+  owner: ResourceOwner;
+  input: RecordWrite;
+  ticket: PublicationTicket;
+  record: RecordMeta;
+  state: WriteProgress["state"];
+  created: number;
+  progress: number;
+  pending: Promise<unknown>;
+  retained?: SealedPayloadPin;
+}>;
+export interface RecordServiceHostPort extends RecordServicePort {
+  admittedWrites(owner?: ResourceOwner): readonly AdmittedRecordWrite[];
+  settle(tickets: readonly string[]): Promise<void>;
+  close(): Promise<void>;
+}

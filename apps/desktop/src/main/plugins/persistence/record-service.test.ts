@@ -537,9 +537,75 @@ it("rejects plugin-to-host storage/drain before checkpoint callbacks", async () 
         reason: "disable",
         remainingMs: 10000,
         checkpoints: [],
-      writes: [],
+        writes: [],
       },
       signal(),
     ),
   ).rejects.toThrow("Host-only method direction.");
+});
+
+it("T5 projections preserve original admission timestamps and await pending work", async () => {
+  const f = fixture(),
+    bytes = new Uint8Array([1]);
+  const begun = await f.service.request(p, "storage/beginWrite", input(bytes), signal());
+  if (!begun.ok) throw new Error("begin failed");
+  const first = f.service.admittedWrites(owner)[0]!;
+  expect(first.created).toBe(0);
+  expect(first.progress).toBe(0);
+  let release!: () => void;
+  f.deps.engine.append = async () => {
+    await new Promise<void>((r) => (release = r));
+    return 1;
+  };
+  const writing = f.service.request(
+    p,
+    "storage/writeChunk",
+    { write: begun.value.write, offset: 0, data: "AQ==" },
+    signal(),
+  );
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const projected = f.service.admittedWrites(owner)[0]!;
+  let settled = false;
+  void projected.pending.then(() => (settled = true));
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release();
+  await writing;
+  expect(f.service.admittedWrites(owner)[0]!.ticket.id).toBe(first.ticket.id);
+  expect(f.service.admittedWrites({ ...owner, generation: 2 })).toEqual([]);
+  await f.service.close();
+});
+it("T5 releases proactive sealed pins after a known commit without retaining read slots", async () => {
+  const f = fixture(),
+    bytes = new Uint8Array();
+  f.deps.retainForRecovery = true;
+  f.deps.evidence.retainSealed = async () => ({ pin: "sealed-pin", expiresMonotonicMs: 30000 });
+  f.deps.read.close = vi.fn(async () => {});
+  const begun = await f.service.request(p, "storage/beginWrite", input(bytes), signal());
+  if (!begun.ok) throw new Error("begin failed");
+  expect(
+    (await f.service.request(p, "storage/sealWrite", { write: begun.value.write }, signal())).ok,
+  ).toBe(true);
+  expect(f.service.admittedWrites(owner)[0]!.retained?.pin).toBe("sealed-pin");
+  expect(
+    (await f.service.request(p, "storage/commitWrite", { write: begun.value.write }, signal())).ok,
+  ).toBe(true);
+  await f.service.close();
+  expect(f.deps.read.close).toHaveBeenCalledWith(owner, "sealed-pin");
+  expect(f.service.admittedWrites(owner)[0]!.retained).toBeUndefined();
+});
+it("T5 projects a pending reserve promise before beginWrite acknowledges admission", async () => {
+  const f = fixture();
+  let release!: () => void;
+  f.deps.engine.reserve = async () => {
+    await new Promise<void>((r) => (release = r));
+  };
+  const pending = f.service.request(p, "storage/beginWrite", input(new Uint8Array()), signal());
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  let settled = false;
+  void f.service.admittedWrites(owner)[0]!.pending.then(() => (settled = true));
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release();
+  expect((await pending).ok).toBe(true);
 });

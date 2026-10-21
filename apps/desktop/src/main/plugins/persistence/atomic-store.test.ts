@@ -368,3 +368,170 @@ it('late operations on a settled uncleaned entry cannot fence a recycled shared 
     expect(recycled.dispatch(120001)).toBe(true);
   }finally{fail=false;await env.close();}
 });
+
+async function registerCheckpoint(store: AtomicStore, t: PublicationTicket) {
+  if(t.metadata.kind!=="record")throw new Error("record required");
+  const checkpoint=randomUUID(),bytes=Buffer.from(JSON.stringify({formatVersion:1,checkpoint,record:t.metadata.record,binding:null,state:"open"}));
+  const document:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:120000,
+    target:{kind:"recovery",key:checkpoint},metadata:{kind:"recovery",key:checkpoint}};
+  await stage(store,document,bytes);await store.publish(document);return checkpoint;
+}
+it("T5: sealed pins validate original ticket, preserve TTL and reject fabricated pins",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1,2]),t=ticket(bytes);
+    await env.store.reserve(t,2);await env.store.append(t,0,bytes);
+    await expect(env.store.retainSealed(t)).rejects.toThrow();await env.store.seal(t,2,hash(bytes));
+    const pin=await env.store.retainSealed(t);expect(pin.expiresMonotonicMs).toBe(30000);
+    const row={id:randomUUID(),owner,ticket:t,sealedPin:randomUUID(),expiresAt:Date.now()+30000,
+      report:{state:"retryable" as const,blocker:true,pendingSettings:false,records:[],errors:[]}};
+    await expect(env.store.saveRecovery(row)).rejects.toThrow();
+    await env.store.saveRecovery({...row,sealedPin:pin.pin});
+    env.advance(20000);expect([...await env.store.read(owner,pin.pin,0,2)]).toEqual([1,2]);
+    env.advance(10000);await expect(env.store.read(owner,pin.pin,0,2)).rejects.toThrow();
+  }finally{await env.close();}
+});
+it("T5: checkpoint documents coexist with recovery rows and unknown shapes fail closed",async()=>{
+  const env=await setup();try {
+    const t=ticket(new Uint8Array([1]));await stage(env.store,t,new Uint8Array([1]));await env.store.publish(t);
+    await registerCheckpoint(env.store,t);expect((await env.store.recoveryPage()).items).toHaveLength(0);
+    const key=randomUUID(),bytes=Buffer.from(JSON.stringify({formatVersion:1,unknown:true}));
+    const doc:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:120000,target:{kind:"recovery",key},metadata:{kind:"recovery",key}};
+    await stage(env.store,doc,bytes);await env.store.publish(doc);await expect(env.store.recoveryPage()).rejects.toThrow();
+  }finally{await env.close();}
+});
+it("T5 fence conflict: only one matching final grant admits after target freeze",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),initial=ticket(bytes);await stage(env.store,initial,bytes);await env.store.publish(initial);
+    if(initial.metadata.kind!=="record")throw new Error("record required");
+    const checkpoint=await registerCheckpoint(env.store,initial),id=initial.metadata.record.id;
+    env.store.fenceTarget(owner,id,1000);
+    const final=ticket(bytes,id,initial.metadata.record.revision);if(final.metadata.kind==="record")final.metadata.record.checkpoint="final";
+    const grant={owner,recordId:id,checkpoint,token:randomUUID(),deadlineMonotonicMs:1000};
+    await expect(env.store.reserve(final,1)).rejects.toThrow("stale");
+    await expect(env.store.reserveFinal(final,1,{...grant,checkpoint:randomUUID()})).rejects.toThrow();
+    await env.store.reserveFinal(final,1,grant);await env.store.append(final,0,bytes);await env.store.seal(final,1,hash(bytes));
+    expect((await env.store.publish(final)).disposition).toBe("committed");
+    const repeat=ticket(bytes,id,final.metadata.kind==="record"?final.metadata.record.revision:null);
+    if(repeat.metadata.kind==="record")repeat.metadata.record.checkpoint="final";
+    await expect(env.store.reserveFinal(repeat,1,grant)).rejects.toThrow();
+  }finally{await env.close();}
+});
+it("T5 fence conflict: retained core retry uses original ticket after drain, never extends TTL",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);
+    const held=await env.store.retainSealed(t);env.store.fence(owner,1000);env.advance(1000);
+    expect(await env.store.publish(t)).toMatchObject({disposition:"not-committed"});
+    expect(await env.store.reconcile(t)).toMatchObject({disposition:"not-committed"});
+    expect([...await env.store.read(owner,held.pin,0,1)]).toEqual([1]);
+    expect(await env.store.publishRecovery(t,held.pin,11000)).toMatchObject({disposition:"committed"});
+  }finally{await env.close();}
+  const env2=await setup();try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env2.store,t,bytes);const held=await env2.store.retainSealed(t);
+    env2.store.fence(owner,1000);env2.advance(30000);
+    await expect(env2.store.publishRecovery(t,held.pin,40000)).rejects.toThrow();
+  }finally{await env2.close();}
+});
+it("T5: unregistered post-deadline publication and foreign core retry remain rejected",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);env.store.fence(owner,1000);env.advance(1000);
+    expect(await env.store.publish(t)).toMatchObject({disposition:"not-committed"});
+    await expect(env.store.publishRecovery(t,randomUUID(),11000)).rejects.toThrow();
+    await expect(env.store.reserve(ticket(bytes),1)).rejects.toThrow();
+  }finally{await env.close();}
+});
+it("T5: closing a sealed pin removes retry authority and restored rows cannot advertise missing bytes",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const held=await env.store.retainSealed(t),id=randomUUID();
+    await env.store.saveRecovery({id,owner,ticket:t,sealedPin:held.pin,expiresAt:Date.now()+30000,
+      report:{state:"retryable",blocker:true,pendingSettings:false,records:[{id:t.metadata.record.id,committedRevision:null,
+        final:false,payload:"complete-staging",expiresAt:Date.now()+30000}],errors:[]}});
+    await env.store.close(owner,held.pin);
+    await expect(env.store.publishRecovery(t,held.pin,10000)).rejects.toThrow();
+    expect(await env.store.loadRecovery(id)).toMatchObject({sealedPin:null,report:{state:"checkpoint-only",records:[{payload:"none"}]}});
+  }finally{await env.close();}
+});
+it("T5: recovery metadata remains writable after owner fence without reopening plugin admissions",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);const held=await env.store.retainSealed(t);
+    env.store.fence(owner,0);
+    const id=randomUUID();await env.store.saveRecovery({id,owner,ticket:t,sealedPin:held.pin,expiresAt:Date.now()+30000,
+      report:{state:"retryable",blocker:true,pendingSettings:false,records:[],errors:[]}});
+    expect((await env.store.loadRecovery(id))?.ticket?.id).toBe(t.id);
+    await expect(env.store.reserve(ticket(bytes),1)).rejects.toThrow("stale");
+  }finally{await env.close();}
+});
+it("T5: failed core retry never renews retention and dispatched retry cannot be reopened",async()=>{
+  let failure=false;
+  const env=await setup(async point=>{if(failure && point==="before-publish")throw new Error("disk-full");});
+  try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);const held=await env.store.retainSealed(t);
+    env.store.fence(owner,1000);env.advance(20000);failure=true;
+    await expect(env.store.publishRecovery(t,held.pin,30000)).rejects.toThrow("disk-full");
+    expect((await env.store.retainSealed(t)).expiresMonotonicMs).toBe(30000);
+    env.advance(10000);failure=false;await expect(env.store.publishRecovery(t,held.pin,40000)).rejects.toThrow();
+  }finally{await env.close();}
+  let dispatched=0;
+  const unknown=await setup(async point=>{if(point==="after-publish"){dispatched++;throw new Error("lost-reply");}});
+  try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(unknown.store,t,bytes);const held=await unknown.store.retainSealed(t);
+    unknown.store.fence(owner,0);
+    expect(await unknown.store.publishRecovery(t,held.pin,10000)).toMatchObject({disposition:"unknown"});
+    await expect(unknown.store.publishRecovery(t,held.pin,10000)).rejects.toThrow();expect(dispatched).toBe(1);
+    expect(await unknown.store.reconcile(t)).toMatchObject({disposition:"committed"});
+  }finally{await unknown.close();}
+});
+it("T5: final registration updates persist under a fence and foreign owners cannot update them",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);await env.store.publish(t);
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const checkpoint=await registerCheckpoint(env.store,t);env.store.fence(owner,0);
+    const value={checkpoint,record:{...t.metadata.record,checkpoint:"final" as const},binding:null,state:"final" as const};
+    await expect(env.store.saveCheckpoint({...owner,generation:2},value)).rejects.toThrow();
+    await env.store.saveCheckpoint(owner,value);
+    expect(JSON.parse(Buffer.from((await env.store.auxiliary(owner,"recovery",checkpoint))!).toString("utf8"))).toMatchObject({state:"final"});
+    await expect(env.store.reserve(ticket(bytes),1)).rejects.toThrow("stale");
+  }finally{await env.close();}
+});
+it("T5: cancellation revokes a core retry before its dispatch boundary",async()=>{
+  let reached!:()=>void,release!:()=>void;
+  const paused=new Promise<void>(r=>reached=r),resume=new Promise<void>(r=>release=r);
+  const env=await setup(async point=>{if(point==="before-publish"){reached();await resume;}});
+  try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);const held=await env.store.retainSealed(t);
+    env.store.fence(owner,0);const publishing=env.store.publishRecovery(t,held.pin,10000);await paused;
+    env.store.fenceTargetOrTicket(t);release();
+    await expect(publishing).rejects.toThrow("expired");
+    expect(await env.store.reconcile(t)).toMatchObject({disposition:"not-committed"});
+  }finally{release?.();await env.close();}
+});
+it("T5: restart drops transient retry authority and permits discard of a known unpublished payload",async()=>{
+  const env=await setup();let reopened:AtomicStore|undefined;
+  try {
+    const bytes=new Uint8Array([1]),t=ticket(bytes);await stage(env.store,t,bytes);const pin=await env.store.retainSealed(t);
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const id=randomUUID();await env.store.saveRecovery({id,owner,ticket:t,sealedPin:pin.pin,expiresAt:Date.now()+30000,
+      report:{state:"retryable",blocker:true,pendingSettings:false,records:[{id:t.metadata.record.id,committedRevision:null,final:false,payload:"complete-staging",expiresAt:Date.now()+30000}],errors:[]}});
+    await env.store.dispose();
+    reopened=new AtomicStore(new NodePersistenceFs(env.fs.root,{hostEpoch:randomUUID(),assertHeld(){}},{now:()=>0}));await reopened.initialize();
+    expect(await reopened.loadRecovery(id)).toMatchObject({ticket:null,sealedPin:null,report:{state:"checkpoint-only",records:[{payload:"none"}]}});
+    await reopened.removeRecovery(id);expect(await reopened.loadRecovery(id)).toBeNull();
+  }finally{await reopened?.dispose();await env.close();}
+});
+it("T5: durable checkpoint ownership outlives the registration ticket's terminal cache",async()=>{
+  const env=await setup();try {
+    const bytes=new Uint8Array([1]),initial=ticket(bytes);await stage(env.store,initial,bytes);await env.store.publish(initial);
+    if(initial.metadata.kind!=="record")throw new Error("record required");
+    const checkpoint=await registerCheckpoint(env.store,initial),record=initial.metadata.record;
+    const {checkpointRecoveryId}=await import('./engine-port.js');
+    await env.store.saveRecovery({id:checkpointRecoveryId(checkpoint),owner,ticket:null,sealedPin:null,expiresAt:null,
+      report:{state:"checkpoint-only",blocker:true,pendingSettings:false,records:[{id:record.id,committedRevision:record.revision,final:false,payload:"checkpoint-only"}],errors:[]}});
+    env.advance(120001);await env.store.stat(owner,record.id);env.store.fenceTarget(owner,record.id,130000);
+    const final={...ticket(bytes,record.id,record.revision),deadlineMonotonicMs:240001};
+    if(final.metadata.kind==="record")final.metadata.record.checkpoint="final";
+    const grant={owner,recordId:record.id,checkpoint,token:randomUUID(),deadlineMonotonicMs:130000};
+    await env.store.reserveFinal(final,1,grant);await env.store.append(final,0,bytes);await env.store.seal(final,1,hash(bytes));
+    expect(await env.store.publish(final)).toMatchObject({disposition:"committed"});
+  }finally{await env.close();}
+});

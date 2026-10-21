@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import type { DeviceDrainGrant, ReservationBinding } from "@kobrixa/plugin-runtime";
 import type { Handle, SettingsSnapshot, SettingsRevision, RecordRevision, RecordId, Receipt, Version, Sha256, RecordMeta } from "@kobrixa/plugin-protocol";
 import type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 export type PublicationTicket = Readonly<{
@@ -13,7 +15,14 @@ export type PublicationTicket = Readonly<{
     | { kind: "record"; id: RecordId; expectedRevision: RecordRevision | null }
     | { kind: "recovery" | "import"; key: string };
 }>;
+// Host-only continuations. Never exposed through a plugin request map.
+export type FinalWriteGrant = Readonly<{ owner: PersistenceOwner; recordId: RecordId;
+  checkpoint: Handle; token: Handle; deadlineMonotonicMs: number;
+  deviceDrain?: DeviceDrainGrant }>;
+export type SealedPayloadPin = Readonly<{ pin: Handle; expiresMonotonicMs: number }>;
 export interface PersistenceEnginePort {
+  reserveFinal?(ticket: PublicationTicket, byteLength: number, grant: FinalWriteGrant): Promise<void>;
+  publishRecovery?(ticket: PublicationTicket, sealedPin: Handle, deadlineMonotonicMs: number): ReturnType<PersistenceEnginePort["publish"]>;
   reserve(ticket: PublicationTicket, byteLength: number): Promise<void>;
   append(ticket: PublicationTicket, offset: number, bytes: Uint8Array): Promise<number>;
   seal(ticket: PublicationTicket, byteLength: number, sha256: Sha256): Promise<void>;
@@ -120,7 +129,13 @@ export type PersistenceBarrierEvidence = {state:"saved"|"failed"|"unknown";
 export type StoredRecovery = Readonly<{id:Handle; owner:PersistenceOwner; report:DrainReport;
   ticket:PublicationTicket|null; sealedPin:Handle|null; expiresAt:Timestamp|null}>;
 
+export type CheckpointRegistration = Readonly<{checkpoint:Handle;record:RecordMeta;
+  binding:ReservationBinding|null;state:"open"|"final"|"interrupted"}>;
 export interface PersistenceEvidencePort {
+  /** Preserve the captured identities for bounded drain reconciliation, without extending its deadline. */
+  captureDrain?(scope:PersistenceScope, deadlineMonotonicMs:number):PersistenceBarrier;
+  saveCheckpoint?(owner:PersistenceOwner, value:CheckpointRegistration):Promise<void>;
+  retainSealed?(ticket: PublicationTicket): Promise<SealedPayloadPin>;
   capture(scope:PersistenceScope, deadlineMonotonicMs:number): PersistenceBarrier;
   flush(barrier:PersistenceBarrier): Promise<PersistenceBarrierEvidence>;
   tickets(barrier:PersistenceBarrier): readonly PublicationTicket[];
@@ -137,7 +152,6 @@ export interface PersistenceEvidencePort {
   removeRecovery(id:Handle): Promise<void>;
 }
 
-import type { PersistenceFsPort } from "./filesystem.js";
 import { performance } from "node:perf_hooks";
 export const ownerKey = (owner: PersistenceOwner): string => JSON.stringify([owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
 export class PublicationGate {
@@ -159,4 +173,10 @@ export class PublicationGate {
     // fence() only shortens time; the atomic state transition is the authority boundary.
     return true;
   }
+}
+
+/** Durable metadata correlation only; this identifier grants no publication/read authority. */
+export function checkpointRecoveryId(checkpoint: Handle): Handle {
+  const digest=createHash("sha256").update("checkpoint-recovery:"+checkpoint).digest("hex");
+  return `${digest.slice(0,8)}-${digest.slice(8,12)}-4${digest.slice(13,16)}-8${digest.slice(17,20)}-${digest.slice(20,32)}`;
 }

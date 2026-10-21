@@ -6,10 +6,10 @@ import { z } from "zod";
 import type { ProfileWriterLock,PersistenceOwner } from "@kobrixa/plugin-runtime";
 import type { LegacyImportDescriptor,LegacySourceItem,LegacyMappedItem,LegacySourceResolver } from "./import-sources.js";
 import type { ExportDestination } from "./actions.js";
-import { AtomicStore } from "./atomic-store.js";
+import { AtomicStore, checkpointDocumentSchema } from "./atomic-store.js";
 import { NodePersistenceFs,NativeOutput,storeRootPath,type StoreRoot,type PersistenceFaultPoint } from "./filesystem.js";
 import { WorkQueue } from "./quota.js";
-import { PublicationGate,ownerKey,type PersistenceBackend,type PublicationTicket,type PersistenceBarrier,type PersistenceScope } from "./engine-port.js";
+import { PublicationGate,ownerKey,type PersistenceBackend,type PublicationTicket,type PersistenceBarrier,type PersistenceScope, type FinalWriteGrant } from "./engine-port.js";
 import { publicationTicketSchema,persistenceOwnerSchema,persistenceBarrierSchema,importPlanSchema,
   importTagSchema,importItemEvidenceSchema,storedRecoverySchema } from "./namespace.js";
 import type { Handle,Counter } from "@kobrixa/plugin-protocol";
@@ -28,8 +28,8 @@ export function persistenceWorkerCount(backend:PersistenceBackend):number {
 }
 export function diagnosticsFor(instance:object):FoundationDiagnostics {const value=diagnosticInstances.get(instance);if(!value)throw new Error("unknown-instance");return value;}
 type Qualified<P,Prefix extends string> = {[K in keyof P as K extends string?`${Prefix}.${K}`:never]:P[K]};
-export type WorkerOperations=Qualified<Omit<PersistenceBackend["engine"],"fence"|"fenceTarget">,"engine"> &
-  Qualified<PersistenceBackend["reads"],"reads"> & Qualified<Omit<PersistenceBackend["evidence"],"capture"|"tickets">,"evidence"> &
+export type WorkerOperations=Qualified<Required<Omit<PersistenceBackend["engine"],"fence"|"fenceTarget">>,"engine"> &
+  Qualified<PersistenceBackend["reads"],"reads"> & Qualified<Required<Omit<PersistenceBackend["evidence"],"capture"|"captureDrain"|"tickets">>,"evidence"> &
   Qualified<PersistenceBackend["imports"],"imports"> & Qualified<PersistenceBackend["output"],"output"> &
   Qualified<PersistenceBackend["destinations"],"destinations"> & Qualified<PersistenceBackend["sources"],"sources">;
 type Operation=keyof WorkerOperations;
@@ -39,7 +39,13 @@ const bytes=z.instanceof(Uint8Array).refine(b=>b.byteLength<=262144),ticket=publ
 const monotonic=z.number().min(0).max(Number.MAX_SAFE_INTEGER);
 const scope=z.strictObject({hostEpoch:handle,workbenchInstance:handle});
 // Use CoreWindowScope's F keys verbatim; do not accept renderer-created scope.
+const finalGrant=z.strictObject({owner,recordId:handle,checkpoint:handle,token:handle,deadlineMonotonicMs:monotonic,
+  deviceDrain:z.strictObject({owner,reservationId:handle,lastSequence:count,expiresMonotonicMs:monotonic}).optional()});
 const args={
+  "engine.reserveFinal":z.tuple([ticket,count.max(8388608),finalGrant]),
+  "engine.publishRecovery":z.tuple([ticket,handle,monotonic]),
+  "evidence.retainSealed":z.tuple([ticket]),
+  "evidence.saveCheckpoint":z.tuple([owner,checkpointDocumentSchema.omit({formatVersion:true})]),
   "engine.reserve":z.tuple([ticket,count.max(8388608)]),"engine.append":z.tuple([ticket,count,bytes]),
   "engine.seal":z.tuple([ticket,count.max(8388608),digest]),"engine.publish":z.tuple([ticket]),"engine.reconcile":z.tuple([ticket]),"engine.abort":z.tuple([ticket]),
   "reads.settings":z.tuple([owner]),"reads.stat":z.tuple([owner,handle]),
@@ -61,10 +67,10 @@ const args={
 } satisfies Record<Operation,z.ZodType>;
 const gateBinding=z.strictObject({slot:count.max(1023),sequence:count.min(1)});
 const envelope=z.strictObject({gate:gateBinding.optional(),version:z.literal(1),id:count.min(1),operation:z.enum(Object.keys(args) as [Operation,...Operation[]]),args:z.array(z.unknown())});
-export const PersistenceWorkerRequest=envelope.superRefine((r,ctx)=>{if((r.operation==="engine.reserve")!==!!r.gate || !args[r.operation].safeParse(r.args).success)ctx.addIssue({code:"custom",message:"invalid-args"});});
+export const PersistenceWorkerRequest=envelope.superRefine((r,ctx)=>{if((["engine.reserve","engine.reserveFinal"].includes(r.operation))!==!!r.gate || !args[r.operation].safeParse(r.args).success)ctx.addIssue({code:"custom",message:"invalid-args"});});
 export type PersistenceWorkerRequest<K extends Operation=Operation>=K extends Operation?
   {version:1;id:Counter;operation:K;args:K extends "evidence.flush"?[PersistenceBarrier,readonly PublicationTicket[]]:Parameters<WorkerOperations[K]>} &
-  (K extends "engine.reserve"?{gate:z.infer<typeof gateBinding>}:{gate?:never}):never;
+  (K extends "engine.reserve"|"engine.reserveFinal"?{gate:z.infer<typeof gateBinding>}:{gate?:never}):never;
 const settledMarkers=z.array(z.strictObject({id:handle,disposition:z.enum(["committed","not-committed","aborted"])})).max(1024);
 export const PersistenceWorkerResponse=z.union([
   z.strictObject({version:z.literal(1),id:count.min(1),ok:z.literal(true),value:z.unknown(),settled:settledMarkers.optional()}),
@@ -103,8 +109,9 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   const inUse=new Int32Array(held,gateBytes,1024);
   function releaseSlot(id:string){const e=ledger.get(id);if(!e)return;ledger.delete(id);Atomics.store(inUse,e.slot,0);freeSlots.push(e.slot);}
   function pruneLedger(){for(const [id,e] of ledger)if(e.settledAt!==null && e.settledAt+120000<=input.now())releaseSlot(id);}
-  const retired=new Set<string>(),targets=new Set<string>(),barriers=new Map<string,{barrier:PersistenceBarrier;tickets:readonly PublicationTicket[]}>();
-  function pruneBarriers(){for(const [id,e] of barriers)if(e.barrier.deadlineMonotonicMs<=input.now())barriers.delete(id);}
+  const ownerDeadlines=new Map<string,number>(),targetDeadlines=new Map<string,number>(),finalClaims=new Set<string>();
+  const retired=new Set<string>(),targets=new Set<string>(),barriers=new Map<string,{barrier:PersistenceBarrier;tickets:readonly PublicationTicket[];expires:number}>();
+  function pruneBarriers(){for(const [id,e] of barriers)if(e.expires<=input.now())barriers.delete(id);}
   const destinations=new WeakMap<ExportDestination,string>();let sequence=0,next=0,dead=false,closing:Promise<void>|null=null;
   const pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:unknown)=>void;ticketId?:string}>();
   const lost=()=>{dead=true;Atomics.store(new Int32Array(held),0,0);for(const e of ledger.values())e.gate.shorten(input.now(),input.now());for(const p of pending.values())p.reject(new Error("worker-lost"));pending.clear();};
@@ -150,28 +157,49 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     },10000);});
     return Promise.race([work,timeout]).finally(()=>clearTimeout(timer));
   }
+  async function admit(t:PublicationTicket,size:number,grant?:FinalWriteGrant) {
+    input.profile.assertHeld();pruneLedger();
+    const target=t.target.kind==="record"?JSON.stringify([ownerKey(t.owner),t.target.id]):"";
+    if(ready.recovery!=="ready" || ledger.has(t.id))throw new Error("stale");
+    if(grant) {
+      finalGrant.parse(grant);
+      const deadline=Math.min(ownerDeadlines.get(ownerKey(t.owner))??Infinity,targetDeadlines.get(target)??Infinity,
+        grant.deadlineMonotonicMs,grant.deviceDrain?.expiresMonotonicMs??Infinity);
+      const identity=JSON.stringify([ownerKey(t.owner),grant.checkpoint]);
+      if((!retired.has(ownerKey(t.owner)) && !targets.has(target)) || finalClaims.has(identity) ||
+        ownerKey(grant.owner)!==ownerKey(t.owner) || t.target.kind!=="record" || t.target.id!==grant.recordId ||
+        input.now()>=deadline)throw new Error("stale");
+      grant={...structuredClone(grant),deadlineMonotonicMs:deadline};finalClaims.add(identity);
+    } else if(retired.has(ownerKey(t.owner)) || targets.has(target))throw new Error("stale");
+    args["engine.reserve"].parse([t,size]);
+    const slot=freeSlots.pop();if(slot===undefined)throw new Error("gate-slot-limit");
+    Atomics.store(inUse,slot,1);const gate=new PublicationGate(Math.min(t.deadlineMonotonicMs,grant?.deadlineMonotonicMs??Infinity),held,gateOffset(slot),true);
+    const accepted=++sequence;ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:accepted,slot,settledAt:null});
+    let posted=false;
+    try{await send(grant?"engine.reserveFinal":"engine.reserve",grant?[t,size,grant]:[t,size],{slot,sequence:accepted},()=>{posted=true;});}
+    catch(e){if(!posted)releaseSlot(t.id);throw e;}
+  }
   const engine:PersistenceBackend["engine"]={
-    async reserve(t,size){
-      input.profile.assertHeld();pruneLedger();
-      if(ready.recovery!=="ready" || retired.has(ownerKey(t.owner)) || t.target.kind==="record" && targets.has(JSON.stringify([ownerKey(t.owner),t.target.id])) || ledger.has(t.id))throw new Error("stale");
-      args["engine.reserve"].parse([t,size]);
-      const slot=freeSlots.pop();if(slot===undefined)throw new Error("gate-slot-limit");
-      Atomics.store(inUse,slot,1);const gate=new PublicationGate(t.deadlineMonotonicMs,held,gateOffset(slot),true);
-      const accepted=++sequence;ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:accepted,slot,settledAt:null});
-      let posted=false;
-      try{await send("engine.reserve",[t,size],{slot,sequence:accepted},()=>{posted=true;});}
-      catch(e){if(!posted)releaseSlot(t.id);throw e;}
-    },
+    reserve:(t,size)=>admit(t,size),reserveFinal:(t,size,grant)=>admit(t,size,grant),
+    publishRecovery:(t,p,d)=>send("engine.publishRecovery",[t,p,Math.min(d,input.now()+10000)]),
     append:(t,o,b)=>send("engine.append",[t,o,b]),seal:(t,n,h)=>send("engine.seal",[t,n,h]),
     async publish(t){try{return await send("engine.publish",[t]);}catch(e){if(ledger.get(t.id)?.gate.dispatched)return {disposition:"unknown"};throw e;}},
     reconcile:t=>send("engine.reconcile",[t]),abort:t=>send("engine.abort",[t]),
-    fence(owner,deadline){retired.add(ownerKey(owner));const ids:string[]=[];for(const e of ledger.values())if(ownerKey(e.ticket.owner)===ownerKey(owner)){e.gate.shorten(deadline,input.now());ids.push(e.ticket.id);}return ids;},
-    fenceTarget(owner,id,deadline){targets.add(JSON.stringify([ownerKey(owner),id]));const ids:string[]=[];for(const e of ledger.values())if(ownerKey(e.ticket.owner)===ownerKey(owner) && e.ticket.target.kind==="record" && e.ticket.target.id===id){e.gate.shorten(deadline,input.now());ids.push(e.ticket.id);}return ids;},
+    fence(owner,deadline){deadline=Math.min(deadline,ownerDeadlines.get(ownerKey(owner))??Infinity);ownerDeadlines.set(ownerKey(owner),deadline);retired.add(ownerKey(owner));const ids:string[]=[];for(const e of ledger.values())if(ownerKey(e.ticket.owner)===ownerKey(owner)){e.gate.shorten(deadline,input.now());ids.push(e.ticket.id);}return ids;},
+    fenceTarget(owner,id,deadline){const key=JSON.stringify([ownerKey(owner),id]);deadline=Math.min(deadline,targetDeadlines.get(key)??Infinity);targetDeadlines.set(key,deadline);targets.add(JSON.stringify([ownerKey(owner),id]));const ids:string[]=[];for(const e of ledger.values())if(ownerKey(e.ticket.owner)===ownerKey(owner) && e.ticket.target.kind==="record" && e.ticket.target.id===id){e.gate.shorten(deadline,input.now());ids.push(e.ticket.id);}return ids;},
   };
+  function captureBarrier(scope:PersistenceScope,deadline:number,retain:boolean):PersistenceBarrier {
+    input.profile.assertHeld();pruneLedger();pruneBarriers();if(barriers.size>=1024)throw new Error("barrier-limit");
+    const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});
+    barriers.set(barrier.id,{barrier,expires:retain?input.now()+120000:deadline,
+      tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});
+    return barrier;
+  }
   const backend:PersistenceBackend={engine,
     reads:{settings:o=>send("reads.settings",[o]),stat:(o,id)=>send("reads.stat",[o,id]),list:(o,p)=>send("reads.list",[o,p]),open:(o,id,r)=>send("reads.open",[o,id,r]),read:(o,p,n,m)=>send("reads.read",[o,p,n,m]),close:(o,p)=>send("reads.close",[o,p])},
-    evidence:{
-      capture(scope,deadline){input.profile.assertHeld();pruneLedger();pruneBarriers();if(barriers.size>=1024)throw new Error("barrier-limit");const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});barriers.set(barrier.id,{barrier,tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});return barrier;},
+    evidence:{saveCheckpoint:(o,v)=>send("evidence.saveCheckpoint",[o,v]),retainSealed:t=>send("evidence.retainSealed",[t]),
+      capture:(scope,deadline)=>captureBarrier(scope,deadline,false),
+      captureDrain:(scope,deadline)=>captureBarrier(scope,deadline,true),
       tickets(b){pruneBarriers();const saved=barriers.get(b.id);if(!saved || JSON.stringify(saved.barrier)!==JSON.stringify(b))throw new Error("stale");return structuredClone(saved.tickets);},
       async flush(b){const tickets=backend.evidence.tickets(b);try{return await send("evidence.flush",[b,tickets]);}finally{barriers.delete(b.id);pruneBarriers();}},quota:o=>send("evidence.quota",[o]),settingsDigest:o=>send("evidence.settingsDigest",[o]),
       auxiliary:(o,k,key)=>send("evidence.auxiliary",[o,k,key]),auxiliaryKeys:(o,k,c)=>send("evidence.auxiliaryKeys",[o,k,c]),recoveryPage:c=>send("evidence.recoveryPage",[c]),
@@ -219,6 +247,13 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       return settled;
     }
     const api={
+      "engine.reserveFinal":(t:PublicationTicket,n:number,g:FinalWriteGrant)=>{
+        store.fenceTarget(t.owner,g.recordId,g.deadlineMonotonicMs);
+        return store.reserveFinal(t,n,g,boot.held,gateOffset([...accepted].find(([,e])=>e.ticket.id===t.id)![0]));
+      },
+      "engine.publishRecovery":store.publishRecovery.bind(store),
+      "evidence.retainSealed":store.retainSealed.bind(store),
+      "evidence.saveCheckpoint":store.saveCheckpoint.bind(store),
       "engine.reserve":(t:PublicationTicket,n:number)=>store.reserve(t,n,boot.held,gateOffset([...accepted].find(([,e])=>e.ticket.id===t.id)![0])),"engine.append":store.append.bind(store),"engine.seal":store.seal.bind(store),"engine.publish":store.publish.bind(store),"engine.reconcile":store.reconcile.bind(store),"engine.abort":store.abort.bind(store),
       "reads.settings":store.settings.bind(store),"reads.stat":store.stat.bind(store),"reads.list":store.list.bind(store),"reads.open":store.open.bind(store),"reads.read":store.read.bind(store),"reads.close":store.close.bind(store),
       "evidence.flush":(b:PersistenceBarrier,tickets:PublicationTicket[])=>store.flushEvidence(b,tickets.filter(t=>matches(b.scope,t))),
@@ -236,7 +271,7 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       const r=parsed.data;
       requests.set(r.id,r);
       if(recovery==="blocked" && !["evidence.recoveryPage","evidence.loadRecovery","evidence.auxiliary","evidence.auxiliaryKeys","imports.load","imports.importReceipts","imports.reconcile"].includes(r.operation)){port.postMessage({version:1,id:r.id,ok:false,error:{code:"io",message:"unsupported-format"}});return;}
-      if(r.operation==="engine.reserve") {
+      if(r.operation==="engine.reserve" || r.operation==="engine.reserveFinal") {
         try {
           reserveGateOffset(boot.held,r.gate);
           for(const [slot,e] of accepted)if(e.until!==null && e.until<=performance.now())accepted.delete(slot);
@@ -252,12 +287,13 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
         const disposition=typeof value==="string"?value:(value as {disposition?:string})?.disposition;
         if(["engine.publish","engine.reconcile"].includes(r.operation) && disposition==="not-committed") {
           // A pre-dispatch observation becomes terminal only after revocation and cleanup.
-          await store.abort(publicationTicketSchema.parse(r.args[0]));
+          const original=publicationTicketSchema.parse(r.args[0]);
+          if(!store.retainedSealed(original))await store.abort(original);
         }
         const settled=collectSettled();
         port.postMessage({version:1,id:r.id,ok:true,value,settled});
       }).catch(error=>{
-        if(r.operation==="engine.reserve")store.recordUnadmittedReserve(r.args[0] as PublicationTicket);
+        if(r.operation==="engine.reserve" || r.operation==="engine.reserveFinal")store.recordUnadmittedReserve(r.args[0] as PublicationTicket);
         port.postMessage({version:1,id:r.id,ok:false,error:privateError(error),settled:collectSettled()});
       }).finally(()=>requests.delete(r.id));
     });

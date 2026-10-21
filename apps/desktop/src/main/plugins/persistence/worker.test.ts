@@ -1,5 +1,5 @@
 import { createHash,randomUUID } from "node:crypto";
-import { mkdtemp,rm,mkdir,readFile,realpath,writeFile } from "node:fs/promises";
+import { mkdtemp,rm,mkdir,realpath,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -230,4 +230,15 @@ it.each([{hash:"0".repeat(64)},{schema:2}])("rejects mismatched plan hash or sch
     await env.store.tagImport(env.attempt,env.tag);
     await expect(env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).rejects.toThrow("input-changed");
   }finally{await env.close();}
+});
+it("T5 private continuations require original ticket, exact grant and a bound reserve gate",()=>{
+  const owner=ownerFor(randomUUID()),t=make(owner,new Uint8Array([1]));
+  const grant={owner,recordId:t.target.kind==="record"?t.target.id:randomUUID(),checkpoint:randomUUID(),token:randomUUID(),deadlineMonotonicMs:performance.now()+1000};
+  const request={version:1,id:1,operation:"engine.reserveFinal",args:[t,1,grant],gate:{slot:0,sequence:1}};
+  expect(PersistenceWorkerRequest.safeParse(request).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({...request,gate:undefined}).success).toBe(false);
+  expect(PersistenceWorkerRequest.safeParse({...request,args:[t,1,{...grant,invocation:"forged"}]}).success).toBe(false);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:2,operation:"engine.publishRecovery",args:[t,randomUUID(),performance.now()+1000]}).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:3,operation:"evidence.retainSealed",args:[t]}).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:4,operation:"engine.publishRecovery",args:[t,"fabricated",performance.now()+1000]}).success).toBe(false);
 });

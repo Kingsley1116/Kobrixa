@@ -178,3 +178,26 @@ it('prunes a barrier when flush rejects',async()=>{
   expect(()=>env.backend.evidence.tickets(barrier)).toThrow('stale');
   await env.backend.dispose();
 });
+it('T5 retains drain captures separately while ordinary deadline expiry stays stale',async()=>{
+  const env=await setup(),scope={kind:'namespace' as const,owner:env.owner};
+  const t=env.ticket();await env.backend.engine.reserve(t,0);
+  const ordinary=env.backend.evidence.capture(scope,0);
+  const drain=env.backend.evidence.captureDrain!(scope,0);
+  expect(()=>env.backend.evidence.tickets(ordinary)).toThrow('stale');
+  expect(env.backend.evidence.tickets(drain)).toEqual([t]);
+  env.advance();expect(()=>env.backend.evidence.tickets(drain)).toThrow('stale');
+  await env.backend.dispose();
+});
+it('T5 final admission keeps earliest main-side fence and permits one checkpoint claim',async()=>{
+  const env=await setup(),t=env.ticket();
+  if(t.target.kind!=='record' || t.metadata.kind!=='record')throw new Error('record required');
+  t.target.expectedRevision='r_'+'1'.repeat(32);t.metadata.record.checkpoint='final';
+  const grant={owner:env.owner,recordId:t.target.id,checkpoint:randomUUID(),token:randomUUID(),deadlineMonotonicMs:10000};
+  env.backend.engine.fenceTarget(env.owner,t.target.id,1000);env.backend.engine.fence(env.owner,500);
+  await expect(env.backend.engine.reserve(t,0)).rejects.toThrow('stale');
+  await env.backend.engine.reserveFinal!(t,0,grant);
+  const frame=harness.worker.frames.find(f=>f.operation==='engine.reserveFinal')!;
+  expect(frame.args[2]).toMatchObject({deadlineMonotonicMs:500});
+  await expect(env.backend.engine.reserveFinal!({...t,id:randomUUID()},0,grant)).rejects.toThrow('stale');
+  await env.backend.dispose();
+});
