@@ -143,8 +143,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     adapter: input.actionAdapter,
     actions: input.coreActions,
     coreOwner: sources.coreOwner,
+    changing: (owner) => lifecycle.invalidateRecovery(owner),
     retried: (owner, _report, deadline) => lifecycle.refreshRecovery(owner, deadline),
-    async discarded(owner, report, ticket) {
+    retired(owner, report, ticket) {
       if (
         ticket &&
         captured.has(ticket.id) &&
@@ -158,9 +159,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         const key = JSON.stringify([ownerKey(owner), id]);
         if (registrations.get(key)?.recovery === report.recovery) registrations.delete(key);
       }
-      // This is a bounded read/reconciliation budget, never a new publication grant.
-      await lifecycle.refreshRecovery(owner, now() + 10000);
     },
+    // This is a bounded read/reconciliation budget, never a new publication grant.
+    discarded: (owner) => lifecycle.refreshRecovery(owner, now() + 10000),
     now,
     wall,
     async retry(_owner, report, deadline) {
@@ -402,7 +403,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         ? { kind: "complete-staging", expiresMonotonicMs: write.retained.expiresMonotonicMs }
         : { kind: "checkpoint-only" };
     },
-    async recover(owner, report) {
+    async recover(owner, report, current) {
       // StoredRecovery owns one immutable ticket/pin. Multi-target drains retain one row per target.
       const admissions = records
         .admittedWrites(owner)
@@ -432,6 +433,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       const items = report.records.length ? report.records : [null];
       let first: string | undefined;
       for (const item of items) {
+        if (!current()) return report;
         const write = item
           ? admissions.find(
               (w) =>
@@ -453,6 +455,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
                     : null,
               }
             : undefined,
+          current,
         );
         first ??= retained.recovery;
         if (retained.state === "uncertain")
@@ -460,6 +463,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       }
       for (const ticket of captured.values())
         if (
+          current() &&
           ownerKey(ticket.owner) === ownerKey(owner) &&
           ticket.target.kind !== "record" &&
           outcomes.get(ticket.id) !== "committed" &&
@@ -469,6 +473,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
             owner,
             { ...report, records: [], recovery: ticket.id },
             { ticket, sealedPin: null },
+            current,
           );
           first ??= retained.recovery;
         }

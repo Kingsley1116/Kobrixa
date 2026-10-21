@@ -1289,3 +1289,207 @@ it("T5fix owner identity capacity fails closed instead of TTL-evicting revocatio
   ).toMatchObject({ error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
   await host.dispose();
 });
+
+it.each([
+  ["discard", "flush"],
+  ["retry", "flush"],
+  ["discard", "retain"],
+  ["retry", "retain"],
+  ["discard", "action"],
+  ["retry", "action"],
+  ["discard", "queued"],
+  ["retry", "queued"],
+] as const)(
+  "T5fix3 %s survives an old report awaiting %s in live and durable recovery",
+  async (operation, boundary) => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    onTestFinished(() => clock.mockRestore());
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    const actionFirst = boundary === "action" || boundary === "queued";
+    const actionEntered = pause(),
+      actionRelease = pause();
+    const reservationId = randomUUID(),
+      sessionId = randomUUID();
+    let active = true,
+      committed = false;
+    f.input.reservations.validate = () =>
+      active ? { owner, reservationId, sessionId, providerGeneration: 1 } : null;
+    const publish = f.backend.engine.publish;
+    f.backend.engine.reconcile = async (ticket) =>
+      ticket.metadata.kind === "record" && !committed
+        ? { disposition: "not-committed" }
+        : publish(ticket);
+    f.backend.engine.publishRecovery = vi.fn(async (ticket) => {
+      if (actionFirst) {
+        actionEntered.resolve();
+        await actionRelease.promise;
+      }
+      committed = true;
+      return publish(ticket);
+    });
+    f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      if (operation === "retry") {
+        const begin = await host.request(
+          principal,
+          "storage/beginWrite",
+          finalInput(f.record(), request),
+          signal,
+        );
+        if (!begin.ok) throw new Error("final admission failed");
+        expect(
+          (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal))
+            .ok,
+        ).toBe(true);
+      }
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const host = await createPersistenceHost(f.input);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/registerCheckpoint",
+          {
+            id: f.record().id,
+            expectedRevision: f.record().revision,
+            reservation: reservationId,
+          },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    active = false;
+    const target = host.participant.endReservation(
+      {
+        owner,
+        reservationId,
+        sessionId,
+        providerGeneration: 1,
+        reason: "released",
+        lastSequence: 1,
+        endedMonotonicMs: 0,
+        drain: { owner, reservationId, lastSequence: 1, expiresMonotonicMs: 10000 },
+      },
+      10000,
+    )!;
+    const first = await host.participant.drain(target, f.input.composition.dispatchDrain);
+    expect(first.blocker).toBe(true);
+    const original = structuredClone(f.rows.get(first.recovery!)!);
+    const entered = pause(),
+      release = pause(),
+      durable = pause();
+    let paused = false;
+    const seen = new Set<string>();
+    f.backend.evidence.flush = async (barrier) => {
+      expect(seen.has(barrier.id)).toBe(false);
+      seen.add(barrier.id);
+      if (boundary !== "retain" && !paused) {
+        paused = true;
+        entered.resolve();
+        if (boundary !== "queued") await release.promise;
+      }
+      return { state: "saved", accepted: [], incomplete: [], unknown: [] };
+    };
+    const save = f.backend.evidence.saveRecovery,
+      remove = f.backend.evidence.removeRecovery;
+    let actionDurable = false,
+      retainedWrites = 0;
+    f.backend.evidence.saveRecovery = async (row) => {
+      if (row.report.state !== "saved") retainedWrites++;
+      if (boundary === "retain" && !paused) {
+        paused = true;
+        entered.resolve();
+        await release.promise;
+      }
+      await save(row);
+      if (row.report.state === "saved") {
+        actionDurable = true;
+        durable.resolve();
+      }
+    };
+    f.backend.evidence.removeRecovery = async (id) => {
+      if (actionFirst) {
+        actionEntered.resolve();
+        await actionRelease.promise;
+      }
+      await remove(id);
+      actionDurable = true;
+      durable.resolve();
+    };
+    // In the action case the report starts after action admission, but before
+    // its mutation completes. Admission-only invalidation cannot protect it.
+    let acting = actionFirst
+      ? host.participant[operation](first.recovery!, coreAction())
+      : undefined;
+    if (acting) await actionEntered.promise;
+    const offer = host.participant.freeze(owner, "shutdown", 10000);
+    const draining = host.participant.drain(offer, f.input.composition.dispatchDrain);
+    await entered.promise;
+    acting ??= host.participant[operation](first.recovery!, coreAction());
+    let actionOvertookRetain = false;
+    if (boundary !== "retain") {
+      // Let this report reach retain while the action still holds the queue.
+      if (boundary === "queued") await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      actionRelease.resolve();
+      await durable.promise;
+      // Let the post-durability notification join the paused original report.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    } else {
+      // Once retain entered saveRecovery, the action must join that write, not
+      // remove/save alongside it and allow its late completion to undo the action.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      actionOvertookRetain = actionDurable || committed;
+    }
+    release.resolve();
+    await draining;
+    expect((await acting).blocker).toBe(false);
+    const verify = () => {
+      const items = host.participant.recoverySnapshot().items;
+      if (operation === "discard") {
+        expect(items).toHaveLength(0);
+        expect(f.rows.size).toBe(0);
+      } else {
+        expect(items).toHaveLength(1);
+        expect(items[0]).toMatchObject({
+          id: first.recovery,
+          state: "saved",
+          payload: "checkpoint-only",
+          committedRevision: f.record().revision,
+        });
+        expect(items[0]!.actions.map((a) => a.kind)).not.toContain("retry");
+        expect(f.rows.size).toBe(1);
+        expect(f.rows.get(first.recovery!)?.report).toMatchObject({
+          state: "saved",
+          blocker: false,
+          records: [
+            { committedRevision: f.record().revision, final: true, payload: "checkpoint-only" },
+          ],
+        });
+        expect(f.rows.get(first.recovery!)?.ticket).toEqual(original.ticket);
+        expect(f.rows.get(first.recovery!)?.expiresAt).toBe(original.expiresAt);
+      }
+    };
+    try {
+      expect(await host.participant.drain(offer, f.input.composition.dispatchDrain)).toMatchObject({
+        state: "saved",
+        blocker: false,
+      });
+      verify();
+      expect(await host.participant.drain(offer, f.input.composition.dispatchDrain)).toMatchObject({
+        state: "saved",
+        blocker: false,
+      });
+    } finally {
+      await host.dispose();
+    }
+    verify();
+    await host.dispose();
+    verify();
+    expect(f.input.composition.dispatchDrain).toHaveBeenCalledOnce();
+    expect(f.backend.engine.publishRecovery).toHaveBeenCalledTimes(operation === "retry" ? 1 : 0);
+    expect(actionOvertookRetain).toBe(false);
+    if (boundary !== "retain") expect(retainedWrites).toBe(0);
+    expect(offer.deadlineMonotonicMs).toBe(10000);
+  },
+);

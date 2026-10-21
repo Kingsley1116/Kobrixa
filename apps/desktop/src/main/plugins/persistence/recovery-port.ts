@@ -20,6 +20,10 @@ type Dependencies = {
   backend: PersistenceBackend;
   adapter: PersistenceActionAdapter;
   coreOwner(input: { sourceKey: string; scope: CoreWindowScope }): ResourceOwner | null;
+  changing?(owner: ResourceOwner): void;
+  // Exact identity retirement is synchronous with durable removal. Reconciliation
+  // below runs after releasing the mutation queue because it can join a drain.
+  retired?(owner: ResourceOwner, report: DrainReport, ticket: PublicationTicket | null): void;
   retried?(owner: ResourceOwner, report: DrainReport, deadline: number): Promise<void>;
   discarded?(
     owner: ResourceOwner,
@@ -46,6 +50,32 @@ type Entry = {
 };
 export function createPersistenceRecovery(deps: Dependencies) {
   const entries = new Map<string, Entry>();
+  const mutations = new Map<string, { owner: ResourceOwner; tail: Promise<void>; count: number }>();
+  let pendingMutations = 0;
+  function mutate<T>(owner: ResourceOwner, operation: () => Promise<T>): Promise<T> {
+    if (
+      pendingMutations >= 1024 ||
+      [...mutations.values()]
+        .filter((row) => row.owner.sourceKey === owner.sourceKey)
+        .reduce((count, row) => count + row.count, 0) >= 64
+    )
+      limit();
+    const key = ownerKey(owner);
+    const row = mutations.get(key) ?? { owner, tail: Promise.resolve(), count: 0 };
+    mutations.set(key, row);
+    row.count++;
+    pendingMutations++;
+    const run = row.tail.then(operation).finally(() => {
+      pendingMutations--;
+      if (--row.count === 0) mutations.delete(key);
+    });
+    // A rejected write must not poison later recovery. Idle queues retain no history.
+    row.tail = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
   let revision = 0;
   const listeners = new Set<() => void>();
   const exporting = new Set<string>();
@@ -143,58 +173,66 @@ export function createPersistenceRecovery(deps: Dependencies) {
       owner: ResourceOwner,
       report: DrainReport,
       evidence?: Pick<StoredRecovery, "ticket" | "sealedPin">,
+      current: () => boolean = () => true,
     ): Promise<DrainReport> {
-      const existing = report.recovery
-        ? entries.get(report.recovery)
-        : [...entries.values()].find(
-            (entry) =>
-              ownerKey(entry.owner) === ownerKey(owner) &&
-              entry.report.records[0]?.id === report.records[0]?.id,
-          );
-      const size = Buffer.byteLength(JSON.stringify(report));
-      if (report.records.length > 2 || report.errors.length > 16 || size > 8192) limit();
-      const retained = [...entries.values()].filter((entry) => entry !== existing);
-      if (
-        retained.reduce(
-          (total, entry) => total + Buffer.byteLength(JSON.stringify(entry.report)),
-          size,
-        ) > 67108864 ||
-        retained
-          .filter((entry) => entry.owner.sourceKey === owner.sourceKey)
-          .reduce((total, entry) => total + Buffer.byteLength(JSON.stringify(entry.report)), size) >
-          4194304
-      )
-        limit();
-      const expires = Math.min(
-        ...report.records.map((r) =>
-          r.expiresAt === undefined
-            ? Infinity
-            : deps.now() + Math.max(0, r.expiresAt - deps.wall()),
-        ),
-      );
-      const entry: Entry = existing ?? {
-        id: report.recovery ?? randomUUID(),
-        owner: { ...owner },
-        report,
-        expires,
-        actionIds: { retry: randomUUID(), export: randomUUID(), discard: randomUUID() },
-      };
-      if (evidence) entry.evidence = structuredClone(evidence);
-      entry.expires = Math.min(entry.expires, expires);
-      entry.report = structuredClone(report);
-      entry.report.recovery = entry.id;
-      for (const record of entry.report.records)
-        if (record.expiresAt !== undefined)
-          record.expiresAt = Math.min(record.expiresAt, deps.wall() + entry.expires - deps.now());
-      if (entry.report.state === "retryable") entry.report.retryAction = entry.actionIds.retry;
-      entries.set(entry.id, entry);
-      revision++;
-      await persist(entry).catch(() => {
-        entry.report.state = "uncertain";
-        entry.report.blocker = true;
+      return mutate(owner, async () => {
+        // Check after acquiring the queue. Once a write starts, the queue covers
+        // every persist await; a core action can only mutate after it finishes.
+        if (!current()) return structuredClone(report);
+        const existing = report.recovery
+          ? entries.get(report.recovery)
+          : [...entries.values()].find(
+              (entry) =>
+                ownerKey(entry.owner) === ownerKey(owner) &&
+                entry.report.records[0]?.id === report.records[0]?.id,
+            );
+        const size = Buffer.byteLength(JSON.stringify(report));
+        if (report.records.length > 2 || report.errors.length > 16 || size > 8192) limit();
+        const retained = [...entries.values()].filter((entry) => entry !== existing);
+        if (
+          retained.reduce(
+            (total, entry) => total + Buffer.byteLength(JSON.stringify(entry.report)),
+            size,
+          ) > 67108864 ||
+          retained
+            .filter((entry) => entry.owner.sourceKey === owner.sourceKey)
+            .reduce(
+              (total, entry) => total + Buffer.byteLength(JSON.stringify(entry.report)),
+              size,
+            ) > 4194304
+        )
+          limit();
+        const expires = Math.min(
+          ...report.records.map((r) =>
+            r.expiresAt === undefined
+              ? Infinity
+              : deps.now() + Math.max(0, r.expiresAt - deps.wall()),
+          ),
+        );
+        const entry: Entry = existing ?? {
+          id: report.recovery ?? randomUUID(),
+          owner: { ...owner },
+          report,
+          expires,
+          actionIds: { retry: randomUUID(), export: randomUUID(), discard: randomUUID() },
+        };
+        if (evidence) entry.evidence = structuredClone(evidence);
+        entry.expires = Math.min(entry.expires, expires);
+        entry.report = structuredClone(report);
+        entry.report.recovery = entry.id;
+        for (const record of entry.report.records)
+          if (record.expiresAt !== undefined)
+            record.expiresAt = Math.min(record.expiresAt, deps.wall() + entry.expires - deps.now());
+        if (entry.report.state === "retryable") entry.report.retryAction = entry.actionIds.retry;
+        entries.set(entry.id, entry);
         revision++;
+        await persist(entry).catch(() => {
+          entry.report.state = "uncertain";
+          entry.report.blocker = true;
+          revision++;
+        });
+        return structuredClone(entry.report);
       });
-      return structuredClone(entry.report);
     },
     recoverySnapshot(): PersistenceRecoverySnapshot {
       for (const entry of entries.values()) expire(entry);
@@ -236,16 +274,33 @@ export function createPersistenceRecovery(deps: Dependencies) {
       try {
         if (entry.report.state !== "retryable" || deps.now() >= entry.expires) stale();
         const deadline = Math.min(entry.expires, deps.now() + 10000);
-        const result = await deps.retry(entry.owner, entry.report, deadline);
-        entry.report = structuredClone(result);
-        entry.report.recovery = entry.id;
-        for (const record of entry.report.records)
-          if (record.expiresAt !== undefined)
-            record.expiresAt = Math.min(record.expiresAt, deps.wall() + entry.expires - deps.now());
-        expire(entry);
-        revision++;
-        await persist(entry);
-        const saved = structuredClone(entry.report);
+        deps.changing?.(entry.owner);
+        const saved = await mutate(entry.owner, async () => {
+          try {
+            if (
+              entries.get(id) !== entry ||
+              entry.report.state !== "retryable" ||
+              deps.now() >= deadline
+            )
+              stale();
+            const result = await deps.retry(entry.owner, entry.report, deadline);
+            entry.report = structuredClone(result);
+            entry.report.recovery = entry.id;
+            for (const record of entry.report.records)
+              if (record.expiresAt !== undefined)
+                record.expiresAt = Math.min(
+                  record.expiresAt,
+                  deps.wall() + entry.expires - deps.now(),
+                );
+            expire(entry);
+            revision++;
+            await persist(entry);
+            return structuredClone(entry.report);
+          } finally {
+            // Also invalidates reports whose reads started while this action awaited I/O.
+            deps.changing?.(entry.owner);
+          }
+        });
         await deps.retried?.(entry.owner, saved, deadline);
         return saved;
       } finally {
@@ -255,22 +310,38 @@ export function createPersistenceRecovery(deps: Dependencies) {
     async discard(id: string, action: CoreActionReference) {
       const entry = checked(id, action, "persistence-discard");
       try {
-        if (exporting.has(id) || (await reconcileExport(id))?.disposition === "unknown")
-          return { ...entry.report, state: "uncertain" as const, blocker: true };
-        const ticket =
-          entry.evidence?.ticket ?? (await deps.backend.evidence.loadRecovery(id))?.ticket ?? null;
-        const report = await deps.discard(entry.owner, entry.report);
-        report.recovery = id;
-        // Unknown dispatch remains a blocker even after a user's discard request.
-        entry.report = report;
-        revision++;
-        if (!report.blocker) {
-          await deps.backend.evidence.removeRecovery(id);
-          entries.delete(id);
-          await deps.discarded?.(entry.owner, report, ticket);
-          changed();
-        } else await persist(entry);
-        return structuredClone(report);
+        deps.changing?.(entry.owner);
+        const result = await mutate(entry.owner, async () => {
+          try {
+            if (entries.get(id) !== entry) stale();
+            if (exporting.has(id) || (await reconcileExport(id))?.disposition === "unknown")
+              return {
+                report: { ...entry.report, state: "uncertain" as const, blocker: true },
+                ticket: null,
+              };
+            const ticket =
+              entry.evidence?.ticket ??
+              (await deps.backend.evidence.loadRecovery(id))?.ticket ??
+              null;
+            const report = await deps.discard(entry.owner, entry.report);
+            report.recovery = id;
+            // Unknown dispatch remains a blocker even after a user's discard request.
+            entry.report = report;
+            revision++;
+            if (!report.blocker) {
+              await deps.backend.evidence.removeRecovery(id);
+              entries.delete(id);
+              deps.retired?.(entry.owner, report, ticket);
+              changed();
+            } else await persist(entry);
+            return { report: structuredClone(report), ticket };
+          } finally {
+            deps.changing?.(entry.owner);
+          }
+        });
+        if (!result.report.blocker)
+          await deps.discarded?.(entry.owner, result.report, result.ticket);
+        return result.report;
       } finally {
         deps.actions.complete(action);
       }

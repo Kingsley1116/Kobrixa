@@ -86,6 +86,130 @@ const report: DrainReport = {
   errors: [],
 };
 
+it.each([5000, 10001])("T5fix3 queued retry keeps its admission deadline (%s)", async (waited) => {
+  const backend = recoveryBackendDouble();
+  let now = 0;
+  const retry = vi.fn(
+    async (
+      _owner: typeof owner,
+      previous: DrainReport,
+      _deadline: number,
+    ): Promise<DrainReport> => ({
+      ...previous,
+      state: "saved",
+      blocker: false,
+      records: previous.records.map((r) => ({
+        id: r.id,
+        committedRevision: "final-revision",
+        final: true,
+        payload: "checkpoint-only",
+      })),
+    }),
+  );
+  const complete = vi.fn();
+  const recovery = createPersistenceRecovery({
+    coreOwner: () => owner,
+    now: () => now,
+    wall: () => 100000 + now,
+    actions: { claim: () => true, isClaimed: () => true, complete },
+    retry,
+    discard: async () => report,
+    backend,
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  const initial = await recovery.retain(owner, report);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((done) => {
+    enter = done;
+  });
+  const gate = new Promise<void>((done) => {
+    release = done;
+  });
+  const save = backend.evidence.saveRecovery;
+  backend.evidence.saveRecovery = async (row) => {
+    enter();
+    await gate;
+    await save(row);
+  };
+  const retaining = recovery.retain(owner, initial);
+  await entered;
+  const acting = recovery.retry(initial.recovery!, action).catch((error: unknown) => error);
+  await new Promise<void>((done) => setTimeout(done, 0));
+  const callsWhileRetaining = retry.mock.calls.length;
+  now = waited;
+  release();
+  await retaining;
+  const result = await acting;
+  expect(callsWhileRetaining).toBe(0);
+  expect(complete).toHaveBeenCalledOnce();
+  if (waited > 10000) {
+    expect(result).toMatchObject({ result: { error: { code: "PLUGIN_E_STALE_RESOURCE" } } });
+    expect(retry).not.toHaveBeenCalled();
+    expect((await backend.evidence.loadRecovery(initial.recovery!))?.report.state).toBe(
+      "retryable",
+    );
+    // A timed-out queued action does not poison a legitimate new core retry.
+    expect((await recovery.retry(initial.recovery!, action)).state).toBe("saved");
+    expect(retry.mock.calls[0]?.[2]).toBe(20001);
+  } else {
+    expect(result).toMatchObject({ state: "saved", blocker: false });
+    expect(retry.mock.calls[0]?.[2]).toBe(10000);
+  }
+  expect(recovery.snapshot().items[0]?.state).toBe("saved");
+  expect((await backend.evidence.loadRecovery(initial.recovery!))?.expiresAt).toBe(130000);
+});
+
+it.each(["source", "host"] as const)(
+  "T5fix3 %s mutation admission is bounded and releases capacity",
+  async (scope) => {
+    const backend = recoveryBackendDouble();
+    let release!: () => void;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const save = backend.evidence.saveRecovery;
+    backend.evidence.saveRecovery = async (row) => {
+      if (row.owner.sourceKey !== "independent") await gate;
+      await save(row);
+    };
+    const recovery = createPersistenceRecovery({
+      coreOwner: () => owner,
+      now: () => 0,
+      wall: () => 100000,
+      actions: { claim: () => true, isClaimed: () => true, complete() {} },
+      retry: async () => report,
+      discard: async () => report,
+      backend,
+      adapter: { chooseDestination: async () => null, copyText: async () => {} },
+    });
+    const count = scope === "source" ? 64 : 1024;
+    const retained = { ...report, recovery: "retained" };
+    const pending = Array.from({ length: count }, (_, i) =>
+      recovery.retain(
+        { ...owner, ...(scope === "host" ? { sourceKey: `source-${Math.floor(i / 64)}` } : {}) },
+        { ...retained, recovery: `retained-${i}` },
+      ),
+    );
+    const overflow =
+      scope === "source" ? { ...owner, generation: 2 } : { ...owner, sourceKey: "overflow" };
+    await expect(recovery.retain(overflow, retained)).rejects.toMatchObject({
+      result: { error: { code: "PLUGIN_E_RESOURCE_LIMIT" } },
+    });
+    if (scope === "source")
+      expect(
+        (
+          await recovery.retain(
+            { ...owner, sourceKey: "independent" },
+            { ...retained, recovery: "independent" },
+          )
+        ).recovery,
+      ).toBe("independent");
+    release();
+    await Promise.all(pending);
+    expect((await recovery.retain(overflow, retained)).recovery).toBe("retained");
+  },
+);
+
 it.each(["retry", "discard"] as const)(
   "T5fix2 %s notifies composition only after durability and joins reconciliation",
   async (operation) => {

@@ -52,7 +52,7 @@ export type LifecycleDependencies = {
     owner: ResourceOwner,
     id: string,
   ): { kind: "complete-staging" | "checkpoint-only" | "none"; expiresMonotonicMs?: number };
-  recover(owner: ResourceOwner, report: DrainReport): Promise<DrainReport>;
+  recover(owner: ResourceOwner, report: DrainReport, current: () => boolean): Promise<DrainReport>;
   checkpointOpen(owner: ResourceOwner, id: string): boolean;
   recovery: Pick<PersistenceParticipant, "recoverySnapshot" | "retry" | "discard">;
 };
@@ -367,6 +367,11 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     }
   }
   async function report(value: Group, deadline = value.deadline): Promise<DrainReport> {
+    // This snapshot spans all reads/flushes and the recovery write, not just the
+    // cached return. Core actions invalidate it on admission and on completion.
+    const revision = value.revision;
+    const current = () =>
+      groups.get(ownerKey(value.owner)) === value && value.revision === revision;
     const budget = { deadline };
     const records: DrainReport["records"] = [];
     let uncertain = false;
@@ -486,7 +491,9 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
           ? "retryable"
           : "checkpoint-only";
     const result: DrainReport = { state, blocker: !saved, pendingSettings, records, errors: [] };
-    return saved ? result : deps.recover(value.owner, result);
+    if (!current()) return unavailable();
+    const retained = saved ? result : await deps.recover(value.owner, result, current);
+    return current() ? retained : unavailable();
   }
   async function run(value: Group, dispatch?: DrainDispatcher) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -701,6 +708,12 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     participant,
     register,
     authorize,
+    invalidateRecovery(owner: ResourceOwner) {
+      const value = groups.get(ownerKey(owner));
+      if (!value) return;
+      value.revision++;
+      delete value.completed;
+    },
     async refreshRecovery(owner: ResourceOwner, deadline: number) {
       const value = groups.get(ownerKey(owner));
       if (!value) return;
