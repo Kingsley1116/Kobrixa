@@ -6,7 +6,11 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { verifyFoundationReports, verifyRunReceipt } from "./plugin-persistence-harness.mjs";
+import {
+  verifyFoundationReports,
+  verifyRunReceipt,
+  diagnosticError,
+} from "./plugin-persistence-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -23,6 +27,17 @@ export const PREREQUISITES = Object.freeze([
   ["K160/K170", "apps/desktop/vite.plugin.config.ts"],
   ["K160/K170", "apps/desktop/src/main/plugins/builtin-launch.ts"],
 ]);
+export function missingCompositionExports(source) {
+  return [
+    "composeDesktopMain",
+    "desktopFoundationTestHandles",
+    "desktopUi",
+    "desktopLifecycle",
+  ].filter(
+    (name) =>
+      !new RegExp(String.raw`^[ \t]*export\s+(?:async\s+)?function\s+${name}\b`, "m").test(source),
+  );
+}
 export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) {
   const blockers = [];
   for (const [owner, file] of PREREQUISITES)
@@ -35,14 +50,8 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
     path.join(root, "apps/desktop/src/main/plugins/controller.ts"),
     "utf8",
   );
-  for (const name of [
-    "composeDesktopMain",
-    "desktopFoundationTestHandles",
-    "desktopUi",
-    "desktopLifecycle",
-  ])
-    if (!new RegExp(`export (?:async )?function ${name}\b`).test(controller))
-      blockers.push(`D170: missing implemented ${name}`);
+  for (const name of missingCompositionExports(controller))
+    blockers.push(`D170: missing implemented ${name}`);
   const protocol = await readFile(
     path.join(root, "packages/plugin-protocol/src/limits.ts"),
     "utf8",
@@ -147,81 +156,340 @@ async function materialize(buildRoot, build) {
     });
   }
 }
-function processTable() {
-  // Controller-only process observation; no PID is inferred from worker/main identity.
-  if (process.platform === "win32")
-    throw new Error("BLOCKED: Windows installed child-tree observer receipt required");
-  return execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" })
-    .trim()
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number));
-}
-async function launchCase(electron, entry, configFile, reportFile) {
-  const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
-    stdio: "inherit",
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "" },
-  });
-  const descendants = new Set();
-  let observationError;
-  const observe = () => {
-    try {
-      const table = processTable(),
-        parents = new Set([child.pid, ...descendants]);
+// All process operations are controller-local. No product/composition adapter is injected.
+// A detached POSIX child gets a private process group. Keep that group through reparenting,
+// and pin birth identities so a reused PID cannot seed a foreign descendant tree.
+export function createOwnedProcessTracker(parentPid) {
+  assert.ok(Number.isSafeInteger(parentPid) && parentPid > 0, "Missing owned parent PID");
+  const owned = new Map(),
+    births = new Map();
+  let groupEnded = false;
+  const key = (row) => `${row.pid}:${row.start}`;
+  return {
+    observe(rows) {
+      const byPid = new Map();
+      for (const row of rows) {
+        assert.ok(
+          Number.isSafeInteger(row.pid) &&
+            row.pid >= 0 &&
+            Number.isSafeInteger(row.ppid) &&
+            row.ppid >= 0,
+        );
+        assert.ok(
+          Number.isSafeInteger(row.pgid) &&
+            row.pgid >= 0 &&
+            typeof row.start === "string" &&
+            row.start.length > 0,
+        );
+        assert.ok(!byPid.has(row.pid), "Duplicate process table PID");
+        byPid.set(row.pid, row);
+      }
+      const parent = byPid.get(parentPid);
+      if (parent && births.has(parentPid) && births.get(parentPid) !== parent.start)
+        groupEnded = true;
+      const retain = (row) => {
+        if (births.has(row.pid) && births.get(row.pid) !== row.start) return false;
+        births.set(row.pid, row.start);
+        owned.set(key(row), { ...row });
+        return true;
+      };
+      if (!groupEnded) {
+        for (const row of rows) if (row.pgid === parentPid) retain(row);
+        if (!rows.some((row) => row.pgid === parentPid)) groupEnded = true;
+      }
       let changed = true;
       while (changed) {
         changed = false;
-        for (const [pid, ppid] of table)
-          if (parents.has(ppid) && !parents.has(pid)) {
-            parents.add(pid);
-            descendants.add(pid);
-            changed = true;
+        for (const row of rows) {
+          const parent = byPid.get(row.ppid);
+          if (parent && owned.has(key(parent)) && !owned.has(key(row))) {
+            changed = retain(row) || changed;
           }
+        }
       }
+      return rows.filter((row) => owned.has(key(row)));
+    },
+    observed: () => [...owned.values()],
+  };
+}
+export function parseProcessTable(text) {
+  return text
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+      assert.ok(match, "Invalid process identity row");
+      return {
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        pgid: Number(match[3]),
+        start: match[4],
+      };
+    });
+}
+function processTable() {
+  if (process.platform === "win32")
+    throw new Error("BLOCKED: Windows owned-process observer required");
+  return parseProcessTable(
+    execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,lstart="], {
+      encoding: "utf8",
+      timeout: 2000,
+      env: { ...process.env, LC_ALL: "C" },
+    }),
+  );
+}
+export async function superviseCase(
+  config,
+  io,
+  { timeoutMs = 60000, pollMs = 100, settleMs = 5000 } = {},
+) {
+  let child,
+    tracker,
+    originalError,
+    controllerError,
+    candidate,
+    entryFailure,
+    observedExit,
+    remaining = null;
+  const cleanupErrors = [];
+  let parentExit = { observed: false, pid: null, code: null, signal: null, at: null };
+  const remember = (error) => {
+    originalError ??= diagnosticError(error);
+    controllerError ??= diagnosticError(error);
+  };
+  const updateExit = () => {
+    const exit = child?.exit();
+    if (exit && exit !== observedExit) {
+      observedExit = exit;
+      parentExit = {
+        observed: !exit.error,
+        pid: child.pid ?? null,
+        code: exit.code ?? null,
+        signal: exit.signal ?? null,
+        at: exit.at ?? io.now(),
+      };
+      if (exit.error) remember(exit.error);
+    }
+    return exit;
+  };
+  const observe = async () => {
+    try {
+      remaining = tracker ? tracker.observe(await io.processes()) : [];
     } catch (error) {
-      observationError = error;
+      remaining = null;
+      cleanupErrors.push(diagnosticError(error));
+      remember(error);
+    }
+    updateExit();
+    return remaining;
+  };
+  const terminateOwned = async () => {
+    const live = await observe();
+    // While the direct child has not exited, its original process-group ID cannot
+    // have been recycled. After exit require a current, still-owned group member.
+    const group = tracker && (!child.exit() || live?.some((row) => row.pgid === child.pid));
+    if (group)
+      try {
+        await io.killGroup(
+          child.pid,
+          live?.filter((row) => row.pgid === child.pid) ?? [],
+          !child.exit(),
+        );
+      } catch (error) {
+        cleanupErrors.push(diagnosticError(error));
+      }
+    for (const row of live ?? [])
+      if (row.pgid !== child.pid) {
+        try {
+          await io.killProcess(row);
+        } catch (error) {
+          cleanupErrors.push(diagnosticError(error));
+        }
+      }
+  };
+  try {
+    child = await io.start();
+    parentExit.pid = child.pid ?? null;
+    tracker = createOwnedProcessTracker(child.pid);
+    const deadline = io.now() + timeoutMs;
+    while (!updateExit()) {
+      await observe();
+      if (originalError) break;
+      if (io.now() >= deadline) throw new Error("Electron timeout; profile retained");
+      await io.sleep(pollMs);
+    }
+    updateExit();
+    if (parentExit.observed && (parentExit.code !== 0 || parentExit.signal !== null))
+      throw new Error(`Electron exited ${parentExit.code} (${parentExit.signal ?? "no signal"})`);
+  } catch (error) {
+    remember(error);
+  }
+  // Common finalization for timeout, nonzero/signal exit, spawn/observation failure,
+  // malformed candidate, failed fixture close and normal completion alike.
+  try {
+    ({ candidate, entryFailure } = await io.readCandidate());
+    if (entryFailure) {
+      originalError = entryFailure.originalError;
+      cleanupErrors.push(...entryFailure.cleanupErrors);
+    }
+    if (!originalError && !candidate) remember(new Error("Missing case candidate"));
+  } catch (error) {
+    remember(error);
+  }
+  if (originalError) await terminateOwned();
+  const settle = async () => {
+    const deadline = io.now() + settleMs;
+    await observe();
+    while (io.now() < deadline) {
+      await io.sleep(Math.min(pollMs, deadline - io.now()));
+      await observe();
     }
   };
-  const poll = setInterval(observe, 100);
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill("SIGKILL");
-  }, 60000);
-  let exitCode, signal;
-  try {
-    [exitCode, signal] = await new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code, sig) => resolve([code, sig]));
-    });
-  } finally {
-    clearTimeout(timer);
-    clearInterval(poll);
+  await settle();
+  if (remaining?.length || (child && !parentExit.observed)) {
+    remember(new Error("Owned processes remain after parent exit/cleanup"));
+    await terminateOwned();
+    await settle();
   }
-  const exitedAt = Date.now();
-  if (observationError) throw observationError;
-  assert.equal(timedOut, false, "Electron timeout; profile retained");
-  assert.equal(exitCode, 0);
-  assert.equal(signal, null);
-  // Required five-second post-exit observation, outside Electron's profile lifetime.
-  await new Promise((resolve) => setTimeout(resolve, 5000));
-  const remaining = new Set(processTable().map(([pid]) => pid));
-  const leaked = [...descendants].filter((pid) => remaining.has(pid));
-  assert.deepEqual(leaked, [], "Child process leak");
-  const candidate = JSON.parse(await readFile(reportFile, "utf8"));
-  assert.equal(candidate.pid, child.pid);
-  assert.equal(candidate.status, "closed-reference");
-  const receipt = {
-    ...candidate,
-    status: "passed",
-    exitCode,
-    signal,
-    exitedAt,
-    reportedAt: Date.now(),
-    cleanup: { ...candidate.cleanup, children: leaked.length },
-    observedDescendants: [...descendants],
-  };
-  verifyRunReceipt(receipt);
+  if (cleanupErrors.length && !originalError)
+    remember(new Error("Process cleanup/observation failed"));
+  let receipt;
+  if (!originalError)
+    try {
+      assert.equal(candidate.pid, child.pid);
+      assert.equal(candidate.status, "closed-reference");
+      receipt = {
+        ...candidate,
+        status: "passed",
+        exitCode: parentExit.code,
+        signal: parentExit.signal,
+        exitedAt: parentExit.at,
+        reportedAt: io.now(),
+        cleanup: { ...candidate.cleanup, children: remaining.length },
+        observedDescendants: tracker.observed().filter((row) => row.pid !== child.pid),
+      };
+      verifyRunReceipt(
+        receipt,
+        Object.fromEntries(
+          ["runId", "case", "bundleSha256", "artifactSha256", "commit"]
+            .filter((key) => config[key] !== undefined)
+            .map((key) => [key, config[key]]),
+        ),
+      );
+    } catch (error) {
+      remember(error);
+    }
+  if (originalError) {
+    const failure = {
+      format: 1,
+      kind: "persistence-controller-failure",
+      status: "failed",
+      runId: config.runId,
+      case: config.case,
+      profile: config.profile,
+      profileRetained: true,
+      originalError,
+      controllerError,
+      parentExit,
+      remainingChildren: remaining?.filter((row) => row.pid !== child?.pid) ?? null,
+      observedProcesses: tracker?.observed() ?? [],
+      cleanupErrors,
+      entryFailure,
+      reportedAt: io.now(),
+    };
+    try {
+      await io.writeFailure(failure);
+    } catch (error) {
+      cleanupErrors.push(diagnosticError(error));
+      io.reportFailure(failure);
+    }
+    const error = new Error(originalError.message);
+    error.diagnostic = failure;
+    throw error;
+  }
   return receipt;
+}
+async function launchCase(electron, entry, configFile, reportFile, config) {
+  return superviseCase(config, {
+    now: Date.now,
+    async start() {
+      if (process.platform === "win32")
+        throw new Error("BLOCKED: Windows owned-process observer required");
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
+        stdio: "inherit",
+        env,
+        detached: true,
+      });
+      let exit;
+      child.once("exit", (code, signal) => {
+        exit = { code, signal, at: Date.now() };
+      });
+      return new Promise((resolve, reject) => {
+        child.once("error", (error) => {
+          exit = { error, at: Date.now() };
+          reject(error);
+        });
+        child.once("spawn", () => resolve({ pid: child.pid, exit: () => exit }));
+      });
+    },
+    processes: async () => processTable(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    async killGroup(pgid, identities, parentAlive) {
+      if (!parentAlive) {
+        const current = processTable().filter((row) => row.pgid === pgid);
+        if (!current.length) return;
+        assert.ok(
+          current.some((row) =>
+            identities.some((old) => row.pid === old.pid && row.start === old.start),
+          ),
+          "Owned process group identity changed; refusing to signal it",
+        );
+      }
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    },
+    async killProcess(identity) {
+      // Recheck the birth identity immediately before signalling an escaped-group descendant.
+      const current = processTable().find((row) => row.pid === identity.pid);
+      if (!current || current.start !== identity.start) return;
+      try {
+        process.kill(identity.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    },
+    async readCandidate() {
+      const read = async (file) => {
+        try {
+          return JSON.parse(await readFile(file, "utf8"));
+        } catch (error) {
+          if (error.code === "ENOENT") return undefined;
+          throw error;
+        }
+      };
+      const entryFailure = await read(`${reportFile}.entry-failure.json`);
+      if (entryFailure) {
+        assert.equal(entryFailure.status, "failed");
+        assert.equal(entryFailure.runId, config.runId);
+        assert.ok(typeof entryFailure.originalError?.message === "string");
+        assert.ok(Array.isArray(entryFailure.cleanupErrors));
+        // A partial candidate must not mask the entry's already-recorded original error.
+        return { entryFailure };
+      }
+      return { candidate: await read(reportFile) };
+    },
+    writeFailure: (failure) =>
+      writeFile(`${reportFile}.controller-failure.json`, JSON.stringify(failure, null, 2), {
+        flag: "wx",
+      }),
+    reportFailure: (failure) => console.error(JSON.stringify(failure)),
+  });
 }
 export async function runFoundationEvidence({ referencesOnly = false } = {}) {
   const handoffs = await preflight();
@@ -272,22 +540,12 @@ export async function runFoundationEvidence({ referencesOnly = false } = {}) {
     `import {app} from 'electron';
 import {readFile,writeFile} from 'node:fs/promises';
 import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-main.ts"))};
+import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
 const config=JSON.parse(await readFile(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
 app.setPath('userData',config.profile);
-let fixture;
-try {
- fixture=await createFoundationFixture();
- const started=fixture.composition.workerCount;
- const evidence=await fixture.runCase(config.case);
- await fixture.close();await fixture.close();
- const workers=fixture.composition.workerCount,listeners=fixture.composition.reservationListenerCount;
- await writeFile(config.report,JSON.stringify({format:1,level:'real-process',status:'closed-reference',
- runId:config.runId,case:config.case,commit:config.commit,bundleSha256:config.bundleSha256,artifactSha256:config.artifactSha256,
- pid:process.pid,profileId:config.profileId,hostEpoch:fixture.composition.profile.hostEpoch,
- environment:fixture.environment,evidence,closedAt:Date.now(),cleanup:{workers,listeners,errors:[]},
- workerTrace:[{kind:'start',count:started,pid:process.pid},{kind:'exit',count:workers,pid:process.pid}]}));
- app.exit(0);
-} catch(error) { console.error(error);if(fixture)try{await fixture.close();}catch(cleanup){console.error(cleanup);}app.exit(1); }
+const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
+ reportFailure:failure=>console.error(JSON.stringify(failure))});
+app.exit(code);
 `,
   );
   // CJS build wraps the entry's awaits without changing the inert producer.
@@ -334,7 +592,7 @@ try {
       filesystem: handoffs.filesystem,
     };
     await writeFile(configFile, JSON.stringify(config));
-    const receipt = await launchCase(electron, entry, configFile, report);
+    const receipt = await launchCase(electron, entry, configFile, report, config);
     verifyRunReceipt(receipt, {
       runId: config.runId,
       case: id,

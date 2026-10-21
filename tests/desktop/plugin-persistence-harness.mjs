@@ -214,6 +214,27 @@ export function verifyInterop(report) {
   }
   assert.equal(report.unregistered17DrainCallbacks, 0);
 }
+// Worker fault hooks acknowledge the BEFORE edge of fs.at. import-marker is
+// after gate.dispatch but still BEFORE atomicReplace. Process death is not power loss:
+// the post-replacement hooks below must reopen the new head. No named hook pauses
+// inside rename, so none of these acknowledged frontiers permits an old/new choice.
+export const KILL_HEAD_FRONTIERS = Object.freeze({
+  reserve: "old",
+  "open-temp": "old",
+  "chunk-write": "old",
+  "seal-sync": "old",
+  "object-rename": "old",
+  "object-dir-sync": "old",
+  "backup-head": "old",
+  "head-write": "old",
+  "before-publish": "old",
+  "import-marker": "old",
+  "after-publish": "new",
+  "head-dir-sync": "new",
+  "cache-publish": "new",
+  "receipt-send": "new",
+  cleanup: "new",
+});
 export function verifyKills(report) {
   realReport(report);
   assert.equal(report.level, "real-process");
@@ -245,9 +266,24 @@ export function verifyKills(report) {
       assert.notEqual(entry.pid, entry.reopenedPid);
     }
     reopened(entry);
-    assert.ok([entry.oldHeadHash, entry.newHeadHash].includes(entry.after.headHash));
+    const frontier = KILL_HEAD_FRONTIERS[entry.point];
+    assert.ok(frontier, "Unknown publication frontier");
+    assert.notEqual(entry.oldHeadHash, entry.newHeadHash, "Kill trial needs distinguishable heads");
+    assert.equal(
+      entry.after.headHash,
+      frontier === "old" ? entry.oldHeadHash : entry.newHeadHash,
+      `${entry.point}: wrong reopened head for publication frontier`,
+    );
+    identity(entry.originalTicketId);
+    assert.equal(entry.reconciledTicketId, entry.originalTicketId, "Reconcile the original ticket");
+    assert.ok(
+      entry.trace?.some(
+        (row) => row.point === entry.point && row.ticket === entry.originalTicketId,
+      ),
+      "Missing original-ticket frontier trace",
+    );
     assert.equal(entry.partialVisible, false);
-    if (["after-publish", "head-dir-sync", "cache-publish", "receipt-send"].includes(entry.point)) {
+    if (frontier === "new") {
       assert.equal(entry.republishCount, 0);
       identity(entry.originalCommitId);
       assert.equal(entry.originalCommitId, entry.reconciledCommitId);
@@ -533,4 +569,81 @@ export function verifyRestartDetails(trials) {
       );
     }
   }
+}
+
+// Test-only entry finalization shared by the generated Electron entry and pure flow tests.
+export function diagnosticError(error) {
+  return {
+    name: error?.name ?? "Error",
+    message: error?.message ?? String(error),
+    ...(typeof error?.stack === "string" ? { stack: error.stack } : {}),
+  };
+}
+export async function runReferenceEntry(createFixture, config, io) {
+  let fixture,
+    originalError,
+    closed = false;
+  const cleanupErrors = [];
+  try {
+    fixture = await createFixture();
+    const started = fixture.composition.workerCount;
+    const evidence = await fixture.runCase(config.case);
+    await fixture.close();
+    await fixture.close();
+    closed = true;
+    const workers = fixture.composition.workerCount,
+      listeners = fixture.composition.reservationListenerCount;
+    await io.write(
+      config.report,
+      JSON.stringify({
+        format: 1,
+        level: "real-process",
+        status: "closed-reference",
+        runId: config.runId,
+        case: config.case,
+        commit: config.commit,
+        bundleSha256: config.bundleSha256,
+        artifactSha256: config.artifactSha256,
+        pid: io.pid,
+        profileId: config.profileId,
+        hostEpoch: fixture.composition.profile.hostEpoch,
+        environment: fixture.environment,
+        evidence,
+        closedAt: io.now(),
+        cleanup: { workers, listeners, errors: [] },
+        workerTrace: [
+          { kind: "start", count: started, pid: io.pid },
+          { kind: "exit", count: workers, pid: io.pid },
+        ],
+      }),
+    );
+    return 0;
+  } catch (error) {
+    originalError = diagnosticError(error);
+  } finally {
+    if (fixture && !closed)
+      try {
+        await fixture.close();
+      } catch (error) {
+        cleanupErrors.push(diagnosticError(error));
+      }
+  }
+  const failure = {
+    format: 1,
+    kind: "persistence-entry-failure",
+    status: "failed",
+    runId: config.runId,
+    case: config.case,
+    pid: io.pid,
+    originalError,
+    cleanupErrors,
+    reportedAt: io.now(),
+  };
+  try {
+    await io.write(`${config.report}.entry-failure.json`, JSON.stringify(failure));
+  } catch (error) {
+    failure.cleanupErrors.push(diagnosticError(error));
+    (io.reportFailure ?? console.error)(failure);
+  }
+  return 1;
 }

@@ -272,3 +272,383 @@ test("verifier negatives: inert import and second factory rejection precede allo
   );
   assert.equal(result.status, 0, result.stderr);
 });
+
+import { missingCompositionExports } from "./plugin-persistence-run.mjs";
+test("T7fix I1: implemented exports are recognized, absent and near names rejected", () => {
+  const names = [
+    "composeDesktopMain",
+    "desktopFoundationTestHandles",
+    "desktopUi",
+    "desktopLifecycle",
+  ];
+  for (const asyncKeyword of ["", "async "]) {
+    const source = names.map((name) => `export ${asyncKeyword}function ${name}() {}`).join("\n");
+    assert.deepEqual(missingCompositionExports(source), []);
+    for (const name of names) {
+      for (const replacement of [
+        `function ${name}() {}`,
+        `export function ${name}Extra() {}`,
+        `export declare function ${name}(): void;`,
+        `// export function ${name}() {}`,
+      ]) {
+        const changed = source.replace(`export ${asyncKeyword}function ${name}() {}`, replacement);
+        assert.deepEqual(missingCompositionExports(changed), [name]);
+      }
+    }
+  }
+});
+
+import {
+  superviseCase,
+  createOwnedProcessTracker,
+  parseProcessTable,
+} from "./plugin-persistence-run.mjs";
+import { runReferenceEntry } from "./plugin-persistence-harness.mjs";
+// Pure controller-flow model: no OS calls, child processes, SDKs or acceptance reports.
+function controllerModel(mode) {
+  let time = 0,
+    exit,
+    rows = [],
+    failure,
+    candidate = receiptFixture();
+  const actions = [];
+  const parent = { pid: 100, ppid: 1, pgid: 100, start: "parent-birth" };
+  const descendant = { pid: 101, ppid: 100, pgid: 100, start: "child-birth" };
+  const io = {
+    now: () => time,
+    async start() {
+      rows = [parent, descendant];
+      return { pid: 100, exit: () => exit };
+    },
+    async processes() {
+      actions.push("observe");
+      return structuredClone(rows);
+    },
+    async sleep(ms) {
+      time += ms;
+      if (mode !== "timeout" && !exit) {
+        exit = { code: mode === "nonzero" ? 7 : 0, signal: null };
+        rows = mode === "success" ? [] : [{ ...descendant, ppid: 1 }];
+      }
+    },
+    async killGroup(pgid) {
+      actions.push(`kill-group:${pgid}`);
+      rows = rows.filter((r) => r.pgid !== pgid);
+      exit ??= { code: null, signal: "SIGKILL" };
+    },
+    async killProcess(row) {
+      actions.push(`kill:${row.pid}`);
+      rows = rows.filter((r) => r.pid !== row.pid);
+    },
+    async readCandidate() {
+      actions.push("candidate");
+      if (mode === "nonzero")
+        return {
+          entryFailure: {
+            originalError: { name: "Error", message: "fixture failed" },
+            cleanupErrors: [],
+          },
+        };
+      return {
+        candidate: {
+          ...candidate,
+          pid: 100,
+          workerTrace: candidate.workerTrace.map((row) => ({ ...row, pid: 100 })),
+          status: "closed-reference",
+        },
+      };
+    },
+    async writeFailure(receipt) {
+      actions.push("failure");
+      failure = receipt;
+    },
+    reportFailure() {
+      actions.push("fallback");
+    },
+  };
+  return {
+    io,
+    actions,
+    get failure() {
+      return failure;
+    },
+    setRows(value) {
+      rows = value;
+    },
+    setCandidate(value) {
+      candidate = value;
+    },
+  };
+}
+for (const mode of ["timeout", "nonzero"])
+  test(`T7fix I3: ${mode} finalizes descendants and retains failure`, async () => {
+    const model = controllerModel(mode);
+    await assert.rejects(
+      superviseCase({ runId: "flow", profile: "retained-profile" }, model.io, {
+        timeoutMs: 200,
+        pollMs: 100,
+        settleMs: 100,
+      }),
+      /timeout|fixture failed|exited/i,
+    );
+    assert.ok(model.actions.includes("kill-group:100"));
+    assert.equal(model.failure.status, "failed");
+    assert.equal(model.failure.parentExit.observed, true);
+    assert.deepEqual(model.failure.remainingChildren, []);
+    assert.deepEqual(model.failure.cleanupErrors, []);
+    assert.ok(
+      model.failure.originalError.message.includes(
+        mode === "timeout" ? "timeout" : "fixture failed",
+      ),
+    );
+    assert.equal(model.actions.at(-1), "failure");
+  });
+test("T7fix I3: normal completion uses the same final observations without cleanup kills", async () => {
+  const model = controllerModel("success");
+  const receipt = await superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 });
+  assert.equal(receipt.status, "passed");
+  assert.equal(model.failure, undefined);
+  assert.ok(!model.actions.some((a) => a.startsWith("kill")));
+});
+test("T7fix I3: cleanup/observation/write errors are retained and never mask original failure", async () => {
+  const model = controllerModel("nonzero");
+  let reads = 0;
+  model.io.processes = async () => {
+    if (++reads > 1) throw new Error("ps unavailable");
+    return [{ pid: 100, ppid: 1, pgid: 100, start: "parent-birth" }];
+  };
+  model.io.writeFailure = async (receipt) => {
+    model.actions.push(receipt);
+    throw new Error("report disk full");
+  };
+  await assert.rejects(
+    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    /fixture failed|exited/i,
+  );
+  const failure = model.actions.find((a) => typeof a === "object");
+  assert.equal(failure.status, "failed");
+  assert.equal(failure.remainingChildren, null);
+  assert.ok(failure.cleanupErrors.some((e) => e.message === "ps unavailable"));
+  assert.ok(failure.cleanupErrors.some((e) => e.message === "report disk full"));
+  assert.ok(model.actions.includes("fallback"));
+});
+test("T7fix I3: reused PIDs never become owned parents or cleanup targets", () => {
+  const tracker = createOwnedProcessTracker(100);
+  tracker.observe([
+    { pid: 100, ppid: 1, pgid: 100, start: "original" },
+    { pid: 101, ppid: 100, pgid: 100, start: "child" },
+  ]);
+  const remaining = tracker.observe([
+    { pid: 100, ppid: 1, pgid: 900, start: "reused" },
+    { pid: 101, ppid: 1, pgid: 100, start: "child" },
+    { pid: 102, ppid: 100, pgid: 900, start: "foreign-child" },
+  ]);
+  assert.deepEqual(
+    remaining.map((r) => r.pid),
+    [101],
+  );
+  assert.deepEqual(
+    tracker
+      .observed()
+      .map((r) => r.pid)
+      .sort(),
+    [100, 101],
+  );
+});
+test("T7fix I3: process table keeps birth identities and permits unrelated system rows", () => {
+  const rows = parseProcessTable(
+    " 0 0 0 Wed Oct 21 01:00:00 2026\n100 1 100 Wed Oct 21 02:00:00 2026\n",
+  );
+  const tracker = createOwnedProcessTracker(100);
+  assert.deepEqual(tracker.observe(rows), [rows[1]]);
+  assert.equal(rows[1].start, "Wed Oct 21 02:00:00 2026");
+  assert.throws(() => parseProcessTable("bad process row"));
+  assert.throws(() => tracker.observe([rows[1], rows[1]]), /Duplicate/);
+});
+test("T7fix I3: generated entry retains original and close errors on a distinct failure path", async () => {
+  const written = [];
+  let closes = 0;
+  const code = await runReferenceEntry(
+    async () => ({
+      composition: { workerCount: 1 },
+      runCase: async () => {
+        throw new Error("original case error");
+      },
+      close: async () => {
+        closes++;
+        throw new Error("close error");
+      },
+    }),
+    { case: "retirement", report: "candidate.json" },
+    {
+      write: async (file, value) => written.push({ file, value: JSON.parse(value) }),
+      now: () => 1,
+      pid: 100,
+    },
+  );
+  assert.equal(code, 1);
+  assert.equal(closes, 1);
+  assert.equal(written[0].file, "candidate.json.entry-failure.json");
+  assert.equal(written[0].value.originalError.message, "original case error");
+  assert.equal(written[0].value.cleanupErrors[0].message, "close error");
+});
+
+test("T7fix I3: failed cleanup records remaining identities and original nonzero exit", async () => {
+  const model = controllerModel("nonzero");
+  model.io.killGroup = async () => {
+    throw new Error("kill denied");
+  };
+  await assert.rejects(
+    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    /fixture failed/,
+  );
+  assert.equal(model.failure.parentExit.code, 7);
+  assert.deepEqual(
+    model.failure.remainingChildren.map((row) => row.pid),
+    [101],
+  );
+  assert.ok(model.failure.cleanupErrors.some((error) => error.message === "kill denied"));
+});
+test("T7fix I3: signal exit cleans an owned descendant that changed process groups", async () => {
+  const model = controllerModel("nonzero");
+  let exit;
+  model.io.start = async () => {
+    model.setRows([
+      { pid: 100, ppid: 1, pgid: 100, start: "parent-birth" },
+      { pid: 101, ppid: 100, pgid: 101, start: "child-birth" },
+    ]);
+    return { pid: 100, exit: () => exit };
+  };
+  const sleep = model.io.sleep;
+  model.io.sleep = async (ms) => {
+    await sleep(ms);
+    if (!exit) {
+      exit = { code: null, signal: "SIGTERM" };
+      model.setRows([{ pid: 101, ppid: 1, pgid: 101, start: "child-birth" }]);
+    }
+  };
+  await assert.rejects(
+    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    /fixture failed/,
+  );
+  assert.ok(model.actions.includes("kill:101"));
+  assert.equal(model.failure.parentExit.signal, "SIGTERM");
+  assert.deepEqual(model.failure.remainingChildren, []);
+});
+test("T7fix I3: PID reuse in the original group cannot revive group ownership", () => {
+  const tracker = createOwnedProcessTracker(100);
+  tracker.observe([{ pid: 100, ppid: 1, pgid: 100, start: "old" }]);
+  assert.deepEqual(
+    tracker.observe([
+      { pid: 100, ppid: 1, pgid: 100, start: "new" },
+      { pid: 102, ppid: 100, pgid: 100, start: "foreign" },
+    ]),
+    [],
+  );
+});
+test("T7fix I3: entry construction failure writes a diagnostic; cleanup success cannot erase a case failure", async () => {
+  for (const construction of [true, false]) {
+    const written = [];
+    const code = await runReferenceEntry(
+      async () => {
+        if (construction) throw new Error("construction failed");
+        return {
+          composition: { workerCount: 1 },
+          runCase: async () => {
+            throw new Error("case failed");
+          },
+          close: async () => {},
+        };
+      },
+      { case: "retirement", report: "candidate.json" },
+      {
+        write: async (file, value) => written.push({ file, value: JSON.parse(value) }),
+        now: () => 1,
+        pid: 100,
+      },
+    );
+    assert.equal(code, 1);
+    assert.equal(written.length, 1);
+    assert.equal(written[0].value.status, "failed");
+    assert.deepEqual(written[0].value.cleanupErrors, []);
+    assert.equal(
+      written[0].value.originalError.message,
+      construction ? "construction failed" : "case failed",
+    );
+  }
+});
+
+test("T7fix I3: spawn failure and malformed candidate still write failure receipts", async () => {
+  for (const mode of ["spawn", "candidate"]) {
+    const model = controllerModel("success");
+    if (mode === "spawn")
+      model.io.start = async () => {
+        throw new Error("spawn failed");
+      };
+    else model.setCandidate({ ...receiptFixture(), bundleSha256: "bad" });
+    await assert.rejects(
+      superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+      /spawn failed|match/,
+    );
+    assert.equal(model.failure.status, "failed");
+    assert.equal(model.failure.parentExit.observed, mode !== "spawn");
+    assert.deepEqual(model.failure.remainingChildren, []);
+  }
+});
+test("T7fix I3: entry success and failure-write fallback have distinct dispositions", async () => {
+  const written = [];
+  let live = 1,
+    closes = 0;
+  const fixture = {
+    composition: {
+      get workerCount() {
+        return live;
+      },
+      reservationListenerCount: 0,
+      profile: { hostEpoch: "observed-epoch" },
+    },
+    runCase: async () => ({ observed: "oracle-only" }),
+    close: async () => {
+      closes++;
+      live = 0;
+    },
+    environment: {},
+  };
+  const code = await runReferenceEntry(
+    async () => fixture,
+    { report: "candidate.json", case: "retirement" },
+    {
+      write: async (file, value) => written.push({ file, value: JSON.parse(value) }),
+      now: () => 1,
+      pid: 100,
+    },
+  );
+  assert.equal(code, 0);
+  assert.equal(closes, 2);
+  assert.equal(written[0].file, "candidate.json");
+  assert.equal(written[0].value.status, "closed-reference");
+  assert.deepEqual(
+    written[0].value.workerTrace.map((row) => row.count),
+    [1, 0],
+  );
+  let fallback;
+  const failed = await runReferenceEntry(
+    async () => {
+      throw new Error("construction failed");
+    },
+    { report: "candidate.json" },
+    {
+      write: async () => {
+        throw new Error("disk full");
+      },
+      now: () => 1,
+      pid: 100,
+      reportFailure: (r) => {
+        fallback = r;
+      },
+    },
+  );
+  assert.equal(failed, 1);
+  assert.equal(fallback.originalError.message, "construction failed");
+  assert.equal(fallback.cleanupErrors[0].message, "disk full");
+});
