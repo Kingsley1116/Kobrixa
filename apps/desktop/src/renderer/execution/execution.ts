@@ -564,8 +564,12 @@ export class ExecutionController {
     );
   }
   async connect(target: DeviceDescriptor | string): Promise<void> {
-    if (this.working || this.state.session) return;
+    if (this.working || this.state.session || this.disconnectingSession) return;
     if (this.state.recovery) await this.disconnect();
+    // Failed cancellation restores recovery; pending cancellation must never
+    // authorize a replacement connection or clear its cleanup error.
+    if (this.working || this.state.session || this.state.recovery || this.disconnectingSession)
+      return;
     this.update({ connectionNotice: undefined });
     await this.perform(async (generation) => {
       this.phase("connecting");

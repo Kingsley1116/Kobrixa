@@ -399,3 +399,165 @@ it("F15 an expiry event cannot be overwritten by a late ready response", async (
   controller.executeBatch("replace");
   expect(api.device.executeFiles).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "holds busy and the device lock through renewal-failure cleanup (cleanup rejects=%s)",
+  async (rejectCleanup) => {
+    const h = setup();
+    h.api.device.prepareFiles = vi.fn(async (request) => ({
+      ...request,
+      planId: "plan",
+      phase: "ready",
+      items: [],
+      issues: [],
+      stopRequested: false,
+    }));
+    h.api.device.renewFiles = vi.fn(async () => {
+      throw new Error("Renewal refused");
+    });
+    h.api.device.executeFiles = vi.fn();
+    let settle!: () => void;
+    const cleanup = new Promise<void>((resolve, reject) => {
+      settle = () => (rejectCleanup ? reject(new Error("Cleanup failed")) : resolve());
+    });
+    h.api.device.stopFiles = vi.fn(() => {
+      // A terminal notification is not the cancellation IPC acknowledgement.
+      h.controller.onEvent({
+        type: "file-batch",
+        snapshot: {
+          ...h.controller.getSnapshot().batch!,
+          phase: "failed",
+          stopRequested: true,
+        },
+      });
+      return cleanup;
+    });
+    const pending = h.controller.prepareBatch("delete", [`${ROOT}/one`], "files", "en");
+    await vi.waitFor(() => expect(h.controller.getSnapshot().batch?.phase).toBe("ready"));
+    const renewal = h.controller.renewConfirmation();
+    try {
+      await vi.waitFor(() => expect(h.api.device.stopFiles).toHaveBeenCalledOnce());
+      expect(h.controller.getSnapshot()).toMatchObject({
+        busy: true,
+        batch: { phase: "failed" },
+        error: { message: "Renewal refused" },
+      });
+      expect(h.execution.locked).toBe(true);
+      h.controller.executeBatch("replace");
+      await h.controller.prepareBatch("delete", [`${ROOT}/two`], "files", "en");
+      expect(h.api.device.prepareFiles).toHaveBeenCalledOnce();
+      expect(h.api.device.executeFiles).not.toHaveBeenCalled();
+    } finally {
+      settle();
+      await renewal;
+      await pending;
+    }
+    expect(h.controller.getSnapshot()).toMatchObject({
+      busy: false,
+      error: { message: "Renewal refused" },
+    });
+    expect(h.execution.locked).toBe(false);
+    expect(h.api.device.stopFiles).toHaveBeenCalledOnce();
+  },
+);
+
+it("joins renewal cleanup when a terminal event precedes the late prepare reply", async () => {
+  const h = setup();
+  let ready!: FileBatchSnapshot;
+  let releasePrepare!: () => void, releaseCleanup!: () => void;
+  const prepareReply = new Promise<void>((resolve) => {
+    releasePrepare = resolve;
+  });
+  const cleanupReply = new Promise<void>((resolve) => {
+    releaseCleanup = resolve;
+  });
+  h.api.device.prepareFiles = vi.fn(async (request) => {
+    ready = {
+      ...request,
+      planId: "late-plan",
+      phase: "ready",
+      items: [],
+      issues: [],
+      stopRequested: false,
+    };
+    h.controller.onEvent({ type: "file-batch", snapshot: ready });
+    await prepareReply;
+    return ready;
+  });
+  h.api.device.renewFiles = vi.fn(async () => {
+    throw new Error("Renewal refused");
+  });
+  h.api.device.stopFiles = vi.fn(() => {
+    h.controller.onEvent({
+      type: "file-batch",
+      snapshot: { ...ready, phase: "failed", stopRequested: true },
+    });
+    return cleanupReply;
+  });
+  h.api.device.executeFiles = vi.fn();
+  const pending = h.controller.prepareBatch("delete", [`${ROOT}/one`], "files", "en");
+  const renewal = h.controller.renewConfirmation();
+  try {
+    await vi.waitFor(() => expect(h.api.device.stopFiles).toHaveBeenCalledOnce());
+    releasePrepare();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(h.controller.getSnapshot()).toMatchObject({ busy: true, batch: { phase: "failed" } });
+    expect(h.execution.locked).toBe(true);
+    h.controller.executeBatch("replace");
+    expect(h.api.device.executeFiles).not.toHaveBeenCalled();
+  } finally {
+    releasePrepare();
+    releaseCleanup();
+    await renewal;
+    await pending;
+  }
+  expect(h.controller.getSnapshot()).toMatchObject({
+    busy: false,
+    batch: { phase: "failed" },
+    error: { message: "Renewal refused" },
+  });
+  expect(h.execution.locked).toBe(false);
+});
+
+it("ignores a late renewal rejection after a replacement session has a new confirmation", async () => {
+  const h = setup();
+  h.api.device.prepareFiles = vi.fn(async (request) => ({
+    ...request,
+    planId: request.requestId,
+    phase: "ready",
+    items: [],
+    issues: [],
+    stopRequested: false,
+  }));
+  let rejectRenewal!: (error: Error) => void;
+  h.api.device.renewFiles = vi.fn(
+    () =>
+      new Promise<void>((_, reject) => {
+        rejectRenewal = reject;
+      }),
+  );
+  h.api.device.stopFiles = vi.fn(async () => {});
+  const old = h.controller.prepareBatch("delete", [`${ROOT}/one`], "files", "en");
+  await vi.waitFor(() => expect(h.controller.getSnapshot().batch?.phase).toBe("ready"));
+  const renewal = h.controller.renewConfirmation();
+  h.controller.setSession("s2");
+  await old;
+  const current = h.controller.prepareBatch("delete", [`${ROOT}/two`], "files", "en");
+  await vi.waitFor(() => expect(h.controller.getSnapshot().batch?.phase).toBe("ready"));
+  const batch = h.controller.getSnapshot().batch;
+  try {
+    rejectRenewal(new Error("Old renewal refused"));
+    await renewal;
+    expect(h.api.device.stopFiles).toHaveBeenCalledOnce();
+    expect(h.controller.getSnapshot()).toMatchObject({
+      sessionId: "s2",
+      busy: true,
+      batch,
+      error: undefined,
+    });
+    expect(h.execution.locked).toBe(true);
+  } finally {
+    await h.controller.stopBatch();
+    await current;
+  }
+});

@@ -665,6 +665,61 @@ describe("USB recovery state", () => {
     expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
   });
 
+  it.each([usb, "192.168.0.2"])(
+    "does not connect after failed recovery cancellation, but permits an explicit retry (%s)",
+    async (target) => {
+      const h = setup();
+      await h.controller.connect(usb);
+      h.emitDevice(waiting);
+      const recovery = h.controller.getSnapshot().recovery;
+      h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
+      await h.controller.connect(target);
+      expect(h.api.device.connect).toHaveBeenCalledTimes(1);
+      expect(h.api.device.connectWifi).not.toHaveBeenCalled();
+      expect(h.controller.getSnapshot().session).toBeUndefined();
+      expect(h.controller.getSnapshot().recovery).toEqual(recovery);
+      expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
+      await h.controller.connect(target);
+      expect(h.api.device.disconnect).toHaveBeenCalledTimes(2);
+      expect(h.controller.getSnapshot().recovery).toBeUndefined();
+      expect(h.controller.getSnapshot().session?.id).toBe(typeof target === "string" ? "s2" : "s1");
+      expect(h.controller.getSnapshot().error).toBeUndefined();
+    },
+  );
+
+  it.each(["disconnect", "connect"] as const)(
+    "does not start another connection while %s cancels recovery",
+    async (initiator) => {
+      const h = setup();
+      await h.controller.connect(usb);
+      h.emitDevice(waiting);
+      const cancelled = deferred<void>();
+      h.api.device.disconnect.mockReturnValueOnce(cancelled.promise);
+      const pending =
+        initiator === "disconnect"
+          ? h.controller.disconnect()
+          : h.controller.connect("192.168.0.2");
+      try {
+        expect(h.controller.locked).toBe(true);
+        await h.controller.connect(usb);
+        await h.controller.connect("192.168.0.3");
+        h.emitDevice(recovered);
+        expect(h.api.device.connect).toHaveBeenCalledTimes(1);
+        expect(h.api.device.connectWifi).not.toHaveBeenCalled();
+        expect(h.controller.getSnapshot().session).toBeUndefined();
+        expect(h.controller.getSnapshot().recovery).toBeUndefined();
+      } finally {
+        cancelled.resolve();
+        await pending;
+      }
+      expect(h.controller.locked).toBe(false);
+      expect(h.api.device.connect).toHaveBeenCalledTimes(1);
+      expect(h.api.device.connectWifi).toHaveBeenCalledTimes(initiator === "connect" ? 1 : 0);
+      if (initiator === "connect")
+        expect(h.api.device.connectWifi).toHaveBeenCalledWith("192.168.0.2");
+    },
+  );
+
   it("does not restore changed files or a closed project's uploaded version", async () => {
     const h = setup();
     await h.controller.connect(usb);
