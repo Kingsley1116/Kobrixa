@@ -406,8 +406,12 @@ export class WorkerSources implements LegacySourceResolver {
       return {state:"present",entries:[{key:"preferences",format:1,byteLength:bytes.length,sha256:binding.resolved.evidence.digest}]};
     }
     const {fs}=binding;
+    // Only the fixed root's initial check can establish absence. Once collection
+    // starts, ENOENT is incomplete inventory (for example a disappearing child).
+    try { await fs.check(fs.path()); }
+    catch(e){return {state:(e as NodeJS.ErrnoException).code==="ENOENT"?"absent":"blocked",entries:[]};}
     try {
-      await fs.check(fs.path());const entries=await fs.entries(fs.path(),4096),items:LegacySourceItem[]=[];
+      const entries=await fs.entries(fs.path(),4096),items:LegacySourceItem[]=[];
       if(entries.length>512)throw new Error("size-limit");
       for(let start=0;start<entries.length;start+=64)for(const entry of entries.slice(start,start+64)) {
         if(entry.directory || Buffer.byteLength(entry.name)>128 || entry.bytes>8388608)throw new Error("invalid-resource");
@@ -417,7 +421,7 @@ export class WorkerSources implements LegacySourceResolver {
         items.push({key:entry.name,format,byteLength:bytes.length,sha256});
       }
       return {state:"present",entries:items};
-    }catch(e){return {state:(e as NodeJS.ErrnoException).code==="ENOENT"?"absent":"blocked",entries:[]};}
+    }catch{return {state:"blocked",entries:[]};}
   }
   async read(id:string,key:string,offset:number,maxBytes:number):Promise<Uint8Array> {
     const binding=this.source(id);

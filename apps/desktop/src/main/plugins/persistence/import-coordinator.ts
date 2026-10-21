@@ -27,7 +27,7 @@ import {
   recordImport,
   reconcileImport,
   finishImport,
-  publishImportDocument,
+  publishGuardedImportDocument,
   assertImportBudget,
 } from "./import-journal.js";
 import { sameImportValue, sameImportAttempt, publicationTicketSchema } from "./namespace.js";
@@ -96,7 +96,7 @@ export function createLegacyImportCoordinator(input: {
     challenges = new Map<string, Handle>();
   const pending = new Map<
     Handle,
-    { document: LegacyNonceDocument; promise: ReturnType<typeof publishImportDocument> }
+    { document: LegacyNonceDocument; promise: ReturnType<typeof publishGuardedImportDocument> }
   >();
   const retainedPins = new Map<string, { mapped: Handle; ticket: PublicationTicket }>();
   const scopeKey = (scope: CoreWindowScope) =>
@@ -128,7 +128,10 @@ export function createLegacyImportCoordinator(input: {
     )
       throw new Error("stale");
   }
-  async function save(document: LegacyNonceDocument): Promise<boolean> {
+  async function save(
+    document: LegacyNonceDocument,
+    admit: () => void = () => {},
+  ): Promise<boolean> {
     let operation = pending.get(document.nonce);
     if (operation && !sameImportValue(operation.document, document))
       throw new Error("import-pending");
@@ -137,11 +140,11 @@ export function createLegacyImportCoordinator(input: {
       const copy = parseNonceDocument(Buffer.from(JSON.stringify(document)));
       operation = {
         document: copy,
-        promise: Promise.resolve().then(() => publishImportDocument(backend, copy)),
+        promise: Promise.resolve().then(() => publishGuardedImportDocument(backend, copy, admit)),
       };
       pending.set(document.nonce, operation);
     }
-    let result: Awaited<ReturnType<typeof publishImportDocument>>;
+    let result: Awaited<ReturnType<typeof publishGuardedImportDocument>>;
     try {
       result = await operation.promise;
     } catch (error) {
@@ -603,7 +606,9 @@ export function createLegacyImportCoordinator(input: {
           saved.items.every((e) => e.state === "committed" || e.state === "skipped") &&
           (await finishImport(imports, owner, saved.plan))
         ) {
+          check();
           await barrier.complete(handle);
+          check();
           return progress(saved.plan.items.length ? "complete" : "complete-empty");
         }
         return progress("blocked");
@@ -649,7 +654,9 @@ export function createLegacyImportCoordinator(input: {
         : undefined;
       if (!document) {
         // A later workbench may replace an uncaptured challenge, but never revive it.
-        for (const prior of nonces.values())
+        const issued = new Map(nonces);
+        for (const [nonce, operation] of pending) issued.set(nonce, operation.document);
+        for (const prior of issued.values())
           if (prior.descriptorId === descriptor.id && !sameImportValue(prior.scope, scope))
             retired.add(scopeKey(prior.scope));
         const nonce = randomUUID(),
@@ -718,7 +725,13 @@ export function createLegacyImportCoordinator(input: {
           digest,
           ticket: metadataTicket(descriptor, copy.nonce),
         };
-        if (!(await save(document))) return { state: "pending" };
+        const owner = structuredClone(document.ticket.owner);
+        const admit = () => {
+          live(descriptor, copy.scope);
+          if (!sameImportValue(owner, input.importOwner(descriptor.targetSourceKey)))
+            throw new Error("stale");
+        };
+        if (!(await save(document, admit))) return { state: "pending" };
       }
       // If the window retired during raw persistence, preserve its durable capture for host recovery.
       live(descriptor, copy.scope);

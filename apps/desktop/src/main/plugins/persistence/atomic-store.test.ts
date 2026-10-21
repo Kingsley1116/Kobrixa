@@ -535,3 +535,82 @@ it("T5: durable checkpoint ownership outlives the registration ticket's terminal
     expect(await env.store.publish(final)).toMatchObject({disposition:"committed"});
   }finally{await env.close();}
 });
+
+function importBudgetTicket(key: string): PublicationTicket {
+  const target = { kind: "import" as const, key };
+  return { id: randomUUID(), owner, deadlineMonotonicMs: 120000, target, metadata: target };
+}
+function importBudgetBytes(length: number): Uint8Array {
+  const empty = JSON.stringify({ formatVersion: 1, padding: "" });
+  return Buffer.from(JSON.stringify({ formatVersion: 1, padding: "x".repeat(length - Buffer.byteLength(empty)) }));
+}
+it("T6 budget: shrinking replacements release capacity only on known commit", async () => {
+  const env = await setup();
+  try {
+    const original = importBudgetTicket("large"), full = importBudgetBytes(2097152);
+    await stage(env.store, original, full); await env.store.publish(original);
+    const smaller = importBudgetBytes(1024), abandoned = importBudgetTicket("large");
+    await stage(env.store, abandoned, smaller);
+    await expect(env.store.reserve(importBudgetTicket("other"), 1)).rejects.toThrow("size-limit");
+    expect(await env.store.abort(abandoned)).toBe("aborted");
+    await expect(env.store.reserve(importBudgetTicket("other"), 1)).rejects.toThrow("size-limit");
+    const replacement = importBudgetTicket("large");
+    await stage(env.store, replacement, smaller);
+    expect((await env.store.publish(replacement)).disposition).toBe("committed");
+    // Re-reading an older receipt cannot overwrite the new committed budget size.
+    expect((await env.store.reconcile(original)).disposition).toBe("committed");
+    const fitting = importBudgetTicket("other");
+    await env.store.reserve(fitting, 2097152 - smaller.length);
+    await expect(env.store.reserve(importBudgetTicket("overflow"), 1)).rejects.toThrow("size-limit");
+    await env.store.abort(fitting);
+    expect(original.deadlineMonotonicMs).toBe(120000);
+  } finally { await env.close(); }
+});
+it("T6 budget: failed reserve cleanup retains its charge until exact settlement", async () => {
+  const env = await setup(), open = env.fs.open.bind(env.fs), unlink = env.fs.unlink.bind(env.fs);
+  let fail = false;
+  try {
+    const original = importBudgetTicket("large");
+    await stage(env.store, original, importBudgetBytes(2097152 - 100)); await env.store.publish(original);
+    env.fs.open = async (p, mode) => {
+      if (fail && env.fs.name(p).endsWith("payload.tmp")) throw new Error("injected-open");
+      return open(p, mode);
+    };
+    env.fs.unlink = async p => {
+      if (fail && env.fs.name(p).endsWith("intent.json")) throw new Error("injected-cleanup");
+      return unlink(p);
+    };
+    fail = true;
+    const pending = importBudgetTicket("uncertain");
+    await expect(env.store.reserve(pending, 100)).rejects.toThrow("injected-open");
+    await expect(env.store.reserve(importBudgetTicket("overflow"), 1)).rejects.toThrow("size-limit");
+    await expect(env.store.abort({ ...pending, deadlineMonotonicMs: 120001 })).rejects.toThrow("stale");
+    fail = false;
+    expect(await env.store.abort(pending)).toBe("aborted");
+    const fitting = importBudgetTicket("other");
+    await env.store.reserve(fitting, 100); await env.store.abort(fitting);
+  } finally { fail = false; await env.close(); }
+});
+it("T6 budget: unknown commit reconciles once and restart restores the same aggregate", async () => {
+  let fail = false;
+  const env = await setup(async point => { if (fail && point === "after-publish") throw new Error("lost-reply"); });
+  let reopened: AtomicStore | undefined;
+  try {
+    const original = importBudgetTicket("large");
+    await stage(env.store, original, importBudgetBytes(2097152 - 1024)); await env.store.publish(original);
+    const pending = importBudgetTicket("small");
+    await stage(env.store, pending, importBudgetBytes(1024));
+    fail = true;
+    expect(await env.store.publish(pending)).toEqual({ disposition: "unknown" });
+    await expect(env.store.reserve(importBudgetTicket("overflow"), 1)).rejects.toThrow("publish-uncertain");
+    fail = false;
+    expect((await env.store.reconcile(pending)).disposition).toBe("committed");
+    await expect(env.store.reserve(importBudgetTicket("overflow"), 1)).rejects.toThrow("size-limit");
+    await env.store.dispose();
+    reopened = new AtomicStore(new NodePersistenceFs(env.fs.root, { hostEpoch: randomUUID(), assertHeld() {} }, { now: () => 0 }));
+    await reopened.initialize();
+    const current = { ...importBudgetTicket("overflow"), owner: { ...owner, hostEpoch: reopened.fs.profile.hostEpoch } };
+    await expect(reopened.reserve(current, 1)).rejects.toThrow("size-limit");
+    expect(await reopened.auxiliary(current.owner, "import", "small")).toEqual(Uint8Array.from(importBudgetBytes(1024)));
+  } finally { fail = false; await reopened?.dispose(); await env.close(); }
+});

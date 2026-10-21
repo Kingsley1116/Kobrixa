@@ -17,8 +17,23 @@ beforeAll(async()=>{
   await mkdir(path.join(directory,"legacy","sensor-lab"),{recursive:true});
   const workerPath=fileURLToPath(new URL("./worker.ts",import.meta.url)),fixturesPath=fileURLToPath(new URL("./import-fixtures.ts",import.meta.url));
   const fixtureEntry=path.join(directory,"worker-entry.ts");
+  const filesystemPath=fileURLToPath(new URL("./filesystem.ts",import.meta.url));
   await writeFile(fixtureEntry,`import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
       import {syntheticImportDescriptor,syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixturesPath)};
+      import {NodePersistenceFs} from ${JSON.stringify(filesystemPath)};
+      import {existsSync,unlinkSync} from "node:fs";
+      // Test-only fault injection: remove an enumerated child on real disk. All source
+      // collection, messages, codecs, journals and subsequent reads remain native.
+      const entries=NodePersistenceFs.prototype.entries;
+      NodePersistenceFs.prototype.entries=async function(...args) {
+        const result=await entries.apply(this,args);
+        const trigger=${JSON.stringify(path.join(directory,"child-race.trigger"))};
+        if(this.root===${JSON.stringify(path.join(directory,"legacy","sensor-lab"))} && existsSync(trigger)) {
+          unlinkSync(trigger);
+          unlinkSync(this.root+"/22222222-2222-4222-8222-222222222222.json");
+        }
+        return result;
+      };
       runPersistenceWorker({mappers:new Map([syntheticImportDescriptor,syntheticPreferencesImportDescriptor].map(d=>[d.id,d])),
         sourceRoots:new Map([[syntheticImportDescriptor.id,${JSON.stringify(path.join(directory,"legacy","sensor-lab"))}]])});`);
   await build({configFile:false,logLevel:"error",
@@ -272,3 +287,41 @@ it("T5 private continuations require original ticket, exact grant and a bound re
   expect(PersistenceWorkerRequest.safeParse({version:1,id:3,operation:"evidence.retainSealed",args:[t]}).success).toBe(true);
   expect(PersistenceWorkerRequest.safeParse({version:1,id:4,operation:"engine.publishRecovery",args:[t,"fabricated",performance.now()+1000]}).success).toBe(false);
 });
+
+
+import { createLegacyImportCoordinator } from "./import-coordinator.js";
+import { createLegacyWriterBarrier, importIdFor } from "./import-sources.js";
+import { syntheticImportDescriptor } from "./import-fixtures.js";
+it("T6 fix round1 child ENOENT blocks actual-worker import and retry imports the survivor", async () => {
+  const sourceRoot=path.join(directory,"legacy","sensor-lab"),
+    survivor="11111111-1111-4111-8111-111111111111.json",
+    lost="22222222-2222-4222-8222-222222222222.json",
+    bytes=Buffer.from(JSON.stringify({formatVersion:1,value:"survivor"}));
+  await writeFile(path.join(sourceRoot,survivor),bytes);
+  await writeFile(path.join(sourceRoot,lost),Buffer.from(JSON.stringify({formatVersion:1,value:"lost"})));
+  const env=await launch(path.join(directory,randomUUID())),d=syntheticImportDescriptor,
+    owner={...ownerFor(env.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
+  const barrier=createLegacyWriterBarrier({backend:env.backend,descriptors:[d],writers:[],importOwner:()=>owner});
+  const coordinator=createLegacyImportCoordinator({backend:env.backend,sources:env.backend.sources,barrier,
+    descriptors:[d],currentScope:()=>true,currentSource:()=>true,importOwner:()=>owner});
+  try {
+    await writeFile(path.join(directory,"child-race.trigger"),"");
+    expect(await coordinator.run(d,new AbortController().signal)).toEqual({state:"blocked",completedItems:0,totalItems:0});
+    expect(await env.backend.imports.load(owner,importIdFor(d.id,d.targetSourceKey))).toBeNull();
+    expect((await env.backend.sources.inventory(d.id)).entries.map(e=>e.key)).toEqual([survivor]);
+    expect(await coordinator.run(d,new AbortController().signal)).toEqual({state:"complete",completedItems:1,totalItems:1});
+    const saved=await env.backend.imports.load(owner,importIdFor(d.id,d.targetSourceKey));
+    expect(saved?.plan.items.map(i=>i.key)).toEqual([survivor]);
+    const records=await env.backend.reads.list(owner,{limit:64});
+    expect(records.entries).toHaveLength(1);
+    expect(records.entries[0]?.sha256).toBe(hash(bytes));
+    // Only a subsequent conclusive check of the fixed root may report absent.
+    await rm(sourceRoot,{recursive:true});
+    expect(await env.backend.sources.inventory(d.id)).toEqual({state:"absent",entries:[]});
+  } finally {
+    await env.backend.dispose();
+    await rm(sourceRoot,{recursive:true,force:true});
+    await mkdir(sourceRoot,{recursive:true});
+    await rm(path.join(directory,"child-race.trigger"),{force:true});
+  }
+},30000);

@@ -459,6 +459,75 @@ describe("T6 import-journal.test.ts: transitions", () => {
     expect(await finishImport(typedImports, owner, plan)).toBe(true);
     expect((await typedImports.load(owner, id))?.items[0]?.skipReason).toBe("trusted-user-skip");
   });
+  it.each(["plan", "attempt", "receipt"] as const)(
+    "T6 fix round1 namespace budget includes %s growth",
+    async (phase) => {
+      let attempt: PublicationTicket | undefined;
+      if (phase === "receipt") {
+        attempt = await typedImports.admit(owner, id, "one");
+        await store.reserve(attempt, bytes.length);
+        await store.tagImport(attempt, plan.items[0]!.tag);
+        await store.append(attempt, 0, bytes);
+        await store.seal(attempt, bytes.length, digest);
+        expect((await store.publish(attempt)).disposition).toBe("committed");
+      }
+      const before = await typedImports.load(owner, id),
+        existing = (await store.auxiliary(owner, "import", id))!;
+      // Existing opaque import evidence counts too: fill the namespace, not the plan's
+      // individual codec limit. The production engine persists and hashes these bytes.
+      const padding = Buffer.from(
+          JSON.stringify({ padding: "x".repeat(2097152 - existing.length - 32 - 14) }),
+        ),
+        target = { kind: "import" as const, key: "budget-padding" },
+        filler: PublicationTicket = {
+          id: randomUUID(),
+          owner,
+          deadlineMonotonicMs: 10000,
+          target,
+          metadata: target,
+        };
+      expect(existing.length + padding.length).toBe(2097152 - 32);
+      await store.reserve(filler, padding.length);
+      for (let offset = 0; offset < padding.length; offset += 262144)
+        await store.append(filler, offset, padding.subarray(offset, offset + 262144));
+      await store.seal(filler, padding.length, createHash("sha256").update(padding).digest("hex"));
+      expect((await store.publish(filler)).disposition).toBe("committed");
+      if (phase === "plan") {
+        const descriptorId = "test.other-import",
+          nextId = importIdFor(descriptorId, owner.sourceKey),
+          next = {
+            ...structuredClone(plan),
+            id: nextId,
+            descriptorId,
+            items: plan.items.map((item) => ({
+              ...structuredClone(item),
+              tag: { ...item.tag, importId: nextId },
+            })),
+          };
+        await expect(typedImports.plan(owner, next)).rejects.toThrow();
+        expect(await typedImports.load(owner, nextId)).toBeNull();
+      } else if (phase === "attempt") {
+        await expect(typedImports.admit(owner, id, "one")).rejects.toThrow();
+      } else {
+        const outcome = await typedImports.reconcile(attempt!);
+        if (outcome.disposition !== "committed" || !outcome.receipt) throw new Error("fixture");
+        await expect(
+          typedImports.record(owner, id, {
+            key: "one",
+            state: "committed",
+            receipt: outcome.receipt,
+            skipReason: null,
+            publicationTicket: attempt!,
+          }),
+        ).rejects.toThrow();
+        expect((await typedImports.reconcile(attempt!)).disposition).toBe("committed");
+      }
+      expect(await typedImports.load(owner, id)).toEqual(before);
+      expect(await store.auxiliary(owner, "import", "budget-padding")).toEqual(
+        Uint8Array.from(padding),
+      );
+    },
+  );
 });
 function recordRevision(ticket: PublicationTicket): string {
   if (ticket.metadata.kind !== "record") throw new Error("fixture");

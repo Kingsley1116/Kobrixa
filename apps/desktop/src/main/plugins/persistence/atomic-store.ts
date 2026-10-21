@@ -31,6 +31,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   readonly quota = new QuotaLedger();
   private readonly namespaces = new Map<string, Promise<Namespace>>();
   private readonly blockedSources = new Map<string,string>();
+  // Verified committed sizes and outstanding candidates share one synchronous admission
+  // boundary. Namespace recovery owns disk reconciliation before this ledger is exposed.
+  private readonly importCommitted = new WeakMap<Namespace, Map<string, number>>();
+  private readonly importReservations = new Map<string, { ns: Namespace; key: string; bytes: number }>();
   private readonly failedReserves = new Map<string, { ticket: PublicationTicket; ns: Namespace }>();
   private readonly tombstones=new Map<string,{signature:string;disposition:"committed"|"aborted";until:number}>();
   private readonly entries = new Map<string, Entry>(); private readonly targets = new Map<string, string>();
@@ -60,12 +64,40 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       pending = Namespace.open(this.fs, source).then(async ns => {
         try {
           const scanned=await scanNamespace(ns,this.fs.profile.hostEpoch);this.quota.restore(source,scanned.totals);
+          const imports=new Map<string,number>();let bytes=0;
+          for(const head of scanned.heads)if(head.target.kind==="import") {
+            bytes+=head.byteLength;
+            if(imports.size>=512 || bytes>2097152)throw new Error("size-limit");
+            imports.set(head.target.key,head.byteLength);
+          }
+          this.importCommitted.set(ns,imports);
           if(scanned.problems.length)this.blockedSources.set(source,scanned.problems[0]!);
         }catch(e){this.blockedSources.set(source,e instanceof Error?e.message:"corrupt");}
         return ns;
       }); this.namespaces.set(source, pending);
     }
     return pending;
+  }
+  private reserveImportBudget(ns:Namespace,ticket:PublicationTicket,bytes:number):void {
+    if(ticket.target.kind!=="import")return;
+    const committed=this.importCommitted.get(ns);
+    if(!committed)throw new Error("recovery-blocked");
+    // Match the existing 64-per-source / 1024-host admission bounds even while
+    // reserve is awaiting IO and has not installed its engine Entry yet.
+    let own=0;
+    const projected=new Map(committed);
+    for(const held of this.importReservations.values())if(held.ns===ns) {
+      own++;
+      projected.set(held.key,Math.max(projected.get(held.key)??0,held.bytes));
+    }
+    if(this.importReservations.has(ticket.id) || this.importReservations.size>=1024 || own>=64)
+      throw new Error("quota");
+    // A pending shrink grants no space until commit. One key counts once; neither
+    // an uncertain candidate nor its old head may be evicted to admit another key.
+    projected.set(ticket.target.key,Math.max(projected.get(ticket.target.key)??0,bytes));
+    if(projected.size>512 || [...projected.values()].reduce((sum,n)=>sum+n,0)>2097152)
+      throw new Error("size-limit");
+    this.importReservations.set(ticket.id,{ns,key:ticket.target.key,bytes});
   }
   private targetKey(t: PublicationTicket): string { return JSON.stringify([t.owner.sourceKey, t.target.kind, t.target.kind === "record" ? t.target.id : t.target.kind === "settings" ? "settings" : t.target.key]); }
   private releaseTarget(t: PublicationTicket): void { const key = this.targetKey(t); if (this.targets.get(key) === t.id) this.targets.delete(key); }
@@ -215,10 +247,12 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (ticket.target.kind !== "settings") this.targets.set(targetKey, ticket.id);
     let held: { source: string; key: string } | null = null;
     let opened: StoreFd | null = null; let allocated: Namespace | null = null;
+    let importBudgetHeld=false;
     try {
       const ns = await this.ns(ticket.owner.sourceKey), location = await ns.location(ticket.target, true), old = await ns.head(location);
       this.admitted(ticket); this.cas(ticket, old);
       if (old) { await ns.verify(location, old); if (old.object) { const key = this.fs.name(ns.object(location, old)); this.quota.holdTemporary(ticket.owner.sourceKey, key, old.byteLength); held = { source: ticket.owner.sourceKey, key }; } }
+      this.reserveImportBudget(ns,ticket,byteLength);importBudgetHeld=ticket.target.kind==="import";
       await this.fs.at("reserve", async () => { this.quota.reserve(ticket.id, ticket.owner.sourceKey, { bytes: ticket.metadata.kind === "record" ? byteLength : 0, create: ticket.target.kind === "record" && old === null, metadata: 32768 + (ticket.metadata.kind === "record" ? 0 : byteLength), lane: ticket.metadata.kind === "record" ? "write" : "metadata" }, (await this.fs.statfs(ns.path())).availableBytes); });
       allocated = ns; await this.fs.mkdir(ns.path("staging", ticket.id));
       await ns.writeNew(ns.path("staging", ticket.id, "intent.json"), { formatVersion: 1, ticket, byteLength, predecessor: old });
@@ -237,7 +271,9 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         try { if (await this.fs.exists(p)) await this.fs.unlink(p); } catch { clean = false; }
       }
       if (clean && allocated) { try { await this.fs.removeEmpty(allocated.path("staging", ticket.id)); } catch { clean = false; } }
-      if (clean) { this.releaseTarget(ticket); this.quota.release(ticket.id); }
+      if (clean) { this.releaseTarget(ticket); this.quota.release(ticket.id);
+        if(importBudgetHeld)this.importReservations.delete(ticket.id);
+      }
       else this.failedReserves.set(ticket.id, { ticket: structuredClone(ticket), ns: allocated! });
       if (held) this.quota.releaseTemporary(held.source, held.key); throw e;
     }
@@ -346,7 +382,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (!e.accounted) {
       const oldRecord = liveRecord(e.old), nextRecord = liveRecord(e.head);
       const size = (h: DiskHead | null) => h ? Buffer.byteLength(JSON.stringify(h)) + (h.metadata.kind === "record" ? 0 : h.byteLength) : 0;
-      this.quota.commit(e.ticket.id, { committed: (nextRecord?.byteLength ?? 0) - (oldRecord?.byteLength ?? 0), records: Number(nextRecord !== null) - Number(oldRecord !== null), metadata: size(e.head) - size(e.old) + 32768, temporary: 0 }); e.accounted = true;
+      this.quota.commit(e.ticket.id, { committed: (nextRecord?.byteLength ?? 0) - (oldRecord?.byteLength ?? 0), records: Number(nextRecord !== null) - Number(oldRecord !== null), metadata: size(e.head) - size(e.old) + 32768, temporary: 0 });
+      if(e.ticket.target.kind==="import") {
+        // Transfer the charge synchronously: no scan/commit gap and no double charge.
+        this.importCommitted.get(e.ns)!.set(e.ticket.target.key,e.size);
+        this.importReservations.delete(e.ticket.id);
+      }
+      e.accounted = true;
     }
     e.state = "committed"; e.finished ??= this.fs.now(); this.uncertain.delete(e.ticket.owner.sourceKey); this.releaseTarget(e.ticket);
   }
@@ -377,6 +419,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       for (const name of ["payload.tmp", "sealed.json", "import-tag.json", "publication.json", "intent.json"]) { const p = failed.ns.path("staging", ticket.id, name); if (await this.fs.exists(p)) await this.fs.unlink(p); }
       await this.fs.removeEmpty(failed.ns.path("staging", ticket.id));
       this.quota.release(ticket.id); this.releaseTarget(ticket); this.failedReserves.delete(ticket.id);
+      this.importReservations.delete(ticket.id);
       for(const [identity,write] of this.documentWrites)if(write.ticket.id===ticket.id)this.documentWrites.delete(identity);
       this.tombstones.set(ticket.id,{signature:JSON.stringify(ticket),disposition:"aborted",until:this.fs.now()+120000});
       while(this.tombstones.size>1024)this.tombstones.delete(this.tombstones.keys().next().value!);
@@ -409,6 +452,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     }
     await this.fs.removeEmpty(e.ns.path("staging", e.ticket.id));
     this.quota.release(e.ticket.id); this.releaseOld(e); e.state = "aborted"; e.finished ??= this.fs.now(); this.releaseTarget(e.ticket);
+    this.importReservations.delete(e.ticket.id);
   }
   private releaseOld(e: Entry): void {
     if (e.oldHeld && e.old?.object) { this.quota.releaseTemporary(e.ticket.owner.sourceKey, this.fs.name(e.ns.object(e.location, e.old))); e.oldHeld = false; }

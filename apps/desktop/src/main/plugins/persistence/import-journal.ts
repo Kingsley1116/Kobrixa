@@ -151,6 +151,15 @@ export async function publishImportDocument(
   backend: PersistenceBackend,
   document: ImportAuxiliaryDocument,
 ): ReturnType<PersistenceEnginePort["publish"]> {
+  return publishGuardedImportDocument(backend, document, () => {});
+}
+
+/** Internal renderer admission fence; called after asynchronous preflight and before dispatch. */
+export async function publishGuardedImportDocument(
+  backend: PersistenceBackend,
+  document: ImportAuxiliaryDocument,
+  admit: () => void,
+): ReturnType<PersistenceEnginePort["publish"]> {
   const encoded = Buffer.from(JSON.stringify(document));
   const checked =
     document.kind === "nonce" ? parseNonceDocument(encoded) : parseBarrierDocument(encoded);
@@ -164,6 +173,7 @@ export async function publishImportDocument(
   );
   let reserved = false;
   try {
+    admit();
     await backend.engine.reserve(ticket, bytes.length);
     reserved = true;
     for (let offset = 0; offset < bytes.length; offset += 262144)

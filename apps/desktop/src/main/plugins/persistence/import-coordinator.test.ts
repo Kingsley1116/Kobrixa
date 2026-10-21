@@ -1256,3 +1256,139 @@ it("T6 import-coordinator.test.ts: outcomes — cleanup uncertainty retains the 
   expect((await f.coordinator.run(f.descriptor, signal())).state).toBe("blocked");
   expect(f.pins.size).toBe(1);
 });
+
+describe("T6 fix round1 authority boundaries", () => {
+  it("retires an unresolved no-raw challenge when a replacement scope is issued", async () => {
+    const f = await fixture(syntheticPreferencesImportDescriptor);
+    let current = f.scope,
+      unknown = true,
+      oldNonce = "";
+    const coordinator = createLegacyImportCoordinator({
+      backend: f.backend,
+      sources: f.backend.sources,
+      barrier: f.barrier,
+      descriptors: [f.descriptor],
+      currentScope: (s) => s.workbenchInstance === current.workbenchInstance,
+      currentSource: () => true,
+      importOwner: () => f.owner,
+    });
+    const publish = AtomicStore.prototype.publish.bind(f.store),
+      reconcile = f.backend.imports.reconcile;
+    vi.spyOn(f.store, "publish").mockImplementation(async (t) => {
+      const result = await publish(t);
+      if (unknown && t.target.kind === "import" && t.target.key.startsWith("nonce/")) {
+        oldNonce = t.target.key.slice(6);
+        return { disposition: "unknown" };
+      }
+      return result;
+    });
+    vi.spyOn(f.backend.imports, "reconcile").mockImplementation((t) =>
+      unknown && t.target.kind === "import" && t.target.key.startsWith("nonce/")
+        ? Promise.resolve({ disposition: "unknown" })
+        : reconcile(t),
+    );
+    await expect(
+      coordinator.issuePreferences({ descriptorId: f.descriptor.id, scope: current }),
+    ).rejects.toThrow("import-pending");
+    expect(oldNonce).not.toBe("");
+    unknown = false;
+    const oldScope = current;
+    current = { ...current, workbenchInstance: randomUUID() };
+    const nextScope = current;
+    const next = await coordinator.issuePreferences({
+      descriptorId: f.descriptor.id,
+      scope: current,
+    });
+    current = oldScope;
+    await expect(
+      coordinator.issuePreferences({ descriptorId: f.descriptor.id, scope: current }),
+    ).rejects.toThrow("stale");
+    await expect(coordinator.acceptPreferencesEvidence(snap(f, oldNonce))).rejects.toThrow("stale");
+    expect((await nonceDoc(f, oldNonce)).raw).toBeNull();
+    current = nextScope;
+    expect(
+      await coordinator.acceptPreferencesEvidence({ ...snap(f, next.nonce), scope: nextScope }),
+    ).toEqual({ state: "accepted" });
+  });
+
+  it.each([
+    "retirement",
+    "source",
+    "pluginId",
+    "generation",
+    "hostEpoch",
+    "processEpoch",
+    "sourceKey",
+  ] as const)(
+    "does not admit raw evidence after %s changes during budget preflight",
+    async (change) => {
+      const f = await fixture(syntheticPreferencesImportDescriptor);
+      const challenge = await f.coordinator.issuePreferences({
+        descriptorId: f.descriptor.id,
+        scope: f.scope,
+      });
+      let reached!: () => void, release!: () => void;
+      const paused = new Promise<void>((r) => {
+        reached = r;
+      });
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const keys = f.backend.evidence.auxiliaryKeys;
+      vi.spyOn(f.backend.evidence, "auxiliaryKeys").mockImplementationOnce(async (...args) => {
+        reached();
+        await gate;
+        return keys(...args);
+      });
+      const result = f.coordinator
+        .acceptPreferencesEvidence(snap(f, challenge.nonce))
+        .catch((e) => e);
+      await paused;
+      const before = f.counts.reserve,
+        originalOwner = { ...f.owner };
+      if (change === "retirement") f.coordinator.retirePreferences(f.scope);
+      else if (change === "source") f.setActive(false);
+      else if (change === "generation") f.owner.generation++;
+      else if (change === "hostEpoch" || change === "processEpoch") f.owner[change] = randomUUID();
+      else f.owner[change] += "-replacement";
+      release();
+      const error = await result;
+      Object.assign(f.owner, originalOwner);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toBe("stale");
+      expect(f.counts.reserve).toBe(before);
+      expect((await nonceDoc(f, challenge.nonce)).raw).toBeNull();
+    },
+  );
+
+  it.each(["import", "barrier"] as const)(
+    "observes cancellation during final %s completion and preserves repair evidence",
+    async (boundary) => {
+      const f = await fixture(syntheticImportDescriptor),
+        abort = new AbortController();
+      if (boundary === "import") {
+        const complete = f.backend.imports.complete;
+        vi.spyOn(f.backend.imports, "complete").mockImplementation(async (...args) => {
+          await complete(...args);
+          abort.abort();
+        });
+      } else {
+        const complete = f.barrier.complete;
+        vi.spyOn(f.barrier, "complete").mockImplementation(async (...args) => {
+          await complete(...args);
+          abort.abort();
+        });
+      }
+      const completeBarrier = vi.spyOn(f.barrier, "complete");
+      expect(await f.coordinator.run(f.descriptor, abort.signal)).toEqual({
+        state: "blocked",
+        completedItems: 1,
+        totalItems: 1,
+      });
+      expect((await f.saved())?.complete).toBe(true);
+      if (boundary === "import") expect(completeBarrier).not.toHaveBeenCalled();
+      expect((await f.coordinator.run(f.descriptor, signal())).state).toBe("complete");
+      expect((await f.store.list(f.owner, { limit: 64 })).entries).toHaveLength(1);
+    },
+  );
+});

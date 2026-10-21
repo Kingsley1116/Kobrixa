@@ -191,10 +191,11 @@ it("parses only bound nonce and barrier documents", () => {
 
 import { afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { AtomicStore } from "./atomic-store.js";
+import { Namespace, parseHead } from "./namespace.js";
 import { createNodePersistenceFs } from "./filesystem.js";
 import {
   createLegacyWriterBarrier,
@@ -578,3 +579,186 @@ it("T6 import-sources.test.ts: barrier — duplicate in-flight enter and complet
   expect(second).toBe(first);
   await first;
 });
+
+it.each(["concurrent", "unresolved"] as const)(
+  "T6 fix round1 aggregate budget accounts for %s descriptor reservations",
+  async (mode) => {
+    const f = await barrierFixture();
+    const document = (index: number) => {
+      const nonce = randomUUID(),
+        key = "nonce/" + nonce,
+        owner = { ...f.owner, pluginId: `test.preferences-${index}` },
+        ticket = {
+          id: randomUUID(),
+          owner,
+          deadlineMonotonicMs: 10000,
+          metadata: { kind: "import" as const, key },
+          target: { kind: "import" as const, key },
+        },
+        raw = {
+          nonce,
+          scope: { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() },
+          entries: [{ key: "test.preference", raw: "" }],
+        };
+      raw.entries[0]!.raw = "x".repeat(65536 - snapshotBytes(raw, ["test.preference"]).length);
+      return {
+        formatVersion: 1 as const,
+        kind: "nonce" as const,
+        descriptorId: owner.pluginId,
+        sourceKey: owner.sourceKey,
+        nonce,
+        scope: raw.scope,
+        allowlist: ["test.preference"],
+        state: "consumed" as const,
+        raw,
+        digest: snapshotDigest(raw, ["test.preference"]),
+        originalTicket: ticket,
+        ticket,
+      };
+    };
+    let total = 0;
+    for (let index = 0; index < 30; index++) {
+      const doc = document(index);
+      expect((await publishImportDocument(f.backend, doc)).disposition).toBe("committed");
+      total += Buffer.byteLength(JSON.stringify(doc));
+    }
+    const candidates = [document(30), document(31)],
+      size = (doc: ReturnType<typeof document>) => Buffer.byteLength(JSON.stringify(doc));
+    expect(total + Math.max(...candidates.map(size))).toBeLessThanOrEqual(2097152);
+    expect(total + candidates.reduce((n, doc) => n + size(doc), 0)).toBeGreaterThan(2097152);
+    if (mode === "unresolved") {
+      const pending = candidates[0]!,
+        blocked = candidates[1]!,
+        publish = f.store.publish.bind(f.store),
+        reconcile = f.backend.imports.reconcile;
+      vi.spyOn(f.store, "publish").mockImplementation((t) =>
+        t.id === pending.ticket.id ? Promise.resolve({ disposition: "unknown" }) : publish(t),
+      );
+      vi.spyOn(f.backend.imports, "reconcile").mockImplementation((t) =>
+        t.id === pending.ticket.id ? Promise.resolve({ disposition: "unknown" }) : reconcile(t),
+      );
+      expect(await publishImportDocument(f.backend, pending)).toEqual({ disposition: "unknown" });
+      expect(await f.store.auxiliary(f.owner, "import", "nonce/" + pending.nonce)).toBeNull();
+      await expect(publishImportDocument(f.backend, blocked)).rejects.toThrow();
+      // Only settling the exact original ticket releases its charge; no eviction or republish.
+      expect(await f.store.abort(pending.ticket)).toBe("aborted");
+      expect(
+        (
+          await publishImportDocument(f.backend, {
+            ...blocked,
+            ticket: { ...blocked.ticket, id: randomUUID() },
+          })
+        ).disposition,
+      ).toBe("committed");
+      return;
+    }
+    // Both preflights must see the same committed inventory before either dispatches.
+    let arrivals = 0,
+      release!: () => void;
+    const gate = new Promise<void>((r) => {
+        release = r;
+      }),
+      keys = f.backend.evidence.auxiliaryKeys;
+    vi.spyOn(f.backend.evidence, "auxiliaryKeys").mockImplementation(async (...args) => {
+      const result = await keys(...args);
+      if (!args[2] && ++arrivals <= 2) {
+        if (arrivals === 2) release();
+        await gate;
+      }
+      return result;
+    });
+    const outcomes = await Promise.allSettled(
+      candidates.map((doc) => publishImportDocument(f.backend, doc)),
+    );
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const winner = outcomes.findIndex((o) => o.status === "fulfilled"),
+      loser = 1 - winner;
+    const winnerDoc = candidates[winner]!,
+      loserDoc = candidates[loser]!;
+    expect(
+      await f.backend.evidence.auxiliary(
+        loserDoc.ticket.owner,
+        "import",
+        "nonce/" + loserDoc.nonce,
+      ),
+    ).toBeNull();
+    expect(total + size(winnerDoc)).toBeLessThanOrEqual(2097152);
+  },
+  30000,
+);
+
+it("T6 fix round1 aggregate document count reserves the last slot across descriptors", async () => {
+  const now = 0,
+    f = await barrierFixture();
+  const document = (index: number): LegacyBarrierDocument => {
+    const descriptorId = `test.count-${index}`,
+      key = barrierKeyFor(descriptorId),
+      ticket = {
+        id: randomUUID(),
+        owner: { ...f.owner, pluginId: descriptorId },
+        deadlineMonotonicMs: now + 10000,
+        metadata: { kind: "import" as const, key },
+        target: { kind: "import" as const, key },
+      };
+    return {
+      formatVersion: 1,
+      kind: "barrier",
+      descriptorId,
+      sourceKey: f.owner.sourceKey,
+      barrier: randomUUID(),
+      state: "active",
+      originalTicket: ticket,
+      ticket,
+    };
+  };
+  // Seed a valid on-disk restart fixture; runtime admission is tested below. Writing
+  // fixture heads directly avoids 511 unrelated journal publications and fsync cycles.
+  const ns = await Namespace.open(f.store.fs, f.owner.sourceKey);
+  await ns.location({ kind: "import", key: "fixture" }, true);
+  for (let index = 0; index < 511; index++) {
+    const doc = document(index),
+      bytes = Buffer.from(JSON.stringify(doc)),
+      loc = await ns.location(doc.ticket.target),
+      revision = "r_" + randomUUID().replaceAll("-", ""),
+      head = parseHead(
+        Buffer.from(
+          JSON.stringify({
+            formatVersion: 1,
+            metadata: doc.ticket.metadata,
+            target: doc.ticket.target,
+            object: revision + ".json",
+            byteLength: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            receipt: { revision, commitId: doc.ticket.id, durability: "file-and-directory-sync" },
+          }),
+        ),
+      );
+    await writeFile(f.store.fs.name(ns.object(loc, head)), bytes);
+    await writeFile(f.store.fs.name(loc.head), JSON.stringify(head));
+  }
+  await f.store.initialize();
+  const keys = f.backend.evidence.auxiliaryKeys;
+  let arrivals = 0,
+    release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  vi.spyOn(f.backend.evidence, "auxiliaryKeys").mockImplementation(async (...args) => {
+    const page = await keys(...args);
+    if (!args[2] && ++arrivals <= 2) {
+      if (arrivals === 2) release();
+      await gate;
+    }
+    return page;
+  });
+  const candidates = [document(511), document(512)],
+    outcomes = await Promise.allSettled(
+      candidates.map((doc) => publishImportDocument(f.backend, doc)),
+    );
+  expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+  const loser = outcomes.findIndex((o) => o.status === "rejected"),
+    doc = candidates[loser]!;
+  expect(
+    await f.store.auxiliary(doc.ticket.owner, "import", barrierKeyFor(doc.descriptorId)),
+  ).toBeNull();
+}, 60000);
