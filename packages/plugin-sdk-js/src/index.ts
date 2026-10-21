@@ -80,7 +80,7 @@ export async function runPlugin(
     initialized = resolve;
   });
   const devices = createDevicesClient(peer, ready);
-  peer.handle("initialize", async ({ pluginId, locale, apiVersion }) => {
+  peer.handle("initialize", async ({ pluginId, locale, apiVersion }, request) => {
     await definition.activate({
       devices,
       pluginId,
@@ -98,10 +98,12 @@ export async function runPlugin(
         },
       },
     });
-    // Activation cannot use devices; the first command after the initialize
-    // response can. A timer leaves a race with that command on real channels.
-    initialized(apiVersion);
-    await ready;
+    // Readiness follows successful response publication, without a timer racing
+    // the first command or activation continuations overtaking the handshake.
+    request.afterReply(
+      () => initialized(apiVersion),
+      () => {},
+    );
     return {
       apiVersion: PLUGIN_API_VERSION,
       sdk: { name: "@kobrixa/plugin-sdk", version: SDK_VERSION },

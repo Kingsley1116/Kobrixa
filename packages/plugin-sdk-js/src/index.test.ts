@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { MessageChannel } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryChannelPair, RpcPeer, type ParamsOf } from "@kobrixa/plugin-protocol";
 import { API_VERSION, definePlugin, electronParentPortChannel, runPlugin } from "./index.js";
@@ -18,6 +19,79 @@ function connect(definition: Parameters<typeof runPlugin>[0]) {
 }
 
 describe("JS plugin SDK", () => {
+  it.each([false, true])(
+    "F16 real-port readiness follows successful initialize publication (send failure: %s)",
+    async (sendFailure) => {
+      const { port1, port2 } = new MessageChannel();
+      const sent: string[] = [];
+      const channel = (port: typeof port1, plugin = false) => ({
+        onMessage(listener: (text: string) => void) {
+          port.on("message", listener);
+          return () => {
+            port.off("message", listener);
+          };
+        },
+        send(text: string) {
+          const message = JSON.parse(text);
+          if (plugin && message.result?.sdk) {
+            if (sendFailure) throw new Error("initialize publication failed");
+            sent.push("initialize-response");
+          }
+          if (plugin && message.method === "devices/negotiate") sent.push("devices/negotiate");
+          port.postMessage(text);
+        },
+      });
+      const host = new RpcPeer(channel(port1));
+      const negotiate = vi.fn(() => ({
+        ok: true as const,
+        value: {
+          devicesContractVersion: 1 as const,
+          eventVersion: 1 as const,
+          capabilities: [],
+          requirementsSatisfied: true,
+        },
+      }));
+      host.handle("devices/negotiate", negotiate);
+      let background: Promise<void> | undefined;
+      let after: (() => Promise<unknown>) | undefined;
+      void runPlugin(
+        definePlugin({
+          activate(context) {
+            after = () => context.devices.negotiate();
+            background = (async () => {
+              for (let attempt = 0; attempt < 8; attempt++)
+                if ((await context.devices.negotiate()).ok) return;
+            })();
+          },
+        }),
+        { channel: channel(port2, true), exit() {} },
+      );
+      try {
+        const initialization = host.request("initialize", { ...init, apiVersion: "1.5.0" });
+        if (sendFailure)
+          await expect(initialization).rejects.toThrow("initialize publication failed");
+        else await initialization;
+        await background;
+        expect(after).toBeDefined();
+        const result = await after!();
+        if (sendFailure) {
+          expect(result).toMatchObject({
+            ok: false,
+            error: { code: "PLUGIN_E_DEVICE_UNAVAILABLE" },
+          });
+          expect(negotiate).not.toHaveBeenCalled();
+          expect(sent).toEqual([]);
+        } else {
+          expect(result).toMatchObject({ ok: true });
+          expect(sent).toEqual(["initialize-response", "devices/negotiate"]);
+        }
+      } finally {
+        host.close();
+        port1.close();
+        port2.close();
+      }
+    },
+  );
   it("F16 makes devices ready when initialize returns, without opening them during activation", async () => {
     vi.useFakeTimers();
     const negotiation = {
