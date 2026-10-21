@@ -95,8 +95,13 @@ export class RemoteFilesController {
   onEvent = (event: DeviceEvent): void => {
     if (event.type === "file-batch") {
       const batch = event.snapshot;
-      if (batch.sessionId === this.state.sessionId && batch.requestId === this.requestId)
+      if (batch.sessionId === this.state.sessionId && batch.requestId === this.requestId) {
         this.update({ batch });
+        if (!["checking", "ready", "running"].includes(batch.phase)) {
+          this.decide?.(undefined);
+          this.decide = undefined;
+        }
+      }
     } else if (
       event.type === "state" &&
       event.state === "disconnected" &&
@@ -195,6 +200,35 @@ export class RemoteFilesController {
     }
     return succeeded;
   }
+  async renewConfirmation(): Promise<void> {
+    const batch = this.state.batch;
+    if (!batch || !this.state.busy || batch.phase !== "ready" || batch.stopRequested) return;
+    const generation = this.generation;
+    try {
+      await this.api.device.renewFiles(batch);
+      if (
+        generation !== this.generation ||
+        this.state.batch?.planId !== batch.planId ||
+        this.state.batch.phase !== "ready"
+      )
+        return;
+      this.update({ error: undefined });
+    } catch (error) {
+      if (
+        generation !== this.generation ||
+        this.state.batch?.planId !== batch.planId ||
+        this.state.batch.phase !== "ready"
+      )
+        return;
+      this.decide?.(undefined);
+      this.decide = undefined;
+      this.update({
+        error: asError(error),
+        batch: { ...batch, phase: "failed", stopRequested: true },
+      });
+      await this.api.device.stopFiles(batch).catch(() => {});
+    }
+  }
   async prepareBatch(
     action: FileBatchAction,
     paths: string[],
@@ -231,12 +265,20 @@ export class RemoteFilesController {
           locale,
         });
         if (!current() || batch.sessionId !== sessionId || batch.requestId !== requestId) return;
-        if (this.state.batch?.planId !== batch.planId || this.state.batch.phase !== "running")
-          this.update({ batch });
+        const published = this.state.batch;
+        if (published?.planId === batch.planId && !["checking", "ready"].includes(published.phase))
+          batch = published;
+        else this.update({ batch });
         if (batch.phase === "ready") {
           const policy = await choice;
           if (!current()) return;
           if (!policy) {
+            const terminal = this.state.batch;
+            if (
+              terminal?.planId === batch.planId &&
+              !["checking", "ready", "running"].includes(terminal.phase)
+            )
+              return;
             await this.api.device.stopFiles(batch);
             if (current())
               this.update({ batch: { ...batch, phase: "cancelled", stopRequested: true } });

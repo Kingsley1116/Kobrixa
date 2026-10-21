@@ -334,3 +334,68 @@ describe("remote files state", () => {
     expect(h.controller.getSnapshot().entries).toEqual([]);
   });
 });
+
+it("F15 never renews a confirmation from a timer or an obsolete plan", async () => {
+  vi.useFakeTimers();
+  try {
+    const { controller, api } = setup();
+    api.device.renewFiles = vi.fn(async () => {});
+    api.device.stopFiles = vi.fn(async () => {});
+    api.device.executeFiles = vi.fn();
+    api.device.prepareFiles = vi.fn(async (request) => ({
+      ...request,
+      planId: "plan",
+      phase: "ready",
+      items: [],
+      issues: [],
+      stopRequested: false,
+    }));
+    const request = controller.prepareBatch("delete", [`${ROOT}/file.rbf`], "files", "en");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(controller.getSnapshot().batch?.phase).toBe("ready");
+    await vi.advanceTimersByTimeAsync(119_999);
+    expect(api.device.renewFiles).not.toHaveBeenCalled();
+    await controller.renewConfirmation();
+    expect(api.device.renewFiles).toHaveBeenCalledTimes(1);
+    controller.setSession(undefined);
+    await controller.renewConfirmation();
+    expect(api.device.renewFiles).toHaveBeenCalledTimes(1);
+    await request;
+    expect(api.device.executeFiles).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("F15 an expiry event cannot be overwritten by a late ready response", async () => {
+  const { controller, api } = setup();
+  api.device.executeFiles = vi.fn();
+  api.device.stopFiles = vi.fn(async () => {});
+  api.device.prepareFiles = vi.fn(async (request) => {
+    const ready: FileBatchSnapshot = {
+      ...request,
+      planId: "expired-plan",
+      phase: "ready",
+      items: [],
+      issues: [],
+      stopRequested: false,
+    };
+    controller.onEvent({
+      type: "file-batch",
+      snapshot: {
+        ...ready,
+        phase: "failed",
+        stopRequested: true,
+        issues: ["Confirmation expired"],
+      },
+    });
+    return ready;
+  });
+  await controller.prepareBatch("delete", [`${ROOT}/file.rbf`], "files", "en");
+  expect(controller.getSnapshot()).toMatchObject({
+    busy: false,
+    batch: { phase: "failed", stopRequested: true },
+  });
+  controller.executeBatch("replace");
+  expect(api.device.executeFiles).not.toHaveBeenCalled();
+});

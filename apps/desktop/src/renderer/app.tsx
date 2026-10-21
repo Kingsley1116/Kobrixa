@@ -393,7 +393,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
   }, [remoteFiles, execution.session?.id, execution.deployed?.path]);
-  const [battery] = useState(() => new BatteryStatus(window.kobrixa.device.monitor));
+  const [battery] = useState(() => new BatteryStatus(window.kobrixa.device));
   const batteryState = useSyncExternalStore(battery.subscribe, battery.getSnapshot);
   useEffect(() => battery.setSession(execution.session?.id), [battery, execution.session?.id]);
   useEffect(() => {

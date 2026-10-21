@@ -653,6 +653,18 @@ describe("USB recovery state", () => {
     expect(h.controller.getSnapshot().session?.id).toBe("s2");
   });
 
+  it("retains recovery for retry when cancellation cleanup fails", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.emitDevice(waiting);
+    const recovery = h.controller.getSnapshot().recovery;
+    h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
+    await h.controller.disconnect();
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.controller.getSnapshot().recovery).toEqual(recovery);
+    expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
+  });
+
   it("does not restore changed files or a closed project's uploaded version", async () => {
     const h = setup();
     await h.controller.connect(usb);
@@ -765,4 +777,25 @@ it("keeps a successful non-deployable build without a build error", async () => 
     detail: "BUILD1005: This target cannot deploy to EV3.",
     failed: false,
   });
+});
+
+it("F17 core Disconnect keeps the session until stop/save/disconnect acknowledges", async () => {
+  const { controller, api } = setup();
+  await controller.connect(usb);
+  let reject!: (error: Error) => void;
+  api.device.disconnect.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+  );
+  const disconnect = controller.disconnect();
+  expect(controller.getSnapshot().session?.id).toBe("s1");
+  expect(controller.locked).toBe(true);
+  expect(controller.getSnapshot().phase).toBe("disconnecting");
+  reject(new Error("Stop is unconfirmed; journal blocker retained"));
+  await disconnect;
+  expect(controller.getSnapshot().session?.id).toBe("s1");
+  expect(controller.getSnapshot().error?.detail).toContain("unconfirmed");
+  expect(controller.locked).toBe(false);
 });
