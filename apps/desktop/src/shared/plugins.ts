@@ -124,3 +124,6 @@ export interface PluginsApi {
   clearSafeModeLock(): Promise<PluginsResult>;
   onEvent(listener: (event: PluginEvent) => void): () => void;
 }
+
+export type { CoreActionReference, CoreWindowScope } from "./plugin-ui.js";
+export type { DrainReport } from "./plugin-persistence.js";

@@ -25,6 +25,7 @@ const api: KobrixaApi = {
     kick: (roomId, participantId) => ipcRenderer.invoke("collab:kick", roomId, participantId),
     setRole: (roomId, request) => ipcRenderer.invoke("collab:set-role", roomId, request),
     leave: (roomId) => ipcRenderer.invoke("collab:leave", roomId),
+    deviceControlContext: () => ipcRenderer.invoke("collab:device-control-context"),
     setDeviceControl: (holder) => ipcRenderer.invoke("collab:set-device-control", holder),
     openMirror: (roomId, projectName) =>
       ipcRenderer.invoke("collab:open-mirror", roomId, projectName),
@@ -199,6 +200,7 @@ const api: KobrixaApi = {
     setPreferences: (patch) => ipcRenderer.invoke("device:set-preferences", patch),
     prepareFiles: (request) => ipcRenderer.invoke("device:files-prepare", request),
     executeFiles: (ref, policy) => ipcRenderer.invoke("device:files-execute", ref, policy),
+    renewFiles: (ref) => ipcRenderer.invoke("device:files-renew", ref),
     stopFiles: (ref) => ipcRenderer.invoke("device:files-stop", ref),
     files: (request) => ipcRenderer.invoke("device:files", request),
     discover: () => ipcRenderer.invoke("device:discover"),

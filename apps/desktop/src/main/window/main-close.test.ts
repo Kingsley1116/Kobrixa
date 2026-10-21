@@ -83,3 +83,11 @@ describe("main-process close fallback", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 });
+
+it("does not mark renderer-ready or a timeout as main cleanup success", async () => {
+  const close = vi.fn(), cancel = vi.fn();
+  const guard = new MainProcessCloseGuard(async () => { throw new Error("journal unconfirmed"); },
+    close, async () => false, cancel);
+  await guard.request(); expect(guard.ready).toBe(false);
+  expect(close).not.toHaveBeenCalled(); expect(cancel).toHaveBeenCalledOnce();
+});

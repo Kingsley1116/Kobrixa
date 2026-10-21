@@ -99,6 +99,7 @@ export function registerIpc(
   /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
   beforeUpdateInstall: () => Promise<void> = async () => {},
   plugins?: Pick<PluginController, "diagnosticHelpEntry">,
+  deviceFoundation?: DesktopDeviceIpc,
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -106,7 +107,7 @@ export function registerIpc(
       throw new Error("Rejected IPC from an untrusted sender.");
     }
   };
-  const deviceControl = new DeviceControlGate();
+  const deviceControl = deviceFoundation?.authority ?? new DeviceControlGate();
   const handle: IpcHandle = <T extends unknown[], R>(
     channel: string,
     action: (event: IpcMainInvokeEvent, ...args: T) => R,
@@ -248,6 +249,7 @@ export function registerIpc(
   handle("updates:check", () => updates.check());
   handle("updates:prepare", async () => {
     await sensorTools?.motors?.flush();
+    await sensorTools?.lab.flush("update");
     updates.prepareInstall();
   });
   handle("updates:cancel", () => updates.cancelInstall());
@@ -291,7 +293,11 @@ export function registerIpc(
   handle("workspace:finish-close", async (_event, requestId: unknown, ready: unknown) => {
     const parsedId = id.parse(requestId),
       parsedReady = z.boolean().parse(ready);
-    if (parsedReady) await sensorTools?.motors?.flush();
+    if (parsedReady) {
+      await sensorTools?.motors?.flush();
+      await sensorTools?.lab.flush("close");
+      await deviceFoundation?.beforeClose();
+    }
     finishClose(parsedId, parsedReady);
   });
   handle("workspace:create", (_event, name: unknown) =>
@@ -432,7 +438,7 @@ export function registerIpc(
         .parse(request),
     ),
   );
-  const batchRef = z.object({ sessionId: id, requestId: id, planId: id });
+  const batchRef = z.strictObject({ sessionId: id, requestId: id, planId: id });
   handle("device:files-prepare", async (event, request: unknown) => {
     const parsed = z
       .object({
@@ -449,6 +455,11 @@ export function registerIpc(
     deviceControl.rememberBatch(event.sender, snapshot);
     return snapshot;
   });
+handle("device:files-renew", (event, ref: unknown) => {
+  const owner = deviceControl.principal(event.sender.id, "remote-files");
+  if (owner.kind !== "core") throw new Error("Core file owner required.");
+  devices.renewFilePlan(batchRef.parse(ref), owner);
+});
   handle("device:files-execute", (event, ref: unknown, policy: unknown) =>
     devices.executeFiles(
       batchRef.parse(ref),
@@ -473,9 +484,11 @@ export function registerIpc(
         .parse(address),
     ),
   );
-  handle("device:disconnect", (_event, sessionId: unknown) =>
-    devices.disconnect(id.parse(sessionId)),
-  );
+  handle("device:disconnect", (event, sessionId: unknown) => {
+    const session = id.parse(sessionId);
+    if (!deviceFoundation) throw new Error("Device lifecycle coordinator is unavailable.");
+    return deviceFoundation.disconnect(session, deviceControl.principal(event.sender.id, "recovery"));
+  });
   handle("device:upload", (_event, sessionId: unknown, buildId: unknown, remotePath: unknown) =>
     devices.upload(id.parse(sessionId), id.parse(buildId), file.parse(remotePath)),
   );
@@ -487,8 +500,20 @@ export function registerIpc(
   handle("device:run", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.run(id.parse(sessionId), file.parse(remotePath)),
   );
-  handle("device:stop", (_event, sessionId: unknown) => devices.stop(id.parse(sessionId)));
+handle("device:stop", (event, sessionId: unknown) => {
+  if (!deviceFoundation) throw new Error("Device foundation not attached.");
+  return deviceFoundation.stop(id.parse(sessionId), deviceControl.principal(event.sender.id, "recovery"));
+});
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );
+}
+
+import type { Principal } from "@kobrixa/plugin-runtime";
+
+export interface DesktopDeviceIpc {
+  stop(sessionId: string, principal: Principal): Promise<void>;
+  authority: DeviceControlGate;
+  disconnect(sessionId: string, principal: Principal): Promise<void>;
+  beforeClose(): Promise<void>;
 }

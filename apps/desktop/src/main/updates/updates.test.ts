@@ -5,7 +5,7 @@ import {
   validateUpdateInfo,
   type PublishedRelease,
 } from "./catalog.js";
-import { UpdateOperationGate, UpdateService } from "./service.js";
+import { assertDeviceUpdateAdmission, UpdateOperationGate, UpdateService } from "./service.js";
 import {
   updateArtifactName,
   updateMetadataName,
@@ -305,4 +305,15 @@ it("keeps offline checks recoverable and a normal quit never installs a download
   expect(service.getState().phase).toBe("ready");
   service.dispose();
   expect(backend.install).not.toHaveBeenCalled();
+});
+
+it("F03/F17 update admission blocks new operations but retains safety-stop/reconciliation", () => {
+  for (const state of [{ preparing: true, installing: false }, { preparing: false, installing: true }]) {
+    for (const operation of ["connection", "passive-read", "mode-read", "mode-write", "finite-motion",
+      "program-launch", "program-stop", "file-read", "file-write", "deployment", "recording-reservation"] as const)
+      expect(() => assertDeviceUpdateAdmission(state, operation)).toThrow("busy");
+    for (const operation of ["safety-stop", "reconciliation"] as const)
+      expect(() => assertDeviceUpdateAdmission(state, operation)).not.toThrow();
+  }
+  expect(() => assertDeviceUpdateAdmission(undefined, "finite-motion")).not.toThrow();
 });

@@ -112,3 +112,11 @@ describe("sensor lab privileged IPC", () => {
     expect(lab.getState).toHaveBeenCalledOnce();
   });
 });
+
+it("retains the legacy Lab save guard while new persistence is unavailable", async () => {
+  const { call, lab } = setup();
+  lab.flush.mockRejectedValue(new Error("legacy save unavailable"));
+  await expect(call("sensor-lab:stop", "close")).rejects.toThrow("legacy save unavailable");
+  await expect(call("sensor-lab:stop", "update")).rejects.toThrow("legacy save unavailable");
+  expect(lab.getState).not.toHaveBeenCalled();
+});

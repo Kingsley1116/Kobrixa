@@ -6,3 +6,6 @@ export interface PersistenceRecoveryBridge {
   onOpen(listener: (input: { itemId: Handle }) => void): () => void;
   onChanged(listener: () => void): () => void;
 }
+
+/** P150 forward types only. Public storage methods are introduced by P170. */
+export type { DrainReport } from "@kobrixa/plugin-runtime";

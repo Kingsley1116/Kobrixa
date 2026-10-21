@@ -96,6 +96,7 @@ function setup() {
       setPreferences: vi.fn(),
       files: vi.fn(),
       prepareFiles: vi.fn(),
+      renewFiles: vi.fn(),
       executeFiles: vi.fn(),
       stopFiles: vi.fn(),
       onEvent: vi.fn((listener) => {

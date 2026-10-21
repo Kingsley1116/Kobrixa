@@ -32,7 +32,17 @@ import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
 import { registerPluginIpc } from "./plugins/ipc.js";
 import { installPluginQuitCleanup } from "./plugins/quit.js";
-import { startPlugins } from "./plugins/controller.js";
+import { composeDesktopMain, desktopLifecycle, desktopDeviceAccess, retireDesktopWindow,
+  createLegacyActionAdmission, trustedDeviceActions, createDeviceLossHandler,
+  type PluginController } from "./plugins/controller.js";
+import { createDesktopFoundation } from "./device-broker/lifecycle-coordinator.js";
+import { createJournal } from "./device-broker/journal.js";
+import { createJournalFilesystem } from "./device-broker/journal-filesystem.js";
+import { createCoreActionLedger } from "./plugins/core-recovery.js";
+import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
+import { LegacyFiles } from "./device-broker/legacy-files.js";
+import type { CoreWindowScope, Principal } from "@kobrixa/plugin-runtime";
+import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
 import { electronPluginDialogs } from "./plugins/dialogs.js";
 import { quitOnSignals, watchRendererHealth } from "./plugins/session.js";
 
@@ -105,7 +115,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
   );
   const handshake = new CloseHandshake(
     (id) => window.webContents.send("workspace:before-close", id),
-    finish,
+    () => { void mainClose.request(); },
   );
   closeHandshake = handshake;
   window.on("closed", () => {
@@ -115,7 +125,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     rendererCanFlush = false;
   });
   window.on("close", (event) => {
-    if (updates?.installing || handshake.ready || mainClose.ready) return;
+    if (updates?.installing || mainClose.ready) return;
     event.preventDefault();
     if (updates?.preparing) return;
     if (window.webContents.isCrashed() || !rendererCanFlush) {
@@ -151,7 +161,9 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     );
 }
 
-void app.whenReady().then(async () => {
+const primary = startPrimary(app, async (profile) => {
+  profile.assertHeld();
+  const authority = new DeviceControlGate(new AuthorityContexts(profile.hostEpoch));
   const collabServerUrl = resolveCollabServerUrl();
   const contentSecurityPolicy = rendererContentSecurityPolicy(
     collabServerUrl,
@@ -168,15 +180,70 @@ void app.whenReady().then(async () => {
   const workspaces = new WorkspaceService();
   const pluginSettings = pluginOptions(app.commandLine);
   const pluginLanguage = pluginLocale(app.getLocale());
-  const plugins = await startPlugins({
-    userData: app.getPath("userData"),
-    builtins: BUILTIN_PLUGIN_SOURCES,
-    commandLine: pluginSettings,
-    dialogs: electronPluginDialogs(() => mainWindow, pluginLanguage),
-    locale: pluginLanguage,
+  const now = () => performance.now();
+  const operationGate = new UpdateOperationGate(() => updates);
+  const preferences = await loadDevicePreferences(app.getPath("userData"));
+  const journal = createJournal(createJournalFilesystem(app.getPath("userData")), profile);
+  const currentCorePrincipal = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
+    return authority.principal(mainWindow.webContents.id, "recovery");
+  };
+  const currentCoreScope = (): CoreWindowScope => {
+    const principal = currentCorePrincipal();
+    if (principal.kind !== "core") throw new Error("Core workbench required.");
+    return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
+  };
+  const isCurrentCoreScope = (scope: CoreWindowScope) => {
+    try { const current = currentCoreScope(); return current.hostEpoch === scope.hostEpoch &&
+      current.workbenchInstance === scope.workbenchInstance; } catch { return false; }
+  };
+  const coreActions = createCoreActionLedger({ now, current: isCurrentCoreScope });
+  const controller: { current?: PluginController } = {};
+  const requirements = (owner: ResourceOwner) => controller.current ? desktopDeviceAccess(controller.current).requirements(owner) : null;
+  const corePermissions = new Set<Permission>(["devices.read", "devices.connect", "devices.control"]);
+  const hasPermission = (principal: Principal, permission: Permission) => {
+    if (principal.kind === "plugin") return !!controller.current && desktopDeviceAccess(controller.current).hasPermission(principal.owner, permission);
+    return isCurrentCoreScope(principal) && corePermissions.has(permission);
+  };
+  const pluginPrincipal = (owner: ResourceOwner): Principal => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) return authority.contexts.plugin(mainWindow.webContents.id, owner);
+    } catch { /* An unopened document grants no authority. */ }
+    return { kind: "plugin", owner, authorityContext: null };
+  };
+  const connectionPolicy = () => {
+    const value = preferences.get();
+    return { wifiConnectTimeoutMs: value.wifiConnectTimeout, wifiHandshakeTimeoutMs: value.wifiHandshakeTimeout,
+      usbAutoReconnect: value.usbAutoReconnect, usbRetryInterval: value.usbRetryInterval, usbRetryLimit: value.usbRetryLimit };
+  };
+  const reportCleanupError = (error: unknown) => { console.error("Device cleanup blocked.", error); };
+  const composition = await composeDesktopMain({
+    createFoundation: createDesktopFoundation,
+    foundationOptions: { profile, authority: authority.contexts, journal, coreActions, now,
+      hasPermission, requirements, connectionPolicy,
+      operationGate: ({ operationClass }) => {
+        try { operationGate.assertDevice(operationClass); return { ok: true, value: null }; }
+        catch (error) { return { ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY",
+          message: error instanceof Error ? error.message : String(error),
+          detail: { kind: "device", reason: "foreground", dispatch: "not-sent", stopConfirmation: "not-required" } } }; }
+      } },
+    plugins: { userData: app.getPath("userData"), builtins: BUILTIN_PLUGIN_SOURCES,
+      commandLine: pluginSettings, dialogs: electronPluginDialogs(() => mainWindow, pluginLanguage), locale: pluginLanguage },
+    principal: pluginPrincipal, scope: currentCoreScope, currentScope: isCurrentCoreScope,
+    legacyFlush: async reason => {
+      // The coordinator has already ended reservations synchronously before this guard.
+      if (recording) recording.ended = true;
+      await motors.flush();
+      if (reason === "suspend") await sensorLab.suspend();
+      else await sensorLab.flush(reason);
+    },
+    report: reportCleanupError,
   });
-  installPluginQuitCleanup(app, plugins);
-  // Electron emits quit after will-quit, so plugin processes have already been stopped.
+  const { broker } = composition.foundation;
+  const plugins = composition.plugins;
+  controller.current = plugins;
+  const coordinator = desktopLifecycle(composition);
+  installPluginQuitCleanup(app, async () => { await composition.dispose(); await monitor.dispose(); }, reportCleanupError);
   app.on("quit", () => plugins.finishSession());
   quitOnSignals(process, () => app.quit());
   const renderer = () => {
@@ -199,7 +266,7 @@ void app.whenReady().then(async () => {
   const offLanguagePlugins = plugins.onEvent((event) => {
     if (event.type === "state") void language.refresh().catch(console.error);
   });
-  app.on("will-quit", () => {
+  app.on("quit", () => {
     offLanguageStatus();
     offLanguagePlugins();
     updates?.dispose();
@@ -213,28 +280,63 @@ void app.whenReady().then(async () => {
   const devices = new DeviceService(
     builds,
     renderer,
-    await loadDevicePreferences(app.getPath("userData")),
+    preferences,
   );
   const send = (channel: string, value: unknown) => {
     const target = renderer();
     if (target && !target.isDestroyed()) target.send(channel, value);
   };
-  const monitor = new MonitorService(devices, (update) => send("device:monitor-update", update));
-  const motors = new MotorTestService({
-    run: (id, work) => devices.withMotorTest(id, work),
-    recording: () => monitor.recordingSession !== undefined,
-    publish: (state) => send("device:motor-test-update", state),
-  });
-  devices.setBeforeDisconnect((id) => motors.stopAll(id));
+  const feed = createLegacyMonitorFeed(broker);
+  const legacyAdmission = createLegacyActionAdmission(trustedDeviceActions(broker, coordinator, coreActions));
+  const legacy = createLegacyDevice({ broker, principal: currentCorePrincipal,
+    disconnect: legacyAdmission.disconnect, stop: legacyAdmission.stop, feed });
+  const admittedDeviceActions = legacyAdmission.bind(legacy);
+  devices.attachLegacy({ device: legacy, files: new LegacyFiles(broker, operationClass => {
+    const principal = currentCorePrincipal();
+    if (principal.kind !== "core") throw new Error("Core operation owner required.");
+    return { ...principal, adapter: operationClass === "program-launch" ? "program" :
+      operationClass === "deployment" ? "deployment" : "remote-files" };
+  }) });
+  const monitor = new MonitorService(legacy, update => send("device:monitor-update", update));
+  // P150 has no declarative motion scope. The service refuses starts until D160 supplies it.
+  const motors = new MotorTestService({ publish: state => send("device:motor-test-update", state) });
+  let recording: { reservationId: string; principal: Principal; ended?: boolean } | undefined;
   let labBusy = false;
   const sensorLab = new SensorLabService({
     directory: path.join(app.getPath("userData"), "sensor-lab"),
     device: (id) => devices.descriptor(id),
-    acquire: (id) => {
+    acquire: async (id, channels) => {
       if (motors.busy) throw new Error("Stop the motor test before recording.");
-      return monitor.acquire(id);
+      const principal = currentCorePrincipal();
+      const { sources } = await legacy.request("devices/session", { sessionId: id });
+      const channelIds = channels.map(channel => {
+        const source = sources.channels.find(source => source.portId === `${channel.kind}:${channel.port}` &&
+          source.typeId === `ev3:${channel.type}` && source.component === channel.channel &&
+          (channel.kind === "output" || source.modeId === `mode:${channel.mode}`));
+        if (!source) throw new Error("Recording source changed.");
+        return source.channelId;
+      });
+      const result = await broker.request(principal, "devices/recording/reserve", {
+        sessionId: id, channelIds, expectedSourceRevision: sources.sourceRevision,
+      }, new AbortController().signal);
+      if (!result.ok) throw new Error(result.error.message);
+      recording = { reservationId: result.value.reservation.reservationId, principal };
+      try { await monitor.watch(id, true, -1); }
+      catch (error) {
+        await broker.request(principal, "devices/recording/release", { reservationId: recording.reservationId }, new AbortController().signal);
+        recording = undefined; throw error;
+      }
     },
-    release: (id) => monitor.release(id),
+    release: async id => {
+      if (recording && !recording.ended) {
+        const result = await broker.request(recording.principal, "devices/recording/release",
+          { reservationId: recording.reservationId }, new AbortController().signal);
+        if (!result.ok) throw new Error(result.error.message);
+        recording = undefined;
+      }
+      recording = undefined;
+      await monitor.watch(id, false, -1);
+    },
     latest: monitor.latest,
     publish: (state) => {
       labBusy = state.active || !state.saved;
@@ -244,10 +346,7 @@ void app.whenReady().then(async () => {
   // On macOS the application can outlive its last window. A quit in that state
   // still has to finish any crash recovery / background checkpoint writes.
   const mainQuit = new MainProcessCloseGuard(
-    async () => {
-      await motors.flush();
-      await sensorLab.flush("close");
-    },
+    () => coordinator.close("close"),
     () => app.quit(),
     (error) => retryDeviceWork(error),
     () => {
@@ -266,57 +365,42 @@ void app.whenReady().then(async () => {
     }
   });
   monitor.subscribe((update) => sensorLab.observe(update));
-  devices.subscribe((event) => {
-    const connectedId =
-      event.type === "state" && event.state === "connected"
-        ? event.sessionId
-        : event.type === "usb-recovery" && event.state === "restored"
-          ? event.sessionId
-          : undefined;
-    if (connectedId) void motors.reconnected(connectedId);
-    const id =
-      event.type === "state" && event.state === "disconnected"
-        ? event.sessionId
-        : event.type === "usb-recovery" && ["waiting", "unavailable"].includes(event.state)
-          ? event.previousSessionId
-          : undefined;
-    if (id) {
-      motors.disconnected(id);
-      sensorLab.onDisconnect(id);
-      void monitor.disconnect(id);
-    }
-  });
+  devices.subscribe(createDeviceLossHandler(id => {
+    motors.disconnected(id); sensorLab.onDisconnect(id);
+    void monitor.disconnect(id).catch(reportCleanupError);
+  }, id => { void motors.reconnected(id).catch(reportCleanupError); }));
   powerMonitor.on("suspend", () => {
-    void motors.stopAll();
-    void sensorLab.suspend().catch(() => {});
+    for (const id of legacy.sessionIds()) void coordinator.suspend(id).catch(reportCleanupError);
+    void sensorLab.suspend().catch(reportCleanupError);
   });
-  void sensorLab.getState().catch(() => {});
-  app.on("will-quit", () => {
-    void monitor.dispose();
-    void devices.reset();
+  powerMonitor.on("resume", () => {
+    for (const id of legacy.sessionIds()) void coordinator.resume(id).catch(reportCleanupError);
   });
+  void sensorLab.getState().catch(reportCleanupError);
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() !== "window") return;
-    contents.on("destroyed", () => {
-      void sensorLab.stop("close").catch(() => {});
-      void monitor.pause();
-      void devices.reset();
-    });
-    contents.on("render-process-gone", () => {
-      void sensorLab.stop("interrupted").catch(() => {});
-      void monitor.pause();
-      void devices.reset();
-    });
-    contents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
-      if (isMainFrame) {
-        void sensorLab.stop("interrupted").catch(() => {});
-        void monitor.pause();
-        void devices.reset();
-      }
+    const retire = (destroyed: boolean) => {
+      let retired: Promise<void> = Promise.resolve();
+      try {
+        const principal = authority.principal(contents.id, "recovery");
+        if (principal.kind === "core") {
+          const scope = { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
+          coreActions.retire(scope);
+          retired = retireDesktopWindow(composition, scope, destroyed);
+        }
+      } catch { /* No document has been admitted yet. */ }
+      authority.invalidate(contents.id);
+      const sessions = legacy.sessionIds().map(id => coordinator.suspend(id));
+      void Promise.all([retired, ...sessions, sensorLab.flush("close")])
+        .then(() => monitor.pause()).catch(reportCleanupError);
+    };
+    contents.on("destroyed", () => retire(true));
+    contents.on("render-process-gone", () => retire(false));
+    contents.on("did-start-navigation", (_event, _url, inPlace, isMainFrame) => {
+      if (isMainFrame && !inPlace) retire(false);
     });
   });
   const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
-  const operationGate = new UpdateOperationGate(() => updates);
   updates = await createUpdateService(
     renderer,
     () =>
@@ -352,22 +436,15 @@ void app.whenReady().then(async () => {
         registerPluginIpc(handle, plugins, (event) => send("plugins:event", event));
       },
     ],
-    async () => {
-      try {
-        await plugins.shutdown();
-      } catch (error) {
-        void plugins.resume();
-        throw error;
-      }
-    },
+    () => coordinator.close("update"),
     plugins,
+    { authority, stop: admittedDeviceActions.stop, disconnect: admittedDeviceActions.disconnect,
+      beforeClose: () => coordinator.close("close") },
   );
-  const flushDeviceWork = async () => {
-    await motors.flush();
-    await sensorLab.flush("close");
-  };
+  const flushDeviceWork = () => coordinator.close("close");
   const openWindow = () => {
     createWindow(flushDeviceWork);
+    primary?.windowReady();
     if (mainWindow) watchRendererHealth(mainWindow, () => plugins.markRendererUnresponsive());
     mainWindow?.on("blur", () => {
       void motors.stopAll();
@@ -384,8 +461,21 @@ void app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) openWindow();
   });
+}, () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show(); mainWindow.focus();
+  return true;
+});
+void primary?.ready.catch((error: unknown) => {
+  console.error("Primary startup failed.", error);
+  void retryDeviceWork(error);
 });
 
-app.on("window-all-closed", () => {
+if (primary) app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+import { startPrimary } from "./plugins/profile-writer-lock.js";
+import { AuthorityContexts } from "./device-broker/authority-context.js";
+import { DeviceControlGate } from "./collab/device-control.js";

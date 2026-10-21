@@ -1,3 +1,6 @@
+import type { Permission as ImportedPermission, ResourceOwner as ImportedResourceOwner } from "@kobrixa/plugin-protocol";
+import type { CoreWindowScope as ImportedCoreWindowScope, Stage3ChannelContext as ImportedStage3ChannelContext } from "@kobrixa/plugin-runtime";
+import type { DeviceEvent as ImportedDeviceEvent } from "../../shared/api.js";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import type {
@@ -149,7 +152,9 @@ export class PluginController {
         this.#emit({ type: "notice", notice: deps.notices.add(event.notice) });
         return;
       }
-      deps.marker.update({ thirdPartyRunning: deps.manager.active });
+      deps.marker.update({ thirdPartyRunning: deps.manager.state().plugins.some(
+        plugin => plugin.source === "development" && plugin.running,
+      ) });
       for (const plugin of event.state.plugins)
         if (!plugin.running) this.#pendingReload.delete(plugin.sourceKey);
       this.#emit({ type: "state", state: this.#view(event.state) });
@@ -349,7 +354,10 @@ export class PluginController {
   }
 
   async #setEnabled(sourceKey: string, enabled: boolean): Promise<PluginsResult> {
-    const refused = this.#refuse({ developer: enabled });
+    const source = this.deps.manager.state().plugins.find((item) => item.sourceKey === sourceKey);
+    const optionalBuiltin = source?.sourceKey.startsWith("builtin:") === true &&
+      source.canToggle && !source.required;
+    const refused = this.#refuse({ developer: enabled && !optionalBuiltin, outsideSafeMode: optionalBuiltin });
     if (refused) return refused;
     return this.#result(await this.deps.manager.setEnabled(sourceKey, enabled));
   }
@@ -460,7 +468,10 @@ export class PluginController {
   }
 
   async #reload(sourceKey: string): Promise<PluginsResult> {
-    const refused = this.#refuse({ developer: true, outsideSafeMode: true });
+    const source = this.deps.manager.state().plugins.find((item) => item.sourceKey === sourceKey);
+    const optionalBuiltin = source?.sourceKey.startsWith("builtin:") === true &&
+      source.canToggle && !source.required;
+    const refused = this.#refuse({ developer: !optionalBuiltin, outsideSafeMode: true });
     if (refused) return refused;
     this.#pendingReload.delete(sourceKey);
     return this.#result(await this.deps.manager.reloadSource(sourceKey));
@@ -840,6 +851,9 @@ export class PluginController {
 }
 
 export interface StartPluginsOptions {
+stage3?: PluginManagerOptions["stage3"];
+stage3Host?: PluginManagerOptions["stage3Host"];
+onStage3Runtime?: (runtime: UiRuntimeAttachment, providers: Pick<PluginManager, "state" | "onEvent">) => void;
   userData: string;
   builtins: readonly PluginSource[];
   commandLine: PluginOptions;
@@ -863,6 +877,8 @@ export interface StartPluginsOptions {
  * locks safe mode until the user restores plugins.
  */
 export async function startPlugins(options: StartPluginsOptions): Promise<PluginController> {
+  if ((options.stage3 === undefined) !== (options.stage3Host === undefined))
+    throw new Error("stage3 and stage3Host must be supplied together.");
   const now = options.now ?? (() => new Date());
   const settings = filePluginStateStore(options.userData, { now });
   let loaded: PluginPersistedState & { problem?: string };
@@ -961,7 +977,11 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
       console.error(`[plugin ${plugin.id}] ${line}`);
     },
   };
+  const grants = new Map<string, ReadonlySet<ImportedPermission>>();
+  const launcher = (options.launcher ?? createDesktopLauncher)(hooks);
   const manager = await PluginManager.create({
+...(options.stage3 && options.stage3Host
+  ? { stage3: options.stage3, stage3Host: options.stage3Host } : {}),
     sources: [
       ...options.builtins,
       ...directories.map((directory) => ({ kind: "development" as const, directory })),
@@ -969,10 +989,22 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
     // Already loaded above, so the manager sees the same result, including a corrupt file.
     store: { load: async () => loaded, save: (state) => settings.save(state) },
     safeMode,
-    launcher: (options.launcher ?? createDesktopLauncher)(hooks),
+    launcher: async plugin => {
+      const owner = plugin.channelOwner;
+      if (owner) grants.set(deviceOwnerKey(owner), new Set(plugin.permissions));
+      try { return await launcher(plugin); }
+      catch (error) { if (owner) grants.delete(deviceOwnerKey(owner)); throw error; }
+    },
     locale: options.locale,
     ...(options.supervisor ? { supervisor: options.supervisor } : {}),
   });
+try {
+  if (options.stage3 && options.stage3Host)
+    options.onStage3Runtime?.(manager.stage3Runtime(), manager);
+} catch (error) {
+  await manager.shutdown();
+  throw error;
+}
   const commandLinePython = options.commandLine.python;
   const controller = new PluginController({
     manager,
@@ -995,5 +1027,212 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
     },
   });
   created.controller = controller;
+  deviceAccess.set(controller, {
+    requirements: owner => manager.requirements(owner),
+    hasPermission: (owner, permission) => manager.requirements(owner) !== null &&
+      grants.get(deviceOwnerKey(owner))?.has(permission) === true,
+    async retire(owner) {
+      if (manager.requirements(owner) === null) return;
+      const result = await manager.reloadSource(owner.sourceKey);
+      if (!result.ok) throw new Error(result.message);
+      grants.delete(deviceOwnerKey(owner));
+    },
+  });
   return controller;
+}
+
+const deviceOwnerKey = (owner: ImportedResourceOwner) => JSON.stringify([
+  owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch,
+]);
+interface DesktopDeviceAccess {
+  requirements: PluginManager["requirements"];
+  hasPermission(owner: ImportedResourceOwner,
+    permission: ImportedPermission): boolean;
+  retire(owner: ImportedResourceOwner): Promise<void>;
+}
+const deviceAccess = new WeakMap<PluginController, DesktopDeviceAccess>();
+/** Main-only registry access; no manager or renderer-selected grants escape. */
+export function desktopDeviceAccess(controller: PluginController): DesktopDeviceAccess {
+  const access = deviceAccess.get(controller);
+  if (!access) throw new Error("Unknown desktop controller.");
+  return access;
+}
+
+import type { Stage3RuntimePorts, Stage3HostAttachment, UiRuntimeAttachment } from "@kobrixa/plugin-runtime";
+import { unavailableUi150, resourceFreePersistence150 } from "@kobrixa/plugin-runtime";
+import { LifecycleCoordinator } from "../device-broker/lifecycle-coordinator.js";
+import type { DesktopMainComposition, DesktopMainCompositionInput } from "../device-broker/lifecycle-coordinator.js";
+import { attachDeviceRpc } from "../device-broker/rpc-router.js";
+export type { DesktopFoundationOptions, DesktopFoundation, DesktopMainComposition,
+  DesktopMainCompositionInput } from "../device-broker/lifecycle-coordinator.js";
+
+const lifecycles = new WeakMap<DesktopMainComposition, LifecycleCoordinator>();
+const windowRetirements = new WeakMap<DesktopMainComposition,
+  (scope: ImportedCoreWindowScope, destroyed: boolean) => Promise<void>>();
+export function retireDesktopWindow(composition: DesktopMainComposition,
+  scope: ImportedCoreWindowScope, destroyed: boolean): Promise<void> {
+  const retire = windowRetirements.get(composition);
+  if (!retire) throw new Error("Unknown desktop composition.");
+  return retire(scope, destroyed);
+}
+export function desktopLifecycle(composition: DesktopMainComposition): LifecycleCoordinator {
+  const coordinator = lifecycles.get(composition);
+  if (!coordinator) throw new Error("Unknown desktop composition.");
+  return coordinator;
+}
+export async function composeDesktopMain(input: DesktopMainCompositionInput): Promise<DesktopMainComposition> {
+  input.foundationOptions.profile.assertHeld();
+  const foundation = await input.createFoundation(input.foundationOptions);
+  const broker = foundation.broker;
+  const stage3: Stage3RuntimePorts = { device: broker.resources,
+    persistence: resourceFreePersistence150(), ui: unavailableUi150() };
+  let runtimeAttachment: UiRuntimeAttachment | undefined;
+  const originalChannels = new Map<string, ImportedStage3ChannelContext>();
+  const ownerKey = (owner: ImportedResourceOwner) => JSON.stringify([
+    owner.sourceKey, owner.pluginId, owner.generation, owner.hostEpoch, owner.processEpoch]);
+  let plugins: PluginController | undefined;
+  const runtime = (): UiRuntimeAttachment => {
+    if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached.");
+    return runtimeAttachment;
+  };
+  const coordinator = new LifecycleCoordinator({ ports: stage3,
+    resources: broker.resources, sessions: broker.sessions, reservations: broker.reservations,
+    persistence: stage3.persistence, now: input.foundationOptions.now,
+    alive: owner => { const channel = originalChannels.get(ownerKey(owner)); return !!channel && !channel.peer.closed; },
+    owners: () => runtime().owners(),
+    dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+    shutdown: async () => { if (plugins) await plugins.shutdown(); },
+    legacyFlush: input.legacyFlush, report: input.report,
+  });
+  const stage3Host: Stage3HostAttachment = {
+    hostEpoch: input.foundationOptions.profile.hostEpoch,
+    principal: input.principal,
+    hasPermission: (owner, permission) => input.foundationOptions.hasPermission(input.principal(owner), permission),
+    requirements(owner) {
+      const declarations = input.foundationOptions.requirements(owner);
+      return declarations === null ? null : Object.freeze(declarations.map(value => Object.freeze({ ...value })));
+    },
+    bindChannel(context) {
+      const principal = context.principal();
+      const key = (owner: typeof context.owner) => JSON.stringify([owner.sourceKey, owner.pluginId,
+        owner.generation, owner.hostEpoch, owner.processEpoch]);
+      if (principal.kind !== "plugin" || key(principal.owner) !== key(context.owner))
+        throw new Error("Channel owner mismatch.");
+      originalChannels.set(ownerKey(context.owner), context);
+      const detach = attachDeviceRpc({ peer: context.peer, principal: context.principal, broker });
+      return { async initialized(signal) { signal.throwIfAborted(); },
+        async ready(signal) { signal.throwIfAborted(); },
+        dispose() { detach(); originalChannels.delete(ownerKey(context.owner)); } };
+    },
+    retireResources: (owner, reason) => coordinator.retire(owner, reason),
+  };
+  try {
+    plugins = await startPlugins({ ...input.plugins, stage3, stage3Host,
+      onStage3Runtime(attachment, providers) {
+        if (runtimeAttachment) throw new Error("Runtime already attached.");
+        runtimeAttachment = attachment;
+        foundation.attachProvider(providers);
+      },
+    });
+    if (!runtimeAttachment) throw new Error("Missing runtime attachment.");
+    let disposed = false;
+    const composition: DesktopMainComposition = { foundation, plugins, stage3, stage3Host,
+      async dispose() {
+        if (disposed) return;
+        await coordinator.close("close");
+        await foundation.dispose();
+        coordinator.dispose(); disposed = true;
+      },
+    };
+    lifecycles.set(composition, coordinator);
+    windowRetirements.set(composition, (scope, destroyed) => {
+      const affected = [...originalChannels.values()].filter(channel => {
+        const principal = channel.principal();
+        const binding = principal.authorityContext;
+        const record = binding && input.foundationOptions.authority.current(principal, binding.ref);
+        return scope.hostEpoch === input.foundationOptions.profile.hostEpoch &&
+          record?.workbenchInstance === scope.workbenchInstance;
+      });
+      // Fence all affected owners in this turn, before the native caller invalidates the document.
+      const retired = affected.map(channel => coordinator.retire(channel.owner,
+        destroyed ? "window-destroyed" : "renderer-crash"));
+      return Promise.all(retired).then(async () => {
+        // Reload retires the old supervisor, then admits a lazy replacement generation.
+        // It launches no process and replays no command.
+        await Promise.all(affected.map(channel => desktopDeviceAccess(composition.plugins).retire(channel.owner)));
+      });
+    });
+    return composition;
+  } catch (error) {
+    try { await foundation.dispose(); coordinator.dispose(); }
+    catch (cleanup) { input.report(cleanup); throw cleanup; }
+    throw error;
+  }
+}
+import type { Principal } from "@kobrixa/plugin-runtime";
+import type { DeviceBrokerPort } from "../device-broker/broker-port.js";
+import type { CoreActionLedger } from "./core-recovery.js";
+export function trustedDeviceActions(broker: Pick<DeviceBrokerPort, "stopCurrentDevice">,
+  coordinator: Pick<LifecycleCoordinator, "disconnect">, coreActions: CoreActionLedger) {
+  return {
+    async trustedCoreDisconnect(sessionId: string, principal: Principal): Promise<void> {
+      if (principal.kind !== "core") throw new Error("Core workbench required.");
+      const action = coreActions.mint({ hostEpoch: principal.hostEpoch,
+        workbenchInstance: principal.workbenchInstance }, { kind: "device-disconnect", sessionId });
+      try { await coordinator.disconnect(sessionId, action); }
+      finally { coreActions.complete(action); }
+    },
+    async trustedCoreStop(sessionId: string, principal: Principal): Promise<void> {
+      if (principal.kind !== "core") throw new Error("Core workbench required.");
+      const action = coreActions.mint({ hostEpoch: principal.hostEpoch,
+        workbenchInstance: principal.workbenchInstance }, { kind: "device-current-stop", sessionId });
+      try {
+        const result = await broker.stopCurrentDevice({ sessionId, action });
+        if (!result.ok) throw new Error(result.error.message);
+      } finally { coreActions.complete(action); }
+    },
+  };
+}
+import type { LegacyDevice } from "../device-broker/legacy-device.js";
+export function createLegacyActionAdmission(actions: ReturnType<typeof trustedDeviceActions>) {
+  type Kind = "stop" | "disconnect";
+  let permit: { kind: Kind; sessionId: string; principal: Principal } | undefined;
+  const consume = (kind: Kind, sessionId: string): Promise<void> => {
+    const captured = permit;
+    permit = undefined;
+    if (!captured || captured.kind !== kind || captured.sessionId !== sessionId)
+      return Promise.reject(new Error("Validated device IPC required."));
+    return kind === "stop" ? actions.trustedCoreStop(sessionId, captured.principal)
+      : actions.trustedCoreDisconnect(sessionId, captured.principal);
+  };
+  return {
+    stop: (sessionId: string) => consume("stop", sessionId),
+    disconnect: (sessionId: string) => consume("disconnect", sessionId),
+    bind(device: Pick<LegacyDevice, "stop" | "disconnect">) {
+      const invoke = (kind: Kind, sessionId: string, principal: Principal) => {
+        if (permit) throw new Error("Nested device IPC admission.");
+        permit = { kind, sessionId, principal };
+        try { return device[kind](sessionId); }
+        finally { permit = undefined; }
+      };
+      return {
+        stop: (sessionId: string, principal: Principal) => invoke("stop", sessionId, principal),
+        disconnect: (sessionId: string, principal: Principal) => invoke("disconnect", sessionId, principal),
+      };
+    },
+  };
+}
+
+export function createDeviceLossHandler(lost: (sessionId: string) => void,
+  restored: (sessionId: string) => void): (event: ImportedDeviceEvent) => void {
+  const ended = new Set<string>();
+  return event => {
+    if (event.type === "state" && event.state === "connected" && event.sessionId) restored(event.sessionId);
+    if (event.type === "usb-recovery" && event.state === "restored") restored(event.sessionId);
+    const sessionId = event.type === "state" && event.state === "disconnected" ? event.sessionId :
+      event.type === "usb-recovery" && (event.state === "waiting" || event.state === "unavailable")
+        ? event.previousSessionId : undefined;
+    if (!sessionId || ended.has(sessionId)) return;
+    ended.add(sessionId); lost(sessionId);
+  };
 }

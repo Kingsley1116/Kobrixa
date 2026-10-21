@@ -40,7 +40,7 @@ const snapshot: PluginsView = {
     {
       id: "kobrixa.basic-plus",
       sourceKey: "builtin:kobrixa.basic-plus",
-      source: "builtin",
+      source: "builtin", required: true, canToggle: false,
       runtime: "builtin",
       version: "1.0.0",
       status: "enabled",
@@ -52,7 +52,7 @@ const snapshot: PluginsView = {
     {
       id: "acme.hello",
       sourceKey: "dev:0123456789abcdef",
-      source: "development",
+      source: "development", required: false, canToggle: true,
       runtime: "python",
       version: "1.0.0",
       status: "enabled",

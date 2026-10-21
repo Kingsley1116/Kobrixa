@@ -8,8 +8,8 @@ vi.mock("electron", () => ({
 import { registerIpc } from "../ipc.js";
 
 describe("monitor IPC", () => {
-  it("validates privileged monitor requests before accessing the device", () => {
-    const renderer = { id: 1, mainFrame: {} };
+  it("validates privileged monitor requests before accessing the device", async () => {
+    const renderer = { id: 1, mainFrame: {}, once: vi.fn() };
     const service = { monitor: vi.fn(), inputModes: vi.fn(), setInputMode: vi.fn() };
     registerIpc(
       () => renderer as never,
@@ -21,6 +21,11 @@ describe("monitor IPC", () => {
       { run: (_: string, work: () => unknown) => work() } as never,
     );
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
+    const context = handlers.get("collab:device-control-context")!(event) as { document: string };
+    await handlers.get("collab:set-device-control")!(event, {
+      document: context.document, sequence: 1, state: "local", roomId: null,
+      connected: true, synced: true, role: null, isHolder: true,
+    });
     const id = "01a105ef-2540-78c2-a13e-e255f0b4b1a6";
     const monitor = handlers.get("device:monitor")!;
     const modes = handlers.get("device:input-modes")!;
