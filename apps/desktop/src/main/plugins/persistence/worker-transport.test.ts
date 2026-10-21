@@ -50,6 +50,7 @@ vi.mock('node:worker_threads', async importOriginal => {
 });
 import { startPersistenceWorker, runPersistenceWorker, privateError, reserveGateOffset } from './worker.js';
 import { openStoreRoot } from './filesystem.js';
+import { PersistenceFault } from './record-port.js';
 const roots: string[] = [];
 afterEach(async () => { harness.runner=null; harness.port.removeAllListeners(); vi.restoreAllMocks(); harness.hold=false; harness.disposition='committed'; harness.settledId=null; vi.useRealTimers(); for (const root of roots.splice(0)) await rm(root,{recursive:true,force:true}); });
 async function setup() {
@@ -105,6 +106,32 @@ it.each([0,1])('dispose after an observed exit %s settles immediately',async cod
 },500);
 it.each([['stale','stale'],['expired','stale'],['not-primary','stale'],['quota','quota'],['queue','quota'],['size-limit','quota'],['host-bytes','quota'],['publish-uncertain','unknown'],['input-changed','invalid'],['invalid-resource','invalid'],['revision-mismatch','invalid'],['already-committed','invalid'],['EACCES /private/path','io']])('sanitizes private error %s', (message,code)=>{
   expect(privateError(new Error(message))).toEqual({code,message:code==='io'?'persistence-io':message});
+});
+
+it.each(['checksum-mismatch','not-found','record-count','disk-full'])('preserves the bounded storage reason %s',message=>{
+  expect(privateError(new Error(message)).message).toBe(message);
+});
+
+it.each([['ENOSPC','disk-full'],['EDQUOT','disk-full'],['EACCES','permission'],['EPERM','permission'],['EROFS','read-only']])('sanitizes filesystem error %s without losing its actionable reason', (code,reason)=>{
+  expect(privateError(Object.assign(new Error('operation failed at /private/user/data'),{code}))).toEqual({code:'io',message:reason});
+});
+
+it.each([
+  ['checksum-mismatch','PLUGIN_E_STORAGE_CONFLICT'],
+  ['not-found','PLUGIN_E_STORAGE_IO'],
+  ['source-bytes','PLUGIN_E_STORAGE_QUOTA'],
+] as const)('reconstructs typed storage failure %s without losing internal reconciliation tokens',async(reason,code)=>{
+  const env=await setup();
+  try {
+    harness.hold=true;
+    const result=env.backend.reads.stat(env.owner,randomUUID()).catch((error:unknown)=>error);
+    const frame=harness.worker.frames.at(-1)!;
+    harness.worker.emit('message',{version:1,id:frame.id,ok:false,error:privateError(new Error(reason))});
+    const error=await result;
+    expect(error).toBeInstanceOf(PersistenceFault);
+    expect(error).toMatchObject({message:reason,result:{ok:false,error:{code,detail:{kind:'persistence',reason}}}});
+    if(error instanceof PersistenceFault)expect(error.result.error.message).toBe('Persistence request could not be completed.');
+  } finally { harness.hold=false;await env.backend.dispose(); }
 });
 
 it('keeps settled slots until the full retention window elapses',async()=>{

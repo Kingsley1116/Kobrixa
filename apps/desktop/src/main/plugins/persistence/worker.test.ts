@@ -4,30 +4,29 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
-import { existsSync } from "node:fs";
-import * as importCodecs from "./import-sources.js";
-const hasT6Handoff=existsSync(fileURLToPath(new URL("./import-fixtures.ts",import.meta.url))) && "parseNonceDocument" in importCodecs;
 import { afterAll,beforeAll,expect,it } from "vitest";
 import { startPersistenceWorker,PersistenceWorkerRequest,PersistenceWorkerResponse,type PersistenceFaultControl } from "./worker.js";
 import { openStoreRoot,type PersistenceFaultPoint } from "./filesystem.js";
 import type { PersistenceBackend,PublicationTicket,ImportPlan } from "./engine-port.js";
+import { createRecordService } from "./record-service.js";
+import { PersistenceFault } from "./record-port.js";
 let directory:string,entry:string;
 const hash=(bytes:Uint8Array)=>createHash("sha256").update(bytes).digest("hex");
 beforeAll(async()=>{
-  if(!hasT6Handoff)return;
-  directory=await mkdtemp(path.join(tmpdir(),"persistence-worker-test-"));
+  directory=await realpath(await mkdtemp(path.join(tmpdir(),"persistence-worker-test-")));
+  await mkdir(path.join(directory,"legacy","sensor-lab"),{recursive:true});
   const workerPath=fileURLToPath(new URL("./worker.ts",import.meta.url)),fixturesPath=fileURLToPath(new URL("./import-fixtures.ts",import.meta.url));
-  await build({configFile:false,logLevel:"error",plugins:[{name:"private-import-worker",
-    resolveId(id){if(id==="virtual:import-worker")return "\0virtual:import-worker";},
-    load(id){if(id==="\0virtual:import-worker")return `import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
+  const fixtureEntry=path.join(directory,"worker-entry.ts");
+  await writeFile(fixtureEntry,`import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
       import {syntheticImportDescriptor,syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixturesPath)};
       runPersistenceWorker({mappers:new Map([syntheticImportDescriptor,syntheticPreferencesImportDescriptor].map(d=>[d.id,d])),
-        sourceRoots:new Map([[syntheticImportDescriptor.id,${JSON.stringify(path.join(directory,"legacy","sensor-lab"))}]])});`;}}],
+        sourceRoots:new Map([[syntheticImportDescriptor.id,${JSON.stringify(path.join(directory,"legacy","sensor-lab"))}]])});`);
+  await build({configFile:false,logLevel:"error",
     build:{target:"node24",outDir:path.join(directory,"bundle"),emptyOutDir:true,
-      lib:{entry:"virtual:import-worker",formats:["cjs"],fileName:()=>"persistence-worker.cjs"},rollupOptions:{external:[/^node:/]},minify:false}});
+      lib:{entry:fixtureEntry,formats:["cjs"],fileName:()=>"persistence-worker.cjs"},rollupOptions:{external:[/^node:/]},minify:false}});
   entry=path.join(directory,"bundle","persistence-worker.cjs");
 },60000);
-afterAll(async()=>{if(!hasT6Handoff)return;await rm(directory,{recursive:true,force:true});});
+afterAll(async()=>{await rm(directory,{recursive:true,force:true});});
 async function launch(userData:string){
   await mkdir(userData,{recursive:true});const profile={hostEpoch:randomUUID(),assertHeld(){}};
   const root=await openStoreRoot({userData,profile});let control:PersistenceFaultControl|undefined;
@@ -40,6 +39,35 @@ function make(owner:PublicationTicket["owner"],bytes:Uint8Array):PublicationTick
 }
 const ownerFor=(epoch:string)=>({sourceKey:"builtin:kobrixa.lab",pluginId:"kobrixa.lab",generation:1,hostEpoch:epoch,processEpoch:randomUUID()});
 async function stage(backend:PersistenceBackend,t:PublicationTicket,bytes:Uint8Array){await backend.engine.reserve(t,bytes.length);for(let n=0;n<bytes.length;n+=262144)await backend.engine.append(t,n,bytes.subarray(n,n+262144));await backend.engine.seal(t,bytes.length,hash(bytes));}
+it('preserves checksum, missing-record and read-quota failures through the real worker',async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch);
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,
+      register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal;
+  try {
+    const missing=await service.request(principal,'storage/stat',{id:randomUUID()},signal);
+    expect(missing).toMatchObject({ok:false,error:{code:'PLUGIN_E_STORAGE_IO',detail:{kind:'persistence',reason:'not-found'}}});
+    const bytes=Buffer.from('payload'),begin=await service.request(principal,'storage/beginWrite',{
+      target:{mode:'create'},kind:'test',schemaVersion:1,label:'Bad checksum',mediaType:'application/octet-stream',
+      byteLength:bytes.length,sha256:hash(Buffer.from('different'))},signal);
+    expect(begin.ok).toBe(true);if(!begin.ok)throw new Error('begin failed');
+    expect((await service.request(principal,'storage/writeChunk',{write:begin.value.write,offset:0,data:bytes.toString('base64')},signal)).ok).toBe(true);
+    expect(await service.request(principal,'storage/sealWrite',{write:begin.value.write},signal)).toMatchObject({
+      ok:false,error:{code:'PLUGIN_E_STORAGE_CONFLICT',detail:{kind:'persistence',reason:'checksum-mismatch'}}});
+    expect(await service.request(principal,'storage/writeStatus',{write:begin.value.write},signal)).toMatchObject({ok:true,value:{state:'failed'}});
+    const t=make(owner,bytes);await stage(env.backend,t,bytes);await env.backend.engine.publish(t);
+    if(t.metadata.kind!=='record')throw new Error('record required');
+    const record=t.metadata.record,pins:string[]=[];
+    for(let i=0;i<4;i++)pins.push(await env.backend.reads.open(owner,record.id,record.revision));
+    try {
+      const error=await env.backend.reads.open(owner,record.id,record.revision).catch((error:unknown)=>error);
+      expect(error).toBeInstanceOf(PersistenceFault);
+      expect(error).toMatchObject({result:{ok:false,error:{code:'PLUGIN_E_RESOURCE_LIMIT',detail:{kind:'resource',reason:'quota',resource:'storage-read'}}}});
+    } finally {for(const pin of pins)await env.backend.reads.close(owner,pin);}
+  } finally {await service.close();await env.backend.dispose();}
+});
 it("rejects malformed private messages and missing capabilities",async()=>{
   const directory=await realpath(await mkdtemp(path.join(tmpdir(),"malformed-worker-")));
   try {
@@ -50,24 +78,27 @@ it("rejects malformed private messages and missing capabilities",async()=>{
   await expect(startPersistenceWorker({profile:{hostEpoch:randomUUID(),assertHeld(){}},root:{} as never,workerEntry:path.join(directory,"unused.cjs"),now:()=>0})).rejects.toThrow("unsafe-root");
   }finally{await rm(directory,{recursive:true,force:true});}
 });
-it.skipIf(!hasT6Handoff)("preserves exact opaque bytes, scoped barriers and one idempotent disposal",async()=>{
+it("preserves exact opaque bytes, scoped barriers and one idempotent disposal",async()=>{
   const env=await launch(path.join(directory,randomUUID())),bytes=new Uint8Array([0,255,123,0,10]),owner=ownerFor(env.profile.hostEpoch),t=make(owner,bytes);
   expect(persistenceWorkerCount(env.backend)).toBe(1);
   await stage(env.backend,t,bytes);
+  const incomplete=env.backend.evidence.capture({kind:"namespace",owner},performance.now()+10000);
+  expect(env.backend.evidence.tickets(incomplete)).toEqual([t]);
+  expect((await env.backend.evidence.flush(incomplete)).state).toBe("failed");
+  expect(()=>env.backend.evidence.tickets(incomplete)).toThrow("stale");
   const barrier=env.backend.evidence.capture({kind:"namespace",owner},performance.now()+10000);
-  expect((await env.backend.evidence.flush(barrier)).state).toBe("failed");
-  expect(env.backend.evidence.tickets(barrier)).toEqual([t]);
   const committed=await env.backend.engine.publish(t);expect(committed.disposition).toBe("committed");
-  expect((await env.backend.evidence.flush(barrier)).state).toBe("saved");
   const id=t.target.kind==="record"?t.target.id:"",meta=await env.backend.reads.stat(owner,id);
   expect([meta.byteLength,meta.sha256]).toEqual([bytes.length,hash(bytes)]);
   const pin=await env.backend.reads.open(owner,id,meta.revision);expect(await env.backend.reads.read(owner,pin,0,256)).toEqual(bytes);await env.backend.reads.close(owner,pin);
   const late=make(owner,bytes);await env.backend.engine.reserve(late,bytes.length);
-  expect(env.backend.evidence.tickets(barrier)).toEqual([t]);await env.backend.engine.abort(late);
+  expect(env.backend.evidence.tickets(barrier)).toEqual([t]);
+  expect((await env.backend.evidence.flush(barrier)).state).toBe("saved");
+  await env.backend.engine.abort(late);
   const one=env.backend.dispose();expect(env.backend.dispose()).toBe(one);expect(persistenceWorkerCount(env.backend)).toBe(1);await one;expect(persistenceWorkerCount(env.backend)).toBe(0);
 });
 const points:PersistenceFaultPoint[]=["reserve","open-temp","chunk-write","seal-sync","object-rename","object-dir-sync","backup-head","head-write","before-publish","after-publish","head-dir-sync","cache-publish","receipt-send","cleanup","import-marker"];
-for(const point of points)it.skipIf(!hasT6Handoff)(`real worker kill at ${point}`,async()=>{
+for(const point of points)it(`real worker kill at ${point}`,async()=>{
   const userData=path.join(directory,randomUUID()),env=await launch(userData),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from(JSON.stringify({formatVersion:1,value:1}));
   const target={kind:"import" as const,key:"fault-matrix"};
   const ticket=():PublicationTicket=>({id:randomUUID(),owner,deadlineMonotonicMs:performance.now()+120000,target,metadata:target});
@@ -76,12 +107,14 @@ for(const point of points)it.skipIf(!hasT6Handoff)(`real worker kill at ${point}
   const pending=stage(env.backend,next,bytes).then(()=>env.backend.engine.publish(next)).catch(()=>null);
   await reached;expect(persistenceWorkerCount(env.backend)).toBe(1);await env.control.terminate();expect(persistenceWorkerCount(env.backend)).toBe(0);await pending;
   for(let attempt=0;attempt<3;attempt++){
-    const reopened=await launch(userData);expect(reopened.recovery).toBe("ready");
-    expect(await reopened.backend.evidence.auxiliary(ownerFor(reopened.profile.hostEpoch),"import","fault-matrix")).toEqual(bytes);
-    await reopened.backend.dispose();
+    const reopened=await launch(userData);
+    try {
+      expect(reopened.recovery).toBe("ready");
+      expect(await reopened.backend.evidence.auxiliary(ownerFor(reopened.profile.hostEpoch),"import","fault-matrix")).toEqual(Uint8Array.from(bytes));
+    } finally {await reopened.backend.dispose();}
   }
 },30000);
-it.skipIf(!hasT6Handoff)("kill after imported head before receipt reconciles original ticket without new IDs",async()=>{
+it("kill after imported head before receipt reconciles original ticket without new IDs",async()=>{
   const userData=path.join(directory,randomUUID()),env=await launch(userData),owner=ownerFor(env.profile.hostEpoch),bytes=new Uint8Array([7,0,255]);
   const id="import/"+hash(Buffer.from(JSON.stringify(["test.synthetic-import",owner.sourceKey])));
   const t=make(owner,bytes),tag={importId:id,itemKey:"item",sourceSha256:hash(bytes)},skipTicket=make(owner,bytes);
@@ -111,7 +144,7 @@ it.skipIf(!hasT6Handoff)("kill after imported head before receipt reconciles ori
 },30000);
 
 import { snapshotBytes, snapshotDigest, type LegacyNonceDocument } from "./import-sources.js";
-it.skipIf(!hasT6Handoff)("resolves a consumed nonce after host change without a renderer or filesystem fallback",async()=>{
+it("resolves a consumed nonce after host change without a renderer or filesystem fallback",async()=>{
   const {syntheticPreferencesImportDescriptor}=await import("./import-fixtures.js");
   const userData=path.join(directory,randomUUID()),first=await launch(userData),d=syntheticPreferencesImportDescriptor;
   const owner={...ownerFor(first.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
@@ -181,9 +214,6 @@ it("accepts finite fractional monotonic deadlines without relaxing integer count
   expect(PersistenceWorkerRequest.safeParse({version:1,id:1.5,operation:"engine.reserve",args:[t,0],gate:{slot:0,sequence:1}}).success).toBe(false);
 });
 
-it("T6 codec and fixture handoff must arrive together",()=>{
-  expect("parseNonceDocument" in importCodecs).toBe(existsSync(fileURLToPath(new URL("./import-fixtures.ts",import.meta.url))));
-});
 async function mappedSetup(options:{hash?:string;schema?:number;large?:boolean}={}) {
   const root=await realpath(await mkdtemp(path.join(tmpdir(),"mapped-source-")));
   const profile={hostEpoch:randomUUID(),assertHeld(){}},fs=await createNodePersistenceFs(root,profile,{now:()=>0}),store=new AtomicStore(fs);

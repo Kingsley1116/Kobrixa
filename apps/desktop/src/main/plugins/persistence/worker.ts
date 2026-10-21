@@ -7,6 +7,8 @@ import type { ProfileWriterLock,PersistenceOwner } from "@kobrixa/plugin-runtime
 import type { LegacyImportDescriptor,LegacySourceItem,LegacyMappedItem,LegacySourceResolver } from "./import-sources.js";
 import type { ExportDestination } from "./actions.js";
 import { AtomicStore, checkpointDocumentSchema } from "./atomic-store.js";
+import { PersistenceFault } from "./record-port.js";
+import { persistenceCodeReasons } from "../../../../../../packages/plugin-protocol/src/persistence-primitives.js";
 import { NodePersistenceFs,NativeOutput,storeRootPath,type StoreRoot,type PersistenceFaultPoint } from "./filesystem.js";
 import { WorkQueue } from "./quota.js";
 import { PublicationGate,ownerKey,type PersistenceBackend,type PublicationTicket,type PersistenceBarrier,type PersistenceScope, type FinalWriteGrant } from "./engine-port.js";
@@ -87,14 +89,39 @@ export function reserveGateOffset(memory:SharedArrayBuffer,binding:unknown):numb
   if(memory.byteLength!==sharedBytes || Atomics.load(new Int32Array(memory,gateBytes,1024),slot)!==1)throw new Error("invalid-gate");
   return gateOffset(slot);
 }
+const storageErrorCodes = ["PLUGIN_E_STORAGE_QUOTA", "PLUGIN_E_STORAGE_CONFLICT", "PLUGIN_E_STORAGE_IO", "PLUGIN_E_STORAGE_VERSION"] as const;
+function storageFault(message:string,operation?:Operation):PersistenceFault|undefined {
+  if(message==="quota") {
+    const resource=operation==="reads.list"?"storage-list":operation?.startsWith("reads.")?"storage-read":
+      operation?.startsWith("output.")?"storage-export":"storage-write";
+    const fault=new PersistenceFault("PLUGIN_E_RESOURCE_LIMIT",undefined,resource);
+    fault.message=message;
+    return fault;
+  }
+  for(const code of storageErrorCodes) {
+    const reason=persistenceCodeReasons[code].find(reason=>reason===message);
+    if(reason!==undefined) {
+      const fault=new PersistenceFault(code,reason);
+      // Host import reconciliation uses these bounded tokens. The public result
+      // retains PersistenceFault's generic message and typed code/detail pair.
+      fault.message=message;
+      return fault;
+    }
+  }
+  return undefined;
+}
 export function privateError(error:unknown):{code:"io"|"invalid"|"stale"|"quota"|"unknown";message:string} {
+  const errno=error instanceof Error && "code" in error?error.code:undefined;
+  if(errno==="ENOSPC" || errno==="EDQUOT")return {code:"io",message:"disk-full"};
+  if(errno==="EACCES" || errno==="EPERM")return {code:"io",message:"permission"};
+  if(errno==="EROFS")return {code:"io",message:"read-only"};
   const message=error instanceof Error?error.message:"";
   if(message.length>128 || !/^[a-z]+(?:-[a-z]+)*$/.test(message))return {code:"io",message:"persistence-io"};
   const code=["stale","expired","not-primary"].includes(message)?"stale":
     ["quota","queue"].includes(message) || /-(limit|bytes)$/.test(message)?"quota":
     message==="publish-uncertain"?"unknown":
     ["input-changed","revision-mismatch","already-committed"].includes(message) || message.startsWith("invalid-")?"invalid":"io";
-  return {code,message:code==="io"?"persistence-io":message};
+  return {code,message:code==="io" && !storageFault(message)?"persistence-io":message};
 }
 const charge=(value:unknown):number=>value instanceof Uint8Array?value.byteLength:Array.isArray(value)?value.reduce((n,v)=>n+charge(v),0):Buffer.byteLength(JSON.stringify(value)??"null");
 
@@ -113,14 +140,14 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   const retired=new Set<string>(),targets=new Set<string>(),barriers=new Map<string,{barrier:PersistenceBarrier;tickets:readonly PublicationTicket[];expires:number}>();
   function pruneBarriers(){for(const [id,e] of barriers)if(e.expires<=input.now())barriers.delete(id);}
   const destinations=new WeakMap<ExportDestination,string>();let sequence=0,next=0,dead=false,closing:Promise<void>|null=null;
-  const pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:unknown)=>void;ticketId?:string}>();
+  const pending=new Map<number,{resolve:(v:unknown)=>void;reject:(e:unknown)=>void;operation:Operation;ticketId?:string}>();
   const lost=()=>{dead=true;Atomics.store(new Int32Array(held),0,0);for(const e of ledger.values())e.gate.shorten(input.now(),input.now());for(const p of pending.values())p.reject(new Error("worker-lost"));pending.clear();};
   worker.once("error",lost);worker.once("exit",lost);
   worker.on("message",raw=>{
     const parsed=PersistenceWorkerResponse.safeParse(raw);if(!parsed.success)return;
     const r=parsed.data,p=pending.get(r.id);if(!p)return;pending.delete(r.id);
     for(const marker of r.settled??[]) {const settled=ledger.get(marker.id);if(settled)settled.settledAt??=input.now();}
-    if(!r.ok){p.reject(new Error(r.error.message));return;}
+    if(!r.ok){p.reject(storageFault(r.error.message,p.operation)??new Error(r.error.message));return;}
     const e=p.ticketId?ledger.get(p.ticketId):undefined;
     if(e && ((r.value as {disposition?:string}|null)?.disposition==="unknown" || r.value==="unknown"))e.settledAt=null;
     p.resolve(r.value);
@@ -146,7 +173,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
       try {
         const request=PersistenceWorkerRequest.parse({version:1,id,operation,args:parameters,...(gate?{gate}:{})});
         const ticketId=(parameters[0] as {id?:string}|undefined)?.id;
-        pending.set(id,{resolve:resolve as (v:unknown)=>void,reject,...(ticketId?{ticketId}:{})});
+        pending.set(id,{resolve:resolve as (v:unknown)=>void,reject,operation,...(ticketId?{ticketId}:{})});
         worker.postMessage(request);requestId=id;posted?.();
       }catch(e){pending.delete(id);reject(e);}
     }));
