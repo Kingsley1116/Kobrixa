@@ -308,9 +308,23 @@ it("keeps offline checks recoverable and a normal quit never installs a download
 });
 
 it("F03/F17 update admission blocks new operations but retains safety-stop/reconciliation", () => {
-  for (const state of [{ preparing: true, installing: false }, { preparing: false, installing: true }]) {
-    for (const operation of ["connection", "passive-read", "mode-read", "mode-write", "finite-motion",
-      "program-launch", "program-stop", "file-read", "file-write", "deployment", "recording-reservation"] as const)
+  for (const state of [
+    { preparing: true, installing: false },
+    { preparing: false, installing: true },
+  ]) {
+    for (const operation of [
+      "connection",
+      "passive-read",
+      "mode-read",
+      "mode-write",
+      "finite-motion",
+      "program-launch",
+      "program-stop",
+      "file-read",
+      "file-write",
+      "deployment",
+      "recording-reservation",
+    ] as const)
       expect(() => assertDeviceUpdateAdmission(state, operation)).toThrow("busy");
     for (const operation of ["safety-stop", "reconciliation"] as const)
       expect(() => assertDeviceUpdateAdmission(state, operation)).not.toThrow();

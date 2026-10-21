@@ -45,7 +45,10 @@ it("rejects a second-language service whose extensions differ from its frontend"
   const manifest = structuredClone(SECOND_MANIFEST);
   manifest.contributes!.languageServices![0]!.extensions = ["csx"];
   await expect(
-    readSource({ kind: "builtin", policy: "required", resources: {}, manifest }, { safeMode: false }),
+    readSource(
+      { kind: "builtin", policy: "required", resources: {}, manifest },
+      { safeMode: false },
+    ),
   ).rejects.toThrow(
     "Language services require one matching frontend with the same source extensions.",
   );
@@ -55,7 +58,10 @@ it("reports both second-language owners as unavailable due to conflict", async (
   const other = { ...structuredClone(SECOND_MANIFEST), id: "test.other-case" };
   const reads = await Promise.all(
     [SECOND_MANIFEST, other].map((manifest) =>
-      readSource({ kind: "builtin", policy: "required", resources: {}, manifest }, { safeMode: false }),
+      readSource(
+        { kind: "builtin", policy: "required", resources: {}, manifest },
+        { safeMode: false },
+      ),
     ),
   );
   expect(reads.every((read) => read.problems.length === 0)).toBe(true);

@@ -39,12 +39,27 @@ it("stops plugins before quitAndInstall starts", async () => {
 });
 
 it("never installs after a failed combined stop/save/journal guard", async () => {
-  handlers.clear(); const renderer = { id: 1, mainFrame: {} };
+  handlers.clear();
+  const renderer = { id: 1, mainFrame: {} };
   const updates = { install: vi.fn() };
-  registerIpc(() => renderer as never, {} as never, {} as never, {} as never, {} as never,
-    updates as never, new UpdateOperationGate(() => undefined), undefined, undefined, undefined, [],
-    async () => { throw new Error("stop/save/journal unconfirmed"); });
-  await expect(handlers.get("updates:install")!({ sender: renderer, senderFrame: renderer.mainFrame }))
-    .rejects.toThrow("unconfirmed");
+  registerIpc(
+    () => renderer as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    updates as never,
+    new UpdateOperationGate(() => undefined),
+    undefined,
+    undefined,
+    undefined,
+    [],
+    async () => {
+      throw new Error("stop/save/journal unconfirmed");
+    },
+  );
+  await expect(
+    handlers.get("updates:install")!({ sender: renderer, senderFrame: renderer.mainFrame }),
+  ).rejects.toThrow("unconfirmed");
   expect(updates.install).not.toHaveBeenCalled();
 });

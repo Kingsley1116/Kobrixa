@@ -132,14 +132,19 @@ const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisp
 };
 // The first quiescence keeps its identity and original operation receipts. New
 // explicit recovery can add evidence, but never restarts those operations/clocks.
-async function settleRecovery(current: Session, original: Promise<DeviceDisposition>, close = false): Promise<DeviceDisposition> {
+async function settleRecovery(
+  current: Session,
+  original: Promise<DeviceDisposition>,
+  close = false,
+): Promise<DeviceDisposition> {
   for (;;) {
     const recovery = current.recoveryDisposition;
     const disposition = await merge(recovery ? [original, recovery] : [original]);
     if (recovery !== current.recoveryDisposition) continue;
     // A clean teardown receipt must not be invalidated by a newly admitted Stop
     // while its caller awaits storage or process exit. Existing recovery is done.
-    if (close && disposition.stopConfirmed && disposition.journalCommitted) current.recoveryClosed = true;
+    if (close && disposition.stopConfirmed && disposition.journalCommitted)
+      current.recoveryClosed = true;
     return disposition;
   }
 }
@@ -523,8 +528,13 @@ export function createBroker(
         promises.push(operation.done);
       }
     const original = merge(promises);
-    return { sessionId: current.snapshot.sessionId, ended,
-      get settled() { return settleRecovery(current, original); } };
+    return {
+      sessionId: current.snapshot.sessionId,
+      ended,
+      get settled() {
+        return settleRecovery(current, original);
+      },
+    };
   };
   const sessions: DeviceBrokerPort["sessions"] = {
     quiesce(id, cause) {
@@ -641,7 +651,8 @@ export function createBroker(
     async occupy(sessionId, work) {
       const current = session;
       if (!current || current.snapshot.sessionId !== sessionId) return stale();
-      if (current.recoveryClosed) return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
+      if (current.recoveryClosed)
+        return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
       if (reservations.active || coreReservations.active)
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
@@ -649,9 +660,12 @@ export function createBroker(
       // Session teardown must join recovery through final journal publication, not
       // merely wait for the last transport exchange to leave the lane.
       let settle!: (value: DeviceDisposition) => void;
-      const disposition = new Promise<DeviceDisposition>(resolve => { settle = resolve; });
+      const disposition = new Promise<DeviceDisposition>((resolve) => {
+        settle = resolve;
+      });
       current.recoveryDisposition = current.recoveryDisposition
-        ? merge([current.recoveryDisposition, disposition]) : disposition;
+        ? merge([current.recoveryDisposition, disposition])
+        : disposition;
       let confirmed = false;
       const originalGeneration = current.generation,
         originalKey = current.connection.key;
@@ -681,21 +695,29 @@ export function createBroker(
           stop: () =>
             current.provider.stopAndReadback(originalKey, { kind: "current-device" }, ctx.cleanup),
         });
-        confirmed = !(typeof result === "object" && result !== null && "ok" in result && result.ok === false);
+        confirmed = !(
+          typeof result === "object" &&
+          result !== null &&
+          "ok" in result &&
+          result.ok === false
+        );
         if (!confirmed) current.lane.quarantined = true;
         return result;
       } catch (error) {
         current.lane.quarantined = true;
         throw error;
       } finally {
-        try { await current.lane.drain(ctx.cleanup.deadlineMonotonicMs); }
-        finally {
+        try {
+          await current.lane.drain(ctx.cleanup.deadlineMonotonicMs);
+        } finally {
           current.provider.releaseOperation(id);
           current.lane.release(id);
           const snapshot = input.journal.snapshot();
-          settle({ stopConfirmed: confirmed && !current.lane.quarantined,
+          settle({
+            stopConfirmed: confirmed && !current.lane.quarantined,
             journalCommitted: snapshot.journalHealth === "ready",
-            faultIds: snapshot.blockers });
+            faultIds: snapshot.blockers,
+          });
         }
       }
     },

@@ -225,7 +225,9 @@ export class UpdateService {
 export class UpdateOperationGate {
   private active = 0;
   constructor(private service: () => UpdateService | undefined) {}
-  assertDevice(operation: OperationClass): void { assertDeviceUpdateAdmission(this.service(), operation); }
+  assertDevice(operation: OperationClass): void {
+    assertDeviceUpdateAdmission(this.service(), operation);
+  }
   get busy(): boolean {
     return this.active > 0;
   }

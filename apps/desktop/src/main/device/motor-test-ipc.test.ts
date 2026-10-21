@@ -34,8 +34,14 @@ describe("motor test IPC", () => {
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
     const context = handlers.get("collab:device-control-context")!(event) as { document: string };
     await handlers.get("collab:set-device-control")!(event, {
-      document: context.document, sequence: 1, state: "local", roomId: null,
-      connected: true, synced: true, role: null, isHolder: true,
+      document: context.document,
+      sequence: 1,
+      state: "local",
+      roomId: null,
+      connected: true,
+      synced: true,
+      role: null,
+      isHolder: true,
     });
     const request = {
       sessionId: "00000000-0000-4000-8000-000000000001",

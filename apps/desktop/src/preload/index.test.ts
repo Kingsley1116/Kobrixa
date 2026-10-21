@@ -106,13 +106,22 @@ it("preserves IPC rejection so renderer bootstrap can choose its plaintext fallb
 });
 
 it("uses the narrow authority-report bridge without adding a raw device RPC escape hatch", async () => {
-  const report = { document: "00000000-0000-4000-8000-000000000001", sequence: 1,
-    state: "local" as const, roomId: null, connected: true, synced: true, role: null, isHolder: true };
+  const report = {
+    document: "00000000-0000-4000-8000-000000000001",
+    sequence: 1,
+    state: "local" as const,
+    roomId: null,
+    connected: true,
+    synced: true,
+    role: null,
+    isHolder: true,
+  };
   electron.invoke.mockResolvedValueOnce({ document: report.document });
   await expect(api.collab.deviceControlContext()).resolves.toEqual({ document: report.document });
   await api.collab.setDeviceControl(report);
   expect(electron.invoke.mock.calls).toEqual([
-    ["collab:device-control-context"], ["collab:set-device-control", report],
+    ["collab:device-control-context"],
+    ["collab:set-device-control", report],
   ]);
   expect(Object.hasOwn(api.device, "request")).toBe(false);
   expect(Object.hasOwn(api.plugins, "storage")).toBe(false);

@@ -23,8 +23,14 @@ describe("monitor IPC", () => {
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
     const context = handlers.get("collab:device-control-context")!(event) as { document: string };
     await handlers.get("collab:set-device-control")!(event, {
-      document: context.document, sequence: 1, state: "local", roomId: null,
-      connected: true, synced: true, role: null, isHolder: true,
+      document: context.document,
+      sequence: 1,
+      state: "local",
+      roomId: null,
+      connected: true,
+      synced: true,
+      role: null,
+      isHolder: true,
     });
     const id = "01a105ef-2540-78c2-a13e-e255f0b4b1a6";
     const monitor = handlers.get("device:monitor")!;

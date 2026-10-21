@@ -1,4 +1,7 @@
-import type { ResourceOwner as ImportedResourceOwner, RpcPeer as ImportedRpcPeer } from "@kobrixa/plugin-protocol";
+import type {
+  ResourceOwner as ImportedResourceOwner,
+  RpcPeer as ImportedRpcPeer,
+} from "@kobrixa/plugin-protocol";
 import { BUILTIN_PLUGIN_SOURCES } from "./builtin.js";
 import { readFileSync } from "node:fs";
 import {
@@ -1183,7 +1186,9 @@ describe("PluginController with a fake manager", () => {
   const builtin: PluginsSnapshot["plugins"][number] = {
     sourceKey: "builtin:kobrixa.basic-plus",
     id: "kobrixa.basic-plus",
-    source: "builtin", required: true, canToggle: false,
+    source: "builtin",
+    required: true,
+    canToggle: false,
     runtime: "builtin",
     displayName: { en: "Basic Plus", "zh-TW": "Basic Plus" },
     status: "enabled",
@@ -1203,7 +1208,9 @@ describe("PluginController with a fake manager", () => {
       {
         sourceKey: key,
         id: "acme.hello",
-        source: "development", required: false, canToggle: true,
+        source: "development",
+        required: false,
+        canToggle: true,
         runtime: "python",
         status: "enabled",
         running: true,
@@ -1270,7 +1277,9 @@ describe("PluginController with a fake manager", () => {
       {
         sourceKey: key,
         id: "acme.toy",
-        source: "development", required: false, canToggle: true,
+        source: "development",
+        required: false,
+        canToggle: true,
         runtime: "static",
         status: "enabled",
         running: false,
@@ -2113,33 +2122,65 @@ async function compositionInput() {
   const now = () => performance.now();
   const scope = { hostEpoch: profile.hostEpoch, workbenchInstance: randomUUID() };
   const foundationOptions = {
-    profile, now, authority: new AuthorityContexts(profile.hostEpoch),
+    profile,
+    now,
+    authority: new AuthorityContexts(profile.hostEpoch),
     journal: createJournal(createJournalFilesystem(root), profile),
-    coreActions: createCoreActionLedger({ now, current: candidate => candidate.hostEpoch === scope.hostEpoch && candidate.workbenchInstance === scope.workbenchInstance }),
-    hasPermission: () => false, requirements: () => null,
-    connectionPolicy: () => ({ wifiConnectTimeoutMs: 10000 as const, wifiHandshakeTimeoutMs: 5000 as const,
-      usbAutoReconnect: false, usbRetryInterval: 2000 as const, usbRetryLimit: 3 as const }),
+    coreActions: createCoreActionLedger({
+      now,
+      current: (candidate) =>
+        candidate.hostEpoch === scope.hostEpoch &&
+        candidate.workbenchInstance === scope.workbenchInstance,
+    }),
+    hasPermission: () => false,
+    requirements: () => null,
+    connectionPolicy: () => ({
+      wifiConnectTimeoutMs: 10000 as const,
+      wifiHandshakeTimeoutMs: 5000 as const,
+      usbAutoReconnect: false,
+      usbRetryInterval: 2000 as const,
+      usbRetryLimit: 3 as const,
+    }),
     operationGate: () => ({ ok: true as const, value: null }),
   };
-  const factory = vi.fn<typeof createDesktopFoundation>(options => createDesktopFoundation({ ...options,
-    providerFactory: catalog => createFakeDeviceProvider({ catalog, now }).provider }));
+  const factory = vi.fn<typeof createDesktopFoundation>((options) =>
+    createDesktopFoundation({
+      ...options,
+      providerFactory: (catalog) => createFakeDeviceProvider({ catalog, now }).provider,
+    }),
+  );
   const input: DesktopMainCompositionInput = {
-    createFoundation: factory, foundationOptions,
-    plugins: { userData: root, builtins: BUILTIN_PLUGIN_SOURCES,
-      commandLine: { developmentDirectories: [], safeMode: false }, locale: "en",
-      dialogs: { confirmDeveloperMode: async () => false, chooseFolder: async () => undefined,
-        confirmLink: async () => false, confirmUnlink: async () => false, choosePython: async () => undefined },
-      launcher: () => async () => { throw new Error("No provider process"); },
+    createFoundation: factory,
+    foundationOptions,
+    plugins: {
+      userData: root,
+      builtins: BUILTIN_PLUGIN_SOURCES,
+      commandLine: { developmentDirectories: [], safeMode: false },
+      locale: "en",
+      dialogs: {
+        confirmDeveloperMode: async () => false,
+        chooseFolder: async () => undefined,
+        confirmLink: async () => false,
+        confirmUnlink: async () => false,
+        choosePython: async () => undefined,
+      },
+      launcher: () => async () => {
+        throw new Error("No provider process");
+      },
     },
-    principal: owner => ({ kind: "plugin", owner, authorityContext: null }),
+    principal: (owner) => ({ kind: "plugin", owner, authorityContext: null }),
     scope: () => scope,
-    currentScope: candidate => candidate.hostEpoch === scope.hostEpoch && candidate.workbenchInstance === scope.workbenchInstance,
-    legacyFlush: async () => {}, report: vi.fn(),
+    currentScope: (candidate) =>
+      candidate.hostEpoch === scope.hostEpoch &&
+      candidate.workbenchInstance === scope.workbenchInstance,
+    legacyFlush: async () => {},
+    report: vi.fn(),
   };
   return { input, factory, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
 it("BM-18 creates one foundation and forwards the exact host/runtime pair", async () => {
-  const f = await compositionInput(); const create = vi.spyOn(PluginManager, "create");
+  const f = await compositionInput();
+  const create = vi.spyOn(PluginManager, "create");
   try {
     const composition = await composeDesktopMain(f.input);
     expect(f.factory).toHaveBeenCalledExactlyOnceWith(f.input.foundationOptions);
@@ -2150,39 +2191,74 @@ it("BM-18 creates one foundation and forwards the exact host/runtime pair", asyn
     expect(composition.stage3.device).toBe(composition.foundation.broker.resources);
     expect(composition.stage3Host.principal).toBe(f.input.principal);
     expect(desktopLifecycle(composition)).toBe(desktopLifecycle(composition));
-    expect(composition.stage3Host.requirements({ sourceKey: "retired", pluginId: "test.retired", generation: 1,
-      hostEpoch: f.input.foundationOptions.profile.hostEpoch, processEpoch: randomUUID() })).toBeNull();
-    await composition.dispose(); await composition.dispose();
-  } finally { create.mockRestore(); await f.cleanup(); }
+    expect(
+      composition.stage3Host.requirements({
+        sourceKey: "retired",
+        pluginId: "test.retired",
+        generation: 1,
+        hostEpoch: f.input.foundationOptions.profile.hostEpoch,
+        processEpoch: randomUUID(),
+      }),
+    ).toBeNull();
+    await composition.dispose();
+    await composition.dispose();
+  } finally {
+    create.mockRestore();
+    await f.cleanup();
+  }
 });
 it("BM-18 secondary never calls the foundation or manager factories", async () => {
-  const f = await compositionInput(); const create = vi.spyOn(PluginManager, "create");
+  const f = await compositionInput();
+  const create = vi.spyOn(PluginManager, "create");
   try {
-    const primary = startPrimary({ requestSingleInstanceLock: () => false, hasSingleInstanceLock: () => false,
-      whenReady: async () => {}, quit() {}, on() {} },
-      async () => { await composeDesktopMain(f.input); }, () => false);
-    expect(primary).toBeNull(); await Promise.resolve();
-    expect(f.factory).not.toHaveBeenCalled(); expect(create).not.toHaveBeenCalled();
-  } finally { create.mockRestore(); await f.cleanup(); }
+    const primary = startPrimary(
+      {
+        requestSingleInstanceLock: () => false,
+        hasSingleInstanceLock: () => false,
+        whenReady: async () => {},
+        quit() {},
+        on() {},
+      },
+      async () => {
+        await composeDesktopMain(f.input);
+      },
+      () => false,
+    );
+    expect(primary).toBeNull();
+    await Promise.resolve();
+    expect(f.factory).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    create.mockRestore();
+    await f.cleanup();
+  }
 });
 it("BM-18 callback failure shuts down the manager and disposes the foundation", async () => {
   const f = await compositionInput();
   const original = PluginManager.create.bind(PluginManager);
   let shutdown: ReturnType<typeof vi.spyOn> | undefined;
-  const create = vi.spyOn(PluginManager, "create").mockImplementation(async options => {
-    const manager = await original(options); shutdown = vi.spyOn(manager, "shutdown"); return manager;
+  const create = vi.spyOn(PluginManager, "create").mockImplementation(async (options) => {
+    const manager = await original(options);
+    shutdown = vi.spyOn(manager, "shutdown");
+    return manager;
   });
   let dispose: ReturnType<typeof vi.spyOn> | undefined;
-  f.factory.mockImplementation(async options => {
+  f.factory.mockImplementation(async (options) => {
     const foundation = await createDesktopFoundation(options);
     dispose = vi.spyOn(foundation, "dispose");
-    foundation.attachProvider = () => { throw new Error("attachment failed"); };
+    foundation.attachProvider = () => {
+      throw new Error("attachment failed");
+    };
     return foundation;
   });
   try {
     await expect(composeDesktopMain(f.input)).rejects.toThrow("attachment failed");
-    expect(shutdown).toHaveBeenCalledOnce(); expect(dispose).toHaveBeenCalledOnce();
-  } finally { create.mockRestore(); await f.cleanup(); }
+    expect(shutdown).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  } finally {
+    create.mockRestore();
+    await f.cleanup();
+  }
 });
 it("BM-18 importing controller does not invoke shared production startup", async () => {
   vi.resetModules();
@@ -2191,7 +2267,9 @@ it("BM-18 importing controller does not invoke shared production startup", async
   try {
     await import("./controller.js");
     expect(create).not.toHaveBeenCalled();
-  } finally { create.mockRestore(); }
+  } finally {
+    create.mockRestore();
+  }
 });
 
 it("D150 optional builtin toggles and reloads without developer mode and survives restart", async () => {
@@ -2201,23 +2279,31 @@ it("D150 optional builtin toggles and reloads without developer mode and survive
   expect(await controller.setEnabled(optional, false)).toMatchObject({ ok: true });
   controller.finishSession();
   controller = await start(undefined, { builtins: BUILTIN_PLUGIN_SOURCES });
-  expect(controller.state().plugins.find(row => row.sourceKey === optional)?.status).toBe("disabled");
+  expect(controller.state().plugins.find((row) => row.sourceKey === optional)?.status).toBe(
+    "disabled",
+  );
   expect(await controller.setEnabled(optional, true)).toMatchObject({ ok: true });
   expect(await controller.reload(optional)).toMatchObject({ ok: true });
-  expect(await controller.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({ ok: false });
+  expect(await controller.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
+    ok: false,
+  });
   expect(await controller.reload("builtin:kobrixa.basic-plus")).toMatchObject({ ok: false });
-  await controller.shutdown(); controller.finishSession();
+  await controller.shutdown();
+  controller.finishSession();
 });
 it("D150 refuses either half of the stage3 pair before creating a manager", async () => {
   const create = vi.spyOn(PluginManager, "create");
-  for (const options of [{ stage3: {} as NonNullable<StartPluginsOptions["stage3"]> },
-    { stage3Host: {} as NonNullable<StartPluginsOptions["stage3Host"]> }])
+  for (const options of [
+    { stage3: {} as NonNullable<StartPluginsOptions["stage3"]> },
+    { stage3Host: {} as NonNullable<StartPluginsOptions["stage3Host"]> },
+  ])
     await expect(start(undefined, options)).rejects.toThrow("together");
   expect(create).not.toHaveBeenCalled();
 });
 
 it("D150 actual channel uses admitted generation requirements and launch permissions", async () => {
-  const { memoryPlugin } = await import("../../../../../packages/plugin-runtime/src/test-process.js");
+  const { memoryPlugin } =
+    await import("../../../../../packages/plugin-runtime/src/test-process.js");
   const f = await compositionInput();
   const directory = await pluginFolder("consumer");
   const manifest = path.join(directory, "kobrixa-plugin.json");
@@ -2229,118 +2315,182 @@ it("D150 actual channel uses admitted generation requirements and launch permiss
   let controller: PluginController | undefined;
   let channelOwner: ImportedResourceOwner | undefined;
   let peer!: ImportedRpcPeer;
-  f.input.plugins.launcher = () => async plugin => {
+  f.input.plugins.launcher = () => async (plugin) => {
     channelOwner = plugin.channelOwner;
     return memoryPlugin((remote, control) => {
       peer = remote;
-      remote.handle("initialize", () => ({ apiVersion: "1.5.0", sdk: { name: "test", version: "1" } }));
+      remote.handle("initialize", () => ({
+        apiVersion: "1.5.0",
+        sdk: { name: "test", version: "1" },
+      }));
       remote.handle("command/execute", () => null);
       remote.handle("shutdown", () => null);
       remote.onNotification("exit", () => control.exit());
     }).process;
   };
-  f.input.foundationOptions.requirements = owner => controller ? desktopDeviceAccess(controller).requirements(owner) : null;
-  f.input.foundationOptions.hasPermission = (principal, permission) => !!controller && principal.kind === "plugin" &&
+  f.input.foundationOptions.requirements = (owner) =>
+    controller ? desktopDeviceAccess(controller).requirements(owner) : null;
+  f.input.foundationOptions.hasPermission = (principal, permission) =>
+    !!controller &&
+    principal.kind === "plugin" &&
     desktopDeviceAccess(controller).hasPermission(principal.owner, permission);
   try {
-    const composition = await composeDesktopMain(f.input); controller = composition.plugins;
+    const composition = await composeDesktopMain(f.input);
+    controller = composition.plugins;
     expect(await controller.execute("acme.consumer.greet")).toMatchObject({ ok: true });
     expect(channelOwner).toBeDefined();
-    expect(desktopDeviceAccess(controller).requirements(channelOwner!)).toEqual(value.requires.devices);
+    expect(desktopDeviceAccess(controller).requirements(channelOwner!)).toEqual(
+      value.requires.devices,
+    );
     expect(desktopDeviceAccess(controller).hasPermission(channelOwner!, "devices.read")).toBe(true);
-    expect(desktopDeviceAccess(controller).hasPermission(channelOwner!, "devices.control")).toBe(false);
+    expect(desktopDeviceAccess(controller).hasPermission(channelOwner!, "devices.control")).toBe(
+      false,
+    );
     const negotiated = await peer.request("devices/negotiate", {});
     expect(negotiated.ok).toBe(true);
     await controller.setEnabled(channelOwner!.sourceKey, false);
     expect(desktopDeviceAccess(controller).requirements(channelOwner!)).toBeNull();
-    expect(desktopDeviceAccess(controller).hasPermission(channelOwner!, "devices.read")).toBe(false);
+    expect(desktopDeviceAccess(controller).hasPermission(channelOwner!, "devices.read")).toBe(
+      false,
+    );
     await composition.dispose();
-  } finally { await f.cleanup(); }
+  } finally {
+    await f.cleanup();
+  }
 });
 
 import { createWindowRetirementHandler } from "./controller.js";
-it.each([false, true])("D150 native retirement destroyed=%s fences the old channel before invalidation and awaits disposition", async destroyed => {
-  const { memoryPlugin } = await import("../../../../../packages/plugin-runtime/src/test-process.js");
-  const f = await compositionInput();
-  const directory = await pluginFolder("window");
-  const authority = f.input.foundationOptions.authority as AuthorityContexts;
-  const document = authority.open(7);
-  authority.report(7, { document, sequence: 1, state: "local", roomId: null,
-    connected: true, synced: true, role: null, isHolder: true });
-  const core = authority.core(7, "recovery");
-  const scope = { hostEpoch: core.hostEpoch, workbenchInstance: core.workbenchInstance };
-  const ledger = createCoreActionLedger({ now: f.input.foundationOptions.now,
-    current: value => value.workbenchInstance === scope.workbenchInstance });
-  f.input.foundationOptions.coreActions = ledger;
-  f.input.plugins.commandLine.developmentDirectories = [directory];
-  f.input.principal = owner => authority.plugin(7, owner);
-  const controllerRef: { current?: PluginController } = {};
-  let owner!: ImportedResourceOwner;
-  const commands = vi.fn(() => null), shutdown = vi.fn(() => null);
-  const launch = vi.fn(async (plugin: LaunchablePlugin) => {
-    owner = plugin.channelOwner!;
-    return memoryPlugin((remote, control) => {
-      remote.handle("initialize", () => ({ apiVersion: "1.5.0", sdk: { name: "test", version: "1" } }));
-      remote.handle("command/execute", commands); remote.handle("shutdown", shutdown);
-      remote.onNotification("exit", () => control.exit());
-    }).process;
-  });
-  f.input.plugins.launcher = () => launch;
-  f.input.foundationOptions.requirements = candidate => controllerRef.current ? desktopDeviceAccess(controllerRef.current).requirements(candidate) : null;
-  const composition = await composeDesktopMain(f.input);
-  const controller = composition.plugins; controllerRef.current = controller;
-  try {
-    expect(await controller.execute("acme.window.greet")).toMatchObject({ ok: true });
-    const oldOwner = owner;
-    const target = { kind: "device-current-stop" as const, sessionId: randomUUID() };
-    const action = ledger.mint(scope, target);
-    const claimed = ledger.mint(scope, target);
-    expect(ledger.claim(claimed, target)).toBe(true);
-    let finish!: () => void;
-    const disposition = new Promise<void>(resolve => { finish = resolve; });
-    const resources = composition.foundation.broker.resources;
-    const original = resources.retire.bind(resources);
-    const retire = vi.spyOn(resources, "retire").mockImplementation((candidate, reason) => {
-      expect(candidate).toEqual(oldOwner);
-      expect(authority.current(f.input.principal(candidate), core.authorityContext!.ref)).not.toBeNull();
-      const result = original(candidate, reason);
-      return { ...result, settled: disposition.then(() => result.settled) };
+it.each([false, true])(
+  "D150 native retirement destroyed=%s fences the old channel before invalidation and awaits disposition",
+  async (destroyed) => {
+    const { memoryPlugin } =
+      await import("../../../../../packages/plugin-runtime/src/test-process.js");
+    const f = await compositionInput();
+    const directory = await pluginFolder("window");
+    const authority = f.input.foundationOptions.authority as AuthorityContexts;
+    const document = authority.open(7);
+    authority.report(7, {
+      document,
+      sequence: 1,
+      state: "local",
+      roomId: null,
+      connected: true,
+      synced: true,
+      role: null,
+      isHolder: true,
     });
-    const ledgerRetire = vi.spyOn(ledger, "retire");
-    const invalidate = vi.fn(() => {
-      expect(ledgerRetire).toHaveBeenCalledExactlyOnceWith(scope);
-      expect(retire).toHaveBeenCalledExactlyOnceWith(oldOwner, "renderer-lost");
-      authority.invalidate(7);
+    const core = authority.core(7, "recovery");
+    const scope = { hostEpoch: core.hostEpoch, workbenchInstance: core.workbenchInstance };
+    const ledger = createCoreActionLedger({
+      now: f.input.foundationOptions.now,
+      current: (value) => value.workbenchInstance === scope.workbenchInstance,
     });
-    const pause = vi.fn(async () => {});
-    const handler = createWindowRetirementHandler({ composition, coreActions: ledger,
-      scope: () => scope, invalidate, flush: async () => {}, pause });
-    const pending = handler(destroyed);
-    expect(invalidate).toHaveBeenCalledOnce();
-    expect(ledger.claim(action, target)).toBe(false);
-    expect(ledger.isClaimed(claimed, target)).toBe(false);
-    expect(shutdown).not.toHaveBeenCalled(); expect(pause).not.toHaveBeenCalled();
-    expect(launch).toHaveBeenCalledOnce(); expect(commands).toHaveBeenCalledOnce();
-    finish(); await pending;
-    expect(shutdown).toHaveBeenCalledOnce(); expect(pause).toHaveBeenCalledOnce();
-    expect(desktopDeviceAccess(controller).requirements(oldOwner)).toBeNull();
-    expect(launch).toHaveBeenCalledOnce(); expect(commands).toHaveBeenCalledOnce();
-    const replacement = authority.open(7);
-    expect(replacement).not.toBe(document);
-    expect(authority.core(7, "recovery").workbenchInstance).not.toBe(scope.workbenchInstance);
-  } finally { await composition.dispose(); await f.cleanup(); }
-});
-it.each([false, true])("D150 actual controller crash risk=%s preserves disabled optional source", async risk => {
-  const optional = "builtin:kobrixa.device-ev3";
-  const directories = risk ? [await pluginFolder("risk")] : [];
-  const options = { builtins: BUILTIN_PLUGIN_SOURCES,
-    commandLine: { developmentDirectories: directories, safeMode: false } };
-  const crashed = await start(undefined, options);
-  expect(await crashed.setEnabled(optional, false)).toMatchObject({ ok: true });
-  crashed.markRendererUnresponsive();
-  const recovered = await start(undefined, options);
-  expect(recovered.state().plugins.find(row => row.sourceKey === optional)?.status).toBe("disabled");
-  expect(recovered.state().safeMode).toBe(risk);
-  if (risk) expect(await recovered.setEnabled(optional, true)).toMatchObject({ ok: false });
-  await recovered.shutdown(); recovered.finishSession();
-});
+    f.input.foundationOptions.coreActions = ledger;
+    f.input.plugins.commandLine.developmentDirectories = [directory];
+    f.input.principal = (owner) => authority.plugin(7, owner);
+    const controllerRef: { current?: PluginController } = {};
+    let owner!: ImportedResourceOwner;
+    const commands = vi.fn(() => null),
+      shutdown = vi.fn(() => null);
+    const launch = vi.fn(async (plugin: LaunchablePlugin) => {
+      owner = plugin.channelOwner!;
+      return memoryPlugin((remote, control) => {
+        remote.handle("initialize", () => ({
+          apiVersion: "1.5.0",
+          sdk: { name: "test", version: "1" },
+        }));
+        remote.handle("command/execute", commands);
+        remote.handle("shutdown", shutdown);
+        remote.onNotification("exit", () => control.exit());
+      }).process;
+    });
+    f.input.plugins.launcher = () => launch;
+    f.input.foundationOptions.requirements = (candidate) =>
+      controllerRef.current
+        ? desktopDeviceAccess(controllerRef.current).requirements(candidate)
+        : null;
+    const composition = await composeDesktopMain(f.input);
+    const controller = composition.plugins;
+    controllerRef.current = controller;
+    try {
+      expect(await controller.execute("acme.window.greet")).toMatchObject({ ok: true });
+      const oldOwner = owner;
+      const target = { kind: "device-current-stop" as const, sessionId: randomUUID() };
+      const action = ledger.mint(scope, target);
+      const claimed = ledger.mint(scope, target);
+      expect(ledger.claim(claimed, target)).toBe(true);
+      let finish!: () => void;
+      const disposition = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const resources = composition.foundation.broker.resources;
+      const original = resources.retire.bind(resources);
+      const retire = vi.spyOn(resources, "retire").mockImplementation((candidate, reason) => {
+        expect(candidate).toEqual(oldOwner);
+        expect(
+          authority.current(f.input.principal(candidate), core.authorityContext!.ref),
+        ).not.toBeNull();
+        const result = original(candidate, reason);
+        return { ...result, settled: disposition.then(() => result.settled) };
+      });
+      const ledgerRetire = vi.spyOn(ledger, "retire");
+      const invalidate = vi.fn(() => {
+        expect(ledgerRetire).toHaveBeenCalledExactlyOnceWith(scope);
+        expect(retire).toHaveBeenCalledExactlyOnceWith(oldOwner, "renderer-lost");
+        authority.invalidate(7);
+      });
+      const pause = vi.fn(async () => {});
+      const handler = createWindowRetirementHandler({
+        composition,
+        coreActions: ledger,
+        scope: () => scope,
+        invalidate,
+        flush: async () => {},
+        pause,
+      });
+      const pending = handler(destroyed);
+      expect(invalidate).toHaveBeenCalledOnce();
+      expect(ledger.claim(action, target)).toBe(false);
+      expect(ledger.isClaimed(claimed, target)).toBe(false);
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(pause).not.toHaveBeenCalled();
+      expect(launch).toHaveBeenCalledOnce();
+      expect(commands).toHaveBeenCalledOnce();
+      finish();
+      await pending;
+      expect(shutdown).toHaveBeenCalledOnce();
+      expect(pause).toHaveBeenCalledOnce();
+      expect(desktopDeviceAccess(controller).requirements(oldOwner)).toBeNull();
+      expect(launch).toHaveBeenCalledOnce();
+      expect(commands).toHaveBeenCalledOnce();
+      const replacement = authority.open(7);
+      expect(replacement).not.toBe(document);
+      expect(authority.core(7, "recovery").workbenchInstance).not.toBe(scope.workbenchInstance);
+    } finally {
+      await composition.dispose();
+      await f.cleanup();
+    }
+  },
+);
+it.each([false, true])(
+  "D150 actual controller crash risk=%s preserves disabled optional source",
+  async (risk) => {
+    const optional = "builtin:kobrixa.device-ev3";
+    const directories = risk ? [await pluginFolder("risk")] : [];
+    const options = {
+      builtins: BUILTIN_PLUGIN_SOURCES,
+      commandLine: { developmentDirectories: directories, safeMode: false },
+    };
+    const crashed = await start(undefined, options);
+    expect(await crashed.setEnabled(optional, false)).toMatchObject({ ok: true });
+    crashed.markRendererUnresponsive();
+    const recovered = await start(undefined, options);
+    expect(recovered.state().plugins.find((row) => row.sourceKey === optional)?.status).toBe(
+      "disabled",
+    );
+    expect(recovered.state().safeMode).toBe(risk);
+    if (risk) expect(await recovered.setEnabled(optional, true)).toMatchObject({ ok: false });
+    await recovered.shutdown();
+    recovered.finishSession();
+  },
+);

@@ -12,10 +12,16 @@ it("implements the frozen three-method authority port", () => {
   expectTypeOf<AuthorityPort["assertContinuation"]>().toEqualTypeOf<
     (principal: Principal, contextRef: string) => void
   >();
-  expect(contexts.current({
-    kind: "core", adapter: "deployment",
-    hostEpoch: "00000000-0000-4000-8000-000000000001",
-    workbenchInstance: "00000000-0000-4000-8000-000000000002",
-    authorityContext: null,
-  }, "00000000-0000-4000-8000-000000000003")).toBeNull();
+  expect(
+    contexts.current(
+      {
+        kind: "core",
+        adapter: "deployment",
+        hostEpoch: "00000000-0000-4000-8000-000000000001",
+        workbenchInstance: "00000000-0000-4000-8000-000000000002",
+        authorityContext: null,
+      },
+      "00000000-0000-4000-8000-000000000003",
+    ),
+  ).toBeNull();
 });

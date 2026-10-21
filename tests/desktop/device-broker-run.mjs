@@ -11,14 +11,12 @@ import { root, run, assertParity, assertLoad } from "./device-broker-harness.mjs
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
 const electron = require("electron");
 const temporary = await mkdtemp(path.join(tmpdir(), "kobrixa-device-transport-"));
-const python = [process.env.KOBRIXA_TEST_PYTHON, "python3", "python"]
-  .filter(Boolean)
-  .find(
-    (command) =>
-      spawnSync(command, ["-c", "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"], {
-        stdio: "ignore",
-      }).status === 0,
-  );
+const python = [process.env.KOBRIXA_TEST_PYTHON, "python3", "python"].filter(Boolean).find(
+  (command) =>
+    spawnSync(command, ["-c", "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"], {
+      stdio: "ignore",
+    }).status === 0,
+);
 if (!python) throw new Error("Python 3.10+ is required; no SKIP acceptance");
 const alias = Object.fromEntries(
   [

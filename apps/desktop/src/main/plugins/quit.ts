@@ -4,7 +4,9 @@ interface QuitHost {
   quit(): void;
 }
 export function installPluginQuitCleanup(
-  app: QuitHost, cleanup: () => Promise<void>, blocked: (error: unknown) => void,
+  app: QuitHost,
+  cleanup: () => Promise<void>,
+  blocked: (error: unknown) => void,
 ): void {
   let state: "idle" | "cleaning" | "done" = "idle";
   app.on("will-quit", (event) => {
@@ -19,15 +21,22 @@ export function installPluginQuitCleanup(
       blocked(new Error("Cleanup disposition is still unknown after 25 seconds."));
       // Only a fresh user request can retry; this attempt can never quit later.
     }, PLUGIN_QUIT_TIMEOUT_MS);
-    void Promise.resolve().then(cleanup).then(() => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      state = "done"; app.quit();
-    }, (error: unknown) => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      state = "idle"; blocked(error);
-    });
+    void Promise.resolve()
+      .then(cleanup)
+      .then(
+        () => {
+          clearTimeout(timer);
+          if (timedOut) return;
+          state = "done";
+          app.quit();
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          if (timedOut) return;
+          state = "idle";
+          blocked(error);
+        },
+      );
   });
 }
 
@@ -43,8 +52,11 @@ export function createQuitRecovery(input: {
     input.open();
     return input.focus();
   };
-  return { focus, async blocked(error: unknown): Promise<void> {
-    focus();
-    if (await input.retry(error)) input.quit();
-  } };
+  return {
+    focus,
+    async blocked(error: unknown): Promise<void> {
+      focus();
+      if (await input.retry(error)) input.quit();
+    },
+  };
 }

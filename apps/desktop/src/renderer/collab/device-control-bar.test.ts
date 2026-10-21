@@ -25,15 +25,26 @@ describe("device control UI bridge", () => {
     const hostControl = new DeviceControl(hostSession!);
     const store = new CollabStore(() => editorSession!);
     const api = {
-      deviceControlContext: vi.fn(async () => ({ document: "00000000-0000-4000-8000-000000000001" })),
+      deviceControlContext: vi.fn(async () => ({
+        document: "00000000-0000-4000-8000-000000000001",
+      })),
       setDeviceControl: vi.fn(async (_report: DeviceAuthorityReport) => {}),
     };
-    function Panel() { useDeviceControl(store, api); return createElement("p", null, "Control"); }
-    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
-    await act(async () => { root!.render(createElement(Panel)); });
+    function Panel() {
+      useDeviceControl(store, api);
+      return createElement("p", null, "Control");
+    }
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(createElement(Panel));
+    });
     const last = () => api.setDeviceControl.mock.calls.at(-1)![0];
     expect(last()).toMatchObject({ state: "local", role: null, isHolder: true, roomId: null });
-    await act(async () => { store.start(editorSession!.connection); });
+    await act(async () => {
+      store.start(editorSession!.connection);
+    });
     expect(last()).toMatchObject({ state: "room", role: "editor", isHolder: false });
     act(() => hostControl.grant(editorSession!.connection.participantId));
     expect(last()).toMatchObject({ state: "room", isHolder: true });
@@ -41,14 +52,20 @@ describe("device control UI bridge", () => {
     expect(last()).toMatchObject({ state: "room", isHolder: false });
     act(() => editorSession!.close("kicked"));
     expect(last()).toMatchObject({ state: "unsynced", isHolder: false });
-    await act(async () => { store.stop(); });
+    await act(async () => {
+      store.stop();
+    });
     expect(last()).toMatchObject({ state: "local" });
-    act(() => { root!.unmount(); root = undefined; });
+    act(() => {
+      root!.unmount();
+      root = undefined;
+    });
     expect(last()).toMatchObject({ state: "invalid", isHolder: false });
     const sequences = api.setDeviceControl.mock.calls.map(([value]) => value.sequence);
     expect(new Set(sequences).size).toBe(sequences.length);
     expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
-    hostControl.dispose(); hostSession!.destroy();
+    hostControl.dispose();
+    hostSession!.destroy();
   });
 
   it.each(["en", "zh-TW"] as const)(

@@ -458,11 +458,11 @@ export function registerIpc(
     deviceControl.rememberBatch(event.sender, snapshot);
     return snapshot;
   });
-handle("device:files-renew", (event, ref: unknown) => {
-  const owner = deviceControl.principal(event.sender.id, "remote-files");
-  if (owner.kind !== "core") throw new Error("Core file owner required.");
-  devices.renewFilePlan(batchRef.parse(ref), owner);
-});
+  handle("device:files-renew", (event, ref: unknown) => {
+    const owner = deviceControl.principal(event.sender.id, "remote-files");
+    if (owner.kind !== "core") throw new Error("Core file owner required.");
+    devices.renewFilePlan(batchRef.parse(ref), owner);
+  });
   handle("device:files-execute", (event, ref: unknown, policy: unknown) =>
     devices.executeFiles(
       batchRef.parse(ref),
@@ -490,7 +490,10 @@ handle("device:files-renew", (event, ref: unknown) => {
   handle("device:disconnect", (event, sessionId: unknown) => {
     const session = id.parse(sessionId);
     if (!deviceFoundation) throw new Error("Device lifecycle coordinator is unavailable.");
-    return deviceFoundation.disconnect(session, deviceControl.principal(event.sender.id, "recovery"));
+    return deviceFoundation.disconnect(
+      session,
+      deviceControl.principal(event.sender.id, "recovery"),
+    );
   });
   handle("device:upload", (_event, sessionId: unknown, buildId: unknown, remotePath: unknown) =>
     devices.upload(id.parse(sessionId), id.parse(buildId), file.parse(remotePath)),
@@ -503,10 +506,13 @@ handle("device:files-renew", (event, ref: unknown) => {
   handle("device:run", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.run(id.parse(sessionId), file.parse(remotePath)),
   );
-handle("device:stop", (event, sessionId: unknown) => {
-  if (!deviceFoundation) throw new Error("Device foundation not attached.");
-  return deviceFoundation.stop(id.parse(sessionId), deviceControl.principal(event.sender.id, "recovery"));
-});
+  handle("device:stop", (event, sessionId: unknown) => {
+    if (!deviceFoundation) throw new Error("Device foundation not attached.");
+    return deviceFoundation.stop(
+      id.parse(sessionId),
+      deviceControl.principal(event.sender.id, "recovery"),
+    );
+  });
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );

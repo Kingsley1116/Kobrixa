@@ -23,29 +23,55 @@ export function useDeviceControl(
   const document = useRef<string | null>(null);
   const sequence = useRef(0);
   const currentReport = useRef<() => void>(() => {});
-  const send = useCallback((value: Omit<DeviceAuthorityReport, "document" | "sequence">) => {
-    if (!document.current) return;
-    const report = { ...value, document: document.current, sequence: ++sequence.current };
-    try { void api.setDeviceControl(report).catch(() => undefined); } catch { /* teardown */ }
-  }, [api]);
+  const send = useCallback(
+    (value: Omit<DeviceAuthorityReport, "document" | "sequence">) => {
+      if (!document.current) return;
+      const report = { ...value, document: document.current, sequence: ++sequence.current };
+      try {
+        void api.setDeviceControl(report).catch(() => undefined);
+      } catch {
+        /* teardown */
+      }
+    },
+    [api],
+  );
   useEffect(() => {
     let disposed = false;
-    void api.deviceControlContext().then((value) => {
-      if (disposed) return;
-      document.current = value.document;
-      currentReport.current();
-    }).catch(() => { document.current = null; });
+    void api
+      .deviceControlContext()
+      .then((value) => {
+        if (disposed) return;
+        document.current = value.document;
+        currentReport.current();
+      })
+      .catch(() => {
+        document.current = null;
+      });
     return () => {
       disposed = true;
-      send({ state: "invalid", roomId: null, connected: false, synced: false, role: null, isHolder: false });
+      send({
+        state: "invalid",
+        roomId: null,
+        connected: false,
+        synced: false,
+        role: null,
+        isHolder: false,
+      });
       document.current = null;
     };
   }, [api, send]);
   useEffect(() => {
     if (!session) {
       setControl(null);
-      currentReport.current = () => send({ state: "local", roomId: null,
-        connected: true, synced: true, role: null, isHolder: true });
+      currentReport.current = () =>
+        send({
+          state: "local",
+          roomId: null,
+          connected: true,
+          synced: true,
+          role: null,
+          isHolder: true,
+        });
       currentReport.current();
       return;
     }
@@ -53,20 +79,37 @@ export function useDeviceControl(
     const reportState = () => {
       const snapshot = session.getSnapshot();
       const connected = snapshot.status === "connected";
-      const state = connected && snapshot.synced ? "room" :
-        snapshot.status === "connecting" || snapshot.status === "syncing" ? "joining" : "unsynced";
-      send({ state, roomId: session.connection.roomId, connected, synced: snapshot.synced,
-        role: snapshot.role, isHolder: next.getSnapshot().isHolder });
+      const state =
+        connected && snapshot.synced
+          ? "room"
+          : snapshot.status === "connecting" || snapshot.status === "syncing"
+            ? "joining"
+            : "unsynced";
+      send({
+        state,
+        roomId: session.connection.roomId,
+        connected,
+        synced: snapshot.synced,
+        role: snapshot.role,
+        isHolder: next.getSnapshot().isHolder,
+      });
     };
     currentReport.current = reportState;
     const offControl = next.subscribe(reportState);
     const offSession = session.subscribe(reportState);
-    reportState(); setControl(next);
-    return () => { offControl(); offSession(); next.dispose(); };
+    reportState();
+    setControl(next);
+    return () => {
+      offControl();
+      offSession();
+      next.dispose();
+    };
   }, [session, send]);
   const current = control && control.session === session ? control : null;
-  const state = useSyncExternalStore(current?.subscribe ?? subscribeNothing,
-    current?.getSnapshot ?? getNothing);
+  const state = useSyncExternalStore(
+    current?.subscribe ?? subscribeNothing,
+    current?.getSnapshot ?? getNothing,
+  );
   return current && state ? { control: current, state } : null;
 }
 

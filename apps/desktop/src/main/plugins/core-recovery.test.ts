@@ -7,14 +7,20 @@ it("claims only the original target/scope once within five seconds", () => {
   let now = 0;
   const ledger = createCoreActionLedger({ now: () => now, current: () => true });
   const action = ledger.mint(scope, target);
-  expect(ledger.claim({ ...action, scope: { ...scope, workbenchInstance: id(4) } }, target)).toBe(false);
+  expect(ledger.claim({ ...action, scope: { ...scope, workbenchInstance: id(4) } }, target)).toBe(
+    false,
+  );
   expect(ledger.claim(action, { ...target, sessionId: id(5) })).toBe(false);
   expect(ledger.claim(action, { kind: "device-current-stop", sessionId: id(3) })).toBe(false);
-  now = 4_999; expect(ledger.claim(action, target)).toBe(true);
+  now = 4_999;
+  expect(ledger.claim(action, target)).toBe(true);
   expect(ledger.claim(action, target)).toBe(false);
-  now = 5_001; expect(ledger.isClaimed(action, target)).toBe(true);
-  ledger.complete(action); expect(ledger.isClaimed(action, target)).toBe(false);
-  const expired = ledger.mint(scope, target); now += 5_000;
+  now = 5_001;
+  expect(ledger.isClaimed(action, target)).toBe(true);
+  ledger.complete(action);
+  expect(ledger.isClaimed(action, target)).toBe(false);
+  const expired = ledger.mint(scope, target);
+  now += 5_000;
   expect(ledger.claim(expired, target)).toBe(false);
 });
 it("retires claimed actions with the window and uses fresh actions for retry", () => {
@@ -27,6 +33,8 @@ it("retires claimed actions with the window and uses fresh actions for retry", (
   expect(retry.actionToken).not.toBe(failed.actionToken);
   expect(ledger.claim(failed, target)).toBe(false);
   expect(ledger.claim(retry, target)).toBe(true);
-  ledger.retire(scope); expect(ledger.isClaimed(retry, target)).toBe(false);
-  current = false; expect(() => ledger.mint(scope, target)).toThrow("Retired");
+  ledger.retire(scope);
+  expect(ledger.isClaimed(retry, target)).toBe(false);
+  current = false;
+  expect(() => ledger.mint(scope, target)).toThrow("Retired");
 });
