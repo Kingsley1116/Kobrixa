@@ -652,7 +652,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     importPlanSchema.parse(plan);
     if (plan.targetSourceKey!==owner.sourceKey || plan.items.some(i=>ownerKey(i.ticket.owner)!==ownerKey(owner))) throw new Error("stale");
     const old=await this.loadImport(owner,plan.id);
-    if (old) { if (JSON.stringify(old.plan)!==JSON.stringify(plan)) throw new Error("input-changed"); return; }
+    if (old) { if (!sameImportValue(old.plan,plan)) throw new Error("input-changed"); return; }
     await this.writeDocument(owner,"import",plan.id,{formatVersion:1,plan,items:plan.items.map(i=>({key:i.key,state:"pending",receipt:null,skipReason:null,publicationTicket:null})),complete:false});
   }
   private async recordImportOne(owner:PersistenceOwner,id:string,evidence:ImportItemEvidence):Promise<void> {
