@@ -325,18 +325,7 @@ it("F03/F18 checks all eight permission combinations and permission before forei
       ["devices.read", await broker.request(p, "devices/list", {}, signal)],
       [
         "devices.connect",
-        await broker.request(
-          p,
-          "devices/connect",
-          {
-            target: {
-              kind: "wifi-address",
-              providerId: "kobrixa.device-ev3",
-              address: "127.0.0.1",
-            },
-          },
-          signal,
-        ),
+        await broker.request(p, "devices/discover", { providerId: "kobrixa.device-ev3" }, signal),
       ],
       [
         "devices.control",
@@ -371,7 +360,7 @@ it("F03/F18 checks all eight permission combinations and permission before forei
     expect(discovery).toMatchObject({
       ok: false,
       error: {
-        code: grants.has("devices.read")
+        code: grants.has("devices.connect")
           ? "PLUGIN_E_DEVICE_UNAVAILABLE"
           : "PLUGIN_E_PERMISSION_DENIED",
       },

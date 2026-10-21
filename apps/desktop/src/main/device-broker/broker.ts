@@ -390,7 +390,7 @@ export function createBroker(
       principal: () => Principal;
       send: (event: Stage3EventEnvelope) => void;
       domains: Set<"devices" | "ui" | "settings">;
-      dispose: () => void;
+      retire: () => void;
     }
   >();
   const events = new EventLedger(
@@ -416,7 +416,7 @@ export function createBroker(
       try {
         channel.send(event);
       } catch (error) {
-        channel.dispose();
+        channel.retire();
         throw error;
       }
     },
@@ -861,7 +861,9 @@ export function createBroker(
     }
     permission(
       principal,
-      method === "devices/connect" || method === "devices/disconnect"
+      method === "devices/connect" ||
+        method === "devices/disconnect" ||
+        method === "devices/discover"
         ? "devices.connect"
         : method === "devices/motion/prepare" ||
             method === "devices/motion/start" ||
@@ -1710,12 +1712,11 @@ export function createBroker(
         principal,
         send,
         domains: new Set<"devices" | "ui" | "settings">(),
-        dispose() {
+        retire() {
           if (disposed) return;
           disposed = true;
           events.disposeOwner(owner);
           channel.domains.clear();
-          channels.delete(key);
         },
       };
       channels.set(key, channel);
@@ -1731,7 +1732,11 @@ export function createBroker(
         abandon(id) {
           events.unsubscribe(owner, id);
         },
-        dispose: channel.dispose,
+        dispose() {
+          channel.retire();
+          // A failed sink keeps its owner slot until the router releases the attachment.
+          if (channels.get(key) === channel) channels.delete(key);
+        },
       };
     },
     async request<M extends DeviceMethod>(

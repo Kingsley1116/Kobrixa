@@ -445,11 +445,16 @@ export class EventLedger implements CommonEventLedgerPort {
   }
   sweep() {
     for (const [id, row] of this.#rows) {
-      if (row.removed) continue;
-      const expired = row.pending.some((item) => this.now() - item.at >= 10000);
-      if (!expired) continue;
-      if (row.terminal) this.unsubscribe(row.owner, id);
-      else this.#resync(row.owner, id, "ack-timeout");
+      try {
+        if (row.removed) continue;
+        const expired = row.pending.some((item) => this.now() - item.at >= 10000);
+        if (!expired) continue;
+        if (row.terminal) this.unsubscribe(row.owner, id);
+        else this.#resync(row.owner, id, "ack-timeout");
+      } catch {
+        // Timer failures stay host-side; never log native transport details.
+        console.error("Device event sweep failed.");
+      }
     }
   }
   diagnostics() {

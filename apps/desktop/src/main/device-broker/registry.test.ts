@@ -381,3 +381,49 @@ it.each([
     ledger.dispose();
   }
 });
+
+it("contains timer sweep send failures, logs no native text, and continues other owners", async () => {
+  vi.useFakeTimers();
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  let now = 0;
+  const healthy = { ...owner, sourceKey: "builtin:healthy" };
+  const send = vi.fn((event: Stage3EventEnvelope) => {
+    if (event.kind === "events.resyncRequired" && event.owner.sourceKey === owner.sourceKey)
+      throw new Error("private native transport detail");
+  });
+  const ledger = new EventLedger(
+    () => now,
+    send,
+    () => {},
+  );
+  try {
+    const ids = [owner, healthy].map((current) => {
+      const created = ledger.create(current);
+      if (!created.ok) throw new Error("create");
+      const id = created.value.subscriptionId;
+      ledger.activate(current, id);
+      ledger.publish(
+        current,
+        id,
+        { kind: "devices.catalog", data: { revision: 1, providers: [], sessions: [] } },
+        "control",
+      );
+      return id;
+    });
+    now = 10000;
+    await expect(vi.advanceTimersByTimeAsync(500)).resolves.toBe(vi);
+    expect(ledger.owns(owner, ids[0]!)).toBe(false);
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({
+      owner: healthy,
+      kind: "events.resyncRequired",
+    });
+    expect(logged).toHaveBeenCalledExactlyOnceWith("Device event sweep failed.");
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("private native");
+    ledger.ack(healthy, ids[1]!, send.mock.calls.at(-1)![0].sequence);
+    expect(ledger.diagnostics()).toEqual({ subscriptions: 0, queuedEvents: 0, queuedBytes: 0 });
+  } finally {
+    ledger.dispose();
+    logged.mockRestore();
+    vi.useRealTimers();
+  }
+});

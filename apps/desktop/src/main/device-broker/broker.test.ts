@@ -1581,3 +1581,39 @@ it("send failure disposes every channel subscription while preserving another ow
     await h.broker.resources.beginShutdown();
   }
 });
+
+it("fences a failed sink until its original attachment is disposed", async () => {
+  const h = setup();
+  const principal = pluginPrincipal();
+  const input = {
+    owner: principal.owner,
+    principal: () => principal,
+    send() {
+      throw new Error("private transport failure");
+    },
+  };
+  const channel = h.broker.attachChannel(input);
+  try {
+    channel.negotiated("devices", 1);
+    const created = h.broker.events.create(principal.owner);
+    if (!created.ok) throw new Error("create");
+    channel.activate(created.value.subscriptionId);
+    expect(() =>
+      h.broker.events.publish(
+        principal.owner,
+        created.value.subscriptionId,
+        { kind: "devices.catalog", data: { revision: 1, providers: [], sessions: [] } },
+        "control",
+      ),
+    ).toThrow("private transport failure");
+    expect(() => h.broker.attachChannel(input)).toThrow("Resource is unavailable");
+    channel.dispose();
+    const replacement = h.broker.attachChannel(input);
+    channel.dispose();
+    expect(() => h.broker.attachChannel(input)).toThrow("Resource is unavailable");
+    replacement.dispose();
+  } finally {
+    channel.dispose();
+    await h.broker.resources.beginShutdown();
+  }
+});
