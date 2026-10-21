@@ -98,7 +98,10 @@ export async function runPlugin(
         },
       },
     });
-    setTimeout(() => initialized(apiVersion), 0);
+    // Activation cannot use devices; the first command after the initialize
+    // response can. A timer leaves a race with that command on real channels.
+    initialized(apiVersion);
+    await ready;
     return {
       apiVersion: PLUGIN_API_VERSION,
       sdk: { name: "@kobrixa/plugin-sdk", version: SDK_VERSION },

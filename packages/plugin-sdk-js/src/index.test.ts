@@ -18,6 +18,45 @@ function connect(definition: Parameters<typeof runPlugin>[0]) {
 }
 
 describe("JS plugin SDK", () => {
+  it("F16 makes devices ready when initialize returns, without opening them during activation", async () => {
+    vi.useFakeTimers();
+    const negotiation = {
+      ok: true as const,
+      value: {
+        devicesContractVersion: 1 as const,
+        eventVersion: 1 as const,
+        capabilities: [],
+        requirementsSatisfied: true,
+      },
+    };
+    let duringActivation: unknown, afterInitialize: unknown;
+    const { host } = connect(
+      definePlugin({
+        async activate(context) {
+          duringActivation = await context.devices.negotiate();
+          context.commands.register("acme.hello.devices", async () => {
+            afterInitialize = await context.devices.negotiate();
+          });
+        },
+      }),
+    );
+    const negotiate = vi.fn(() => negotiation);
+    host.handle("devices/negotiate", negotiate);
+    try {
+      await host.request("initialize", { ...init, apiVersion: "1.5.0" });
+      expect(duringActivation).toMatchObject({
+        ok: false,
+        error: { code: "PLUGIN_E_DEVICE_UNAVAILABLE" },
+      });
+      expect(negotiate).not.toHaveBeenCalled();
+      await host.request("command/execute", { command: "acme.hello.devices" });
+      expect(afterInitialize).toEqual(negotiation);
+      expect(negotiate).toHaveBeenCalledTimes(1);
+    } finally {
+      host.close();
+      vi.useRealTimers();
+    }
+  });
   it("exposes the same API version as its initialize response", () => {
     expect(API_VERSION).toBe("1.5.0");
   });
