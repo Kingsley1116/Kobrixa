@@ -1,3 +1,12 @@
+import type {
+  Stage3RuntimePorts,
+  OwnerRetirement,
+  Stage3HostAttachment,
+  Stage3ChannelContext,
+  UiRuntimeAttachment,
+} from "./ui-lifecycle.js";
+import type { DeviceRequirement } from "./device-resources.js";
+import type { ResourceOwner } from "@kobrixa/plugin-protocol";
 import { STATIC_LANGUAGE_LIMITS_V1 } from "@kobrixa/plugin-protocol";
 import { readDiagnosticHelp } from "./diagnostic-help.js";
 import {
@@ -13,7 +22,7 @@ import {
   type ReportLanguageRegistrationFailureInput,
   type ReportLanguageRegistrationFailureResult,
 } from "./static-languages.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   DIAGNOSTIC_HELP_LIMITS,
@@ -59,6 +68,8 @@ export interface PluginStateStore {
   save(state: PluginPersistedState): Promise<void>;
 }
 export interface PluginManagerOptions {
+  stage3?: Stage3RuntimePorts;
+  stage3Host?: Stage3HostAttachment;
   sources: readonly PluginSource[];
   store: PluginStateStore;
   safeMode: boolean;
@@ -72,6 +83,8 @@ export interface PluginManagerOptions {
   now?(): number;
 }
 export interface PluginSummary {
+  required: boolean;
+  canToggle: boolean;
   sourceKey: string;
   id: string;
   source: "builtin" | "development";
@@ -174,6 +187,74 @@ function convertLegacy(
 }
 
 export class PluginManager {
+  readonly #stage3Channels = new Map<ResourceOwner, Stage3ChannelContext>();
+  #stage3Attachment: UiRuntimeAttachment | undefined;
+
+  stage3Runtime(): UiRuntimeAttachment {
+    if (!this.options.stage3 || !this.options.stage3Host)
+      throw new Error("Stage 3 runtime is not attached");
+    const channel = (owner: ResourceOwner) => {
+      if (this.requirements(owner) === null) return undefined;
+      return [...this.#stage3Channels.values()].find(
+        ({ owner: current }) =>
+          current.sourceKey === owner.sourceKey &&
+          current.pluginId === owner.pluginId &&
+          current.generation === owner.generation &&
+          current.processEpoch === owner.processEpoch &&
+          current.hostEpoch === owner.hostEpoch,
+      );
+    };
+    return (this.#stage3Attachment ??= Object.freeze<UiRuntimeAttachment>({
+      activateInitialized: async (sourceKey, signal) => {
+        if (this.#shutdown) throw new Error("Stage 3 runtime is shutting down");
+        const supervisor = this.#supervisors.get(sourceKey);
+        if (!supervisor) throw new Error("Source has no admitted process");
+        const context = await supervisor.activateInitialized(signal);
+        if (!channel(context.owner)) throw new Error("Retired initialized owner");
+        return context;
+      },
+      ready: async (owner, signal) => {
+        const original = channel(owner);
+        if (!original) throw new Error("Retired ready owner");
+        const supervisor = this.#supervisors.get(owner.sourceKey);
+        if (!supervisor) throw new Error("Missing original supervisor");
+        await supervisor.ready(signal);
+        if (channel(owner) !== original) throw new Error("Owner changed during ready");
+      },
+      current: (owner) => channel(owner) !== undefined,
+      owners: () =>
+        [...this.#stage3Channels.keys()].filter((owner) => channel(owner) !== undefined),
+      context: () => null,
+      commands: () => Object.freeze([]),
+      invoke: async () => {
+        throw new Error("Context commands are unpublished before P160");
+      },
+      dispatchDrain: async () => {
+        throw new Error("Storage drain is unpublished before P170");
+      },
+    }));
+  }
+
+  readonly #admittedOwners = new Map<ResourceOwner, readonly DeviceRequirement[]>();
+
+  requirements(owner: ResourceOwner): readonly DeviceRequirement[] | null {
+    for (const [admitted, requirements] of this.#admittedOwners) {
+      if (
+        admitted.sourceKey !== owner.sourceKey ||
+        admitted.pluginId !== owner.pluginId ||
+        admitted.generation !== owner.generation ||
+        admitted.hostEpoch !== owner.hostEpoch ||
+        admitted.processEpoch !== owner.processEpoch
+      )
+        continue;
+      const entry = this.#entryOf(admitted.sourceKey);
+      if (!entry || entry.generation !== admitted.generation || entry.plugin.status !== "enabled")
+        return null;
+      return requirements;
+    }
+    return null;
+  }
+
   #entries: Entry[];
   /** Keyed by source key: only the current supervisor of each enabled plugin. */
   readonly #supervisors = new Map<string, PluginSupervisor>();
@@ -213,6 +294,8 @@ export class PluginManager {
   #safeMode: boolean;
 
   static async create(options: PluginManagerOptions): Promise<PluginManager> {
+    if ((options.stage3 === undefined) !== (options.stage3Host === undefined))
+      throw new Error("stage3 and stage3Host must be supplied together.");
     let stored: PluginPersistedState & { problem?: string };
     try {
       stored = await options.store.load();
@@ -483,12 +566,16 @@ export class PluginManager {
     const entry = this.#entryOf(sourceKey);
     if (!entry || entry.plugin.status === "invalid")
       return failure("PLUGIN_E_UNKNOWN_PLUGIN", `No valid plugin has the source ${sourceKey}.`);
-    if (entry.read.source === "builtin" && !enabled)
+    if (entry.source.kind === "builtin" && entry.source.policy === "required" && !enabled)
       return failure(
         "PLUGIN_E_BUILTIN_REQUIRED",
         `${entry.plugin.id} is part of Kobrixa and cannot be disabled in this version.`,
       );
-    if (enabled && this.#safeMode && entry.source.kind === "development")
+    if (
+      enabled &&
+      this.#safeMode &&
+      (entry.source.kind === "development" || entry.source.policy === "optional")
+    )
       return failure(
         "PLUGIN_E_SAFE_MODE",
         "Restore plugins first, or restart without --safe-mode.",
@@ -578,7 +665,13 @@ export class PluginManager {
   async #removeSource(sourceKey: string, forget: boolean): Promise<PluginActionResult> {
     const refused = this.#refuseChange(sourceKey, "removed");
     if (refused) return refused;
+    const supervisor = this.#supervisors.get(sourceKey);
+    // Withdraw the registry row before cleanup so a removed process cannot publish notices.
     this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);
+    if (supervisor) {
+      this.#supervisors.delete(sourceKey);
+      await this.#retire([supervisor], "removed");
+    }
     this.#clearRegistrationFailures(sourceKey);
     if (forget && this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
     await this.#apply("cancelled");
@@ -595,6 +688,10 @@ export class PluginManager {
       );
     const entry = this.#entryOf(sourceKey)!;
     // Withdraw before waiting for a process or filesystem. Failed reloads cannot keep old rules.
+    if (entry.source.kind === "builtin" && entry.source.policy === "optional") {
+      entry.plugin = { ...entry.plugin, status: "disabled" };
+      this.#emitState();
+    }
     this.#revokeStaticSource(sourceKey);
     this.#clearRegistrationFailures(sourceKey);
     // Prevent #apply's initial reconciliation from recreating old commands before metadata returns.
@@ -630,7 +727,10 @@ export class PluginManager {
     const entry = this.#entryOf(sourceKey);
     if (!entry)
       return failure("PLUGIN_E_UNKNOWN_PLUGIN", `No plugin source has the key ${sourceKey}.`);
-    if (entry.read.source === "builtin")
+    if (
+      entry.source.kind === "builtin" &&
+      (verb === "removed" || entry.source.policy === "required")
+    )
       return failure(
         "PLUGIN_E_BUILTIN_REQUIRED",
         `${entry.plugin.id} is part of Kobrixa and cannot be ${verb}.`,
@@ -662,9 +762,16 @@ export class PluginManager {
   shutdown(deadlineMs: number = PLUGIN_SHUTDOWN_DEADLINE_MS): Promise<void> {
     this.#staticOperation += 1;
     this.#shutdown ??= (async () => {
-      const supervisors = [...this.#supervisors.values(), ...this.#retiring];
+      const supervisors = [...new Set([...this.#supervisors.values(), ...this.#retiring])];
+      // Device beginShutdown and every owner retirement start in the same turn.
+      const deviceShutdown = this.options.stage3?.device.beginShutdown();
+      await Promise.all([
+        deviceShutdown,
+        ...supervisors.map((supervisor) => supervisor.settleResources("shutdown")),
+      ]);
+      // Only now starts the existing bounded process-teardown phase.
       this.#supervisorsStopped = Promise.all(
-        supervisors.map((supervisor) => supervisor.stop()),
+        supervisors.map((supervisor) => supervisor.stop("shutdown")),
       ).then(() => undefined);
       const stopped = this.#supervisorsStopped.then(() => true);
       const waitForStop = async (ms: number) => {
@@ -973,6 +1080,48 @@ export class PluginManager {
       this.options.launcher,
       {
         ...this.options.supervisor,
+        ...(this.options.stage3
+          ? {
+              hostEpoch: this.options.stage3Host!.hostEpoch,
+              resourceOwner: () => {
+                if (this.#shutdown || !current() || entry.plugin.status !== "enabled")
+                  throw new Error("Retired registry generation");
+                const owner = Object.freeze({
+                  sourceKey,
+                  pluginId: plugin.id,
+                  generation,
+                  hostEpoch: this.options.stage3Host!.hostEpoch,
+                  processEpoch: randomUUID(),
+                });
+                this.#admittedOwners.set(
+                  owner,
+                  Object.freeze(
+                    (manifest.requires?.devices ?? []).map(({ capability, required }) =>
+                      Object.freeze({ capability, required }),
+                    ),
+                  ),
+                );
+                return owner;
+              },
+              bindChannel: (context: Stage3ChannelContext) => {
+                const host = this.options.stage3Host!;
+                const requirements = this.requirements(context.owner);
+                if (requirements === null) throw new Error("Retired channel owner");
+                const trusted = host.requirements(context.owner);
+                if (trusted === null || JSON.stringify(trusted) !== JSON.stringify(requirements))
+                  throw new Error("Registry requirements mismatch");
+                context.principal = () => host.principal(context.owner);
+                context.requirements = requirements;
+                this.#stage3Channels.set(context.owner, context);
+                return host.bindChannel(context);
+              },
+              retireResources: (owner: ResourceOwner, reason: OwnerRetirement) => {
+                this.#admittedOwners.delete(owner);
+                this.#stage3Channels.delete(owner);
+                return this.options.stage3Host!.retireResources(owner, reason);
+              },
+            }
+          : {}),
         locale: this.options.locale,
         onNotice: (notice) => {
           if (!current()) return;
@@ -994,10 +1143,12 @@ export class PluginManager {
     this.#supervisors.set(sourceKey, supervisor);
   }
 
-  #summary({ plugin }: Entry): PluginSummary {
+  #summary({ plugin, source }: Entry): PluginSummary {
     const supervisor = this.#supervisors.get(plugin.sourceKey);
     const manifest = plugin.manifest;
     return {
+      required: source.kind === "builtin" && source.policy === "required",
+      canToggle: source.kind === "development" || source.policy === "optional",
       sourceKey: plugin.sourceKey,
       id: plugin.id,
       source: plugin.source,

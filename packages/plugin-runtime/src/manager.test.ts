@@ -1,3 +1,8 @@
+import type {
+  Stage3ChannelContext,
+  Stage3RuntimePorts,
+  Stage3HostAttachment,
+} from "./ui-lifecycle.js";
 import { appendFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -46,6 +51,7 @@ async function devPlugin(name: string) {
 }
 const builtin = {
   kind: "builtin" as const,
+  policy: "required" as const,
   resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
@@ -66,6 +72,7 @@ const builtin = {
 };
 const builtinBackend = {
   kind: "builtin" as const,
+  policy: "required" as const,
   resources: {},
   manifest: {
     id: "test.back",
@@ -200,7 +207,9 @@ describe("PluginManager", () => {
         ],
       },
     };
-    const manager = await create([{ kind: "builtin", resources: {}, manifest }]);
+    const manager = await create([
+      { kind: "builtin", policy: "required", resources: {}, manifest },
+    ]);
     try {
       expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
         ok: false,
@@ -1274,4 +1283,303 @@ describe("diagnostic help", () => {
     expect(manager.diagnosticHelp().revision).toBeGreaterThan(added.revision);
     expect(launcher).not.toHaveBeenCalled();
   });
+});
+
+it("F20 optional builtin toggles persist without development mode; required stays enabled", async () => {
+  const optional = {
+    ...builtin,
+    policy: "optional" as const,
+    manifest: {
+      id: "kobrixa.device-ev3",
+      version: "1.0.0",
+      apiVersion: "^1.5.0",
+      runtime: { kind: "builtin" },
+    },
+  };
+  const store = memoryStore();
+  const manager = await create([{ ...builtin, policy: "required" as const }, optional], store);
+  expect(manager.state().developmentMode).toBe(false);
+  expect(
+    manager.state().plugins.map(({ required, canToggle }) => ({ required, canToggle })),
+  ).toEqual([
+    { required: true, canToggle: false },
+    { required: false, canToggle: true },
+  ]);
+  expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
+    ok: false,
+    code: "PLUGIN_E_BUILTIN_REQUIRED",
+  });
+  expect(await manager.setEnabled("builtin:kobrixa.device-ev3", false)).toMatchObject({ ok: true });
+  expect((await store.load()).disabled.has("builtin:kobrixa.device-ev3")).toBe(true);
+  const reopened = await create([{ ...builtin, policy: "required" as const }, optional], store);
+  expect(reopened.state().plugins[1]).toMatchObject({ status: "disabled", disabledBy: "user" });
+  expect(await reopened.setEnabled("builtin:kobrixa.device-ev3", true)).toMatchObject({ ok: true });
+  expect(await reopened.removeSource("builtin:kobrixa.device-ev3")).toMatchObject({
+    ok: false,
+    code: "PLUGIN_E_BUILTIN_REQUIRED",
+  });
+  // This optional provider-only source has no process supervisor to publish withdrawal.
+  const reloadStates: string[] = [];
+  const off = reopened.onEvent((event) => {
+    if (event.type === "state") {
+      const provider = event.state.plugins.find(
+        (source) => source.sourceKey === "builtin:kobrixa.device-ev3",
+      );
+      if (provider) reloadStates.push(provider.status);
+    }
+  });
+  try {
+    expect(await reopened.reloadSource("builtin:kobrixa.device-ev3")).toMatchObject({ ok: true });
+    const disabled = reloadStates.indexOf("disabled");
+    expect(disabled).toBeGreaterThanOrEqual(0);
+    expect(reloadStates.slice(disabled + 1)).toContain("enabled");
+  } finally {
+    off();
+  }
+  await Promise.all([manager.shutdown(), reopened.shutdown()]);
+});
+
+function stage3Fixture() {
+  const contexts: Stage3ChannelContext[] = [];
+  let manager: PluginManager;
+  const disposition = { stopConfirmed: true, faultIds: [], journalCommitted: true };
+  const stage3: Stage3RuntimePorts = {
+    device: {
+      retire: vi.fn(() => ({ drain: null, settled: Promise.resolve(disposition) })),
+      retireProvider: vi.fn(async () => disposition),
+      beginShutdown: vi.fn(async () => disposition),
+    },
+    persistence: resourceFreePersistence150(),
+    ui: unavailableUi150(),
+  };
+  const host: Stage3HostAttachment = {
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    principal: (owner) => ({ kind: "plugin", owner, authorityContext: null }),
+    hasPermission: () => false,
+    requirements: (owner) => manager.requirements(owner),
+    bindChannel: vi.fn((context) => {
+      contexts.push(context);
+      return { initialized: async () => {}, ready: async () => {}, dispose: vi.fn() };
+    }),
+    retireResources: vi.fn(async (owner, reason) => {
+      expect(manager.requirements(owner)).toBeNull();
+      await retireStage3Owner(
+        stage3,
+        owner,
+        reason,
+        () => 100,
+        async () => {
+          throw new Error("No storage dispatch at P150");
+        },
+      );
+    }),
+  };
+  return {
+    stage3,
+    host,
+    contexts,
+    assign(value: PluginManager) {
+      manager = value;
+    },
+  };
+}
+
+import { retireStage3Owner, resourceFreePersistence150, unavailableUi150 } from "./ui-lifecycle.js";
+
+it("F02 rejects partial manager stage3 options before touching sources or storage", async () => {
+  const fixture = stage3Fixture();
+  for (const pair of [{ stage3: fixture.stage3 }, { stage3Host: fixture.host }]) {
+    const store = memoryStore();
+    const load = vi.spyOn(store, "load");
+    await expect(
+      PluginManager.create({
+        sources: [],
+        store,
+        launcher,
+        locale: "en",
+        safeMode: false,
+        ...pair,
+      }),
+    ).rejects.toThrow("stage3 and stage3Host must be supplied together");
+    expect(load).not.toHaveBeenCalled();
+  }
+});
+
+it.each([false, true])(
+  "F02 admits immutable full-tuple requirements and replaces process identity (requires: %s)",
+  async (declared) => {
+    const source = await devPlugin("owner");
+    const file = path.join(source.directory, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    if (declared)
+      manifest.requires = { devices: [{ capability: "connection.v1", required: true }] };
+    await writeFile(file, JSON.stringify(manifest));
+    const fixture = stage3Fixture();
+    const manager = await PluginManager.create({
+      sources: [source],
+      store: memoryStore(),
+      launcher,
+      locale: "en",
+      safeMode: false,
+      stage3: fixture.stage3,
+      stage3Host: fixture.host,
+    });
+    fixture.assign(manager);
+    const runtime = manager.stage3Runtime();
+    expect(manager.stage3Runtime()).toBe(runtime);
+    expect(Object.isFrozen(runtime)).toBe(true);
+    const signal = new AbortController().signal;
+    const [first, duplicate] = await Promise.all([
+      runtime.activateInitialized(keyOf(source), signal),
+      runtime.activateInitialized(keyOf(source), signal),
+    ]);
+    expect(first).toBe(duplicate);
+    await runtime.ready(first.owner, signal);
+    expect(launcher).toHaveBeenCalledTimes(1);
+    expect(Object.isFrozen(first.owner)).toBe(true);
+    const requirements = manager.requirements({ ...first.owner });
+    expect(requirements).toEqual(declared ? [{ capability: "connection.v1", required: true }] : []);
+    expect(Object.isFrozen(requirements)).toBe(true);
+    if (declared) {
+      expect(Object.isFrozen(requirements![0])).toBe(true);
+      manifest.requires.devices[0].required = false;
+      expect(requirements![0]!.required).toBe(true);
+    }
+    const foreign = { ...first.owner, processEpoch: "00000000-0000-4000-8000-000000000099" };
+    expect(manager.requirements(foreign)).toBeNull();
+    expect(runtime.current(foreign)).toBe(false);
+    await expect(runtime.ready(foreign, signal)).rejects.toThrow("Retired ready owner");
+    expect(runtime.owners()).toEqual([first.owner]);
+    expect(runtime.commands(keyOf(source))).toEqual([]);
+    await expect(runtime.dispatchDrain(first.owner, {} as never, signal)).rejects.toThrow(
+      "unpublished",
+    );
+    expect(await manager.reloadSource(keyOf(source))).toMatchObject({ ok: true });
+    expect(manager.requirements(first.owner)).toBeNull();
+    expect(runtime.current(first.owner)).toBe(false);
+    const second = await runtime.activateInitialized(keyOf(source), signal);
+    await runtime.ready(second.owner, signal);
+    expect(second.owner.hostEpoch).toBe(first.owner.hostEpoch);
+    expect(second.owner.processEpoch).not.toBe(first.owner.processEpoch);
+    expect(second.owner.generation).toBeGreaterThan(first.owner.generation);
+    await manager.shutdown();
+    expect(runtime.owners()).toEqual([]);
+  },
+);
+
+it("F17 manager starts its process timer only after device and owner dispositions", async () => {
+  const source = await devPlugin("drain");
+  const fixture = stage3Fixture();
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    launcher,
+    locale: "en",
+    safeMode: false,
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const signal = new AbortController().signal;
+  const context = await runtime.activateInitialized(keyOf(source), signal);
+  await runtime.ready(context.owner, signal);
+  let finish!: (value: {
+    stopConfirmed: boolean;
+    faultIds: string[];
+    journalCommitted: boolean;
+  }) => void;
+  const barrier = {
+    promise: new Promise<{ stopConfirmed: boolean; faultIds: string[]; journalCommitted: boolean }>(
+      (resolve) => {
+        finish = resolve;
+      },
+    ),
+    resolve: (value: { stopConfirmed: boolean; faultIds: string[]; journalCommitted: boolean }) =>
+      finish(value),
+  };
+  vi.mocked(fixture.stage3.device.beginShutdown).mockReturnValue(barrier.promise);
+  vi.mocked(fixture.stage3.device.retire).mockReturnValue({
+    drain: null,
+    settled: barrier.promise,
+  });
+  const force = vi.spyOn(PluginSupervisor.prototype, "forceKill");
+  vi.useFakeTimers();
+  try {
+    const shutdown = manager.shutdown(100);
+    expect(fixture.host.retireResources).toHaveBeenCalledWith(context.owner, "shutdown");
+    expect(runtime.current(context.owner)).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(context.peer.closed).toBe(false);
+    expect(force).not.toHaveBeenCalled();
+    barrier.resolve({
+      stopConfirmed: false,
+      faultIds: [context.owner.hostEpoch],
+      journalCommitted: true,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await shutdown;
+    expect(context.peer.closed).toBe(true);
+  } finally {
+    force.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("F20 safe mode suppresses optional registration before any process launch", async () => {
+  const fixture = stage3Fixture();
+  const manager = await PluginManager.create({
+    sources: [{ ...builtin, policy: "optional" }],
+    store: memoryStore(),
+    launcher,
+    locale: "en",
+    safeMode: true,
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  expect(manager.state().plugins[0]).toMatchObject({
+    required: false,
+    canToggle: true,
+    status: "disabled",
+  });
+  await expect(
+    manager
+      .stage3Runtime()
+      .activateInitialized("builtin:kobrixa.basic-plus", new AbortController().signal),
+  ).rejects.toThrow("Source has no admitted process");
+  expect(launcher).not.toHaveBeenCalled();
+  await manager.shutdown();
+});
+
+it("F17 shutdown fences an idle source before waiting for device disposition", async () => {
+  const source = await devPlugin("idleclose");
+  const fixture = stage3Fixture();
+  let finish!: () => void;
+  vi.mocked(fixture.stage3.device.beginShutdown).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ stopConfirmed: true, faultIds: [], journalCommitted: true });
+      }),
+  );
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    launcher,
+    locale: "en",
+    safeMode: false,
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const shutdown = manager.shutdown();
+  try {
+    await expect(
+      manager.stage3Runtime().activateInitialized(keyOf(source), new AbortController().signal),
+    ).rejects.toThrow("shutting down");
+    expect(launcher).not.toHaveBeenCalled();
+  } finally {
+    finish();
+    await shutdown;
+  }
 });

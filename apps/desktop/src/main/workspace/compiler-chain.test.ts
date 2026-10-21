@@ -19,7 +19,7 @@ it("builds a test-only language and non-rbf target through resolution commit and
   const root = await mkdtemp(path.join(tmpdir(), "kobrixa-chain-"));
   let service: BuildService | undefined;
   const source = (id: string, contributes: unknown) => ({
-    kind: "builtin" as const,
+    kind: "builtin" as const, policy: "required" as const,
     resources: {},
     manifest: {
       id,
