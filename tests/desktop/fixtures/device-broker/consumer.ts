@@ -8,6 +8,7 @@ const fixture = JSON.parse(readFileSync("fixture.json", "utf8")) as {
   expectedSatisfied?: boolean;
   expectedRpcError?: number;
   subscriptionProbe?: string;
+  eventTimeoutMs?: number;
 };
 function value<T>(
   result: { ok: true; value: T } | { ok: false; error: { code: string; message: string } },
@@ -94,14 +95,47 @@ void runPlugin(
         const channelIds = sources.channels.slice(0, 4).map((channel) => channel.channelId);
         value(await devices.read({ sessionId, channelIds, freshness: "fresh" }));
         scenario.push("read");
+        type Event = Parameters<Parameters<typeof devices.subscribe>[1]>[0];
+        let delivered!: (event: Event) => void;
+        const received = new Promise<Event>((resolve) => {
+          delivered = resolve;
+        });
         const subscription = value(
           await devices.subscribe(
             { topic: "telemetry", sessionId, channelIds, intervalMs: 500 },
-            () => {},
+            delivered,
           ),
         );
         scenario.push("subscribe");
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let eventReceipt: object | undefined;
         try {
+          const event = await Promise.race([
+            received,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("SDK telemetry event deadline")),
+                fixture.eventTimeoutMs ?? 5000,
+              );
+            }),
+          ]);
+          clearTimeout(timer);
+          if (
+            event.kind !== "devices.telemetry" ||
+            event.subscriptionId !== subscription.subscriptionId ||
+            event.data.sessionId !== sessionId ||
+            event.data.frames.length === 0 ||
+            !Number.isSafeInteger(event.sequence) ||
+            event.sequence <= 0
+          )
+            throw new Error("Unexpected SDK telemetry event");
+          eventReceipt = {
+            kind: event.kind,
+            subscriptionId: event.subscriptionId,
+            sequence: event.sequence,
+            sessionId,
+            owner: event.owner,
+          };
           const portId = sources.channels[0]!.portId!;
           const modes = value(
             await devices.inputModes.query({
@@ -176,11 +210,12 @@ void runPlugin(
             throw new Error("Fixture has unresolved stop outcome");
           scenario.push("query");
         } finally {
+          clearTimeout(timer);
           await subscription.dispose();
           await subscription.dispose();
         }
         scenario.push("unsubscribe");
-        await context.ui.showMessage(JSON.stringify({ ok: true, scenario }));
+        await context.ui.showMessage(JSON.stringify({ ok: true, scenario, eventReceipt }));
       });
     },
   }),

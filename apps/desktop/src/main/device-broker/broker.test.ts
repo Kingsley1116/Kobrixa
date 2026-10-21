@@ -918,7 +918,7 @@ it("conflicting and replaced provider generations cannot reuse a catalog allocat
   expect(next.identify({ ...tuple, sessionId: reconnected.value.session.sessionId })).not.toBe(id);
 });
 
-it("a connect settling after its deadline permits a later connection", async () => {
+it("F09 a connect settling after its deadline permits a later connection", async () => {
   vi.useFakeTimers();
   try {
     const h = setup(),
@@ -959,7 +959,7 @@ it("a connect settling after its deadline permits a later connection", async () 
   }
 });
 it.each(["provider", "lane"] as const)(
-  "finish bounds stalled %s cleanup and subsequent cancel",
+  "F09 finish bounds stalled %s cleanup and subsequent cancel",
   async (failure) => {
     vi.useFakeTimers();
     try {
@@ -1026,7 +1026,7 @@ it.each(["provider", "lane"] as const)(
   },
 );
 it.each(["throw", "outcome"] as const)(
-  "failed input mode %s preserves source revision and notifies subscribers",
+  "F09 failed input mode %s preserves source revision and notifies subscribers",
   async (failure) => {
     const h = setup(),
       p = pluginPrincipal();
@@ -1093,7 +1093,7 @@ it.each(["throw", "outcome"] as const)(
 );
 
 it.each(["success", "failure", "late"] as const)(
-  "cancel preserves settled provider evidence and bounds %s outcomes",
+  "F09 cancel preserves settled provider evidence and bounds %s outcomes",
   async (outcomeKind) => {
     vi.useFakeTimers();
     try {

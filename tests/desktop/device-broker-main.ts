@@ -3,7 +3,6 @@ import { randomUUID, createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cpus, totalmem, platform, arch } from "node:os";
-import { execFileSync } from "node:child_process";
 import { app } from "electron";
 import {
   RpcPeer,
@@ -12,6 +11,7 @@ import {
   jsonRpcMessageSchema,
   deviceRequestSchemas,
   deviceEventDataSchemas,
+  eventEnvelopeSchema,
   type JsonRpcMessage,
 } from "@kobrixa/plugin-protocol";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -34,6 +34,17 @@ import { createProviderCatalog } from "../../apps/desktop/src/main/device-broker
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
 
 const [directory, python] = process.argv.slice(-2) as [string, string];
+type ArtifactIdentity = {
+  commit: string;
+  artifact: { dirty: boolean; sha256: Record<string, string> };
+};
+type EventReceipt = {
+  kind: "devices.telemetry";
+  subscriptionId: string;
+  sessionId: string;
+  sequence: number;
+  owner: ResourceOwner;
+};
 const hostEpoch = randomUUID();
 const workbenchInstance = randomUUID();
 const ref = randomUUID(),
@@ -178,6 +189,7 @@ process.on("uncaughtException", fail);
 process.on("unhandledRejection", fail);
 const negotiationCases = [
   { name: "absent", requires: [], satisfied: true },
+  { name: "event-delivery-withheld", requires: [], satisfied: true },
   {
     name: "required-supported",
     requires: [{ capability: "telemetry.v1", required: true }],
@@ -231,7 +243,10 @@ function assertNegotiation(
   }
 }
 
-async function runMaximumLoad(broker: DeviceBrokerPort): Promise<object> {
+async function runMaximumLoad(
+  broker: DeviceBrokerPort,
+  identity: ArtifactIdentity,
+): Promise<object> {
   const gc = (globalThis as typeof globalThis & { gc?: () => void }).gc;
   if (!gc) throw new Error("Load run requires Electron --js-flags=--expose-gc");
   const now = () => performance.now();
@@ -455,7 +470,8 @@ async function runMaximumLoad(broker: DeviceBrokerPort): Promise<object> {
       },
       measurements: { transport, readback, journal: journalTimes },
       environment: {
-        commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+        commit: identity.commit,
+        bundle: identity.artifact,
         artifact: "source-bundled synthetic-provider load",
         os: platform(),
         arch: arch(),
@@ -495,6 +511,10 @@ void app
   .whenReady()
   .then(async () => {
     assert.equal(app.requestSingleInstanceLock(), true);
+    const identity: ArtifactIdentity = JSON.parse(
+      await readFile(path.join(directory, "artifact-identity.json"), "utf8"),
+    );
+    assert.match(identity.commit, /^[0-9a-f]{40}$/);
     const broker = createDeviceBroker({
       authority: {
         current(principal, contextRef) {
@@ -614,7 +634,8 @@ void app
           JSON.stringify({
             contextRef: ref,
             motionScopeRef: scope,
-            negotiateOnly: row.name !== "absent",
+            negotiateOnly: row.name !== "absent" && row.name !== "event-delivery-withheld",
+            eventTimeoutMs: row.name === "event-delivery-withheld" ? 250 : 5000,
             expectedSatisfied: row.satisfied,
             ...(subscriptionProbe ? { subscriptionProbe: row.name } : {}),
             ...(row.name === "hostile-requirements" ? { expectedRpcError: -32602 } : {}),
@@ -649,6 +670,7 @@ void app
               subscribed?: boolean;
               cancelled?: boolean;
               scenario?: string[];
+              eventReceipt?: EventReceipt;
               negotiated?: {
                 requirementsSatisfied: boolean;
                 capabilities: { capability: string; state: string }[];
@@ -656,6 +678,16 @@ void app
             }
           | undefined;
         const outgoing: JsonRpcMessage[] = [];
+        let withheldEvents = 0;
+        const ackRequests = new Map<
+          string | number,
+          { subscriptionId: string; sequence: number }
+        >();
+        const successfulAcks: Array<{
+          subscriptionId: string;
+          sequence: number;
+          acknowledged: number;
+        }> = [];
         const requests = new Map<string | number, string>();
         let allocated!: () => void;
         const allocation = new Promise<void>((resolve) => {
@@ -683,7 +715,14 @@ void app
           onMessage(listener) {
             return child.onMessage((text) => {
               const message = jsonRpcMessageSchema.parse(JSON.parse(text));
-              if ("method" in message && "id" in message) requests.set(message.id, message.method);
+              if ("method" in message && "id" in message) {
+                requests.set(message.id, message.method);
+                if (message.method === "events/ack")
+                  ackRequests.set(
+                    message.id,
+                    deviceRequestSchemas["events/ack"].params.parse(message.params),
+                  );
+              }
               if (
                 row.name === "hostile-requirements" &&
                 "method" in message &&
@@ -744,8 +783,24 @@ void app
                   throw new Error("Injected serialized subscription reply failure");
               }
             }
+            if (
+              row.name === "event-delivery-withheld" &&
+              "method" in message &&
+              message.method === "events/deliver"
+            ) {
+              withheldEvents++;
+              return;
+            }
             child.send(text);
             outgoing.push(message);
+            if ("result" in message && ackRequests.has(message.id)) {
+              const result = deviceRequestSchemas["events/ack"].result.parse(message.result);
+              if (result.ok)
+                successfulAcks.push({
+                  ...ackRequests.get(message.id)!,
+                  acknowledged: result.value.acknowledged,
+                });
+            }
           },
         });
         const detach = attachDeviceRpc({ peer, principal: () => principal, broker });
@@ -771,72 +826,104 @@ void app
               "devices.control",
             ],
           });
-          assert.equal(
-            await peer.request(
-              "command/execute",
-              { command: "kobrixa-fixture.devices.probe" },
-              { timeoutMs: 65_000 },
-            ),
-            null,
+          const command = peer.request(
+            "command/execute",
+            { command: "kobrixa-fixture.devices.probe" },
+            { timeoutMs: 65_000 },
           );
-          assert.ok(notice);
-          const transport = language === "js" ? "electron-message-port" : "content-length";
-          if (subscriptionProbe) {
-            assert.equal(notice.deliveries, 0);
-            if (row.name === "metadata-absent")
-              assert.equal(notice.businessError, "PLUGIN_E_DEVICE_UNAVAILABLE");
-            else if (row.name.startsWith("metadata-")) {
-              assert.equal(notice.subscribed, true);
-              assert.equal([...requests.values()].includes("events/ack"), false);
-            } else if (row.name === "subscribe-cancel") {
-              if (language === "js") assert.equal(notice.rpcError, -32800);
-              else assert.equal(notice.cancelled, true);
-            } else assert.equal(notice.rpcError, -32603);
+          if (row.name === "event-delivery-withheld") {
+            await assert.rejects(command, /SDK telemetry event deadline/);
+            assert.equal(notice, undefined, "withheld event must not produce a success notice");
+            assert.ok(withheldEvents > 0, "negative scenario must actually suppress real events");
+            assert.equal(ackRequests.size, 0);
             assert.equal(broker.events.diagnostics().subscriptions, 0);
-            if (!row.name.startsWith("metadata-"))
-              assert.equal(
-                outgoing.some((m) => "method" in m && m.method === "events/deliver"),
-                false,
-              );
-            channelChecks.push({ language, name: row.name, ok: true });
-          } else if (row.name === "hostile-requirements") {
-            assert.equal(notice.rpcError, -32602);
-            assert.deepEqual(requirements(owner), []);
-            channelChecks.push({ language, name: row.name, ok: true });
-          } else if (row.name === "absent") {
-            transports.push({ ...notice, language, transport });
-            negotiations.push({ language, transport, name: row.name, ok: true });
-            const replyAt = outgoing.findIndex(
-              (m) => "result" in m && requests.get(m.id) === "devices/subscribe",
-            );
-            const eventsAt = outgoing.flatMap((m, index) =>
-              "method" in m && m.method === "events/deliver" ? [index] : [],
-            );
-            assert.ok(replyAt >= 0 && eventsAt.length > 0);
-            assert.ok(eventsAt.every((index) => index > replyAt));
-            assert.equal(broker.events.diagnostics().subscriptions, 0);
-            channelChecks.push({
-              language,
-              name: "reply-before-delivery",
-              ok: true,
-              events: eventsAt.length,
-            });
+            channelChecks.push({ language, name: row.name, ok: true, withheldEvents });
           } else {
-            assert.ok(notice.negotiated);
-            assertNegotiation(row, notice.negotiated);
-            negotiations.push({
-              language,
-              transport,
-              name: row.name,
-              ok: true,
-              value: notice.negotiated,
-            });
-            if (row.name === "required-disabled")
-              assert.deepEqual(
-                successful(await broker.request(hostPrincipal, "devices/list", {}, signal))
-                  .providers,
-                [],
+            assert.equal(await command, null);
+            assert.ok(notice);
+            const transport = language === "js" ? "electron-message-port" : "content-length";
+            if (subscriptionProbe) {
+              assert.equal(notice.deliveries, 0);
+              if (row.name === "metadata-absent")
+                assert.equal(notice.businessError, "PLUGIN_E_DEVICE_UNAVAILABLE");
+              else if (row.name.startsWith("metadata-")) {
+                assert.equal(notice.subscribed, true);
+                assert.equal([...requests.values()].includes("events/ack"), false);
+              } else if (row.name === "subscribe-cancel") {
+                if (language === "js") assert.equal(notice.rpcError, -32800);
+                else assert.equal(notice.cancelled, true);
+              } else assert.equal(notice.rpcError, -32603);
+              assert.equal(broker.events.diagnostics().subscriptions, 0);
+              if (!row.name.startsWith("metadata-"))
+                assert.equal(
+                  outgoing.some((m) => "method" in m && m.method === "events/deliver"),
+                  false,
+                );
+              channelChecks.push({ language, name: row.name, ok: true });
+            } else if (row.name === "hostile-requirements") {
+              assert.equal(notice.rpcError, -32602);
+              assert.deepEqual(requirements(owner), []);
+              channelChecks.push({ language, name: row.name, ok: true });
+            } else if (row.name === "absent") {
+              const receipt = notice.eventReceipt;
+              assert.ok(receipt, "positive scenario must receive an SDK event");
+              assert.equal(receipt.kind, "devices.telemetry");
+              assert.equal(receipt.sessionId, connected);
+              assert.deepEqual(receipt.owner, owner);
+              const matchingEvents = outgoing
+                .filter((m) => "method" in m && m.method === "events/deliver")
+                .map((m) => eventEnvelopeSchema.parse("params" in m ? m.params : undefined))
+                .filter(
+                  (event) =>
+                    event.subscriptionId === receipt.subscriptionId &&
+                    event.sequence === receipt.sequence,
+                );
+              assert.equal(matchingEvents.length, 1);
+              const matchingAcks = successfulAcks.filter(
+                (ack) =>
+                  ack.subscriptionId === receipt.subscriptionId &&
+                  ack.sequence === receipt.sequence,
               );
+              assert.equal(matchingAcks.length, 1, "receipt must correlate to one successful ACK");
+              assert.equal(matchingAcks[0]!.acknowledged, receipt.sequence);
+              const acknowledged = {
+                subscriptionId: receipt.subscriptionId,
+                sequence: receipt.sequence,
+              };
+              transports.push({ ...notice, acknowledged, language, transport });
+              negotiations.push({ language, transport, name: row.name, ok: true });
+              const replyAt = outgoing.findIndex(
+                (m) => "result" in m && requests.get(m.id) === "devices/subscribe",
+              );
+              const eventsAt = outgoing.flatMap((m, index) =>
+                "method" in m && m.method === "events/deliver" ? [index] : [],
+              );
+              assert.ok(replyAt >= 0 && eventsAt.length > 0);
+              assert.ok(eventsAt.every((index) => index > replyAt));
+              assert.equal(broker.events.diagnostics().subscriptions, 0);
+              channelChecks.push({
+                language,
+                name: "reply-before-delivery",
+                ok: true,
+                events: eventsAt.length,
+              });
+            } else {
+              assert.ok(notice.negotiated);
+              assertNegotiation(row, notice.negotiated);
+              negotiations.push({
+                language,
+                transport,
+                name: row.name,
+                ok: true,
+                value: notice.negotiated,
+              });
+              if (row.name === "required-disabled")
+                assert.deepEqual(
+                  successful(await broker.request(hostPrincipal, "devices/list", {}, signal))
+                    .providers,
+                  [],
+                );
+            }
           }
           await peer.request("shutdown", {});
           const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
@@ -879,13 +966,13 @@ void app
       unregister = broker.registerProvider(fakeProvider(broker, "kobrixa.device-ev3", true));
       await writeFile(
         path.join(directory, "load-result.json"),
-        JSON.stringify(await runMaximumLoad(broker), null, 2),
+        JSON.stringify(await runMaximumLoad(broker, identity), null, 2),
       );
     }
     unregister();
     await writeFile(
       path.join(directory, "transport-result.json"),
-      JSON.stringify({ transports, negotiations, channelChecks }, null, 2),
+      JSON.stringify({ ...identity, transports, negotiations, channelChecks }, null, 2),
     );
     app.quit();
   })

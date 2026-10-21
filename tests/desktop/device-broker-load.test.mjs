@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertLoad } from "./device-broker-harness.mjs";
+import * as harness from "./device-broker-harness.mjs";
+
+const identity = {
+  commit: "a".repeat(40),
+  artifact: { dirty: false, sha256: { "main.cjs": "b".repeat(64) } },
+};
 
 const sample = () => ({
   durationMs: 600_000,
@@ -24,6 +30,7 @@ const sample = () => ({
   environment: {
     commit: "a".repeat(40),
     artifact: "test",
+    bundle: identity.artifact,
     os: "test",
     arch: "test",
     cpu: "test",
@@ -36,22 +43,39 @@ const sample = () => ({
   },
 });
 
+test("load identity stays tied to the captured bundle and rejects mismatched commit or hashes", () => {
+  assertLoad(sample(), identity);
+  harness.assertArtifactIdentity(structuredClone(identity), identity);
+  const otherCommit = sample();
+  otherCommit.environment.commit = "c".repeat(40);
+  assert.throws(() => assertLoad(otherCommit, identity), /commit/);
+  const otherBundle = sample();
+  otherBundle.environment.bundle = { ...identity.artifact, sha256: { "main.cjs": "d".repeat(64) } };
+  assert.throws(() => assertLoad(otherBundle, identity), /artifact/);
+  assert.throws(
+    () => harness.assertArtifactIdentity({ ...identity, commit: "c".repeat(40) }, identity),
+    /commit/,
+  );
+});
+
 test("load gate rejects short runs, missing measurements and stop p95 above 50ms", () => {
-  assertLoad(sample());
-  assert.throws(() => assertLoad({ ...sample(), durationMs: 599_999 }));
-  assert.throws(() => assertLoad({ ...sample(), stopDispatchMs: Array(100).fill(50.001) }));
-  assert.throws(() => assertLoad({ ...sample(), measurements: { transport: [2] } }));
-  assert.throws(() => assertLoad({ ...sample(), retainedHeap: [] }));
+  assertLoad(sample(), identity);
+  assert.throws(() => assertLoad({ ...sample(), durationMs: 599_999 }, identity));
   assert.throws(() =>
-    assertLoad({ ...sample(), traffic: { peakQueuedBytes: 262_145, overflowFrames: 1 } }),
+    assertLoad({ ...sample(), stopDispatchMs: Array(100).fill(50.001) }, identity),
+  );
+  assert.throws(() => assertLoad({ ...sample(), measurements: { transport: [2] } }, identity));
+  assert.throws(() => assertLoad({ ...sample(), retainedHeap: [] }, identity));
+  assert.throws(() =>
+    assertLoad({ ...sample(), traffic: { peakQueuedBytes: 262_145, overflowFrames: 1 } }, identity),
   );
   assert.throws(() =>
-    assertLoad({ ...sample(), traffic: { peakQueuedBytes: 1, overflowFrames: 0 } }),
+    assertLoad({ ...sample(), traffic: { peakQueuedBytes: 1, overflowFrames: 0 } }, identity),
   );
   const growing = sample();
   growing.retainedHeap = growing.retainedHeap.map((entry, index) => ({
     ...entry,
     bytes: 12_000_000 + index * 1_000_000,
   }));
-  assert.throws(() => assertLoad(growing));
+  assert.throws(() => assertLoad(growing, identity));
 });

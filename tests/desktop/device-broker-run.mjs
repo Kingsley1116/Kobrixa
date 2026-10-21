@@ -6,7 +6,13 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { build } from "esbuild";
-import { root, run, assertParity, assertLoad } from "./device-broker-harness.mjs";
+import {
+  root,
+  run,
+  assertParity,
+  assertLoad,
+  assertArtifactIdentity,
+} from "./device-broker-harness.mjs";
 
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
 const electron = require("electron");
@@ -70,6 +76,23 @@ try {
     path.join(temporary, "python/kobrixa-plugin.json"),
     JSON.stringify({ ...manifest, runtime: { kind: "python", entry: "consumer.py" } }),
   );
+  const identity = {
+    commit,
+    artifact: {
+      dirty,
+      sha256: Object.fromEntries(
+        await Promise.all(
+          ["main.cjs", "js/consumer.cjs", "python/consumer.py", "stall.cjs"].map(async (file) => [
+            file,
+            createHash("sha256")
+              .update(await readFile(path.join(temporary, file)))
+              .digest("hex"),
+          ]),
+        ),
+      ),
+    },
+  };
+  await writeFile(path.join(temporary, "artifact-identity.json"), JSON.stringify(identity));
   const load = process.argv.includes("--load");
   await run(
     electron,
@@ -86,6 +109,7 @@ try {
     },
   );
   const report = JSON.parse(await readFile(path.join(temporary, "transport-result.json"), "utf8"));
+  assertArtifactIdentity(report, identity);
   assertParity(report);
   const requirements = [
     "absent",
@@ -97,6 +121,7 @@ try {
   ];
   const channelCases = [
     "reply-before-delivery",
+    "event-delivery-withheld",
     "hostile-requirements",
     "subscribe-send-throws",
     "subscribe-invalid-result",
@@ -135,7 +160,7 @@ try {
   }
   if (load) {
     report.load = JSON.parse(await readFile(path.join(temporary, "load-result.json"), "utf8"));
-    assertLoad(report.load);
+    assertLoad(report.load, identity);
     for (const [name, values] of Object.entries({
       stopDispatch: report.load.stopDispatchMs,
       ...report.load.measurements,
@@ -181,20 +206,6 @@ try {
     ),
   ]);
   assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" });
-  report.commit = commit;
-  report.artifact = {
-    dirty,
-    sha256: Object.fromEntries(
-      await Promise.all(
-        ["main.cjs", "js/consumer.cjs", "python/consumer.py", "stall.cjs"].map(async (file) => [
-          file,
-          createHash("sha256")
-            .update(await readFile(path.join(temporary, file)))
-            .digest("hex"),
-        ]),
-      ),
-    ),
-  };
   report.stall = "child-entered-and-killed";
   // Controller keeps this artifact with the acceptance report before deleting the temp directory.
   console.log(JSON.stringify(report, null, 2));

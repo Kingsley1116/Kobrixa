@@ -67,12 +67,24 @@ async def probe(ctx):
     channels = [channel["channelId"] for channel in sources["channels"][:4]]
     value(await devices.read({"sessionId": session_id, "channelIds": channels, "freshness": "fresh"}))
     scenario.append("read")
+    received = asyncio.get_running_loop().create_future()
     async def on_event(event):
-        return None
+        if not received.done():
+            received.set_result(event)
     subscription = value(await devices.subscribe({"topic": "telemetry", "sessionId": session_id,
                                             "channelIds": channels, "intervalMs": 500}, on_event))
     scenario.append("subscribe")
     try:
+        try:
+            event = await asyncio.wait_for(received, fixture.get("eventTimeoutMs", 5000) / 1000)
+        except asyncio.TimeoutError as error:
+            raise RuntimeError("SDK telemetry event deadline") from error
+        if (event["kind"] != "devices.telemetry" or event["subscriptionId"] != subscription.subscription_id
+                or event["data"]["sessionId"] != session_id or not event["data"]["frames"]
+                or event["sequence"] <= 0):
+            raise RuntimeError("Unexpected SDK telemetry event")
+        event_receipt = {"kind": event["kind"], "subscriptionId": event["subscriptionId"],
+                         "sequence": event["sequence"], "sessionId": session_id, "owner": event["owner"]}
         port = sources["channels"][0]["portId"]
         modes = value(await devices.input_modes.query({"sessionId": session_id, "portId": port,
                        "expectedSourceRevision": sources["sourceRevision"]}))
@@ -114,7 +126,7 @@ async def probe(ctx):
         await subscription.close()
         await subscription.close()
     scenario.append("unsubscribe")
-    await ctx.ui.show_message(json.dumps({"ok": True, "scenario": scenario}))
+    await ctx.ui.show_message(json.dumps({"ok": True, "scenario": scenario, "eventReceipt": event_receipt}))
 
 
 if __name__ == "__main__":

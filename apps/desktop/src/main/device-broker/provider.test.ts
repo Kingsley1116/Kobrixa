@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { ExchangeLane, createContexts } from "./provider.js";
 import { ID } from "./fake-provider.js";
-it("F21 timeout quarantines occupancy until the underlying exchange settles", async () => {
+it("F09/F21 timeout quarantines occupancy until the underlying exchange settles", async () => {
   vi.useFakeTimers();
   let now = 0;
   const lane = new ExchangeLane(() => now);

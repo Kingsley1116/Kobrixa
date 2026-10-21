@@ -45,7 +45,7 @@ it("F17/F19 revokes in the calling turn, returns the same grant and retains fail
   });
   expect(await resources.beginShutdown()).toMatchObject({ journalCommitted: false });
 });
-it("F09/F17 no resources is an explicit empty disposition; rejected cleanup never becomes success", async () => {
+it("F17 no resources is an explicit empty disposition; rejected cleanup never becomes success", async () => {
   const driver: ResourceDriver = {
     revokeOwner: () => {
       throw new Error("unused");
