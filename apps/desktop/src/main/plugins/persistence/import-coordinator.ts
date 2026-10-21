@@ -714,10 +714,14 @@ export function createLegacyImportCoordinator(input: {
       )
         throw new Error("changed-replay");
       const unresolved = pending.get(copy.nonce);
-      if (unresolved && !(await save(unresolved.document))) return { state: "pending" };
+      if (unresolved) {
+        const settled = await save(unresolved.document);
+        live(descriptor, copy.scope);
+        if (!settled) return { state: "pending" };
+      }
       document = nonces.get(copy.nonce)!;
-      if (document.state === "consumed") return { state: "reconciled" };
       live(descriptor, copy.scope);
+      if (document.state === "consumed") return { state: "reconciled" };
       if (!document.raw) {
         document = {
           ...document,
@@ -731,7 +735,9 @@ export function createLegacyImportCoordinator(input: {
           if (!sameImportValue(owner, input.importOwner(descriptor.targetSourceKey)))
             throw new Error("stale");
         };
-        if (!(await save(document, admit))) return { state: "pending" };
+        const settled = await save(document, admit);
+        live(descriptor, copy.scope);
+        if (!settled) return { state: "pending" };
       }
       // If the window retired during raw persistence, preserve its durable capture for host recovery.
       live(descriptor, copy.scope);

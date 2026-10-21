@@ -1258,6 +1258,56 @@ it("T6 import-coordinator.test.ts: outcomes — cleanup uncertainty retains the 
 });
 
 describe("T6 fix round1 authority boundaries", () => {
+  it.each([true, false])(
+    "rejects retired consumed replay after reconciliation settles=%s",
+    async (settled) => {
+      const f = await fixture(syntheticPreferencesImportDescriptor);
+      const challenge = await f.coordinator.issuePreferences({
+        descriptorId: f.descriptor.id,
+        scope: f.scope,
+      });
+      const raw = snap(f, challenge.nonce);
+      const publish = AtomicStore.prototype.publish.bind(f.store);
+      const reconcile = f.backend.imports.reconcile;
+      let unknown = true,
+        reached!: () => void,
+        release!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(f.store, "publish").mockImplementation(async (ticket) => {
+        const result = await publish(ticket);
+        return (await nonceDoc(f, challenge.nonce)).state === "consumed"
+          ? { disposition: "unknown" }
+          : result;
+      });
+      vi.spyOn(f.backend.imports, "reconcile").mockImplementation(async (ticket) => {
+        if (unknown) return { disposition: "unknown" };
+        reached();
+        await gate;
+        return settled ? reconcile(ticket) : { disposition: "unknown" };
+      });
+      expect(await f.coordinator.acceptPreferencesEvidence(raw)).toEqual({ state: "pending" });
+      const before = await nonceDoc(f, challenge.nonce);
+      expect(before.state).toBe("consumed");
+      const reserves = f.counts.reserve;
+      unknown = false;
+      const replay = f.coordinator.acceptPreferencesEvidence(raw).then(
+        (value) => ({ value }),
+        (error: Error) => ({ error: error.message }),
+      );
+      await entered;
+      f.coordinator.retirePreferences(f.scope);
+      release();
+      expect(await replay).toEqual({ error: "stale" });
+      expect(f.counts.reserve).toBe(reserves);
+      expect(await nonceDoc(f, challenge.nonce)).toEqual(before);
+    },
+  );
+
   it("retires an unresolved no-raw challenge when a replacement scope is issued", async () => {
     const f = await fixture(syntheticPreferencesImportDescriptor);
     let current = f.scope,
