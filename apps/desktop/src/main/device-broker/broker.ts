@@ -42,6 +42,7 @@ import {
   createContexts,
   type ProviderCandidate,
   type ProviderConnection,
+  type ProviderCatalogPort,
   type BuiltinDeviceProvider,
   type ProviderOutcome,
   type LegacyProviderValue,
@@ -84,6 +85,45 @@ export function observeBrokerLifecycle(
   return () => {
     listeners?.delete(listener);
   };
+}
+// Main-only observations leave the frozen provider/session ports unchanged.
+// Only the broker that created a port can register its live observation state.
+type SourceTuple = Parameters<ProviderCatalogPort["identify"]>[0];
+type SourceObservation = {
+  sessionId: string;
+  generation: number;
+  signature: string;
+  ids: Map<string, string>;
+};
+type CatalogBinding = {
+  generation: number | null;
+  retired: boolean;
+  ids: Map<string, string>;
+  observation: SourceObservation | null;
+};
+const catalogObservers = new WeakMap<
+  ProviderCatalogPort,
+  (sessionId: string, tuples: readonly SourceTuple[]) => void
+>();
+export function observeProviderSources(
+  port: ProviderCatalogPort,
+  sessionId: string,
+  tuples: readonly SourceTuple[],
+): void {
+  catalogObservers.get(port)?.(sessionId, tuples);
+}
+type ResumeState = "resumed" | "pending" | "blocked";
+const resumeObservers = new WeakMap<
+  DeviceBrokerPort["sessions"],
+  (receipt: SessionQuiescence) => ResumeState
+>();
+export function resumeQuiescedSession(
+  port: DeviceBrokerPort["sessions"],
+  receipt: SessionQuiescence,
+): ResumeState {
+  port.resume(receipt.sessionId);
+  // Non-broker ports keep their existing synchronous void completion contract.
+  return resumeObservers.get(port)?.(receipt) ?? "resumed";
 }
 const legacyAdmissions = new WeakMap<LegacyOperation, () => void>();
 /** Consume the host file plan's confirmation without adding a plugin wire method. */
@@ -709,6 +749,19 @@ export function createBroker(
       changed();
     },
   };
+  resumeObservers.set(sessions, (receipt) => {
+    const current = session;
+    if (!current || current.snapshot.sessionId !== receipt.sessionId) return "blocked";
+    if (!current.quiescence && current.snapshot.state === "connected") return "resumed";
+    if (
+      !closing &&
+      current.suspendOnly &&
+      current.quiescence === receipt &&
+      current.resumeEvidence?.recovery !== current.recoveryDisposition
+    )
+      return "pending";
+    return "blocked";
+  });
   const resourceDriver: ResourceDriver = {
     revokeOwner(owner, reason) {
       for (const [id, row] of lostUsb)
@@ -1553,41 +1606,59 @@ export function createBroker(
     entries.push(entry);
     await bounded(input.journal.commit(journalDocument(document.revision + 1, entries)), 5000);
   };
-  const catalogBindings = new Map<
-    string,
-    { generation: number | null; retired: boolean; ids: Map<string, string> }
-  >();
+  const catalogBindings = new Map<string, CatalogBinding>();
   const providerCatalog: DeviceBrokerPort["providerCatalog"] = (providerId) => {
     if (providerId !== "kobrixa.device-ev3")
       return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "provider-disabled");
     if (catalogBindings.has(providerId))
       return deviceFailure("PLUGIN_E_PROVIDER_CONFLICT", "provider-conflict");
-    const binding = {
-      generation: null as number | null,
+    const binding: CatalogBinding = {
+      generation: null,
       retired: false,
-      ids: new Map<string, string>(),
+      ids: new Map(),
+      observation: null,
     };
     catalogBindings.set(providerId, binding);
-    return {
+    const currentSession = (id: string) => {
+      const current = session;
+      if (
+        binding.retired ||
+        binding.generation === null ||
+        !current ||
+        current.provider.id !== providerId ||
+        current.generation !== binding.generation ||
+        id !== current.snapshot.sessionId
+      )
+        return stale();
+      providers.get(providerId);
+      return current;
+    };
+    const tupleKey = (tuple: SourceTuple) => {
+      const fields = channelDefinitionSchema.shape;
+      for (const field of ["portId", "typeId", "modeId", "component", "unit"] as const)
+        if (!fields[field].safeParse(tuple[field]).success)
+          return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
+      validateDeviceWire("provider.channel", tuple);
+      return JSON.stringify([
+        tuple.sessionId,
+        tuple.portId,
+        tuple.typeId,
+        tuple.modeId,
+        tuple.component,
+        tuple.unit,
+      ]);
+    };
+    const port: ProviderCatalogPort = {
       connectionPolicy: () =>
         attemptPolicies.get(providerId) ?? Object.freeze({ ...input.connectionPolicy() }),
       identify(tuple) {
-        const current = session;
-        if (
-          binding.retired ||
-          binding.generation === null ||
-          !current ||
-          current.provider.id !== providerId ||
-          current.generation !== binding.generation ||
-          tuple.sessionId !== current.snapshot.sessionId
-        )
-          return stale();
-        const fields = channelDefinitionSchema.shape;
-        for (const field of ["portId", "typeId", "modeId", "component", "unit"] as const)
-          if (!fields[field].safeParse(tuple[field]).success)
-            return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
-        validateDeviceWire("provider.channel", tuple);
-        providers.get(providerId);
+        const current = currentSession(tuple.sessionId);
+        const identity = tupleKey(tuple);
+        if (binding.observation?.sessionId === tuple.sessionId) {
+          // Only the immediately observed generation is eligible. Returning to
+          // an earlier tuple cannot reach a historical ID, even before publish.
+          return binding.observation.ids.get(identity) ?? stale();
+        }
         const key = JSON.stringify([
           binding.generation,
           tuple.sessionId,
@@ -1606,6 +1677,26 @@ export function createBroker(
         return id;
       },
     };
+    catalogObservers.set(port, (sessionId, tuples) => {
+      currentSession(sessionId);
+      // The complete observation includes channels and actuators (38 + 4).
+      if (tuples.length > 42 || tuples.some((tuple) => tuple.sessionId !== sessionId))
+        return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
+      const keys = tuples.map(tupleKey).sort();
+      const signature = JSON.stringify(keys);
+      const previous = binding.observation?.sessionId === sessionId ? binding.observation : null;
+      if (previous?.signature === signature) return;
+      const ids = new Map(keys.map((key) => [key, previous?.ids.get(key) ?? randomUUID()]));
+      binding.observation = {
+        sessionId,
+        generation: (previous?.generation ?? 0) + 1,
+        signature,
+        ids,
+      };
+      // No historical allocation can reappear after a disappearance/replacement.
+      binding.ids.clear();
+    });
+    return port;
   };
   const broker: DeviceBrokerPort & LegacyOperationPort = {
     intent: {
@@ -1956,6 +2047,7 @@ export function createBroker(
         if (binding) {
           binding.retired = true;
           binding.ids.clear();
+          binding.observation = null;
         }
         catalogBindings.delete(provider.id);
         const current = session;

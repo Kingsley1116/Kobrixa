@@ -171,7 +171,8 @@ async function fixture(auto = false) {
     });
     return raw;
   });
-  const provider = buildEv3Provider(broker.providerCatalog(EV3_PROVIDER_ID), {
+  const catalogPort = broker.providerCatalog(EV3_PROVIDER_ID);
+  const provider = buildEv3Provider(catalogPort, {
     usb: { discover: async () => [descriptor], connect },
     wifi: { discover: async () => [], connect },
   });
@@ -228,6 +229,7 @@ async function fixture(auto = false) {
     broker,
     provider,
     providerConnect,
+    catalogPort,
     principal,
     core,
     context,
@@ -854,3 +856,333 @@ it("A-final wake joins later explicit recovery through the final journal commit 
   expect(f.motorStop).toHaveBeenCalledTimes(4);
   expect(f.commit).toHaveBeenCalledTimes(2);
 });
+
+// Retained independent review regressions: the same real broker/EV3 fixture.
+it("A-finalfix2 ABA observed before broker publication cannot revive an old handle", async () => {
+  const f = await fixture();
+  const oldId = f.first.sources.channels[0]!.channelId;
+  const intermediate = structuredClone(f.observed);
+  intermediate.inputs[0]!.unit = "intermediate";
+  // provider.read observes B; provider.sources observes A again, before either
+  // generation has reached the broker's retained catalog.
+  f.monitor.mockResolvedValueOnce(intermediate);
+  expect((await f.read([oldId])).ok).toBe(false);
+  const after = await f.catalog();
+  const oldRead = await f.read([oldId]);
+  expect(after.sources.sourceRevision).toBe(f.first.sources.sourceRevision + 2);
+  expect.soft(after.sources.channels[0]!.channelId).not.toBe(oldId);
+  expect.soft(oldRead.ok).toBe(false);
+});
+
+it("A-finalfix2 real coordinator wake observes completed later recovery", async () => {
+  const f = await fixture();
+  const persistence = createResourceFreePersistence(() => true);
+  const coordinator = new LifecycleCoordinator({
+    ports: { device: f.broker.resources, persistence, ui: unavailableUi150() },
+    resources: f.broker.resources,
+    sessions: f.broker.sessions,
+    reservations: f.broker.reservations,
+    persistence,
+    dispatch: async () => ({ ok: true, value: { status: "submitted", writes: [] } }),
+    alive: () => true,
+    owners: () => [f.principal.owner],
+    now: () => performance.now(),
+    shutdown: vi.fn(async () => {}),
+    legacyFlush: vi.fn(async () => {}),
+    report: vi.fn(),
+  });
+  try {
+    await coordinator.suspend(f.sessionId);
+    const recovery = await f.broker.stopCurrentDevice({
+      sessionId: f.sessionId,
+      action: {
+        actionToken: randomUUID(),
+        scope: {
+          hostEpoch: f.principal.owner.hostEpoch,
+          workbenchInstance: f.core.workbenchInstance,
+        },
+      },
+    });
+    expect(recovery.ok).toBe(true);
+    expect(f.commit).toHaveBeenCalledTimes(2);
+    await coordinator.resume(f.sessionId);
+    const after = await f.broker.request(
+      f.principal,
+      "devices/session",
+      { sessionId: f.sessionId },
+      f.signal,
+    );
+    await coordinator.resume(f.sessionId);
+    const retry = await f.read();
+    expect.soft(after.ok).toBe(true);
+    expect.soft(retry.ok).toBe(true);
+    expect(f.connect).toHaveBeenCalledOnce();
+    expect(f.stop).toHaveBeenCalledOnce();
+    expect(f.motorStop).toHaveBeenCalledTimes(4);
+  } finally {
+    coordinator.dispose();
+  }
+});
+
+function wakeFixture(f: Awaited<ReturnType<typeof fixture>>) {
+  const persistence = createResourceFreePersistence(() => true);
+  const legacyFlush = vi.fn(async () => {}),
+    shutdown = vi.fn(async () => {});
+  const quiesce = vi.spyOn(f.broker.sessions, "quiesce");
+  const coordinator = new LifecycleCoordinator({
+    ports: { device: f.broker.resources, persistence, ui: unavailableUi150() },
+    resources: f.broker.resources,
+    sessions: f.broker.sessions,
+    reservations: f.broker.reservations,
+    persistence,
+    dispatch: async () => ({ ok: true, value: { status: "submitted", writes: [] } }),
+    alive: () => true,
+    owners: () => [f.principal.owner],
+    now: () => performance.now(),
+    shutdown,
+    legacyFlush,
+    report: vi.fn(),
+  });
+  onTestFinished(() => coordinator.dispose());
+  return { coordinator, legacyFlush, shutdown, quiesce };
+}
+function heldRecovery(f: Awaited<ReturnType<typeof fixture>>, fail = false) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const commit = f.commit.getMockImplementation()!;
+  f.commit.mockImplementationOnce(commit).mockImplementationOnce(async (next) => {
+    await gate;
+    if (fail) {
+      f.health.value = "unwritable";
+      throw new Error("journal failed");
+    }
+    await commit(next);
+  });
+  const work = f.broker.stopCurrentDevice({
+    sessionId: f.sessionId,
+    action: {
+      actionToken: randomUUID(),
+      scope: {
+        hostEpoch: f.principal.owner.hostEpoch,
+        workbenchInstance: f.core.workbenchInstance,
+      },
+    },
+  });
+  return { work, release };
+}
+it.each(["clean", "core-disconnect", "provider-loss", "journal-failure"] as const)(
+  "A-finalfix2 coordinator wake joins overlapping final recovery commit: %s",
+  async (cause) => {
+    const f = await fixture(),
+      w = wakeFixture(f);
+    await w.coordinator.suspend(f.sessionId);
+    const original = w.quiesce.mock.results[0]!.value;
+    const recovery = heldRecovery(f, cause === "journal-failure");
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(f.commit).toHaveBeenCalledTimes(2);
+      expect(f.motorStop).toHaveBeenCalledTimes(4);
+      const settled = vi.fn();
+      const wake = w.coordinator.resume(f.sessionId);
+      expect(w.coordinator.resume(f.sessionId)).toBe(wake);
+      void wake.then(settled, settled);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).not.toHaveBeenCalled();
+      expect(
+        (
+          await f.broker.request(
+            f.principal,
+            "devices/session",
+            { sessionId: f.sessionId },
+            f.signal,
+          )
+        ).ok,
+      ).toBe(false);
+      if (cause === "core-disconnect") {
+        expect(
+          f.broker.sessions.quiesce(f.sessionId, {
+            reason: "core-disconnect",
+            action: {
+              actionToken: randomUUID(),
+              scope: {
+                hostEpoch: f.principal.owner.hostEpoch,
+                workbenchInstance: f.core.workbenchInstance,
+              },
+            },
+          }),
+        ).toBe(original);
+      } else if (cause === "provider-loss") f.lose();
+      recovery.release();
+      expect((await recovery.work).ok).toBe(cause !== "journal-failure");
+      if (cause === "clean") {
+        await wake;
+        expect((await f.read()).ok).toBe(true);
+        await w.coordinator.resume(f.sessionId);
+      } else {
+        await expect(wake).rejects.toThrow();
+        await expect(w.coordinator.resume(f.sessionId)).rejects.toThrow();
+        expect((await f.read()).ok).toBe(false);
+      }
+      expect(w.quiesce).toHaveBeenCalledTimes(cause === "core-disconnect" ? 2 : 1);
+      expect(w.legacyFlush).toHaveBeenCalledExactlyOnceWith("suspend");
+      expect(w.shutdown).not.toHaveBeenCalled();
+      expect(f.connect).toHaveBeenCalledOnce();
+      expect(f.stop).toHaveBeenCalledOnce();
+      expect(f.motorStop).toHaveBeenCalledTimes(4);
+    } finally {
+      recovery.release();
+      await recovery.work;
+      f.health.value = "ready";
+    }
+  },
+);
+it("A-finalfix2 recovery starting at the resume boundary is joined through the same receipt", async () => {
+  const f = await fixture(),
+    w = wakeFixture(f);
+  await w.coordinator.suspend(f.sessionId);
+  const resume = f.broker.sessions.resume.bind(f.broker.sessions);
+  let recovery: ReturnType<typeof heldRecovery> | undefined;
+  vi.spyOn(f.broker.sessions, "resume").mockImplementationOnce((id) => {
+    recovery = heldRecovery(f);
+    resume(id);
+  });
+  const settled = vi.fn();
+  const wake = w.coordinator.resume(f.sessionId);
+  void wake.then(settled, settled);
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(recovery).toBeDefined();
+    expect(settled).not.toHaveBeenCalled();
+    expect((await f.read()).ok).toBe(false);
+    recovery!.release();
+    expect((await recovery!.work).ok).toBe(true);
+    await wake;
+    expect((await f.read()).ok).toBe(true);
+    expect(w.quiesce).toHaveBeenCalledOnce();
+    expect(w.legacyFlush).toHaveBeenCalledOnce();
+    expect(f.stop).toHaveBeenCalledOnce();
+    expect(f.commit).toHaveBeenCalledTimes(2);
+  } finally {
+    recovery?.release();
+    await recovery?.work;
+  }
+});
+it.each(["settled", "pending-recovery"] as const)(
+  "A-finalfix2 coordinator long sleep keeps original deadlines and a retryable receipt: %s",
+  async (state) => {
+    vi.useFakeTimers();
+    let recovery: ReturnType<typeof heldRecovery> | undefined;
+    try {
+      const f = await fixture(),
+        w = wakeFixture(f);
+      await w.coordinator.suspend(f.sessionId);
+      await vi.advanceTimersByTimeAsync(60000);
+      if (state === "pending-recovery") {
+        recovery = heldRecovery(f);
+        await vi.advanceTimersByTimeAsync(0);
+        const wake = w.coordinator.resume(f.sessionId);
+        const expired = expect(wake).rejects.toThrow("observation deadline");
+        await vi.advanceTimersByTimeAsync(0);
+        await expired;
+        expect((await f.read()).ok).toBe(false);
+        const again = expect(w.coordinator.resume(f.sessionId)).rejects.toThrow(
+          "observation deadline",
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        await again;
+        expect(w.quiesce).toHaveBeenCalledOnce();
+        expect(f.commit).toHaveBeenCalledTimes(2);
+        recovery.release();
+        expect((await recovery.work).ok).toBe(true);
+      }
+      await w.coordinator.resume(f.sessionId);
+      expect((await f.read()).ok).toBe(true);
+      expect(w.quiesce).toHaveBeenCalledOnce();
+      expect(w.legacyFlush).toHaveBeenCalledExactlyOnceWith("suspend");
+      expect(f.connect).toHaveBeenCalledOnce();
+      expect(f.modeWrites).not.toHaveBeenCalled();
+      expect(f.stop).toHaveBeenCalledTimes(state === "settled" ? 0 : 1);
+      expect(f.motorStop).toHaveBeenCalledTimes(state === "settled" ? 0 : 4);
+    } finally {
+      recovery?.release();
+      await recovery?.work;
+      vi.useRealTimers();
+    }
+  },
+);
+it("A-finalfix2 wake observation expires at original suspend +20s, not wake +20s", async () => {
+  vi.useFakeTimers();
+  let recovery: ReturnType<typeof heldRecovery> | undefined;
+  try {
+    const f = await fixture(),
+      w = wakeFixture(f);
+    await w.coordinator.suspend(f.sessionId);
+    await vi.advanceTimersByTimeAsync(19000);
+    recovery = heldRecovery(f);
+    await vi.advanceTimersByTimeAsync(0);
+    const wake = w.coordinator.resume(f.sessionId);
+    const expired = expect(wake).rejects.toThrow("observation deadline");
+    await vi.advanceTimersByTimeAsync(999);
+    expect((await f.read()).ok).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expired;
+    recovery.release();
+    expect((await recovery.work).ok).toBe(true);
+    await w.coordinator.resume(f.sessionId);
+    expect((await f.read()).ok).toBe(true);
+    expect(w.quiesce).toHaveBeenCalledOnce();
+    expect(w.legacyFlush).toHaveBeenCalledOnce();
+    expect(f.stop).toHaveBeenCalledOnce();
+    expect(f.commit).toHaveBeenCalledTimes(2);
+  } finally {
+    recovery?.release();
+    await recovery?.work;
+    vi.useRealTimers();
+  }
+});
+it.each(["type", "mode", "removed", "component", "actuator"] as const)(
+  "A-finalfix2 unpublished replacement generations stay stable without historical IDs: %s",
+  async (change) => {
+    const f = await fixture();
+    let previous = f.first;
+    for (let round = 0; round < 3; round++) {
+      const intermediate = structuredClone(f.observed);
+      if (change === "type") intermediate.inputs[0]!.type = 30;
+      else if (change === "mode") intermediate.inputs[0]!.mode = 1;
+      else if (change === "removed") intermediate.inputs = [];
+      else if (change === "component") intermediate.inputs[0]!.values = [];
+      else intermediate.outputs[0]!.type = 8;
+      const index = change === "actuator" ? 1 : 0;
+      const oldId = previous.sources.channels[index]!.channelId;
+      f.monitor.mockResolvedValueOnce(intermediate);
+      expect((await f.read([oldId])).ok).toBe(false);
+      const current = await f.catalog();
+      expect(current.sources.sourceRevision).toBe(previous.sources.sourceRevision + 2);
+      const channel = current.sources.channels[index]!;
+      expect(channel.channelId).not.toBe(oldId);
+      expect((await f.read([oldId])).ok).toBe(false);
+      const tuple = {
+        sessionId: f.sessionId,
+        portId: channel.portId,
+        typeId: channel.typeId,
+        modeId: channel.modeId,
+        component: channel.component,
+        unit: channel.unit,
+      };
+      expect(f.catalogPort.identify(tuple)).toBe(channel.channelId);
+      expect(f.catalogPort.identify(tuple)).toBe(channel.channelId);
+      expect((await f.read([channel.channelId])).ok).toBe(true);
+      expect((await f.catalog()).sources).toEqual(current.sources);
+      expect(current.sources.channels.at(-1)!.channelId).toBe(
+        f.first.sources.channels.at(-1)!.channelId,
+      );
+      if (change === "actuator")
+        expect(current.sources.actuators[0]!.actuatorId).not.toBe(
+          previous.sources.actuators[0]!.actuatorId,
+        );
+      previous = current;
+    }
+  },
+);

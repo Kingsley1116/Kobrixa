@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { DeviceDescriptor, DeviceMonitorSnapshot } from "@kobrixa/device";
 import type { PhysicalIdentity } from "@kobrixa/plugin-runtime";
 import type { Handle, SourceCatalog, TelemetryFrame } from "@kobrixa/plugin-protocol";
+import { observeProviderSources } from "../../device-broker/broker.js";
 import type { ProviderCatalogPort } from "../../device-broker/provider.js";
 export const EV3_PROVIDER_ID = "kobrixa.device-ev3";
 export function physicalIdentity(descriptor: DeviceDescriptor): PhysicalIdentity {
@@ -114,40 +115,32 @@ export class Ev3Catalog {
     if (signature !== this.signature) {
       // Compare observed metadata before allocating. Published broker revisions
       // must not turn an unchanged reading into another catalog generation.
-      const identifiedChannels = channels.map((item) => ({
-        ...item,
-        channelId:
-          this.value.channels.find(
-            (old) =>
-              old.portId === item.portId &&
-              old.typeId === item.typeId &&
-              old.modeId === item.modeId &&
-              old.component === item.component &&
-              old.unit === item.unit,
-          )?.channelId ??
-          this.port.identify({
-            sessionId: this.sessionId,
-            portId: item.portId,
-            typeId: item.typeId,
-            modeId: item.modeId,
-            component: item.component,
-            unit: item.unit,
-          }),
+      const channelTuples = channels.map((item) => ({
+        sessionId: this.sessionId,
+        portId: item.portId,
+        typeId: item.typeId,
+        modeId: item.modeId,
+        component: item.component,
+        unit: item.unit,
       }));
-      const identifiedActuators = actuators.map((item) => ({
+      const actuatorTuples = actuators.map((item) => ({
+        sessionId: this.sessionId,
+        portId: item.portId,
+        typeId: item.typeId,
+        modeId: null,
+        component: 0,
+        unit: "actuator",
+      }));
+      // Report every observed identity, including disappearance, before allocation.
+      // The broker owns the generation even when no consumer has seen it yet.
+      observeProviderSources(this.port, this.sessionId, [...channelTuples, ...actuatorTuples]);
+      const identifiedChannels = channels.map((item, index) => ({
         ...item,
-        actuatorId:
-          this.value.actuators.find(
-            (old) => old.portId === item.portId && old.typeId === item.typeId,
-          )?.actuatorId ??
-          this.port.identify({
-            sessionId: this.sessionId,
-            portId: item.portId,
-            typeId: item.typeId,
-            modeId: null,
-            component: 0,
-            unit: "actuator",
-          }),
+        channelId: this.port.identify(channelTuples[index]!),
+      }));
+      const identifiedActuators = actuators.map((item, index) => ({
+        ...item,
+        actuatorId: this.port.identify(actuatorTuples[index]!),
       }));
       this.signature = signature;
       this.value = {

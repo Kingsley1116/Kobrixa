@@ -1,5 +1,6 @@
 import type { DrainReason } from "@kobrixa/plugin-protocol";
 import { randomUUID } from "node:crypto";
+import { resumeQuiescedSession } from "./broker.js";
 import type { DeviceDrainGrant } from "@kobrixa/plugin-runtime";
 import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
 import type {
@@ -65,6 +66,7 @@ import type {
   DeviceSessionControlPort,
   ReservationBindingPort,
   ReservationEnded,
+  SessionQuiescence,
   PersistenceParticipant,
   DrainDispatcher,
   DrainOffer,
@@ -125,10 +127,16 @@ type RetirementWork = {
   storage: Promise<DrainReport>;
   done: Promise<void>;
 };
+type SuspendWork = {
+  receipt: SessionQuiescence;
+  deadline: number;
+  work: Promise<void>;
+  wake?: Promise<void>;
+};
 export class LifecycleCoordinator {
   readonly #ends = new Map<string, EndWork>();
   readonly #retiring = new Map<string, RetirementWork>();
-  readonly #suspending = new Map<Handle, Promise<void>>();
+  readonly #suspending = new Map<Handle, SuspendWork>();
   readonly #disconnecting = new Map<string, Promise<void>>();
   readonly #off: () => void;
   #close: Promise<void> | undefined;
@@ -287,7 +295,7 @@ export class LifecycleCoordinator {
   }
   async suspend(sessionId: Handle): Promise<void> {
     const existing = this.#suspending.get(sessionId);
-    if (existing) return existing;
+    if (existing) return existing.work;
     const t0 = this.input.now();
     const quiescence = this.input.sessions.quiesce(sessionId, { reason: "suspended" });
     for (const event of quiescence.ended) this.#ended(event);
@@ -296,19 +304,49 @@ export class LifecycleCoordinator {
       this.#sessionReports(sessionId),
       this.input.legacyFlush("suspend"),
     ]).then(([device, storage]) => this.#assert(device, storage));
-    this.#suspending.set(sessionId, work);
+    const row: SuspendWork = { receipt: quiescence, deadline: t0 + 20_000, work };
+    this.#suspending.set(sessionId, row);
     void work.catch((error: unknown) => {
-      this.#suspending.delete(sessionId);
+      if (this.#suspending.get(sessionId) === row) this.#suspending.delete(sessionId);
       this.input.report(error);
     });
     return work;
   }
-  async resume(sessionId: Handle): Promise<void> {
-    const work = this.#suspending.get(sessionId);
-    if (!work) return;
-    await work;
-    this.input.sessions.resume(sessionId);
-    this.#suspending.delete(sessionId);
+  resume(sessionId: Handle): Promise<void> {
+    const row = this.#suspending.get(sessionId);
+    if (!row) return Promise.resolve();
+    if (row.wake) return row.wake;
+    const wake = this.#resume(row);
+    row.wake = wake;
+    void wake.then(
+      () => {
+        if (this.#suspending.get(sessionId) === row) this.#suspending.delete(sessionId);
+      },
+      () => {
+        // Keep the original receipt retryable. Neither a blocked admission nor
+        // an observation timeout is a successful wake or a new cleanup grant.
+        if (row.wake === wake) delete row.wake;
+      },
+    );
+    return wake;
+  }
+  async #resume(row: SuspendWork): Promise<void> {
+    await row.work;
+    for (;;) {
+      const device = await this.#bounded(
+        row.receipt.settled,
+        row.deadline,
+        "Wake stop/journal observation deadline expired.",
+      );
+      this.#assert(device, []);
+      const state = resumeQuiescedSession(this.input.sessions, row.receipt);
+      if (state === "resumed") return;
+      if (state === "blocked") throw new Error("Session remains quiesced; wake is blocked.");
+      if (this.input.now() >= row.deadline)
+        throw new Error("Wake stop/journal observation deadline expired.");
+      // Recovery raced the await above. Re-observe the same receipt and deadline,
+      // without calling quiesce, replaying legacy flush or renewing provider work.
+    }
   }
   close(reason: "close" | "update"): Promise<void> {
     if (this.#closed) return Promise.resolve();
