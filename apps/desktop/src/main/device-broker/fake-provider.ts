@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   CapabilityId,
   ChannelDefinition,
@@ -62,8 +63,105 @@ const success = <T>(value: T): ProviderOutcome<T> => ({
   stopConfirmation: "not-required",
   error: null,
 });
+export type FakeProviderOptions = { profile?: "maximum"; providerId?: string };
+const DIAGNOSTIC_LIMIT = 1024;
+function fixtureHandle(identity: string): string {
+  const hash = createHash("sha256").update(identity).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
 export class FakeProvider implements BuiltinDeviceProvider {
-  readonly id = "kobrixa.device-ev3";
+  readonly id: string;
+  readonly maximum: boolean;
+  constructor(options: FakeProviderOptions = {}) {
+    this.id = options.providerId ?? "kobrixa.device-ev3";
+    if (!/^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+$/.test(this.id) || this.id.length > 128)
+      throw new Error("Invalid fake provider ID");
+    if (options.profile !== undefined && options.profile !== "maximum")
+      throw new Error("Invalid fake profile");
+    this.maximum = options.profile === "maximum";
+    this.#candidates = Array.from({ length: this.maximum ? 32 : 1 }, (_, index) =>
+      index === 0 ? this.candidate : ({} as ProviderCandidateKey),
+    );
+  }
+  #candidates: ProviderCandidateKey[];
+  #connected = 0;
+  #modes = new Map<string, string>();
+  private call(name: string): void {
+    if (this.maximum && this.calls.length >= DIAGNOSTIC_LIMIT)
+      this.calls.splice(0, this.calls.length - DIAGNOSTIC_LIMIT + 1);
+    this.calls.push(name);
+  }
+  private candidatePhysical(index: number): PhysicalIdentity {
+    return {
+      providerId: this.id,
+      family: "ev3",
+      basis: "serial",
+      strength: "stable",
+      digest:
+        !this.maximum && this.id === "kobrixa.device-ev3"
+          ? "a".repeat(64)
+          : createHash("sha256")
+              .update(JSON.stringify([this.id, index]))
+              .digest("hex"),
+    };
+  }
+  get physical(): PhysicalIdentity {
+    return this.candidatePhysical(this.#connected);
+  }
+  get descriptor() {
+    return {
+      providerId: this.id,
+      name: this.maximum ? `Test EV3 ${this.#connected + 1}` : "Test EV3",
+      transport: "mock" as const,
+      identity: "stable" as const,
+    };
+  }
+  private actuatorIds(): string[] {
+    return Array.from({ length: 4 }, (_, index) =>
+      !this.maximum && this.id === "kobrixa.device-ev3" && index === 0
+        ? ACTUATOR
+        : fixtureHandle(JSON.stringify([this.id, this.#connected, "actuator", index])),
+    );
+  }
+  private channels(): ChannelDefinition[] {
+    if (!this.maximum) return [{ ...channel(), modeId: this.#modeId }];
+    const inputs: ChannelDefinition[] = Array.from({ length: 32 }, (_, index) => {
+      const portId = String(Math.floor(index / 8) + 1),
+        modeId = this.#modes.get(portId) ?? "0";
+      return {
+        ...channel(),
+        portId,
+        component: index % 8,
+        modeId,
+        modeName: modeId === "0" ? "Reflect" : "Ambient",
+        name: `Input ${portId} component ${index % 8}`,
+      };
+    });
+    const outputs: ChannelDefinition[] = Array.from({ length: 4 }, (_, index) => ({
+      ...channel(),
+      kind: "output-angle",
+      portId: String.fromCharCode(65 + index),
+      typeId: "7",
+      modeId: null,
+      modeName: "",
+      name: `Motor ${String.fromCharCode(65 + index)} angle`,
+      unit: "deg",
+    }));
+    const battery: ChannelDefinition[] = ["battery-percent", "battery-voltage"].map(
+      (kind, index) => ({
+        ...channel(),
+        kind: kind as "battery-percent" | "battery-voltage",
+        portId: null,
+        typeId: kind,
+        modeId: null,
+        modeName: "",
+        name: index === 0 ? "Battery charge" : "Battery voltage",
+        unit: index === 0 ? "%" : "V",
+        decimals: index === 0 ? 0 : 2,
+      }),
+    );
+    return [...inputs, ...outputs, ...battery];
+  }
   readonly capabilities: readonly CapabilityId[] = [
     "connection.v1",
     "telemetry.v1",
@@ -74,19 +172,6 @@ export class FakeProvider implements BuiltinDeviceProvider {
   readonly calls: string[] = [];
   readonly session = {} as ProviderSessionKey;
   readonly candidate = {} as ProviderCandidateKey;
-  readonly physical: PhysicalIdentity = {
-    providerId: this.id,
-    family: "ev3",
-    basis: "serial",
-    digest: "a".repeat(64),
-    strength: "stable",
-  };
-  readonly descriptor = {
-    providerId: this.id,
-    name: "Test EV3",
-    transport: "mock" as const,
-    identity: "stable" as const,
-  };
   #sourceRevision = 1;
   #modeId = "0";
   #lost = new Set<Parameters<BuiltinDeviceProvider["onDisconnect"]>[0]>();
@@ -95,19 +180,34 @@ export class FakeProvider implements BuiltinDeviceProvider {
     return { movement: "completed", angle: 90, displacement: 90 };
   };
   async discover(ctx: ProviderOperationContext): ReturnType<BuiltinDeviceProvider["discover"]> {
-    this.calls.push("discover");
+    this.call("discover");
     return ctx.exchange("discover", async () =>
-      success([{ key: this.candidate, descriptor: this.descriptor, physical: this.physical }]),
+      success(
+        this.#candidates.map((key, index) => ({
+          key,
+          descriptor: {
+            ...this.descriptor,
+            name: this.maximum ? `Test EV3 ${index + 1}` : "Test EV3",
+          },
+          physical: this.candidatePhysical(index),
+        })),
+      ),
     );
   }
   async connect(
     _target: ProviderCandidateKey | { wifiAddress: string },
     ctx: ProviderOperationContext,
   ) {
-    this.calls.push("connect");
+    this.call("connect");
     return ctx.exchange("connect", async () => {
+      if (this.maximum) {
+        const index = this.#candidates.indexOf(_target as ProviderCandidateKey);
+        if (index < 0) throw new Error("Unknown fake candidate");
+        this.#connected = index;
+      }
       this.#sourceRevision = 1;
       this.#modeId = "0";
+      this.#modes.clear();
       return success(this.describe(this.session));
     });
   }
@@ -121,7 +221,7 @@ export class FakeProvider implements BuiltinDeviceProvider {
   }
   async disconnect(_session: ProviderSessionKey, ctx: ProviderCleanupContext) {
     return ctx.exchange("disconnect", async () => {
-      this.calls.push("disconnect");
+      this.call("disconnect");
       return success(null);
     });
   }
@@ -133,17 +233,24 @@ export class FakeProvider implements BuiltinDeviceProvider {
     return success({
       sessionId: ctx.sessionId ?? ID,
       sourceRevision: this.#sourceRevision,
-      channels: [{ ...channel(), modeId: this.#modeId }],
-      actuators: [
-        { actuatorId: ACTUATOR, portId: "A", name: "Motor", typeId: "7", state: "ready" },
-      ],
+      channels: this.channels(),
+      actuators: this.actuatorIds()
+        .slice(0, this.maximum ? 4 : 1)
+        .map((actuatorId, index) => ({
+          actuatorId,
+          portId: String.fromCharCode(65 + index),
+          name: this.maximum ? `Motor ${String.fromCharCode(65 + index)}` : "Motor",
+          typeId: "7",
+          state: "ready",
+        })),
     });
   }
   async read(_session: ProviderSessionKey, ctx: ProviderOperationContext) {
-    this.calls.push("read");
+    this.call("read");
     return success(
       await ctx.exchange("read", async () => ({
         ...frame(),
+        values: this.channels().map((c) => ({ channelId: c.channelId, value: 42 })),
         sourceRevision: this.#sourceRevision,
         sequence: 0,
         sampledAt: 0,
@@ -157,12 +264,22 @@ export class FakeProvider implements BuiltinDeviceProvider {
     ctx: ProviderOperationContext,
   ) {
     ctx.assertContinuation("read");
+    if (
+      this.maximum &&
+      (!/^[1-4]$/.test(request.portId) || request.expectedSourceRevision !== this.#sourceRevision)
+    )
+      throw new Error("Invalid fake mode request");
     return success({
       sourceRevision: this.#sourceRevision,
       portId: request.portId,
       typeId: "29",
-      currentModeId: this.#modeId,
-      modes: [{ modeId: "0", name: "Reflect" }],
+      currentModeId: this.maximum ? (this.#modes.get(request.portId) ?? "0") : this.#modeId,
+      modes: this.maximum
+        ? [
+            { modeId: "0", name: "Reflect" },
+            { modeId: "1", name: "Ambient" },
+          ]
+        : [{ modeId: "0", name: "Reflect" }],
     });
   }
   async setInputMode(
@@ -171,6 +288,15 @@ export class FakeProvider implements BuiltinDeviceProvider {
     ctx: ProviderOperationContext,
   ) {
     await ctx.exchange("mode-write", async () => {
+      if (this.maximum) {
+        if (
+          !/^[1-4]$/.test(_request.portId) ||
+          !["0", "1"].includes(_request.modeId) ||
+          _request.expectedSourceRevision !== this.#sourceRevision
+        )
+          throw new Error("Invalid fake mode request");
+        this.#modes.set(_request.portId, _request.modeId);
+      }
       this.#sourceRevision++;
       this.#modeId = _request.modeId;
     });
@@ -195,10 +321,34 @@ export class FakeProvider implements BuiltinDeviceProvider {
   }
   async executeFiniteMotion(
     _session: ProviderSessionKey,
-    _motion: MotionAdmission["motion"],
+    motion: MotionAdmission["motion"],
     ctx: ProviderOperationContext,
   ) {
-    this.calls.push("motion");
+    this.call("motion");
+    if (this.maximum && motion.mode === "timed") {
+      await ctx.exchange("motion-pulse", async () => {});
+      // Device runtime is not transport time: keep the existing pulse budget.
+      // Resolve on cancellation so the broker retains dispatch evidence and runs cleanup.
+      const completed = await new Promise<boolean>((resolve) => {
+        const finish = (completed: boolean) => {
+          clearTimeout(timer);
+          ctx.cancellation.removeEventListener("abort", abort);
+          resolve(completed);
+        };
+        const abort = () => finish(false);
+        const timer = setTimeout(() => finish(true), motion.durationMs);
+        ctx.cancellation.addEventListener("abort", abort, { once: true });
+        if (ctx.cancellation.aborted) abort();
+      });
+      return {
+        ...success<MotionCompletion>({
+          movement: completed ? "completed" : "interrupted",
+          angle: completed ? 90 : null,
+          displacement: completed ? 90 : null,
+        }),
+        dispatch: "sent" as const,
+      };
+    }
     const value = await this.motion(ctx);
     return { ...success(value), dispatch: "sent" as const };
   }
@@ -208,13 +358,13 @@ export class FakeProvider implements BuiltinDeviceProvider {
     ctx: ProviderCleanupContext,
   ) {
     await ctx.exchange("stop", async () => {
-      this.calls.push("stop");
+      this.call("stop");
     });
     return ctx.exchange("readback", async () => ({
       value: {
         programStopped: true,
-        outputs: Array.from({ length: 4 }, () => ({
-          actuatorId: ACTUATOR,
+        outputs: this.actuatorIds().map((actuatorId) => ({
+          actuatorId,
           known: true,
           busy: false,
           speed: 0,
@@ -230,8 +380,8 @@ export class FakeProvider implements BuiltinDeviceProvider {
     return ctx.exchange("readback", async () =>
       success({
         programStopped: true,
-        outputs: Array.from({ length: 4 }, () => ({
-          actuatorId: ACTUATOR,
+        outputs: this.actuatorIds().map((actuatorId) => ({
+          actuatorId,
           known: true,
           busy: false,
           speed: 0,
@@ -248,7 +398,7 @@ export class FakeProvider implements BuiltinDeviceProvider {
     ctx.assertContinuation(
       request.kind === "list" || request.kind === "download" ? "read" : "file-begin",
     );
-    this.calls.push(request.kind);
+    this.call(request.kind);
     if (request.kind === "list") return success({ kind: "entries", entries: [] });
     if (request.kind === "download") {
       await request.sink(new Uint8Array());
@@ -265,7 +415,7 @@ export class FakeProvider implements BuiltinDeviceProvider {
         }
       } finally {
         await ctx.exchange("file-close", async () => {
-          this.calls.push("close");
+          this.call("close");
         });
       }
       return success({ kind: "transfer", transferred });
@@ -284,11 +434,11 @@ export class FakeProvider implements BuiltinDeviceProvider {
     for (const listener of this.#lost) listener(this.session, "connection-lost");
   }
   releaseOperation(_id: string): void {
-    this.calls.push("release");
+    this.call("release");
   }
   async dispose(ctx: ProviderCleanupContext) {
     ctx.assertCleanup("disconnect");
-    this.calls.push("dispose");
+    this.call("dispose");
   }
 }
 export function operationHarness() {
@@ -354,6 +504,8 @@ export interface FakeProviderControl {
   block(point: FakeProviderPoint, step: ProviderStep): void;
   reached(point: FakeProviderPoint, step: ProviderStep): Promise<void>;
   release(point: FakeProviderPoint, step: ProviderStep): void;
+  /** Clear diagnostic rows/calls only; blocked exchanges remain blocked. */
+  resetTrace(): void;
   trace(): readonly {
     step: ProviderStep;
     operationId: Handle;
@@ -364,6 +516,8 @@ export interface FakeProviderControl {
 export function createFakeDeviceProvider(input: {
   catalog: ProviderCatalogPort;
   now: () => number;
+  profile?: "maximum";
+  providerId?: string;
 }): { provider: BuiltinDeviceProvider; control: FakeProviderControl } {
   type Barrier = { hit: Promise<void>; mark: () => void; wait: Promise<void>; release: () => void };
   const barriers = new Map<string, Barrier>();
@@ -373,6 +527,12 @@ export function createFakeDeviceProvider(input: {
     time: number;
     dispatch: DispatchOutcome;
   }> = [];
+  const maximum = input.profile === "maximum";
+  const recordTrace = (row: (typeof trace)[number]) => {
+    if (maximum && trace.length >= DIAGNOSTIC_LIMIT)
+      trace.splice(0, trace.length - DIAGNOSTIC_LIMIT + 1);
+    trace.push(row);
+  };
   const key = (point: FakeProviderPoint, step: ProviderStep) => `${point}:${step}`;
   const control: FakeProviderControl = {
     block(point, step) {
@@ -402,6 +562,10 @@ export function createFakeDeviceProvider(input: {
     trace() {
       return structuredClone(trace);
     },
+    resetTrace() {
+      trace.length = 0;
+      provider.calls.length = 0;
+    },
   };
   const pause = async (point: FakeProviderPoint, step: ProviderStep) => {
     const barrier = barriers.get(key(point, step));
@@ -427,9 +591,9 @@ export function createFakeDeviceProvider(input: {
     )
       ctx.assertCleanup(step);
     else throw new Error("Invalid cleanup step");
-    trace.push({ step, operationId: ctx.operationId, time: input.now(), dispatch: "not-sent" });
+    recordTrace({ step, operationId: ctx.operationId, time: input.now(), dispatch: "not-sent" });
     const value = await invoke(signal, timeoutMs);
-    trace.push({ step, operationId: ctx.operationId, time: input.now(), dispatch: "sent" });
+    recordTrace({ step, operationId: ctx.operationId, time: input.now(), dispatch: "sent" });
     await pause("after-exchange", step);
     return value;
   };
@@ -528,5 +692,6 @@ export function createFakeDeviceProvider(input: {
       return super.dispose(cleanup(ctx));
     }
   }
-  return { provider: new ControlledProvider(), control };
+  const provider = new ControlledProvider(input);
+  return { provider, control };
 }
