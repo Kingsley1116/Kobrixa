@@ -302,6 +302,7 @@ import {
   superviseCase,
   createOwnedProcessTracker,
   parseProcessTable,
+  readEntryFailure,
 } from "./plugin-persistence-run.mjs";
 import { runReferenceEntry } from "./plugin-persistence-harness.mjs";
 // Pure controller-flow model: no OS calls, child processes, SDKs or acceptance reports.
@@ -488,9 +489,15 @@ test("T7fix I3: generated entry retains original and close errors on a distinct 
   );
   assert.equal(code, 1);
   assert.equal(closes, 1);
-  assert.equal(written[0].file, "candidate.json.entry-failure.json");
+  assert.equal(written.length, 2);
+  assert.equal(written[0].file, "candidate.json.entry-failure-pending.json");
   assert.equal(written[0].value.originalError.message, "original case error");
-  assert.equal(written[0].value.cleanupErrors[0].message, "close error");
+  assert.equal(written[0].value.cleanupState, "pending");
+  assert.deepEqual(written[0].value.cleanupErrors, []);
+  assert.equal(written[1].file, "candidate.json.entry-failure.json");
+  assert.equal(written[1].value.originalError.message, "original case error");
+  assert.equal(written[1].value.cleanupState, "failed");
+  assert.equal(written[1].value.cleanupErrors[0].message, "close error");
 });
 
 test("T7fix I3: failed cleanup records remaining identities and original nonzero exit", async () => {
@@ -568,11 +575,14 @@ test("T7fix I3: entry construction failure writes a diagnostic; cleanup success 
       },
     );
     assert.equal(code, 1);
-    assert.equal(written.length, 1);
-    assert.equal(written[0].value.status, "failed");
-    assert.deepEqual(written[0].value.cleanupErrors, []);
+    assert.equal(written.length, construction ? 1 : 2);
+    const final = written.at(-1);
+    assert.equal(final.file, "candidate.json.entry-failure.json");
+    assert.equal(final.value.status, "failed");
+    assert.equal(final.value.cleanupState, "settled");
+    assert.deepEqual(final.value.cleanupErrors, []);
     assert.equal(
-      written[0].value.originalError.message,
+      final.value.originalError.message,
       construction ? "construction failed" : "case failed",
     );
   }
@@ -651,4 +661,187 @@ test("T7fix I3: entry success and failure-write fallback have distinct dispositi
   assert.equal(failed, 1);
   assert.equal(fallback.originalError.message, "construction failed");
   assert.equal(fallback.cleanupErrors[0].message, "disk full");
+});
+
+test("T7fix2: current ownership admits a new child identity reusing an old PID", () => {
+  const parent = { pid: 100, ppid: 1, pgid: 100, start: "parent" };
+  const oldChild = { pid: 101, ppid: 100, pgid: 100, start: "old-child" };
+  const replacement = { ...oldChild, start: "new-child" };
+  const tracker = createOwnedProcessTracker(100);
+  tracker.observe([parent, oldChild]);
+  tracker.observe([parent]);
+  assert.deepEqual(tracker.observe([parent, replacement]), [parent, replacement]);
+  assert.deepEqual(tracker.observe([{ ...replacement, ppid: 1 }]), [{ ...replacement, ppid: 1 }]);
+  assert.equal(tracker.observed().filter((row) => row.pid === 101).length, 2);
+  const escaped = { ...replacement, pid: 102, ppid: 101, pgid: 102, start: "escaped-child" };
+  assert.deepEqual(tracker.observe([{ ...replacement, ppid: 1 }, escaped]), [
+    { ...replacement, ppid: 1 },
+    escaped,
+  ]);
+});
+
+test("T7fix2: uncertain recycled group identity cannot report empty cleanup", () => {
+  const tracker = createOwnedProcessTracker(100);
+  tracker.observe([{ pid: 100, ppid: 1, pgid: 100, start: "parent" }]);
+  assert.throws(
+    () => tracker.observe([{ pid: 101, ppid: 1, pgid: 100, start: "unknown" }]),
+    /identity/i,
+  );
+});
+
+test("T7fix2: supervisor cleans an owned replacement child instead of passing", async () => {
+  const model = controllerModel("success");
+  const parent = { pid: 100, ppid: 1, pgid: 100, start: "parent" };
+  const oldChild = { pid: 101, ppid: 100, pgid: 100, start: "old-child" };
+  const replacement = { ...oldChild, start: "new-child" };
+  let time = 0,
+    exit;
+  model.io.now = () => time;
+  model.io.start = async () => {
+    model.setRows([parent, oldChild]);
+    return { pid: 100, exit: () => exit };
+  };
+  model.io.sleep = async (ms) => {
+    time += ms;
+    if (time === 1) model.setRows([parent]);
+    if (time === 2) model.setRows([parent, replacement]);
+    if (time === 3) {
+      model.setRows([{ ...replacement, ppid: 1 }]);
+      exit = { code: 0, signal: null, at: time };
+    }
+  };
+  await assert.rejects(
+    superviseCase({}, model.io, { timeoutMs: 10, pollMs: 1, settleMs: 2 }),
+    /Owned processes remain/,
+  );
+  assert.ok(model.actions.includes("kill-group:100"));
+  assert.equal(model.failure.status, "failed");
+  assert.deepEqual(model.failure.remainingChildren, []);
+  assert.ok(model.failure.observedProcesses.some((row) => row.start === "new-child"));
+});
+
+test("T7fix2: original error is externally recorded while close is still pending", async () => {
+  for (const diskFailure of [false, true]) {
+    const writes = [],
+      fallbacks = [];
+    let release, reachedClose;
+    const closeEntered = new Promise((resolve) => {
+      reachedClose = resolve;
+    });
+    const close = new Promise((resolve) => {
+      release = resolve;
+    });
+    const running = runReferenceEntry(
+      async () => ({
+        composition: { workerCount: 1 },
+        runCase: async () => {
+          throw new Error("original before hung close");
+        },
+        close: async () => {
+          reachedClose();
+          await close;
+        },
+      }),
+      { report: "candidate.json", runId: "flow", case: "retirement" },
+      {
+        pid: 100,
+        now: () => 1,
+        write: async (file, value) => {
+          if (diskFailure) throw new Error("disk full");
+          writes.push({ file, value: JSON.parse(value) });
+        },
+        reportFailure: (value) => fallbacks.push(structuredClone(value)),
+      },
+    );
+    await closeEntered;
+    try {
+      const preliminary = diskFailure ? fallbacks[0] : writes[0]?.value;
+      assert.equal(preliminary?.originalError.message, "original before hung close");
+      assert.equal(preliminary.cleanupState, "pending");
+      assert.equal(preliminary.status, "failed");
+      if (diskFailure)
+        assert.ok(preliminary.cleanupErrors.some((row) => row.message === "disk full"));
+      else assert.equal(writes[0].file, "candidate.json.entry-failure-pending.json");
+    } finally {
+      release();
+      await running;
+    }
+    assert.equal(await running, 1);
+    if (!diskFailure) {
+      assert.equal(writes.at(-1).file, "candidate.json.entry-failure.json");
+      assert.equal(writes.at(-1).value.cleanupState, "settled");
+    }
+  }
+});
+
+test("T7fix2: supervisor timeout preserves the preliminary case failure", async () => {
+  const model = controllerModel("timeout");
+  const preliminary = {
+    status: "failed",
+    originalError: { name: "Error", message: "original before hung close" },
+    cleanupState: "pending",
+    cleanupErrors: [],
+  };
+  model.io.readCandidate = async () => ({ entryFailure: preliminary });
+  await assert.rejects(
+    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    /original before hung close/,
+  );
+  assert.match(model.failure.controllerError.message, /timeout/);
+  assert.equal(model.failure.entryFailure.cleanupState, "pending");
+  assert.deepEqual(model.failure.remainingChildren, []);
+});
+
+test("T7fix2: entry reader preserves preliminary evidence when the final write is absent or torn", async () => {
+  for (const torn of [false, true]) {
+    const pending = {
+      status: "failed",
+      cleanupState: "pending",
+      cleanupErrors: [],
+      originalError: { message: "original case failure" },
+    };
+    const reads = [];
+    const result = await readEntryFailure("candidate.json", async (file) => {
+      reads.push(file);
+      if (file.endsWith(".entry-failure.json")) {
+        if (torn) throw new SyntaxError("torn final JSON");
+        return undefined;
+      }
+      return structuredClone(pending);
+    });
+    assert.deepEqual(reads, [
+      "candidate.json.entry-failure.json",
+      "candidate.json.entry-failure-pending.json",
+    ]);
+    assert.equal(result.originalError.message, "original case failure");
+    assert.equal(result.cleanupState, "pending");
+    assert.equal(result.cleanupErrors.length, torn ? 1 : 0);
+    if (torn) assert.equal(result.cleanupErrors[0].message, "torn final JSON");
+  }
+});
+
+test("T7fix2: entry reader prefers the final diagnostic and never hides an unreadable final without fallback", async () => {
+  const final = {
+    status: "failed",
+    cleanupState: "settled",
+    cleanupErrors: [],
+    originalError: { message: "original" },
+  };
+  const reads = [];
+  assert.deepEqual(
+    await readEntryFailure("candidate.json", async (file) => {
+      reads.push(file);
+      return final;
+    }),
+    final,
+  );
+  assert.deepEqual(reads, ["candidate.json.entry-failure.json"]);
+  const error = new Error("unreadable final");
+  await assert.rejects(
+    readEntryFailure("candidate.json", async (file) => {
+      if (file.endsWith(".entry-failure.json")) throw error;
+    }),
+    (value) => value === error,
+  );
+  assert.equal(await readEntryFailure("candidate.json", async () => undefined), undefined);
 });

@@ -584,6 +584,28 @@ export async function runReferenceEntry(createFixture, config, io) {
     originalError,
     closed = false;
   const cleanupErrors = [];
+  const recordFailure = async (cleanupState, suffix) => {
+    const failure = {
+      format: 1,
+      kind: "persistence-entry-failure",
+      status: "failed",
+      runId: config.runId,
+      case: config.case,
+      pid: io.pid,
+      originalError,
+      cleanupState,
+      cleanupErrors: [...cleanupErrors],
+      reportedAt: io.now(),
+    };
+    try {
+      await io.write(`${config.report}.${suffix}.json`, JSON.stringify(failure));
+    } catch (error) {
+      const diagnostic = diagnosticError(error);
+      cleanupErrors.push(diagnostic);
+      failure.cleanupErrors.push(diagnostic);
+      (io.reportFailure ?? console.error)(failure);
+    }
+  };
   try {
     fixture = await createFixture();
     const started = fixture.composition.workerCount;
@@ -621,29 +643,17 @@ export async function runReferenceEntry(createFixture, config, io) {
   } catch (error) {
     originalError = diagnosticError(error);
   } finally {
-    if (fixture && !closed)
+    if (fixture && !closed) {
+      // Keep an immutable first-failure record outside the potentially hanging
+      // close. A later final record must never truncate this fallback evidence.
+      await recordFailure("pending", "entry-failure-pending");
       try {
         await fixture.close();
       } catch (error) {
         cleanupErrors.push(diagnosticError(error));
       }
+    }
   }
-  const failure = {
-    format: 1,
-    kind: "persistence-entry-failure",
-    status: "failed",
-    runId: config.runId,
-    case: config.case,
-    pid: io.pid,
-    originalError,
-    cleanupErrors,
-    reportedAt: io.now(),
-  };
-  try {
-    await io.write(`${config.report}.entry-failure.json`, JSON.stringify(failure));
-  } catch (error) {
-    failure.cleanupErrors.push(diagnosticError(error));
-    (io.reportFailure ?? console.error)(failure);
-  }
+  await recordFailure(cleanupErrors.length ? "failed" : "settled", "entry-failure");
   return 1;
 }

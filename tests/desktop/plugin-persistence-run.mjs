@@ -161,9 +161,10 @@ async function materialize(buildRoot, build) {
 // and pin birth identities so a reused PID cannot seed a foreign descendant tree.
 export function createOwnedProcessTracker(parentPid) {
   assert.ok(Number.isSafeInteger(parentPid) && parentPid > 0, "Missing owned parent PID");
-  const owned = new Map(),
-    births = new Map();
-  let groupEnded = false;
+  const owned = new Map();
+  let parentBirth,
+    observedGroup = false,
+    groupEnded = false;
   const key = (row) => `${row.pid}:${row.start}`;
   return {
     observe(rows) {
@@ -185,25 +186,33 @@ export function createOwnedProcessTracker(parentPid) {
         byPid.set(row.pid, row);
       }
       const parent = byPid.get(parentPid);
-      if (parent && births.has(parentPid) && births.get(parentPid) !== parent.start)
-        groupEnded = true;
+      if (parent && !observedGroup) parentBirth = parent.start;
+      if (parent && parentBirth !== undefined && parentBirth !== parent.start) groupEnded = true;
       const retain = (row) => {
-        if (births.has(row.pid) && births.get(row.pid) !== row.start) return false;
-        births.set(row.pid, row.start);
         owned.set(key(row), { ...row });
-        return true;
       };
       if (!groupEnded) {
-        for (const row of rows) if (row.pgid === parentPid) retain(row);
-        if (!rows.some((row) => row.pgid === parentPid)) groupEnded = true;
+        const group = rows.filter((row) => row.pgid === parentPid);
+        if (!group.length) groupEnded = true;
+        else {
+          // A fresh identity needs current ownership proof, not historical PID
+          // equality. Without a surviving member, group-number reuse is ambiguous.
+          if (observedGroup && !group.some((row) => owned.has(key(row)))) {
+            groupEnded = true;
+            throw new Error("Owned process group identity is unresolved");
+          }
+          for (const row of group) retain(row);
+        }
       }
+      observedGroup = true;
       let changed = true;
       while (changed) {
         changed = false;
         for (const row of rows) {
           const parent = byPid.get(row.ppid);
           if (parent && owned.has(key(parent)) && !owned.has(key(row))) {
-            changed = retain(row) || changed;
+            retain(row);
+            changed = true;
           }
         }
       }
@@ -410,6 +419,21 @@ export async function superviseCase(
   }
   return receipt;
 }
+export async function readEntryFailure(reportFile, read) {
+  let finalError;
+  try {
+    const final = await read(`${reportFile}.entry-failure.json`);
+    if (final) return final;
+  } catch (error) {
+    finalError = error;
+  }
+  const pending = await read(`${reportFile}.entry-failure-pending.json`);
+  if (pending) {
+    if (finalError) pending.cleanupErrors.push(diagnosticError(finalError));
+    return pending;
+  }
+  if (finalError) throw finalError;
+}
 async function launchCase(electron, entry, configFile, reportFile, config) {
   return superviseCase(config, {
     now: Date.now,
@@ -473,7 +497,7 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
           throw error;
         }
       };
-      const entryFailure = await read(`${reportFile}.entry-failure.json`);
+      const entryFailure = await readEntryFailure(reportFile, read);
       if (entryFailure) {
         assert.equal(entryFailure.status, "failed");
         assert.equal(entryFailure.runId, config.runId);
