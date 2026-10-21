@@ -357,3 +357,140 @@ it("keeps each target's original reservation grant when two ends share an owner"
     expect(authorized?.deadlineMonotonicMs).toBe(second.deadlineMonotonicMs);
   }
 });
+
+it("T5fix re-fences admitted tickets when an end or coalesced target shortens the deadline", async () => {
+  const f = fixture();
+  const fences = new Map<string, number>();
+  f.deps.fenceTarget = (_owner, id, deadline) => {
+    fences.set(id, Math.min(fences.get(id) ?? Infinity, deadline));
+    return [];
+  };
+  f.deps.record = async (_owner, id) => ({ ...record, id });
+  await f.life.register(owner, { id: record.id, expectedRevision: record.revision, reservation });
+  const otherId = "00000000-0000-4000-8000-000000000008";
+  await f.life.register(owner, { id: otherId, expectedRevision: record.revision, reservation });
+  f.end();
+  f.life.participant.endReservation(event, 10100);
+  const shorter = f.life.participant.endReservation(event, 500)!;
+  expect(shorter.deadlineMonotonicMs).toBe(500);
+  expect([...fences.values()]).toEqual([500, 500]);
+  await f.life.participant.drain({ ...shorter, deadlineMonotonicMs: 400 }, async () => ({
+    ok: true,
+    value: { status: "checkpoint-only", writes: [] },
+  }));
+  expect([...fences.values()]).toEqual([400, 400]);
+});
+
+it("T5fix sequential drains preserve their result with single-use worker barriers", async () => {
+  const f = fixture(),
+    captures = new Set<string>();
+  let sequence = 0;
+  f.deps.evidence.capture = (scope, deadlineMonotonicMs) => {
+    const id = String(++sequence);
+    captures.add(id);
+    return { id, scope, deadlineMonotonicMs, through: 0 };
+  };
+  f.deps.evidence.flush = vi.fn(async (barrier) => {
+    if (!captures.delete(barrier.id)) throw new Error("stale");
+    return { state: "saved" as const, accepted: [], incomplete: [], unknown: [] };
+  });
+  await f.life.register(owner, { id: record.id, expectedRevision: record.revision });
+  const offer = f.life.participant.freeze(owner, "shutdown", 10000);
+  const dispatch = vi.fn(async () => {
+    f.setFinal();
+    return { ok: true as const, value: { status: "submitted" as const, writes: [] } };
+  });
+  const first = await f.life.participant.drain(offer, dispatch);
+  expect(first.state).toBe("saved");
+  expect(await f.life.participant.drain(offer, dispatch)).toEqual(first);
+  const repeated = f.life.participant.freeze(owner, "shutdown", 10000);
+  expect(await f.life.participant.drain(repeated, dispatch)).toEqual(first);
+  expect(dispatch).toHaveBeenCalledOnce();
+  expect(captures.size).toBe(0);
+});
+
+it("T5fix terminal history is finite, expires at 120 seconds, and preserves unresolved registrations", async () => {
+  const f = fixture();
+  f.deps.record = async (_owner, id) => ({ ...record, id });
+  const unresolved = await f.life.register(owner, {
+    id: record.id,
+    expectedRevision: record.revision,
+  });
+  expect(unresolved.ok).toBe(true);
+  for (let i = 0; i < 63; i++) {
+    const id = `00000000-0000-4000-8000-${String(i + 100).padStart(12, "0")}`;
+    const registered = await f.life.register(owner, { id, expectedRevision: record.revision });
+    if (!registered.ok) throw new Error("terminal admission failed");
+    f.life.committed(
+      owner,
+      {
+        target: { mode: "replace", id, expectedRevision: record.revision },
+        kind: record.kind,
+        schemaVersion: 1,
+        label: "",
+        mediaType: record.mediaType,
+        byteLength: 0,
+        sha256: record.sha256,
+        checkpoint: { handle: registered.value.checkpoint, phase: "final" },
+      },
+      { ...record, id, checkpoint: "final" },
+    );
+  }
+  const next = "00000000-0000-4000-8000-000000000900";
+  expect(
+    await f.life.register(owner, { id: next, expectedRevision: record.revision }),
+  ).toMatchObject({ error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
+  f.advance(119999);
+  expect((await f.life.register(owner, { id: next, expectedRevision: record.revision })).ok).toBe(
+    false,
+  );
+  f.advance(1);
+  expect((await f.life.register(owner, { id: next, expectedRevision: record.revision })).ok).toBe(
+    true,
+  );
+  expect(
+    await f.life.register(owner, {
+      id: "00000000-0000-4000-8000-000000000901",
+      expectedRevision: record.revision,
+    }),
+  ).toMatchObject({ error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
+  const offer = f.life.participant.freeze(owner, "shutdown", 130000);
+  f.setFinal();
+  await f.life.participant.drain(offer, async () => ({
+    ok: true,
+    value: { status: "submitted", writes: [] },
+  }));
+  f.advance(120000);
+  expect(
+    (
+      await f.life.register(owner, {
+        id: "00000000-0000-4000-8000-000000000902",
+        expectedRevision: record.revision,
+      })
+    ).ok,
+  ).toBe(false);
+});
+
+it("T5fix a cached drain expires sealed eligibility without renewing its original deadline", async () => {
+  const f = fixture();
+  f.deps.pendingWrites = () => [{ write: "ticket", id: record.id, state: "sealed" }];
+  f.deps.payload = () => ({ kind: "complete-staging", expiresMonotonicMs: 30000 });
+  f.deps.evidence.flush = async () => ({
+    state: "failed",
+    accepted: ["ticket"],
+    incomplete: ["ticket"],
+    unknown: [],
+  });
+  const offer = f.life.participant.freeze(owner, "disable", 10000);
+  const dispatch = async () => ({
+    ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] },
+  });
+  const first = await f.life.participant.drain(offer, dispatch);
+  expect(first.state).toBe("retryable");
+  f.advance(30000);
+  const expired = await f.life.participant.drain(offer, dispatch);
+  expect(expired.state).toBe("checkpoint-only");
+  expect(expired.records[0]?.payload).toBe("checkpoint-only");
+  expect(expired.records[0]).not.toHaveProperty("expiresAt");
+});

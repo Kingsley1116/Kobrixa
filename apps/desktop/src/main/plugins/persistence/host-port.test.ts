@@ -2,7 +2,7 @@ import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import { createHash, randomUUID } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import { createPersistenceHost } from "./host-port.js";
-import type { PersistenceBackend, PublicationTicket } from "./engine-port.js";
+import type { PersistenceBackend, PublicationTicket, StoredRecovery } from "./engine-port.js";
 import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
 const owner = {
   sourceKey: "builtin:test.host",
@@ -422,5 +422,283 @@ it("retains the original publishing ticket on owner loss even without checkpoint
   expect(f.backend.evidence.saveRecovery).toHaveBeenCalledWith(
     expect.objectContaining({ ticket: expect.objectContaining({ id: begun.value.write }) }),
   );
+  await host.dispose();
+});
+
+function checkpointFixture() {
+  const f = fixture();
+  let record: RecordMeta = {
+    id: randomUUID(),
+    revision: `r_${"1".repeat(32)}`,
+    kind: "test.record",
+    schemaVersion: 1,
+    label: "data",
+    mediaType: "text/plain",
+    byteLength: 0,
+    sha256: createHash("sha256").update("").digest("hex"),
+    createdAt: 0,
+    updatedAt: 0,
+    checkpoint: "none",
+    interrupted: false,
+  };
+  const rows = new Map<string, StoredRecovery>();
+  f.backend.reads.stat = async (_o, id) => ({ ...record, id });
+  f.backend.engine.publish = async (t) => {
+    if (t.metadata.kind === "record") record = t.metadata.record;
+    return {
+      disposition: "committed",
+      receipt: { revision: record.revision, commitId: t.id, durability: "file-sync-only" },
+    };
+  };
+  f.backend.engine.reconcile = f.backend.engine.publish;
+  f.backend.engine.reserveFinal = async (t, n) => f.backend.engine.reserve(t, n);
+  f.backend.evidence.saveCheckpoint = async () => {};
+  f.backend.evidence.retainSealed = async () => ({ pin: randomUUID(), expiresMonotonicMs: 30000 });
+  f.backend.evidence.recoveryPage = async () => ({ items: [...rows.values()], nextCursor: null });
+  f.backend.evidence.loadRecovery = async (id) => rows.get(id) ?? null;
+  f.backend.evidence.saveRecovery = async (row) => {
+    rows.set(row.id, structuredClone(row));
+  };
+  f.backend.evidence.removeRecovery = async (id) => {
+    rows.delete(id);
+  };
+  f.input.coreActions = { claim: () => true, isClaimed: () => true, complete() {} };
+  return { ...f, rows, record: () => record };
+}
+
+it.each([false, true])(
+  "T5fix shutdown permits the original final continuation (already draining=%s)",
+  async (already) => {
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const paused = new Promise<void>((r) => {
+      release = r;
+    });
+    const results: boolean[] = [];
+    f.input.composition.dispatchDrain = async (_owner, request) => {
+      entered();
+      if (already) await paused;
+      const record = f.record();
+      const ordinary = await host.request(
+        principal,
+        "storage/beginWrite",
+        {
+          target: { mode: "create" },
+          kind: record.kind,
+          schemaVersion: 1,
+          label: "",
+          mediaType: "text/plain",
+          byteLength: 0,
+          sha256: record.sha256,
+        },
+        signal,
+      );
+      expect(ordinary.ok).toBe(false);
+      const begin = await host.request(
+        principal,
+        "storage/beginWrite",
+        {
+          target: { mode: "replace", id: record.id, expectedRevision: record.revision },
+          kind: record.kind,
+          schemaVersion: 1,
+          label: "",
+          mediaType: "text/plain",
+          byteLength: 0,
+          sha256: record.sha256,
+          checkpoint: { handle: request.checkpoints[0]!.checkpoint, phase: "final" },
+          drainToken: request.token,
+        },
+        signal,
+      );
+      results.push(begin.ok);
+      if (begin.ok) {
+        results.push(
+          (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal))
+            .ok,
+        );
+        results.push(
+          (
+            await host.request(
+              principal,
+              "storage/commitWrite",
+              { write: begin.value.write, drainToken: request.token },
+              signal,
+            )
+          ).ok,
+        );
+      }
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    };
+    const host = await createPersistenceHost(f.input);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/registerCheckpoint",
+          {
+            id: f.record().id,
+            expectedRevision: f.record().revision,
+          },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    let draining: Promise<unknown> | undefined;
+    if (already) {
+      draining = host.participant.drain(
+        host.participant.freeze(owner, "shutdown", 10000),
+        f.input.composition.dispatchDrain,
+      );
+      await started;
+    }
+    const closing = host.dispose();
+    release?.();
+    await closing;
+    await draining;
+    expect(results).toEqual([true, true, true]);
+    expect(f.record().checkpoint).toBe("final");
+  },
+);
+
+it.each(["open", "final", "none"] as const)(
+  "T5fix retry distinguishes committed %s checkpoints",
+  async (checkpoint) => {
+    const f = checkpointFixture(),
+      record = { ...f.record(), checkpoint },
+      id = randomUUID();
+    const ticket: PublicationTicket = {
+      id: randomUUID(),
+      owner,
+      deadlineMonotonicMs: 10000,
+      metadata: { kind: "record", record, deleted: false },
+      target: { kind: "record", id: record.id, expectedRevision: null },
+    };
+    f.rows.set(id, {
+      id,
+      owner,
+      ticket,
+      sealedPin: randomUUID(),
+      expiresAt: Date.now() + 30000,
+      report: {
+        recovery: id,
+        state: "retryable",
+        blocker: true,
+        pendingSettings: false,
+        records: [
+          {
+            id: record.id,
+            committedRevision: null,
+            final: false,
+            payload: "complete-staging",
+            expiresAt: Date.now() + 30000,
+          },
+        ],
+        errors: [],
+      },
+    });
+    const host = await createPersistenceHost(f.input);
+    const result = await host.participant.retry(id, {
+      actionToken: randomUUID(),
+      scope: { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() },
+    });
+    expect(result.state).toBe(checkpoint === "open" ? "checkpoint-only" : "saved");
+    expect(result.blocker).toBe(checkpoint === "open");
+    expect(result.records[0]?.final).toBe(checkpoint === "final");
+    await host.dispose();
+  },
+);
+
+it("T5fix known discard frees checkpoint slots without reviving old generations", async () => {
+  const f = checkpointFixture(),
+    host = await createPersistenceHost(f.input),
+    signal = new AbortController().signal;
+  const oldOwners = [];
+  for (let generation = 1; generation <= 2; generation++) {
+    const old = { ...owner, generation, processEpoch: randomUUID() };
+    oldOwners.push(old);
+    expect(
+      (
+        await host.request(
+          { ...principal, owner: old },
+          "storage/registerCheckpoint",
+          {
+            id: randomUUID(),
+            expectedRevision: f.record().revision,
+          },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    const report = await host.participant.ownerLost(old);
+    expect(
+      (
+        await host.participant.discard(report.recovery!, {
+          actionToken: randomUUID(),
+          scope: { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() },
+        })
+      ).blocker,
+    ).toBe(false);
+  }
+  expect(f.rows.size).toBe(0);
+  for (const old of oldOwners)
+    expect(
+      (
+        await host.request(
+          { ...principal, owner: old },
+          "storage/registerCheckpoint",
+          { id: randomUUID(), expectedRevision: f.record().revision },
+          signal,
+        )
+      ).ok,
+    ).toBe(false);
+  expect(
+    (
+      await host.request(
+        { ...principal, owner: { ...owner, generation: 3, processEpoch: randomUUID() } },
+        "storage/registerCheckpoint",
+        {
+          id: randomUUID(),
+          expectedRevision: f.record().revision,
+        },
+        signal,
+      )
+    ).ok,
+  ).toBe(true);
+  await host.dispose();
+});
+
+it("T5fix owner identity capacity fails closed instead of TTL-evicting revocation", async () => {
+  const f = checkpointFixture();
+  let now = 0;
+  f.input.now = () => now;
+  const host = await createPersistenceHost(f.input),
+    signal = new AbortController().signal;
+  for (let generation = 1; generation <= 64; generation++) {
+    const current = { ...owner, generation, processEpoch: randomUUID() };
+    expect(
+      (
+        await host.request(
+          { ...principal, owner: current },
+          "storage/stat",
+          { id: f.record().id },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    await host.participant.ownerLost(current);
+  }
+  now = 120001;
+  expect(
+    await host.request(
+      { ...principal, owner: { ...owner, generation: 65 } },
+      "storage/stat",
+      { id: f.record().id },
+      signal,
+    ),
+  ).toMatchObject({ error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
   await host.dispose();
 });

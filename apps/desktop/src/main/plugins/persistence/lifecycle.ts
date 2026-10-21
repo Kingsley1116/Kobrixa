@@ -18,7 +18,7 @@ import type {
   ReservationBindingPort,
   ReservationEnded,
 } from "@kobrixa/plugin-runtime";
-import { ownerKey, PersistenceFault, conflict, stale } from "./record-port.js";
+import { ownerKey, PersistenceFault, conflict, limit, stale } from "./record-port.js";
 import type {
   PersistenceEvidencePort,
   PersistenceReadPort,
@@ -66,6 +66,7 @@ type Entry = {
   ended?: ReservationEnded;
   final: boolean;
   failed: boolean;
+  terminalAt?: number;
 };
 type Group = {
   owner: ResourceOwner;
@@ -78,6 +79,9 @@ type Group = {
   retired: boolean;
   grant?: DeviceDrainGrant;
   run?: Promise<DrainReport>;
+  completed?: DrainReport;
+  completedAt?: number;
+  revision: number;
   control: AbortController;
   rearm?: () => void;
   callbackAllowed: boolean;
@@ -86,13 +90,69 @@ type Group = {
 export function createPersistenceLifecycle(deps: LifecycleDependencies) {
   const entries = new Map<string, Entry>();
   const groups = new Map<string, Group>();
+  // Revocation identities are never TTL-evicted. Saturation closes new admission;
+  // terminal payload/projection caches can expire without reviving a generation.
   const retired = new Set<string>();
+  let retirementSaturated = false;
+  const hostLimit = 1024,
+    sourceLimit = 64,
+    retention = 120000;
+  function sweep() {
+    const now = deps.now();
+    for (const [id, value] of groups)
+      if (
+        !value.run &&
+        value.completed &&
+        !value.completed.blocker &&
+        value.completedAt !== undefined &&
+        now >= value.completedAt + retention
+      )
+        groups.delete(id);
+    for (const [id, entry] of entries)
+      if (
+        entry.final &&
+        !entry.failed &&
+        entry.terminalAt !== undefined &&
+        now >= entry.terminalAt + retention &&
+        !groups.get(ownerKey(entry.owner))?.run
+      )
+        entries.delete(id);
+  }
+  function retire(owner: ResourceOwner) {
+    if (retired.has(ownerKey(owner))) return;
+    if (retired.size >= hostLimit) retirementSaturated = true;
+    else retired.add(ownerKey(owner));
+  }
+  function shorten(value: Group, deadline: number) {
+    if (deadline >= value.deadline) return;
+    value.deadline = deadline;
+    // Main's fence updates the same shared gates observed at worker publication.
+    if (value.retired) {
+      for (const ticket of deps.fence(value.owner, deadline)) value.tickets.add(ticket);
+    } else
+      for (const entry of value.entries)
+        for (const ticket of deps.fenceTarget(value.owner, entry.id, deadline))
+          value.tickets.add(ticket);
+    value.rearm?.();
+  }
+  function include(value: Group, entry: Entry) {
+    if (!value.entries.has(entry)) {
+      if (value.entries.size >= sourceLimit) {
+        deps.fenceTarget(value.owner, entry.id, deps.now());
+        limit();
+      }
+      value.entries.add(entry);
+      value.revision++;
+      delete value.completed;
+    }
+  }
   const key = (owner: ResourceOwner, id: string) => JSON.stringify([ownerKey(owner), id]);
   const mine = (owner: ResourceOwner) =>
     [...entries.values()].filter(
       (entry) => ownerKey(entry.owner) === ownerKey(owner) && !entry.final,
     );
   function group(owner: ResourceOwner, reason: DrainReason, deadline: number) {
+    sweep();
     const identity = ownerKey(owner);
     let value = groups.get(identity);
     if (value && !value.retired && !value.run && [...value.entries].every((e) => e.final)) {
@@ -100,6 +160,15 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       value = undefined;
     }
     if (!value) {
+      if (
+        groups.size >= hostLimit ||
+        [...groups.values()].filter((g) => g.owner.sourceKey === owner.sourceKey).length >=
+          sourceLimit
+      ) {
+        retirementSaturated = true;
+        deps.fence(owner, deps.now());
+        limit();
+      }
       value = {
         owner: Object.freeze({ ...owner }),
         reason,
@@ -112,11 +181,11 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         control: new AbortController(),
         callbackAllowed: true,
         barriers: [],
+        revision: 0,
       };
       groups.set(identity, value);
     }
-    value.deadline = Math.min(value.deadline, deadline);
-    value.rearm?.();
+    shorten(value, deadline);
     return value;
   }
   function snapshot(value: Group): DrainOffer {
@@ -156,8 +225,15 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     owner: ResourceOwner,
     input: StorageRequestMap["storage/registerCheckpoint"]["params"],
   ): Promise<StorageRequestMap["storage/registerCheckpoint"]["result"]> {
-    if (!deps.live(owner) || retired.has(ownerKey(owner)))
+    sweep();
+    if (retirementSaturated || !deps.live(owner) || retired.has(ownerKey(owner)))
       return new PersistenceFault("PLUGIN_E_STALE_RESOURCE").result;
+    if (
+      entries.size >= hostLimit ||
+      [...entries.values()].filter((e) => e.owner.sourceKey === owner.sourceKey).length >=
+        sourceLimit
+    )
+      return new PersistenceFault("PLUGIN_E_RESOURCE_LIMIT").result;
     if (
       [...entries.values()].filter(
         (entry) => entry.owner.sourceKey === owner.sourceKey && !entry.final,
@@ -239,7 +315,12 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         stale();
       return "final";
     }
-    if (retired.has(ownerKey(owner)) || !deps.live(owner) || (target && value?.entries.has(target)))
+    if (
+      retirementSaturated ||
+      retired.has(ownerKey(owner)) ||
+      !deps.live(owner) ||
+      (target && value?.entries.has(target))
+    )
       stale();
     if (input.checkpoint) {
       if (!target || target.handle !== input.checkpoint.handle || target.final || target.failed)
@@ -284,6 +365,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       if (!evidence) uncertain = true;
       const final = evidence?.checkpoint === "final";
       entry.final ||= final;
+      if (final) entry.terminalAt ??= deps.now();
       const held = deps.payload(value.owner, entry.id);
       const complete =
         held.kind === "complete-staging" &&
@@ -328,15 +410,16 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
           recordId: entry.id,
         }));
     const finalBarriers = scopes.map((scope) => deps.evidence.capture(scope, value.deadline));
+    const initialBarriers = value.barriers.splice(0);
     const outcomes = await bounded(
       value,
       Promise.all(
-        [...value.barriers, ...finalBarriers].map((barrier) => deps.evidence.flush(barrier)),
+        [...initialBarriers, ...finalBarriers].map((barrier) => deps.evidence.flush(barrier)),
       ),
       [],
     );
     const flushed =
-      outcomes.length === value.barriers.length + finalBarriers.length &&
+      outcomes.length === initialBarriers.length + finalBarriers.length &&
       outcomes.every(
         (result) => result.state === "saved" && !result.incomplete.length && !result.unknown.length,
       );
@@ -414,6 +497,47 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       delete value.rearm;
     }
   }
+  function start(value: Group, dispatch?: DrainDispatcher): Promise<DrainReport> {
+    if (value.run) return value.run;
+    if (value.completed) {
+      const cached = value.completed;
+      let expired = false;
+      cached.records = cached.records.map((record) => {
+        if (
+          record.payload !== "complete-staging" ||
+          record.expiresAt === undefined ||
+          deps.wall() < record.expiresAt
+        )
+          return record;
+        expired = true;
+        const copy = { ...record };
+        delete copy.expiresAt;
+        return { ...copy, payload: record.committedRevision ? "checkpoint-only" : "none" };
+      });
+      if (
+        expired &&
+        cached.state === "retryable" &&
+        !cached.records.some((r) => r.payload === "complete-staging")
+      ) {
+        cached.state = "checkpoint-only";
+        delete cached.retryAction;
+      }
+      return Promise.resolve(structuredClone(cached));
+    }
+    const revision = value.revision;
+    value.run = run(value, dispatch)
+      .then((result) => {
+        if (revision === value.revision) {
+          value.completed = structuredClone(result);
+          value.completedAt = deps.now();
+        }
+        return result;
+      })
+      .finally(() => {
+        delete value.run;
+      });
+    return value.run;
+  }
   const unavailable = (): DrainReport => ({
     state: "uncertain",
     blocker: true,
@@ -444,65 +568,66 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       for (const entry of targets) {
         if (!entry.ended) {
           entry.ended = event;
+          for (const ticket of deps.fenceTarget(event.owner, entry.id, value.deadline))
+            value.tickets.add(ticket);
           const barrier = deps.evidence.capture(
             { kind: "target", owner: event.owner, recordId: entry.id },
             value.deadline,
           );
           value.barriers.push(barrier);
           for (const ticket of deps.evidence.tickets(barrier)) value.tickets.add(ticket.id);
-          for (const ticket of deps.fenceTarget(event.owner, entry.id, value.deadline))
-            value.tickets.add(ticket);
         }
-        value.entries.add(entry);
+        include(value, entry);
       }
       return snapshot(value);
     },
     freeze(owner, reason, deadline, deviceDrain) {
       if (reason === "reservation-ended") throw new Error("Target ends do not retire owners.");
       if (deviceDrain && ownerKey(deviceDrain.owner) !== ownerKey(owner)) stale();
-      retired.add(ownerKey(owner));
+      retire(owner);
       const value = group(
         owner,
         reason,
         Math.min(deadline, deviceDrain?.expiresMonotonicMs ?? Infinity),
       );
+      const newlyRetired = !value.retired;
       value.retired = true;
       value.reason = reason;
       if (deviceDrain) value.grant = deviceDrain;
-      for (const entry of mine(owner)) value.entries.add(entry);
+      for (const entry of mine(owner)) include(value, entry);
       for (const ticket of deps.fence(owner, value.deadline)) value.tickets.add(ticket);
-      const barrier = deps.evidence.capture({ kind: "namespace", owner }, value.deadline);
-      value.barriers.push(barrier);
-      for (const ticket of deps.evidence.tickets(barrier)) value.tickets.add(ticket.id);
+      if (newlyRetired) {
+        delete value.completed;
+        value.revision++;
+        const barrier = deps.evidence.capture({ kind: "namespace", owner }, value.deadline);
+        value.barriers.push(barrier);
+        for (const ticket of deps.evidence.tickets(barrier)) value.tickets.add(ticket.id);
+      }
       return snapshot(value);
     },
     drain(offer, dispatch) {
       const value = groups.get(ownerKey(offer.owner));
       if (!value || value.token !== offer.token) return Promise.resolve(unavailable());
-      value.deadline = Math.min(value.deadline, offer.deadlineMonotonicMs);
-      value.rearm?.();
-      if (!value.run)
-        value.run = run(value, dispatch).finally(() => {
-          delete value.run;
-        });
-      return value.run;
+      shorten(value, offer.deadlineMonotonicMs);
+      return start(value, dispatch);
     },
     async ownerLost(owner) {
       const value = group(owner, "disable", deps.now());
-      retired.add(ownerKey(owner));
+      retire(owner);
+      const newlyRetired = !value.retired;
       value.retired = true;
-      for (const entry of mine(owner)) value.entries.add(entry);
+      for (const entry of mine(owner)) include(value, entry);
       for (const ticket of deps.fence(owner, value.deadline)) value.tickets.add(ticket);
-      const barrier = deps.evidence.capture({ kind: "namespace", owner }, value.deadline);
-      value.barriers.push(barrier);
-      for (const ticket of deps.evidence.tickets(barrier)) value.tickets.add(ticket.id);
+      if (newlyRetired) {
+        delete value.completed;
+        value.revision++;
+        const barrier = deps.evidence.capture({ kind: "namespace", owner }, value.deadline);
+        value.barriers.push(barrier);
+        for (const ticket of deps.evidence.tickets(barrier)) value.tickets.add(ticket.id);
+      }
       value.callbackAllowed = false;
       value.control.abort();
-      if (!value.run)
-        value.run = run(value).finally(() => {
-          delete value.run;
-        });
-      return value.run;
+      return start(value);
     },
     recoverySnapshot: () => deps.recovery.recoverySnapshot(),
     retry: (id, action) => deps.recovery.retry(id, action),
@@ -512,6 +637,34 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     participant,
     register,
     authorize,
+    retireCheckpoint(owner: ResourceOwner, ids: readonly string[]) {
+      const value = groups.get(ownerKey(owner));
+      for (const id of ids) {
+        const entry = entries.get(key(owner, id));
+        if (!entry) continue;
+        entries.delete(key(owner, id));
+        value?.entries.delete(entry);
+      }
+      if (value) {
+        value.revision++;
+        if (
+          !value.entries.size &&
+          value.completed &&
+          !value.completed.pendingSettings &&
+          value.completed.state !== "uncertain"
+        ) {
+          value.completed = {
+            state: "saved",
+            blocker: false,
+            pendingSettings: false,
+            records: [],
+            errors: [],
+          };
+          value.completedAt = deps.now();
+        } else delete value.completed;
+        // Revocation stays recorded; unresolved scopes require a fresh reconciliation.
+      }
+    },
     finalGrant(owner: ResourceOwner, input: RecordWrite): FinalWriteGrant | undefined {
       if (!input.drainToken) return undefined;
       authorize(owner, input);
@@ -536,6 +689,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       entry.record = record;
       if (record.checkpoint === "final") {
         entry.final = true;
+        entry.terminalAt = deps.now();
         entry.ready = deps
           .persist(owner, { checkpoint: entry.handle, record, state: "final" })
           .catch(() => {

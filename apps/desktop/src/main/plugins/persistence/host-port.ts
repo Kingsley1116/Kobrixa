@@ -4,7 +4,7 @@ import { createPersistenceRecovery } from "./recovery-port.js";
 import { createPersistenceLifecycle } from "./lifecycle.js";
 import { createRecordService } from "./record-service.js";
 import { createPersistenceActions } from "./actions.js";
-import { ownerKey } from "./record-port.js";
+import { ownerKey, PersistenceFault, limit } from "./record-port.js";
 import { checkpointRecoveryId, type PublicationTicket } from "./engine-port.js";
 import { settingsRequestSchemas } from "../../../../../../packages/plugin-protocol/src/settings.js";
 import { storageRequestSchemas } from "../../../../../../packages/plugin-protocol/src/storage.js";
@@ -26,7 +26,13 @@ import type {
 } from "@kobrixa/plugin-runtime";
 import type { PersistenceBackend } from "./engine-port.js";
 import type { PersistenceActionAdapter } from "./actions.js";
-import type { ResourceOwner, UiOwner, SettingsResourceV1, Sha256 } from "@kobrixa/plugin-protocol";
+import type {
+  ResourceOwner,
+  UiOwner,
+  SettingsResourceV1,
+  Sha256,
+  RecordWrite,
+} from "@kobrixa/plugin-protocol";
 import type {
   CoreWindowScope,
   BoundSettingsService,
@@ -79,7 +85,35 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
   const offers = new Map<string, ReturnType<PersistenceParticipant["freeze"]>>();
   const pending = new Set<Promise<unknown>>(),
     metadata = new Set<Promise<void>>();
-  const registrations = new Map<string, { checkpoint: string; recovery: string }>();
+  const registrations = new Map<
+    string,
+    { checkpoint: string; recovery: string; terminalAt?: number }
+  >();
+  const settledAt = new Map<string, number>();
+  const hostLimit = 1024,
+    sourceLimit = 64;
+  function sweep() {
+    for (const [id, at] of settledAt)
+      if (now() >= at + 120000) {
+        captured.delete(id);
+        outcomes.delete(id);
+        settledAt.delete(id);
+      }
+    for (const [id, row] of registrations)
+      if (row.terminalAt !== undefined && now() >= row.terminalAt + 120000)
+        registrations.delete(id);
+  }
+  function admitOwner(owner: ResourceOwner) {
+    sweep();
+    if (owners.has(ownerKey(owner))) return;
+    // Lifetime owner identities are bounded and never evicted to reopen a generation.
+    if (
+      owners.size >= hostLimit ||
+      [...owners.values()].filter((o) => o.sourceKey === owner.sourceKey).length >= sourceLimit
+    )
+      limit();
+    owners.set(ownerKey(owner), Object.freeze({ ...owner }));
+  }
   const captured = new Map<string, PublicationTicket>(),
     outcomes = new Map<string, string>();
   const schemas = {
@@ -93,6 +127,14 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     backend,
     adapter: input.actionAdapter,
     actions: input.coreActions,
+    coreOwner: sources.coreOwner,
+    discarded(owner, report) {
+      const ids = report.records.map((r) => r.id);
+      lifecycle.retireCheckpoint(owner, ids);
+      for (const id of ids) registrations.delete(JSON.stringify([ownerKey(owner), id]));
+      // Discard proves only this recovery row's outcome. Other captured tickets on
+      // the same target retain their evidence until individually known and swept.
+    },
     now,
     wall,
     async retry(_owner, report, deadline) {
@@ -118,19 +160,25 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
           state: result.disposition === "unknown" ? "uncertain" : "retryable",
           blocker: true,
         };
+      const target =
+        stored.ticket.metadata.kind === "record" ? stored.ticket.metadata.record : null;
+      const remaining =
+        report.pendingSettings || report.records.some((r) => r.id !== target?.id && !r.final);
+      const open = target?.checkpoint === "open";
       return {
         ...report,
-        state: "saved",
-        blocker: false,
-        pendingSettings: false,
-        records: report.records.map((r) => ({
-          id: r.id,
-          committedRevision: result.receipt!.revision,
-          final:
-            stored.ticket!.metadata.kind === "record" &&
-            stored.ticket!.metadata.record.checkpoint === "final",
-          payload: "checkpoint-only",
-        })),
+        state: remaining ? "uncertain" : open ? "checkpoint-only" : "saved",
+        blocker: remaining || open,
+        records: report.records.map((r) =>
+          r.id !== target?.id
+            ? r
+            : {
+                id: r.id,
+                committedRevision: result.receipt!.revision,
+                final: target.checkpoint === "final",
+                payload: "checkpoint-only",
+              },
+        ),
       };
     },
     async discard(_owner, report) {
@@ -165,7 +213,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       const run = (async () => {
         const key = JSON.stringify([ownerKey(owner), document.record.id]);
         let registration = registrations.get(key);
-        if (!registration) {
+        sweep();
+        if (!registration || registration.checkpoint !== document.checkpoint) {
+          if (!registration && registrations.size >= hostLimit) limit();
           registration = {
             checkpoint: document.checkpoint,
             recovery: checkpointRecoveryId(document.checkpoint),
@@ -226,6 +276,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
             errors: [],
           },
         });
+        if (document.state !== "open") registration.terminalAt = now();
       })();
       metadata.add(run);
       void run.finally(() => metadata.delete(run)).catch(() => {});
@@ -260,7 +311,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         const ticket = captured.get(id) ?? projection?.ticket;
         if (ticket) {
           try {
-            outcomes.set(id, (await backend.engine.reconcile(ticket)).disposition);
+            const disposition = (await backend.engine.reconcile(ticket)).disposition;
+            outcomes.set(id, disposition);
+            if (disposition === "committed") settledAt.set(id, settledAt.get(id) ?? now());
           } catch {
             outcomes.set(id, "unknown");
           }
@@ -270,11 +323,15 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     evidence: {
       ...backend.evidence,
       capture(scope, deadline) {
+        sweep();
         const barrier = (backend.evidence.captureDrain ?? backend.evidence.capture)(
           scope,
           deadline,
         );
-        for (const ticket of backend.evidence.tickets(barrier)) captured.set(ticket.id, ticket);
+        const tickets = backend.evidence.tickets(barrier);
+        const additional = tickets.filter((t) => !captured.has(t.id));
+        if (captured.size + additional.length > hostLimit) limit();
+        for (const ticket of additional) captured.set(ticket.id, ticket);
         return barrier;
       },
     },
@@ -401,19 +458,23 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
   }
   const participant: PersistenceParticipant = {
     freeze(owner, reason, deadline, grant) {
-      owners.set(ownerKey(owner), owner);
+      admitOwner(owner);
       const offer = lifecycle.participant.freeze(owner, reason, deadline, grant);
       offers.set(ownerKey(owner), offer);
       return offer;
     },
     endReservation(event, deadline) {
-      owners.set(ownerKey(event.owner), event.owner);
+      admitOwner(event.owner);
       const offer = lifecycle.participant.endReservation(event, deadline);
       if (offer) offers.set(ownerKey(event.owner), offer);
       return offer;
     },
     drain: (offer, dispatch) => trackDrain(lifecycle.participant.drain(offer, dispatch)),
-    ownerLost: (owner) => trackDrain(lifecycle.participant.ownerLost(owner)),
+    ownerLost: (owner) => {
+      admitOwner(owner);
+      frozen.add(ownerKey(owner));
+      return trackDrain(lifecycle.participant.ownerLost(owner));
+    },
     recoverySnapshot: () => lifecycle.participant.recoverySnapshot(),
     retry: (id, action) => trackDrain(lifecycle.participant.retry(id, action)),
     discard: (id, action) => trackDrain(lifecycle.participant.discard(id, action)),
@@ -438,8 +499,48 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       if (!schemas[method].params.safeParse(params).success)
         throw new RpcError(RPC_ERRORS.invalidParams, "Invalid persistence parameters.");
     },
-    track(principal: Principal, operation: Promise<unknown>) {
-      if (principal.kind === "plugin") owners.set(ownerKey(principal.owner), principal.owner);
+    admit(principal: Principal) {
+      if (principal.kind === "plugin") admitOwner(principal.owner);
+    },
+    closingRequest(
+      principal: Principal,
+      method: keyof PersistenceRequestMap,
+      params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+    ): boolean {
+      if (principal.kind !== "plugin") return false;
+      try {
+        if (method === "storage/beginWrite" && "drainToken" in params && params.drainToken) {
+          const input = params as StorageRequestMap["storage/beginWrite"]["params"];
+          const { checkpoint, drainToken, ...base } = input;
+          const write: RecordWrite = {
+            ...base,
+            ...(checkpoint ? { checkpoint } : {}),
+            ...(drainToken ? { drainToken } : {}),
+          };
+          return !!lifecycle.finalGrant(principal.owner, write);
+        }
+        if (
+          ![
+            "storage/writeChunk",
+            "storage/sealWrite",
+            "storage/commitWrite",
+            "storage/writeStatus",
+            "storage/abortWrite",
+          ].includes(method) ||
+          !("write" in params)
+        )
+          return false;
+        const write = records
+          .admittedWrites(principal.owner)
+          .find((w) => w.ticket.id === params.write);
+        if (!write) return false;
+        if (method === "storage/writeStatus" || method === "storage/abortWrite") return true;
+        return !!write.input.drainToken && !!lifecycle.finalGrant(principal.owner, write.input);
+      } catch {
+        return false;
+      }
+    },
+    track(_principal: Principal, operation: Promise<unknown>) {
       pending.add(operation);
       void operation.finally(() => pending.delete(operation)).catch(() => {});
     },
@@ -453,7 +554,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         [...offers.values()].map((offer) => participant.drain(offer, dispatchDrain)),
       );
       await Promise.allSettled([...drains]);
-      await Promise.allSettled([...pending, ...metadata]);
+      while (pending.size || metadata.size) await Promise.allSettled([...pending, ...metadata]);
       await closingSettings;
       await actions.dispose();
       await records.close();
@@ -491,6 +592,7 @@ export async function createPersistenceHost(input: {
     throw error;
   }
   let disposed = false,
+    closed = false,
     pending = 0,
     bytes = 0;
   let disposal: Promise<void> | undefined;
@@ -558,7 +660,7 @@ export async function createPersistenceHost(input: {
       input.profile.assertHeld();
       if (method === "storage/drain")
         throw new RpcError(RPC_ERRORS.methodNotFound, "Host-only method direction.");
-      if (disposed)
+      if (closed)
         return {
           ok: false,
           error: { code: "PLUGIN_E_SHUTTING_DOWN", message: "Host is closing." },
@@ -593,6 +695,17 @@ export async function createPersistenceHost(input: {
           },
         };
       services.validate(method, params);
+      if (disposed && !services.closingRequest(principal, method, params))
+        return {
+          ok: false,
+          error: { code: "PLUGIN_E_SHUTTING_DOWN", message: "Host is closing." },
+        };
+      try {
+        services.admit(principal);
+      } catch (error) {
+        if (error instanceof PersistenceFault) return error.result;
+        throw error;
+      }
       const size = Buffer.byteLength(JSON.stringify(params));
       const key = principal.kind === "plugin" ? principal.owner.sourceKey : "core";
       const source = counts.get(key) ?? { pending: 0, bytes: 0 };
@@ -655,6 +768,7 @@ export async function createPersistenceHost(input: {
         try {
           await services.dispose();
         } finally {
+          closed = true;
           await backend.dispose();
         }
         input.profile.assertHeld();

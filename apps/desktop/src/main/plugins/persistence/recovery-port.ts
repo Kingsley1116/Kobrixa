@@ -4,6 +4,7 @@ import type { PersistenceBackend, StoredRecovery } from "./engine-port.js";
 import type { PersistenceActionAdapter, ExportDestination } from "./actions.js";
 import type { ExportOutcome } from "./engine-port.js";
 import type {
+  CoreWindowScope,
   CoreActionReference,
   CoreActionValidationPort,
   DrainReport,
@@ -18,6 +19,8 @@ type Dependencies = {
   discard(owner: ResourceOwner, report: DrainReport): Promise<DrainReport>;
   backend: PersistenceBackend;
   adapter: PersistenceActionAdapter;
+  coreOwner(input: { sourceKey: string; scope: CoreWindowScope }): ResourceOwner | null;
+  discarded?(owner: ResourceOwner, report: DrainReport): void;
 };
 export interface PersistenceRecoveryHostPort {
   snapshot(): PersistenceRecoverySnapshot;
@@ -75,7 +78,11 @@ export function createPersistenceRecovery(deps: Dependencies) {
   };
   async function persist(entry: Entry) {
     const previous = await deps.backend.evidence.loadRecovery(entry.id);
-    if (entry.report.state === "saved") {
+    if (
+      entry.report.state === "saved" ||
+      (entry.report.state === "checkpoint-only" &&
+        !entry.report.records.some((record) => record.payload === "complete-staging"))
+    ) {
       const pin = entry.evidence?.sealedPin ?? previous?.sealedPin;
       if (pin) await deps.backend.reads.close(entry.owner, pin);
       entry.evidence = {
@@ -253,6 +260,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
         if (!report.blocker) {
           await deps.backend.evidence.removeRecovery(id);
           entries.delete(id);
+          deps.discarded?.(entry.owner, report);
           changed();
         } else await persist(entry);
         return structuredClone(report);
@@ -306,6 +314,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
         }
       }
       const backend = deps.backend;
+      let pinOwner = entry.owner;
       let pin: Handle | undefined,
         closePin = false,
         destination: ExportDestination | null = null;
@@ -318,6 +327,14 @@ export function createPersistenceRecovery(deps: Dependencies) {
       try {
         const stored = await backend.evidence.loadRecovery(id);
         if (!stored) stale();
+        const current = deps.coreOwner({ sourceKey: stored.owner.sourceKey, scope: action.scope });
+        if (
+          !current ||
+          current.sourceKey !== stored.owner.sourceKey ||
+          current.pluginId !== stored.owner.pluginId ||
+          current.hostEpoch !== action.scope.hostEpoch
+        )
+          stale();
         const record = stored.report.records.find(
           (r) => r.payload === "complete-staging" || r.committedRevision !== null,
         );
@@ -330,14 +347,17 @@ export function createPersistenceRecovery(deps: Dependencies) {
           stored.expiresAt !== null &&
           deps.wall() < stored.expiresAt
         ) {
+          // A transient sealed pin remains bound to its exact historical owner.
+          if (stored.owner.hostEpoch !== current.hostEpoch) stale();
           pin = stored.sealedPin;
           bytes = stored.ticket.metadata.record.byteLength;
           digest = stored.ticket.metadata.record.sha256;
         } else {
           if (!record.committedRevision) stale();
-          const meta = await backend.reads.stat(stored.owner, record.id);
+          const meta = await backend.reads.stat(current, record.id);
           if (meta.revision !== record.committedRevision) stale();
-          pin = await backend.reads.open(stored.owner, record.id, record.committedRevision);
+          pin = await backend.reads.open(current, record.id, record.committedRevision);
+          pinOwner = current;
           closePin = true;
           bytes = meta.byteLength;
           digest = meta.sha256;
@@ -355,7 +375,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
         )
           stale();
         begun = true;
-        await backend.output.begin(job, stored.owner, destination, bytes, digest, deadline);
+        await backend.output.begin(job, current, destination, bytes, digest, deadline);
         for (let offset = 0; offset < bytes;) {
           if (
             control.signal.aborted ||
@@ -364,7 +384,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
           )
             stale();
           const chunk = await backend.reads.read(
-            stored.owner,
+            pinOwner,
             pin!,
             offset,
             Math.min(262144, bytes - offset),
@@ -387,9 +407,9 @@ export function createPersistenceRecovery(deps: Dependencies) {
         clearTimeout(timer);
         exporting.delete(id);
         if (outcome.disposition === "unknown")
-          exports.set(id, { job, owner: entry.owner, pin, closePin, destination });
+          exports.set(id, { job, owner: pinOwner, pin, closePin, destination });
         if (outcome.disposition !== "unknown" && closePin && pin)
-          await backend.reads.close(entry.owner, pin);
+          await backend.reads.close(pinOwner, pin);
         // Unknown jobs retain destination identity and are reconciled using their original job ID.
         if (destination && outcome.disposition !== "unknown")
           await backend.destinations.release(destination);

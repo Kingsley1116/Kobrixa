@@ -40,6 +40,8 @@ type Job = {
   received: number;
   destination?: ExportDestination;
   beginDispatched?: boolean;
+  beginPending?: Promise<void>;
+  unsettled: number;
   control: AbortController;
   result?: Outcome;
   last?: { offset: number; data: string; expiresAt: number };
@@ -51,10 +53,28 @@ export function createPersistenceActions(deps: ActionDependencies) {
   const jobs = new Map<string, Job>();
   const cleanup = new Set<Promise<unknown>>();
   let disposed = false;
-  async function abortKnown(job: Job) {
+  function abortKnown(job: Job) {
+    job.unsettled++;
+    return performAbort(job).finally(() => job.unsettled--);
+  }
+  async function performAbort(job: Job) {
     const disposition = job.beginDispatched
       ? await deps.output.abort(job.id).catch(() => "unknown" as const)
       : "aborted";
+    if (disposition === "unknown") {
+      job.state = "publishing";
+      job.result = { disposition: "unknown" };
+    } else if (disposition === "committed") {
+      job.state = "completed";
+      job.result = await deps.output.reconcile(job.id).catch(() => ({ disposition: "unknown" }));
+      if (job.result.disposition === "unknown") {
+        job.state = "publishing";
+        return "unknown";
+      }
+    } else if (job.state === "publishing") {
+      job.state = "cancelled";
+      job.result = { disposition: "not-committed" };
+    }
     if (disposition !== "unknown" && job.destination) {
       const destination = job.destination;
       delete job.destination;
@@ -173,7 +193,7 @@ export function createPersistenceActions(deps: ActionDependencies) {
             stop(job);
           }
         }
-      const running = [...jobs.values()].filter(active);
+      const running = [...jobs.values()].filter((job) => active(job) || job.unsettled > 0);
       if (
         running.length >= 4 ||
         running.some((j) => j.owner.sourceKey === owner.sourceKey) ||
@@ -196,6 +216,7 @@ export function createPersistenceActions(deps: ActionDependencies) {
         received: 0,
         control: new AbortController(),
         pending: Promise.resolve(),
+        unsettled: 0,
       };
       jobs.set(id, job);
       arm(job);
@@ -211,10 +232,24 @@ export function createPersistenceActions(deps: ActionDependencies) {
           }
           job.progress = deps.now(); // Preserve the registered destination’s original deadline.
           job.beginDispatched = true;
-          await deps.output.begin(id, owner, destination, p.byteLength, p.sha256, job.deadline);
-          gate(job);
-          job.state = "receiving";
-          arm(job);
+          // Track dispatched I/O independently of the native dialog, which may return late.
+          job.unsettled++;
+          job.beginPending = (async () => {
+            try {
+              await deps.output.begin(id, owner, destination, p.byteLength, p.sha256, job.deadline);
+              gate(job);
+              job.state = "receiving";
+              arm(job);
+            } catch {
+              clearTimeout(job.timer);
+              if (job.state !== "expired" && job.state !== "cancelled") job.state = "failed";
+              job.error = { code: "PLUGIN_E_STORAGE_IO", message: "Export unavailable." };
+              await abortKnown(job);
+            } finally {
+              job.unsettled--;
+            }
+          })();
+          await job.beginPending;
         })
         .catch(async () => {
           clearTimeout(job.timer);
@@ -316,7 +351,7 @@ export function createPersistenceActions(deps: ActionDependencies) {
         try {
           gate(job);
         } catch {
-          await deps.output.abort(job.id);
+          await abortKnown(job);
         }
       }
       if (job.state === "publishing") {
@@ -386,7 +421,7 @@ export function createPersistenceActions(deps: ActionDependencies) {
           },
         } as PersistenceActionRequestMap[M]["result"];
       for (const [id, job] of jobs)
-        if (!active(job) && deps.now() >= job.deadline + 120000) jobs.delete(id);
+        if (!active(job) && !job.unsettled && deps.now() >= job.deadline + 120000) jobs.delete(id);
       const run = async () => {
         try {
           return await handlers[method](principal.owner, params, signal);
@@ -410,7 +445,11 @@ export function createPersistenceActions(deps: ActionDependencies) {
     async dispose() {
       disposed = true;
       for (const job of jobs.values()) if (active(job)) stop(job);
-      await Promise.allSettled([...jobs.values()].map((job) => job.pending));
+      await Promise.allSettled(
+        [...jobs.values()].flatMap((job) => [job.pending, job.beginPending ?? Promise.resolve()]),
+      );
+      await Promise.allSettled([...cleanup]);
+      for (const job of jobs.values()) if (active(job)) stop(job);
       await Promise.allSettled([...cleanup]);
     },
     retire(owner: ResourceOwner) {

@@ -366,3 +366,121 @@ it("uses cumulative output offsets and releases a late destination after disposa
   await vi.waitFor(() => expect(late.deps.destinations.release).toHaveBeenCalledWith(destination));
   expect(late.begin).not.toHaveBeenCalled();
 });
+
+it("T5fix disposal joins a dispatched begin and its eventual abort", async () => {
+  const f = fixture();
+  let release!: () => void,
+    begun = false,
+    done = false;
+  f.deps.output.begin = async () => {
+    begun = true;
+    await new Promise<void>((r) => {
+      release = r;
+    });
+  };
+  f.deps.output.abort = vi.fn(async () => (done ? "aborted" : "unknown"));
+  await f.service.request(
+    p,
+    "storage/exportBegin",
+    {
+      actionRef,
+      suggestedName: "data",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: "a".repeat(64),
+    },
+    new AbortController().signal,
+  );
+  f.choose(Object.freeze({}) as ExportDestination);
+  await vi.waitFor(() => expect(begun).toBe(true));
+  let closed = false;
+  const closing = f.service.dispose().then(() => {
+    closed = true;
+  });
+  try {
+    await new Promise((r) => setTimeout(r, 10));
+    expect(closed).toBe(false);
+  } finally {
+    done = true;
+    release();
+    await closing;
+  }
+  expect(f.deps.destinations.release).toHaveBeenCalledOnce();
+});
+
+it("T5fix unknown aborts retain original job identity past terminal eviction", async () => {
+  const f = fixture();
+  let release!: () => void;
+  f.deps.output.begin = () =>
+    new Promise<void>((r) => {
+      release = r;
+    });
+  f.deps.output.abort = async () => "unknown";
+  f.deps.output.reconcile = async () => ({ disposition: "unknown" });
+  const signal = new AbortController().signal;
+  const result = await f.service.request(
+    p,
+    "storage/exportBegin",
+    {
+      actionRef,
+      suggestedName: "data",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: "a".repeat(64),
+    },
+    signal,
+  );
+  if (!result.ok) throw new Error("begin failed");
+  f.choose(Object.freeze({}) as ExportDestination);
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  f.service.retire(owner);
+  release();
+  await new Promise((r) => setImmediate(r));
+  f.advance(240001);
+  expect(
+    await f.service.request(p, "storage/exportStatus", { export: result.value.export }, signal),
+  ).toMatchObject({ ok: true, value: { state: "publishing" } });
+  expect(f.deps.destinations.release).not.toHaveBeenCalled();
+  await f.service.dispose();
+});
+
+it("T5fix pending aborts cannot evict the job before their outcome is known", async () => {
+  const f = fixture();
+  let finishAbort!: () => void;
+  f.deps.output.abort = () =>
+    new Promise((resolve) => {
+      finishAbort = () => resolve("unknown");
+    });
+  const signal = new AbortController().signal;
+  const result = await f.service.request(
+    p,
+    "storage/exportBegin",
+    {
+      actionRef,
+      suggestedName: "data",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: "a".repeat(64),
+    },
+    signal,
+  );
+  if (!result.ok) throw new Error("begin failed");
+  f.choose(Object.freeze({}) as ExportDestination);
+  await vi.waitFor(() => expect(f.begin).toHaveBeenCalledOnce());
+  f.service.retire(owner);
+  f.advance(240001);
+  const status = await f.service.request(
+    p,
+    "storage/exportStatus",
+    {
+      export: result.value.export,
+    },
+    signal,
+  );
+  finishAbort();
+  await new Promise((resolve) => setImmediate(resolve));
+  f.deps.output.abort = async () => "unknown";
+  await f.service.dispose();
+  expect(status).toMatchObject({ ok: true });
+  expect(f.deps.destinations.release).not.toHaveBeenCalled();
+});

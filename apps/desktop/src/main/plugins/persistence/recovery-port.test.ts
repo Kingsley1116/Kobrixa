@@ -1,3 +1,4 @@
+import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import type { ExportDestination } from "./actions.js";
 import { expect, it, vi } from "vitest";
 import type { DrainReport } from "@kobrixa/plugin-runtime";
@@ -88,6 +89,7 @@ it("B2-RF3: failed retry never extends the original 30-second retention", async 
   let now = 0;
   const retry = vi.fn(async () => report);
   const recovery = createPersistenceRecovery({
+    coreOwner: () => owner,
     now: () => now,
     wall: () => 100000 + now,
     actions: { claim: () => true, isClaimed: () => true, complete: () => {} },
@@ -114,6 +116,7 @@ it("B2-RF4/U16: core actions must match the item and cannot reuse feature proofs
   const retry = vi.fn(async () => report),
     discard = vi.fn(async () => report);
   const recovery = createPersistenceRecovery({
+    coreOwner: () => owner,
     now: () => 0,
     wall: () => 100000,
     actions: { claim: () => false, isClaimed: () => false, complete: () => {} },
@@ -176,6 +179,7 @@ it("unknown core exports reconcile the original job without opening another dest
   backend.destinations.release = vi.fn(async () => {});
   const chooseDestination = vi.fn(async () => destination);
   const recovery = createPersistenceRecovery({
+    coreOwner: () => owner,
     now: () => 0,
     wall: () => 100000,
     backend,
@@ -199,4 +203,77 @@ it("unknown core exports reconcile the original job without opening another dest
   });
   expect(backend.reads.close).toHaveBeenCalledOnce();
   expect(backend.destinations.release).toHaveBeenCalledOnce();
+});
+
+it("T5fix restart export uses current core authority and preserves historical evidence", async () => {
+  const backend = recoveryBackendDouble();
+  const historical = { ...owner, hostEpoch: "old-host" },
+    current = { ...owner, hostEpoch: "new-host", processEpoch: "core", generation: 0 };
+  const row: StoredRecovery = {
+    id: "restored",
+    owner: historical,
+    ticket: null,
+    sealedPin: null,
+    expiresAt: null,
+    report: {
+      ...report,
+      state: "checkpoint-only",
+      records: [
+        {
+          id: "record",
+          committedRevision: "r_" + "1".repeat(32),
+          final: false,
+          payload: "checkpoint-only",
+        },
+      ],
+    },
+  };
+  backend.evidence.recoveryPage = async () => ({ items: [row], nextCursor: null });
+  backend.evidence.loadRecovery = async () => row;
+  backend.reads.stat = vi.fn(async (o): Promise<RecordMeta> => {
+    if (o.hostEpoch !== current.hostEpoch) throw new Error("stale");
+    return {
+      id: "record",
+      revision: "r_" + "1".repeat(32),
+      kind: "test",
+      schemaVersion: 1,
+      label: "",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: "a".repeat(64),
+      createdAt: 0,
+      updatedAt: 0,
+      checkpoint: "open",
+      interrupted: false,
+    };
+  });
+  backend.reads.open = vi.fn(async () => "pin");
+  backend.reads.close = vi.fn(async () => {});
+  backend.output.begin = vi.fn(async (_id, o) => {
+    expect(o).toEqual(current);
+  });
+  backend.output.commit = async () => ({ disposition: "committed" });
+  backend.destinations.release = async () => {};
+  const coreOwner = vi.fn(() => current);
+  const recovery = createPersistenceRecovery({
+    now: () => 0,
+    wall: () => 100000,
+    backend,
+    actions: { claim: () => true, isClaimed: () => true, complete() {} },
+    coreOwner,
+    retry: async () => report,
+    discard: async () => report,
+    adapter: {
+      chooseDestination: async () => Object.freeze({}) as ExportDestination,
+      copyText: async () => {},
+    },
+  });
+  await recovery.restore();
+  const fresh = { ...action, scope: { ...action.scope, hostEpoch: current.hostEpoch } };
+  expect(await recovery.export({ recovery: row.id, action: fresh })).toMatchObject({
+    value: { disposition: "committed" },
+  });
+  expect(coreOwner).toHaveBeenCalledWith({ sourceKey: historical.sourceKey, scope: fresh.scope });
+  expect(backend.reads.close).toHaveBeenCalledWith(current, "pin");
+  expect(row.owner).toEqual(historical);
 });
