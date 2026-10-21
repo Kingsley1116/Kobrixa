@@ -39,6 +39,7 @@ export async function readStaticLanguageFixtures() {
   declaration.aliases = ["Fixture owner"];
   const builtin = {
     kind: "builtin",
+    policy: "required",
     manifest: {
       id: binding.pluginId,
       version: "1.0.0",
