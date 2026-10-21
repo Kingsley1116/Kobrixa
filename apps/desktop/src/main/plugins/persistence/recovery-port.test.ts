@@ -85,6 +85,83 @@ const report: DrainReport = {
   ],
   errors: [],
 };
+
+it.each(["retry", "discard"] as const)(
+  "T5fix2 %s notifies composition only after durability and joins reconciliation",
+  async (operation) => {
+    const backend = recoveryBackendDouble(),
+      completed = vi.fn();
+    let release!: () => void,
+      notified = false;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const notify = vi.fn(async (_owner: typeof owner, result: DrainReport) => {
+      expect(result.recovery).toBe(id);
+      const row = await backend.evidence.loadRecovery(id);
+      if (operation === "retry") expect(row?.report.state).toBe("saved");
+      else expect(row).toBeNull();
+      notified = true;
+      await pending;
+    });
+    const recovery = createPersistenceRecovery({
+      coreOwner: () => owner,
+      now: () => 0,
+      wall: () => 100000,
+      actions: { claim: () => true, isClaimed: () => true, complete: completed },
+      retry: async () => ({ ...report, state: "saved", blocker: false }),
+      discard: async () => ({ ...report, state: "checkpoint-only", blocker: false }),
+      retried: notify,
+      discarded: notify,
+      backend,
+      adapter: { chooseDestination: async () => null, copyText: async () => {} },
+    });
+    const id = (await recovery.retain(owner, report)).recovery!;
+    let finished = false;
+    const work = recovery[operation](id, action).then(() => {
+      finished = true;
+    });
+    await vi.waitFor(() => expect(notified).toBe(true));
+    expect(finished).toBe(false);
+    expect(completed).not.toHaveBeenCalled();
+    release();
+    await work;
+    expect(notify).toHaveBeenCalledOnce();
+    expect(completed).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["retry", "discard"] as const)(
+  "T5fix2 failed durable %s cannot retire aggregate evidence",
+  async (operation) => {
+    const backend = recoveryBackendDouble(),
+      notify = vi.fn(async () => {});
+    const recovery = createPersistenceRecovery({
+      coreOwner: () => owner,
+      now: () => 0,
+      wall: () => 100000,
+      actions: { claim: () => true, isClaimed: () => true, complete: () => {} },
+      retry: async () => ({ ...report, state: "saved", blocker: false }),
+      discard: async () => ({ ...report, state: "checkpoint-only", blocker: false }),
+      retried: notify,
+      discarded: notify,
+      backend,
+      adapter: { chooseDestination: async () => null, copyText: async () => {} },
+    });
+    const id = (await recovery.retain(owner, report)).recovery!;
+    if (operation === "retry")
+      backend.evidence.saveRecovery = async () => {
+        throw new Error("save failed");
+      };
+    else
+      backend.evidence.removeRecovery = async () => {
+        throw new Error("remove failed");
+      };
+    await expect(recovery[operation](id, action)).rejects.toThrow("failed");
+    expect(notify).not.toHaveBeenCalled();
+    expect((await backend.evidence.loadRecovery(id))?.report.blocker).toBe(true);
+  },
+);
 it("B2-RF3: failed retry never extends the original 30-second retention", async () => {
   let now = 0;
   const retry = vi.fn(async () => report);

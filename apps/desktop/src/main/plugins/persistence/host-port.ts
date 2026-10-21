@@ -95,6 +95,17 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
   function sweep() {
     for (const [id, at] of settledAt)
       if (now() >= at + 120000) {
+        // A direct core abort does not rewrite the record service's old sealed
+        // projection. Keep its bounded identity until that projection is terminal.
+        if (
+          outcomes.get(id) === "discarded" &&
+          records
+            .admittedWrites()
+            .some(
+              (w) => w.ticket.id === id && ["receiving", "sealed", "publishing"].includes(w.state),
+            )
+        )
+          continue;
         captured.delete(id);
         outcomes.delete(id);
         settledAt.delete(id);
@@ -116,6 +127,10 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
   }
   const captured = new Map<string, PublicationTicket>(),
     outcomes = new Map<string, string>();
+  const discardedTicket = (owner: ResourceOwner, id: string) =>
+    outcomes.get(id) === "discarded" &&
+    captured.has(id) &&
+    ownerKey(captured.get(id)!.owner) === ownerKey(owner);
   const schemas = {
     ...settingsRequestSchemas,
     ...storageRequestSchemas,
@@ -128,12 +143,23 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     adapter: input.actionAdapter,
     actions: input.coreActions,
     coreOwner: sources.coreOwner,
-    discarded(owner, report) {
-      const ids = report.records.map((r) => r.id);
-      lifecycle.retireCheckpoint(owner, ids);
-      for (const id of ids) registrations.delete(JSON.stringify([ownerKey(owner), id]));
-      // Discard proves only this recovery row's outcome. Other captured tickets on
-      // the same target retain their evidence until individually known and swept.
+    retried: (owner, _report, deadline) => lifecycle.refreshRecovery(owner, deadline),
+    async discarded(owner, report, ticket) {
+      if (
+        ticket &&
+        captured.has(ticket.id) &&
+        ownerKey(captured.get(ticket.id)!.owner) === ownerKey(owner)
+      ) {
+        outcomes.set(ticket.id, "discarded");
+        settledAt.set(ticket.id, now());
+      }
+      lifecycle.retireCheckpoint(owner, report.recovery!, report.records);
+      for (const { id } of report.records) {
+        const key = JSON.stringify([ownerKey(owner), id]);
+        if (registrations.get(key)?.recovery === report.recovery) registrations.delete(key);
+      }
+      // This is a bounded read/reconciliation budget, never a new publication grant.
+      await lifecycle.refreshRecovery(owner, now() + 10000);
     },
     now,
     wall,
@@ -255,12 +281,13 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         // This independent evidence preserves the original owner even for unbound registrations.
         // It is restored into the core registry only after restart or an actual failed drain.
         const final = document.state === "final";
+        const previous = final ? await backend.evidence.loadRecovery(registration.recovery) : null;
         await backend.evidence.saveRecovery({
           id: registration.recovery,
           owner,
-          ticket: null,
+          ticket: previous?.ticket ?? null,
           sealedPin: null,
-          expiresAt: null,
+          expiresAt: previous?.expiresAt ?? null,
           report: {
             state: final ? "saved" : "checkpoint-only",
             blocker: !final,
@@ -290,7 +317,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     pendingWrites: (o) =>
       records
         .admittedWrites(o)
-        .filter((w) => ["receiving", "sealed"].includes(w.state))
+        .filter(
+          (w) => ["receiving", "sealed"].includes(w.state) && !discardedTicket(o, w.ticket.id),
+        )
         .map((w) => ({
           write: w.ticket.id,
           id: w.record.id,
@@ -301,9 +330,14 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         (t) =>
           ownerKey(t.owner) === ownerKey(o) &&
           t.target.kind === "settings" &&
-          outcomes.get(t.id) !== "committed",
+          outcomes.get(t.id) !== "committed" &&
+          !discardedTicket(o, t.id),
       ),
     async settle(ids, _deadline) {
+      ids = ids.filter((id) => {
+        const ticket = captured.get(id);
+        return !ticket || !discardedTicket(ticket.owner, id);
+      });
       await records.settle(ids);
       for (const id of ids) {
         const projection = records.admittedWrites().find((w) => w.ticket.id === id);
@@ -322,6 +356,23 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     },
     evidence: {
       ...backend.evidence,
+      async flush(barrier) {
+        const result = await backend.evidence.flush(barrier);
+        const incomplete = result.incomplete.filter(
+          (id) => !discardedTicket(barrier.scope.owner, id),
+        );
+        const unknown = result.unknown.filter((id) => !discardedTicket(barrier.scope.owner, id));
+        const resolved =
+          !incomplete.length &&
+          !unknown.length &&
+          (result.incomplete.length > 0 || result.unknown.length > 0);
+        return {
+          ...result,
+          incomplete,
+          unknown,
+          state: resolved ? ("saved" as const) : result.state,
+        };
+      },
       capture(scope, deadline) {
         sweep();
         const barrier = (backend.evidence.captureDrain ?? backend.evidence.capture)(
@@ -342,6 +393,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         .find(
           (w) =>
             w.record.id === id &&
+            !discardedTicket(o, w.ticket.id) &&
             w.retained &&
             w.state === "sealed" &&
             now() < w.retained.expiresMonotonicMs,
@@ -352,7 +404,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     },
     async recover(owner, report) {
       // StoredRecovery owns one immutable ticket/pin. Multi-target drains retain one row per target.
-      const admissions = records.admittedWrites(owner);
+      const admissions = records
+        .admittedWrites(owner)
+        .filter((w) => !discardedTicket(owner, w.ticket.id));
       const missing = admissions.filter(
         (w) => w.state === "publishing" && !report.records.some((r) => r.id === w.record.id),
       );
@@ -544,7 +598,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       pending.add(operation);
       void operation.finally(() => pending.delete(operation)).catch(() => {});
     },
-    async dispose() {
+    async dispose(closeAdmission = () => {}) {
       const closingSettings = settings.dispose();
       for (const owner of owners.values()) {
         actions.retire(owner);
@@ -555,6 +609,8 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       );
       await Promise.allSettled([...drains]);
       while (pending.size || metadata.size) await Promise.allSettled([...pending, ...metadata]);
+      // No await between observing an empty request set and sealing admission.
+      closeAdmission();
       await closingSettings;
       await actions.dispose();
       await records.close();
@@ -597,7 +653,7 @@ export async function createPersistenceHost(input: {
     bytes = 0;
   let disposal: Promise<void> | undefined;
   const counts = new Map<string, { pending: number; bytes: number }>();
-  const controllers = new Set<AbortController>();
+  const controllers = new Map<AbortController, () => boolean>();
   const readMethods = new Set([
     "settings/read",
     "settings/watch",
@@ -729,7 +785,9 @@ export async function createPersistenceHost(input: {
       source.pending++;
       source.bytes += size;
       const control = new AbortController();
-      controllers.add(control);
+      // Revalidate original owner/ticket/grant at closing; caller abort and timeout
+      // still cancel the same request independently of the host shutdown.
+      controllers.set(control, () => services.closingRequest(principal, method, params));
       const cancel = () => control.abort();
       signal.addEventListener("abort", cancel, { once: true });
       if (signal.aborted) cancel();
@@ -762,11 +820,13 @@ export async function createPersistenceHost(input: {
     dispose() {
       if (disposal) return disposal;
       disposed = true;
-      for (const controller of controllers) controller.abort();
+      for (const [controller, continues] of controllers) if (!continues()) controller.abort();
       disposal = (async () => {
         input.profile.assertHeld();
         try {
-          await services.dispose();
+          await services.dispose(() => {
+            closed = true;
+          });
         } finally {
           closed = true;
           await backend.dispose();

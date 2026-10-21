@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { RecordMeta, RecordWrite, ResourceOwner } from "@kobrixa/plugin-protocol";
 import type { ReservationEnded } from "@kobrixa/plugin-runtime";
 import { createPersistenceLifecycle, type LifecycleDependencies } from "./lifecycle.js";
+import { checkpointRecoveryId } from "./engine-port.js";
 const owner: ResourceOwner = {
   sourceKey: "builtin:test.drain",
   pluginId: "test.drain",
@@ -101,6 +102,62 @@ function fixture() {
     },
   };
 }
+
+it("T5fix2 discard cannot acknowledge a replacement open head", async () => {
+  const f = fixture();
+  const registered = await f.life.register(owner, {
+    id: record.id,
+    expectedRevision: record.revision,
+  });
+  if (!registered.ok) throw new Error("registration failed");
+  const offer = f.life.participant.freeze(owner, "shutdown", 10000);
+  const dispatch = async () => ({
+    ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] },
+  });
+  await f.life.participant.drain(offer, dispatch);
+  f.life.retireCheckpoint(owner, checkpointRecoveryId(registered.value.checkpoint));
+  f.deps.reads.stat = async () => ({
+    ...record,
+    revision: `r_${"2".repeat(32)}`,
+    checkpoint: "open",
+  });
+  f.deps.evidence.flush = async () => ({
+    state: "failed",
+    accepted: [],
+    incomplete: [record.id],
+    unknown: [],
+  });
+  await f.life.refreshRecovery(owner, 10000);
+  expect((await f.life.participant.drain(offer, dispatch)).blocker).toBe(true);
+});
+
+it("T5fix2 discarded checkpoint leaves unknown barrier evidence blocking", async () => {
+  const f = fixture();
+  const registered = await f.life.register(owner, {
+    id: record.id,
+    expectedRevision: record.revision,
+  });
+  if (!registered.ok) throw new Error("registration failed");
+  const offer = f.life.participant.freeze(owner, "shutdown", 10000);
+  const dispatch = async () => ({
+    ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] },
+  });
+  await f.life.participant.drain(offer, dispatch);
+  f.life.retireCheckpoint(owner, checkpointRecoveryId(registered.value.checkpoint));
+  f.deps.evidence.flush = async () => ({
+    state: "unknown",
+    accepted: [],
+    incomplete: [record.id],
+    unknown: ["other-ticket"],
+  });
+  await f.life.refreshRecovery(owner, 10000);
+  expect(await f.life.participant.drain(offer, dispatch)).toMatchObject({
+    state: "uncertain",
+    blocker: true,
+  });
+});
 it("B2-RF3: registration awaiting durable evidence is included in first end and cannot ack active", async () => {
   const f = fixture();
   let release!: () => void;

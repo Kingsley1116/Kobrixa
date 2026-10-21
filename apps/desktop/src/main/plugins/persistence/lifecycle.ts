@@ -1,4 +1,5 @@
 import type { FinalWriteGrant } from "./engine-port.js";
+import { checkpointRecoveryId } from "./engine-port.js";
 import { randomUUID } from "node:crypto";
 import type {
   DrainReason,
@@ -74,6 +75,8 @@ type Group = {
   token: string;
   deadline: number;
   entries: Set<Entry>;
+  targets: Set<string>;
+  discardedRecords: Map<string, string>;
   tickets: Set<string>;
   sent: Set<string>;
   retired: boolean;
@@ -104,6 +107,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         !value.run &&
         value.completed &&
         !value.completed.blocker &&
+        !value.discardedRecords.size &&
         value.completedAt !== undefined &&
         now >= value.completedAt + retention
       )
@@ -137,11 +141,16 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
   }
   function include(value: Group, entry: Entry) {
     if (!value.entries.has(entry)) {
-      if (value.entries.size >= sourceLimit) {
+      if (
+        value.entries.size >= sourceLimit ||
+        new Set([...value.targets, ...value.discardedRecords.keys(), entry.id]).size > sourceLimit
+      ) {
         deps.fenceTarget(value.owner, entry.id, deps.now());
         limit();
       }
       value.entries.add(entry);
+      value.targets.add(entry.id);
+      value.discardedRecords.delete(entry.id);
       value.revision++;
       delete value.completed;
     }
@@ -155,6 +164,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     sweep();
     const identity = ownerKey(owner);
     let value = groups.get(identity);
+    const discardedRecords = value?.discardedRecords ?? new Map<string, string>();
     if (value && !value.retired && !value.run && [...value.entries].every((e) => e.final)) {
       groups.delete(identity);
       value = undefined;
@@ -175,6 +185,8 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         token: randomUUID(),
         deadline: Math.min(deadline, deps.now() + 10000),
         entries: new Set(),
+        targets: new Set(),
+        discardedRecords,
         tickets: new Set(),
         sent: new Set(),
         retired: false,
@@ -259,6 +271,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       failed: false,
     };
     entries.set(key(owner, input.id), entry);
+    groups.get(ownerKey(owner))?.discardedRecords.delete(input.id);
     try {
       const record = await deps.record(owner, input.id);
       entry.record = record;
@@ -336,7 +349,11 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     if (target) conflict("write-in-progress");
     return "none";
   }
-  async function bounded<T>(value: Group, action: Promise<T>, fallback: T): Promise<T> {
+  async function bounded<T>(
+    value: Pick<Group, "deadline">,
+    action: Promise<T>,
+    fallback: T,
+  ): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -349,7 +366,8 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       clearTimeout(timer);
     }
   }
-  async function report(value: Group): Promise<DrainReport> {
+  async function report(value: Group, deadline = value.deadline): Promise<DrainReport> {
+    const budget = { deadline };
     const records: DrainReport["records"] = [];
     let uncertain = false;
     for (const entry of value.entries) {
@@ -358,7 +376,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         continue;
       }
       const evidence = await bounded<RecordMeta | undefined>(
-        value,
+        budget,
         Promise.resolve().then(() => deps.reads.stat(value.owner, entry.id)),
         undefined,
       );
@@ -383,7 +401,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       for (const write of deps.pendingWrites(value.owner)) {
         if (records.some((r) => r.id === write.id)) continue;
         const evidence = await bounded<RecordMeta | undefined>(
-          value,
+          budget,
           Promise.resolve().then(() => deps.reads.stat(value.owner, write.id)),
           undefined,
         );
@@ -404,17 +422,50 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     // Capture final grant-scoped submissions synchronously before awaiting any flush.
     const scopes: PersistenceScope[] = value.retired
       ? [{ kind: "namespace", owner: value.owner }]
-      : [...value.entries].map((entry) => ({
+      : [...value.targets].map((id) => ({
           kind: "target",
           owner: value.owner,
-          recordId: entry.id,
+          recordId: id,
         }));
     const finalBarriers = scopes.map((scope) => deps.evidence.capture(scope, value.deadline));
+    for (const barrier of finalBarriers)
+      for (const ticket of deps.evidence.tickets(barrier)) value.tickets.add(ticket.id);
     const initialBarriers = value.barriers.splice(0);
     const outcomes = await bounded(
-      value,
+      budget,
       Promise.all(
-        [...initialBarriers, ...finalBarriers].map((barrier) => deps.evidence.flush(barrier)),
+        [...initialBarriers, ...finalBarriers].map(async (barrier) => {
+          const result = await deps.evidence.flush(barrier);
+          const discarded = new Set<string>();
+          for (const id of result.incomplete) {
+            const revision = value.discardedRecords.get(id);
+            if (!revision || entries.has(key(value.owner, id))) continue;
+            const current = await bounded<RecordMeta | undefined>(
+              budget,
+              Promise.resolve().then(() => deps.reads.stat(value.owner, id)),
+              undefined,
+            );
+            if (
+              current?.revision === revision &&
+              !entries.has(key(value.owner, id)) &&
+              value.discardedRecords.get(id) === revision
+            )
+              discarded.add(id);
+          }
+          const incomplete = result.incomplete.filter((id) => !discarded.has(id));
+          const unknown = result.unknown;
+          // Explicit, durably removed recovery resolves only its exact evidence.
+          const resolved =
+            !incomplete.length &&
+            !unknown.length &&
+            (result.incomplete.length > 0 || result.unknown.length > 0);
+          return {
+            ...result,
+            incomplete,
+            unknown,
+            state: resolved ? ("saved" as const) : result.state,
+          };
+        }),
       ),
       [],
     );
@@ -497,7 +548,11 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       delete value.rearm;
     }
   }
-  function start(value: Group, dispatch?: DrainDispatcher): Promise<DrainReport> {
+  function start(
+    value: Group,
+    dispatch?: DrainDispatcher,
+    reconciliationDeadline?: number,
+  ): Promise<DrainReport> {
     if (value.run) return value.run;
     if (value.completed) {
       const cached = value.completed;
@@ -525,7 +580,16 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       return Promise.resolve(structuredClone(cached));
     }
     const revision = value.revision;
-    value.run = run(value, dispatch)
+    const operation =
+      reconciliationDeadline === undefined
+        ? run(value, dispatch)
+        : (async () => {
+            const budget = { deadline: reconciliationDeadline };
+            await bounded(budget, deps.settle([...value.tickets], value.deadline), undefined);
+            await bounded(budget, Promise.all([...value.entries].map((entry) => entry.ready)), []);
+            return report(value, reconciliationDeadline);
+          })();
+    value.run = operation
       .then((result) => {
         if (revision === value.revision) {
           value.completed = structuredClone(result);
@@ -637,32 +701,40 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     participant,
     register,
     authorize,
-    retireCheckpoint(owner: ResourceOwner, ids: readonly string[]) {
+    async refreshRecovery(owner: ResourceOwner, deadline: number) {
       const value = groups.get(ownerKey(owner));
-      for (const id of ids) {
-        const entry = entries.get(key(owner, id));
-        if (!entry) continue;
-        entries.delete(key(owner, id));
+      if (!value) return;
+      value.revision++;
+      delete value.completed;
+      if (value.run) await value.run;
+      // Recovery reconciles evidence without dispatching callbacks or altering
+      // the original grant, token, publication deadline or staging retention.
+      await start(value, undefined, deadline);
+    },
+    retireCheckpoint(
+      owner: ResourceOwner,
+      recovery: string,
+      resolvedRecords: DrainReport["records"] = [],
+    ) {
+      const value = groups.get(ownerKey(owner));
+      const candidates = new Set([
+        ...[...entries.values()].filter((entry) => ownerKey(entry.owner) === ownerKey(owner)),
+        ...(value?.entries ?? []),
+      ]);
+      for (const entry of candidates) {
+        if (checkpointRecoveryId(entry.handle) !== recovery) continue;
+        const current = entries.get(key(owner, entry.id));
+        if (current === entry) entries.delete(key(owner, entry.id));
         value?.entries.delete(entry);
+        const revision =
+          resolvedRecords.find((r) => r.id === entry.id)?.committedRevision ??
+          entry.record?.revision;
+        if ((!current || current === entry) && revision)
+          value?.discardedRecords.set(entry.id, revision);
       }
       if (value) {
         value.revision++;
-        if (
-          !value.entries.size &&
-          value.completed &&
-          !value.completed.pendingSettings &&
-          value.completed.state !== "uncertain"
-        ) {
-          value.completed = {
-            state: "saved",
-            blocker: false,
-            pendingSettings: false,
-            records: [],
-            errors: [],
-          };
-          value.completedAt = deps.now();
-        } else delete value.completed;
-        // Revocation stays recorded; unresolved scopes require a fresh reconciliation.
+        delete value.completed;
       }
     },
     finalGrant(owner: ResourceOwner, input: RecordWrite): FinalWriteGrant | undefined {

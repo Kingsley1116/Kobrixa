@@ -1,9 +1,11 @@
 import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import { createHash, randomUUID } from "node:crypto";
-import { expect, it, vi } from "vitest";
+import { expect, it, vi, onTestFinished } from "vitest";
+import type { DrainRequest, StorageRequestMap } from "@kobrixa/plugin-protocol";
 import { createPersistenceHost } from "./host-port.js";
 import type { PersistenceBackend, PublicationTicket, StoredRecovery } from "./engine-port.js";
 import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
+import type { DrainDispatcher } from "@kobrixa/plugin-runtime";
 const owner = {
   sourceKey: "builtin:test.host",
   pluginId: "test.host",
@@ -465,6 +467,591 @@ function checkpointFixture() {
   f.input.coreActions = { claim: () => true, isClaimed: () => true, complete() {} };
   return { ...f, rows, record: () => record };
 }
+
+function pause() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+function finalInput(
+  record: RecordMeta,
+  request: DrainRequest,
+): StorageRequestMap["storage/beginWrite"]["params"] {
+  return {
+    target: { mode: "replace", id: record.id, expectedRevision: record.revision },
+    kind: record.kind,
+    schemaVersion: 1,
+    label: "",
+    mediaType: "text/plain",
+    byteLength: 0,
+    sha256: record.sha256,
+    checkpoint: { handle: request.checkpoints[0]!.checkpoint, phase: "final" },
+    drainToken: request.token,
+  };
+}
+const coreAction = () => ({
+  actionToken: randomUUID(),
+  scope: { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() },
+});
+
+it.each([false, true])(
+  "T5fix2 preserves in-flight final admission unless the caller cancels (%s)",
+  async (cancel) => {
+    const f = checkpointFixture(),
+      entered = pause(),
+      release = pause(),
+      caller = new AbortController();
+    let result: StorageRequestMap["storage/beginWrite"]["result"] | undefined;
+    f.backend.engine.reserveFinal = vi.fn(async (ticket, size) => {
+      await f.backend.engine.reserve(ticket, size);
+      entered.resolve();
+      await release.promise;
+    });
+    f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      result = await host.request(
+        principal,
+        "storage/beginWrite",
+        finalInput(f.record(), request),
+        caller.signal,
+      );
+      if (result.ok) {
+        expect(
+          (
+            await host.request(
+              principal,
+              "storage/sealWrite",
+              { write: result.value.write },
+              caller.signal,
+            )
+          ).ok,
+        ).toBe(true);
+        expect(
+          (
+            await host.request(
+              principal,
+              "storage/commitWrite",
+              { write: result.value.write, drainToken: request.token },
+              caller.signal,
+            )
+          ).ok,
+        ).toBe(true);
+      }
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const host = await createPersistenceHost(f.input);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/registerCheckpoint",
+          { id: f.record().id, expectedRevision: f.record().revision },
+          caller.signal,
+        )
+      ).ok,
+    ).toBe(true);
+    const offer = host.participant.freeze(owner, "shutdown", 10000);
+    const draining = host.participant.drain(offer, f.input.composition.dispatchDrain);
+    await entered.promise;
+    const closing = host.dispose();
+    if (cancel) caller.abort();
+    expect(f.backend.dispose).not.toHaveBeenCalled();
+    release.resolve();
+    const report = await draining;
+    await closing;
+    if (cancel) expect(result).toMatchObject({ error: { code: "PLUGIN_E_CANCELLED" } });
+    else {
+      expect(result?.ok).toBe(true);
+      expect(report.blocker).toBe(false);
+    }
+    expect(f.backend.engine.reserveFinal).toHaveBeenCalledOnce();
+    expect(f.input.composition.dispatchDrain).toHaveBeenCalledOnce();
+  },
+);
+
+it("T5fix2 closing still cancels an ordinary in-flight begin", async () => {
+  const f = checkpointFixture(),
+    entered = pause(),
+    release = pause();
+  f.backend.engine.reserve = async () => {
+    entered.resolve();
+    await release.promise;
+  };
+  const host = await createPersistenceHost(f.input),
+    record = f.record();
+  const beginning = host.request(
+    principal,
+    "storage/beginWrite",
+    {
+      target: { mode: "create" },
+      kind: record.kind,
+      schemaVersion: 1,
+      label: "",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: record.sha256,
+    },
+    new AbortController().signal,
+  );
+  await entered.promise;
+  const closing = host.dispose();
+  release.resolve();
+  expect((await beginning).ok).toBe(false);
+  await closing;
+});
+
+it("T5fix2 seals request admission before asynchronous pin/backend cleanup", async () => {
+  const f = checkpointFixture(),
+    entered = pause(),
+    release = pause(),
+    signal = new AbortController().signal;
+  const pin = randomUUID();
+  f.backend.reads.open = async () => pin;
+  f.backend.reads.close = async (_owner, id) => {
+    if (id === pin) {
+      entered.resolve();
+      await release.promise;
+    }
+  };
+  const host = await createPersistenceHost(f.input),
+    record = f.record();
+  expect(
+    (
+      await host.request(
+        principal,
+        "storage/openRead",
+        { id: record.id, expectedRevision: record.revision, schemaVersion: record.schemaVersion },
+        signal,
+      )
+    ).ok,
+  ).toBe(true);
+  const begin = await host.request(
+    principal,
+    "storage/beginWrite",
+    {
+      target: { mode: "create" },
+      kind: record.kind,
+      schemaVersion: 1,
+      label: "",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: record.sha256,
+    },
+    signal,
+  );
+  if (!begin.ok) throw new Error("admission failed");
+  expect(
+    (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal)).ok,
+  ).toBe(true);
+  const closing = host.dispose();
+  await entered.promise;
+  const late = await host.request(
+    principal,
+    "storage/writeStatus",
+    { write: begin.value.write },
+    signal,
+  );
+  release.resolve();
+  await closing;
+  expect(late).toMatchObject({ error: { code: "PLUGIN_E_SHUTTING_DOWN" } });
+});
+
+it.each([false, true])(
+  "T5fix2 preserves an in-flight final short write unless caller cancels (%s)",
+  async (cancel) => {
+    const f = checkpointFixture(),
+      entered = pause(),
+      release = pause(),
+      caller = new AbortController();
+    let chunk: StorageRequestMap["storage/writeChunk"]["result"] | undefined;
+    f.backend.engine.append = async (ticket, offset, bytes) => {
+      if (ticket.metadata.kind !== "record") return offset + bytes.length;
+      if (offset === 0) {
+        entered.resolve();
+        await release.promise;
+      }
+      return offset + 1;
+    };
+    f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      const begin = await host.request(
+        principal,
+        "storage/beginWrite",
+        {
+          ...finalInput(f.record(), request),
+          byteLength: 2,
+          sha256: createHash("sha256").update("xy").digest("hex"),
+        },
+        caller.signal,
+      );
+      if (!begin.ok) throw new Error("final admission failed");
+      chunk = await host.request(
+        principal,
+        "storage/writeChunk",
+        { write: begin.value.write, offset: 0, data: Buffer.from("xy").toString("base64") },
+        caller.signal,
+      );
+      if (chunk.ok) {
+        expect(
+          (
+            await host.request(
+              principal,
+              "storage/sealWrite",
+              { write: begin.value.write },
+              caller.signal,
+            )
+          ).ok,
+        ).toBe(true);
+        expect(
+          (
+            await host.request(
+              principal,
+              "storage/commitWrite",
+              { write: begin.value.write, drainToken: request.token },
+              caller.signal,
+            )
+          ).ok,
+        ).toBe(true);
+      }
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const host = await createPersistenceHost(f.input);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/registerCheckpoint",
+          { id: f.record().id, expectedRevision: f.record().revision },
+          caller.signal,
+        )
+      ).ok,
+    ).toBe(true);
+    const draining = host.participant.drain(
+      host.participant.freeze(owner, "shutdown", 10000),
+      f.input.composition.dispatchDrain,
+    );
+    await entered.promise;
+    const closing = host.dispose();
+    if (cancel) caller.abort();
+    release.resolve();
+    const result = await draining;
+    await closing;
+    if (cancel) expect(chunk).toMatchObject({ error: { code: "PLUGIN_E_CANCELLED" } });
+    else {
+      expect(chunk).toMatchObject({ ok: true, value: { receivedBytes: 2 } });
+      expect(result.blocker).toBe(false);
+    }
+    expect(f.input.composition.dispatchDrain).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([0, 11000])(
+  "T5fix2 successful retry refreshes aggregate without redispatch or deadline renewal (%s)",
+  async (retryAt) => {
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    let now = 0,
+      committed = false;
+    const epoch = Date.now(),
+      clock = vi.spyOn(Date, "now").mockImplementation(() => epoch + now);
+    onTestFinished(() => clock.mockRestore());
+    f.input.now = () => now;
+    const publish = f.backend.engine.publish;
+    f.backend.engine.reconcile = async (ticket) =>
+      ticket.metadata.kind === "record" && !committed
+        ? { disposition: "not-committed" }
+        : publish(ticket);
+    f.backend.engine.publishRecovery = vi.fn(async (ticket) => {
+      committed = true;
+      return publish(ticket);
+    });
+    const barriers = new Set<string>();
+    const capture = f.backend.evidence.capture;
+    f.backend.evidence.capture = (scope, deadline) => {
+      const b = capture(scope, deadline);
+      barriers.add(b.id);
+      return b;
+    };
+    f.backend.evidence.flush = vi.fn<PersistenceBackend["evidence"]["flush"]>(async (barrier) => {
+      if (!barriers.delete(barrier.id)) throw new Error("consumed barrier");
+      return { state: "saved", accepted: [], incomplete: [], unknown: [] };
+    });
+    f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      const begin = await host.request(
+        principal,
+        "storage/beginWrite",
+        finalInput(f.record(), request),
+        signal,
+      );
+      if (!begin.ok) throw new Error("final admission failed");
+      expect(
+        (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal))
+          .ok,
+      ).toBe(true);
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const host = await createPersistenceHost(f.input);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/registerCheckpoint",
+          { id: f.record().id, expectedRevision: f.record().revision },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    const offer = host.participant.freeze(owner, "shutdown", 10000);
+    const before = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    expect(before.state).toBe("retryable");
+    const original = structuredClone(f.rows.get(before.recovery!)!);
+    now = retryAt;
+    expect((await host.participant.retry(before.recovery!, coreAction())).state).toBe("saved");
+    const after = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    expect(after).toMatchObject({ state: "saved", blocker: false });
+    expect(f.rows.get(before.recovery!)?.ticket).toEqual(original.ticket);
+    expect(f.rows.get(before.recovery!)?.expiresAt).toBe(original.expiresAt);
+    expect(host.participant.freeze(owner, "shutdown", 50000).deadlineMonotonicMs).toBe(10000);
+    expect(f.input.composition.dispatchDrain).toHaveBeenCalledOnce();
+    expect(f.backend.engine.publishRecovery).toHaveBeenCalledOnce();
+    expect(f.backend.evidence.flush).toHaveBeenCalledTimes(3);
+    await host.dispose();
+    expect(f.input.composition.dispatchDrain).toHaveBeenCalledOnce();
+    expect(barriers.size).toBe(0);
+  },
+);
+
+it.each([false, true])(
+  "T5fix2 discard removes only the exact historical checkpoint (%s)",
+  async (delayed) => {
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    const reservationId = randomUUID(),
+      sessionId = randomUUID();
+    let active = true;
+    f.input.reservations.validate = () =>
+      active ? { owner, reservationId, sessionId, providerGeneration: 1 } : null;
+    const host = await createPersistenceHost(f.input);
+    const a = await host.request(
+      principal,
+      "storage/registerCheckpoint",
+      { id: f.record().id, expectedRevision: f.record().revision, reservation: reservationId },
+      signal,
+    );
+    if (!a.ok) throw new Error("registration failed");
+    active = false;
+    const offer = host.participant.endReservation(
+      {
+        owner,
+        reservationId,
+        sessionId,
+        providerGeneration: 1,
+        reason: "released",
+        lastSequence: 1,
+        endedMonotonicMs: 0,
+        drain: { owner, reservationId, lastSequence: 1, expiresMonotonicMs: 10000 },
+      },
+      10000,
+    )!;
+    const report = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    const entered = pause(),
+      release = pause(),
+      remove = f.backend.evidence.removeRecovery;
+    f.backend.evidence.removeRecovery = async (id) => {
+      entered.resolve();
+      if (delayed) await release.promise;
+      await remove(id);
+    };
+    const discarding = delayed
+      ? host.participant.discard(report.recovery!, coreAction())
+      : undefined;
+    if (delayed) await entered.promise;
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/abandonCheckpoint",
+          { checkpoint: a.value.checkpoint },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    const b = await host.request(
+      principal,
+      "storage/registerCheckpoint",
+      { id: f.record().id, expectedRevision: f.record().revision },
+      signal,
+    );
+    if (!b.ok) throw new Error("replacement registration failed");
+    expect(b.value.checkpoint).not.toBe(a.value.checkpoint);
+    release.resolve();
+    expect(
+      (await (discarding ?? host.participant.discard(report.recovery!, coreAction()))).blocker,
+    ).toBe(false);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/abandonCheckpoint",
+          { checkpoint: b.value.checkpoint },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    expect(f.rows.size).toBe(1);
+    await host.dispose();
+  },
+);
+
+it("T5fix2 discarding one checkpoint preserves a different sealed write blocker", async () => {
+  const f = checkpointFixture(),
+    signal = new AbortController().signal,
+    publish = f.backend.engine.publish;
+  f.backend.engine.reconcile = async (ticket) =>
+    ticket.metadata.kind === "record" ? { disposition: "not-committed" } : publish(ticket);
+  const host = await createPersistenceHost(f.input),
+    record = f.record();
+  expect(
+    (
+      await host.request(
+        principal,
+        "storage/registerCheckpoint",
+        { id: record.id, expectedRevision: record.revision },
+        signal,
+      )
+    ).ok,
+  ).toBe(true);
+  const begin = await host.request(
+    principal,
+    "storage/beginWrite",
+    {
+      target: { mode: "create" },
+      kind: record.kind,
+      schemaVersion: 1,
+      label: "",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: record.sha256,
+    },
+    signal,
+  );
+  if (!begin.ok) throw new Error("ordinary admission failed");
+  expect(
+    (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal)).ok,
+  ).toBe(true);
+  const offer = host.participant.freeze(owner, "shutdown", 10000);
+  const before = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+  expect(before.records).toHaveLength(2);
+  expect((await host.participant.discard(before.recovery!, coreAction())).blocker).toBe(false);
+  const after = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+  expect(after.blocker).toBe(true);
+  expect(after.records.map((r) => r.id)).toEqual([begin.value.id]);
+  expect(host.participant.recoverySnapshot().items).toHaveLength(1);
+  await host.dispose();
+});
+
+it.each(["other-checkpoint", "unknown-barrier"])(
+  "T5fix2 retry preserves unrelated %s evidence",
+  async (kind) => {
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    const other = { ...f.record(), id: randomUUID(), checkpoint: "open" as const };
+    f.backend.reads.stat = async (_owner, id) => (id === other.id ? other : f.record());
+    let committed = false;
+    const publish = f.backend.engine.publish;
+    f.backend.engine.reconcile = async (t) =>
+      t.metadata.kind === "record" && !committed ? { disposition: "not-committed" } : publish(t);
+    f.backend.engine.publishRecovery = async (t) => {
+      committed = true;
+      return publish(t);
+    };
+    f.backend.evidence.flush = async () =>
+      kind === "unknown-barrier" && committed
+        ? { state: "unknown", accepted: [], incomplete: [], unknown: ["unrelated-ticket"] }
+        : { state: "saved", accepted: [], incomplete: [], unknown: [] };
+    f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      const begin = await host.request(
+        principal,
+        "storage/beginWrite",
+        finalInput(f.record(), request),
+        signal,
+      );
+      if (!begin.ok) throw new Error("final begin failed");
+      expect(
+        (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal))
+          .ok,
+      ).toBe(true);
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const host = await createPersistenceHost(f.input);
+    for (const record of kind === "other-checkpoint" ? [f.record(), other] : [f.record()])
+      expect(
+        (
+          await host.request(
+            principal,
+            "storage/registerCheckpoint",
+            { id: record.id, expectedRevision: record.revision },
+            signal,
+          )
+        ).ok,
+      ).toBe(true);
+    const offer = host.participant.freeze(owner, "shutdown", 10000);
+    const before = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    expect((await host.participant.retry(before.recovery!, coreAction())).state).toBe("saved");
+    const after = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    expect(after.blocker).toBe(true);
+    expect(after.records.find((r) => r.id === f.record().id)?.final).toBe(true);
+    if (kind === "other-checkpoint")
+      expect(after.records.find((r) => r.id === other.id)?.final).toBe(false);
+    else expect(after.state).toBe("uncertain");
+    expect(f.input.composition.dispatchDrain).toHaveBeenCalledOnce();
+    await host.dispose();
+  },
+);
+
+it("T5fix2 discarded sealed identity stays resolved after terminal group retention", async () => {
+  const f = checkpointFixture(),
+    signal = new AbortController().signal;
+  let now = 0;
+  f.input.now = () => now;
+  const publish = f.backend.engine.publish;
+  f.backend.engine.reconcile = async (t) =>
+    t.metadata.kind === "record" ? { disposition: "not-committed" } : publish(t);
+  const host = await createPersistenceHost(f.input),
+    record = f.record();
+  const begin = await host.request(
+    principal,
+    "storage/beginWrite",
+    {
+      target: { mode: "create" },
+      kind: record.kind,
+      schemaVersion: 1,
+      label: "",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: record.sha256,
+    },
+    signal,
+  );
+  if (!begin.ok) throw new Error("admission failed");
+  expect(
+    (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal)).ok,
+  ).toBe(true);
+  const offer = host.participant.freeze(owner, "shutdown", 10000);
+  const before = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+  expect((await host.participant.discard(before.recovery!, coreAction())).blocker).toBe(false);
+  expect((await host.participant.drain(offer, f.input.composition.dispatchDrain)).blocker).toBe(
+    false,
+  );
+  now = 120001;
+  const again = await host.participant.drain(
+    host.participant.freeze(owner, "shutdown", now),
+    f.input.composition.dispatchDrain,
+  );
+  expect(again.blocker).toBe(false);
+  expect(host.participant.recoverySnapshot().items).toHaveLength(0);
+  await host.dispose();
+});
 
 it.each([false, true])(
   "T5fix shutdown permits the original final continuation (already draining=%s)",

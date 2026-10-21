@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ResourceOwner, Handle, PersistenceResult } from "@kobrixa/plugin-protocol";
-import type { PersistenceBackend, StoredRecovery } from "./engine-port.js";
+import type { PersistenceBackend, StoredRecovery, PublicationTicket } from "./engine-port.js";
 import type { PersistenceActionAdapter, ExportDestination } from "./actions.js";
 import type { ExportOutcome } from "./engine-port.js";
 import type {
@@ -20,7 +20,12 @@ type Dependencies = {
   backend: PersistenceBackend;
   adapter: PersistenceActionAdapter;
   coreOwner(input: { sourceKey: string; scope: CoreWindowScope }): ResourceOwner | null;
-  discarded?(owner: ResourceOwner, report: DrainReport): void;
+  retried?(owner: ResourceOwner, report: DrainReport, deadline: number): Promise<void>;
+  discarded?(
+    owner: ResourceOwner,
+    report: DrainReport,
+    ticket: PublicationTicket | null,
+  ): Promise<void>;
 };
 export interface PersistenceRecoveryHostPort {
   snapshot(): PersistenceRecoverySnapshot;
@@ -230,11 +235,8 @@ export function createPersistenceRecovery(deps: Dependencies) {
       const entry = checked(id, action, "persistence-retry");
       try {
         if (entry.report.state !== "retryable" || deps.now() >= entry.expires) stale();
-        const result = await deps.retry(
-          entry.owner,
-          entry.report,
-          Math.min(entry.expires, deps.now() + 10000),
-        );
+        const deadline = Math.min(entry.expires, deps.now() + 10000);
+        const result = await deps.retry(entry.owner, entry.report, deadline);
         entry.report = structuredClone(result);
         entry.report.recovery = entry.id;
         for (const record of entry.report.records)
@@ -243,7 +245,9 @@ export function createPersistenceRecovery(deps: Dependencies) {
         expire(entry);
         revision++;
         await persist(entry);
-        return structuredClone(entry.report);
+        const saved = structuredClone(entry.report);
+        await deps.retried?.(entry.owner, saved, deadline);
+        return saved;
       } finally {
         deps.actions.complete(action);
       }
@@ -253,14 +257,17 @@ export function createPersistenceRecovery(deps: Dependencies) {
       try {
         if (exporting.has(id) || (await reconcileExport(id))?.disposition === "unknown")
           return { ...entry.report, state: "uncertain" as const, blocker: true };
+        const ticket =
+          entry.evidence?.ticket ?? (await deps.backend.evidence.loadRecovery(id))?.ticket ?? null;
         const report = await deps.discard(entry.owner, entry.report);
+        report.recovery = id;
         // Unknown dispatch remains a blocker even after a user's discard request.
         entry.report = report;
         revision++;
         if (!report.blocker) {
           await deps.backend.evidence.removeRecovery(id);
           entries.delete(id);
-          deps.discarded?.(entry.owner, report);
+          await deps.discarded?.(entry.owner, report, ticket);
           changed();
         } else await persist(entry);
         return structuredClone(report);
