@@ -18,8 +18,38 @@ export class Sampler {
       read: () => Promise<TelemetryFrame>;
       busy: () => boolean;
     },
+    continuity?: { origin: number; sequence: number; revision: number },
   ) {
-    this.#origin = input.now();
+    this.#origin = continuity?.origin ?? input.now();
+    this.#sequence = continuity?.sequence ?? 0;
+    this.#revision = continuity?.revision ?? 0;
+  }
+  /** Carry only the same-session clock; no cached frame, consumer or demand. */
+  restart(): Sampler {
+    if (!this.#closed || this.#pending) throw new Error("Sampler not settled");
+    return new Sampler(this.input, {
+      origin: this.#origin,
+      sequence: this.#sequence,
+      revision: this.#revision,
+    });
+  }
+  async settled(deadline: number): Promise<void> {
+    if (!this.#pending) return;
+    let timer: ReturnType<typeof setTimeout>;
+    try {
+      await Promise.race([
+        this.#pending.catch(() => {}),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Sampler deadline")),
+            Math.max(0, deadline - this.input.now()),
+          );
+          timer.unref();
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer!);
+    }
   }
   snapshot(): ReadSnapshot {
     const ageMs = this.#receipt === null ? null : Math.max(0, this.input.now() - this.#receipt);

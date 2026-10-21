@@ -118,6 +118,12 @@ type Session = {
   lane: ExchangeLane;
   sampler: Sampler;
   quiescence: SessionQuiescence | null;
+  suspendOnly: boolean;
+  resumeEvidence?: {
+    receipt: SessionQuiescence;
+    disposition: DeviceDisposition;
+    recovery: Session["recoveryDisposition"];
+  };
   users: Set<string>;
   unregister: () => void;
 };
@@ -136,6 +142,7 @@ async function settleRecovery(
   current: Session,
   original: Promise<DeviceDisposition>,
   close = false,
+  observe?: (disposition: DeviceDisposition, recovery: Session["recoveryDisposition"]) => void,
 ): Promise<DeviceDisposition> {
   for (;;) {
     const recovery = current.recoveryDisposition;
@@ -145,6 +152,8 @@ async function settleRecovery(
     // while its caller awaits storage or process exit. Existing recovery is done.
     if (close && disposition.stopConfirmed && disposition.journalCommitted)
       current.recoveryClosed = true;
+    // Record wake evidence in the same turn as the recovery-identity check.
+    observe?.(disposition, recovery);
     return disposition;
   }
 }
@@ -403,6 +412,7 @@ export function createBroker(
       );
     },
   });
+  const intentOwners = new Map<string, ResourceOwner>();
   const intent = new IntentRegistry(input.now, (scope) => operations.stopScope(scope));
   const channels = new Map<
     string,
@@ -502,14 +512,73 @@ export function createBroker(
       progress: () => {},
       onStop: () => {},
     });
+  const publishSources = (current: Session, raw: SourceCatalog) => {
+    const sources = sourceCatalogSchema.parse(raw);
+    if (
+      session !== current ||
+      sources.sessionId !== current.snapshot.sessionId ||
+      sources.sourceRevision < current.sources.sourceRevision
+    )
+      return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
+    if (sources.sourceRevision !== current.sources.sourceRevision) {
+      // End pinned recordings before any frame with replacement source identities
+      // is published. Consumers fetch the complete retained catalog on control.
+      reservations.endSession(current.snapshot.sessionId, "source-changed", true);
+      coreReservations.endSession(current.snapshot.sessionId, "source-changed", true);
+      current.sources = sources;
+      current.snapshot.sourceRevision = sources.sourceRevision;
+      current.snapshot.revision++;
+      changed(true);
+    }
+  };
+  const makeSampler = (id: string, lane: ExchangeLane, get: () => Session, previous?: Sampler) => {
+    const sampler =
+      previous?.restart() ??
+      new Sampler({
+        sessionId: id,
+        now: input.now,
+        busy: () => lane.foreground !== null,
+        read: async () => {
+          const current = get(),
+            ctx = contexts(samplerPrincipal, current, "passive-read", 10000);
+          const frame = telemetryFrameSchema.parse(
+            value(await current.provider.read(current.connection.key, ctx.work)),
+          );
+          ctx.work.assertContinuation("read");
+          if (frame.sourceRevision !== current.sources.sourceRevision) {
+            const sources = value(await current.provider.sources(current.connection.key, ctx.work));
+            ctx.work.assertContinuation("read");
+            publishSources(current, sources);
+            // A second physical change during catalog reconciliation is not a usable
+            // sample. The next explicit read can sample the newly retained sources.
+            if (frame.sourceRevision !== current.sources.sourceRevision)
+              return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "source-changed");
+          }
+          return frame;
+        },
+      });
+    sampler.subscribe((frame) => {
+      reservations.append(frame);
+      coreReservations.append(frame);
+    });
+    return sampler;
+  };
   const finishSession = (
     current: Session,
     reason: "disconnected" | "suspended" | "core-disconnect",
     recoveryFollows = false,
   ) => {
+    current.suspendOnly = reason === "suspended";
+    delete current.resumeEvidence;
     current.snapshot.state = reason === "disconnected" ? "disconnected" : "disconnecting";
     current.snapshot.revision++;
     current.sampler.dispose();
+    coreTelemetry.dispose();
+    for (const [id, row] of [...subscriptions])
+      if (row.params.topic === "telemetry" && row.params.sessionId === current.snapshot.sessionId)
+        events.unsubscribe(row.owner, id);
+    for (const owner of intentOwners.values()) intent.retire(owner);
+    intentOwners.clear();
     if (reason === "disconnected")
       notifyLifecycle({
         kind: "lost",
@@ -522,19 +591,32 @@ export function createBroker(
     coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
+    // Passive I/O also has to cross its original boundary before a wake can
+    // admit a fresh sampler. A timed-out lane remains quarantined.
+    const deadline = input.now() + 15000;
+    promises.push(
+      Promise.all([current.lane.drain(deadline), current.sampler.settled(deadline)]).then(
+        () => ({ stopConfirmed: !current.lane.quarantined, journalCommitted: true, faultIds: [] }),
+        () => ({ stopConfirmed: false, journalCommitted: true, faultIds: [] }),
+      ),
+    );
     for (const operation of legacy.values())
       if (operation.session === current.snapshot.sessionId) {
         void operation.cancel();
         promises.push(operation.done);
       }
     const original = merge(promises);
-    return {
+    const receipt: SessionQuiescence = {
       sessionId: current.snapshot.sessionId,
       ended,
       get settled() {
-        return settleRecovery(current, original);
+        return settleRecovery(current, original, false, (disposition, recovery) => {
+          if (current.quiescence === receipt)
+            current.resumeEvidence = { receipt, disposition, recovery };
+        });
       },
     };
+    return receipt;
   };
   const sessions: DeviceBrokerPort["sessions"] = {
     quiesce(id, cause) {
@@ -548,6 +630,7 @@ export function createBroker(
       )
         actionFailure();
       if (!current.quiescence) current.quiescence = finishSession(current, cause.reason);
+      if (cause.reason !== "suspended") current.suspendOnly = false;
       return current.quiescence;
     },
     async disconnect(id, action) {
@@ -558,6 +641,7 @@ export function createBroker(
           actionFailure();
         const quiescence = current.quiescence;
         if (!quiescence) return actionFailure();
+        current.suspendOnly = false;
         const disposition = await settleRecovery(current, quiescence.settled, true);
         if (!disposition.stopConfirmed || !disposition.journalCommitted)
           return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "readback-failed", "unknown");
@@ -585,8 +669,44 @@ export function createBroker(
       }
     },
     resume(id) {
-      if (session?.snapshot.sessionId !== id) return;
-      session.quiescence ??= finishSession(session, "suspended");
+      const current = session,
+        evidence = current?.resumeEvidence;
+      if (
+        !current ||
+        current.snapshot.sessionId !== id ||
+        closing ||
+        !current.suspendOnly ||
+        !evidence ||
+        evidence.receipt !== current.quiescence ||
+        evidence.recovery !== current.recoveryDisposition ||
+        !evidence.disposition.stopConfirmed ||
+        !evidence.disposition.journalCommitted ||
+        evidence.disposition.faultIds.length ||
+        current.lane.quarantined ||
+        current.lane.occupied ||
+        current.lane.foreground !== null
+      )
+        return;
+      const journal = input.journal.snapshot();
+      if (journal.journalHealth !== "ready" || journal.blockers.length) return;
+      try {
+        input.profile.assertHeld();
+        if (providers.get(current.provider.id).generation !== current.generation) return;
+        current.provider.describe(current.connection.key);
+      } catch {
+        return;
+      }
+      try {
+        current.sampler = makeSampler(id, current.lane, () => current, current.sampler);
+      } catch {
+        return;
+      }
+      current.quiescence = null;
+      current.suspendOnly = false;
+      delete current.resumeEvidence;
+      current.snapshot.state = "connected";
+      current.snapshot.revision++;
+      changed();
     },
   };
   const resourceDriver: ResourceDriver = {
@@ -601,6 +721,7 @@ export function createBroker(
       events.disposeOwner(owner);
       channels.delete(resourceOwnerKey(owner));
       intent.retire(owner);
+      intentOwners.delete(resourceOwnerKey(owner));
       const ends = reservations.endOwner(
         owner,
         reason === "renderer-lost" ? "renderer-lost" : "retired",
@@ -623,6 +744,7 @@ export function createBroker(
       const current = session;
       if (!current || current.provider.id !== id || current.generation !== generation) return [];
       current.quiescence ??= finishSession(current, "disconnected");
+      current.suspendOnly = false;
       return [settleRecovery(current, current.quiescence.settled, true)];
     },
     revokeAll() {
@@ -632,6 +754,7 @@ export function createBroker(
       events.dispose();
       if (!session) return [];
       session.quiescence ??= finishSession(session, "suspended");
+      session.suspendOnly = false;
       return [settleRecovery(session, session.quiescence.settled, true)];
     },
   };
@@ -1015,20 +1138,7 @@ export function createBroker(
           recording: false,
           sourceRevision: 1,
         };
-        const sampler = new Sampler({
-          sessionId: id,
-          now: input.now,
-          busy: () => lane.foreground !== null,
-          read: async () =>
-            telemetryFrameSchema.parse(
-              value(
-                await current.provider.read(
-                  connection.key,
-                  contexts(samplerPrincipal, current, "passive-read", 10000).work,
-                ),
-              ),
-            ),
-        });
+        const sampler = makeSampler(id, lane, () => current);
         session?.unregister();
         const current: Session = {
           snapshot,
@@ -1039,14 +1149,11 @@ export function createBroker(
           lane,
           sampler,
           quiescence: null,
+          suspendOnly: false,
           users: new Set([ownerKey(principal), ownerKey(samplerPrincipal)]),
           unregister: () => {},
         };
         session = current;
-        current.sampler.subscribe((frame) => {
-          reservations.append(frame);
-          coreReservations.append(frame);
-        });
         try {
           current.sources = sourceCatalogSchema.parse(
             value(
@@ -1066,8 +1173,15 @@ export function createBroker(
         }
         current.unregister = current.provider.onDisconnect((key) => {
           if (key !== connection.key) return;
-          if (current.quiescence) return;
-          current.quiescence = finishSession(current, "disconnected", true);
+          current.suspendOnly = false;
+          if (current.snapshot.state === "disconnected") return;
+          if (current.quiescence)
+            notifyLifecycle({
+              kind: "lost",
+              session: { ...current.snapshot, state: "disconnected" },
+              message: "The EV3 connection was lost.",
+            });
+          else current.quiescence = finishSession(current, "disconnected", true);
           const lossPolicy = input.connectionPolicy();
           if (
             current.snapshot.transport === "usb" &&
@@ -1302,6 +1416,8 @@ export function createBroker(
         p.freshness === "fresh" ? await current.sampler.fresh() : current.sampler.snapshot();
       getSession(principal, p.sessionId);
       permission(principal, "devices.read");
+      if (p.channelIds.some((id) => !current.sources.channels.some((c) => c.channelId === id)))
+        return stale();
       return {
         ...snapshot,
         frame: snapshot.frame
@@ -1402,14 +1518,11 @@ export function createBroker(
           return value(await current.provider.inputModes(current.connection.key, p, ctx.work));
         const modeChange = parse("devices/inputModes/set");
         input.authority.assertContinuation(principal, modeChange.contextRef);
-        current.snapshot.sourceRevision++;
         const result = value(
           await current.provider.setInputMode(current.connection.key, modeChange, ctx.work),
         );
         ctx.work.assertContinuation("read");
-        current.sources = result.sources;
-        current.snapshot.sourceRevision = result.sources.sourceRevision;
-        changed(true);
+        publishSources(current, result.sources);
         return {
           ...result,
           snapshot: result.snapshot.frame
@@ -1417,10 +1530,9 @@ export function createBroker(
             : result.snapshot,
         };
       } catch (error) {
-        if (method === "devices/inputModes/set") {
-          current.snapshot.sourceRevision = current.sources.sourceRevision;
-          changed(true);
-        }
+        // A failed write may have changed the physical source. Preserve the last
+        // confirmed revision and prompt consumers to refresh, as before.
+        if (method === "devices/inputModes/set") changed(true);
         throw error;
       } finally {
         current.lane.release(id);
@@ -1496,7 +1608,17 @@ export function createBroker(
     };
   };
   const broker: DeviceBrokerPort & LegacyOperationPort = {
-    intent,
+    intent: {
+      bindMotionScope(binding) {
+        intentOwners.set(resourceOwnerKey(binding.owner), structuredClone(binding.owner));
+        return intent.bindMotionScope(binding);
+      },
+      pulsePanel: (scope, sequence) => intent.pulsePanel(scope, sequence),
+      revokeScope: (scope, reason) => intent.revokeScope(scope, reason),
+      beginGesture: (scope, sequence) => intent.beginGesture(scope, sequence),
+      pulseGesture: (gesture, sequence) => intent.pulseGesture(gesture, sequence),
+      endGesture: (gesture, reason) => intent.endGesture(gesture, reason),
+    },
     reservations,
     sessions,
     resources,

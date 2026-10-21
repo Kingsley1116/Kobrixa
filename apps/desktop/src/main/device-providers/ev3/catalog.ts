@@ -47,20 +47,9 @@ export class Ev3Catalog {
       reading.inputs.some((p) => p.values.length > 8)
     )
       throw new Error("provider-contract");
-    const channels: SourceCatalog["channels"] = [],
-      actuators: SourceCatalog["actuators"] = [];
-    const add = (item: Omit<SourceCatalog["channels"][number], "channelId">) =>
-      channels.push({
-        ...item,
-        channelId: this.port.identify({
-          sessionId: this.sessionId,
-          portId: item.portId,
-          typeId: item.typeId,
-          modeId: item.modeId,
-          component: item.component,
-          unit: item.unit,
-        }),
-      });
+    const channels: Array<Omit<SourceCatalog["channels"][number], "channelId">> = [],
+      actuators: Array<Omit<SourceCatalog["actuators"][number], "actuatorId">> = [];
+    const add = (item: Omit<SourceCatalog["channels"][number], "channelId">) => channels.push(item);
     for (const p of reading.inputs)
       for (let component = 0; component < p.values.length; component++)
         add({
@@ -91,14 +80,6 @@ export class Ev3Catalog {
         state: p.state,
       });
       actuators.push({
-        actuatorId: this.port.identify({
-          sessionId: this.sessionId,
-          portId,
-          typeId,
-          modeId: null,
-          component: 0,
-          unit: "actuator",
-        }),
         portId,
         typeId,
         name: p.name || `Motor ${p.port}`,
@@ -131,12 +112,49 @@ export class Ev3Catalog {
     });
     const signature = JSON.stringify({ channels, actuators });
     if (signature !== this.signature) {
+      // Compare observed metadata before allocating. Published broker revisions
+      // must not turn an unchanged reading into another catalog generation.
+      const identifiedChannels = channels.map((item) => ({
+        ...item,
+        channelId:
+          this.value.channels.find(
+            (old) =>
+              old.portId === item.portId &&
+              old.typeId === item.typeId &&
+              old.modeId === item.modeId &&
+              old.component === item.component &&
+              old.unit === item.unit,
+          )?.channelId ??
+          this.port.identify({
+            sessionId: this.sessionId,
+            portId: item.portId,
+            typeId: item.typeId,
+            modeId: item.modeId,
+            component: item.component,
+            unit: item.unit,
+          }),
+      }));
+      const identifiedActuators = actuators.map((item) => ({
+        ...item,
+        actuatorId:
+          this.value.actuators.find(
+            (old) => old.portId === item.portId && old.typeId === item.typeId,
+          )?.actuatorId ??
+          this.port.identify({
+            sessionId: this.sessionId,
+            portId: item.portId,
+            typeId: item.typeId,
+            modeId: null,
+            component: 0,
+            unit: "actuator",
+          }),
+      }));
       this.signature = signature;
       this.value = {
         sessionId: this.sessionId,
         sourceRevision: this.value.sourceRevision + 1,
-        channels,
-        actuators,
+        channels: identifiedChannels,
+        actuators: identifiedActuators,
       };
     }
     return this.snapshot;

@@ -115,6 +115,35 @@ export function buildEv3Provider(
     { descriptor: DeviceDescriptor; expires: number }
   >();
   const records = new Map<ProviderSessionKey, RecordState>();
+  // At most one original native close can be outstanding: admission stays shut
+  // until it succeeds. Keep its failure even though raw.disconnect is idempotent.
+  const retiring = new Map<ProviderSessionKey, Promise<void>>();
+  const retire = (key: ProviderSessionKey, record: RecordState) => {
+    const existing = retiring.get(key);
+    if (existing) return existing;
+    record.removeListener();
+    records.delete(key);
+    let timer: ReturnType<typeof setTimeout>;
+    const original = record.raw.disconnect();
+    const bounded = Promise.race([
+      original,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("deadline")), 5000);
+        timer.unref();
+      }),
+    ]).finally(() => clearTimeout(timer));
+    retiring.set(key, bounded);
+    // A late *successful original close* is evidence; a second disconnect call
+    // is not. Neither a timeout nor a rejected close opens fresh admission.
+    void original.then(
+      () => {
+        if (retiring.get(key) === bounded) retiring.delete(key);
+      },
+      () => {},
+    );
+    void bounded.catch(() => {});
+    return bounded;
+  };
   const listeners = new Set<(session: ProviderSessionKey, reason: DeviceErrorReason) => void>();
   const requireRecord = (
     key: ProviderSessionKey,
@@ -312,7 +341,7 @@ export function buildEv3Provider(
       let raw: EV3DeviceSession | undefined;
       try {
         ctx.assertContinuation("connect");
-        if (records.size) throw new Error("provider-contract");
+        if (records.size || retiring.size) throw new Error("provider-contract");
         let selected: DeviceDescriptor;
         if ("wifiAddress" in target) {
           if (!isIP(target.wifiAddress) || target.wifiAddress.includes("%"))
@@ -357,7 +386,14 @@ export function buildEv3Provider(
           removeListener: () => {},
         };
         record.removeListener = raw.onDisconnect((_) => {
-          for (const listener of listeners) listener(key, "connection-lost");
+          void retire(key, record);
+          for (const listener of listeners) {
+            try {
+              listener(key, "connection-lost");
+            } catch {
+              /* Isolate observers. */
+            }
+          }
         });
         records.set(key, record);
         return {
@@ -379,11 +415,10 @@ export function buildEv3Provider(
     describe: (key) => requireRecord(key).connection,
     async disconnect(key, ctx) {
       try {
-        const record = requireRecord(key);
+        const pending = retiring.get(key);
+        const record = pending ? undefined : requireRecord(key);
         ctx.assertCleanup("disconnect");
-        await ctx.exchange("disconnect", () => record.raw.disconnect());
-        record.removeListener();
-        records.delete(key);
+        await ctx.exchange("disconnect", () => pending ?? retire(key, record!));
         return { value: null, dispatch: "sent", stopConfirmation: "not-required", error: null };
       } catch {
         return {
@@ -540,9 +575,11 @@ export function buildEv3Provider(
     async dispose(ctx) {
       for (const [key, record] of records) {
         ctx.assertCleanup("disconnect");
-        await ctx.exchange("disconnect", () => record.raw.disconnect());
-        record.removeListener();
-        records.delete(key);
+        await ctx.exchange("disconnect", () => retire(key, record));
+      }
+      for (const pending of retiring.values()) {
+        ctx.assertCleanup("disconnect");
+        await ctx.exchange("disconnect", () => pending);
       }
       listeners.clear();
     },
