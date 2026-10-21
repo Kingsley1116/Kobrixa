@@ -1,6 +1,38 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { OperationStore } from "./operations.js";
 import { operationHarness, pluginPrincipal } from "./fake-provider.js";
+it("F07 starting motion reserves foreground before a shared read drains without aborting it", async () => {
+  const h = operationHarness(),
+    store = new OperationStore(h.dependencies);
+  let release!: () => void;
+  let readSignal!: AbortSignal;
+  const reading = h.admission.lane.exchange(
+    "shared-read",
+    5000,
+    5000,
+    () => {},
+    async (signal) => {
+      readSignal = signal;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+  );
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const first = store.prepare(h.admission),
+    second = store.prepare(h.admission);
+  store.start(h.admission.principal, first.operationId);
+  expect(h.admission.lane.foreground).toBe(first.operationId);
+  expect(() => store.start(h.admission.principal, second.operationId)).toThrow();
+  expect(readSignal.aborted).toBe(false);
+  expect(h.provider.calls).not.toContain("motion");
+  release();
+  await reading;
+  await store.settled(first.operationId);
+  expect(readSignal.aborted).toBe(false);
+  expect(h.provider.calls.filter((call) => call === "motion")).toHaveLength(1);
+  expect(h.admission.lane.foreground).toBeNull();
+});
 it.each([4999, 5000, 5001])("F04 prepare deadline %i is not renewed by start", async (age) => {
   const h = operationHarness();
   const store = new OperationStore(h.dependencies);

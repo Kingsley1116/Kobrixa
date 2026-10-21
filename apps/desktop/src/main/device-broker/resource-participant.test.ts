@@ -22,7 +22,7 @@ it("F17/F19 revokes in the calling turn, returns the same grant and retains fail
   expect(await resources.retireProvider("kobrixa.device-ev3", 1)).toMatchObject({ journalCommitted: false, faultIds: ["fault"] });
   expect(await resources.beginShutdown()).toMatchObject({ journalCommitted: false });
 });
-it("F17 no resources is an explicit empty disposition; rejected cleanup never becomes success", async () => {
+it("F09/F17 no resources is an explicit empty disposition; rejected cleanup never becomes success", async () => {
   const driver: ResourceDriver = { revokeOwner: () => { throw new Error("unused"); }, revokeProvider: () => [], revokeAll: () => [Promise.reject(new Error("provider-stalled"))] };
   const resources = createDeviceResourceParticipant(driver);
   expect(await resources.retireProvider("kobrixa.device-ev3", 1)).toEqual({ stopConfirmed: true, journalCommitted: true, faultIds: [] });

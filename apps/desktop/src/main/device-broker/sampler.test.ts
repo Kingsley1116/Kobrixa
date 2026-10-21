@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { Sampler } from "./sampler.js";
 import { frame, ID } from "./fake-provider.js";
-it("F07 one in-flight poll serves monitor, battery and recording demand", async () => {
+it("F07/F12 one in-flight poll serves monitor, battery and recording demand", async () => {
   let now = 0,
     release!: (value: ReturnType<typeof frame>) => void;
   const read = vi.fn(

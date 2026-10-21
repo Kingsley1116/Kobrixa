@@ -6,6 +6,7 @@ import type {
   ProviderOperationContext,
 } from "../../device-broker/provider.js";
 import { Ev3MotionEngine } from "./motion.js";
+import { createContexts, ExchangeLane } from "../../device-broker/provider.js";
 const idle = (): MotorTestReading => ({
   sampledAt: 1,
   programStopped: true,
@@ -58,6 +59,50 @@ function session() {
   };
 }
 afterEach(() => vi.useRealTimers());
+it("F21 stop/readback uses the original remaining cleanup budget and never rearms at fifteen seconds", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const original = createContexts({
+    id: randomUUID(),
+    sessionId: randomUUID(),
+    generation: 1,
+    operationClass: "finite-motion",
+    deadline: 30000,
+    now: () => performance.now(),
+    lane: new ExchangeLane(() => performance.now()),
+    check() {},
+    progress() {},
+    onStop() {},
+  });
+  original.stop("cancelled", true);
+  await vi.advanceTimersByTimeAsync(14983);
+  const timeouts: number[] = [],
+    s = session();
+  const invoke = async <T>(step: "stop" | "readback", value: T): Promise<T> =>
+    original.cleanup.exchange(step, async (_signal, timeout) => {
+      timeouts.push(timeout);
+      return value;
+    });
+  s.stop.mockImplementation(async () => invoke("stop", undefined));
+  s.motorStop.mockImplementation(async () => invoke("stop", undefined));
+  const moving = idle();
+  moving.outputs[0]!.speed = 1;
+  s.readMotorTest.mockImplementation(async () => invoke("readback", moving));
+  const pending = new Ev3MotionEngine().stop(
+    { kind: "current-device" },
+    original.cleanup,
+    () => s as unknown as DeviceSession,
+    String,
+  );
+  const failed = expect(pending).rejects.toThrow("stop-deadline");
+  await vi.advanceTimersByTimeAsync(17);
+  await failed;
+  expect(timeouts).toEqual([17, 17, 17, 17, 17, 17]);
+  expect(s.readMotorTest).toHaveBeenCalledOnce();
+  expect(original.cleanup.deadlineMonotonicMs).toBe(15000);
+  const lateDispatch = vi.fn(async () => {});
+  expect(() => original.cleanup.exchange("stop", lateDispatch)).toThrow("unavailable");
+  expect(lateDispatch).not.toHaveBeenCalled();
+});
 it.each(["upload", "ready"])("F05/A-RF1 stop after %s prevents helper arm", async (point) => {
   const ctx = context(),
     s = session(),

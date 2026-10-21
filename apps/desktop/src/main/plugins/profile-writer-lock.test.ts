@@ -11,7 +11,7 @@ function host(primary: boolean) {
   };
   return { app, events, release: () => { held = false; } };
 }
-it("F17 secondary never starts a writer, provider, plugin, worker or whenReady callback", async () => {
+it("F17/F20 secondary never starts a writer, provider, plugin, worker or whenReady callback", async () => {
   const f = host(false); const start = vi.fn(async () => {}); const focus = vi.fn();
   expect(startPrimary(f.app, start, focus)).toBeNull();
   await Promise.resolve();

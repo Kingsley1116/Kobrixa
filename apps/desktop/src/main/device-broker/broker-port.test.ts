@@ -104,7 +104,7 @@ it("current-device stop journals a real request before stop and does not invent 
   });
 });
 
-// Deferred to T10 Step 18: these imports deliberately require the actual T3/D150 values.
+// P150 acceptance uses the actual T3/D150 factories and action ledger.
 import { createCoreActionLedger } from "../plugins/core-recovery.js";
 async function realSetup() {
   const h = operationHarness();
@@ -156,7 +156,7 @@ async function realSetup() {
   return { ...h, broker, actions, scope, sessionId: result.value.session.sessionId };
 }
 // T10 Step 18 removes this gate.
-describe.runIf(process.env.KOBRIXA_A_T10 === "1")("deferred real-factory acceptance", () => {
+describe("real-factory acceptance", () => {
   it("real action ledger rejects replay and foreign-window current stops", async () => {
     const h = await realSetup(),
       action = h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId });

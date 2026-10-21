@@ -33,7 +33,7 @@ it("F12/F19/A-RF5 one end linearization preserves the original drain grant", asy
   now = 10000;
   expect(() => reservations.read(owner, id, 0, 64)).toThrow();
 });
-it("F12 atomic admission revalidates source after await and releases all pins on failure", async () => {
+it("F07/F12 atomic admission revalidates source after await and releases all pins on failure", async () => {
   const reservations = new Reservations(() => 0);
   let valid = true,
     release!: (value: {
