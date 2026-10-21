@@ -977,7 +977,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
       console.error(`[plugin ${plugin.id}] ${line}`);
     },
   };
-  const grants = new Map<string, ReadonlySet<ImportedPermission>>();
+  const grants = new Map<string, { owner: ImportedResourceOwner; permissions: ReadonlySet<ImportedPermission> }>();
   const launcher = (options.launcher ?? createDesktopLauncher)(hooks);
   const manager = await PluginManager.create({
 ...(options.stage3 && options.stage3Host
@@ -991,7 +991,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
     safeMode,
     launcher: async plugin => {
       const owner = plugin.channelOwner;
-      if (owner) grants.set(deviceOwnerKey(owner), new Set(plugin.permissions));
+      if (owner) grants.set(deviceOwnerKey(owner), { owner, permissions: new Set(plugin.permissions) });
       try { return await launcher(plugin); }
       catch (error) { if (owner) grants.delete(deviceOwnerKey(owner)); throw error; }
     },
@@ -1027,10 +1027,14 @@ try {
     },
   });
   created.controller = controller;
+  manager.onEvent(() => {
+    for (const [key, grant] of grants)
+      if (manager.requirements(grant.owner) === null) grants.delete(key);
+  });
   deviceAccess.set(controller, {
     requirements: owner => manager.requirements(owner),
     hasPermission: (owner, permission) => manager.requirements(owner) !== null &&
-      grants.get(deviceOwnerKey(owner))?.has(permission) === true,
+      grants.get(deviceOwnerKey(owner))?.permissions.has(permission) === true,
     async retire(owner) {
       if (manager.requirements(owner) === null) return;
       const result = await manager.reloadSource(owner.sourceKey);
@@ -1227,12 +1231,42 @@ export function createDeviceLossHandler(lost: (sessionId: string) => void,
   restored: (sessionId: string) => void): (event: ImportedDeviceEvent) => void {
   const ended = new Set<string>();
   return event => {
-    if (event.type === "state" && event.state === "connected" && event.sessionId) restored(event.sessionId);
-    if (event.type === "usb-recovery" && event.state === "restored") restored(event.sessionId);
+    if (event.type === "state" && event.state === "connected" && event.sessionId) {
+      ended.delete(event.sessionId); restored(event.sessionId);
+    }
+    if (event.type === "usb-recovery" && event.state === "restored") {
+      ended.delete(event.previousSessionId); ended.delete(event.sessionId); restored(event.sessionId);
+    }
     const sessionId = event.type === "state" && event.state === "disconnected" ? event.sessionId :
       event.type === "usb-recovery" && (event.state === "waiting" || event.state === "unavailable")
         ? event.previousSessionId : undefined;
     if (!sessionId || ended.has(sessionId)) return;
-    ended.add(sessionId); lost(sessionId);
+    ended.add(sessionId);
+    if (ended.size > 64) ended.delete(ended.values().next().value!);
+    lost(sessionId);
+  };
+}
+
+/** Native navigation captures and retires the old scope before invalidating its authority. */
+export function createWindowRetirementHandler(input: {
+  composition: DesktopMainComposition;
+  scope(): ImportedCoreWindowScope;
+  coreActions: CoreActionLedger;
+  invalidate(): void;
+  flush(): Promise<void>;
+  pause(): Promise<void>;
+}): (destroyed: boolean) => Promise<void> {
+  return destroyed => {
+    let scope: ImportedCoreWindowScope | undefined;
+    try { scope = input.scope(); } catch { /* No admitted document. */ }
+    let retired: Promise<void> = Promise.resolve();
+    try {
+      if (scope) {
+        input.coreActions.retire(scope);
+        retired = retireDesktopWindow(input.composition, scope, destroyed);
+      }
+    } catch (error) { retired = Promise.reject(error); }
+    finally { input.invalidate(); }
+    return Promise.all([retired, input.flush()]).then(() => input.pause());
   };
 }

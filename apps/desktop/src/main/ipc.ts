@@ -115,6 +115,9 @@ export function registerIpc(
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
       deviceControl.assert(event.sender.id, channel, args);
+      // This handler validates the session and mints a trusted device-current-stop
+      // action. Safety cleanup must remain reachable while an update fences work.
+      if (deviceFoundation && channel === "device:stop") return action(event, ...args);
       if (
         /^(workspace|device|build|simulator|sensor-lab):/.test(channel) ||
         /^collab:(prepare-project|preview-project|save-copy)$/.test(channel)

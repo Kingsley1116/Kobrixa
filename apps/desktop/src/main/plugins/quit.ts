@@ -15,15 +15,36 @@ export function installPluginQuitCleanup(
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
+      state = "idle";
       blocked(new Error("Cleanup disposition is still unknown after 25 seconds."));
-      // Keep state cleaning: late callbacks cannot turn this attempt into automatic quit.
+      // Only a fresh user request can retry; this attempt can never quit later.
     }, PLUGIN_QUIT_TIMEOUT_MS);
     void Promise.resolve().then(cleanup).then(() => {
       clearTimeout(timer);
-      if (timedOut) { state = "idle"; return; }
+      if (timedOut) return;
       state = "done"; app.quit();
     }, (error: unknown) => {
-      clearTimeout(timer); state = "idle"; blocked(error);
+      clearTimeout(timer);
+      if (timedOut) return;
+      state = "idle"; blocked(error);
     });
   });
+}
+
+/** Keep blocked cleanup visible while retaining the primary profile lock. */
+export function createQuitRecovery(input: {
+  focus(): boolean;
+  open(): void;
+  retry(error: unknown): Promise<boolean>;
+  quit(): void;
+}) {
+  const focus = () => {
+    if (input.focus()) return true;
+    input.open();
+    return input.focus();
+  };
+  return { focus, async blocked(error: unknown): Promise<void> {
+    focus();
+    if (await input.retry(error)) input.quit();
+  } };
 }

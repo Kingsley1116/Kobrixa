@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { journalDocument } from "./journal.js";
+import { randomUUID } from "node:crypto";
 import {
   channelDefinitionSchema,
   deviceRequestSchemas,
@@ -107,6 +108,7 @@ export function observeCoreTelemetryClosed(
 }
 type Options = DeviceBrokerOptions;
 type Session = {
+  recoveryDisposition?: Promise<DeviceDisposition>;
   snapshot: DeviceSessionSnapshot;
   sources: SourceCatalog;
   connection: ProviderConnection;
@@ -501,6 +503,7 @@ export function createBroker(
     coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
+    if (current.recoveryDisposition) promises.push(current.recoveryDisposition);
     for (const operation of legacy.values())
       if (operation.session === current.snapshot.sessionId) {
         void operation.cancel();
@@ -627,6 +630,11 @@ export function createBroker(
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
       current.lane.reserve(id);
+      // Session teardown must join recovery through final journal publication, not
+      // merely wait for the last transport exchange to leave the lane.
+      let settle!: (value: DeviceDisposition) => void;
+      current.recoveryDisposition = new Promise(resolve => { settle = resolve; });
+      let confirmed = false;
       const originalGeneration = current.generation,
         originalKey = current.connection.key;
       const ctx = createContexts({
@@ -655,16 +663,22 @@ export function createBroker(
           stop: () =>
             current.provider.stopAndReadback(originalKey, { kind: "current-device" }, ctx.cleanup),
         });
-        if (typeof result === "object" && result !== null && "ok" in result && result.ok === false)
-          current.lane.quarantined = true;
+        confirmed = !(typeof result === "object" && result !== null && "ok" in result && result.ok === false);
+        if (!confirmed) current.lane.quarantined = true;
         return result;
       } catch (error) {
         current.lane.quarantined = true;
         throw error;
       } finally {
-        await current.lane.drain(ctx.cleanup.deadlineMonotonicMs);
-        current.provider.releaseOperation(id);
-        current.lane.release(id);
+        try { await current.lane.drain(ctx.cleanup.deadlineMonotonicMs); }
+        finally {
+          current.provider.releaseOperation(id);
+          current.lane.release(id);
+          const snapshot = input.journal.snapshot();
+          settle({ stopConfirmed: confirmed && !current.lane.quarantined,
+            journalCommitted: snapshot.journalHealth === "ready",
+            faultIds: snapshot.blockers });
+        }
       }
     },
   };
@@ -1385,17 +1399,7 @@ export function createBroker(
       entries.splice(index, 1);
     }
     entries.push(entry);
-    const body = { schemaVersion: 1 as const, revision: document.revision + 1, entries };
-    await bounded(
-      input.journal.commit({
-        ...body,
-        integrity: {
-          algorithm: "sha256",
-          digest: createHash("sha256").update(JSON.stringify(body)).digest("hex"),
-        },
-      }),
-      5000,
-    );
+    await bounded(input.journal.commit(journalDocument(document.revision + 1, entries)), 5000);
   };
   const catalogBindings = new Map<
     string,

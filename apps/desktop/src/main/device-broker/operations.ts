@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { journalDocument } from "./journal.js";
+import { randomUUID } from "node:crypto";
 import type { MotionSpec, MotionSnapshot, ResourceOwner } from "@kobrixa/plugin-protocol";
 import type {
   Principal,
   PhysicalIdentity,
   ProfileWriterLock,
   SafetyFaultEntry,
-  FaultJournalDocument,
   DeviceDisposition,
 } from "@kobrixa/plugin-runtime";
 import type { JournalPort } from "./journal-port.js";
@@ -241,14 +241,7 @@ export class OperationStore {
       entries.splice(safe, 1);
     }
     entries.push(structuredClone(r.fault!));
-    const body = { schemaVersion: 1 as const, revision: document.revision + 1, entries };
-    const next: FaultJournalDocument = {
-      ...body,
-      integrity: {
-        algorithm: "sha256",
-        digest: createHash("sha256").update(JSON.stringify(body)).digest("hex"),
-      },
-    };
+    const next = journalDocument(document.revision + 1, entries);
     await this.#bounded(this.deps.journal.commit(next), 5000);
   }
   async #run(r: Row): Promise<void> {

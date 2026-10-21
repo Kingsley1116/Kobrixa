@@ -36,3 +36,35 @@ it("tears down a USB loss episode once across repeated waiting/unavailable repor
 });
 
 vi.mock("electron", () => ({ utilityProcess: {}, MessageChannelMain: class {} }));
+it("restores a recovery window on blocked quit and second launch, and retries only explicitly", async () => {
+  const { createQuitRecovery } = await import("./plugins/quit.js");
+  let visible = false;
+  const focus = vi.fn(() => visible);
+  const open = vi.fn(() => { visible = true; });
+  const retry = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  const quit = vi.fn();
+  const recovery = createQuitRecovery({ focus, open, retry, quit });
+  await recovery.blocked(new Error("journal"));
+  expect(open).toHaveBeenCalledOnce(); expect(retry).toHaveBeenCalledOnce();
+  expect(quit).not.toHaveBeenCalled();
+  visible = false;
+  expect(recovery.focus()).toBe(true);
+  expect(open).toHaveBeenCalledTimes(2);
+  await recovery.blocked(new Error("timeout"));
+  expect(quit).toHaveBeenCalledOnce();
+});
+it("production startup has no test provider selector and uses recovery/window retirement helpers", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/providerFactory|createFakeDeviceProvider|KOBRIXA_A_T10/);
+  expect(source).toContain("createWindowRetirementHandler(");
+  expect(source).toContain("quitRecovery.blocked");
+});
+it("re-arms restored USB sessions without retaining their old loss episode", async () => {
+  const { createDeviceLossHandler } = await import("./plugins/controller.js");
+  const lost = vi.fn(); const handle = createDeviceLossHandler(lost, vi.fn());
+  const descriptor = { id: "old", name: "EV3", transport: "usb" as const };
+  handle({ type: "usb-recovery", state: "waiting", previousSessionId: "old", descriptor });
+  handle({ type: "usb-recovery", state: "restored", previousSessionId: "old", sessionId: "old", descriptor, deployment: "none" });
+  handle({ type: "usb-recovery", state: "waiting", previousSessionId: "old", descriptor });
+  expect(lost).toHaveBeenCalledTimes(2);
+});

@@ -44,3 +44,19 @@ it("assertHeld also detects unexpected Electron lock loss", async () => {
   const f = host(true); const primary = startPrimary(f.app, async () => {}, () => false)!;
   await primary.ready; f.release(); expect(() => primary.profile.assertHeld()).toThrow("profile");
 });
+import { createQuitRecovery } from "./quit.js";
+it("F17 second launch reopens a blocked primary's missing recovery window without another writer", async () => {
+  const f = host(true); let visible = false;
+  const open = vi.fn(() => { visible = true; });
+  const recovery = createQuitRecovery({ focus: () => visible, open, retry: async () => false, quit: f.app.quit });
+  const start = vi.fn(async () => {});
+  const primary = startPrimary(f.app, start, recovery.focus)!;
+  await primary.ready;
+  await recovery.blocked(new Error("unknown stop disposition"));
+  expect(open).toHaveBeenCalledOnce();
+  visible = false;
+  f.events.emit("second-instance", {}, ["--plugin-dev-dir=/untrusted"], "/untrusted");
+  expect(open).toHaveBeenCalledTimes(2); expect(start).toHaveBeenCalledOnce();
+  expect(() => primary.profile.assertHeld()).not.toThrow();
+  expect(f.app.quit).not.toHaveBeenCalled();
+});

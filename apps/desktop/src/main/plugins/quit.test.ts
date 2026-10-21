@@ -32,3 +32,16 @@ it("does not swallow failed stop, save, journal or process exit", async () => {
     expect(h.quit).not.toHaveBeenCalled();
   }
 });
+it("permits explicit retry after timeout without letting late completion quit", async () => {
+  vi.useFakeTimers();
+  const h = host(); let finish!: () => void;
+  const cleanup = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }))
+    .mockResolvedValue(undefined);
+  installPluginQuitCleanup(h.app, cleanup, vi.fn());
+  h.fire(); await vi.advanceTimersByTimeAsync(25_000);
+  h.fire(); await vi.advanceTimersByTimeAsync(0);
+  expect(cleanup).toHaveBeenCalledTimes(2);
+  expect(h.quit).toHaveBeenCalledOnce();
+  finish(); await vi.advanceTimersByTimeAsync(0);
+  expect(h.quit).toHaveBeenCalledOnce();
+});

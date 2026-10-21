@@ -127,6 +127,10 @@ export class LifecycleCoordinator {
         !event.drain || !this.input.alive(event.owner)
           ? this.input.persistence.ownerLost(event.owner)
           : this.input.persistence.drain(offer, this.input.dispatch);
+      // R150/D170 handoff: split retireStage3Owner's persistence promise from its
+      // joined receipt so storage alone can be bounded at the original <=10 s offer.
+      // Until then this is the device+storage join (15 s stop + 5 s journal), not
+      // permission to extend a persistence offer or the drain dispatch signal.
       void this.#observe(pending, retirement ? event.endedMonotonicMs + 20_000 : offer?.deadlineMonotonicMs ?? deadline).then((report) => {
         work.terminal = report.state === "saved" && !report.blocker;
         resolve(report);
@@ -183,7 +187,7 @@ export class LifecycleCoordinator {
     const result = await this.input.sessions.disconnect(sessionId, action);
     if (!result.ok) throw new Error(result.error.message);
   }
-  suspend(sessionId: Handle): Promise<void> {
+  async suspend(sessionId: Handle): Promise<void> {
     const existing = this.#suspending.get(sessionId); if (existing) return existing;
     const t0 = this.input.now();
     const quiescence = this.input.sessions.quiesce(sessionId, { reason: "suspended" });
@@ -193,7 +197,10 @@ export class LifecycleCoordinator {
       this.#sessionReports(sessionId), this.input.legacyFlush("suspend"),
     ]).then(([device, storage]) => this.#assert(device, storage));
     this.#suspending.set(sessionId, work);
-    void work.catch((error: unknown) => this.input.report(error));
+    void work.catch((error: unknown) => {
+      this.#suspending.delete(sessionId);
+      this.input.report(error);
+    });
     return work;
   }
   async resume(sessionId: Handle): Promise<void> {

@@ -8,9 +8,9 @@ vi.mock("electron", () => ({ ipcMain: { handle: (key: string, fn: (...args: unkn
 import { registerIpc } from "./ipc.js";
 import { DeviceControlGate } from "./collab/device-control.js";
 import { AuthorityContexts } from "./device-broker/authority-context.js";
-import { UpdateOperationGate } from "./updates/service.js";
+import { UpdateOperationGate, assertDeviceUpdateAdmission, UpdateService } from "./updates/service.js";
 import { trustedDeviceActions, createLegacyActionAdmission } from "./plugins/controller.js";
-import { createLegacyDevice } from "./device-broker/legacy-device.js";
+import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
 import { createCoreActionLedger } from "./plugins/core-recovery.js";
 import type { DeviceBrokerPort } from "./device-broker/broker-port.js";
 const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
@@ -165,13 +165,12 @@ it("D150 renews a real retained file plan only for its original sender/ref at 11
     expect(f.operation.renewConfirmation).toHaveBeenCalledOnce();
   } finally { await f.cleanup(); }
 });
-it.each(["replacement", "authority", "cancelled", "completed"])("D150 %s cannot renew a retained plan", async kind => {
+it.each(["replacement", "authority", "cancelled"])("D150 %s cannot renew a retained plan", async kind => {
   const f = await renewalFixture();
   try {
     if (kind === "replacement") { f.authority.invalidate(f.renderer.id); f.authority.open(f.renderer as never); }
     if (kind === "authority") f.authority.set(f.renderer as never, { ...f.report, sequence: 2, state: "invalid", isHolder: false });
     if (kind === "cancelled") await f.devices.stopFiles(f.ref, f.renderer.id);
-    if (kind === "completed") await f.devices.executeFiles(f.ref, "skip", f.renderer.id);
     vi.mocked(f.operation.renewConfirmation).mockClear();
     await expect(Promise.resolve().then(() => f.call("device:files-renew", f.ref))).rejects.toThrow();
     expect(f.operation.renewConfirmation).not.toHaveBeenCalled();
@@ -188,5 +187,539 @@ it("D150 explicit 100/200/300/400/500 second renewals retain the original 600 se
     expect(f.operation.renewConfirmation).toHaveBeenCalledTimes(5);
     expect(vi.mocked(f.operation.execute).mock.calls.length).toBe(exchanges);
     expect(f.operation.cancel).toHaveBeenCalledOnce();
+  } finally { await f.cleanup(); }
+});
+
+import { mkdir, realpath } from "node:fs/promises";
+import { composeDesktopMain, desktopLifecycle, desktopDeviceAccess, type PluginController } from "./plugins/controller.js";
+import { createDesktopFoundation } from "./device-broker/lifecycle-coordinator.js";
+import { createJournal } from "./device-broker/journal.js";
+import { createJournalFilesystem } from "./device-broker/journal-filesystem.js";
+import { createFakeDeviceProvider, type FakeProviderControl } from "./device-broker/fake-provider.js";
+import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
+import { registerPluginIpc } from "./plugins/ipc.js";
+import type { ResourceOwner, RpcPeer } from "@kobrixa/plugin-protocol";
+import { memoryPlugin } from "../../../../packages/plugin-runtime/src/test-process.js";
+
+async function foundationIpc(legacyMetadata = false) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "kobrixa-d150-ipc-")));
+  const directory = join(root, "consumer"); await mkdir(directory);
+  await writeFile(join(directory, "index.cjs"), "");
+  await writeFile(join(directory, "kobrixa-plugin.json"), JSON.stringify({
+    id: "test.consumer", version: "1.0.0", apiVersion: "^1.5.0", displayName: "Consumer",
+    runtime: { kind: "node", entry: "index.cjs" }, permissions: ["devices.read", "devices.connect", "devices.control"],
+    requires: { devices: [{ capability: "connection.v1", required: true }, { capability: "telemetry.v1", required: true },
+      { capability: "finiteMotion.v1", required: true }] },
+    contributes: { commands: [{ id: "test.consumer.start", title: "Start" }] },
+  }));
+  const renderer = Object.assign(new EventEmitter(), { id: 7, mainFrame: {}, isDestroyed: () => false, send: vi.fn() });
+  const contexts = new AuthorityContexts(id(1)), authority = new DeviceControlGate(contexts);
+  const document = authority.open(renderer as never).document;
+  const report = { document, sequence: 1, state: "local" as const, roomId: null,
+    connected: true, synced: true, role: null, isHolder: true };
+  authority.set(renderer as never, report);
+  const principal = contexts.core(renderer.id, "recovery");
+  const scope = { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
+  let elapsed = 0;
+  const installer = vi.fn();
+  const update = new UpdateService({ version: "1.0.0", platform: "win32", arch: "x64",
+    preferences: { enabled: true, channel: "stable" },
+    list: async () => [{ tag_name: "v1.1.0", draft: false, prerelease: false,
+      assets: [updateArtifactName("1.1.0", "win32", "x64"), updateMetadataName("win32")]
+        .map(name => ({ name, size: 20, state: "uploaded" })) }],
+    backend: { download: async () => {}, install: installer },
+    persist: async () => {}, publish: () => {}, open: async () => {}, busy: () => false,
+  });
+  const profile = { hostEpoch: id(1), assertHeld: vi.fn() }, now = () => performance.now() + elapsed;
+  const fs = createJournalFilesystem(root), journal = createJournal(fs, profile);
+  const ledger = createCoreActionLedger({ now, current: value => {
+    try { return contexts.core(renderer.id, "recovery").workbenchInstance === value.workbenchInstance && value.hostEpoch === profile.hostEpoch; }
+    catch { return false; }
+  } });
+  const controllerRef: { current?: PluginController } = {};
+  let control!: FakeProviderControl, peer!: RpcPeer, owner!: ResourceOwner;
+  let dropStartReply = false, droppedReplies = 0;
+  const connectionBudgets: number[] = [];
+  const catalogs: ProviderCatalogPort[] = [];
+  const controls: FakeProviderControl[] = [];
+  const shutdown = vi.fn(() => null), commands = vi.fn(() => null);
+  const legacyFlush = vi.fn(async () => {});
+  const composition = await composeDesktopMain({ createFoundation: createDesktopFoundation,
+    foundationOptions: { profile, authority: contexts, journal, coreActions: ledger, now,
+      hasPermission: (candidate, permission) => candidate.kind === "core"
+        ? candidate.hostEpoch === scope.hostEpoch && candidate.workbenchInstance === scope.workbenchInstance &&
+          ["devices.read", "devices.connect", "devices.control"].includes(permission)
+        : !!controllerRef.current && desktopDeviceAccess(controllerRef.current).hasPermission(candidate.owner, permission),
+      requirements: candidate => controllerRef.current ? desktopDeviceAccess(controllerRef.current).requirements(candidate) : null,
+      operationGate: ({ operationClass }) => {
+        try { assertDeviceUpdateAdmission(update, operationClass); return { ok: true, value: null }; }
+        catch { return { ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY", message: "update preparing",
+          detail: { kind: "device", reason: "foreground", dispatch: "not-sent", stopConfirmation: "not-required" } } }; }
+      },
+      connectionPolicy: () => ({ wifiConnectTimeoutMs: 3000, wifiHandshakeTimeoutMs: 1000,
+        usbAutoReconnect: false, usbRetryInterval: 2000, usbRetryLimit: 3 }),
+      providerFactory(catalog) {
+        catalogs.push(catalog);
+        expect(() => catalog.identify({ sessionId: id(99), portId: "1", typeId: "29", modeId: "0", component: 0, unit: "%" })).toThrow();
+        const fake = createFakeDeviceProvider({ catalog, now }); control = fake.control; controls.push(control);
+        const connect = fake.provider.connect.bind(fake.provider);
+        vi.spyOn(fake.provider, "connect").mockImplementation((target, ctx) => connect(target, {
+          ...ctx, exchange: (step, invoke) => ctx.exchange(step, (signal, timeout) => {
+            connectionBudgets.push(timeout); return invoke(signal, timeout);
+          }),
+        }));
+        if (legacyMetadata) {
+          // Formal transport and barriers are unchanged; supply the EV3 metadata the
+          // legacy Lab adapter expects, as in the T5 compatibility fixture.
+          const sources = fake.provider.sources.bind(fake.provider);
+          vi.spyOn(fake.provider, "sources").mockImplementation(async (...args) => {
+            const value = await sources(...args);
+            if (value.value) for (const channel of value.value.channels)
+              Object.assign(channel, { portId: "input:0", typeId: "ev3:29", modeId: "mode:0" });
+            return value;
+          });
+        }
+        return fake.provider;
+      },
+    },
+    plugins: { userData: root, builtins: BUILTIN_PLUGIN_SOURCES,
+      commandLine: { developmentDirectories: [directory], safeMode: false }, locale: "en",
+      dialogs: { confirmDeveloperMode: async () => false, chooseFolder: async () => undefined,
+        confirmLink: async () => false, confirmUnlink: async () => false, choosePython: async () => undefined },
+      launcher: () => async plugin => {
+        owner = plugin.channelOwner!;
+        const memory = memoryPlugin((remote, process) => {
+          peer = remote;
+          remote.handle("initialize", () => ({ apiVersion: "1.5.0", sdk: { name: "test", version: "1" } }));
+          remote.handle("command/execute", commands); remote.handle("shutdown", shutdown);
+          remote.onNotification("exit", () => process.exit());
+        });
+        const send = memory.process.send.bind(memory.process);
+        return { ...memory.process, send(text) {
+          const message = JSON.parse(text);
+          if (dropStartReply && message.result?.value?.operation) {
+            dropStartReply = false; droppedReplies++; return;
+          }
+          send(text);
+        } };
+      },
+    },
+    principal: candidate => contexts.plugin(renderer.id, candidate), scope: () => scope,
+    currentScope: value => value.workbenchInstance === scope.workbenchInstance,
+    legacyFlush, report: vi.fn(),
+  });
+  const controller = composition.plugins; controllerRef.current = controller;
+  expect(await controller.execute("test.consumer.start")).toMatchObject({ ok: true });
+  expect((await peer.request("devices/negotiate", {})).ok).toBe(true);
+  const connected = await peer.request("devices/connect", { target: { kind: "wifi-address", providerId: "kobrixa.device-ev3", address: "127.0.0.1" } });
+  if (!connected.ok) throw new Error(connected.error.message);
+  const sessionId = connected.value.session.sessionId;
+  const broker = composition.foundation.broker, coordinator = desktopLifecycle(composition);
+  for (const adapter of ["recovery", "remote-files", "monitor", "battery", "lab"] as const)
+    await broker.request({ ...principal, adapter }, "devices/list", {}, new AbortController().signal);
+  const callbacks = trustedDeviceActions(broker, coordinator, ledger);
+  registerIpc(() => renderer as never, {} as never, {} as never, {} as never, {} as never,
+    update, new UpdateOperationGate(() => update), undefined, undefined, undefined,
+    [handle => { registerPluginIpc(handle, controller!, () => {}); }], () => coordinator.close("update"), controller,
+    { authority, stop: callbacks.trustedCoreStop, disconnect: callbacks.trustedCoreDisconnect,
+      beforeClose: () => coordinator.close("close") });
+  const event = { sender: renderer, senderFrame: renderer.mainFrame };
+  return { composition, controller, broker, coordinator, control, peer, owner, principal, scope,
+    ledger, journal, fs, legacyFlush, shutdown, commands, authority, report, renderer, event, sessionId, root, update, installer, connectionBudgets, catalogs, controls,
+    advance: (ms: number) => { elapsed += ms; },
+    dropStartResponse: () => { dropStartReply = true; }, droppedReplies: () => droppedReplies,
+    call: (name: string, ...args: unknown[]) => handlers.get(name)!(event, ...args),
+    async cleanup(blocked = false) {
+      try {
+        if (blocked) {
+          await expect(composition.dispose()).rejects.toThrow("disposition");
+          expect(shutdown).not.toHaveBeenCalled();
+          await controller.shutdown(); // Dispose the in-memory test process only.
+          coordinator.dispose();
+        } else await composition.dispose();
+      } finally { update.dispose(); await rm(root, { recursive: true, force: true }); }
+    } };
+}
+it("D150 real IPC stops an external program through device-current-stop and rejects replay", async () => {
+  const f = await foundationIpc();
+  try {
+    expect(f.journal.snapshot().faults).toEqual([]);
+    const mint = vi.spyOn(f.ledger, "mint");
+    f.control.block("before-stop-readback", "stop");
+    const stopped = f.call("device:stop", f.sessionId);
+    await f.control.reached("before-stop-readback", "stop");
+    expect(mint.mock.calls[0]![1]).toEqual({ kind: "device-current-stop", sessionId: f.sessionId });
+    expect(f.journal.snapshot().faults).toMatchObject([{ operationClass: "safety-stop", state: "pending" }]);
+    f.control.release("before-stop-readback", "stop"); await stopped;
+    expect(f.journal.snapshot().blockers).toEqual([]);
+    expect(f.journal.snapshot().faults).toMatchObject([{ state: "resolved", stopConfirmation: "confirmed" }]);
+    const before = f.control.trace().length;
+    expect((await f.broker.stopCurrentDevice({ sessionId: f.sessionId, action: mint.mock.results[0]!.value })).ok).toBe(false);
+    expect(f.control.trace()).toHaveLength(before);
+  } finally { await f.cleanup(); }
+});
+it("D150 initial journal failure prevents actual stop dispatch", async () => {
+  const f = await foundationIpc();
+  const sync = vi.spyOn(f.fs, "sync").mockRejectedValueOnce(new Error("disk failure"));
+  try {
+    await expect(f.call("device:stop", f.sessionId)).rejects.toThrow();
+    expect(f.control.trace().some(row => row.step === "stop")).toBe(false);
+    expect(f.journal.snapshot().journalHealth).not.toBe("ready");
+  } finally { sync.mockRestore(); await f.cleanup(true); }
+});
+it("D150 final journal failure retains real stop evidence and rejects replay", async () => {
+  const f = await foundationIpc();
+  try {
+    f.control.block("after-exchange", "readback");
+    const work = f.call("device:stop", f.sessionId);
+    const rejected = expect(work).rejects.toThrow();
+    await f.control.reached("after-exchange", "readback");
+    const sync = vi.spyOn(f.fs, "sync").mockRejectedValueOnce(new Error("final sync failed"));
+    f.control.release("after-exchange", "readback"); await rejected; sync.mockRestore();
+    expect(f.journal.snapshot().blockers).toHaveLength(1);
+    expect(f.journal.snapshot().faults[0]!.stopConfirmation).not.toBe("confirmed");
+    await expect(f.call("device:disconnect", f.sessionId)).rejects.toThrow("disposition");
+    expect(f.control.trace().some(row => row.step === "disconnect")).toBe(false);
+    expect(await f.fs.read("faults.json")).not.toBeNull();
+  } finally { await f.cleanup(true); }
+});
+it("D150 legacy save failure blocks physical Disconnect; a new click claims a new token and retries", async () => {
+  const f = await foundationIpc();
+  try {
+    const mint = vi.spyOn(f.ledger, "mint");
+    f.legacyFlush.mockRejectedValueOnce(new Error("Lab save failed"));
+    await expect(f.call("device:disconnect", f.sessionId)).rejects.toThrow("Lab save failed");
+    expect(f.control.trace().some(row => row.step === "disconnect")).toBe(false);
+    expect(f.shutdown).not.toHaveBeenCalled();
+    await f.call("device:disconnect", f.sessionId);
+    expect(f.control.trace().filter(row => row.step === "disconnect" && row.dispatch === "sent")).toHaveLength(1);
+    expect(mint.mock.results[0]!.value.actionToken).not.toBe(mint.mock.results[1]!.value.actionToken);
+    expect(f.shutdown).not.toHaveBeenCalled();
+  } finally { await f.cleanup(); }
+});
+it("D150 real plugin IPC refuses foreign/subframe senders and forged policy fields", async () => {
+  const f = await foundationIpc();
+  try {
+    for (const event of [{ ...f.event, sender: { id: 8 } }, { ...f.event, senderFrame: {} }])
+      expect(() => handlers.get("plugins:set-enabled")!(event, "builtin:kobrixa.device-ev3", false)).toThrow("untrusted");
+    for (const policy of [{ enabled: false, required: false }, { enabled: false, safeMode: false }, { enabled: false, developerMode: true }])
+      await expect(Promise.resolve().then(() => f.call("plugins:set-enabled", "builtin:kobrixa.device-ev3", policy))).rejects.toThrow();
+    expect(f.controller.state().plugins.find(row => row.sourceKey === "builtin:kobrixa.device-ev3")?.status).toBe("enabled");
+    expect(await f.call("plugins:set-enabled", "builtin:kobrixa.basic-plus", false)).toMatchObject({ ok: false });
+  } finally { await f.cleanup(); }
+});
+async function prepareMotion(f: Awaited<ReturnType<typeof foundationIpc>>) {
+  const contextRef = f.principal.authorityContext!.ref;
+  const motionScopeRef = f.broker.intent.bindMotionScope({ owner: f.owner, contextRef,
+    panelInstance: id(81), uiResourceGeneration: 1, workbenchInstance: f.scope.workbenchInstance });
+  f.broker.intent.pulsePanel(motionScopeRef, 1);
+  const result = await f.peer.request("devices/motion/prepare", { sessionId: f.sessionId, contextRef,
+    motionScopeRef, motion: { mode: "timed", actuatorId: id(2), power: 10, direction: 1, brake: true, durationMs: 100 } });
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value.operation.operationId;
+}
+it("D150 stop/readback and durable final journal precede physical Disconnect and manager shutdown", async () => {
+  const f = await foundationIpc();
+  try {
+    const operationId = await prepareMotion(f);
+    f.control.block("after-exchange", "motion-pulse");
+    expect((await f.peer.request("devices/motion/start", { operationId })).ok).toBe(true);
+    await f.control.reached("after-exchange", "motion-pulse");
+    f.control.block("before-stop-readback", "stop");
+    const disconnected = f.call("device:disconnect", f.sessionId);
+    await f.control.reached("before-stop-readback", "stop");
+    expect(f.control.trace().some(row => row.step === "disconnect")).toBe(false);
+    f.control.release("after-exchange", "motion-pulse");
+    const synced = deferredIpc<void>(), allowSync = deferredIpc<void>();
+    const original = f.fs.syncDirectory.bind(f.fs);
+    const sync = vi.spyOn(f.fs, "syncDirectory").mockImplementation(async () => { synced.resolve(); await allowSync.promise; await original(); });
+    f.control.release("before-stop-readback", "stop");
+    await synced.promise;
+    expect(f.control.trace().some(row => row.step === "readback" && row.dispatch === "sent")).toBe(true);
+    expect(f.control.trace().some(row => row.step === "disconnect")).toBe(false);
+    expect(f.shutdown).not.toHaveBeenCalled();
+    allowSync.resolve(); await disconnected; sync.mockRestore();
+    expect(f.journal.snapshot().blockers).toEqual([]);
+    const sent = f.control.trace().filter(row => row.dispatch === "sent").map(row => row.step);
+    expect(sent.indexOf("readback")).toBeLessThan(sent.indexOf("disconnect"));
+    expect(f.shutdown).not.toHaveBeenCalled();
+  } finally { await f.cleanup(); }
+});
+function deferredIpc<T>() { let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
+it("D150 authority revocation beats late motion ACK; retained query never replays start", async () => {
+  const f = await foundationIpc();
+  try {
+    const operationId = await prepareMotion(f);
+    f.control.block("after-exchange", "motion-pulse");
+    // Lose only the serialized start response while retaining the original live channel.
+    f.dropStartResponse();
+    const lost = new AbortController();
+    const start = f.peer.request("devices/motion/start", { operationId }, { signal: lost.signal });
+    const cancelled = expect(start).rejects.toThrow();
+    await f.control.reached("after-exchange", "motion-pulse");
+    expect(f.droppedReplies()).toBe(1); lost.abort(); await cancelled;
+    f.control.block("before-stop-readback", "stop");
+    f.authority.set(f.renderer as never, { ...f.report, sequence: 2, state: "invalid", isHolder: false });
+    await f.control.reached("before-stop-readback", "stop");
+    const settled = f.coordinator.suspend(f.sessionId);
+    f.control.release("after-exchange", "motion-pulse");
+    f.control.release("before-stop-readback", "stop");
+    await settled;
+    const result = await f.peer.request("devices/motion/query", { operationId });
+    expect(result).toMatchObject({ ok: true, value: { operation: { stopConfirmation: "confirmed", stage: "terminal" } } });
+    expect(f.control.trace().filter(row => row.step === "motion-pulse" && row.dispatch === "sent")).toHaveLength(1);
+    expect(f.journal.snapshot().blockers).toEqual([]);
+  } finally { await f.cleanup(); }
+});
+it("D150 readback deadline keeps the original pending journal blocker", async () => {
+  const f = await foundationIpc();
+  try {
+    f.control.block("before-exchange", "readback");
+    const rejected = expect(f.call("device:stop", f.sessionId)).rejects.toThrow();
+    await f.control.reached("before-exchange", "readback");
+    f.advance(15_001); f.control.release("before-exchange", "readback"); await rejected;
+    expect(f.journal.snapshot().blockers).toHaveLength(1);
+    expect(f.control.trace().some(row => row.step === "readback" && row.dispatch === "sent")).toBe(false);
+  } finally { await f.cleanup(true); }
+});
+it("D150 successfully completed formal-provider transfer cannot renew or perform more I/O", async () => {
+  const f = await foundationIpc();
+  try {
+    const file = join(f.root, "sample.rbf"); await writeFile(file, "test");
+    fileDialog.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [file] });
+    const legacy = createLegacyDevice({ broker: f.broker, principal: () => f.principal,
+      feed: {} as never, stop: async () => {}, disconnect: async () => {} });
+    const files = new LegacyFiles(f.broker, () => ({ ...f.principal, adapter: "remote-files" }));
+    const devices = new DeviceService({} as never, () => f.renderer as never, undefined, { device: legacy, files });
+    const plan = await devices.prepareFiles({ sessionId: f.sessionId, requestId: id(90), action: "upload",
+      path: "/home/root/lms2012/prjs", paths: [], source: "files", locale: "en" }, f.renderer as never);
+    const ref = { sessionId: f.sessionId, requestId: plan.requestId, planId: plan.planId };
+    const result = await devices.executeFiles(ref, "replace", f.renderer.id);
+    expect(result.phase).toBe("complete");
+    expect(result.items.every(item => item.status === "succeeded")).toBe(true);
+    expect(f.control.trace().some(row => row.step === "file-close" && row.dispatch === "sent")).toBe(true);
+    const before = f.control.trace().length;
+    await expect(Promise.resolve().then(() => devices.renewFilePlan(ref, { ...f.principal, adapter: "remote-files" }))).rejects.toThrow();
+    expect(f.control.trace()).toHaveLength(before);
+  } finally { await f.cleanup(); }
+});
+it("D150 update denies the next held-transfer continuation, retains close and direct safety with four pending public calls", async () => {
+  const f = await foundationIpc();
+  try {
+    const operation = await f.broker.begin({ principal: f.principal, sessionId: f.sessionId,
+      operationClass: "file-write", signal: new AbortController().signal });
+    f.control.block("after-exchange", "file-chunk");
+    const transfer = operation.execute({ kind: "upload", remotePath: "/test", size: 2,
+      chunks: (async function* () { yield new Uint8Array([1]); yield new Uint8Array([2]); })(), progress() {} });
+    const failedTransfer = expect(transfer).rejects.toThrow();
+    await f.control.reached("after-exchange", "file-chunk");
+    f.control.block("before-exchange", "discover");
+    const requests = vi.spyOn(f.broker, "request");
+    let replies = 0;
+    const publicCalls = Array.from({ length: 4 }, () => f.peer.request("devices/discover", { providerId: "kobrixa.device-ev3" }).then(value => { replies++; return value; }));
+    await f.control.reached("before-exchange", "discover");
+    expect(requests.mock.calls.filter(row => row[1] === "devices/discover")).toHaveLength(4);
+    expect(replies).toBe(0);
+    await f.call("updates:check");
+    await f.call("updates:prepare");
+    expect(f.update.preparing).toBe(true); expect(f.installer).not.toHaveBeenCalled();
+    f.control.release("after-exchange", "file-chunk"); await failedTransfer; await operation.finish();
+    expect(f.control.trace().filter(row => row.step === "file-chunk" && row.dispatch === "sent")).toHaveLength(1);
+    expect(f.control.trace().filter(row => row.step === "file-close" && row.dispatch === "sent")).toHaveLength(1);
+    // Core safety bypasses the still-held public request lane and ordinary update gate.
+    await f.call("device:stop", f.sessionId);
+    expect(f.control.trace().some(row => row.step === "readback" && row.dispatch === "sent")).toBe(true);
+    expect(f.shutdown).not.toHaveBeenCalled();
+    f.control.release("before-exchange", "discover");
+    expect(replies).toBe(0);
+    const results = await Promise.all(publicCalls);
+    expect(results.every(result => !result.ok)).toBe(true);
+    f.installer.mockImplementation(() => { expect(f.shutdown).toHaveBeenCalledOnce(); });
+    await f.call("updates:install"); expect(f.installer).toHaveBeenCalledOnce();
+  } finally { await f.cleanup(); }
+});
+import { MonitorService } from "./device/monitor-service.js";
+it("D150 battery/monitor/Lab share one sampler; slow or throwing consumers and window loss cannot retain demand", async () => {
+  const f = await foundationIpc();
+  const feed = createLegacyMonitorFeed(f.broker);
+  const core = (adapter: ImportedCorePrincipal["adapter"]): ImportedCorePrincipal => ({ ...f.principal, adapter });
+  const legacy = createLegacyDevice({ broker: f.broker, principal: () => core("monitor"), feed,
+    stop: async () => {}, disconnect: async () => {} });
+  const monitor = new MonitorService(legacy, vi.fn());
+  const remove: Array<() => Promise<void>> = [];
+  try {
+    const session = await f.peer.request("devices/session", { sessionId: f.sessionId });
+    if (!session.ok) throw new Error("session");
+    const channelIds = session.value.sources.channels.map(channel => channel.channelId);
+    const read = () => f.peer.request("devices/read", { sessionId: f.sessionId, channelIds, freshness: "fresh" });
+    await read();
+    const battery = vi.fn(), lab = vi.fn(), closed = vi.fn();
+    remove.push(await feed.subscribe({ principal: core("battery"), sessionId: f.sessionId, intervalMs: 30000, receive: battery }));
+    remove.push(await feed.subscribe({ principal: core("lab"), sessionId: f.sessionId, intervalMs: 500, receive: lab, onClosed: closed }));
+    expect(battery).toHaveBeenCalledOnce(); expect(lab).toHaveBeenCalledOnce();
+    expect(battery.mock.calls[0]![0]).toMatchObject({ status: "fresh", frame: { values: [{ value: 42 }] } });
+    await monitor.watch(f.sessionId, true, 7);
+    let throwing = false;
+    const failedConsumer = vi.fn();
+    remove.push(await feed.subscribe({ principal: core("monitor"), sessionId: f.sessionId, intervalMs: 500,
+      receive: () => { if (throwing) throw new Error("consumer"); }, onClosed: failedConsumer }));
+    const slow = vi.fn();
+    const slowDemand = await f.broker.subscribeCoreTelemetry({ principal: core("battery"), sessionId: f.sessionId,
+      channelIds, intervalMs: 30000, receive: slow });
+    slowDemand.activate(); remove.push(() => slowDemand.dispose());
+    const before = f.control.trace().filter(row => row.step === "read" && row.dispatch === "sent").length;
+    f.control.block("before-exchange", "read");
+    const one = read(), two = read();
+    await f.control.reached("before-exchange", "read");
+    throwing = true;
+    f.control.release("before-exchange", "read"); await Promise.all([one, two]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(f.control.trace().filter(row => row.step === "read" && row.dispatch === "sent").length).toBe(before + 1);
+    expect(failedConsumer).toHaveBeenCalledExactlyOnceWith("consumer-error");
+    expect(slow).toHaveBeenCalled();
+    await slowDemand.dispose();
+    slowDemand.ack(slow.mock.calls[0]![0].sequence); // A late ACK cannot revive a retired subscription.
+    await monitor.watch(f.sessionId, false, 7);
+    const previousLab = lab.mock.calls.length;
+    await read(); await new Promise<void>(resolve => setImmediate(resolve));
+    expect(lab.mock.calls.length).toBeGreaterThan(previousLab);
+    const work = f.coordinator.suspend(f.sessionId); await work;
+    f.authority.invalidate(f.renderer.id);
+    await monitor.pause(); await Promise.all(remove.map(dispose => dispose()));
+    const after = f.control.trace().length;
+    await f.coordinator.resume(f.sessionId);
+    expect(f.control.trace()).toHaveLength(after);
+    expect(f.commands).toHaveBeenCalledOnce();
+  } finally { await monitor.dispose(); await Promise.all(remove.map(dispose => dispose())); await f.cleanup(); }
+});
+import { LegacyLab } from "./device-broker/legacy-lab.js";
+it("D150 actual legacy Lab recording overlaps monitor and battery; release preserves the healthy channel", async () => {
+  const f = await foundationIpc(true);
+  const feed = createLegacyMonitorFeed(f.broker);
+  const device = createLegacyDevice({ broker: f.broker, principal: () => ({ ...f.principal, adapter: "lab" }), feed,
+    stop: async () => {}, disconnect: async () => {} });
+  const lab = new LegacyLab(device, vi.fn()), monitor = new MonitorService(device, vi.fn());
+  let battery: (() => Promise<void>) | undefined;
+  try {
+    await monitor.watch(f.sessionId, true, 7);
+    const batteryFrames = vi.fn();
+    battery = await feed.subscribe({ principal: { ...f.principal, adapter: "battery" }, sessionId: f.sessionId,
+      intervalMs: 30000, receive: batteryFrames });
+    await lab.acquire(f.sessionId, [{ id: "light", kind: "input", port: 0, type: 29, mode: 0,
+      channel: 0, name: "Light", modeName: "Reflect", unit: "%", decimals: 0 }]);
+    expect(lab.latest(f.sessionId)?.status).toBe("live");
+    expect(lab.latest(f.sessionId)?.snapshot?.inputs[0]?.values).toEqual([42]);
+    const before = batteryFrames.mock.calls.length;
+    await lab.release(f.sessionId);
+    const session = await f.peer.request("devices/session", { sessionId: f.sessionId });
+    if (!session.ok) throw new Error("session");
+    expect(session.value.session.recording).toBe(false);
+    await f.peer.request("devices/read", { sessionId: f.sessionId,
+      channelIds: session.value.sources.channels.map(channel => channel.channelId), freshness: "fresh" });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(batteryFrames.mock.calls.length).toBeGreaterThan(before);
+    expect(monitor.latest(f.sessionId)?.status).toBe("live");
+    expect(desktopDeviceAccess(f.controller).requirements(f.owner)).not.toBeNull();
+    expect(f.shutdown).not.toHaveBeenCalled(); expect(f.commands).toHaveBeenCalledOnce();
+  } finally { await lab.release(f.sessionId); await monitor.dispose(); await battery?.(); await f.cleanup(); }
+});
+it("D150 non-default connect policy clamps the real exchange to the remaining four-second attempt", async () => {
+  const f = await foundationIpc();
+  try {
+    expect(f.connectionBudgets).toHaveLength(1);
+    expect(f.connectionBudgets[0]).toBeGreaterThan(0);
+    expect(f.connectionBudgets[0]).toBeLessThanOrEqual(4000);
+  } finally { await f.cleanup(); }
+});
+it.each(["wrong-scope", "wrong-target", "expired", "retired"] as const)("D150 real current-stop rejects %s before provider I/O", async kind => {
+  const f = await foundationIpc();
+  try {
+    const action = f.ledger.mint(f.scope, { kind: "device-current-stop", sessionId: f.sessionId });
+    const candidate = kind === "wrong-scope" ? { ...action, scope: { ...f.scope, workbenchInstance: id(80) } } : action;
+    if (kind === "expired") f.advance(5000);
+    if (kind === "retired") f.ledger.retire(f.scope);
+    const before = f.control.trace().length;
+    expect(await f.broker.stopCurrentDevice({ sessionId: kind === "wrong-target" ? id(80) : f.sessionId, action: candidate }))
+      .toMatchObject({ ok: false, error: { code: "PLUGIN_E_PERMISSION_DENIED" } });
+    expect(f.control.trace()).toHaveLength(before); expect(f.journal.snapshot().faults).toEqual([]);
+  } finally { await f.cleanup(); }
+});
+it("D150 same claimed Disconnect action remains valid during cleanup beyond its five-second mint window", async () => {
+  const f = await foundationIpc();
+  try {
+    const operationId = await prepareMotion(f);
+    f.control.block("after-exchange", "motion-pulse");
+    await f.peer.request("devices/motion/start", { operationId });
+    await f.control.reached("after-exchange", "motion-pulse");
+    f.control.block("before-stop-readback", "stop");
+    const disconnected = f.call("device:disconnect", f.sessionId);
+    await f.control.reached("before-stop-readback", "stop");
+    f.advance(6000);
+    f.control.release("after-exchange", "motion-pulse");
+    f.control.release("before-stop-readback", "stop"); await disconnected;
+    expect(f.control.trace().filter(row => row.step === "disconnect" && row.dispatch === "sent")).toHaveLength(1);
+  } finally { await f.cleanup(); }
+});
+it("D150 window invalidation ends core telemetry demand while a late ACK cannot revive it", async () => {
+  const f = await foundationIpc();
+  const feed = createLegacyMonitorFeed(f.broker);
+  const closed = vi.fn();
+  let dispose: (() => Promise<void>) | undefined;
+  try {
+    const session = await f.peer.request("devices/session", { sessionId: f.sessionId });
+    if (!session.ok) throw new Error("session");
+    const channelIds = session.value.sources.channels.map(channel => channel.channelId);
+    const values = vi.fn();
+    dispose = await feed.subscribe({ principal: { ...f.principal, adapter: "lab" }, sessionId: f.sessionId,
+      intervalMs: 500, receive: values, onClosed: closed });
+    f.control.block("before-exchange", "read");
+    const pending = f.peer.request("devices/read", { sessionId: f.sessionId, channelIds, freshness: "fresh" });
+    await f.control.reached("before-exchange", "read");
+    f.authority.invalidate(f.renderer.id);
+    f.control.release("before-exchange", "read"); await pending;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(closed).toHaveBeenCalledExactlyOnceWith("broker-ended");
+    const count = values.mock.calls.length;
+    await dispose(); await dispose();
+    expect(values).toHaveBeenCalledTimes(count);
+  } finally { await dispose?.(); await f.cleanup(); }
+});
+
+import { updateArtifactName, updateMetadataName } from "../shared/updates.js";
+it("D150 Disconnect also waits for a concurrent current-stop's final journal publication", async () => {
+  const f = await foundationIpc();
+  try {
+    f.control.block("after-exchange", "readback");
+    const stop = f.call("device:stop", f.sessionId);
+    await f.control.reached("after-exchange", "readback");
+    const synced = deferredIpc<void>(), allowSync = deferredIpc<void>();
+    const original = f.fs.syncDirectory.bind(f.fs);
+    const sync = vi.spyOn(f.fs, "syncDirectory").mockImplementation(async () => { synced.resolve(); await allowSync.promise; await original(); });
+    const physical = vi.spyOn(f.broker.sessions, "disconnect");
+    const disconnect = Promise.resolve(f.call("device:disconnect", f.sessionId));
+    void disconnect.catch(() => {});
+    f.control.release("after-exchange", "readback"); await synced.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // Release even on assertion failure, so the regression never hangs test teardown.
+    try { expect(physical).not.toHaveBeenCalled(); }
+    finally { allowSync.resolve(); await Promise.all([stop, disconnect]); sync.mockRestore(); }
+    expect(f.journal.snapshot().blockers).toEqual([]);
+  } finally { await f.cleanup(); }
+});
+
+import type { ProviderCatalogPort } from "./device-broker/provider.js";
+it("D150 catalog rejects foreign sessions and invalidates its allocator on real optional-provider reload", async () => {
+  const f = await foundationIpc();
+  try {
+    const catalog = f.catalogs[0]!;
+    const tuple = { sessionId: f.sessionId, portId: "1", typeId: "29", modeId: "0", component: 0, unit: "%" };
+    expect(catalog.identify(tuple)).toBe(catalog.identify(tuple));
+    expect(() => catalog.identify({ ...tuple, sessionId: id(99) })).toThrow();
+    expect(await f.controller.reload("builtin:kobrixa.device-ev3")).toMatchObject({ ok: true });
+    expect(f.catalogs).toHaveLength(2); expect(f.catalogs[1]).not.toBe(catalog);
+    expect(() => catalog.identify(tuple)).toThrow();
+    expect(f.controls[1]!.trace()).toEqual([]); // Replacement does not reconnect or replay.
+    expect(f.commands).toHaveBeenCalledOnce();
   } finally { await f.cleanup(); }
 });

@@ -2257,3 +2257,86 @@ it("D150 actual channel uses admitted generation requirements and launch permiss
     await composition.dispose();
   } finally { await f.cleanup(); }
 });
+
+import { createWindowRetirementHandler } from "./controller.js";
+it.each([false, true])("D150 native retirement destroyed=%s fences the old channel before invalidation and awaits disposition", async destroyed => {
+  const { memoryPlugin } = await import("../../../../../packages/plugin-runtime/src/test-process.js");
+  const f = await compositionInput();
+  const directory = await pluginFolder("window");
+  const authority = f.input.foundationOptions.authority as AuthorityContexts;
+  const document = authority.open(7);
+  authority.report(7, { document, sequence: 1, state: "local", roomId: null,
+    connected: true, synced: true, role: null, isHolder: true });
+  const core = authority.core(7, "recovery");
+  const scope = { hostEpoch: core.hostEpoch, workbenchInstance: core.workbenchInstance };
+  const ledger = createCoreActionLedger({ now: f.input.foundationOptions.now,
+    current: value => value.workbenchInstance === scope.workbenchInstance });
+  f.input.foundationOptions.coreActions = ledger;
+  f.input.plugins.commandLine.developmentDirectories = [directory];
+  f.input.principal = owner => authority.plugin(7, owner);
+  const controllerRef: { current?: PluginController } = {};
+  let owner!: ImportedResourceOwner;
+  const commands = vi.fn(() => null), shutdown = vi.fn(() => null);
+  const launch = vi.fn(async (plugin: LaunchablePlugin) => {
+    owner = plugin.channelOwner!;
+    return memoryPlugin((remote, control) => {
+      remote.handle("initialize", () => ({ apiVersion: "1.5.0", sdk: { name: "test", version: "1" } }));
+      remote.handle("command/execute", commands); remote.handle("shutdown", shutdown);
+      remote.onNotification("exit", () => control.exit());
+    }).process;
+  });
+  f.input.plugins.launcher = () => launch;
+  f.input.foundationOptions.requirements = candidate => controllerRef.current ? desktopDeviceAccess(controllerRef.current).requirements(candidate) : null;
+  const composition = await composeDesktopMain(f.input);
+  const controller = composition.plugins; controllerRef.current = controller;
+  try {
+    expect(await controller.execute("acme.window.greet")).toMatchObject({ ok: true });
+    const oldOwner = owner;
+    const action = ledger.mint(scope, { kind: "device-current-stop", sessionId: randomUUID() });
+    let finish!: () => void;
+    const disposition = new Promise<void>(resolve => { finish = resolve; });
+    const resources = composition.foundation.broker.resources;
+    const original = resources.retire.bind(resources);
+    const retire = vi.spyOn(resources, "retire").mockImplementation((candidate, reason) => {
+      expect(candidate).toEqual(oldOwner);
+      expect(authority.current(f.input.principal(candidate), core.authorityContext!.ref)).not.toBeNull();
+      const result = original(candidate, reason);
+      return { ...result, settled: disposition.then(() => result.settled) };
+    });
+    const ledgerRetire = vi.spyOn(ledger, "retire");
+    const invalidate = vi.fn(() => {
+      expect(ledgerRetire).toHaveBeenCalledExactlyOnceWith(scope);
+      expect(retire).toHaveBeenCalledExactlyOnceWith(oldOwner, "renderer-lost");
+      authority.invalidate(7);
+    });
+    const pause = vi.fn(async () => {});
+    const handler = createWindowRetirementHandler({ composition, coreActions: ledger,
+      scope: () => scope, invalidate, flush: async () => {}, pause });
+    const pending = handler(destroyed);
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(ledger.claim(action, { kind: "device-current-stop", sessionId: randomUUID() })).toBe(false);
+    expect(shutdown).not.toHaveBeenCalled(); expect(pause).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledOnce(); expect(commands).toHaveBeenCalledOnce();
+    finish(); await pending;
+    expect(shutdown).toHaveBeenCalledOnce(); expect(pause).toHaveBeenCalledOnce();
+    expect(desktopDeviceAccess(controller).requirements(oldOwner)).toBeNull();
+    expect(launch).toHaveBeenCalledOnce(); expect(commands).toHaveBeenCalledOnce();
+    const replacement = authority.open(7);
+    expect(replacement).not.toBe(document);
+    expect(authority.core(7, "recovery").workbenchInstance).not.toBe(scope.workbenchInstance);
+  } finally { await composition.dispose(); await f.cleanup(); }
+});
+it.each([false, true])("D150 actual controller crash risk=%s preserves disabled optional source", async risk => {
+  const optional = "builtin:kobrixa.device-ev3";
+  const directories = risk ? [await pluginFolder("risk")] : [];
+  const options = { builtins: BUILTIN_PLUGIN_SOURCES,
+    commandLine: { developmentDirectories: directories, safeMode: false } };
+  const crashed = await start(undefined, options);
+  expect(await crashed.setEnabled(optional, false)).toMatchObject({ ok: true });
+  crashed.markRendererUnresponsive();
+  const recovered = await start(undefined, options);
+  expect(recovered.state().plugins.find(row => row.sourceKey === optional)?.status).toBe("disabled");
+  expect(recovered.state().safeMode).toBe(risk);
+  if (risk) expect(await recovered.setEnabled(optional, true)).toMatchObject({ ok: false });
+  await recovered.shutdown(); recovered.finishSession();
+});

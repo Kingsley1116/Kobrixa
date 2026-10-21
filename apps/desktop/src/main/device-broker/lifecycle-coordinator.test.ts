@@ -341,3 +341,10 @@ it("BM-03 blocked disposition retains registration until a successful retry", as
 });
 
 import { createFakeDeviceProvider, type FakeProviderControl } from "./fake-provider.js";
+it("stale suspend rejects asynchronously so other sessions can still be suspended", async () => {
+  const f = fixture();
+  f.sessions.quiesce.mockImplementationOnce(() => { throw new Error("stale"); });
+  let pending!: Promise<void>;
+  expect(() => { pending = f.coordinator.suspend(id(3)); }).not.toThrow();
+  await expect(pending).rejects.toThrow("stale");
+});

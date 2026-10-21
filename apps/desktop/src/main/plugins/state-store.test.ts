@@ -162,3 +162,13 @@ it("rejects an invalid update or a failed write without changing the settings", 
   await store.update((current) => ({ ...current, developerMode: true }));
   expect((await stored()).developerMode).toBe(true);
 });
+it("D150 optional builtin disable survives safe-mode recovery and clearing its lock", async () => {
+  const optional = "builtin:kobrixa.device-ev3";
+  const first = filePluginStateStore(root);
+  await first.load(); await first.save(state([optional]));
+  await first.update(document => ({ ...document, safeModeLock: { since: "2026-10-15T00:00:00.000Z", reason: "unclean-exit" } }));
+  const recovered = filePluginStateStore(root);
+  expect((await recovered.load()).disabled.has(optional)).toBe(true);
+  await recovered.update(document => { const next = { ...document }; delete next.safeModeLock; return next; });
+  expect((await filePluginStateStore(root).load()).disabled.has(optional)).toBe(true);
+});

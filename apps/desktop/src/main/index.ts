@@ -31,8 +31,8 @@ import { registerCollabIpc } from "./collab/ipc.js";
 import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
 import { registerPluginIpc } from "./plugins/ipc.js";
-import { installPluginQuitCleanup } from "./plugins/quit.js";
-import { composeDesktopMain, desktopLifecycle, desktopDeviceAccess, retireDesktopWindow,
+import { installPluginQuitCleanup, createQuitRecovery } from "./plugins/quit.js";
+import { composeDesktopMain, desktopLifecycle, desktopDeviceAccess, createWindowRetirementHandler,
   createLegacyActionAdmission, trustedDeviceActions, createDeviceLossHandler,
   type PluginController } from "./plugins/controller.js";
 import { createDesktopFoundation } from "./device-broker/lifecycle-coordinator.js";
@@ -60,6 +60,17 @@ let mainWindow: BrowserWindow | undefined;
 let quitting = false;
 let closeHandshake: CloseHandshake | undefined;
 let rendererCanFlush = false;
+let reopenWindow: (() => void) | undefined;
+const quitRecovery = createQuitRecovery({
+  focus: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus(); return true;
+  },
+  open: () => { reopenWindow?.(); },
+  retry: error => retryDeviceWork(error, mainWindow),
+  quit: () => app.quit(),
+});
 
 async function retryDeviceWork(error: unknown, window?: BrowserWindow): Promise<boolean> {
   const options: MessageBoxOptions = {
@@ -243,7 +254,10 @@ const primary = startPrimary(app, async (profile) => {
   const plugins = composition.plugins;
   controller.current = plugins;
   const coordinator = desktopLifecycle(composition);
-  installPluginQuitCleanup(app, async () => { await composition.dispose(); await monitor.dispose(); }, reportCleanupError);
+  installPluginQuitCleanup(app, async () => { await composition.dispose(); await monitor.dispose(); }, error => {
+    quitting = false;
+    void quitRecovery.blocked(error).catch(reportCleanupError);
+  });
   app.on("quit", () => plugins.finishSession());
   quitOnSignals(process, () => app.quit());
   const renderer = () => {
@@ -379,21 +393,17 @@ const primary = startPrimary(app, async (profile) => {
   void sensorLab.getState().catch(reportCleanupError);
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() !== "window") return;
-    const retire = (destroyed: boolean) => {
-      let retired: Promise<void> = Promise.resolve();
-      try {
+    const handler = createWindowRetirementHandler({
+      composition, coreActions,
+      scope: () => {
         const principal = authority.principal(contents.id, "recovery");
-        if (principal.kind === "core") {
-          const scope = { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
-          coreActions.retire(scope);
-          retired = retireDesktopWindow(composition, scope, destroyed);
-        }
-      } catch { /* No document has been admitted yet. */ }
-      authority.invalidate(contents.id);
-      const sessions = legacy.sessionIds().map(id => coordinator.suspend(id));
-      void Promise.all([retired, ...sessions, sensorLab.flush("close")])
-        .then(() => monitor.pause()).catch(reportCleanupError);
-    };
+        if (principal.kind !== "core") throw new Error("Core workbench required.");
+        return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
+      },
+      invalidate: () => authority.invalidate(contents.id),
+      flush: () => sensorLab.flush("close"), pause: () => monitor.pause(),
+    });
+    const retire = (destroyed: boolean) => { void handler(destroyed).catch(reportCleanupError); };
     contents.on("destroyed", () => retire(true));
     contents.on("render-process-gone", () => retire(false));
     contents.on("did-start-navigation", (_event, _url, inPlace, isMainFrame) => {
@@ -456,17 +466,13 @@ const primary = startPrimary(app, async (profile) => {
       void motors.stopAll();
     });
   };
+  reopenWindow = openWindow;
   openWindow();
   updates.start();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) openWindow();
   });
-}, () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show(); mainWindow.focus();
-  return true;
-});
+}, quitRecovery.focus);
 void primary?.ready.catch((error: unknown) => {
   console.error("Primary startup failed.", error);
   void retryDeviceWork(error);
