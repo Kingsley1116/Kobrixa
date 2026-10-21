@@ -28,7 +28,9 @@ export function installPluginQuitCleanup(
           clearTimeout(timer);
           if (timedOut) return;
           state = "done";
-          app.quit();
+          // Electron can ignore a reentrant quit while the prevented will-quit
+          // event is still unwinding, including an immediately resolved cleanup.
+          setImmediate(() => app.quit());
         },
         (error: unknown) => {
           clearTimeout(timer);
