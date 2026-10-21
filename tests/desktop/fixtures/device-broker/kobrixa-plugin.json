@@ -1,0 +1,10 @@
+{
+  "id": "kobrixa-fixture.devices",
+  "version": "0.0.0",
+  "apiVersion": "^1.5.0",
+  "runtime": { "kind": "node", "entry": "consumer.cjs" },
+  "permissions": ["ui.notifications", "devices.read", "devices.connect", "devices.control"],
+  "contributes": {
+    "commands": [{ "id": "kobrixa-fixture.devices.probe", "title": "Probe devices" }]
+  }
+}
