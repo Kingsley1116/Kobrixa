@@ -103,6 +103,33 @@ function fixture() {
   };
 }
 
+it("late abandon completion preserves a replacement checkpoint", async () => {
+  const f = fixture();
+  const original = await f.life.register(owner, {
+    id: record.id,
+    expectedRevision: record.revision,
+  });
+  if (!original.ok) throw new Error("registration failed");
+  let resume!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  f.deps.persist = async (_owner, document) => {
+    if (document.state === "interrupted") await paused;
+  };
+  const abandoning = f.life.abandon(owner, { checkpoint: original.value.checkpoint });
+  f.life.retireCheckpoint(owner, checkpointRecoveryId(original.value.checkpoint));
+  const replacement = await f.life.register(owner, {
+    id: record.id,
+    expectedRevision: record.revision,
+  });
+  if (!replacement.ok) throw new Error("replacement failed");
+  resume();
+  expect((await abandoning).ok).toBe(true);
+  expect(f.life.open(owner)).toBe(true);
+  expect((await f.life.abandon(owner, { checkpoint: replacement.value.checkpoint })).ok).toBe(true);
+});
+
 it("T5fix2 discard cannot acknowledge a replacement open head", async () => {
   const f = fixture();
   const registered = await f.life.register(owner, {

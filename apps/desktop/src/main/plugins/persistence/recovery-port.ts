@@ -169,6 +169,17 @@ export function createPersistenceRecovery(deps: Dependencies) {
     return entry;
   }
   const api = {
+    // Checkpoint metadata and its derived recovery row must share the same
+    // ordering as core actions, including every persistence await.
+    async persistCheckpoint(
+      owner: ResourceOwner,
+      current: () => boolean,
+      write: () => Promise<void>,
+    ): Promise<void> {
+      await mutate(owner, async () => {
+        if (current()) await write();
+      });
+    },
     async retain(
       owner: ResourceOwner,
       report: DrainReport,

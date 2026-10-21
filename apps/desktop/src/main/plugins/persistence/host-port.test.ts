@@ -496,6 +496,115 @@ const coreAction = () => ({
   scope: { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() },
 });
 
+it.each(["checkpoint", "recovery", "discard"] as const)(
+  "discard stays durable when checkpoint metadata waits at %s",
+  async (boundary) => {
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    const reservationId = randomUUID(),
+      sessionId = randomUUID();
+    let active = true;
+    f.input.reservations.validate = () =>
+      active ? { owner, reservationId, sessionId, providerGeneration: 1 } : null;
+    const host = await createPersistenceHost(f.input);
+    const registered = await host.request(
+      principal,
+      "storage/registerCheckpoint",
+      {
+        id: f.record().id,
+        expectedRevision: f.record().revision,
+        reservation: reservationId,
+      },
+      signal,
+    );
+    if (!registered.ok) throw new Error("registration failed");
+    active = false;
+    const offer = host.participant.endReservation(
+      {
+        owner,
+        reservationId,
+        sessionId,
+        providerGeneration: 1,
+        reason: "released",
+        lastSequence: 1,
+        endedMonotonicMs: 0,
+        drain: { owner, reservationId, lastSequence: 1, expiresMonotonicMs: 10000 },
+      },
+      10000,
+    )!;
+    const first = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    expect(first.blocker).toBe(true);
+    const entered = pause(),
+      release = pause();
+    const save = f.backend.evidence.saveRecovery,
+      remove = f.backend.evidence.removeRecovery;
+    let interruptedWrites = 0;
+    f.backend.evidence.saveCheckpoint = async (_owner, document) => {
+      if (document.state !== "interrupted") return;
+      interruptedWrites++;
+      if (boundary === "checkpoint") {
+        entered.resolve();
+        await release.promise;
+      }
+    };
+    f.backend.evidence.saveRecovery = async (row) => {
+      if (boundary === "recovery") {
+        entered.resolve();
+        await release.promise;
+      }
+      await save(row);
+    };
+    f.backend.evidence.removeRecovery = async (id) => {
+      if (boundary === "discard") {
+        entered.resolve();
+        await release.promise;
+      }
+      await remove(id);
+    };
+    const abandon = () =>
+      host.request(
+        principal,
+        "storage/abandonCheckpoint",
+        {
+          checkpoint: registered.value.checkpoint,
+        },
+        signal,
+      );
+    let discarded =
+      boundary === "discard" ? host.participant.discard(first.recovery!, coreAction()) : undefined;
+    if (discarded) await entered.promise;
+    const abandoning = abandon();
+    if (!discarded) await entered.promise;
+    discarded ??= host.participant.discard(first.recovery!, coreAction());
+    let completed = false;
+    void discarded.then(() => {
+      completed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const overtook = completed;
+    release.resolve();
+    expect((await abandoning).ok).toBe(true);
+    expect((await discarded).blocker).toBe(false);
+    for (let i = 0; i < 2; i++) {
+      expect(await host.participant.drain(offer, f.input.composition.dispatchDrain)).toMatchObject({
+        state: "saved",
+        blocker: false,
+        records: [],
+      });
+      expect(host.participant.recoverySnapshot().items).toHaveLength(0);
+    }
+    await host.dispose();
+    const remaining = [...f.rows.values()];
+    const restarted = await createPersistenceHost(f.input);
+    const restored = restarted.participant.recoverySnapshot();
+    await restarted.dispose();
+    expect(remaining).toHaveLength(0);
+    expect(restored.items).toHaveLength(0);
+    expect(overtook).toBe(false);
+    expect(interruptedWrites).toBe(boundary === "discard" ? 0 : 1);
+  },
+);
+
 it.each([false, true])(
   "T5fix2 preserves in-flight final admission unless the caller cancels (%s)",
   async (cancel) => {
@@ -866,16 +975,24 @@ it.each([false, true])(
       ? host.participant.discard(report.recovery!, coreAction())
       : undefined;
     if (delayed) await entered.promise;
-    expect(
-      (
-        await host.request(
-          principal,
-          "storage/abandonCheckpoint",
-          { checkpoint: a.value.checkpoint },
-          signal,
-        )
-      ).ok,
-    ).toBe(true);
+    const abandoning = host.request(
+      principal,
+      "storage/abandonCheckpoint",
+      { checkpoint: a.value.checkpoint },
+      signal,
+    );
+    if (delayed) {
+      // Metadata joins the in-flight discard instead of racing its durable
+      // removal. The non-delayed case still replaces before discarding A.
+      let complete = false;
+      void abandoning.then(() => {
+        complete = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(complete).toBe(false);
+      release.resolve();
+    }
+    expect((await abandoning).ok).toBe(true);
     const b = await host.request(
       principal,
       "storage/registerCheckpoint",

@@ -239,9 +239,12 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     persist(owner, document) {
       const run = (async () => {
         const key = JSON.stringify([ownerKey(owner), document.record.id]);
-        let registration = registrations.get(key);
         sweep();
+        let registration = registrations.get(key);
         if (!registration || registration.checkpoint !== document.checkpoint) {
+          // A terminal continuation cannot recreate a retired or replaced
+          // association. Only registration admits a new checkpoint identity.
+          if (document.state !== "open") return;
           if (!registration && registrations.size >= hostLimit) limit();
           registration = {
             checkpoint: document.checkpoint,
@@ -249,62 +252,72 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
           };
           registrations.set(key, registration);
         }
-        const value = { ...document, binding: document.binding ?? null };
-        if (document.state !== "open" && backend.evidence.saveCheckpoint)
-          await backend.evidence.saveCheckpoint(owner, value);
-        else {
-          const bytes = Buffer.from(JSON.stringify({ formatVersion: 1, ...value }));
-          const ticket: PublicationTicket = Object.freeze({
-            id: randomUUID(),
-            owner: Object.freeze({ ...owner }),
-            deadlineMonotonicMs: now() + 10000,
-            target: { kind: "recovery" as const, key: document.checkpoint },
-            metadata: { kind: "recovery" as const, key: document.checkpoint },
-          });
-          await backend.engine.reserve(ticket, bytes.length);
-          for (let offset = 0; offset < bytes.length;) {
-            const chunk = bytes.subarray(offset, offset + 262144),
-              next = await backend.engine.append(ticket, offset, chunk);
-            if (next <= offset || next > offset + chunk.length)
-              throw new Error("Invalid metadata progress");
-            offset = next;
-          }
-          await backend.engine.seal(
-            ticket,
-            bytes.length,
-            createHash("sha256").update(bytes).digest("hex"),
-          );
-          let result = await backend.engine.publish(ticket);
-          if (result.disposition === "unknown") result = await backend.engine.reconcile(ticket);
-          if (result.disposition !== "committed")
-            throw new Error("Checkpoint registration unavailable");
-        }
-        // This independent evidence preserves the original owner even for unbound registrations.
-        // It is restored into the core registry only after restart or an actual failed drain.
-        const final = document.state === "final";
-        const previous = final ? await backend.evidence.loadRecovery(registration.recovery) : null;
-        await backend.evidence.saveRecovery({
-          id: registration.recovery,
+        const admitted = registration;
+        const deadlineMonotonicMs = now() + 10000;
+        await recovery.persistCheckpoint(
           owner,
-          ticket: previous?.ticket ?? null,
-          sealedPin: null,
-          expiresAt: previous?.expiresAt ?? null,
-          report: {
-            state: final ? "saved" : "checkpoint-only",
-            blocker: !final,
-            pendingSettings: false,
-            records: [
-              {
-                id: document.record.id,
-                committedRevision: document.record.revision,
-                final,
-                payload: "checkpoint-only",
+          () => registrations.get(key) === admitted,
+          async () => {
+            const value = { ...document, binding: document.binding ?? null };
+            if (document.state !== "open" && backend.evidence.saveCheckpoint)
+              await backend.evidence.saveCheckpoint(owner, value);
+            else {
+              const bytes = Buffer.from(JSON.stringify({ formatVersion: 1, ...value }));
+              const ticket: PublicationTicket = Object.freeze({
+                id: randomUUID(),
+                owner: Object.freeze({ ...owner }),
+                deadlineMonotonicMs,
+                target: { kind: "recovery" as const, key: document.checkpoint },
+                metadata: { kind: "recovery" as const, key: document.checkpoint },
+              });
+              await backend.engine.reserve(ticket, bytes.length);
+              for (let offset = 0; offset < bytes.length;) {
+                const chunk = bytes.subarray(offset, offset + 262144),
+                  next = await backend.engine.append(ticket, offset, chunk);
+                if (next <= offset || next > offset + chunk.length)
+                  throw new Error("Invalid metadata progress");
+                offset = next;
+              }
+              await backend.engine.seal(
+                ticket,
+                bytes.length,
+                createHash("sha256").update(bytes).digest("hex"),
+              );
+              let result = await backend.engine.publish(ticket);
+              if (result.disposition === "unknown") result = await backend.engine.reconcile(ticket);
+              if (result.disposition !== "committed")
+                throw new Error("Checkpoint registration unavailable");
+            }
+            // This independent evidence preserves the original owner even for unbound registrations.
+            // It is restored into the core registry only after restart or an actual failed drain.
+            const final = document.state === "final";
+            const previous = final
+              ? await backend.evidence.loadRecovery(registration.recovery)
+              : null;
+            await backend.evidence.saveRecovery({
+              id: registration.recovery,
+              owner,
+              ticket: previous?.ticket ?? null,
+              sealedPin: null,
+              expiresAt: previous?.expiresAt ?? null,
+              report: {
+                state: final ? "saved" : "checkpoint-only",
+                blocker: !final,
+                pendingSettings: false,
+                records: [
+                  {
+                    id: document.record.id,
+                    committedRevision: document.record.revision,
+                    final,
+                    payload: "checkpoint-only",
+                  },
+                ],
+                errors: [],
               },
-            ],
-            errors: [],
+            });
+            if (document.state !== "open") registration.terminalAt = now();
           },
-        });
-        if (document.state !== "open") registration.terminalAt = now();
+        );
       })();
       metadata.add(run);
       void run.finally(() => metadata.delete(run)).catch(() => {});

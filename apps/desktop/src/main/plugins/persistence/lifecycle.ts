@@ -795,7 +795,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         return new PersistenceFault("PLUGIN_E_STORAGE_CONFLICT", "write-in-progress").result;
       const record = { ...entry.record, interrupted: true };
       await deps.persist(owner, { checkpoint: entry.handle, record, state: "interrupted" });
-      entries.delete(key(owner, entry.id));
+      if (entries.get(key(owner, entry.id)) === entry) entries.delete(key(owner, entry.id));
       return { ok: true, value: { record } };
     },
   };
