@@ -1,7 +1,64 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import { assertMeasurements, summary } from "./declarative-ui-harness.mjs";
+import { analyzeLoad } from "./declarative-ui-load-report.mjs";
+
+test(
+  "actual 30-second slow renderer preserves drafts, bounds queues and ignores a retired snapshot",
+  {
+    skip: !process.env.KOBRIXA_UI_SLOW_REPORT,
+  },
+  async () => {
+    const file = process.env.KOBRIXA_UI_SLOW_REPORT;
+    const bytes = await readFile(file);
+    const report = JSON.parse((file.endsWith(".gz") ? gunzipSync(bytes) : bytes).toString("utf8"));
+    assert.equal(report.kind, "ui-slow-renderer-run");
+    assert.equal(report.composition, "composeDesktopMain/createDesktopFoundation");
+    assert.ok(report.durationMs >= 30000 && report.samples.length >= 100);
+    assert.equal(report.delayMs, 800);
+    for (const sample of report.samples) {
+      assert.equal(sample.state.raw, "-");
+      assert.equal(sample.state.focused, true);
+      assert.equal(sample.state.active, true);
+      for (const row of sample.counters) {
+        assert.ok(row.counters.queuedEvents <= 4);
+        assert.ok(row.counters.queuedBytes <= 65536);
+      }
+    }
+    assert.ok(
+      report.samples.some(
+        (sample, index, rows) =>
+          index > 0 && sample.state.revision - rows[index - 1].state.revision > 1,
+      ),
+    );
+    assert.ok(report.snapshotDeliveries.length > 100);
+    assert.ok(report.snapshotDeliveries.every((row) => row.count <= 1 && row.bytes <= 65536));
+    assert.equal(report.afterClose, false);
+    assert.notEqual(report.reopened.panelInstance, report.initial.panelInstance);
+    assert.ok(report.after.active && report.after.revision > report.reopened.revision);
+    assert.equal(report.final.length, 3);
+    for (const row of [...report.final, ...report.rendererFinal])
+      assert.ok(Object.values(row.counters).every((value) => value === 0));
+    assert.equal(report.normalClose, true);
+    assert.ok(report.orphanCheckMs >= 5000);
+    assert.deepEqual(report.remainingPids, []);
+    assert.deepEqual(report.failures, []);
+  },
+);
+
+test(
+  "three actual native maximum-load runs meet UI timing, heap and cleanup limits",
+  {
+    skip: !process.env.KOBRIXA_UI_LOAD_REPORT,
+  },
+  async () => {
+    const report = await analyzeLoad(process.env.KOBRIXA_UI_LOAD_REPORT);
+    for (const run of report.runs) assert.equal(run.pass, true, JSON.stringify(run.checks));
+    assert.equal(report.pass, true);
+  },
+);
 
 // Separate from maximum-load acceptance: this verifies an actual renderer-cycle
 // receipt only when the controller provides one, never the example below.

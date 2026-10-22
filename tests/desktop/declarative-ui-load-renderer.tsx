@@ -151,15 +151,17 @@ async function openAll() {
     ?.setAttribute("open", "");
   return { entries: entries(), diagnostics: sample() };
 }
-function bounds(kind: "input" | "hold" | "hide") {
+function bounds(kind: "input" | "hold" | "hide" | "number") {
   const element =
     kind === "hide"
       ? document.querySelector<HTMLButtonElement>(".plugin-tools-pane > header button")
-      : kind === "input"
-        ? [...document.querySelectorAll<HTMLInputElement>('input[type="text"]')][0]
-        : [...document.querySelectorAll<HTMLButtonElement>("button")].find(
-            (button) => button.textContent?.trim() === "Hold",
-          );
+      : kind === "number"
+        ? document.querySelector<HTMLInputElement>('input[inputmode="decimal"]')
+        : kind === "input"
+          ? [...document.querySelectorAll<HTMLInputElement>('input[type="text"]')][0]
+          : [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+              (button) => button.textContent?.trim() === "Hold",
+            );
   check(element && !element.disabled, `missing ${kind}`);
   element!.scrollIntoView({ block: "center" });
   const r = element!.getBoundingClientRect();
@@ -217,6 +219,35 @@ Object.assign(window, {
     },
     show() {
       owner.session.showPane(true, "tab");
+    },
+    slowState() {
+      const selected = entries().find((entry) => owner.session.selectedKey()?.includes(entry.id));
+      const state = selected && owner.session.record(selected)?.state.getSnapshot();
+      const field = document.querySelector<HTMLInputElement>('input[inputmode="decimal"]');
+      return {
+        raw: field?.value,
+        focused: field === document.activeElement,
+        panelInstance: state?.snapshot.binding.panelInstance,
+        revision: state?.snapshot.revision,
+        active: state?.active,
+      };
+    },
+    closeSelected() {
+      document.querySelector<HTMLButtonElement>("[data-close-contribution]")!.click();
+    },
+    hasInstance(id: string) {
+      return entries().some(
+        (entry) => owner.session.record(entry)?.state.form().binding.panelInstance === id,
+      );
+    },
+    async reopenFirst() {
+      const entry = entries().find((entry) => entry.kind === "panel")!;
+      await owner.session.open(entry);
+      owner.session.select(entry);
+      await frame();
+      await frame();
+      const snapshot = owner.session.record(entry)!.state.getSnapshot().snapshot;
+      return { panelInstance: snapshot.binding.panelInstance, revision: snapshot.revision };
     },
     async dispose() {
       root.unmount();

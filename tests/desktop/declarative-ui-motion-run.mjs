@@ -10,6 +10,7 @@ import { build } from "esbuild";
 import { build as buildRenderer } from "vite";
 import { root, materialize, padJson } from "./declarative-ui-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
+import { analyzeLoad } from "./declarative-ui-load-report.mjs";
 
 const faults = [
   "hide",
@@ -23,7 +24,8 @@ const cases = ["prepare", "start", "arm", "pulse"].flatMap((boundary) =>
   ["before", "after"].flatMap((position) => faults.map((fault) => ({ boundary, position, fault }))),
 );
 const args = process.argv.slice(2);
-const load = ["--load", "--load-probe"].includes(args[0]);
+const slow = args[0] === "--slow-consumer";
+const load = ["--load", "--load-probe", "--slow-consumer"].includes(args[0]);
 assert.equal(args.length, 1, "Pass --all, --stress or --case=boundary:position:fault");
 const selected = load
   ? Array.from({ length: args[0] === "--load" ? 3 : 1 }, (_, repeat) => ({
@@ -34,6 +36,7 @@ const selected = load
       load: {
         durationMs: args[0] === "--load" ? 60000 : 5000,
         cycles: args[0] === "--load" ? 1000 : 5,
+        ...(slow ? { slow: true } : {}),
       },
     }))
   : args[0] === "--stress"
@@ -295,7 +298,10 @@ for (const scenario of selected) {
   assert.equal(timedOut, false, name);
   assert.equal(result.code, 0, `${name}: ${JSON.stringify(result)}; see ${folder}`);
   const report = JSON.parse(await readFile(output, "utf8"));
-  assert.equal(report.kind, load ? "ui-maximum-load-run" : "ui-motion-race");
+  assert.equal(
+    report.kind,
+    slow ? "ui-slow-renderer-run" : load ? "ui-maximum-load-run" : "ui-motion-race",
+  );
   const pids = load ? report.childPids : [report.pid];
   assert.ok(pids.length && pids.every((pid) => pid > 0));
   const alive = (pid) => {
@@ -307,8 +313,9 @@ for (const scenario of selected) {
       throw error;
     }
   };
-  const deadline = performance.now() + 5000;
-  while (pids.some(alive) && performance.now() < deadline) await pause(25);
+  const closedAt = performance.now();
+  await pause(5000);
+  report.orphanCheckMs = performance.now() - closedAt;
   report.remainingPids = pids.filter(alive);
   report.artifact = artifact;
   report.normalClose = !report.expectedBlockedClose;
@@ -321,11 +328,13 @@ await writeFile(
   path.join(directory, "matrix.json"),
   JSON.stringify(
     {
-      kind: load
-        ? "ui-maximum-load"
-        : args[0] === "--stress"
-          ? "ui-motion-stress"
-          : "ui-motion-matrix",
+      kind: slow
+        ? "ui-slow-renderer"
+        : load
+          ? "ui-maximum-load"
+          : args[0] === "--stress"
+            ? "ui-motion-stress"
+            : "ui-motion-matrix",
       reports,
       artifact,
     },
@@ -334,5 +343,11 @@ await writeFile(
   ),
 );
 console.log(
-  `${reports.length}/${selected.length} native motion cases recorded; other acceptance gates remain separate.`,
+  `${reports.length}/${selected.length} native ${load ? "UI" : "motion"} cases recorded; other acceptance gates remain separate.`,
 );
+if (args[0] === "--load") {
+  const analysis = await analyzeLoad(path.join(directory, "matrix.json"));
+  await writeFile(path.join(directory, "load-analysis.json"), JSON.stringify(analysis, null, 2));
+  assert.equal(analysis.pass, true, JSON.stringify(analysis.runs.map((run) => run.checks)));
+  console.log("Native UI load timing, heap and cleanup thresholds PASS.");
+}

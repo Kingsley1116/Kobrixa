@@ -11,6 +11,7 @@ import type { DesktopMainComposition } from "../../apps/desktop/src/main/device-
 import { desktopUi } from "../../apps/desktop/src/main/plugins/controller.js";
 import { diagnosticsFor as mainDiagnostics } from "../../apps/desktop/src/main/plugins/ui-bridge.js";
 import { diagnosticsFor as stateDiagnostics } from "../../packages/plugin-runtime/src/ui-state.js";
+import { measureSlowRenderer, type SnapshotDelay } from "./declarative-ui-slow-main.js";
 
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const wall = () => performance.timeOrigin + performance.now();
@@ -22,6 +23,8 @@ export async function runUiLoad(input: {
   folders: string[];
   durationMs: number;
   cycles: number;
+  slow?: boolean;
+  snapshotDelay: SnapshotDelay;
 }) {
   const { window, composition, directory } = input;
   const ui = desktopUi(composition);
@@ -136,6 +139,30 @@ export async function runUiLoad(input: {
     // Heap snapshots deliberately stall both isolates. Resume via the real
     // visibility route before warmup, rather than measuring a revoked scope.
     await js("window.uiLoad.show()");
+    if (input.slow) {
+      const observed = await measureSlowRenderer(window, input.snapshotDelay);
+      const rendererFinal = await js("window.uiLoad.dispose()");
+      for (const source of composition.plugins
+        .state()
+        .plugins.filter((plugin) => plugin.source === "development"))
+        assert.equal((await composition.plugins.unlink(source.sourceKey)).ok, true);
+      await composition.dispose();
+      const final = snapshots();
+      assert.ok(final.every((row) => Object.values(row.counters).every((value) => value === 0)));
+      return {
+        kind: "ui-slow-renderer-run",
+        composition: "composeDesktopMain/createDesktopFoundation",
+        ...observed,
+        final,
+        rendererFinal,
+        fullCounters,
+        baselineHeap,
+        fullHeap,
+        afterHeap: await heap("after"),
+        normalClose: true,
+        versions: process.versions,
+      };
+    }
     const calibration = [];
     for (let n = 0; n < 30; n++) {
       const send = wall();

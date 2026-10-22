@@ -47,9 +47,10 @@ import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launc
 import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
 import { diagnosticsFor as runtimeDiagnostics } from "../../packages/plugin-runtime/src/ui-lifecycle.js";
 import { runUiLoad } from "./declarative-ui-load-main.js";
+import { snapshotDelay } from "./declarative-ui-slow-main.js";
 
 type Scenario = {
-  load?: { durationMs: number; cycles: number };
+  load?: { durationMs: number; cycles: number; slow?: boolean };
   boundary: "prepare" | "start" | "arm" | "pulse";
   position: "before" | "after";
   fault:
@@ -370,6 +371,7 @@ async function run() {
       });
       const trusted = (event: { sender: { id: number }; senderFrame: unknown }) =>
         !window.isDestroyed() && trustedWorkbench(event, window.webContents);
+      const delayedSnapshots = snapshotDelay();
       const handle: IpcHandle = (name, action) =>
         ipcMain.handle(name, (...args: Parameters<typeof action>) => {
           assert.ok(trusted(args[0]), "Untrusted native sender");
@@ -383,7 +385,9 @@ async function run() {
               if (!scenario.load) ipc.push({ ...row, error: String(error) });
             },
           );
-          return result;
+          return scenario.load?.slow && name === "plugins:ui:snapshot"
+            ? Promise.resolve(result).then((value) => delayedSnapshots.deliver(value))
+            : result;
         });
       registerUiIpc({ handle, bridge: ui.bridge, trusted });
       let rendererAlive = true;
@@ -463,6 +467,7 @@ async function run() {
           runtime: loadRuntime,
           directory: root,
           folders,
+          snapshotDelay: delayedSnapshots,
           ...scenario.load,
         });
         assert.deepEqual(failures, []);
