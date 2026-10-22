@@ -103,7 +103,6 @@ runPlugin(
       };
       const loop = async () => {
         if (stopped) return;
-        const started = performance.now();
         try {
           await tick();
         } catch (error) {
@@ -116,7 +115,9 @@ runPlugin(
             () => {
               void loop();
             },
-            Math.max(0, Math.ceil(100 - (performance.now() - started))),
+            // Wait after the acknowledged patch. Compensating for RPC time
+            // can place eleven arrivals inside the host's rolling second.
+            100,
           );
       };
       await tick();

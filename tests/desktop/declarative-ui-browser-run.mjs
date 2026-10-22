@@ -11,7 +11,10 @@ import { root, fixture, readFixtures } from "./declarative-ui-harness.mjs";
 
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
 const plainGlyphs = process.argv.slice(2).includes("--plain-glyphs");
-assert.deepEqual(process.argv.slice(2), plainGlyphs ? ["--plain-glyphs"] : []);
+const diagnostics = process.argv.slice(2).includes("--renderer-diagnostics");
+assert.ok(
+  process.argv.slice(2).every((arg) => ["--plain-glyphs", "--renderer-diagnostics"].includes(arg)),
+);
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-browser-")));
 console.log(`Real workbench browser workspace: ${directory}`);
 await cp(path.join(root, "apps/desktop/.vite"), path.join(directory, ".vite"), { recursive: true });
@@ -20,6 +23,28 @@ await cp(
   path.join(directory, "node_modules"),
   { recursive: true },
 );
+if (diagnostics) {
+  const { build: buildRenderer } = await import("vite");
+  await buildRenderer({
+    root: path.join(root, "apps/desktop"),
+    configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+    base: "./",
+    plugins: [
+      {
+        name: "actual-ui-diagnostic-entry",
+        transformIndexHtml: {
+          order: "pre",
+          handler: (html) =>
+            html.replace(
+              'src="/src/renderer/index.tsx"',
+              `src="/@fs/${path.join(root, "tests/desktop/declarative-ui-diagnostics-entry.ts")}"`,
+            ),
+        },
+      },
+    ],
+    build: { outDir: path.join(directory, ".vite/renderer/main_window"), emptyOutDir: true },
+  });
+}
 const alias = Object.fromEntries(
   [
     ["plugin-protocol", "plugin-protocol"],
@@ -82,6 +107,7 @@ const artifact = {
     execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim().length >
     0,
   glyphs: plainGlyphs ? "cjk-diagnostic" : "emoji-and-cjk",
+  rendererInstrumentation: diagnostics,
   sha256: Object.fromEntries(
     await Promise.all(
       [
@@ -120,6 +146,7 @@ const child = spawn(
     "--enable-logging=stderr",
     `--ui-browser-output=${output}`,
     `--ui-browser-probe=${probe}`,
+    ...(diagnostics ? ["--ui-browser-diagnostics"] : []),
     `--user-data-dir=${path.join(directory, "profile")}`,
     `--plugin-dev-dir=${sources.join(path.delimiter)}`,
   ],
@@ -143,10 +170,13 @@ const terminate = () => {
     }
 };
 let timedOut = false;
-const timer = setTimeout(() => {
-  timedOut = true;
-  terminate();
-}, 100_000);
+const timer = setTimeout(
+  () => {
+    timedOut = true;
+    terminate();
+  },
+  diagnostics ? 180_000 : 100_000,
+);
 let result;
 try {
   result = await new Promise((resolve, reject) => {
@@ -183,6 +213,4 @@ assert.equal(report.nativeInput, true);
 console.log(
   `PASS ${plainGlyphs ? "CJK diagnostic" : "actual production workbench"} baseline: ${output}`,
 );
-console.log(
-  "Motion races, renderer diagnostics and load remain separate acceptance gates.",
-);
+console.log("Motion races, renderer diagnostics and load remain separate acceptance gates.");

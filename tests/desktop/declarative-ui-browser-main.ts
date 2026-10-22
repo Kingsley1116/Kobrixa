@@ -6,6 +6,7 @@ import { app, crashReporter } from "electron";
 
 const output = app.commandLine.getSwitchValue("ui-browser-output");
 const probe = app.commandLine.getSwitchValue("ui-browser-probe");
+const diagnostics = app.commandLine.hasSwitch("ui-browser-diagnostics");
 app.setPath("crashDumps", path.join(path.dirname(output), "crashes"));
 crashReporter.start({ uploadToServer: false });
 let failing = false;
@@ -19,7 +20,10 @@ const fail = (error: unknown) => {
 };
 process.on("uncaughtException", fail);
 process.on("unhandledRejection", fail);
-setTimeout(() => fail(new Error("UI browser acceptance timed out")), 90_000).unref();
+setTimeout(
+  () => fail(new Error("UI browser acceptance timed out")),
+  diagnostics ? 170_000 : 90_000,
+).unref();
 let started = false;
 app.on("browser-window-created", (_event, window) => {
   window.webContents.on("render-process-gone", (_event, details) => {
@@ -89,6 +93,49 @@ app.on("browser-window-created", (_event, window) => {
       }
       assert.equal(focus, true, "native mouse input did not focus the real note control");
       console.error("UI_PHASE native-input-complete");
+      const heap = async () => {
+        const samples: Record<string, number>[] = [];
+        for (let n = 0; n < 3; n++) {
+          await window.webContents.debugger.sendCommand("HeapProfiler.collectGarbage");
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          const sample = (await window.webContents.debugger.sendCommand(
+            "Runtime.getHeapUsage",
+          )) as Record<string, number>;
+          assert.ok(Number.isFinite(sample.usedSize) && sample.usedSize! > 0);
+          samples.push(sample);
+        }
+        return samples;
+      };
+      if (diagnostics) window.webContents.debugger.attach("1.3");
+      const heapBefore = diagnostics ? await heap() : undefined;
+      const rendererDiagnostics = diagnostics
+        ? await window.webContents.executeJavaScript("window.declarativeDiagnostics.run(1000)")
+        : undefined;
+      if (rendererDiagnostics) {
+        assert.equal(rendererDiagnostics.cycles, 1000);
+        assert.ok(Object.values(rendererDiagnostics.final.counters).every((value) => value === 0));
+        console.error("UI_PHASE renderer-diagnostics-complete");
+      }
+      const heapAfter = diagnostics ? await heap() : undefined;
+      const rendererHeap =
+        heapBefore && heapAfter
+          ? {
+              method:
+                "CDP HeapProfiler.collectGarbage + Runtime.getHeapUsage, three settled collections",
+              scope: "renderer-isolate-only",
+              before: heapBefore,
+              after: heapAfter,
+              retainedBytes:
+                Math.max(...heapAfter.map((sample) => sample.usedSize!)) -
+                Math.min(...heapBefore.map((sample) => sample.usedSize!)),
+            }
+          : undefined;
+      if (rendererHeap)
+        assert.ok(
+          rendererHeap.retainedBytes < 2 * 1024 * 1024,
+          `renderer retained ${rendererHeap.retainedBytes} bytes`,
+        );
+      if (diagnostics) window.webContents.debugger.detach();
       await writeFile(
         output,
         JSON.stringify(
@@ -98,6 +145,8 @@ app.on("browser-window-created", (_event, window) => {
             productionMain: true,
             productionPreload: true,
             productionRenderer: true,
+            ...(rendererDiagnostics ? { rendererDiagnostics } : {}),
+            ...(rendererHeap ? { rendererHeap } : {}),
             versions: process.versions,
             childPids: [
               ...new Set([

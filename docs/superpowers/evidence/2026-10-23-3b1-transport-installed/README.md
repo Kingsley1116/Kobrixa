@@ -33,3 +33,5 @@ node tests/desktop/builtin-process-installed.mjs
 The two Electron commands require a local native execution environment. Pure helper tests explicitly skip actual receipt validation unless given a retained receipt; that skip is never reported as installed acceptance.
 
 Supporting checks: 50 packaging/index/fixture/launch Vitest cases; 35 release Node cases; desktop type check and scoped lint passed. The full desktop run before this packaging-only change passed 2447 tests with 9 existing skips. Independent reviews of D160, V160 and the later packaging changes remain pending due to agent quota. Browser, native interaction/race, performance, real persistence and remaining cross-platform/manual gates are still outstanding.
+
+Follow-up after fixture stale-binding handling at clean `a8cd10f4b8f31e7796e24578cc73ea92ca08695e`: `current-transport.json`/`.txt` retains real JS MessagePort/Python stdio receipts, six passing assertions with no skips and no remaining consumer PIDs. This is still mock-UI transport parity, not renderer/motion evidence.

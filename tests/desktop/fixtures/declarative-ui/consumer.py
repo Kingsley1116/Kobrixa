@@ -81,11 +81,14 @@ async def ready(ctx):
                 return failed(patched["error"]["code"])
     async def loop():
         while not stopped:
-            started = asyncio.get_running_loop().time()
+            # The initial tick already ran. Pace from acknowledged completion,
+            # not from the request start, so the host sees at most ten per second.
+            await asyncio.sleep(0.1)
+            if stopped:
+                return
             await tick()
             if stopped:
                 return
-            await asyncio.sleep(max(0, 0.1 - (asyncio.get_running_loop().time() - started)))
     await tick()
     if not stopped:
         producer = asyncio.create_task(loop())

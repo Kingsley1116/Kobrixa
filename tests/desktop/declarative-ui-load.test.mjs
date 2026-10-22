@@ -1,6 +1,57 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import { assertMeasurements, summary } from "./declarative-ui-harness.mjs";
+
+// Separate from maximum-load acceptance: this verifies an actual renderer-cycle
+// receipt only when the controller provides one, never the example below.
+test(
+  "actual production renderer cycles release registered instances and bounded post-GC heap",
+  {
+    skip: !process.env.KOBRIXA_UI_RENDERER_REPORT,
+  },
+  async () => {
+    const report = JSON.parse(await readFile(process.env.KOBRIXA_UI_RENDERER_REPORT, "utf8"));
+    assert.equal(report.productionMain, true);
+    assert.equal(report.productionPreload, true);
+    assert.equal(report.productionRenderer, true);
+    assert.equal(report.artifact.rendererInstrumentation, true);
+    assert.match(report.artifact.commit, /^[a-f0-9]{40}$/);
+    assert.equal(report.normalClose, true);
+    assert.deepEqual(report.remainingPids, []);
+    const data = report.rendererDiagnostics;
+    assert.equal(data.cycles, 1000);
+    assert.equal(data.singleton, true);
+    assert.equal(data.unknownRejected, true);
+    assert.ok(data.final.raw.length >= 1004);
+    for (const sample of [data.baseline, ...data.observations, data.final]) {
+      assert.equal(new Set(sample.raw.map((row) => row.id)).size, sample.raw.length);
+      for (const [key, value] of Object.entries(sample.counters)) {
+        assert.ok(Number.isSafeInteger(value) && value >= 0);
+        assert.equal(
+          value,
+          sample.raw.reduce((sum, row) => sum + row.snapshot[key], 0),
+        );
+      }
+    }
+    assert.ok(Object.values(data.final.counters).every((value) => value === 0));
+    assert.ok(data.baseline.counters.resourceReaders > 0);
+    assert.ok(data.events.some((event) => event.kind === "apply"));
+    assert.ok(data.events.some((event) => event.kind === "revoke"));
+    const heap = report.rendererHeap;
+    assert.equal(heap.scope, "renderer-isolate-only");
+    assert.equal(heap.before.length, 3);
+    assert.equal(heap.after.length, 3);
+    for (const sample of [...heap.before, ...heap.after])
+      assert.ok(Number.isFinite(sample.usedSize) && sample.usedSize > 0);
+    assert.equal(
+      heap.retainedBytes,
+      Math.max(...heap.after.map((sample) => sample.usedSize)) -
+        Math.min(...heap.before.map((sample) => sample.usedSize)),
+    );
+    assert.ok(heap.retainedBytes < 2 * 1024 * 1024);
+  },
+);
 
 // This validates the evidence gate; these invented samples are NEVER performance evidence.
 function example() {
