@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import type { SettingsResourceV1 } from "@kobrixa/plugin-protocol";
+import type { SettingsResourceV1, SettingsSnapshot } from "@kobrixa/plugin-protocol";
 import type { SettingsFormBinding, BoundSettingsService } from "@kobrixa/plugin-runtime";
 import {
   createSettingsFieldMap,
@@ -89,6 +89,181 @@ it("B2-12.1-1: 128 fields make eight 16-field pages, with one mounted host form"
 });
 
 import type { SettingsControlsPort, SettingsDraftState } from "../plugin-ui/host-ports.js";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+function readRaceForm() {
+  const snapshot = (n: number): SettingsSnapshot => ({
+    schemaVersion: 1,
+    revision: `r_${String(n).padStart(32, "0")}`,
+    values: [{ key: "connection.mode", value: n % 2 ? 1 : "1" }],
+  });
+  const reads: ReturnType<typeof deferred<Awaited<ReturnType<BoundSettingsService["read"]>>>>[] =
+    [];
+  let watch!: () => void;
+  let state!: SettingsDraftState;
+  let change!: Parameters<SettingsControlsPort["onChange"]>[0];
+  const service: BoundSettingsService = {
+    open: vi.fn(),
+    read: vi.fn(() => {
+      const read = deferred<Awaited<ReturnType<BoundSettingsService["read"]>>>();
+      reads.push(read);
+      return read.promise;
+    }),
+    update: vi.fn(),
+    reset: vi.fn(),
+    watch: vi.fn((_binding, listener) => {
+      watch = listener;
+      return () => {};
+    }),
+    dispose: vi.fn(),
+  };
+  const form = createContributedSettingsForm(
+    {
+      render: (_binding, _resource, next) => {
+        state = next;
+      },
+      onChange: (listener) => {
+        change = listener;
+        return () => {};
+      },
+      dispose: vi.fn(),
+    },
+    service,
+  );
+  form.open(binding, resource, snapshot(0));
+  return {
+    form,
+    service,
+    reads,
+    snapshot,
+    state: () => state,
+    watch: () => watch(),
+    change: () => change(binding, "connection.mode", 1, "change"),
+  };
+}
+const flushReads = async () => {
+  for (let n = 0; n < 20; ++n) await Promise.resolve();
+};
+
+it("an older initial refresh cannot roll back an explicit Reload", async () => {
+  const h = readRaceForm();
+  await flushReads();
+  expect(h.reads).toHaveLength(1);
+  const reload = h.form.reload(binding);
+  await flushReads();
+  expect(h.reads).toHaveLength(2);
+  h.reads[1]!.resolve({ ok: true, value: h.snapshot(2) });
+  await reload;
+  h.reads[0]!.resolve({ ok: true, value: h.snapshot(1) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(2));
+  expect(h.state().draft).toEqual(h.snapshot(2).values);
+});
+
+it("watch bursts during Reload defer one trailing read and retain edits made during Reload", async () => {
+  const h = readRaceForm();
+  await flushReads();
+  h.reads[0]!.resolve({ ok: true, value: h.snapshot(0) });
+  await flushReads();
+  const reload = h.form.reload(binding);
+  await flushReads();
+  for (let n = 0; n < 20; ++n) h.watch();
+  await flushReads();
+  // A later watch must not observe r2 before the older Reload installs r1.
+  expect(h.reads).toHaveLength(2);
+  h.change();
+  h.reads[1]!.resolve({ ok: true, value: h.snapshot(1) });
+  await reload;
+  await flushReads();
+  expect(h.reads).toHaveLength(3);
+  h.reads[2]!.resolve({ ok: true, value: h.snapshot(2) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(2));
+  expect(h.state().draft).toEqual(h.snapshot(1).values);
+  expect(h.state().errors.map((entry) => entry.key)).toContain("connection.mode");
+  expect(h.service.update).not.toHaveBeenCalled();
+  expect(h.service.watch).toHaveBeenCalledOnce();
+  expect(h.reads).toHaveLength(3);
+});
+
+it("replaceSnapshot supersedes pending background and explicit reads", async () => {
+  const h = readRaceForm();
+  await flushReads();
+  const reload = h.form.reload(binding);
+  await flushReads();
+  h.form.replaceSnapshot(binding, h.snapshot(3));
+  h.reads[1]!.resolve({ ok: true, value: h.snapshot(2) });
+  await reload;
+  h.reads[0]!.resolve({ ok: true, value: h.snapshot(1) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(3));
+  expect(h.state().draft).toEqual(h.snapshot(3).values);
+});
+
+it("watch bursts during a background read retain at most one trailing refresh", async () => {
+  const h = readRaceForm();
+  await flushReads();
+  for (let n = 0; n < 20; ++n) {
+    h.watch();
+    await flushReads();
+  }
+  expect(h.reads).toHaveLength(1);
+  h.reads[0]!.resolve({ ok: true, value: h.snapshot(1) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(0));
+  expect(h.reads).toHaveLength(2);
+  h.reads[1]!.resolve({ ok: true, value: h.snapshot(2) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(2));
+  expect(h.reads).toHaveLength(2);
+});
+
+it("a failed Reload releases the trailing watch refresh without retrying a mutation", async () => {
+  const h = readRaceForm();
+  await flushReads();
+  h.reads[0]!.resolve({ ok: true, value: h.snapshot(0) });
+  await flushReads();
+  const reload = h.form.reload(binding);
+  const rejected = expect(reload).rejects.toMatchObject({ message: "Unavailable" });
+  await flushReads();
+  h.watch();
+  await flushReads();
+  expect(h.reads).toHaveLength(2);
+  h.reads[1]!.resolve({
+    ok: false,
+    error: { code: "PLUGIN_E_SETTINGS_SAVE", message: "Unavailable" },
+  });
+  await rejected;
+  await flushReads();
+  expect(h.reads).toHaveLength(3);
+  h.reads[2]!.resolve({ ok: true, value: h.snapshot(2) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(2));
+  expect(h.service.update).not.toHaveBeenCalled();
+});
+
+it("retirement drops pending reads and a queued trailing refresh", async () => {
+  const h = readRaceForm();
+  await flushReads();
+  const reload = h.form.reload(binding);
+  await flushReads();
+  h.watch();
+  h.form.dispose(binding);
+  h.reads[1]!.resolve({ ok: true, value: h.snapshot(2) });
+  await reload;
+  h.reads[0]!.resolve({ ok: true, value: h.snapshot(1) });
+  await flushReads();
+  expect(h.state().baseline).toEqual(h.snapshot(0));
+  expect(h.reads).toHaveLength(2);
+  expect(h.service.dispose).toHaveBeenCalledOnce();
+});
+
 it("B1 attach: old bindings cannot submit; invalid scalar drafts stay local; conflict requires retry", async () => {
   const fields: SettingsResourceV1 = {
     ...resource,
