@@ -255,7 +255,7 @@ try {
     for (let attempt = 0; attempt < 50; attempt++) {
       if (
         await js(
-          "Boolean(document.querySelector('.editor-stage .monaco-editor[data-mode-id=\"toy\"]'))",
+          "Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))",
         )
       )
         break;
@@ -263,7 +263,7 @@ try {
     }
     assert.equal(
       await js(
-        "Boolean(document.querySelector('.editor-stage .monaco-editor[data-mode-id=\"toy\"]'))",
+        "Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))",
       ),
       true,
     );

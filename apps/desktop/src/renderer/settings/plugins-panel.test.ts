@@ -41,6 +41,8 @@ const snapshot: PluginsView = {
       id: "kobrixa.basic-plus",
       sourceKey: "builtin:kobrixa.basic-plus",
       source: "builtin",
+      required: true,
+      canToggle: false,
       runtime: "builtin",
       version: "1.0.0",
       status: "enabled",
@@ -53,6 +55,8 @@ const snapshot: PluginsView = {
       id: "acme.hello",
       sourceKey: "dev:0123456789abcdef",
       source: "development",
+      required: false,
+      canToggle: true,
       runtime: "python",
       version: "1.0.0",
       status: "enabled",
@@ -994,5 +998,42 @@ it.each(["en", "zh-TW"] as const)(
       locale === "en" ? "Restart Kobrixa" : "重新啟動 Kobrixa",
     );
     expect(container.textContent).not.toContain("[object Object]");
+  },
+);
+
+it.each(["en", "zh-TW"] as const)(
+  "F20 optional builtins toggle with developer mode off (%s)",
+  async (locale) => {
+    api.state.mockResolvedValueOnce({
+      ...snapshot,
+      developmentMode: false,
+      developer: { enabled: false, commandLine: false, linkedCount: 0 },
+      plugins: [
+        snapshot.plugins[0]!,
+        {
+          ...snapshot.plugins[0]!,
+          id: "kobrixa.device-ev3",
+          sourceKey: "builtin:kobrixa.device-ev3",
+          displayName: "EV3 provider",
+          required: false,
+          canToggle: true,
+        },
+      ],
+    });
+    await render(locale);
+    const row = document.getElementById("plugin-builtin-kobrixa.device-ev3")!;
+    const toggle = [...row.querySelectorAll("button")].find(
+      (node) => node.textContent === pluginCopy[locale].disable,
+    )!;
+    expect(toggle).toBeDefined();
+    await act(async () => toggle.click());
+    expect(api.setEnabled).toHaveBeenCalledWith("builtin:kobrixa.device-ev3", false);
+    expect(row.textContent).not.toContain(pluginCopy[locale].unlink);
+    const required = document.getElementById("plugin-builtin-kobrixa.basic-plus")!;
+    expect(
+      [...required.querySelectorAll("button")].some(
+        (node) => node.textContent === pluginCopy[locale].disable,
+      ),
+    ).toBe(false);
   },
 );

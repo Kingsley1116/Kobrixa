@@ -61,7 +61,7 @@ void app.whenReady().then(async () => {
       throw new Error("static contribution attempted process launch");
     },
   });
-  installPluginQuitCleanup(app, plugins);
+  installPluginQuitCleanup(app, () => plugins.shutdown(), fail);
   app.on("quit", () => plugins.finishSession());
   const rendererUrl = process.argv.at(-3)!;
   const windowOptions = {

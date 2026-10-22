@@ -1,129 +1,142 @@
-import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { readDeploymentSnapshot, type CompileResult, type BuildArtifact } from "@kobrixa/compiler";
-import { UsbTransport, type RemoteEntry } from "@kobrixa/device";
+import { expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import type { Principal } from "@kobrixa/plugin-runtime";
+import type {
+  DeviceBrokerPort,
+  LegacyOperation,
+  LegacyOperationPort,
+} from "../device-broker/broker-port.js";
+import { LegacyDevice } from "../device-broker/legacy-device.js";
+import { LegacyFiles } from "../device-broker/legacy-files.js";
 import { DeviceService } from "./device.js";
 import type { BuildService } from "../workspace/build.js";
-vi.mock("electron", () => ({ dialog: {} }));
-let root: string;
-const services: DeviceService[] = [];
-beforeEach(async () => {
-  root = await mkdtemp(path.join(tmpdir(), "kobrixa-deploy-"));
-});
-afterEach(async () => {
-  await Promise.all(services.splice(0).map((service) => service.reset()));
-  vi.restoreAllMocks();
-  await rm(root, { recursive: true, force: true });
-});
-async function fixture() {
-  const artifact = async (
-    name: string,
-    role: "deploy-main" | "deploy-asset",
-    byte: number,
-  ): Promise<BuildArtifact> => {
-    const bytes = new Uint8Array([byte]);
-    const file = path.join(root, name);
-    await writeFile(file, bytes);
-    return {
-      slot: role === "deploy-main" ? "program" : "asset",
-      kind: "not-rbf",
-      role,
-      mediaType: "application/octet-stream",
-      path: file,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      byteLength: 1,
-      ...(role === "deploy-asset" ? { remotePath: name } : {}),
-    };
+import type { DevicePreferencesStore } from "./preferences.js";
+function fixture(skipUnchangedAssets = false) {
+  const principal: Principal = {
+    kind: "core",
+    adapter: "deployment",
+    hostEpoch: randomUUID(),
+    workbenchInstance: randomUUID(),
+    authorityContext: { ref: randomUUID(), epoch: randomUUID() },
   };
-  const result: CompileResult = {
-    buildId: "build",
-    target: "toy-vm",
-    deploy: "ev3",
-    runtimeDirectory: "/robot",
-    success: true,
-    diagnostics: [],
-    artifacts: [
-      await artifact("b.bin", "deploy-asset", 2),
-      await artifact("main.bin", "deploy-main", 3),
-      await artifact("a.bin", "deploy-asset", 1),
-    ],
+  const execute = vi.fn<LegacyOperation["execute"]>(async (request) => ({
+    value:
+      request.kind === "list"
+        ? { kind: "entries", entries: [] }
+        : request.kind === "run"
+          ? { kind: "launch", sent: true }
+          : { kind: "transfer", transferred: request.kind === "upload" ? request.size : 0 },
+    dispatch: "sent",
+    stopConfirmation: "not-required",
+    error: null,
+  }));
+  const operation: LegacyOperation = {
+    operationId: randomUUID(),
+    execute,
+    renewConfirmation() {},
+    finish: vi.fn(async () => {}),
+    cancel: vi.fn(async () => {}),
   };
-  const session = {
-    descriptor: { id: "mock", name: "EV3", transport: "usb" as const },
-    connected: true,
-    list: vi.fn(async (): Promise<RemoteEntry[]> => []),
-    upload: vi.fn(async (_path: string, _bytes: Uint8Array) => {}),
-    run: vi.fn(),
-    stop: vi.fn(),
-    disconnect: vi.fn(async () => {}),
-    onDisconnect: () => () => {},
-  };
-  vi.spyOn(UsbTransport.prototype, "connect").mockResolvedValue(session as never);
-  const builds = {
-    deployableArtifacts: (_id: string, signal?: AbortSignal) =>
-      readDeploymentSnapshot(result, "ev3", signal),
-  } as unknown as BuildService;
-  const service = new DeviceService(builds, () => undefined);
-  services.push(service);
-  const id = await service.connect(session.descriptor);
-  return { result, service, session, id };
-}
-it("rejects a changed or missing last file before any upload", async () => {
-  for (const missing of [false, true]) {
-    const h = await fixture();
-    const main = h.result.artifacts.find((item) => item.role === "deploy-main")!;
-    if (missing) await rm(main.path);
-    else await writeFile(main.path, new Uint8Array([9]));
-    await expect(h.service.deploy(h.id, "build", "/robot")).rejects.toThrow("BUILD1006");
-    expect(h.session.upload).not.toHaveBeenCalled();
-    expect(h.session.list).not.toHaveBeenCalled();
-    expect(h.service.busy).toBe(false);
-  }
-});
-it("uploads the verified snapshot even if disk changes during transfer", async () => {
-  const h = await fixture();
-  h.session.upload.mockImplementationOnce(async () => {
-    await writeFile(path.join(root, "main.bin"), new Uint8Array([99]));
+  const begin = vi.fn<LegacyOperationPort["begin"]>(async () => operation);
+  const request = vi.fn(
+    async (_principal: Principal, _method: string, _params: unknown, _signal: AbortSignal) => ({
+      ok: true,
+      value: { candidates: [] },
+    }),
+  );
+  const stop = vi.fn(async () => {}),
+    disconnect = vi.fn(async () => {});
+  const legacy = new LegacyDevice({
+    broker: { request } as unknown as DeviceBrokerPort,
+    principal: () => principal,
+    stop,
+    disconnect,
+    feed: { subscribe: async () => async () => {} },
   });
-  await h.service.deploy(h.id, "build", h.result.runtimeDirectory!);
-  expect(h.session.upload.mock.calls.map(([name, bytes]) => [name, [...bytes]])).toEqual([
-    ["/robot/a.bin", [1]],
-    ["/robot/b.bin", [2]],
-    ["/robot/main.bin", [3]],
+  const artifacts = vi.fn(async () => [
+    { path: "/asset", remotePath: "asset.rgf", role: "deploy-asset", bytes: Uint8Array.of(1) },
+    { path: "/main", remotePath: "main.rbf", role: "deploy-main", bytes: Uint8Array.of(2) },
+  ]);
+  const builds = {
+    artifactBytes: async () => Uint8Array.of(1),
+    deployableArtifacts: artifacts,
+  } as unknown as BuildService;
+  const preferences = {
+    get: () => ({ skipUnchangedAssets }),
+    set: async () => ({}),
+  } as unknown as DevicePreferencesStore;
+  const service = new DeviceService(builds, () => undefined, preferences, {
+    device: legacy,
+    files: new LegacyFiles({ begin }, () => principal),
+  });
+  return { service, execute, begin, operation, request, stop, disconnect, artifacts, principal };
+}
+it("F14 rejects a changed immutable build before upload and preserves asset-before-main order", async () => {
+  const f = fixture();
+  f.artifacts.mockRejectedValueOnce(new Error("BUILD1006"));
+  await expect(f.service.deploy("s", "build", "/home/root/lms2012/prjs/demo")).rejects.toThrow(
+    "BUILD1006",
+  );
+  expect(f.execute).not.toHaveBeenCalled();
+  expect(f.service.busy).toBe(false);
+  await f.service.deploy("s", "build", "/home/root/lms2012/prjs/demo");
+  expect(f.execute.mock.calls.map(([value]) => value.remotePath)).toEqual([
+    "/home/root/lms2012/prjs/demo/asset.rgf",
+    "/home/root/lms2012/prjs/demo/main.rbf",
   ]);
 });
-it("rejects unsupported deployment and skips unchanged assets but always uploads main", async () => {
-  const h = await fixture();
-  const undeployable = { ...h.result };
-  delete undeployable.deploy;
-  await expect(readDeploymentSnapshot(undeployable, "ev3")).rejects.toThrow("BUILD1005");
-  h.session.list.mockResolvedValue(
-    [1, 2].map((byte, index) => ({
-      name: `${index ? "b" : "a"}.bin`,
-      path: `/robot/${index ? "b" : "a"}.bin`,
-      kind: "file" as const,
-      size: 1,
-      checksum: createHash("md5")
-        .update(new Uint8Array([byte]))
-        .digest("hex"),
-    })),
-  );
-  await h.service.deploy(h.id, "build", "/robot");
-  expect(h.session.list).toHaveBeenCalledTimes(1);
-  expect(h.session.upload.mock.calls.map(([name]) => name)).toEqual(["/robot/main.bin"]);
+it("T5fix missing checksum listing falls back to both artifact uploads", async () => {
+  const f = fixture(true);
+  f.execute.mockRejectedValueOnce(new Error("Missing directory"));
+  await expect(f.service.deploy("s", "build", "/project")).resolves.toBeUndefined();
+  expect(f.execute.mock.calls.map(([request]) => request.kind)).toEqual([
+    "list",
+    "upload",
+    "upload",
+  ]);
+  expect(f.operation.cancel).not.toHaveBeenCalled();
 });
-
-it("uses the main basename in the deployment namespace", async () => {
-  const h = await fixture();
-  const main = h.result.artifacts.find((item) => item.role === "deploy-main")!;
-  main.remotePath = "ignored/main.bin";
-  const files = await readDeploymentSnapshot(h.result, "ev3");
-  expect(files.map((file) => [file.role, file.remotePath])).toEqual([
-    ["deploy-asset", "a.bin"],
-    ["deploy-asset", "b.bin"],
-    ["deploy-main", "main.bin"],
+it("T5fix deployment errors retain the failing artifact path", async () => {
+  const f = fixture();
+  f.execute.mockRejectedValueOnce(new Error("transfer failed"));
+  await expect(f.service.deploy("s", "build", "/project")).rejects.toThrow(
+    "Unable to deploy '/asset': transfer failed",
+  );
+});
+it.each(["authority-changed", "connection-lost", "cancelled"] as const)(
+  "T5fix %s listing errors never admit fallback uploads",
+  async (reason) => {
+    const f = fixture(true);
+    f.execute.mockResolvedValueOnce({
+      value: null,
+      dispatch: "sent",
+      stopConfirmation: "not-required",
+      error: { reason, message: reason },
+    });
+    await expect(f.service.deploy("s", "build", "/project")).rejects.toThrow(reason);
+    expect(f.execute).toHaveBeenCalledOnce();
+  },
+);
+it("T5fix native connection errors never trigger deployment upload fallback", async () => {
+  const f = fixture(true);
+  f.execute.mockRejectedValueOnce(Object.assign(new Error("socket lost"), { code: "ECONNRESET" }));
+  await expect(f.service.deploy("s", "build", "/project")).rejects.toMatchObject({
+    category: "connection",
+  });
+  expect(f.execute).toHaveBeenCalledOnce();
+});
+it("T5fix unavailable checksum capability falls back to uploading", async () => {
+  const f = fixture(true);
+  f.execute.mockResolvedValueOnce({
+    value: null,
+    dispatch: "not-sent",
+    stopConfirmation: "not-required",
+    error: { reason: "unsupported-capability", message: "Checksums unavailable" },
+  });
+  await expect(f.service.deploy("s", "build", "/project")).resolves.toBeUndefined();
+  expect(f.execute.mock.calls.map(([request]) => request.kind)).toEqual([
+    "list",
+    "upload",
+    "upload",
   ]);
 });

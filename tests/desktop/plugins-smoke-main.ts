@@ -53,8 +53,9 @@ void app.whenReady().then(async () => {
     },
     locale: "zh-TW",
   });
-  // The same quit path as apps/desktop/src/main/index.ts.
-  installPluginQuitCleanup(app, manager);
+  // Exercise the host quit gate with this fixture's process-only cleanup.
+  // The real desktop additionally joins device and persistence dispositions.
+  installPluginQuitCleanup(app, () => manager.shutdown(), fail);
   const recordForceKill = recordSmokeQuit(
     app,
     directory,

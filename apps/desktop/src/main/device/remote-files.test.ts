@@ -1,3 +1,4 @@
+import type { LegacyFileSession } from "../device-broker/legacy-files.js";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +17,10 @@ async function setup() {
   const local = path.join(dir, "sample.rbf");
   await writeFile(local, "original");
   const session = {
+    confirm: async <T>(work: () => Promise<T>): Promise<T> => work(),
+    renewConfirmation() {},
+    remaining: () => ({ idleRemainingMs: 120000, totalRemainingMs: 600000 }),
+    cancel: async () => {},
     descriptor: { id: "mock", name: "EV3", transport: "mock" as const },
     connected: true,
     list: vi.fn(async () => [
@@ -44,7 +49,8 @@ async function setup() {
     readMonitor: vi.fn(),
     readInputModes: vi.fn(),
     setInputMode: vi.fn(),
-  } satisfies DeviceSession;
+  } satisfies DeviceSession &
+    Pick<LegacyFileSession, "confirm" | "renewConfirmation" | "remaining" | "cancel">;
   const dialog = {
     showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: [local] })),
     showSaveDialog: vi.fn(async () => ({ canceled: false, filePath: local })),

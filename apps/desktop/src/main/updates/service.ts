@@ -225,6 +225,9 @@ export class UpdateService {
 export class UpdateOperationGate {
   private active = 0;
   constructor(private service: () => UpdateService | undefined) {}
+  assertDevice(operation: OperationClass): void {
+    assertDeviceUpdateAdmission(this.service(), operation);
+  }
   get busy(): boolean {
     return this.active > 0;
   }
@@ -249,4 +252,14 @@ export class UpdateOperationGate {
       this.active--;
     }
   }
+}
+
+import type { OperationClass } from "@kobrixa/plugin-runtime";
+export function assertDeviceUpdateAdmission(
+  state: { preparing: boolean; installing: boolean } | undefined,
+  operation: OperationClass,
+): void {
+  if (!state || (!state.preparing && !state.installing)) return;
+  if (operation === "safety-stop" || operation === "reconciliation") return;
+  throw new Error("The application is busy preparing an update.");
 }

@@ -22,6 +22,7 @@ it("registers separate Basic Plus and EV3 providers in safe mode", async () => {
   expect(plugins.map((plugin) => [plugin.id, plugin.status])).toEqual([
     ["kobrixa.basic-plus", "enabled"],
     ["kobrixa.ev3", "enabled"],
+    ["kobrixa.device-ev3", "disabled"],
   ]);
   const snapshot = resolveCompilerProviders(plugins, "bp", "ev3-native");
   if (!snapshot.ok) throw new Error(snapshot.message);
@@ -273,5 +274,263 @@ it("keeps all keyword lists, nine ordered rules and the original configuration",
       );
     expect(regex.test("If.member = 1")).toBe(false);
     expect(regex.test("Else.member = 1")).toBe(false);
+  }
+});
+
+it("F01 F20 ships two required compilers and one optional provider-only source", async () => {
+  const { BUILTIN_DEVICE_PROVIDER_FACTORIES } = await import("./builtin.js");
+  expect(Object.keys(BUILTIN_DEVICE_PROVIDER_FACTORIES)).toEqual(["builtin:kobrixa.device-ev3"]);
+  expect(
+    BUILTIN_PLUGIN_SOURCES.map((source) =>
+      source.kind === "builtin" ? source.policy : "development",
+    ),
+  ).toEqual(["required", "required", "optional"]);
+  const optional = BUILTIN_PLUGIN_SOURCES[2]!;
+  if (optional.kind !== "builtin") throw new Error("Expected provider-only builtin");
+  expect(optional.launch).toBeUndefined();
+  const parsed = pluginManifestSchema.parse(optional.manifest);
+  expect(parsed.id).toBe("kobrixa.device-ev3");
+  expect(parsed.runtime).toEqual({ kind: "builtin" });
+  expect(parsed.contributes?.commands ?? []).toEqual([]);
+  expect(parsed.contributes?.deviceProviders).toEqual([
+    {
+      id: "kobrixa.device-ev3",
+      capabilities: [
+        "connection.v1",
+        "telemetry.v1",
+        "inputModes.v1",
+        "finiteMotion.v1",
+        "recordingReservation.v1",
+      ],
+    },
+  ]);
+  const loaded = await loadPlugins(BUILTIN_PLUGIN_SOURCES, { disabled: new Set(), safeMode: true });
+  expect(loaded.map((source) => [source.id, source.status])).toEqual([
+    ["kobrixa.basic-plus", "enabled"],
+    ["kobrixa.ev3", "enabled"],
+    ["kobrixa.device-ev3", "disabled"],
+  ]);
+});
+
+import { vi } from "vitest";
+import { PluginManager } from "@kobrixa/plugin-runtime";
+import { attachBuiltinDeviceProvider } from "./builtin.js";
+import { createDeviceBroker } from "../device-broker/broker-port.js";
+import {
+  createFakeDeviceProvider,
+  operationHarness,
+  pluginPrincipal,
+  ID,
+} from "../device-broker/fake-provider.js";
+import type { ProviderCatalogPort } from "../device-broker/provider.js";
+
+async function providerHarness(safeMode = false, disabled = false) {
+  const h = operationHarness();
+  const broker = createDeviceBroker({
+    journal: h.dependencies.journal,
+    profile: h.dependencies.profile,
+    now: h.dependencies.now,
+    authority: {
+      current: () => ({
+        ref: ID,
+        epoch: ID,
+        workbenchInstance: ID,
+        state: "local",
+        roomBinding: null,
+        connected: false,
+        synced: true,
+        role: null,
+        isHolder: true,
+      }),
+      assertContinuation() {},
+      subscribe: () => () => {},
+    },
+    coreActions: { claim: () => false, isClaimed: () => false, complete() {} },
+    hasPermission: () => true,
+    requirements: () => [],
+    operationGate: () => ({ ok: true, value: null }),
+    connectionPolicy: () => ({
+      wifiConnectTimeoutMs: 5000,
+      wifiHandshakeTimeoutMs: 3000,
+      usbAutoReconnect: false,
+      usbRetryInterval: "backoff",
+      usbRetryLimit: 3,
+    }),
+  });
+  let disabledSources = new Set(disabled ? ["builtin:kobrixa.device-ev3"] : []);
+  const manager = await PluginManager.create({
+    sources: [BUILTIN_PLUGIN_SOURCES[2]!],
+    locale: "en",
+    safeMode,
+    launcher: vi.fn(),
+    store: {
+      load: async () => ({ disabled: disabledSources, legacyDisabledIds: new Set() }),
+      save: async (state) => {
+        disabledSources = new Set(state.disabled);
+      },
+    },
+  });
+  const catalogs: ProviderCatalogPort[] = [];
+  const factory = vi.fn((catalog: ProviderCatalogPort) => {
+    catalogs.push(catalog);
+    return createFakeDeviceProvider({ catalog, now: h.dependencies.now }).provider;
+  });
+  const allocate = vi.spyOn(broker, "providerCatalog");
+  const register = vi.spyOn(broker, "registerProvider");
+  const initial = broker.providerCatalog("kobrixa.device-ev3");
+  const detach = attachBuiltinDeviceProvider(manager, broker, initial, factory);
+  return {
+    broker,
+    manager,
+    catalogs,
+    factory,
+    allocate,
+    register,
+    detach,
+    initial,
+    async close() {
+      await broker.resources.beginShutdown();
+      detach();
+      await manager.shutdown();
+    },
+  };
+}
+
+it.each(["safe-mode", "disabled"])("F20 %s boot constructs no optional provider", async (mode) => {
+  const h = await providerHarness(mode === "safe-mode", mode === "disabled");
+  try {
+    expect(h.factory).not.toHaveBeenCalled();
+    expect(h.register).not.toHaveBeenCalled();
+    if (mode === "safe-mode") expect(await h.manager.leaveSafeMode()).toMatchObject({ ok: true });
+    else
+      expect(await h.manager.setEnabled("builtin:kobrixa.device-ev3", true)).toMatchObject({
+        ok: true,
+      });
+    expect(h.factory).toHaveBeenCalledExactlyOnceWith(h.initial);
+    await h.manager.setEnabled("builtin:kobrixa.device-ev3", true);
+    expect(h.register).toHaveBeenCalledOnce();
+  } finally {
+    await h.close();
+  }
+});
+
+it("F01 F20 disable-enable and reload use fresh real-broker catalog generations", async () => {
+  const h = await providerHarness();
+  const principal = pluginPrincipal();
+  const signal = new AbortController().signal;
+  const connect = async () => {
+    const result = await h.broker.request(
+      principal,
+      "devices/connect",
+      {
+        target: { kind: "wifi-address", providerId: "kobrixa.device-ev3", address: "127.0.0.1" },
+      },
+      signal,
+    );
+    if (!result.ok) throw new Error(result.error.message);
+    return result.value.session.sessionId;
+  };
+  const tuple = (sessionId: string) => ({
+    sessionId,
+    portId: "1",
+    typeId: "7",
+    modeId: "0",
+    component: 0,
+    unit: "deg",
+  });
+  try {
+    expect(h.factory).toHaveBeenCalledOnce();
+    const list = await h.broker.request(principal, "devices/list", {}, signal);
+    expect(list).toMatchObject({ ok: true, value: { sessions: [] } });
+    expect(() => h.initial.identify(tuple(ID))).toThrow();
+    const first = await connect();
+    const old = h.catalogs[0]!;
+    const oldId = old.identify(tuple(first));
+    expect(old.identify(tuple(first))).toBe(oldId);
+    expect(() => old.identify(tuple(ID))).toThrow();
+    for (const invalid of [
+      { component: -1 },
+      { unit: "x".repeat(129) },
+      { portId: "!" },
+      { typeId: "" },
+      { modeId: "!" },
+    ])
+      expect(() => old.identify({ ...tuple(first), ...invalid })).toThrow();
+    const session = await h.broker.request(
+      principal,
+      "devices/session",
+      { sessionId: first },
+      signal,
+    );
+    if (!session.ok) throw new Error(session.error.message);
+    expect(
+      await h.broker.request(
+        principal,
+        "devices/inputModes/set",
+        {
+          sessionId: first,
+          portId: "1",
+          expectedSourceRevision: session.value.sources.sourceRevision,
+          modeId: "1",
+          contextRef: ID,
+        },
+        signal,
+      ),
+    ).toMatchObject({ ok: true });
+    expect(old.identify(tuple(first))).not.toBe(oldId);
+    expect(await h.manager.setEnabled("builtin:kobrixa.device-ev3", false)).toMatchObject({
+      ok: true,
+    });
+    expect(() => old.identify(tuple(first))).toThrow();
+    expect(await h.manager.setEnabled("builtin:kobrixa.device-ev3", true)).toMatchObject({
+      ok: true,
+    });
+    expect(h.factory).toHaveBeenCalledTimes(2);
+    const second = await connect();
+    expect(second).not.toBe(first);
+    expect(h.catalogs[1]).not.toBe(old);
+    expect(() => old.identify(tuple(second))).toThrow();
+    expect(() => h.catalogs[1]!.identify(tuple(first))).toThrow();
+    expect(h.catalogs[1]!.identify(tuple(second))).not.toBe(oldId);
+    expect(await h.manager.reloadSource("builtin:kobrixa.device-ev3")).toMatchObject({ ok: true });
+    expect(h.factory).toHaveBeenCalledTimes(3);
+    expect(h.allocate).toHaveBeenCalledTimes(3);
+    expect(new Set(h.catalogs).size).toBe(3);
+    const third = await connect();
+    expect(() => h.catalogs[1]!.identify(tuple(third))).toThrow();
+    expect(h.catalogs[2]!.identify(tuple(third))).not.toBe(oldId);
+  } finally {
+    await h.close();
+  }
+});
+
+it("F01 refuses a wrong allowlist factory identity and detaches the state listener", async () => {
+  const h = await providerHarness(false, true);
+  h.detach();
+  const listeners = new Set<Parameters<PluginManager["onEvent"]>[0]>();
+  const manager = {
+    state: () => ({
+      ...h.manager.state(),
+      plugins: h.manager
+        .state()
+        .plugins.map((source) => ({ ...source, status: "enabled" as const })),
+    }),
+    onEvent: (listener: Parameters<PluginManager["onEvent"]>[0]) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  try {
+    const wrong = createFakeDeviceProvider({ catalog: h.initial, now: () => 0 }).provider;
+    Object.defineProperty(wrong, "id", { value: "foreign.provider" });
+    expect(() => attachBuiltinDeviceProvider(manager, h.broker, h.initial, () => wrong)).toThrow(
+      "wrong provider",
+    );
+    expect(listeners.size).toBe(0);
+    expect(h.register).not.toHaveBeenCalled();
+  } finally {
+    await h.close();
   }
 });

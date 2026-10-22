@@ -314,6 +314,7 @@ export interface KobrixaApi {
     files(request: RemoteFileRequest): Promise<RemoteFileResult>;
     prepareFiles(request: FileBatchRequest): Promise<FileBatchSnapshot>;
     executeFiles(ref: FileBatchRef, policy: "skip" | "replace"): Promise<FileBatchSnapshot>;
+    renewFiles(ref: FileBatchRef): Promise<void>;
     stopFiles(ref: FileBatchRef): Promise<void>;
     discover(): Promise<DeviceDescriptor[]>;
     connect(descriptor: DeviceDescriptor): Promise<string>;

@@ -54,7 +54,7 @@ it("F18 freezes identity and preserves the legacy envelope", () => {
 
 import { createMemoryChannelPair, RpcPeer } from "./index.js";
 import type { RequestContext } from "./peer.js";
-it("publishes the frozen afterReply continuation after the reply", async () => {
+it("F16 publishes the frozen afterReply continuation after the reply", async () => {
   expectTypeOf<RequestContext["afterReply"]>().toEqualTypeOf<
     (published: () => void, abandoned: () => void) => void
   >();
