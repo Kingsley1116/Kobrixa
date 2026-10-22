@@ -5,6 +5,7 @@ import {
 } from "./ui-lifecycle.js";
 import type { CommandInvocation, CommandValue, Result } from "@kobrixa/plugin-protocol";
 import type { Handle, ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { DrainDispatcher, PersistenceOwner } from "./persistence-participant.js";
 import type {
   OwnerRetirement,
   Stage3ChannelContext,
@@ -94,6 +95,144 @@ async function withSignal<T>(work: Promise<T>, signal: AbortSignal): Promise<T> 
   }
 }
 
+const persistencePeers170 = new WeakMap<RpcPeer, RetainedPersistenceChannel>();
+/** Host metadata from this peer's validated initialize result, never the package version. */
+export function persistenceChannelApiVersion(peer: RpcPeer): string | undefined {
+  return persistencePeers170.get(peer)?.negotiatedVersion;
+}
+
+export function persistenceChannelKey(owner: PersistenceOwner): string {
+  return JSON.stringify([
+    owner.sourceKey,
+    owner.pluginId,
+    owner.generation,
+    owner.hostEpoch,
+    owner.processEpoch,
+  ]);
+}
+
+/** The same original-channel row is indexed by the manager and its owning supervisor. */
+export class RetainedPersistenceChannel {
+  private collected: (() => void) | undefined;
+  private collectionComplete = false;
+  private apiVersion: string | undefined;
+  private exited = false;
+  private lost = false;
+  private settled = false;
+  private loss: Promise<void> | undefined;
+  private readonly cancellation = new AbortController();
+  private readonly deadlines = new Map<string, number>();
+  readonly owner: PersistenceOwner;
+  constructor(
+    owner: PersistenceOwner,
+    readonly peer: RpcPeer,
+    private readonly now: () => number,
+    private readonly ownerLost: () => Promise<void>,
+  ) {
+    if (persistencePeers170.has(peer)) throw new Error("Peer already retained");
+    this.owner = Object.freeze({ ...owner });
+    persistencePeers170.set(peer, this);
+  }
+  get negotiatedVersion(): string | undefined {
+    return this.apiVersion;
+  }
+  onCollect(callback: () => void): void {
+    this.collected = callback;
+    this.collect();
+  }
+  private collect(): void {
+    if (!this.releasable || this.collectionComplete) return;
+    this.collectionComplete = true;
+    persistencePeers170.delete(this.peer);
+    this.deadlines.clear();
+    this.collected?.();
+  }
+  negotiated(apiVersion: string): void {
+    this.apiVersion = apiVersion;
+  }
+  disposition(): void {
+    this.settled = true;
+    this.collect();
+  }
+  confirmedExit(): Promise<void> {
+    this.exited = true;
+    const loss = this.closed();
+    this.collect();
+    return loss;
+  }
+  closed(): Promise<void> {
+    if (this.loss) return this.loss;
+    this.lost = true;
+    // Publish before calling the owning retirement path: it may close this peer reentrantly.
+    const receipt = deferred<void>();
+    this.loss = receipt.promise;
+    try {
+      // Admission must be revoked in this same turn, before any promise continuation.
+      const retirement = this.ownerLost();
+      this.cancellation.abort(new RpcError(RPC_ERRORS.connectionClosed, "Original peer is closed"));
+      void retirement.then(receipt.resolve, receipt.reject);
+    } catch (error) {
+      this.cancellation.abort(new RpcError(RPC_ERRORS.connectionClosed, "Original peer is closed"));
+      receipt.reject(error);
+    }
+    return receipt.promise;
+  }
+  get releasable(): boolean {
+    return this.exited && this.settled;
+  }
+  dispatch: DrainDispatcher = async (owner, request, signal) => {
+    if (persistenceChannelKey(owner) !== persistenceChannelKey(this.owner))
+      throw new RpcError(RPC_ERRORS.permissionDenied, "Original owner required");
+    signal.throwIfAborted();
+    if (this.lost || this.peer.closed) {
+      void this.closed().catch(() => undefined);
+      throw new RpcError(RPC_ERRORS.connectionClosed, "Original peer is closed");
+    }
+    const api = this.apiVersion?.split(".").map(Number);
+    if (!api || api[0] !== 1 || api[1]! < 7)
+      throw new RpcError(RPC_ERRORS.methodNotFound, "Persistence is not negotiated");
+    const now = this.now();
+    for (const [token, deadline] of this.deadlines)
+      if (now >= deadline + 120000) this.deadlines.delete(token);
+    const proposed = now + Math.min(10000, request.remainingMs);
+    const deadline = Math.min(this.deadlines.get(request.token) ?? proposed, proposed);
+    if (!this.deadlines.has(request.token) && this.deadlines.size >= 64)
+      throw new RpcError(RPC_ERRORS.permissionDenied, "Drain token budget exhausted");
+    this.deadlines.set(request.token, deadline);
+    const remaining = Math.floor(deadline - this.now());
+    if (remaining <= 0) throw new RpcError(RPC_ERRORS.timeout, "Original drain deadline elapsed");
+    try {
+      const reply = await this.peer.request(
+        "storage/drain",
+        {
+          ...request,
+          remainingMs: Math.min(request.remainingMs, remaining),
+        },
+        { signal: AbortSignal.any([signal, this.cancellation.signal]), timeoutMs: remaining },
+      );
+      signal.throwIfAborted();
+      if (this.lost || this.peer.closed || this.now() >= deadline)
+        throw new RpcError(RPC_ERRORS.connectionClosed, "Original drain no longer live");
+      return reply;
+    } catch (error) {
+      if (this.peer.closed) void this.closed().catch(() => undefined);
+      if (this.lost) throw new RpcError(RPC_ERRORS.connectionClosed, "Original peer is closed");
+      // Numeric methodNotFound remains a dispatch failure for host ticket reconciliation.
+      throw error;
+    }
+  };
+}
+
+/** RpcPeer has no close subscription. Keep the observation local to the owning supervisor. */
+class SupervisedPeer extends RpcPeer {
+  onClosed: (() => void) | undefined;
+  override close(error?: RpcError): void {
+    if (this.closed) return;
+    super.close(error);
+    this.onClosed?.();
+  }
+}
+
 export class PluginSupervisor {
   #state: SupervisorState = "idle";
   #problem: PluginProblem | undefined;
@@ -128,6 +267,22 @@ export class PluginSupervisor {
   #initializedPublished = false;
   #initialized = deferred<Stage3ChannelContext>();
   #resourceRetirement: Promise<void> | undefined;
+  #persistenceChannel170: RetainedPersistenceChannel | undefined;
+
+  retainPersistenceChannel170(row: RetainedPersistenceChannel): void {
+    if (this.#persistenceChannel170?.peer === row.peer) throw new Error("Channel retained twice");
+    if (
+      row.peer !== this.#peer ||
+      !this.#resourceOwner ||
+      persistenceChannelKey(row.owner) !== persistenceChannelKey(this.#resourceOwner)
+    )
+      throw new Error("Original supervisor channel required");
+    this.#persistenceChannel170 = row;
+    if (this.#peer instanceof SupervisedPeer)
+      this.#peer.onClosed = () => {
+        void row.closed().catch(() => undefined);
+      };
+  }
   #terminatingChannel = false;
 
   #retireResources(reason: OwnerRetirement): Promise<void> {
@@ -137,8 +292,12 @@ export class PluginSupervisor {
     const receipt = deferred<void>();
     this.#resourceRetirement = receipt.promise;
     try {
+      const originalPersistenceChannel = this.#persistenceChannel170;
       const retired = this.#options.retireResources!(owner, reason);
-      void retired.then(receipt.resolve, receipt.reject);
+      void retired.then(() => {
+        originalPersistenceChannel?.disposition();
+        receipt.resolve();
+      }, receipt.reject);
     } catch (error) {
       receipt.reject(error);
     }
@@ -421,6 +580,7 @@ export class PluginSupervisor {
     this.#setState("starting");
     this.#resourceOwner = this.#options.resourceOwner?.();
     this.#resourceRetirement = undefined;
+    this.#persistenceChannel170 = undefined;
     if (this.#resourceOwner) {
       resourceOwnerSchema.parse(this.#resourceOwner);
       Object.freeze(this.#resourceOwner);
@@ -467,17 +627,32 @@ export class PluginSupervisor {
       throw this.#stopError(`${this.plugin.id} was stopped before it finished launching.`);
     }
     const child = launched;
-    const peer = new RpcPeer(child, {
-      timeoutMs: this.#options.commandTimeoutMs,
-      cancelGraceMs: this.#options.cancelGraceMs,
-      onProtocolError: (error) =>
-        this.#terminate(child, { code: "PLUGIN_E_PROTOCOL", message: error.message }),
-      onUnresponsive: (method) =>
-        this.#terminate(child, {
-          code: "PLUGIN_E_UNRESPONSIVE",
-          message: `${method} did not finish within ${this.#options.cancelGraceMs} ms after cancellation.`,
-        }),
-    });
+    let persistenceChannel: RetainedPersistenceChannel | undefined;
+    const peer: SupervisedPeer = new SupervisedPeer(
+      {
+        onMessage: (listener) => child.onMessage(listener),
+        send: (text) => {
+          try {
+            child.send(text);
+          } catch (error) {
+            if (this.#resourceOwner)
+              peer.close(new RpcError(RPC_ERRORS.connectionClosed, messageOf(error)));
+            throw error;
+          }
+        },
+      },
+      {
+        timeoutMs: this.#options.commandTimeoutMs,
+        cancelGraceMs: this.#options.cancelGraceMs,
+        onProtocolError: (error) =>
+          this.#terminate(child, { code: "PLUGIN_E_PROTOCOL", message: error.message }),
+        onUnresponsive: (method) =>
+          this.#terminate(child, {
+            code: "PLUGIN_E_UNRESPONSIVE",
+            message: `${method} did not finish within ${this.#options.cancelGraceMs} ms after cancellation.`,
+          }),
+      },
+    );
     // Identity comes from this channel, never from message contents.
     peer.handle("ui/showMessage", (params) => {
       if (!this.plugin.permissions.includes("ui.notifications"))
@@ -490,7 +665,10 @@ export class PluginSupervisor {
     });
     this.#process = child;
     this.#peer = peer;
-    child.onExit((exit) => this.#exited(child, peer, exit));
+    child.onExit((exit) => {
+      this.#exited(child, peer, exit);
+      if (persistenceChannel) void persistenceChannel.confirmedExit().catch(() => undefined);
+    });
     // A stop during launch has already fenced this owner: do not bind it again.
     if (this.#stopping) {
       if (this.#forced) child.forceKill();
@@ -516,7 +694,12 @@ export class PluginSupervisor {
         principal: () => ({ kind: "plugin", owner, authorityContext: null }),
         requirements: Object.freeze([]),
       };
-      this.#channelBinding = this.#options.bindChannel!(this.#channelContext);
+      try {
+        this.#channelBinding = this.#options.bindChannel!(this.#channelContext);
+      } finally {
+        // Binding may throw after the manager retained its original row.
+        persistenceChannel = this.#persistenceChannel170;
+      }
       this.#channelActivation = new ChannelActivation(
         this.#channelContext,
         this.#channelBinding,
@@ -547,6 +730,7 @@ export class PluginSupervisor {
           "PLUGIN_E_HANDSHAKE",
           `The plugin SDK implements API ${result.apiVersion}; Kobrixa requires ${PLUGIN_API_VERSION}.`,
         );
+      persistenceChannel?.negotiated(result.apiVersion);
       await this.#channelActivation?.afterInitialize();
     } catch (error) {
       if (!this.#stopping && !this.#stoppedPeers.has(peer)) {

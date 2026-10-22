@@ -3,8 +3,27 @@ export * from "./diagnostic-help.js";
 export * from "./compiler-resolution.js";
 export * from "./registry.js";
 export * from "./process.js";
-export * from "./supervisor.js";
-export * from "./manager.js";
+export { PluginSupervisor, persistenceChannelApiVersion } from "./supervisor.js";
+export type {
+  LaunchablePlugin,
+  PluginLauncher,
+  SupervisorState,
+  StopReason,
+  SupervisorOptions,
+} from "./supervisor.js";
+export { PluginManager, PLUGIN_SHUTDOWN_DEADLINE_MS, PLUGIN_FORCE_MARGIN_MS } from "./manager.js";
+export type {
+  PluginPersistedState,
+  PluginStateStore,
+  PluginManagerOptions,
+  PluginSummary,
+  PluginsSnapshot,
+  DiagnosticHelpCatalog,
+  PluginNotice,
+  PluginManagerEvent,
+  PluginCommandResult,
+  PluginActionResult,
+} from "./manager.js";
 export * from "./static-languages.js";
 
 export type * from "./persistence-participant.js";
@@ -54,3 +73,5 @@ export type { UiCatalogSource } from "./ui-host-ports.js";
 export { UiStateRegistry, currentStatusBindings } from "./ui-state.js";
 export { UiSubscriptions } from "./ui-subscriptions.js";
 export { sameUiBinding, sameResourceOwner } from "./ui-host-ports.js";
+
+export { readPackagedJson, readBuiltinJson, SourceReadBudget } from "./packaged-json-resource.js";

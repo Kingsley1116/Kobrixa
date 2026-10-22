@@ -7,9 +7,10 @@ import type {
   Stage3ChannelContext,
   UiRuntimeAttachment,
 } from "./ui-lifecycle.js";
+import type { DrainDispatcher } from "./persistence-participant.js";
 import type { DeviceRequirement } from "./device-resources.js";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
-import { STATIC_LANGUAGE_LIMITS_V1 } from "@kobrixa/plugin-protocol";
+import { STATIC_LANGUAGE_LIMITS_V1, RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
 import { readDiagnosticHelp } from "./diagnostic-help.js";
 import {
   buildStaticLanguageCatalog,
@@ -54,6 +55,8 @@ import {
 } from "./registry.js";
 import {
   PluginSupervisor,
+  RetainedPersistenceChannel,
+  persistenceChannelKey,
   type PluginLauncher,
   type StopReason,
   type SupervisorOptions,
@@ -189,7 +192,32 @@ function convertLegacy(
   return changed;
 }
 
+/** An index of the owning supervisors' rows, never a replacement process registry. */
+export class RetainedPersistenceChannels {
+  private readonly rows = new Map<string, RetainedPersistenceChannel>();
+  retain(row: RetainedPersistenceChannel): void {
+    const key = persistenceChannelKey(row.owner);
+    const old = this.rows.get(key);
+    if (old && old !== row) throw new Error("Original channel cannot be replaced");
+    this.rows.set(key, row);
+    row.onCollect(() => this.collect(row));
+  }
+  collect(row: RetainedPersistenceChannel): void {
+    const key = persistenceChannelKey(row.owner);
+    if (row.releasable && this.rows.get(key) === row) this.rows.delete(key);
+  }
+  dispatch: DrainDispatcher = (owner, request, signal) => {
+    const row = this.rows.get(persistenceChannelKey(owner));
+    if (!row)
+      return Promise.reject(
+        new RpcError(RPC_ERRORS.connectionClosed, "Original drain channel is unavailable"),
+      );
+    return row.dispatch(owner, request, signal);
+  };
+}
+
 export class PluginManager {
+  readonly #persistenceChannels = new RetainedPersistenceChannels();
   readonly #stage3Channels = new Map<ResourceOwner, Stage3ChannelContext>();
   readonly #toggleEpoch = new Map<string, number>();
   readonly #stage3Cleanup = new Map<ResourceOwner, { exited: boolean; settled: boolean }>();
@@ -260,15 +288,7 @@ export class PluginManager {
         if (channel(owner) !== original) throw new Error("Owner changed during invocation");
         return supervisor.invoke(invocation, signal);
       },
-      dispatchDrain: async (owner, _request, signal) => {
-        signal.throwIfAborted();
-        const original = [...this.#stage3Channels.values()].find((row) =>
-          sameResourceOwner(row.owner, owner),
-        );
-        if (!original || original.peer.closed)
-          throw new Error("Original drain channel is unavailable");
-        throw new Error("Storage drain is unpublished before P170");
-      },
+      dispatchDrain: this.#persistenceChannels.dispatch,
     });
     this.#stage3Attachment = attachment;
     registerRuntimeDiagnostics(
@@ -329,6 +349,20 @@ export class PluginManager {
           status: manifest.contributes?.status ?? [],
         },
       ];
+    });
+  }
+
+  persistenceCatalogSources(): readonly (UiCatalogSource & {
+    settings: { version: 1; path: string } | null;
+  })[] {
+    return this.uiCatalogSources().map((source) => {
+      const entry = this.#entries.find(
+        (entry) => entry.plugin.sourceKey === source.owner.sourceKey,
+      );
+      return {
+        ...source,
+        settings: structuredClone(entry?.plugin.manifest?.contributes?.settings ?? null),
+      };
     });
   }
 
@@ -1334,6 +1368,14 @@ export class PluginManager {
                 this.#stage3Channels.set(context.owner, context);
                 const cleanup = { exited: false, settled: false };
                 this.#stage3Cleanup.set(context.owner, cleanup);
+                const row = new RetainedPersistenceChannel(
+                  context.owner,
+                  context.peer,
+                  () => performance.now(),
+                  () => supervisor.settleResources("crashed"),
+                );
+                this.#persistenceChannels.retain(row);
+                supervisor.retainPersistenceChannel170(row);
                 const binding = host.bindChannel(context);
                 return {
                   initialized: (signal: AbortSignal) => binding.initialized(signal),

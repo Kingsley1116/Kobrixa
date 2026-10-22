@@ -2,13 +2,20 @@ import type {
   Stage3ChannelContext,
   Stage3RuntimePorts,
   Stage3HostAttachment,
+  RetirementDisposition,
 } from "./ui-lifecycle.js";
 import { appendFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
-import { DIAGNOSTIC_HELP_LIMITS } from "@kobrixa/plugin-protocol";
+import {
+  DIAGNOSTIC_HELP_LIMITS,
+  RPC_ERRORS,
+  type DrainRequest,
+  type ResourceOwner,
+  type RpcPeer,
+} from "@kobrixa/plugin-protocol";
 import {
   developmentSourceKey,
   PLUGIN_FORCE_MARGIN_MS,
@@ -21,6 +28,7 @@ import {
   type PluginProcess,
   type PluginStateStore,
 } from "./index.js";
+import type { DrainReport } from "./persistence-participant.js";
 import { memoryPlugin } from "./test-process.js";
 
 let root: string;
@@ -1453,9 +1461,9 @@ it.each([false, true])(
     await expect(runtime.ready(foreign, signal)).rejects.toThrow("Retired ready owner");
     expect(runtime.owners()).toEqual([first.owner]);
     expect(runtime.commands(keyOf(source))).toEqual([]);
-    await expect(runtime.dispatchDrain(first.owner, {} as never, signal)).rejects.toThrow(
-      "unpublished",
-    );
+    await expect(runtime.dispatchDrain(first.owner, drain170(), signal)).rejects.toMatchObject({
+      code: RPC_ERRORS.methodNotFound,
+    });
     expect(await manager.reloadSource(keyOf(source))).toMatchObject({ ok: true });
     expect(manager.requirements(first.owner)).toBeNull();
     expect(runtime.current(first.owner)).toBe(false);
@@ -2028,9 +2036,9 @@ it("R160 keeps original peer evidence through disposition and real exit, with ob
   await expect(
     runtime.dispatchDrain({ ...context.owner, processEpoch: "foreign" }, {} as never, signal),
   ).rejects.toThrow("Original drain channel");
-  await expect(runtime.dispatchDrain(context.owner, {} as never, signal)).rejects.toThrow(
-    "unpublished before P170",
-  );
+  await expect(runtime.dispatchDrain(context.owner, drain170(), signal)).rejects.toMatchObject({
+    code: RPC_ERRORS.methodNotFound,
+  });
   disposition.resolve();
   await exiting.promise;
   expect(diagnostics.snapshot().owners).toBe(1);
@@ -2552,3 +2560,553 @@ it.each(["state", "host"] as const)(
     await reconstructed.shutdown();
   },
 );
+
+function drain170(
+  remainingMs = 10000,
+  token = "00000000-0000-4000-8000-000000000003",
+): DrainRequest {
+  return { token, reason: "disable", remainingMs, checkpoints: [], writes: [] };
+}
+async function integrated170(api = "1.7.0") {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const children: {
+    peer: RpcPeer;
+    exit(): void;
+    process: PluginProcess;
+  }[] = [];
+  const callbacks: ReturnType<typeof vi.fn>[] = [];
+  const launch = vi.fn(async () => {
+    const callback = vi.fn(() => ({
+      ok: true as const,
+      value: { status: "checkpoint-only" as const, writes: [] },
+    }));
+    const child = memoryPlugin((peer, control) => {
+      callbacks.push(callback);
+      peer.handle("initialize", () => ({
+        apiVersion: api,
+        sdk: { name: "R170", version: "99.0.0" },
+      }));
+      peer.handle("storage/drain", callback);
+      peer.handle("command/execute", () => null);
+      peer.handle("shutdown", () => null);
+      peer.onNotification("exit", () => control.exit());
+      children.push({ peer, exit: () => control.exit(17), process: undefined as never });
+    });
+    children[children.length - 1]!.process = child.process;
+    return child.process;
+  });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+    supervisor: { stopTimeoutMs: 10, exitTimeoutMs: 20 },
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const reports: RetirementDisposition[] = [];
+  vi.mocked(fixture.host.retireResources).mockImplementation(async (owner, reason) => {
+    expect(manager.requirements(owner)).toBeNull();
+    reports.push(
+      await retireStage3Owner(
+        fixture.stage3,
+        owner,
+        reason,
+        () => performance.now(),
+        runtime.dispatchDrain,
+      ),
+    );
+  });
+  const signal = new AbortController().signal;
+  const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
+  await runtime.ready(context.owner, signal);
+  return {
+    manager,
+    runtime,
+    fixture,
+    source,
+    context,
+    signal,
+    launch,
+    callbacks,
+    children,
+    reports,
+  };
+}
+
+it("R170 drains the original initialized process during disable and keeps replacement isolated from late exit", async () => {
+  const h = await integrated170();
+  const disposition = gate160();
+  const entered = gate160();
+  vi.mocked(h.fixture.host.retireResources).mockImplementation(async (owner) => {
+    expect(h.manager.requirements(owner)).toBeNull();
+    entered.resolve();
+    await disposition.promise;
+  });
+  const stopping = h.manager.setEnabled(h.source.launch.sourceKey, false);
+  await entered.promise;
+  expect(h.runtime.current(h.context.owner)).toBe(false);
+  expect(await h.runtime.dispatchDrain({ ...h.context.owner }, drain170(), h.signal)).toMatchObject(
+    { ok: true },
+  );
+  expect(h.callbacks[0]).toHaveBeenCalledOnce();
+  disposition.resolve();
+  await stopping;
+  await h.manager.setEnabled(h.source.launch.sourceKey, true);
+  const next = await h.runtime.activateInitialized(h.source.launch.sourceKey, h.signal);
+  await h.runtime.ready(next.owner, h.signal);
+  h.children[0]!.exit();
+  await expect(
+    h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal),
+  ).rejects.toMatchObject({ code: RPC_ERRORS.connectionClosed });
+  expect(await h.runtime.dispatchDrain(next.owner, drain170(), h.signal)).toMatchObject({
+    ok: true,
+  });
+  expect(h.callbacks[1]).toHaveBeenCalledOnce();
+  expect(h.fixture.host.retireResources).toHaveBeenCalledTimes(1);
+  await h.manager.shutdown();
+});
+
+it.each(["sourceKey", "pluginId", "generation", "hostEpoch", "processEpoch"] as const)(
+  "R170 rejects repeated forged %s without sending or retiring",
+  async (key) => {
+    const h = await integrated170();
+    const forged: ResourceOwner = {
+      ...h.context.owner,
+      [key]: key === "generation" ? 999 : "foreign",
+    };
+    for (let i = 0; i < 2; i++)
+      await expect(h.runtime.dispatchDrain(forged, drain170(), h.signal)).rejects.toMatchObject({
+        code: RPC_ERRORS.connectionClosed,
+      });
+    expect(h.callbacks[0]).not.toHaveBeenCalled();
+    expect(h.fixture.host.retireResources).not.toHaveBeenCalled();
+    expect(h.runtime.current(h.context.owner)).toBe(true);
+    await h.manager.shutdown();
+  },
+);
+
+it.each(["1.0.0", "1.6.0", "1.7.0"])(
+  "R170 uses negotiated %s and preserves numeric missing callback failure",
+  async (api) => {
+    const h = await integrated170(api);
+    const metadata = await import("./index.js");
+    expect(metadata.persistenceChannelApiVersion(h.context.peer)).toBe(api);
+    // Replace the registered callback with the same numeric failure an unregistered SDK sends.
+    h.children[0]!.peer.handle("storage/drain", () => {
+      throw new metadata170.RpcError(RPC_ERRORS.methodNotFound, "Unregistered callback");
+    });
+    const send = vi.spyOn(h.context.peer, "request");
+    await expect(
+      h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal),
+    ).rejects.toMatchObject({ code: RPC_ERRORS.methodNotFound });
+    expect(send).toHaveBeenCalledTimes(api === "1.7.0" ? 1 : 0);
+    await h.manager.shutdown();
+    expect(metadata.persistenceChannelApiVersion(h.context.peer)).toBeUndefined();
+  },
+);
+import * as metadata170 from "@kobrixa/plugin-protocol";
+
+it.each([false, true])(
+  "R170 synchronous original close/crash preserves disposition and blocked evidence: %s",
+  async (blocked) => {
+    const h = await integrated170();
+    const storage = gate160<DrainReport>();
+    const lost = vi
+      .spyOn(h.fixture.stage3.persistence, "ownerLost")
+      .mockReturnValue(storage.promise);
+    const freeze = vi.spyOn(h.fixture.stage3.persistence, "freeze");
+    const drain = vi.spyOn(h.fixture.stage3.persistence, "drain");
+    const pending = gate160();
+    const entered = gate160();
+    h.children[0]!.peer.handle("storage/drain", async () => {
+      entered.resolve();
+      await pending.promise;
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const dispatch = h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal);
+    const outcome = dispatch.then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await Promise.race([
+      entered.promise,
+      outcome.then((result) => {
+        if ("error" in result) throw result.error;
+      }),
+    ]);
+    if (blocked) h.children[0]!.exit();
+    else h.context.peer.close();
+    if (blocked) await vi.waitFor(() => expect(h.runtime.current(h.context.owner)).toBe(false));
+    else expect(h.runtime.current(h.context.owner)).toBe(false);
+    expect(h.manager.requirements(h.context.owner)).toBeNull();
+    await vi.waitFor(() => expect(lost).toHaveBeenCalledOnce());
+    expect(h.fixture.stage3.device.retire).toHaveBeenCalledExactlyOnceWith(
+      h.context.owner,
+      "crashed",
+    );
+    expect(freeze).not.toHaveBeenCalled();
+    expect(drain).not.toHaveBeenCalled();
+    expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+    const report = {
+      state: blocked ? ("checkpoint-only" as const) : ("saved" as const),
+      blocker: blocked,
+      pendingSettings: false,
+      records: [],
+      errors: [],
+    };
+    storage.resolve(report);
+    await vi.waitFor(() => expect(h.reports).toHaveLength(1));
+    expect(h.reports[0]!.persistence).toBe(report);
+    if (!blocked) {
+      expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+      h.children[0]!.exit();
+    }
+    pending.resolve();
+    expect(await outcome).toMatchObject({ error: { code: RPC_ERRORS.connectionClosed } });
+    await vi.waitFor(() => expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(0));
+    for (let i = 0; i < 2; i++)
+      await expect(
+        h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal),
+      ).rejects.toMatchObject({ code: RPC_ERRORS.connectionClosed });
+    expect(h.fixture.host.retireResources).toHaveBeenCalledOnce();
+    expect(h.reports[0]!.persistence.blocker).toBe(blocked);
+    await h.manager.shutdown();
+  },
+);
+
+it.each(["pending", "rejected"] as const)(
+  "R170 actual exit retains %s disposition and negotiated evidence",
+  async (mode) => {
+    const h = await integrated170();
+    const gate = gate160();
+    vi.mocked(h.fixture.host.retireResources).mockImplementation(() =>
+      mode === "pending" ? gate.promise : Promise.reject(new Error("blocked disposition")),
+    );
+    h.children[0]!.exit();
+    await vi.waitFor(() => expect(h.context.peer.closed).toBe(true));
+    expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+    expect((await import("./index.js")).persistenceChannelApiVersion(h.context.peer)).toBe("1.7.0");
+    expect(h.fixture.host.retireResources).toHaveBeenCalledOnce();
+    await expect(
+      h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal),
+    ).rejects.toMatchObject({ code: RPC_ERRORS.connectionClosed });
+    if (mode === "pending") {
+      gate.resolve();
+      await vi.waitFor(() => expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(0));
+      await h.manager.shutdown();
+    } else await expect(h.manager.shutdown()).rejects.toThrow("blocked disposition");
+  },
+);
+
+it("R170 kill requests and stop timeout never count as actual exit or repeat normal retirement", async () => {
+  const h = await integrated170();
+  h.children[0]!.peer.onNotification("exit", () => {});
+  const kill = vi.spyOn(h.children[0]!.process, "kill").mockImplementation(() => {});
+  const force = vi.spyOn(h.children[0]!.process, "forceKill").mockImplementation(() => {});
+  const freeze = vi.spyOn(h.fixture.stage3.persistence, "freeze");
+  const lost = vi.spyOn(h.fixture.stage3.persistence, "ownerLost");
+  await expect(h.manager.setEnabled(h.source.launch.sourceKey, false)).rejects.toMatchObject({
+    code: "PLUGIN_E_TIMEOUT",
+  });
+  expect(kill).toHaveBeenCalled();
+  expect(force).toHaveBeenCalled();
+  expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+  expect((await import("./index.js")).persistenceChannelApiVersion(h.context.peer)).toBe("1.7.0");
+  expect(h.fixture.host.retireResources).toHaveBeenCalledExactlyOnceWith(
+    h.context.owner,
+    "disable",
+  );
+  expect(freeze).toHaveBeenCalledOnce();
+  expect(lost).not.toHaveBeenCalled();
+  h.children[0]!.exit();
+  await vi.waitFor(() => expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(0));
+  expect((await import("./index.js")).persistenceChannelApiVersion(h.context.peer)).toBeUndefined();
+  expect(h.fixture.host.retireResources).toHaveBeenCalledOnce();
+  expect(lost).not.toHaveBeenCalled();
+  await h.manager.shutdown();
+});
+
+it("R170 admitted persistence catalog is lazy, isolated metadata and excludes disabled sources", async () => {
+  const source = {
+    ...optionalNodeSource(),
+    manifest: {
+      ...optionalNodeSource().manifest,
+      contributes: {
+        ...optionalNodeSource().manifest.contributes,
+        settings: { version: 1 as const, path: "settings.json" },
+      },
+    },
+  };
+  const fixture = stage3Fixture();
+  const launch = vi.fn(async () => {
+    throw new Error("Must remain lazy");
+  });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const sources = manager.persistenceCatalogSources();
+  expect(sources).toHaveLength(1);
+  expect(sources[0]!.settings).toEqual({ version: 1, path: "settings.json" });
+  sources[0]!.settings!.path = "mutated.json";
+  expect(manager.persistenceCatalogSources()[0]!.settings!.path).toBe("settings.json");
+  expect(launch).not.toHaveBeenCalled();
+  await manager.setEnabled(source.launch.sourceKey, false);
+  expect(manager.persistenceCatalogSources()).toEqual([]);
+  await manager.shutdown();
+});
+
+it("R170 observes a reentrant close inside original bind synchronously", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const revoked: boolean[] = [];
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  vi.mocked(fixture.host.bindChannel).mockImplementation((context) => {
+    context.peer.close();
+    revoked.push(manager.requirements(context.owner) === null);
+    return { initialized: async () => {}, ready: async () => {}, dispose() {} };
+  });
+  await expect(
+    manager
+      .stage3Runtime()
+      .activateInitialized(source.launch.sourceKey, new AbortController().signal),
+  ).rejects.toThrow();
+  expect(revoked).toEqual([true]);
+  await manager.shutdown();
+});
+
+it("R170 synchronous send loss retires once without claiming physical exit", async () => {
+  const h = await integrated170();
+  const lost = vi.spyOn(h.fixture.stage3.persistence, "ownerLost");
+  vi.spyOn(h.children[0]!.process, "send").mockImplementation(() => {
+    throw new Error("Transport lost");
+  });
+  const pending = h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal);
+  const observed = pending.catch((error) => error);
+  expect(h.runtime.current(h.context.owner)).toBe(false);
+  expect(await observed).toMatchObject({ code: RPC_ERRORS.connectionClosed });
+  await vi.waitFor(() => expect(lost).toHaveBeenCalledOnce());
+  expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+  h.children[0]!.exit();
+  await vi.waitFor(() => expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(0));
+  expect(h.fixture.host.retireResources).toHaveBeenCalledOnce();
+  await h.manager.shutdown();
+});
+
+it("R170 indexes simultaneous original and replacement peers without redirecting late work", async () => {
+  const { RetainedPersistenceChannels } = await import("./manager.js");
+  const { RetainedPersistenceChannel } = await import("./supervisor.js");
+  const { RpcPeer, createMemoryChannelPair } = metadata170;
+  const rows = new RetainedPersistenceChannels();
+  const owner: ResourceOwner = {
+    sourceKey: "builtin:test.storage",
+    pluginId: "test.storage",
+    generation: 1,
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    processEpoch: "00000000-0000-4000-8000-000000000002",
+  };
+  const pairs = [createMemoryChannelPair(), createMemoryChannelPair(), createMemoryChannelPair()];
+  const peers = pairs.map(([a, b]) => ({ host: new RpcPeer(a), child: new RpcPeer(b) }));
+  const lost = vi.fn(async () => {});
+  const original = new RetainedPersistenceChannel(owner, peers[0]!.host, () => 0, lost);
+  const nextOwner = {
+    ...owner,
+    generation: 2,
+    processEpoch: "00000000-0000-4000-8000-000000000004",
+  };
+  const next = new RetainedPersistenceChannel(
+    nextOwner,
+    peers[1]!.host,
+    () => 0,
+    async () => {},
+  );
+  const duplicate = new RetainedPersistenceChannel(
+    owner,
+    peers[2]!.host,
+    () => 0,
+    async () => {},
+  );
+  original.negotiated("1.7.0");
+  next.negotiated("1.7.0");
+  rows.retain(original);
+  rows.retain(next);
+  const gate = gate160();
+  const entered = gate160();
+  peers[0]!.child.handle("storage/drain", async () => {
+    entered.resolve();
+    await gate.promise;
+    return { ok: true, value: { status: "submitted", writes: [] } };
+  });
+  const replacement = vi.fn(() => ({
+    ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] },
+  }));
+  peers[1]!.child.handle("storage/drain", replacement);
+  try {
+    expect(() => rows.retain(duplicate)).toThrow("Original channel cannot be replaced");
+    const pending = rows.dispatch({ ...owner }, drain170(), new AbortController().signal);
+    await entered.promise;
+    expect(replacement).not.toHaveBeenCalled();
+    gate.resolve();
+    expect(await pending).toMatchObject({ ok: true, value: { status: "submitted" } });
+    original.disposition();
+    expect(original.releasable).toBe(false);
+    await original.confirmedExit();
+    rows.collect(original);
+    await expect(
+      rows.dispatch(owner, drain170(), new AbortController().signal),
+    ).rejects.toMatchObject({ code: RPC_ERRORS.connectionClosed });
+    expect(await rows.dispatch(nextOwner, drain170(), new AbortController().signal)).toMatchObject({
+      ok: true,
+    });
+    expect(replacement).toHaveBeenCalledOnce();
+    expect(lost).toHaveBeenCalledOnce();
+  } finally {
+    gate.resolve();
+    for (const { host, child } of peers) {
+      host.close();
+      child.close();
+    }
+    for (const row of [original, next, duplicate]) {
+      row.disposition();
+      await row.confirmedExit();
+    }
+  }
+});
+
+it("R170 delivers retirement drain over a real Node stdio peer and collects only on OS exit", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const moduleUrl = new URL("../../plugin-protocol/dist/index.js", import.meta.url).href;
+  const script = `
+    import {RpcPeer, ContentLengthDecoder, encodeContentLength} from ${JSON.stringify(moduleUrl)};
+    const decoder = new ContentLengthDecoder(), listeners = new Set();
+    process.stdin.on("data", bytes => {for (const text of decoder.push(bytes)) for (const listener of listeners) listener(text);});
+    const peer = new RpcPeer({send: text => process.stdout.write(encodeContentLength(text)), onMessage: listener => {listeners.add(listener); return () => listeners.delete(listener);}});
+    peer.handle("initialize", () => ({apiVersion: "1.7.0", sdk: {name: "R170 stdio", version: "0.0.1"}}));
+    peer.handle("storage/drain", () => ({ok: true, value: {status: "submitted", writes: []}}));
+    peer.handle("shutdown", () => null);
+    peer.onNotification("exit", () => process.exit(0));
+  `;
+  let process170!: PluginProcess;
+  let actualExits = 0;
+  const launch = vi.fn(async () => {
+    process170 = await spawnPluginProcess(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: root,
+    });
+    process170.onExit(() => {
+      actualExits++;
+    });
+    return process170;
+  });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const drained = vi
+    .spyOn(fixture.stage3.persistence, "drain")
+    .mockImplementation(async (offer, dispatch) => {
+      expect(actualExits).toBe(0);
+      expect(
+        await dispatch(
+          offer.owner,
+          { ...drain170(), token: offer.token },
+          new AbortController().signal,
+        ),
+      ).toEqual({ ok: true, value: { status: "submitted", writes: [] } });
+      expect(actualExits).toBe(0);
+      return { state: "saved", blocker: false, pendingSettings: false, records: [], errors: [] };
+    });
+  vi.mocked(fixture.host.retireResources).mockImplementation(async (owner, reason) => {
+    await retireStage3Owner(
+      fixture.stage3,
+      owner,
+      reason,
+      () => performance.now(),
+      runtime.dispatchDrain,
+    );
+  });
+  try {
+    const context = await runtime.activateInitialized(
+      source.launch.sourceKey,
+      new AbortController().signal,
+    );
+    await runtime.ready(context.owner, new AbortController().signal);
+    expect((await import("./index.js")).persistenceChannelApiVersion(context.peer)).toBe("1.7.0");
+    await manager.setEnabled(source.launch.sourceKey, false);
+    expect(drained).toHaveBeenCalledOnce();
+    expect(actualExits).toBe(1);
+    expect(runtimeDiagnostics(runtime).snapshot().owners).toBe(0);
+    expect(fixture.host.retireResources).toHaveBeenCalledExactlyOnceWith(context.owner, "disable");
+    await expect(
+      runtime.dispatchDrain(context.owner, drain170(), new AbortController().signal),
+    ).rejects.toMatchObject({ code: RPC_ERRORS.connectionClosed });
+    expect(launch).toHaveBeenCalledOnce();
+  } finally {
+    await manager.shutdown();
+    process170?.forceKill();
+  }
+});
+
+it("R170 failed old disposition and late loss cannot retire a restarted supervisor's owner", async () => {
+  const h = await integrated170();
+  const originalRetirement = vi.mocked(h.fixture.host.retireResources).getMockImplementation()!;
+  vi.mocked(h.fixture.host.retireResources).mockImplementationOnce(async () => {
+    throw new Error("Old disposition blocked");
+  });
+  h.children[0]!.exit();
+  await vi.waitFor(() => expect(h.context.peer.closed).toBe(true));
+  const next = await h.runtime.activateInitialized(h.source.launch.sourceKey, h.signal);
+  await h.runtime.ready(next.owner, h.signal);
+  expect(next.owner.processEpoch).not.toBe(h.context.owner.processEpoch);
+  expect(next.owner.generation).toBe(h.context.owner.generation);
+  expect(h.launch).toHaveBeenCalledTimes(2);
+  expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(2);
+  h.context.peer.close();
+  h.children[0]!.exit();
+  for (let i = 0; i < 2; i++)
+    await expect(
+      h.runtime.dispatchDrain(h.context.owner, drain170(), h.signal),
+    ).rejects.toMatchObject({ code: RPC_ERRORS.connectionClosed });
+  expect(h.runtime.current(next.owner)).toBe(true);
+  expect(h.manager.requirements(next.owner)).not.toBeNull();
+  expect(await h.runtime.dispatchDrain(next.owner, drain170(), h.signal)).toMatchObject({
+    ok: true,
+  });
+  expect(h.callbacks[0]).not.toHaveBeenCalled();
+  expect(h.callbacks[1]).toHaveBeenCalledOnce();
+  expect(h.fixture.host.retireResources).toHaveBeenCalledExactlyOnceWith(
+    h.context.owner,
+    "crashed",
+  );
+  vi.mocked(h.fixture.host.retireResources).mockImplementation(originalRetirement);
+  await h.manager.shutdown();
+  expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+});

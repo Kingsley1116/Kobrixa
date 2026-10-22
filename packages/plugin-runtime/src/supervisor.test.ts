@@ -997,3 +997,209 @@ describe("R160-1 startup failure cause survives the actual-exit fence", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+import {
+  createMemoryChannelPair,
+  RpcPeer as DrainPeer170,
+  RPC_ERRORS,
+  type DrainRequest,
+  type RequestContext,
+} from "@kobrixa/plugin-protocol";
+async function retained170(api = "1.7.0") {
+  const { RetainedPersistenceChannel } = await import("./supervisor.js");
+  const [a, b] = createMemoryChannelPair();
+  const peer = new DrainPeer170(a),
+    child = new DrainPeer170(b);
+  let clock = 0;
+  const lost = vi.fn(async () => {});
+  const row = new RetainedPersistenceChannel(channelOwner, peer, () => clock, lost);
+  row.negotiated(api);
+  const request: DrainRequest = {
+    token: "00000000-0000-4000-8000-000000000003",
+    reason: "disable",
+    remainingMs: 10000,
+    checkpoints: [],
+    writes: [],
+  };
+  return {
+    row,
+    peer,
+    child,
+    lost,
+    request,
+    signal: new AbortController().signal,
+    time: (value: number) => {
+      clock = value;
+    },
+    close() {
+      peer.close();
+      child.close();
+    },
+  };
+}
+
+it("R170 retained row pins original token deadline and clamps repeated shorter budgets", async () => {
+  const h = await retained170();
+  const callback = vi.fn(() => ({
+    ok: true as const,
+    value: { status: "checkpoint-only" as const, writes: [] },
+  }));
+  h.child.handle("storage/drain", callback);
+  const send = vi.spyOn(h.peer, "request");
+  try {
+    await h.row.dispatch(channelOwner, { ...h.request, remainingMs: 100 }, h.signal);
+    h.time(20);
+    await h.row.dispatch(channelOwner, h.request, h.signal);
+    expect(send.mock.calls[1]![1]).toMatchObject({ remainingMs: 80 });
+    await h.row.dispatch(channelOwner, { ...h.request, remainingMs: 10 }, h.signal);
+    h.time(30);
+    await expect(h.row.dispatch(channelOwner, h.request, h.signal)).rejects.toMatchObject({
+      code: RPC_ERRORS.timeout,
+    });
+    expect(callback).toHaveBeenCalledTimes(3);
+  } finally {
+    h.close();
+  }
+});
+
+it("R170 retains 64 token outcomes for 120 seconds without refreshing on rejected callers", async () => {
+  const h = await retained170();
+  h.child.handle("storage/drain", () => ({
+    ok: true,
+    value: { status: "checkpoint-only", writes: [] },
+  }));
+  const send = vi.spyOn(h.peer, "request");
+  try {
+    for (let i = 0; i < 64; i++)
+      await h.row.dispatch(
+        channelOwner,
+        {
+          ...h.request,
+          token: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+          remainingMs: 1,
+        },
+        h.signal,
+      );
+    const rejected = { ...h.request, token: "10000000-0000-4000-8000-000000000001" };
+    await expect(h.row.dispatch(channelOwner, rejected, h.signal)).rejects.toMatchObject({
+      code: RPC_ERRORS.permissionDenied,
+    });
+    h.time(120000);
+    await expect(h.row.dispatch(channelOwner, rejected, h.signal)).rejects.toMatchObject({
+      code: RPC_ERRORS.permissionDenied,
+    });
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(h.row.dispatch(channelOwner, rejected, aborted.signal)).rejects.toBeDefined();
+    expect(send).toHaveBeenCalledTimes(64);
+    expect(h.lost).not.toHaveBeenCalled();
+    h.time(120001);
+    await expect(h.row.dispatch(channelOwner, rejected, h.signal)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(send).toHaveBeenCalledTimes(65);
+  } finally {
+    h.close();
+  }
+});
+
+it.each(["1.6.0", "1.7.0"])(
+  "R170 missing drain callback on %s preserves numeric methodNotFound",
+  async (api) => {
+    const h = await retained170(api);
+    const send = vi.spyOn(h.peer, "request");
+    try {
+      await expect(h.row.dispatch(channelOwner, h.request, h.signal)).rejects.toMatchObject({
+        code: RPC_ERRORS.methodNotFound,
+      });
+      expect(send).toHaveBeenCalledTimes(api === "1.6.0" ? 0 : 1);
+      expect(h.lost).not.toHaveBeenCalled();
+    } finally {
+      h.close();
+    }
+  },
+);
+
+it.each(["abort", "deadline", "close"] as const)(
+  "R170 pending original callback is bounded by %s and never resurrects",
+  async (mode) => {
+    vi.useFakeTimers();
+    const h = await retained170();
+    const gate = latch();
+    const entered = latch();
+    let callbackSignal!: AbortSignal;
+    const callback = vi.fn(async (_request: DrainRequest, context: RequestContext) => {
+      callbackSignal = context.signal;
+      entered.resolve();
+      await gate.promise;
+      return { ok: true as const, value: { status: "submitted" as const, writes: [] } };
+    });
+    h.child.handle("storage/drain", callback);
+    const control = new AbortController();
+    try {
+      const pending = h.row.dispatch(
+        channelOwner,
+        { ...h.request, remainingMs: 10 },
+        control.signal,
+      );
+      const failed = expect(pending).rejects.toMatchObject({
+        code:
+          mode === "close"
+            ? RPC_ERRORS.connectionClosed
+            : mode === "deadline"
+              ? RPC_ERRORS.timeout
+              : RPC_ERRORS.requestCancelled,
+      });
+      await entered.promise;
+      if (mode === "abort") control.abort();
+      else if (mode === "deadline") {
+        h.time(10);
+        await vi.advanceTimersByTimeAsync(10);
+      } else void h.row.closed();
+      await failed;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callbackSignal.aborted).toBe(true);
+      gate.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callback).toHaveBeenCalledOnce();
+      expect(h.row.releasable).toBe(false);
+      if (mode === "close") {
+        await h.row.closed();
+        expect(h.lost).toHaveBeenCalledOnce();
+        await expect(h.row.dispatch(channelOwner, h.request, h.signal)).rejects.toMatchObject({
+          code: RPC_ERRORS.connectionClosed,
+        });
+        h.row.disposition();
+        expect(h.row.releasable).toBe(false);
+        await h.row.confirmedExit();
+        expect(h.row.releasable).toBe(true);
+      }
+    } finally {
+      gate.resolve();
+      h.close();
+    }
+  },
+);
+
+it("R170 collection and confirmed exit are idempotent in either disposition order", async () => {
+  for (const first of ["exit", "disposition"]) {
+    const h = await retained170();
+    const collected = vi.fn();
+    h.row.onCollect(collected);
+    try {
+      if (first === "exit") await h.row.confirmedExit();
+      else h.row.disposition();
+      expect(h.row.releasable).toBe(false);
+      expect(collected).not.toHaveBeenCalled();
+      h.row.disposition();
+      await h.row.confirmedExit();
+      h.row.disposition();
+      await h.row.confirmedExit();
+      expect(h.row.releasable).toBe(true);
+      expect(collected).toHaveBeenCalledOnce();
+      expect(h.lost).toHaveBeenCalledOnce();
+    } finally {
+      h.close();
+    }
+  }
+});
