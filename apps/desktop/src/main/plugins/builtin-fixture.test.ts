@@ -112,11 +112,18 @@ it("reports and stops an unexpected background patch failure", async () => {
   expect(h.ui.patch).toHaveBeenCalledTimes(2);
   expect(vi.getTimerCount()).toBe(0);
 });
-it("stops quietly on stale binding retirement", async () => {
+it("skips a closed binding and keeps updating later instances until the owner retires", async () => {
   const h = await consumer();
   h.ui.patch.mockResolvedValueOnce(resourceFailure("stale"));
   await h.definition.ready!(h.context);
+  expect(vi.getTimerCount()).toBe(1);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(h.snapshot()).toEqual({ data: { ticks: "tick:2" }, revision: 1 });
+  expect(h.ui.patch).toHaveBeenCalledTimes(2);
+  h.ui.instances.mockResolvedValueOnce(resourceFailure("stale") as never);
+  await vi.advanceTimersByTimeAsync(100);
   expect(vi.getTimerCount()).toBe(0);
+  expect(h.ui.patch).toHaveBeenCalledTimes(2);
   expect(h.log).not.toHaveBeenCalled();
 });
 it("does not issue a patch or reschedule after deactivation during state lookup", async () => {
@@ -130,7 +137,7 @@ it("does not issue a patch or reschedule after deactivation during state lookup"
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("Python consumer checks actual installed data schema, unexpected failure, and stale retirement", () => {
+it("Python consumer checks installed data, unexpected errors, binding closure and owner retirement", () => {
   const output = execFileSync(
     "python3",
     [
@@ -153,12 +160,17 @@ async def scenario(error=None):
     ns = runpy.run_path(sys.argv[1])
     revision = 0
     data = {key: slot['initial'] for key, slot in panel['data'].items()}
-    async def instances(): return {'ok': True, 'value': {'instances': [{}]}}
+    retired = False
+    attempted = 0
+    async def instances():
+        if retired: return {'ok': False, 'error': {'code': 'PLUGIN_E_STALE_RESOURCE'}}
+        return {'ok': True, 'value': {'instances': [{}]}}
     async def state(_): return {'ok': True, 'value': {'revision': revision}}
     async def patch(binding, base, values):
-        nonlocal revision
+        nonlocal revision, attempted
         assert base == revision
-        if error: return {'ok': False, 'error': {'code': error}}
+        attempted += 1
+        if error and attempted == 1: return {'ok': False, 'error': {'code': error}}
         assert all(key in panel['data'] and accepts(panel['data'][key]['schema'], value) for key, value in values.items())
         data.update(values)
         revision += 1
@@ -171,14 +183,21 @@ async def scenario(error=None):
     else:
         await ns['ready'](ctx)
         if error is None: assert data['ticks'] == 'tick:1' and revision == 1
-        else: assert ns['ready'].__globals__['stopped'] is True
+        else:
+            assert ns['ready'].__globals__['stopped'] is False
+            await asyncio.sleep(0.15)
+            assert revision == 1 and data['ticks'] == 'tick:2'
+            retired = True
+            await asyncio.sleep(0.15)
+            assert ns['ready'].__globals__['stopped'] is True
+            assert attempted == 2
     await ns['deactivate']()
     assert ns['ready'].__globals__['stopped'] is True
     return revision
 async def main():
     assert await scenario() == 1
     assert await scenario('PLUGIN_E_UI_RESOURCE') == 0
-    assert await scenario('PLUGIN_E_STALE_RESOURCE') == 0
+    assert await scenario('PLUGIN_E_STALE_RESOURCE') == 1
     print('3 Python fixture scenarios passed')
 asyncio.run(main())
 `,
