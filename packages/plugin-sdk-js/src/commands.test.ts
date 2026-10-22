@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ContextCommands } from "./commands.js";
+import { ContextCommands, type ContextCommandContext } from "./commands.js";
 import type { CommandInvocation } from "@kobrixa/plugin-protocol";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const call = (n = 1): CommandInvocation => ({
@@ -22,7 +22,7 @@ describe("U06/U07 B1-RF3 context commands", () => {
     const wait = new Promise<void>((r) => {
       release = r;
     });
-    const handler = vi.fn(async (ctx: import("./commands.js").ContextCommandContext) => {
+    const handler = vi.fn(async (ctx: ContextCommandContext) => {
       await wait;
       return { output: { action: ctx.context.actionRef ?? null }, fieldErrors: [] };
     });

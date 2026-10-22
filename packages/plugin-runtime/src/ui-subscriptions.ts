@@ -12,10 +12,10 @@ export interface UiEventLedgerPort {
   onRemoved(listener: (subscriptionId: Handle) => void): () => void;
 }
 
-import { RpcError, RPC_ERRORS, uiRequestSchemas, uiBytes, resourceFailure, uiFailure,
+import { RpcError, RPC_ERRORS, uiRequestSchemas, resourceFailure,
   type UiBinding, type UiRequestMap } from "@kobrixa/plugin-protocol";
 import { sameResourceOwner, sameUiBinding } from "./ui-host-ports.js";
-import { UiStateRegistry } from "./ui-state.js";
+import type { UiStateRegistry } from "./ui-state.js";
 type Subscription = { owner: ResourceOwner; topics: UiRequestMap["ui/subscribe"]["params"]["topics"]; binding?: UiBinding };
 export class UiSubscriptions {
   readonly #subscriptions = new Map<Handle, Subscription>();

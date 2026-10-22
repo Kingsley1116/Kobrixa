@@ -28,7 +28,7 @@ it("pins shared intent and optional fourth drain argument without wiring I/O", a
   expect(await unavailableUiCatalog().catalog({})).toMatchObject({ ok: false });
 });
 
-import { UiCatalog } from "./ui-catalog.js";
+import type { UiCatalog } from "./ui-catalog.js";
 import type { UiCatalogPort } from "./ui-host-ports.js";
 it("keeps the concrete catalog assignable to the one frozen catalog port", () => {
   expectTypeOf<UiCatalog>().toMatchTypeOf<UiCatalogPort>();

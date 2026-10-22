@@ -16,6 +16,7 @@ import {
   RpcPeer,
   type MessageChannelLike,
   type PluginLocale,
+  type Result,
 } from "@kobrixa/plugin-protocol";
 
 export const API_VERSION = PLUGIN_API_VERSION;
@@ -92,8 +93,7 @@ export async function runPlugin(
   let contextCommands: ContextCommands | undefined;
   let pluginContext: PluginContext | undefined;
   let negotiated = false;
-  let readyResult:
-    Promise<import("@kobrixa/plugin-protocol").Result<Record<string, never>>> | undefined;
+  let readyResult: Promise<Result<Record<string, never>>> | undefined;
   peer.handle("ui/negotiate", async (params) => {
     if (!pluginContext) return uiFailure("negotiation");
     negotiated = params.commandEnvelopeVersions.includes(1);
