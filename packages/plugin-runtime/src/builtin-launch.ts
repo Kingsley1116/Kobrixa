@@ -11,7 +11,6 @@ export type BuiltinLaunchDescriptor = {
   resourceIndex: "resource-index.json";
 };
 
-
 export type BuiltinResourceIndex = {
   version: 1;
   pluginId: Id;

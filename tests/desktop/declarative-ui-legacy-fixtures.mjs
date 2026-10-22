@@ -52,14 +52,12 @@ export async function legacyFixtures(directory) {
     await readFile(path.join(snapshot, "sdks/python/kobrixa/_plugin.py"), "utf8"),
     /API_VERSION = "1\.4\.0"/,
   );
-  const python = [process.env.KOBRIXA_TEST_PYTHON, "python3", "python"]
-    .filter(Boolean)
-    .find(
-      (command) =>
-        spawnSync(command, ["-c", "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"], {
-          stdio: "ignore",
-        }).status === 0,
-    );
+  const python = [process.env.KOBRIXA_TEST_PYTHON, "python3", "python"].filter(Boolean).find(
+    (command) =>
+      spawnSync(command, ["-c", "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"], {
+        stdio: "ignore",
+      }).status === 0,
+  );
   assert.ok(python, "Python 3.10+ is mandatory for old-SDK compatibility");
   const sources = [];
   const artifacts = [];

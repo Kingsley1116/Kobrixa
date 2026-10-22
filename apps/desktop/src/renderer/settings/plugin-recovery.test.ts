@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CoreRecoverySnapshot } from "@kobrixa/plugin-runtime";
-import { fixture, entry, handle } from "../plugin-ui/contract.test.js";
+import { fixture, entry, handle, deferred } from "../plugin-ui/contract.test.js";
 import { CoreRecoveryView } from "../plugin-ui/core-recovery.js";
 import { PluginToolsPane } from "../plugin-ui/panel-host.js";
 import { SettingsStore } from "./settings.js";
@@ -38,41 +38,61 @@ function setup(initial: Record<string, string> = {}) {
   return { ...f, storage, settings, owner };
 }
 
+async function beginPendingHold(
+  owner: ReturnType<typeof createPluginUiWindow>,
+  bridge: ReturnType<typeof fixture>["bridge"],
+  kind: "pointer" | "key" = "pointer",
+) {
+  const record = owner.session.record(entry)!;
+  await vi.waitFor(() => expect(record.state.getSnapshot().busy).toBe(false));
+  const pending = deferred<Awaited<ReturnType<typeof bridge.hold>>>();
+  bridge.hold.mockReturnValueOnce(pending.promise);
+  const count = bridge.hold.mock.calls.length;
+  expect(
+    record.intent.begin("hold", {
+      trusted: true,
+      kind,
+      id: kind === "key" ? "Enter" : "1",
+      primary: true,
+      repeat: false,
+    }),
+  ).toBe(true);
+  // A later gesture first reconciles the preceding submission through snapshot.
+  await vi.waitFor(() => expect(bridge.hold.mock.calls.length).toBe(count + 1));
+  expect(bridge.hold.mock.calls.at(-1)![0].phase).toBe("begin");
+  expect(record.state.getSnapshot().busy).toBe(true);
+  return async () => {
+    pending.resolve({ ok: true, value: { gesture: handle(4) } });
+    await vi.waitFor(() => expect(record.state.getSnapshot().busy).toBe(false));
+  };
+}
+
 it("U09/U15 cancels a pending hold before pane notifications and settings/modal hiding", async () => {
   const { bridge, owner, settings, storage } = setup();
   await owner.ready;
   settings.set("rightPanel", "plugins");
   await owner.session.open(entry);
-  const record = owner.session.record(entry)!;
-  const begin = () =>
-    expect(
-      record.intent.begin("hold", {
-        trusted: true,
-        kind: "pointer",
-        id: "1",
-        primary: true,
-        repeat: false,
-      }),
-    ).toBe(true);
   const off = settings.subscribe(() => {
     expect(bridge.hold.mock.calls.at(-1)![0].phase).toBe("cancel");
     expect(bridge.visibility.mock.calls.at(-1)![0].visible).toBe(false);
   });
-  begin();
+  let settle = await beginPendingHold(owner, bridge);
   settings.set("rightPanel", "collab");
   off();
+  await settle();
   for (const gate of ["settings", "modal"] as const) {
     settings.set("rightPanel", "plugins");
-    begin();
+    settle = await beginPendingHold(owner, bridge);
     owner.gate(gate, true);
     expect(bridge.hold.mock.calls.at(-1)![0].phase).toBe("cancel");
     expect(bridge.visibility.mock.calls.at(-1)![0].visible).toBe(false);
     const count = bridge.visibility.mock.calls.length;
     owner.gate(gate, true);
     expect(bridge.visibility).toHaveBeenCalledTimes(count);
+    await settle();
     owner.gate(gate, false);
   }
-  begin();
+  settle = await beginPendingHold(owner, bridge);
   settings.resetLayout();
   expect(bridge.hold.mock.calls.at(-1)![0].phase).toBe("cancel");
   expect(bridge.visibility.mock.calls.at(-1)![0]).toMatchObject({
@@ -81,6 +101,7 @@ it("U09/U15 cancels a pending hold before pane notifications and settings/modal 
   });
   expect(JSON.parse(storage.saved.get(layoutKey)!)).toEqual([entry.sourceKey, entry.id]);
   expect(storage.saved.get(layoutKey)).not.toMatch(/processEpoch|panelInstance|speed|command/);
+  await settle();
 });
 
 it("U11/U15 restores eligible selection without opening, replaying or duplicating subscriptions", async () => {
@@ -149,33 +170,18 @@ it("uses one window owner and revokes on blur/document hide, then removes window
   await owner.ready;
   settingsStore.set("rightPanel", "plugins");
   await owner.session.open(entry);
-  const record = owner.session.record(entry)!;
-  expect(
-    record.intent.begin("hold", {
-      trusted: true,
-      kind: "key",
-      id: "Enter",
-      primary: true,
-      repeat: false,
-    }),
-  ).toBe(true);
+  let settle = await beginPendingHold(owner, f.bridge, "key");
   focus.mockReturnValue(false);
   window.dispatchEvent(new Event("blur"));
   expect(f.bridge.hold.mock.calls.at(-1)![0].phase).toBe("cancel");
+  await settle();
   focus.mockReturnValue(true);
   window.dispatchEvent(new Event("focus"));
-  expect(
-    record.intent.begin("hold", {
-      trusted: true,
-      kind: "key",
-      id: "Enter",
-      primary: true,
-      repeat: false,
-    }),
-  ).toBe(true);
+  settle = await beginPendingHold(owner, f.bridge, "key");
   hidden.mockReturnValue(true);
   document.dispatchEvent(new Event("visibilitychange"));
   expect(f.bridge.hold.mock.calls.at(-1)![0].phase).toBe("cancel");
+  await settle();
   window.dispatchEvent(new Event("pagehide"));
   expect(f.listeners.size).toBe(0);
   expect(f.bridge.close).toHaveBeenCalledOnce();

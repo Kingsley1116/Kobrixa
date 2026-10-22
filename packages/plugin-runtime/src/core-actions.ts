@@ -1,6 +1,12 @@
 import type {
-  Handle, Counter, ResourceOwner, Text, BusinessResult, PermissionErrorDetail,
-  ResourceErrorDetail, Result,
+  Handle,
+  Counter,
+  ResourceOwner,
+  Text,
+  BusinessResult,
+  PermissionErrorDetail,
+  ResourceErrorDetail,
+  Result,
 } from "@kobrixa/plugin-protocol";
 // 新增 host-only 型別；3A DeviceRecoveryPort／DeviceSessionControlPort 與 3B-2 PersistenceParticipant
 // 僅 type-only import 本定義，不各自定義 actionToken 或 scope variant。

@@ -54,71 +54,97 @@ import {
   type ResourceOwner,
 } from "@kobrixa/plugin-protocol";
 import { uiEventClientPort, bindEventChannel } from "./events.js";
-it("U08 acknowledges bounded enqueue before callback and survives callback failure", async () => {
-  const [hostEnd, pluginEnd] = createMemoryChannelPair();
-  const host = new RpcPeer(hostEnd);
-  const plugin = new RpcPeer(pluginEnd);
-  const subscriptionId = "00000000-0000-4000-8000-000000000001";
-  const owner: ResourceOwner = {
-    sourceKey: "builtin:test.ui",
-    pluginId: "test.ui",
-    generation: 1,
-    hostEpoch: "00000000-0000-4000-8000-000000000002",
-    processEpoch: "00000000-0000-4000-8000-000000000003",
-  };
-  const order: string[] = [];
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  host.handle("ui/subscribe", async () => ({
-    ok: true,
-    value: {
-      subscriptionId,
-      sequence: 0,
-      snapshot: { instances: [], states: [], locale: "en", theme: "light" },
-    },
-  }));
-  host.handle("events/ack", async ({ sequence }) => {
-    order.push(`ack:${sequence}`);
-    return { ok: true as const, value: { acknowledged: sequence } };
-  });
-  host.handle("events/unsubscribe", async () => ({ ok: true as const, value: { removed: true } }));
-  bindEventChannel(plugin, owner);
-  const ui = new UiClient(plugin.request.bind(plugin), uiEventClientPort(plugin));
-  ui.markReady();
-  try {
-    await ui.subscribe({ topics: ["environment"] }, async (event) => {
-      order.push(`callback:${event.sequence}`);
-      if (event.sequence === 1) {
-        await gate;
-        throw new Error("Callback failure is isolated.");
-      }
+it.each(["ui.environment", "ui.state"] as const)(
+  "U08 %s acknowledges bounded enqueue before callback and survives callback failure",
+  async (kind) => {
+    const [hostEnd, pluginEnd] = createMemoryChannelPair();
+    const host = new RpcPeer(hostEnd);
+    const plugin = new RpcPeer(pluginEnd);
+    const subscriptionId = "00000000-0000-4000-8000-000000000001";
+    const owner: ResourceOwner = {
+      sourceKey: "builtin:test.ui",
+      pluginId: "test.ui",
+      generation: 1,
+      hostEpoch: "00000000-0000-4000-8000-000000000002",
+      processEpoch: "00000000-0000-4000-8000-000000000003",
+    };
+    const order: string[] = [];
+    const binding = {
+      contributionId: "test.ui.panel",
+      kind: "panel" as const,
+      panelInstance: subscriptionId,
+      uiResourceGeneration: 1,
+      generation: owner.generation,
+      hostEpoch: owner.hostEpoch,
+      processEpoch: owner.processEpoch,
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    const event = (sequence: number): UiEventEnvelope => ({
-      version: 1,
-      subscriptionId,
-      owner,
-      sequence,
-      delivery: "control",
-      kind: "ui.environment",
-      data: { locale: "en", theme: "dark" },
+    host.handle("ui/subscribe", async () => ({
+      ok: true,
+      value: {
+        subscriptionId,
+        sequence: 0,
+        snapshot: { instances: [], states: [], locale: "en", theme: "light" },
+      },
+    }));
+    host.handle("events/ack", async ({ sequence }) => {
+      order.push(`ack:${sequence}`);
+      return { ok: true as const, value: { acknowledged: sequence } };
     });
-    host.notify("events/deliver", event(1));
-    await vi.waitFor(() => expect(order).toContain("callback:1"));
-    expect(order.indexOf("ack:1")).toBeLessThan(order.indexOf("callback:1"));
-    host.notify("events/deliver", event(2));
-    await vi.waitFor(() => expect(order).toContain("ack:2"));
-    release();
-    await vi.waitFor(() => expect(order).toContain("callback:2"));
-    expect(order.filter((value) => value === "callback:1")).toHaveLength(1);
-    await ui.unsubscribe(subscriptionId);
-  } finally {
-    release();
-    host.close();
-    plugin.close();
-  }
-});
+    host.handle("events/unsubscribe", async () => ({
+      ok: true as const,
+      value: { removed: true },
+    }));
+    bindEventChannel(plugin, owner);
+    const ui = new UiClient(plugin.request.bind(plugin), uiEventClientPort(plugin));
+    ui.markReady();
+    try {
+      await ui.subscribe(
+        kind === "ui.state" ? { topics: ["state"], binding } : { topics: ["environment"] },
+        async (event) => {
+          order.push(`callback:${event.sequence}`);
+          if (event.sequence === 1) {
+            await gate;
+            throw new Error("Callback failure is isolated.");
+          }
+        },
+      );
+      const event = (sequence: number): UiEventEnvelope => ({
+        version: 1,
+        subscriptionId,
+        owner,
+        sequence,
+        ...(kind === "ui.state"
+          ? {
+              delivery: "telemetry" as const,
+              kind,
+              data: { binding, revision: sequence },
+            }
+          : {
+              delivery: "control" as const,
+              kind,
+              data: { locale: "en" as const, theme: "dark" as const },
+            }),
+      });
+      host.notify("events/deliver", event(1));
+      await vi.waitFor(() => expect(order).toContain("callback:1"));
+      expect(order.indexOf("ack:1")).toBeLessThan(order.indexOf("callback:1"));
+      host.notify("events/deliver", event(2));
+      await vi.waitFor(() => expect(order).toContain("ack:2"));
+      release();
+      await vi.waitFor(() => expect(order).toContain("callback:2"));
+      expect(order.filter((value) => value === "callback:1")).toHaveLength(1);
+      await ui.unsubscribe(subscriptionId);
+    } finally {
+      release();
+      host.close();
+      plugin.close();
+    }
+  },
+);
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

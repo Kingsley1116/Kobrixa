@@ -366,6 +366,6 @@ export const uiEventEnvelopeSchema = z.union([
   uiEventSchema.options[1].extend(uiEnvelopeFields),
   uiEventSchema.options[2].extend(uiEnvelopeFields),
   uiEventSchema.options[3].extend(uiEnvelopeFields),
-  uiEventSchema.options[4].extend(uiEnvelopeFields),
+  uiEventSchema.options[4].extend({ ...uiEnvelopeFields, delivery: z.literal("telemetry") }),
   uiEventSchema.options[5].extend(uiEnvelopeFields),
 ]);

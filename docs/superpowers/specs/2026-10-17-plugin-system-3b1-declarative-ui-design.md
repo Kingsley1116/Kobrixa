@@ -443,6 +443,8 @@ ack 為 cumulative、只接受已交付的 sequence；重複／較小 ack 冪等
 
 instances／environment／state invalidation 可 last-value coalesce；form event 只在 action submission 時產生，不用每 keystroke。visibility=false、revoked，以及 3A 的 terminal／authority／stop 為 control。control 的狀態先寫 authoritative ledger，再嘗試通知，不能由 feature patch 刪除。普通 telemetry batch 維持 64 frames／64 KiB，256 KiB queue；recording 原始樣本由 3A 保留或明確 gap，不能因 UI 顯示合併而悄悄消失。
 
+1.6 wire 的固定分類：`ui.state` 為 telemetry，其餘五個 UI kinds 為 control。主機發送、共用 envelope、UI envelope 與 JS／Python SDK 必須一致；state invalidation 不占停止／撤權的保留 control slots。此分類修正原先 schema 誤把 `ui.state` 限為 control 的不一致，不放寬其他 kinds，也不新增方法。
+
 coalescing／queue drop 的缺口依 3A 共用規則只由 sequence 不連續辨識，不新增 UI 專屬 gap kind。consumer 停止由該 stream 推論連續狀態，呼叫 snapshot 取得 watermark，再丟棄 ≤watermark 的 events。snapshot 不表示過去 motion 成功，操作結果仍取 broker ledger。可重建的 UI state snapshot 與不可重建的 raw samples 明確分開。
 
 8 個 control slots 是每 source 所有訂閱共用，單筆 16 KiB；最多 7 筆普通 control，第 8 格只送 3A `events.resyncRequired`，data 為 `{reason:"overflow"|"ack-timeout",affected:Handle[]}`，affected ≤32。terminal 不能被 progress 取代。control slots 滿或最舊 control 10 秒未 ack，host 撤該 source intent／要求 stop、結束受影響 streams，保留 core snapshot；consumer query 後重新 subscribe。通道斷線直接走 retirement，無法送 revoked 不能省略本地撤權。350 ms heartbeat 仍獨立執行，10 秒 ack deadline 不延長 motion。健康 consumer 的終態可逐筆交付；慢 consumer 的終態只保證權威 snapshot 可恢復，無「無限可靠 queue」承諾。

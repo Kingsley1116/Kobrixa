@@ -53238,5 +53238,201 @@
       }
     }
   },
-    {"name": "p170-publication: unsubscribe tombstone", "definition": "events/unsubscribe.result", "valid": true, "value": {"ok": true, "value": {"removed": false}}}
+  {
+    "name": "p170-publication: unsubscribe tombstone",
+    "definition": "events/unsubscribe.result",
+    "valid": true,
+    "value": {
+      "ok": true,
+      "value": {
+        "removed": false
+      }
+    }
+  },
+  {
+    "name": "UI delivery: ui.state control",
+    "definition": "events/deliver.params",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "subscriptionId": "00000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "owner": {
+        "sourceKey": "builtin:acme.ui",
+        "pluginId": "acme.ui",
+        "generation": 1,
+        "hostEpoch": "00000000-0000-4000-8000-000000000001",
+        "processEpoch": "00000000-0000-4000-8000-000000000001"
+      },
+      "kind": "ui.state",
+      "data": {
+        "binding": {
+          "contributionId": "acme.ui.panel",
+          "kind": "panel",
+          "panelInstance": "00000000-0000-4000-8000-000000000001",
+          "uiResourceGeneration": 1,
+          "generation": 1,
+          "hostEpoch": "00000000-0000-4000-8000-000000000001",
+          "processEpoch": "00000000-0000-4000-8000-000000000001"
+        },
+        "revision": 1
+      },
+      "delivery": "control"
+    }
+  },
+  {
+    "name": "UI delivery: ui.state telemetry",
+    "definition": "events/deliver.params",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "subscriptionId": "00000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "owner": {
+        "sourceKey": "builtin:acme.ui",
+        "pluginId": "acme.ui",
+        "generation": 1,
+        "hostEpoch": "00000000-0000-4000-8000-000000000001",
+        "processEpoch": "00000000-0000-4000-8000-000000000001"
+      },
+      "kind": "ui.state",
+      "data": {
+        "binding": {
+          "contributionId": "acme.ui.panel",
+          "kind": "panel",
+          "panelInstance": "00000000-0000-4000-8000-000000000001",
+          "uiResourceGeneration": 1,
+          "generation": 1,
+          "hostEpoch": "00000000-0000-4000-8000-000000000001",
+          "processEpoch": "00000000-0000-4000-8000-000000000001"
+        },
+        "revision": 1
+      },
+      "delivery": "telemetry"
+    }
+  },
+  {
+    "name": "UI delivery: ui.visibility control",
+    "definition": "events/deliver.params",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "subscriptionId": "00000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "owner": {
+        "sourceKey": "builtin:acme.ui",
+        "pluginId": "acme.ui",
+        "generation": 1,
+        "hostEpoch": "00000000-0000-4000-8000-000000000001",
+        "processEpoch": "00000000-0000-4000-8000-000000000001"
+      },
+      "kind": "ui.visibility",
+      "data": {
+        "binding": {
+          "contributionId": "acme.ui.panel",
+          "kind": "panel",
+          "panelInstance": "00000000-0000-4000-8000-000000000001",
+          "uiResourceGeneration": 1,
+          "generation": 1,
+          "hostEpoch": "00000000-0000-4000-8000-000000000001",
+          "processEpoch": "00000000-0000-4000-8000-000000000001"
+        },
+        "visible": false
+      },
+      "delivery": "control"
+    }
+  },
+  {
+    "name": "UI delivery: ui.visibility telemetry",
+    "definition": "events/deliver.params",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "subscriptionId": "00000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "owner": {
+        "sourceKey": "builtin:acme.ui",
+        "pluginId": "acme.ui",
+        "generation": 1,
+        "hostEpoch": "00000000-0000-4000-8000-000000000001",
+        "processEpoch": "00000000-0000-4000-8000-000000000001"
+      },
+      "kind": "ui.visibility",
+      "data": {
+        "binding": {
+          "contributionId": "acme.ui.panel",
+          "kind": "panel",
+          "panelInstance": "00000000-0000-4000-8000-000000000001",
+          "uiResourceGeneration": 1,
+          "generation": 1,
+          "hostEpoch": "00000000-0000-4000-8000-000000000001",
+          "processEpoch": "00000000-0000-4000-8000-000000000001"
+        },
+        "visible": false
+      },
+      "delivery": "telemetry"
+    }
+  },
+  {
+    "name": "UI delivery: ui.revoked control",
+    "definition": "events/deliver.params",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "subscriptionId": "00000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "owner": {
+        "sourceKey": "builtin:acme.ui",
+        "pluginId": "acme.ui",
+        "generation": 1,
+        "hostEpoch": "00000000-0000-4000-8000-000000000001",
+        "processEpoch": "00000000-0000-4000-8000-000000000001"
+      },
+      "kind": "ui.revoked",
+      "data": {
+        "binding": {
+          "contributionId": "acme.ui.panel",
+          "kind": "panel",
+          "panelInstance": "00000000-0000-4000-8000-000000000001",
+          "uiResourceGeneration": 1,
+          "generation": 1,
+          "hostEpoch": "00000000-0000-4000-8000-000000000001",
+          "processEpoch": "00000000-0000-4000-8000-000000000001"
+        },
+        "reason": "closed"
+      },
+      "delivery": "control"
+    }
+  },
+  {
+    "name": "UI delivery: ui.revoked telemetry",
+    "definition": "events/deliver.params",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "subscriptionId": "00000000-0000-4000-8000-000000000001",
+      "sequence": 1,
+      "owner": {
+        "sourceKey": "builtin:acme.ui",
+        "pluginId": "acme.ui",
+        "generation": 1,
+        "hostEpoch": "00000000-0000-4000-8000-000000000001",
+        "processEpoch": "00000000-0000-4000-8000-000000000001"
+      },
+      "kind": "ui.revoked",
+      "data": {
+        "binding": {
+          "contributionId": "acme.ui.panel",
+          "kind": "panel",
+          "panelInstance": "00000000-0000-4000-8000-000000000001",
+          "uiResourceGeneration": 1,
+          "generation": 1,
+          "hostEpoch": "00000000-0000-4000-8000-000000000001",
+          "processEpoch": "00000000-0000-4000-8000-000000000001"
+        },
+        "reason": "closed"
+      },
+      "delivery": "telemetry"
+    }
+  }
 ]

@@ -305,9 +305,12 @@ export function createPluginUiBridge(input: {
   ): Promise<Result<CommandValue>> => {
     const key = bindKey(resolved.state.binding);
     const control = new AbortController();
-    const cleanup = invocation.context.trigger.kind === "hold" && invocation.context.trigger.phase !== "begin";
+    const cleanup =
+      invocation.context.trigger.kind === "hold" && invocation.context.trigger.phase !== "begin";
     if (!cleanup) pending.set(control, resolved.owner.sourceKey);
-    const release = () => { pending.delete(control); };
+    const release = () => {
+      pending.delete(control);
+    };
     control.signal.addEventListener("abort", release, { once: true });
     const requests = inflight.get(key) ?? new Set<AbortController>();
     requests.add(control);

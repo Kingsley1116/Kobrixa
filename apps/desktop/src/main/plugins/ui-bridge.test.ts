@@ -1156,32 +1156,116 @@ it("bridge diagnostics count live requests and disposal aborts their authority w
 });
 
 it("hold cleanup stops first and delivers the original accepted form while begin is pending", async () => {
-  const value = resolved(); if (value.resource.kind !== "panel") throw new Error("panel");
-  value.resource.nodes[2] = { id: "run", type: "holdAction", label: { en: "Hold" }, command: "acme.ui.run", arguments: { speed: { ref: { scope: "form", key: "speed" } } } };
-  const events = new UiBridgeEvents(() => []); const order: string[] = [];
+  const value = resolved();
+  if (value.resource.kind !== "panel") throw new Error("panel");
+  value.resource.nodes[2] = {
+    id: "run",
+    type: "holdAction",
+    label: { en: "Hold" },
+    command: "acme.ui.run",
+    arguments: { speed: { ref: { scope: "form", key: "speed" } } },
+  };
+  const events = new UiBridgeEvents(() => []);
+  const order: string[] = [];
   let challenge = "";
-  const intent = new UiIntent({ bindMotionScope: () => "scope", pulsePanel() {}, beginGesture: () => "gesture", pulseGesture() {},
-    endGesture() { order.push("stop"); }, revokeScope() {} }, () => 0, (event) => { if (event.type === "pulse") challenge = event.challenge; });
+  const intent = new UiIntent(
+    {
+      bindMotionScope: () => "scope",
+      pulsePanel() {},
+      beginGesture: () => "gesture",
+      pulseGesture() {},
+      endGesture() {
+        order.push("stop");
+      },
+      revokeScope() {},
+    },
+    () => 0,
+    (event) => {
+      if (event.type === "pulse") challenge = event.challenge;
+    },
+  );
   let finish!: (value: Awaited<ReturnType<UiExecutionAdapter["invoke"]>>) => void;
   const invoke = vi.fn<UiExecutionAdapter["invoke"]>((_owner, invocation) => {
-    if (invocation.context.trigger.kind === "hold" && invocation.context.trigger.phase === "begin") return new Promise(resolve => { finish = resolve; });
-    order.push("cleanup"); return Promise.resolve({ ok: true, value: { output: {}, fieldErrors: [] } });
+    if (invocation.context.trigger.kind === "hold" && invocation.context.trigger.phase === "begin")
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    order.push("cleanup");
+    return Promise.resolve({ ok: true, value: { output: {}, fieldErrors: [] } });
   });
-  const bridge = createPluginUiBridge({ catalog: { catalog: async () => ({ ok: true, value: { hostEpoch: owner.hostEpoch, revision: 0, entries: [], nextCursor: null } }), resource: async () => { throw new Error("unused"); }, onEvent: () => () => {}, retire() {} },
-    execution: { resolve: () => value, acceptForm: (_binding, revision, form) => { value.state.formRevision = revision; value.state.form = form; return true; },
-      invoke, core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }), open: async () => ({ ok: true, value: value.state }), close: async () => ({ ok: true, value: { closed: true } }), visibility: async () => ({ ok: true, value: { accepted: true } }), snapshot: async () => ({ ok: true, value: value.state }), reportFailure: async () => ({ ok: true, value: { accepted: true } }), dispose() {} },
-    intent, events, actions: new UserPersistenceActions(() => 0, () => true), scope: () => ({ hostEpoch: owner.hostEpoch, workbenchInstance: "window" }) });
+  const bridge = createPluginUiBridge({
+    catalog: {
+      catalog: async () => ({
+        ok: true,
+        value: { hostEpoch: owner.hostEpoch, revision: 0, entries: [], nextCursor: null },
+      }),
+      resource: async () => {
+        throw new Error("unused");
+      },
+      onEvent: () => () => {},
+      retire() {},
+    },
+    execution: {
+      resolve: () => value,
+      acceptForm: (_binding, revision, form) => {
+        value.state.formRevision = revision;
+        value.state.form = form;
+        return true;
+      },
+      invoke,
+      core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }),
+      open: async () => ({ ok: true, value: value.state }),
+      close: async () => ({ ok: true, value: { closed: true } }),
+      visibility: async () => ({ ok: true, value: { accepted: true } }),
+      snapshot: async () => ({ ok: true, value: value.state }),
+      reportFailure: async () => ({ ok: true, value: { accepted: true } }),
+      dispose() {},
+    },
+    intent,
+    events,
+    actions: new UserPersistenceActions(
+      () => 0,
+      () => true,
+    ),
+    scope: () => ({ hostEpoch: owner.hostEpoch, workbenchInstance: "window" }),
+  });
   try {
-    intent.bind(binding, { owner, contextRef: "context", panelInstance: binding.panelInstance, uiResourceGeneration: 1, workbenchInstance: "window" });
+    intent.bind(binding, {
+      owner,
+      contextRef: "context",
+      panelInstance: binding.panelInstance,
+      uiResourceGeneration: 1,
+      workbenchInstance: "window",
+    });
     expect(intent.pulse(binding, challenge, null, null)).toBe(true);
-    const begin = bridge.hold({ binding, nodeId: "run", formRevision: 5, form: { speed: 30 }, phase: "begin", inputToken: "token" });
-    await bridge.hold({ binding, nodeId: "run", formRevision: 99, form: { speed: null }, phase: "cancel", inputToken: "token" });
+    const begin = bridge.hold({
+      binding,
+      nodeId: "run",
+      formRevision: 5,
+      form: { speed: 30 },
+      phase: "begin",
+      inputToken: "token",
+    });
+    await bridge.hold({
+      binding,
+      nodeId: "run",
+      formRevision: 99,
+      form: { speed: null },
+      phase: "cancel",
+      inputToken: "token",
+    });
     expect(order).toEqual(["stop", "cleanup"]);
-    expect(invoke.mock.calls[1]![1].context).toMatchObject({ form: { revision: 5, values: { speed: 30 } }, trigger: { kind: "hold", phase: "cancel" } });
-    finish({ ok: true, value: { output: {}, fieldErrors: [] } }); expect(await begin).toMatchObject({ ok: true, value: { gesture: null } });
-  } finally { disposePluginUiBridge(bridge); intent.dispose(); }
+    expect(invoke.mock.calls[1]![1].context).toMatchObject({
+      form: { revision: 5, values: { speed: 30 } },
+      trigger: { kind: "hold", phase: "cancel" },
+    });
+    finish({ ok: true, value: { output: {}, fieldErrors: [] } });
+    expect(await begin).toMatchObject({ ok: true, value: { gesture: null } });
+  } finally {
+    disposePluginUiBridge(bridge);
+    intent.dispose();
+  }
 });
-
 
 it.each([16384, 16385])(
   "U07 validates %i serialized argument bytes independently of form size",
@@ -1463,7 +1547,9 @@ it("U08 main source pending commands admit sixteen and reject the seventeenth be
     });
     expect(value.state.formRevision).toBe(20);
     expect(actions.count()).toBe(16);
-    expect(await bridge.invoke({ binding, nodeId: "stop", formRevision: 0, form: {} })).toMatchObject({ ok: true });
+    expect(
+      await bridge.invoke({ binding, nodeId: "stop", formRevision: 0, form: {} }),
+    ).toMatchObject({ ok: true });
     expect(dispatched).toHaveLength(16);
   } finally {
     disposePluginUiBridge(bridge);
@@ -1476,7 +1562,12 @@ it("U08 main source pending commands admit sixteen and reject the seventeenth be
 function pendingBridgeFixture(sourceCount = 1, panelsPerSource = 1) {
   const values = Array.from({ length: sourceCount * panelsPerSource }, (_, index) => {
     const value = resolved();
-    value.owner = { ...owner, sourceKey: `dev:${Math.floor(index / panelsPerSource).toString(16).padStart(16, "0")}` };
+    value.owner = {
+      ...owner,
+      sourceKey: `dev:${Math.floor(index / panelsPerSource)
+        .toString(16)
+        .padStart(16, "0")}`,
+    };
     value.state.binding = { ...binding, panelInstance: `panel-${index}` };
     return value;
   });
@@ -1488,16 +1579,35 @@ function pendingBridgeFixture(sourceCount = 1, panelsPerSource = 1) {
   }> = [];
   const events = new UiBridgeEvents(() => []);
   let now = 0;
-  const intent = new UiIntent({
-    bindMotionScope: () => "scope", pulsePanel() {}, beginGesture: () => "gesture",
-    pulseGesture() {}, endGesture() {}, revokeScope() {},
-  }, () => now, events.publish);
-  const actions = new UserPersistenceActions(() => now, () => true);
-  const lookup = (input: UiBinding) => values.find(value => value.state.binding === input) ?? null;
+  const intent = new UiIntent(
+    {
+      bindMotionScope: () => "scope",
+      pulsePanel() {},
+      beginGesture: () => "gesture",
+      pulseGesture() {},
+      endGesture() {},
+      revokeScope() {},
+    },
+    () => now,
+    events.publish,
+  );
+  const actions = new UserPersistenceActions(
+    () => now,
+    () => true,
+  );
+  const lookup = (input: UiBinding) =>
+    values.find((value) => value.state.binding === input) ?? null;
   const bridge = createPluginUiBridge({
     catalog: {
-      catalog: async () => ({ ok: true, value: { hostEpoch: owner.hostEpoch, revision: 0, entries: [], nextCursor: null } }),
-      resource: async () => { throw new Error("unused"); }, onEvent: () => () => {}, retire() {},
+      catalog: async () => ({
+        ok: true,
+        value: { hostEpoch: owner.hostEpoch, revision: 0, entries: [], nextCursor: null },
+      }),
+      resource: async () => {
+        throw new Error("unused");
+      },
+      onEvent: () => () => {},
+      retire() {},
     },
     execution: {
       resolve: lookup,
@@ -1507,30 +1617,46 @@ function pendingBridgeFixture(sourceCount = 1, panelsPerSource = 1) {
         value.state.form = form;
         return true;
       },
-      invoke: (_owner, invocation, signal) => new Promise((finish, fail) => replies.push({ signal, invocation, finish, fail })),
+      invoke: (_owner, invocation, signal) =>
+        new Promise((finish, fail) => replies.push({ signal, invocation, finish, fail })),
       core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }),
       open: async () => ({ ok: true, value: values[0]!.state }),
       close: async () => ({ ok: true, value: { closed: true } }),
       visibility: async () => ({ ok: true, value: { accepted: true } }),
       snapshot: async () => ({ ok: true, value: values[0]!.state }),
-      reportFailure: async () => ({ ok: true, value: { accepted: true } }), dispose() {},
+      reportFailure: async () => ({ ok: true, value: { accepted: true } }),
+      dispose() {},
     },
-    intent, actions, events,
+    intent,
+    actions,
+    events,
     scope: () => ({ hostEpoch: owner.hostEpoch, workbenchInstance: "window" }),
   });
   const calls: Array<ReturnType<typeof bridge.invoke>> = [];
   return {
-    bridge, values, replies, events, intent,
+    bridge,
+    values,
+    replies,
+    events,
+    intent,
     invoke(index = 0) {
       const value = values[index]!;
-      const call = bridge.invoke({ binding: value.state.binding, nodeId: "run", formRevision: value.state.formRevision + 1, form: { speed: 30 } });
+      const call = bridge.invoke({
+        binding: value.state.binding,
+        nodeId: "run",
+        formRevision: value.state.formRevision + 1,
+        form: { speed: 30 },
+      });
       calls.push(call);
       return call;
     },
-    expireActions() { now += 5001; },
+    expireActions() {
+      now += 5001;
+    },
     async dispose() {
       disposePluginUiBridge(bridge);
-      for (const reply of replies) reply.finish({ ok: true, value: { output: {}, fieldErrors: [] } });
+      for (const reply of replies)
+        reply.finish({ ok: true, value: { output: {}, fieldErrors: [] } });
       await Promise.allSettled(calls);
       events.dispose();
     },
@@ -1541,14 +1667,20 @@ it("U08 shares source capacity across panels, separates sources with the same pl
   const fixture = pendingBridgeFixture(2, 2);
   try {
     for (let index = 0; index < 16; index++) void fixture.invoke(index % 2);
-    expect(await fixture.invoke(1)).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT", detail: { limit: 16 } } });
+    expect(await fixture.invoke(1)).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_RESOURCE_LIMIT", detail: { limit: 16 } },
+    });
     void fixture.invoke(2);
     expect(fixture.replies).toHaveLength(17);
     fixture.replies[0]!.finish({ ok: true, value: { output: {}, fieldErrors: [] } });
     await Promise.resolve();
     void fixture.invoke(1);
     expect(fixture.replies).toHaveLength(18);
-    fixture.replies[1]!.finish({ ok: false, error: { code: "PLUGIN_E_COMMAND_FAILED", message: "failed" } });
+    fixture.replies[1]!.finish({
+      ok: false,
+      error: { code: "PLUGIN_E_COMMAND_FAILED", message: "failed" },
+    });
     await Promise.resolve();
     void fixture.invoke(0);
     expect(fixture.replies).toHaveLength(19);
@@ -1557,8 +1689,13 @@ it("U08 shares source capacity across panels, separates sources with the same pl
     void fixture.invoke(1);
     expect(fixture.replies).toHaveLength(20);
     expect(bridgeDiagnostics(fixture.bridge).snapshot().pendingInvocations).toBe(17);
-    expect(await fixture.invoke(0)).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
-  } finally { await fixture.dispose(); }
+    expect(await fixture.invoke(0)).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_RESOURCE_LIMIT" },
+    });
+  } finally {
+    await fixture.dispose();
+  }
 });
 
 it("U08 main host admits 256 ordinary commands across sources and releases host capacity", async () => {
@@ -1567,70 +1704,138 @@ it("U08 main host admits 256 ordinary commands across sources and releases host 
     for (let source = 0; source < 16; source++)
       for (let index = 0; index < 16; index++) void fixture.invoke(source);
     expect(fixture.replies).toHaveLength(256);
-    expect(await fixture.invoke(16)).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT", detail: { limit: 256 } } });
+    expect(await fixture.invoke(16)).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_RESOURCE_LIMIT", detail: { limit: 256 } },
+    });
     expect(fixture.values[16]!.state.formRevision).toBe(4);
-    expect(await fixture.bridge.invoke({ binding: fixture.values[16]!.state.binding, nodeId: "stop", formRevision: 0, form: {} })).toMatchObject({ ok: true });
+    expect(
+      await fixture.bridge.invoke({
+        binding: fixture.values[16]!.state.binding,
+        nodeId: "stop",
+        formRevision: 0,
+        form: {},
+      }),
+    ).toMatchObject({ ok: true });
     fixture.replies[0]!.finish({ ok: true, value: { output: {}, fieldErrors: [] } });
     await Promise.resolve();
     fixture.expireActions();
     void fixture.invoke(16);
     expect(fixture.replies).toHaveLength(257);
     expect(bridgeDiagnostics(fixture.bridge).snapshot().pendingInvocations).toBe(256);
-  } finally { await fixture.dispose(); }
+  } finally {
+    await fixture.dispose();
+  }
 });
 
-it.each(["close", "hidden", "revoked"] as const)("U08 %s releases admission and late old completions cannot remove replacement requests", async (retirement) => {
-  const fixture = pendingBridgeFixture();
-  const input = fixture.values[0]!.state.binding;
-  try {
-    for (let index = 0; index < 16; index++) void fixture.invoke();
-    if (retirement === "close") await fixture.bridge.close({ binding: input });
-    else if (retirement === "hidden") await fixture.bridge.visibility({ binding: input, visible: false, reason: "tab" });
-    else fixture.events.publish({ type: "revoked", binding: input, reason: "generation-retired" });
-    expect(fixture.replies.every(reply => reply.signal.aborted)).toBe(true);
-    expect(bridgeDiagnostics(fixture.bridge).snapshot().pendingInvocations).toBe(0);
-    if (retirement === "revoked") {
-      const value = fixture.values[0]!;
-      value.owner = { ...value.owner, generation: 3, processEpoch: "replacement" };
-      value.state.binding = { ...input, generation: 3, processEpoch: "replacement" };
+it.each(["close", "hidden", "revoked"] as const)(
+  "U08 %s releases admission and late old completions cannot remove replacement requests",
+  async (retirement) => {
+    const fixture = pendingBridgeFixture();
+    const input = fixture.values[0]!.state.binding;
+    try {
+      for (let index = 0; index < 16; index++) void fixture.invoke();
+      if (retirement === "close") await fixture.bridge.close({ binding: input });
+      else if (retirement === "hidden")
+        await fixture.bridge.visibility({ binding: input, visible: false, reason: "tab" });
+      else
+        fixture.events.publish({ type: "revoked", binding: input, reason: "generation-retired" });
+      expect(fixture.replies.every((reply) => reply.signal.aborted)).toBe(true);
+      expect(bridgeDiagnostics(fixture.bridge).snapshot().pendingInvocations).toBe(0);
+      if (retirement === "revoked") {
+        const value = fixture.values[0]!;
+        value.owner = { ...value.owner, generation: 3, processEpoch: "replacement" };
+        value.state.binding = { ...input, generation: 3, processEpoch: "replacement" };
+      }
+      // Close/hide reuse the map key; revocation replaces the execution owner of the source.
+      for (let index = 0; index < 16; index++) void fixture.invoke();
+      for (const reply of fixture.replies.slice(0, 16))
+        reply.finish({ ok: true, value: { output: {}, fieldErrors: [] } });
+      await Promise.resolve();
+      expect(bridgeDiagnostics(fixture.bridge).snapshot().pendingInvocations).toBe(16);
+      expect(await fixture.invoke()).toMatchObject({
+        ok: false,
+        error: { code: "PLUGIN_E_RESOURCE_LIMIT" },
+      });
+      disposePluginUiBridge(fixture.bridge);
+      expect(fixture.replies.every((reply) => reply.signal.aborted)).toBe(true);
+    } finally {
+      await fixture.dispose();
     }
-    // Close/hide reuse the map key; revocation replaces the execution owner of the source.
-    for (let index = 0; index < 16; index++) void fixture.invoke();
-    for (const reply of fixture.replies.slice(0, 16)) reply.finish({ ok: true, value: { output: {}, fieldErrors: [] } });
-    await Promise.resolve();
-    expect(bridgeDiagnostics(fixture.bridge).snapshot().pendingInvocations).toBe(16);
-    expect(await fixture.invoke()).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
-    disposePluginUiBridge(fixture.bridge);
-    expect(fixture.replies.every(reply => reply.signal.aborted)).toBe(true);
-  } finally { await fixture.dispose(); }
-});
+  },
+);
 
 it("U08 saturated ordinary admission rejects hold begin but still stops and dispatches held cleanup", async () => {
   const fixture = pendingBridgeFixture();
   const value = fixture.values[0]!;
   if (value.resource.kind !== "panel") throw new Error("panel fixture");
-  value.resource.nodes.push({ id: "hold", type: "holdAction", label: { en: "Hold" }, command: "acme.ui.run", arguments: { speed: { ref: { scope: "form", key: "speed" } } } });
+  value.resource.nodes.push({
+    id: "hold",
+    type: "holdAction",
+    label: { en: "Hold" },
+    command: "acme.ui.run",
+    arguments: { speed: { ref: { scope: "form", key: "speed" } } },
+  });
   const root = value.resource.nodes[0]!;
   if (root.type !== "group") throw new Error("group fixture");
   root.children.push("hold");
   let challenge = "";
-  const off = fixture.events.subscribe(event => { if (event.type === "pulse") challenge = event.challenge; });
+  const off = fixture.events.subscribe((event) => {
+    if (event.type === "pulse") challenge = event.challenge;
+  });
   const input = value.state.binding;
   let begin: ReturnType<typeof fixture.bridge.hold> | undefined;
   try {
-    fixture.intent.bind(input, { owner: value.owner, contextRef: "context", panelInstance: input.panelInstance, uiResourceGeneration: 1, workbenchInstance: "window" });
+    fixture.intent.bind(input, {
+      owner: value.owner,
+      contextRef: "context",
+      panelInstance: input.panelInstance,
+      uiResourceGeneration: 1,
+      workbenchInstance: "window",
+    });
     expect(fixture.intent.pulse(input, challenge, null, null)).toBe(true);
-    begin = fixture.bridge.hold({ binding: input, nodeId: "hold", formRevision: 5, form: { speed: 30 }, phase: "begin", inputToken: "held" });
+    begin = fixture.bridge.hold({
+      binding: input,
+      nodeId: "hold",
+      formRevision: 5,
+      form: { speed: 30 },
+      phase: "begin",
+      inputToken: "held",
+    });
     for (let index = 0; index < 15; index++) void fixture.invoke();
     expect(fixture.replies).toHaveLength(16);
-    expect(await fixture.bridge.hold({ binding: input, nodeId: "hold", formRevision: 21, form: { speed: 30 }, phase: "begin", inputToken: "other" })).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
+    expect(
+      await fixture.bridge.hold({
+        binding: input,
+        nodeId: "hold",
+        formRevision: 21,
+        form: { speed: 30 },
+        phase: "begin",
+        inputToken: "other",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
     expect(value.state.formRevision).toBe(20);
-    expect(await fixture.bridge.hold({ binding: input, nodeId: "hold", formRevision: 99, form: { speed: null }, phase: "cancel", inputToken: "held" })).toEqual({ ok: true, value: { gesture: null } });
+    expect(
+      await fixture.bridge.hold({
+        binding: input,
+        nodeId: "hold",
+        formRevision: 99,
+        form: { speed: null },
+        phase: "cancel",
+        inputToken: "held",
+      }),
+    ).toEqual({ ok: true, value: { gesture: null } });
     expect(fixture.replies).toHaveLength(17);
-    expect(fixture.replies[16]!.invocation.context).toMatchObject({ form: { revision: 5, values: { speed: 30 } }, trigger: { kind: "hold", phase: "cancel" } });
+    expect(fixture.replies[16]!.invocation.context).toMatchObject({
+      form: { revision: 5, values: { speed: 30 } },
+      trigger: { kind: "hold", phase: "cancel" },
+    });
     expect(fixture.replies[16]!.invocation.context.actionRef).toBeUndefined();
     expect(fixture.intent.liveGesture(input, "held", "gesture")).toBe(false);
-    expect(await fixture.invoke()).toMatchObject({ ok: false, error: { code: "PLUGIN_E_RESOURCE_LIMIT" } });
+    expect(await fixture.invoke()).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_RESOURCE_LIMIT" },
+    });
   } finally {
     off();
     await fixture.dispose();

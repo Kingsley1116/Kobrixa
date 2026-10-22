@@ -14,9 +14,7 @@ export async function checkPackagedStaticLanguages({ js, send, until, profile, s
   assert.ok(builtin.resourceBytes.tokenizer > 0 && builtin.resourceBytes.configuration > 0);
   // Monaco exposes data-mode-id on its host .editor, not the inner .monaco-editor.
   assert.equal(
-    await js(
-      "Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"bp\"]'))",
-    ),
+    await js("Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"bp\"]'))"),
     true,
   );
   const required = await js(

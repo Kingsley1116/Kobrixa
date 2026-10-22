@@ -14,6 +14,8 @@ export default tseslint.config(
       "node_modules/**",
       "**/worker-configuration.d.ts",
       "**/.wrangler/**",
+      // Archived experiment inputs/outputs must retain their original bytes.
+      "docs/superpowers/evidence/**",
     ],
   },
   js.configs.recommended,
