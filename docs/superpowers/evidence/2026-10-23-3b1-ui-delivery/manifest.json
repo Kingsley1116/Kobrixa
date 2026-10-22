@@ -1,0 +1,66 @@
+{
+  "source": "867fc5282bfa3ba6f0620ccc9f33fe65eb07f798",
+  "notes": "Build/plugin smoke source c59ab80; UI fix/regression source 867fc52. Earlier failing regression retained, not PASS. Counts do not close receipt-only or manual gates.",
+  "files": [
+    {
+      "path": "kobrixa-b1-ui-state-desktop.log",
+      "bytes": 34750,
+      "sha256": "3d38ed3a6c367441f9e6d71eae940f72cb0605508b22e8578f9022bc2b8a3c08"
+    },
+    {
+      "path": "kobrixa-b1-pending-hold-tests.log",
+      "bytes": 242,
+      "sha256": "08ad4fb6891c23c6483a79fdf56ad9b8022058fb0868bb6c768fbaaa39e356d4"
+    },
+    {
+      "path": "kobrixa-b1-pending-hold-check.log",
+      "bytes": 32,
+      "sha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630"
+    },
+    {
+      "path": "kobrixa-ui-state-envelope-red2.log",
+      "bytes": 1561,
+      "sha256": "1c0298340d9892b45f12dfe93f54803a5e199ae209b59e77c7893357fb9f0715"
+    },
+    {
+      "path": "kobrixa-ui-state-protocol.log",
+      "bytes": 467,
+      "sha256": "bf823fce1865ca1029b5eaf26c9e71f3c0e2672c9ad359744e4d028ce4cb68dd"
+    },
+    {
+      "path": "kobrixa-ui-state-runtime.log",
+      "bytes": 248,
+      "sha256": "c2fda6e88e6c33981d4811698fba47a0c0bb23eb0fda6d83eaecbc7f9192c345"
+    },
+    {
+      "path": "kobrixa-ui-state-sdk.log",
+      "bytes": 250,
+      "sha256": "a13accaee96eaa79aa1402ead28f1cd5b15f90d014e6ccf073121a93cd7a30b6"
+    },
+    {
+      "path": "kobrixa-ui-state-python.log",
+      "bytes": 7176,
+      "sha256": "12c2d3f295ec85509687fe37b54ceeb6dd76c6359af20be9aa44db47b8eccd9c"
+    },
+    {
+      "path": "kobrixa-ui-state-schema.log",
+      "bytes": 57,
+      "sha256": "b316cbe2a2efa0dbd205a7e0e327ccf1277bfa1af8cf76b7e88b36568538e9f4"
+    },
+    {
+      "path": "kobrixa-ui-state-runtime-build.log",
+      "bytes": 23,
+      "sha256": "29c5ee0f6b0b20dbb259b99d01276198c3d28190090706394608d4deda6d2c0b"
+    },
+    {
+      "path": "kobrixa-b1-c59ab80-package.log",
+      "bytes": 14313,
+      "sha256": "756c5e913c4f44225eb84bfbd607674d765424d3422660f4a88a67ba6b946860"
+    },
+    {
+      "path": "kobrixa-b1-c59ab80-plugin-smoke.log",
+      "bytes": 1700,
+      "sha256": "faa31c4a7ace2bbeca1b05686befba02bf4da3a6dfecd541b47313c734db8540"
+    }
+  ]
+}
