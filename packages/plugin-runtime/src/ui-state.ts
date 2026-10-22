@@ -130,6 +130,9 @@ export class UiStateRegistry {
       this.#live.set(binding.panelInstance, { owner: structuredClone(owner), uiOwner: structuredClone(input.owner),
         scope: structuredClone(input.scope), resource, state, times: [], pending: 0 });
       this.#emit(owner, { kind: "ui.instances", data: { instances: this.instances(owner) } });
+      // Existing renderer listeners must discover a newly initialized status too;
+      // waiting for its first patch would hide a valid constant status forever.
+      if (kind === "status") this.#emit(owner, { kind: "ui.state", data: { binding, revision: 0 } });
       resolve({ ok: true, value: structuredClone(state) });
     }, () => resolve(uiFailure("read"))).catch(() => resolve(uiFailure("read"))).finally(() => {
       if (this.#opening.get(key)?.token === token) this.#opening.delete(key);

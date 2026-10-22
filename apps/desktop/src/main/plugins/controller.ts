@@ -1509,7 +1509,7 @@ export async function composeDesktopMain(
       bindDesktopChannel(
         context,
         broker,
-        { catalog, states, subscriptions, runtime: runtimePort },
+        { catalog, states, subscriptions, runtime: runtimePort, scope: input.scope },
         originalChannels,
       ),
     retireResources: (owner, reason) => lifecycle.retire(owner, reason),

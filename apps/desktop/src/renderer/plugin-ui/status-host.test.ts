@@ -7,6 +7,25 @@ import { RendererSession } from "./bootstrap.js";
 import { PluginStatusHost } from "./status-host.js";
 import { labels } from "./contract.test.js";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+it("shows validated initial status before process activation without inventing a binding", async () => {
+  const f = fixture(); const status = { ...entry, id: "acme.ui.status", kind: "status" as const };
+  f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: handle(1), revision: 1, entries: [status], nextCursor: null } });
+  f.bridge.resource.mockResolvedValue({ ok: true, value: {
+    owner: status, id: status.id, version: 1, validationContext: { pluginId: "acme.ui", commands: [], panels: [] }, rawBytes: 200,
+    resource: { kind: "status", text: { ref: { scope: "data", key: "text" } }, tone: "neutral", data: {
+      text: { schema: { type: "string", maxLength: 32, nullable: false }, initial: "Not started" },
+    } },
+  } });
+  const session = new RendererSession(f.bridge); await session.start();
+  const div = document.createElement("div"); const root = createRoot(div);
+  try {
+    await act(async () => root.render(createElement(PluginStatusHost, { session, locale: "en", labels })));
+    expect(div.textContent).toContain("Not started");
+    expect(session.record(status)).toBeUndefined();
+    expect(f.bridge.open).not.toHaveBeenCalled();
+    expect(f.bridge.invoke).not.toHaveBeenCalled();
+  } finally { await act(async () => root.unmount()); session.dispose(); }
+});
 it("U01/U15 shows replayed current status text without spawning and exposes no feature actions", async () => {
   const f = fixture(); const status = { ...entry, id: "acme.ui.status", kind: "status" as const };
   f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: handle(1), revision: 1, entries: [status], nextCursor: null } });

@@ -638,6 +638,7 @@ export function createUiChannelBinding(
     catalog: UiCatalog;
     runtime: UiRuntimeAttachment;
     attachment: DeviceChannelAttachment;
+    scope(): CoreWindowScope;
   },
 ): Stage3ChannelBinding {
   let disposed = false,
@@ -744,6 +745,53 @@ export function createUiChannelBinding(
         throw new Error("Declared UI is unsupported by the negotiated SDK.");
       input.attachment.negotiated("ui", 1);
       negotiated = true;
+      // A process was explicitly activated already. Bind its statuses to this
+      // host-owned workbench before ready, without recursively starting it.
+      const scope = input.scope();
+      let cursor: string | undefined;
+      let revision: number | undefined;
+      do {
+        const page = await input.catalog.catalog(cursor ? { cursor } : {});
+        checkOwner();
+        combined.throwIfAborted();
+        if (!page.ok || (revision !== undefined && revision !== page.value.revision))
+          throw new Error("UI catalog changed during initialization.");
+        revision = page.value.revision;
+        for (const entry of page.value.entries) {
+          if (
+            entry.kind !== "status" ||
+            entry.availability !== "available" ||
+            entry.sourceKey !== context.owner.sourceKey ||
+            entry.pluginId !== context.owner.pluginId
+          )
+            continue;
+          const resource = await input.catalog.resource({
+            sourceKey: entry.sourceKey,
+            id: entry.id,
+            uiResourceGeneration: entry.uiResourceGeneration,
+            resourceDigest: entry.resourceDigest,
+          });
+          checkOwner();
+          combined.throwIfAborted();
+          if (!resource.ok) throw new Error("Status resource unavailable during initialization.");
+          const opened = await input.states.open({
+            owner: resource.value.owner,
+            id: entry.id,
+            scope,
+            resource: resource.value.resource,
+            signal: combined,
+            activateInitialized: async () => context,
+          });
+          if (!opened.ok) throw new Error("Status binding unavailable during initialization.");
+        }
+        cursor = page.value.nextCursor ?? undefined;
+      } while (cursor);
+      const currentScope = input.scope();
+      if (
+        scope.hostEpoch !== currentScope.hostEpoch ||
+        scope.workbenchInstance !== currentScope.workbenchInstance
+      )
+        throw new Error("Workbench changed during UI initialization.");
       await initialBindings;
       checkOwner();
     },

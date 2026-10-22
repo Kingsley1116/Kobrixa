@@ -12,6 +12,11 @@ function BoundStatus({ record, resource, locale, labels }: { record: PanelRecord
   if (view.problem) return <span role="alert">{labels.unavailable}</span>;
   return <span data-tone={resource.tone}><LiveText text={displayText(resource.text, view.snapshot.data, locale)} /></span>;
 }
+function InitialStatus({ resource, locale }: { resource: StatusResourceV1; locale: "en" | "zh-TW" }) {
+  const data = Object.fromEntries(Object.entries(resource.data).map(([key, field]) => [key, field.initial]));
+  if (!condition(resource.visibleWhen, data, {})) return null;
+  return <span data-tone={resource.tone}><LiveText text={displayText(resource.text, data, locale)} /></span>;
+}
 function StatusItem({ session, entry, locale, labels }: { session: RendererSession; entry: UiCatalogEntry; locale: "en" | "zh-TW"; labels: UiLabels }) {
   const [resource, setResource] = useState<StatusResourceV1 | null>(null);
   useSyncExternalStore(session.subscribe, session.getSnapshot);
@@ -29,7 +34,7 @@ function StatusItem({ session, entry, locale, labels }: { session: RendererSessi
   const record = session.record(entry);
   return <ContributionBoundary onFailure={() => session.quarantine(entry, "renderer")} fallback={labels.unavailable}>
     <span title={translated(entry.title, locale)}>{record ? <BoundStatus record={record} resource={resource} locale={locale} labels={labels} />
-      : <span role="status">{labels.loading}</span>}</span>
+      : <InitialStatus resource={resource} locale={locale} />}</span>
   </ContributionBoundary>;
 }
 export function PluginStatusHost({ session, locale, labels }: { session: RendererSession; locale: "en" | "zh-TW"; labels: UiLabels }) {

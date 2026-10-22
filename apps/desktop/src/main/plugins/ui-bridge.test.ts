@@ -376,6 +376,7 @@ function executionFixture() {
   };
   return {
     owner,
+    scope: () => scope,
     source,
     catalog,
     states,
@@ -603,6 +604,32 @@ async function channelFixture() {
     },
   };
 }
+it("negotiated command activation creates status before ready without another activation", async () => {
+  const h = await channelFixture();
+  try {
+    expect(h.states.instances(h.owner)).toEqual([]);
+    const notices: UiBinding[] = [];
+    h.states.onEvent((_owner, event) => {
+      if (event.kind === "ui.state") notices.push(event.data.binding);
+    });
+    await h.binding.initialized(h.controller.signal);
+    const instances = h.states.instances(h.owner);
+    expect(instances).toHaveLength(1);
+    expect(instances[0]).toMatchObject({ kind: "status", contributionId: "test.ui.status" });
+    expect(notices).toEqual(instances);
+    h.child.handle("ui/ready", async () => {
+      expect(await h.child.request("ui/instances", {})).toEqual({ ok: true, value: { instances } });
+      return { ok: true, value: {} };
+    });
+    await h.binding.ready(h.controller.signal);
+    expect(h.runtime.activateInitialized).not.toHaveBeenCalled();
+    expect(h.runtime.ready).not.toHaveBeenCalled();
+    h.binding.dispose();
+    expect(h.states.instances(h.owner)).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
 it("actual patch RPCs drain coalesced state notifications without a manual test flush", async () => {
   const h = await channelFixture();
   try {
@@ -628,6 +655,32 @@ it("actual patch RPCs drain coalesced state notifications without a manual test 
     expect(revisions.at(-1)).toBe(6);
   } finally {
     h.dispose();
+  }
+});
+it("status initialization only binds the negotiated owner and checks delivery before creating state", async () => {
+  const h = await channelFixture();
+  try {
+    await h.catalog.replace([
+      h.source,
+      { ...h.source, owner: { ...h.owner, sourceKey: "foreign:source" } },
+    ]);
+    await h.binding.initialized(h.controller.signal);
+    expect(h.states.instances(h.owner)).toHaveLength(1);
+    expect(h.marker.mock.calls.map(([source]) => source)).toEqual([h.owner.sourceKey]);
+    expect(stateDiagnostics(h.states).snapshot().bindings).toBe(1);
+  } finally {
+    h.dispose();
+  }
+  const denied = await channelFixture();
+  try {
+    denied.markerFails();
+    await expect(denied.binding.initialized(denied.controller.signal)).rejects.toThrow(
+      "Status resource unavailable",
+    );
+    expect(denied.states.instances(denied.owner)).toEqual([]);
+    expect(denied.runtime.activateInitialized).not.toHaveBeenCalled();
+  } finally {
+    denied.dispose();
   }
 });
 it("repeated closes acknowledge the same closed binding but never a forged or retired owner", async () => {
@@ -743,7 +796,8 @@ it.each(["command", "onPanel"])(
       await h.binding.initialized(h.controller.signal);
       await h.binding.ready(h.controller.signal);
       expect(h.runtime.ready).not.toHaveBeenCalled();
-      expect(h.states.instances(h.owner)).toEqual([]);
+      expect(h.states.instances(h.owner)).toMatchObject([{ kind: "status" }]);
+      expect(h.runtime.activateInitialized).not.toHaveBeenCalled();
     } finally {
       h.dispose();
     }
