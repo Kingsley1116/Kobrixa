@@ -8,10 +8,16 @@ import type {
   ParamsOf,
   ResultOf,
   Stage3EventEnvelope,
+  SettingsSnapshot,
 } from "@kobrixa/plugin-protocol";
 export * from "./settings.js";
 export * from "./storage.js";
 export * from "./persistence-actions.js";
+
+/** Local watch callback data; snapshots are real settings/read results, not wire events. */
+export type SettingsWatchNotice =
+  | { type: "event"; event: Extract<Stage3EventEnvelope, { kind: "settings.changed" }> }
+  | { type: "snapshot"; snapshot: SettingsSnapshot };
 
 export function createPersistenceContext(peer: RpcPeer, signal?: AbortSignal) {
   const send = peer.request.bind(peer) as PersistenceRequest;
@@ -26,25 +32,39 @@ export function createPersistenceContext(peer: RpcPeer, signal?: AbortSignal) {
     async watch(
       params: ParamsOf<"settings/watch">,
       watchSignal?: AbortSignal,
-      listener: (
-        event: Extract<Stage3EventEnvelope, { kind: "settings.changed" }>,
-      ) => void | Promise<void> = () => {},
+      listener: (notice: SettingsWatchNotice) => void | Promise<void> = () => {},
     ) {
       const inbox = eventInbox(peer);
       inbox.enable();
       const finish = inbox.beginSubscription();
       try {
         const result = await client.watch(params, watchSignal);
-        if (result.ok)
+        if (result.ok) {
+          let refreshed: SettingsSnapshot | undefined;
           inbox.open(
             result.value.subscriptionId,
-            (event) => (event.kind === "settings.changed" ? listener(event) : undefined),
+            async (event) => {
+              // The shared pump checks slot ownership after read and before entering here.
+              if (!eventChannelBound(peer) || eventInbox(peer) !== inbox) return;
+              const snapshot = refreshed;
+              refreshed = undefined;
+              if (snapshot !== undefined) await listener({ type: "snapshot", snapshot });
+              if (
+                !eventChannelBound(peer) ||
+                eventInbox(peer) !== inbox ||
+                inbox.last(event.subscriptionId) < event.sequence
+              )
+                return;
+              if (event.kind === "settings.changed") await listener({ type: "event", event });
+            },
             async () => {
               const snapshot = await client.read(params);
               if (!snapshot.ok) throw new Error(snapshot.error.message);
+              refreshed = snapshot.value;
             },
             result.value.sequence,
           );
+        }
         return result;
       } finally {
         finish();

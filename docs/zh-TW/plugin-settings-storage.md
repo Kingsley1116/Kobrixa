@@ -1,6 +1,6 @@
 # 插件設定與資料紀錄
 
-作者階段狀態：API 1.7 公開發布、實際 transport、原生使用者動作及安裝版驗收仍 **BLOCKED**，等待 P170／R170／D170／V170／K170 與 B1-T9 artifacts。以下為預定 1.7 契約，不代表目前 checkout 已發布或驗收完成。
+開發狀態：API 1.7 schema 與 SDK context 組裝已在開發分支實作。公開傳輸、原生操作與安裝版驗收仍須完成 **P170／R170／D170／V170／K170 及跨程序證據**；這不是版本驗收完成的宣告。
 
 基礎範例：[JavaScript](../../tests/desktop/fixtures/plugin-persistence/consumer.ts)、[Python](../../tests/desktop/fixtures/plugin-persistence/consumer.py)。已撰寫 settings read／CAS／衝突／重新讀取、watch 訂閱／取消、record 分塊／seal／commit／讀回、flush 與 drain。export／copy helper 只接受真正 SDK invocation context 中的新 actionRef，activation 與 reference cases 不會執行它們。watch invalidation／ACK／callback 與 export／copy routing 仍需保留實際公開流量證據；Python SKIP 不能通過 parity。產品 mapping 範例留待 3D／3E。
 
@@ -25,3 +25,7 @@ receipt 證明已提交的 head。unknown 表示必須對帳，不能解讀成 r
 Legacy import 是 host allowlist 管理的一次性作業。原始檔保留不變；plan、逐項 receipt 與 complete marker 持久化，重啟沿用原先配置的目標 IDs。缺 renderer evidence 時維持 pending。完成後使用者刪掉新 record，不會再次匯入。此基礎階段只含 synthetic mapper；真正 Sensor Lab 對應在 3D、device preferences 對應在 3E 驗收。
 
 JavaScript method 使用 camelCase；Python method 使用 snake_case，但 params dict 的 wire keys 保留 camelCase。兩者保留相同 ok／value／error business envelope，transport／numeric protocol failure 才拋 RpcError。1.4、1.5、1.6 consumers 維持相容，不收到 persistence drain 或 settings events。UI v2 與 Plugin API 1.8 由 3D 發布。
+
+SDK 的選用 watch callback 接收本機通知：實際設定失效事件為 `{type:"event", event}`；遇到事件缺口或 resync 後，SDK 重新讀取的快照為 `{type:"snapshot", snapshot}`。JavaScript 使用 `settings.watch(params, signal?, listener?)`；Python 使用 `settings.watch(params, listener=None)`，字典形狀相同。初始快照仍由 watch 結果回傳；snapshot 通知不是合成的 wire event。同步或非同步 callback 都沿用共用有界事件佇列串行執行；解除訂閱或關閉通道後，遲到的讀取不會通知呼叫端。
+
+Callback 失敗會被隔離，後續排隊事件仍可繼續。重新讀取本身若失敗，該筆不會產生成功的 snapshot 通知，也不自動重試；本機狀態不確定時可明確呼叫 `settings.read`。Revision 是不透明 token，只能比較是否相同。

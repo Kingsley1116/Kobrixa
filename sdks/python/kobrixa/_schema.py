@@ -196,12 +196,17 @@ _PERSISTENCE_REASONS = {
 
 
 def _persistence_semantics(name, value):
-    if not (name.startswith(("settings/", "storage/")) or name in ("settings-resource-v1", "ui/copyText.params", "ui/copyText.result")):
+    settings_event = name == "events/deliver.params" and value.get("kind") == "settings.changed"
+    if not (settings_event or name.startswith(("settings/", "storage/")) or name in ("settings-resource-v1", "ui/copyText.params", "ui/copyText.result")):
         return
     from ._settings import validate_resource, wire_bytes, key, text, number
     from ._storage import canonical_base64_length, validate_record_write
     from ._persistence_actions import validate_copy, validate_export
     try:
+        if settings_event:
+            for setting_key in value["data"]["changedKeys"]:
+                key(setting_key)
+            return
         if name == "settings-resource-v1":
             validate_resource(value, wire_bytes(value))
             return

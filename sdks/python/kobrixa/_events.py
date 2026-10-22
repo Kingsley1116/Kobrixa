@@ -138,14 +138,33 @@ class _SettingsEventClient:
         try:
             result = await self._client.watch(params)
             if result["ok"]:
+                refreshed = None
+                slot = None
                 async def resync():
+                    nonlocal refreshed
                     snapshot = await self._client.read(params)
                     if not snapshot["ok"]:
                         raise ValueError(snapshot["error"]["message"])
-                def receive(event):
+                    refreshed = snapshot["value"]
+                async def receive(event):
+                    nonlocal refreshed
+                    # Delivery begins only after the shared pump's slot ownership check.
+                    if _BOUND.get(self._peer) is not inbox:
+                        return
+                    snapshot, refreshed = refreshed, None
+                    if listener is not None and snapshot is not None:
+                        pending = listener({"type": "snapshot", "snapshot": snapshot})
+                        if inspect.isawaitable(pending):
+                            await pending
+                    if (_BOUND.get(self._peer) is not inbox or
+                            inbox._slots.get(event["subscriptionId"]) is not slot):
+                        return
                     if event["kind"] == "settings.changed" and listener is not None:
-                        return listener(event)
+                        pending = listener({"type": "event", "event": event})
+                        if inspect.isawaitable(pending):
+                            await pending
                 inbox.open(result["value"]["subscriptionId"], receive, resync, result["value"]["sequence"])
+                slot = inbox._slots.get(result["value"]["subscriptionId"])
             return result
         finally:
             finish()

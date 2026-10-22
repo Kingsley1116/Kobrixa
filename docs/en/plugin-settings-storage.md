@@ -1,6 +1,6 @@
 # Plugin settings and records
 
-Authoring status: API 1.7 publication, public transports, native actions and installed acceptance are **blocked pending P170/R170/D170/V170/K170 and B1-T9 artifacts**. These are intended 1.7 contracts, not claims that this checkout publishes or has validated them.
+Authoring status: API 1.7 schemas and SDK context assembly are implemented on the development branch. Public transport, native actions and installed acceptance still require **P170/R170/D170/V170/K170 and the cross-process evidence**. This is not a release acceptance claim.
 
 Foundation samples: [JavaScript](../../tests/desktop/fixtures/plugin-persistence/consumer.ts) and [Python](../../tests/desktop/fixtures/plugin-persistence/consumer.py). They author settings read/CAS/conflict/re-read, watch subscription/unsubscription, record chunks/seal/commit/readback, flush and cooperative drain. Export/copy helpers require an actual SDK invocation-bound context with a fresh actionRef; they are not invoked by activation or the reference cases. Actual watch invalidation/ACK/callback and export/copy routing still need retained public traffic evidence. No Python skip can pass parity. Product mapping samples remain 3D/3E work.
 
@@ -13,6 +13,10 @@ Settings apply one field at a time. Boolean/enum changes submit immediately; tex
 Settings have at most 128 keys and 64 KiB of serialized values; a string is at most 4 KiB. Settings keys may contain dots. Enum values preserve their types: numeric 1 differs from string "1". Watch delivers invalidations without values; re-read when needed. settings.unwatch calls events/unsubscribe, whose first successful removal is true and whose repeated tombstone removal is false. There is no settings/unwatch wire method.
 
 Records are at most 8 MiB, 256 records and 512 MiB per source, with a 1 GiB host limit. Use beginWrite, ordered writeChunk calls, sealWrite, then commitWrite. Chunks contain canonical base64 and decode to at most 256 KiB. Two staging writes per source and sixteen per host reserve their full payload. Replacing a record requires its expected revision and reserves the replacement before releasing the old object. Read handles pin one revision; lists are bounded snapshots with pages of at most 64 entries. Close read handles when finished.
+
+The optional SDK watch callback receives a local notice: `{type:"event", event}` for the actual settings invalidation envelope, or `{type:"snapshot", snapshot}` after the SDK reads a fresh snapshot for an event gap/resync. JavaScript accepts `settings.watch(params, signal?, listener?)`; Python accepts `settings.watch(params, listener=None)` with the same dictionary shape. The initial snapshot stays in the watch result. Snapshot notices are local callback data, not synthesized wire events. Both sync and async callbacks run serially in the shared bounded event inbox; late reads after unwatch or channel disposal do not notify the consumer.
+
+Callback failures are isolated so later queued entries can proceed. If the refresh read itself fails, that entry produces no successful snapshot notice and is not automatically retried. Call `settings.read` explicitly when handling uncertain local state. Revision tokens are opaque; compare them only for equality.
 
 A commit receipt identifies a committed head. An unknown result means publication needs reconciliation; it does not mean rollback. Do not automatically repeat create, commit, delete, export, or copy. flush does not commit incomplete payloads. Staging/read/list leases expire after 30 seconds idle and 120 seconds total; retry does not renew the original total deadline.
 

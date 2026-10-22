@@ -181,3 +181,148 @@ class SettingsCommonEventsTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(peer.devices.inbox.accept(dict(changed, sequence=3)))
         finally:
             close_event_channel(peer)
+
+
+class T8SettingsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_actual_resync_snapshot_and_gap(self):
+        from types import SimpleNamespace
+        from kobrixa._events import bind_event_channel, close_event_channel, settings_event_client
+        from kobrixa._settings import create_settings_client
+        for marker in (True, False):
+            notices, order = [], []
+            initial = {"schemaVersion":1,"revision":None,"values":[{"key":"fixture.enabled","value":False}]}
+            fresh = dict(initial, values=[{"key":"fixture.enabled","value":True}])
+            class Peer:
+                async def _request(self, method, params):
+                    if method == "settings/watch": return {"ok":True,"value":{"subscriptionId":ID,"sequence":0,"snapshot":initial}}
+                    if method == "settings/read":
+                        order.append("read")
+                        return {"ok":True,"value":fresh}
+                    if method == "events/ack":
+                        order.append("ack")
+                        return {"ok":True,"value":{}}
+                    raise AssertionError(method)
+            peer=Peer();peer.devices=SimpleNamespace(inbox=None)
+            bind_event_channel(peer, OWNER)
+            async def listener(notice):
+                order.append("callback");notices.append(notice)
+                await asyncio.sleep(0)
+            try:
+                result=await settings_event_client(peer,create_settings_client(peer._request)).watch({"schemaVersion":1},listener)
+                self.assertFalse(result["value"]["snapshot"]["values"][0]["value"])
+                envelope=event(1) if marker else dict(event(2),delivery="telemetry",kind="settings.changed",data={"revision":"r_"+"1"*32,"schemaVersion":1,"changedKeys":["fixture.enabled"],"cause":"update"})
+                self.assertTrue(peer.devices.inbox.accept(envelope))
+                for _ in range(10): await asyncio.sleep(0)
+                self.assertEqual(notices, [{"type":"snapshot","snapshot":fresh}] + ([] if marker else [{"type":"event","event":envelope}]))
+                self.assertLess(order.index("ack"),order.index("callback"))
+            finally: close_event_channel(peer)
+
+    async def test_settings_keys_validator_and_bound_inbox(self):
+        from types import SimpleNamespace
+        from kobrixa._events import bind_event_channel, close_event_channel
+        from kobrixa._schema import Validator, SchemaError
+        acks=[]
+        class Peer:
+            async def _request(self,method,params): acks.append(params)
+        peer=Peer();peer.devices=SimpleNamespace(inbox=None)
+        bind_event_channel(peer,OWNER)
+        inbox=peer.devices.inbox;inbox.enable()
+        async def noop(): pass
+        inbox.open(ID,lambda e:None,noop)
+        validator=Validator.bundled()
+        try:
+            for key in ("constructor","prototype","__proto__","foo.constructor","prototype.foo","foo.__proto__.bar"):
+                envelope=dict(event(1),delivery="telemetry",kind="settings.changed",data={"revision":"r_"+"1"*32,"schemaVersion":1,"changedKeys":[key],"cause":"update"})
+                with self.subTest(key=key):
+                    with self.assertRaises(SchemaError): validator.validate("events/deliver.params",envelope)
+                    self.assertFalse(inbox.accept(envelope))
+            await asyncio.sleep(0)
+            self.assertEqual(acks,[])
+            envelope["data"]["changedKeys"]=["fixture.enabled","fixture.enabled","constructorName.x"]
+            validator.validate("events/deliver.params",envelope)
+            self.assertTrue(inbox.accept(envelope))
+            for _ in range(3): await asyncio.sleep(0)
+            self.assertEqual(len(acks), 1)
+        finally: close_event_channel(peer)
+
+    async def test_late_refresh_and_callback_failure(self):
+        from types import SimpleNamespace
+        from kobrixa._events import bind_event_channel, close_event_channel, settings_event_client
+        from kobrixa._settings import create_settings_client
+        for stop in ("unwatch", "inbox-close", "dispose", "callback-error"):
+            notices, acks = [], []
+            gate, reading, callback_gate = asyncio.Event(), asyncio.Event(), asyncio.Event()
+            snapshot={"schemaVersion":1,"revision":None,"values":[]}
+            class Peer:
+                async def _request(self,method,params):
+                    if method == "settings/watch": return {"ok":True,"value":{"subscriptionId":ID,"sequence":0,"snapshot":snapshot}}
+                    if method == "settings/read":
+                        reading.set()
+                        try: await gate.wait()
+                        except asyncio.CancelledError:
+                            # A real request may finish despite cancellation; ownership must still guard delivery.
+                            await gate.wait()
+                        return {"ok":True,"value":snapshot}
+                    if method == "events/ack":
+                        acks.append(params["sequence"])
+                        return {"ok":True,"value":{}}
+                    if method == "events/unsubscribe":return {"ok":True,"value":{"removed":True}}
+                    raise AssertionError(method)
+            peer=Peer();peer.devices=SimpleNamespace(inbox=None)
+            bind_event_channel(peer,OWNER)
+            inbox=peer.devices.inbox
+            async def listener(notice):
+                notices.append(notice)
+                if notice["type"] == "snapshot":
+                    await callback_gate.wait()
+                    raise ValueError("consumer")
+            client=settings_event_client(peer,create_settings_client(peer._request))
+            try:
+                await client.watch({"schemaVersion":1},listener)
+                self.assertTrue(inbox.accept(event(1)))
+                await reading.wait()
+                self.assertEqual(acks,[1])
+                if stop == "unwatch":await client.unwatch({"subscriptionId":ID})
+                elif stop == "inbox-close":inbox.close(ID)
+                elif stop == "dispose":close_event_channel(peer)
+                gate.set()
+                for _ in range(5):await asyncio.sleep(0)
+                if stop == "callback-error":
+                    self.assertEqual(len(notices),1)
+                    changed=dict(event(2),delivery="telemetry",kind="settings.changed",data={"revision":"r_"+"1"*32,"schemaVersion":1,"changedKeys":["fixture.enabled"],"cause":"update"})
+                    self.assertTrue(inbox.accept(changed))
+                    for _ in range(5):await asyncio.sleep(0)
+                    self.assertEqual(acks,[1,2]);self.assertEqual(len(notices),1)
+                    callback_gate.set()
+                    for _ in range(5):await asyncio.sleep(0)
+                    self.assertEqual(notices[1],{"type":"event","event":changed})
+                else:self.assertEqual(notices,[])
+            finally:
+                gate.set();callback_gate.set();close_event_channel(peer)
+
+    async def test_snapshot_callback_can_unwatch(self):
+        from types import SimpleNamespace
+        from kobrixa._events import bind_event_channel, close_event_channel, settings_event_client
+        from kobrixa._settings import create_settings_client
+        snapshot={"schemaVersion":1,"revision":None,"values":[]}
+        class Peer:
+            async def _request(self,method,params):
+                if method == "settings/watch":return {"ok":True,"value":{"subscriptionId":ID,"sequence":0,"snapshot":snapshot}}
+                if method == "settings/read":return {"ok":True,"value":snapshot}
+                if method == "events/ack":return {"ok":True,"value":{}}
+                if method == "events/unsubscribe":return {"ok":True,"value":{"removed":True}}
+                raise AssertionError(method)
+        peer=Peer();peer.devices=SimpleNamespace(inbox=None)
+        bind_event_channel(peer,OWNER)
+        notices=[]
+        client=settings_event_client(peer,create_settings_client(peer._request))
+        async def listener(notice):
+            notices.append(notice)
+            await client.unwatch({"subscriptionId":ID})
+        try:
+            await client.watch({"schemaVersion":1},listener)
+            changed=dict(event(2),delivery="telemetry",kind="settings.changed",data={"revision":"r_"+"1"*32,"schemaVersion":1,"changedKeys":["fixture.enabled"],"cause":"update"})
+            self.assertTrue(peer.devices.inbox.accept(changed))
+            for _ in range(10):await asyncio.sleep(0)
+            self.assertEqual(notices,[{"type":"snapshot","snapshot":snapshot}])
+        finally:close_event_channel(peer)

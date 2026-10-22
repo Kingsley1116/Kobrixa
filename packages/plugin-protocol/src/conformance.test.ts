@@ -235,3 +235,38 @@ for (const family of ["valid", "invalid", "maximum"] as const) {
       expect(accepted).toBe(entry.valid);
     });
 }
+
+it("T8 settings.changed uses segment key semantics and permits duplicate literal dotted keys", () => {
+  const id = "00000000-0000-4000-8000-000000000001";
+  const envelope = (keys: string[]) => ({
+    version: 1,
+    subscriptionId: id,
+    owner: {
+      sourceKey: "builtin:acme.test",
+      pluginId: "acme.test",
+      generation: 1,
+      hostEpoch: id,
+      processEpoch: id,
+    },
+    sequence: 1,
+    delivery: "telemetry",
+    kind: "settings.changed",
+    data: { revision: "r_" + "1".repeat(32), schemaVersion: 1, changedKeys: keys, cause: "update" },
+  });
+  for (const key of [
+    "constructor",
+    "prototype",
+    "__proto__",
+    "foo.constructor",
+    "prototype.foo",
+    "foo.__proto__.bar",
+  ])
+    expect(SCHEMA_DEFINITIONS["events/deliver.params"]!.safeParse(envelope([key])).success).toBe(
+      false,
+    );
+  expect(
+    SCHEMA_DEFINITIONS["events/deliver.params"]!.safeParse(
+      envelope(["fixture.enabled", "fixture.enabled", "constructorName.x"]),
+    ).success,
+  ).toBe(true);
+});

@@ -555,3 +555,257 @@ it("preserves legacy numeric permission errors without retrying a persistence ca
     peer.close();
   }
 });
+
+import { bindEventChannel, eventInbox } from "./events.js";
+const settingsId = "00000000-0000-4000-8000-000000000001";
+const settingsOwner = {
+  sourceKey: "builtin:acme.test",
+  pluginId: "acme.test",
+  generation: 1,
+  hostEpoch: settingsId,
+  processEpoch: settingsId,
+};
+const settingsSnapshot = (value: boolean) => ({
+  schemaVersion: 1,
+  revision: null,
+  values: [{ key: "fixture.enabled", value }],
+});
+const settingsEvent = (sequence: number, marker = true) => ({
+  version: 1,
+  subscriptionId: settingsId,
+  owner: settingsOwner,
+  sequence,
+  ...(marker
+    ? {
+        delivery: "control",
+        kind: "events.resyncRequired",
+        data: { reason: "overflow", affected: [settingsId] },
+      }
+    : {
+        delivery: "telemetry",
+        kind: "settings.changed",
+        data: {
+          revision: "r_" + "1".repeat(32),
+          schemaVersion: 1,
+          changedKeys: ["fixture.enabled"],
+          cause: "update",
+        },
+      }),
+});
+it.each([true, false])(
+  "T8 settings refresh publishes the actual snapshot through the shared queue (marker %s)",
+  async (marker) => {
+    const [a, b] = createMemoryChannelPair();
+    const host = new RpcPeer(a),
+      peer = new RpcPeer(b);
+    bindEventChannel(peer, settingsOwner);
+    const fresh = settingsSnapshot(true),
+      order: string[] = [],
+      notices: unknown[] = [];
+    host.handle("settings/watch", () => ({
+      ok: true,
+      value: { subscriptionId: settingsId, sequence: 0, snapshot: settingsSnapshot(false) },
+    }));
+    host.handle("settings/read", () => {
+      order.push("read");
+      return { ok: true, value: fresh };
+    });
+    host.handle("events/ack", ({ sequence }) => {
+      order.push("ack");
+      return { ok: true as const, value: { acknowledged: sequence } };
+    });
+    try {
+      const result = await createPersistenceContext(peer).settings.watch(
+        { schemaVersion: 1 },
+        undefined,
+        async (notice) => {
+          order.push("callback");
+          notices.push(notice);
+          await Promise.resolve();
+        },
+      );
+      expect(result).toMatchObject({ value: { snapshot: settingsSnapshot(false) } });
+      const envelope = settingsEvent(marker ? 1 : 2, marker);
+      expect(eventInbox(peer).accept(envelope)).toBe(true);
+      await vi.waitFor(() => expect(notices).toHaveLength(marker ? 1 : 2));
+      expect(notices[0]).toEqual({ type: "snapshot", snapshot: fresh });
+      if (!marker) expect(notices[1]).toEqual({ type: "event", event: envelope });
+      expect(order.indexOf("ack")).toBeLessThan(order.indexOf("callback"));
+    } finally {
+      host.close();
+      peer.close();
+    }
+  },
+);
+
+it.each(["unwatch", "inbox-close", "dispose"])(
+  "T8 suppresses late refresh after %s",
+  async (stop) => {
+    const [a, b] = createMemoryChannelPair();
+    const host = new RpcPeer(a),
+      peer = new RpcPeer(b);
+    bindEventChannel(peer, settingsOwner);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const notices: unknown[] = [],
+      read = vi.fn(async () => {
+        await gate;
+        return { ok: true as const, value: settingsSnapshot(true) };
+      });
+    host.handle("settings/watch", () => ({
+      ok: true,
+      value: { subscriptionId: settingsId, sequence: 0, snapshot: settingsSnapshot(false) },
+    }));
+    host.handle("settings/read", read);
+    host.handle("events/ack", ({ sequence }) => ({
+      ok: true as const,
+      value: { acknowledged: sequence },
+    }));
+    host.handle("events/unsubscribe", () => ({ ok: true as const, value: { removed: true } }));
+    try {
+      const settings = createPersistenceContext(peer).settings;
+      await settings.watch({ schemaVersion: 1 }, undefined, (notice) => {
+        notices.push(notice);
+      });
+      eventInbox(peer).accept(settingsEvent(1));
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      if (stop === "unwatch") await settings.unwatch({ subscriptionId: settingsId });
+      else if (stop === "inbox-close") eventInbox(peer).close(settingsId);
+      else peer.close();
+      release();
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      expect(notices).toEqual([]);
+    } finally {
+      release();
+      host.close();
+      peer.close();
+    }
+  },
+);
+
+it("T8 awaits notices in the bounded queue and isolates callback errors", async () => {
+  const [a, b] = createMemoryChannelPair();
+  const host = new RpcPeer(a),
+    peer = new RpcPeer(b);
+  bindEventChannel(peer, settingsOwner);
+  const notices: unknown[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  host.handle("settings/watch", () => ({
+    ok: true,
+    value: { subscriptionId: settingsId, sequence: 0, snapshot: settingsSnapshot(false) },
+  }));
+  host.handle("settings/read", () => ({ ok: true, value: settingsSnapshot(true) }));
+  const ack = vi.fn(({ sequence }: ParamsOf<"events/ack">) => ({
+    ok: true as const,
+    value: { acknowledged: sequence },
+  }));
+  host.handle("events/ack", ack);
+  try {
+    await createPersistenceContext(peer).settings.watch(
+      { schemaVersion: 1 },
+      undefined,
+      async (notice) => {
+        notices.push(notice);
+        if (notice.type === "snapshot") {
+          await gate;
+          throw new Error("consumer");
+        }
+      },
+    );
+    eventInbox(peer).accept(settingsEvent(1));
+    eventInbox(peer).accept(settingsEvent(2, false));
+    await vi.waitFor(() => expect(ack).toHaveBeenCalledTimes(2));
+    expect(notices).toHaveLength(1);
+    release();
+    await vi.waitFor(() => expect(notices).toHaveLength(2));
+    expect(notices[1]).toEqual({ type: "event", event: settingsEvent(2, false) });
+  } finally {
+    release();
+    host.close();
+    peer.close();
+  }
+});
+
+it("T8 bound JS inbox rejects reserved setting keys without ACK and accepts dotted duplicates", async () => {
+  const [a, b] = createMemoryChannelPair();
+  const host = new RpcPeer(a),
+    peer = new RpcPeer(b);
+  bindEventChannel(peer, settingsOwner);
+  const ack = vi.fn(({ sequence }: ParamsOf<"events/ack">) => ({
+    ok: true as const,
+    value: { acknowledged: sequence },
+  }));
+  host.handle("events/ack", ack);
+  const inbox = eventInbox(peer);
+  inbox.enable();
+  inbox.open(
+    settingsId,
+    () => {},
+    async () => {},
+  );
+  try {
+    const envelope = settingsEvent(1, false);
+    for (const key of [
+      "constructor",
+      "prototype",
+      "__proto__",
+      "foo.constructor",
+      "prototype.foo",
+      "foo.__proto__.bar",
+    ])
+      expect(inbox.accept({ ...envelope, data: { ...envelope.data, changedKeys: [key] } })).toBe(
+        false,
+      );
+    await Promise.resolve();
+    expect(ack).not.toHaveBeenCalled();
+    expect(
+      inbox.accept({
+        ...envelope,
+        data: {
+          ...envelope.data,
+          changedKeys: ["fixture.enabled", "fixture.enabled", "constructorName.x"],
+        },
+      }),
+    ).toBe(true);
+    await vi.waitFor(() => expect(ack).toHaveBeenCalledTimes(1));
+  } finally {
+    host.close();
+    peer.close();
+  }
+});
+
+it("T8 snapshot callback can unwatch without a later event callback", async () => {
+  const [a, b] = createMemoryChannelPair();
+  const host = new RpcPeer(a),
+    peer = new RpcPeer(b);
+  bindEventChannel(peer, settingsOwner);
+  host.handle("settings/watch", () => ({
+    ok: true,
+    value: { subscriptionId: settingsId, sequence: 0, snapshot: settingsSnapshot(false) },
+  }));
+  host.handle("settings/read", () => ({ ok: true, value: settingsSnapshot(true) }));
+  host.handle("events/ack", ({ sequence }) => ({
+    ok: true as const,
+    value: { acknowledged: sequence },
+  }));
+  host.handle("events/unsubscribe", () => ({ ok: true as const, value: { removed: true } }));
+  const notices: unknown[] = [];
+  try {
+    const settings = createPersistenceContext(peer).settings;
+    await settings.watch({ schemaVersion: 1 }, undefined, async (notice) => {
+      notices.push(notice);
+      await settings.unwatch({ subscriptionId: settingsId });
+    });
+    eventInbox(peer).accept(settingsEvent(2, false));
+    await vi.waitFor(() => expect(eventInbox(peer).last(settingsId)).toBe(0));
+    expect(notices).toEqual([{ type: "snapshot", snapshot: settingsSnapshot(true) }]);
+  } finally {
+    host.close();
+    peer.close();
+  }
+});
