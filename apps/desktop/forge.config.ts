@@ -1,7 +1,7 @@
 import {
   copyNativeDependencies,
   BUILTIN_PAYLOAD_UNPACK,
-  DELIVERED_BUILTIN_PROCESS_BUILDS,
+  builtinProcessBuilds,
   validateBuiltinPayloads,
 } from "./packaging.js";
 const fixtureBuild = process.env.KOBRIXA_PLUGIN_FIXTURE_BUILD === "1";
@@ -61,20 +61,11 @@ const config: ForgeConfig = {
   plugins: [
     new VitePlugin({
       build: [
-        ...DELIVERED_BUILTIN_PROCESS_BUILDS.map(({ entry, config, target }) => ({
+        ...builtinProcessBuilds(fixtureBuild).map(({ entry, config, target }) => ({
           entry,
           config,
           target,
         })),
-        ...(fixtureBuild
-          ? [
-              {
-                entry: "../../tests/desktop/fixtures/builtin-process/src/main.ts",
-                config: "vite.plugin-fixture.config.ts",
-                target: "main" as const,
-              },
-            ]
-          : []),
         { entry: "src/main/index.ts", config: "vite.main.config.ts", target: "main" },
         {
           entry: "src/main/workspace/build-worker.ts",

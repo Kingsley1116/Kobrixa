@@ -83,19 +83,19 @@ it("uses the CLI outDir for bundle, manifest, index and resources", async () => 
     );
     const output = path.join(root, "override");
     const config = builtinPluginConfig({
-      slug: "acceptance-builtin",
-      pluginId: "acceptance.ui",
+      slug: "motor-test",
+      pluginId: "kobrixa.motor-test",
       sourceRoot,
     });
     await build({ ...config, configFile: false, build: { ...config.build, outDir: output } });
-    const payload = await validateBuiltinLeaf(output, "acceptance.ui");
+    const payload = await validateBuiltinLeaf(output, "kobrixa.motor-test");
     expect(payload.root).toBe(await realpath(output));
     expect(payload.index.files.map((file) => file.path)).toContain("main.cjs");
     expect(payload.index.files.map((file) => file.path)).toContain("kobrixa-plugin.json");
     expect(Object.keys(payload.resources).length).toBeGreaterThan(0);
     expect(
       JSON.parse(await readFile(path.join(output, "resource-index.json"), "utf8")).pluginId,
-    ).toBe("acceptance.ui");
+    ).toBe("kobrixa.motor-test");
     const code = await readFile(path.join(output, "main.cjs"), "utf8");
     expect(code).not.toMatch(/\brequire\(["']@kobrixa\//);
     const map = JSON.parse(await readFile(path.join(output, "main.cjs.map"), "utf8")) as {

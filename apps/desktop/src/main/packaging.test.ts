@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectBundledNotices } from "../../packaging.js";
+import { collectBundledNotices, copyNativeDependencies } from "../../packaging.js";
 
 const roots: string[] = [];
 
@@ -43,6 +43,40 @@ afterEach(async () => {
 });
 
 describe("bundled dependency notices", () => {
+  it("copies native transitive packages and their matching notices without hoisting", async () => {
+    const { buildPath, nodeModules } = await fixture([]);
+    const root = path.dirname(nodeModules);
+    const desktopPackage = path.join(root, "apps/desktop/package.json");
+    await put(root, "apps/desktop/package.json", "{}");
+    const hid = path.join(nodeModules, ".pnpm/node-hid@3.4.0/node_modules/node-hid");
+    const addon = path.join(nodeModules, ".pnpm/node-addon-api@8.9.2/node_modules/node-addon-api");
+    const prebuild = path.join(nodeModules, ".pnpm/pkg-prebuilds@1.1.0/node_modules/pkg-prebuilds");
+    for (const [directory, name, version, license] of [
+      [hid, "node-hid", "3.4.0", "LICENSE-bsd.txt"],
+      [addon, "node-addon-api", "8.9.2", "LICENSE.md"],
+      [prebuild, "pkg-prebuilds", "1.1.0", "LICENSE"],
+    ] as const) {
+      await put(directory, "package.json", JSON.stringify({ name, version }));
+      await put(directory, license, `${name} ${version} license`);
+    }
+    await mkdir(path.join(root, "apps/desktop/node_modules"));
+    await symlink(hid, path.join(root, "apps/desktop/node_modules/node-hid"), "junction");
+    await symlink(addon, path.join(hid, "../node-addon-api"), "junction");
+    await symlink(prebuild, path.join(hid, "../pkg-prebuilds"), "junction");
+    await put(hid, "prebuilds/node-darwin-arm64/hid.node", "target");
+    await put(hid, "prebuilds/node-win32-x64/hid.node", "foreign");
+    await copyNativeDependencies(buildPath, "darwin", "arm64", desktopPackage);
+    expect(await readdir(path.join(buildPath, "node_modules/node-hid/prebuilds"))).toEqual([
+      "node-darwin-arm64",
+    ]);
+    const notices = await readFile(path.join(buildPath, "THIRD-PARTY-NOTICES.txt"), "utf8");
+    for (const name of ["node-hid", "node-addon-api", "pkg-prebuilds"]) {
+      const copied = JSON.parse(
+        await readFile(path.join(buildPath, "node_modules", name, "package.json"), "utf8"),
+      ) as { name: string; version: string };
+      expect(notices).toContain(`${copied.name} ${copied.version} license`);
+    }
+  });
   it("lists every package referenced by staged source maps, including scoped and nested ones", async () => {
     const { buildPath, nodeModules } = await fixture(
       [

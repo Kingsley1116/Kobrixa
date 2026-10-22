@@ -1,6 +1,8 @@
 import { cp, mkdir, readdir, rm, copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { validateBuiltinLeaf } from "./src/main/plugins/builtin-launch.js";
 const workspaceNodeModules = fileURLToPath(new URL("../../node_modules", import.meta.url));
 const licenseFile = /^(license|licence|copying)(\.|$)/i;
 
@@ -66,13 +68,24 @@ export async function copyNativeDependencies(
   buildPath: string,
   platform: string,
   arch: string,
+  desktopPackage = fileURLToPath(new URL("./package.json", import.meta.url)),
 ): Promise<void> {
+  const desktopRequire = createRequire(desktopPackage);
+  const hidPackage = desktopRequire.resolve("node-hid/package.json");
+  const hidRequire = createRequire(hidPackage);
+  // Resolve transitive packages from their consumer; pnpm need not hoist them.
+  const nativeDirectories: Record<string, string> = {
+    "node-hid": path.dirname(hidPackage),
+    "node-addon-api": path.dirname(hidRequire.resolve("node-addon-api/package.json")),
+    "pkg-prebuilds": path.dirname(hidRequire.resolve("pkg-prebuilds/package.json")),
+  };
   const destination = path.join(buildPath, "node_modules");
   await mkdir(destination, { recursive: true });
   await Promise.all(
-    ["node-addon-api", "node-hid", "pkg-prebuilds"].map((name) =>
-      cp(path.join(workspaceNodeModules, name), path.join(destination, name), {
+    Object.entries(nativeDirectories).map(([name, source]) =>
+      cp(source, path.join(destination, name), {
         recursive: true,
+        filter: (entry) => !path.relative(source, entry).split(path.sep).includes("node_modules"),
       }),
     ),
   );
@@ -92,10 +105,14 @@ export async function copyNativeDependencies(
       ["node-hid", "LICENSE-bsd.txt"],
       ["node-addon-api", "LICENSE.md"],
       ["pkg-prebuilds", "LICENSE"],
-    ].map(([name, license]) => readNotice(path.join(workspaceNodeModules, name!), license)),
+    ].map(([name, license]) => readNotice(nativeDirectories[name!]!, license)),
   );
   const notices = new Map<string, Notice>();
-  for (const notice of [...(await collectBundledNotices(buildPath)), ...native])
+  const bundled = await collectBundledNotices(
+    buildPath,
+    path.resolve(path.dirname(desktopPackage), "../../node_modules"),
+  );
+  for (const notice of [...bundled, ...native])
     notices.set(`${notice.name}@${notice.version}`, notice);
   const licenses = [...notices.values()].map(
     ({ name, version, text }) => `${name} ${version}\n\n${text}`,
@@ -114,13 +131,29 @@ export const DELIVERED_BUILTIN_PROCESS_BUILDS: readonly {
   slug: string;
   pluginId: string;
 }[] = Object.freeze([]);
-export async function validateBuiltinPayloads(buildPath: string, fixture: boolean): Promise<void> {
-  const { validateBuiltinLeaf } = await import("./src/main/plugins/builtin-launch.js");
-  const leaves = [
+export function builtinProcessBuilds(fixture: boolean) {
+  // The installed acceptance fixture uses an already allowed identity without
+  // registering a product. Never broaden the production launch allowlist for a test,
+  // or overwrite a real motor payload once the 3C product is delivered.
+  if (fixture && DELIVERED_BUILTIN_PROCESS_BUILDS.some((leaf) => leaf.slug === "motor-test"))
+    throw new Error("Installed acceptance fixture conflicts with the delivered motor payload.");
+  return [
     ...DELIVERED_BUILTIN_PROCESS_BUILDS,
-    ...(fixture ? [{ slug: "acceptance-builtin", pluginId: "acceptance.ui" }] : []),
+    ...(fixture
+      ? [
+          {
+            entry: "../../tests/desktop/fixtures/builtin-process/src/main.ts",
+            config: "vite.plugin-fixture.config.ts",
+            target: "main" as const,
+            slug: "motor-test",
+            pluginId: "kobrixa.motor-test",
+          },
+        ]
+      : []),
   ];
-  for (const leaf of leaves)
+}
+export async function validateBuiltinPayloads(buildPath: string, fixture: boolean): Promise<void> {
+  for (const leaf of builtinProcessBuilds(fixture))
     await validateBuiltinLeaf(
       path.join(buildPath, ".vite/build/plugins", leaf.slug),
       leaf.pluginId,

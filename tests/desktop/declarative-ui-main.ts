@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { app } from "electron";
@@ -10,6 +10,7 @@ import {
   type PluginManifest,
 } from "@kobrixa/plugin-protocol";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
+import { resolveBuiltinLaunch } from "../../apps/desktop/src/main/plugins/builtin-launch.js";
 
 const output = app.commandLine.getSwitchValue("ui-acceptance-output");
 const inputFile = app.commandLine.getSwitchValue("ui-acceptance-input");
@@ -31,7 +32,30 @@ const gone = (pid: number) => {
   }
 };
 
-async function transport(directory: string, language: "js" | "python", python: string) {
+function installedDescriptor() {
+  assert.equal(app.isPackaged, true);
+  return resolveBuiltinLaunch({
+    sourceKey: "builtin:kobrixa.motor-test",
+    pluginId: "kobrixa.motor-test",
+    slug: "motor-test",
+    packaged: true,
+    appPath: app.getAppPath(),
+    buildRoot: "intentionally-unavailable",
+  });
+}
+async function transport(
+  directory: string,
+  language: "js" | "python",
+  python: string,
+  installed = false,
+) {
+  if (installed) {
+    const descriptor = await installedDescriptor();
+    assert.equal(descriptor.policy, "optional");
+    assert.equal(descriptor.runtime, "node");
+    assert.equal(descriptor.entry, "main.cjs");
+    assert.equal(descriptor.packageRoot, await realpath(directory));
+  }
   const manifest: PluginManifest = JSON.parse(
     await readFile(path.join(directory, "kobrixa-plugin.json"), "utf8"),
   );
@@ -49,7 +73,7 @@ async function transport(directory: string, language: "js" | "python", python: s
   });
   const child = await launcher({
     id: manifest.id,
-    sourceKey: `development:${directory}`,
+    sourceKey: installed ? `builtin:${manifest.id}` : `development:${directory}`,
     directory,
     entry: path.join(directory, manifest.runtime.entry),
     runtime: manifest.runtime.kind,
@@ -245,8 +269,50 @@ async function transport(directory: string, language: "js" | "python", python: s
 }
 
 async function run() {
+  const mode = app.commandLine.getSwitchValue("ui-acceptance-mode");
+  if (mode === "installed") {
+    await app.whenReady();
+    assert.equal(app.isPackaged, true);
+    const input = JSON.parse(await readFile(inputFile, "utf8"));
+    if (input.expectRejected) {
+      // A resolver failure must precede any launcher invocation, not merely any later error.
+      await assert.rejects(installedDescriptor(), { code: "PLUGIN_E_ENTRY" });
+      await writeFile(
+        output,
+        JSON.stringify({
+          kind: "installed-rejection",
+          rejected: true,
+          phase: "resolve-before-launch",
+          launched: false,
+        }),
+      );
+    } else {
+      const directory = path.join(`${app.getAppPath()}.unpacked`, ".vite/build/plugins/motor-test");
+      const result = await transport(directory, "js", "unavailable-python", true);
+      await writeFile(
+        output,
+        JSON.stringify(
+          {
+            kind: "installed-builtin",
+            mockHost: true,
+            packaged: app.isPackaged,
+            cwd: process.cwd(),
+            appPath: app.getAppPath(),
+            results: [result],
+            resolvedFromInstalledRoot: true,
+            remainingPids: gone(result.pid) ? [] : [result.pid],
+            versions: process.versions,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    app.quit();
+    return;
+  }
   assert.equal(
-    app.commandLine.getSwitchValue("ui-acceptance-mode"),
+    mode,
     "transport",
     "This entry currently implements transport only; no browser acceptance claim",
   );

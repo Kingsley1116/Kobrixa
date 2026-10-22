@@ -17,7 +17,7 @@
       "variant": "primary",
       "action": {
         "kind": "command",
-        "command": "acceptance.ui.activate",
+        "command": "kobrixa.motor-test.activate",
         "arguments": { "speed": { "literal": 20 }, "mode": { "literal": "brake" } }
       }
     }

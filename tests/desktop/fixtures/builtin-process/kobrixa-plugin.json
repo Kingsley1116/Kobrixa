@@ -1,16 +1,22 @@
 {
-  "id": "acceptance.ui",
+  "id": "kobrixa.motor-test",
   "version": "0.1.0",
   "apiVersion": "^1.6.0",
   "displayName": { "en": "Installed UI acceptance", "zh-TW": "安裝版 UI 驗收" },
   "runtime": { "kind": "node", "entry": "main.cjs" },
   "permissions": ["ui.panels"],
-  "activationEvents": ["onCommand:acceptance.ui.activate"],
+  "activationEvents": ["onCommand:kobrixa.motor-test.activate"],
   "contributes": {
     "commands": [
-      { "id": "acceptance.ui.legacy", "title": { "en": "Legacy" } },
       {
-        "id": "acceptance.ui.activate",
+        "id": "kobrixa.motor-test.inspect",
+        "title": { "en": "Inspect" },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      { "id": "kobrixa.motor-test.legacy", "title": { "en": "Legacy" } },
+      {
+        "id": "kobrixa.motor-test.activate",
         "title": { "en": "Activate" },
         "invocation": "context-v1",
         "arguments": {
@@ -25,7 +31,7 @@
         }
       },
       {
-        "id": "acceptance.ui.hold",
+        "id": "kobrixa.motor-test.hold",
         "title": { "en": "Hold" },
         "invocation": "context-v1",
         "arguments": {
@@ -42,7 +48,7 @@
     ],
     "panels": [
       {
-        "id": "acceptance.ui.panel",
+        "id": "kobrixa.motor-test.panel",
         "title": { "en": "Installed UI acceptance" },
         "location": "right",
         "resource": { "version": 1, "path": "panel.json" }
