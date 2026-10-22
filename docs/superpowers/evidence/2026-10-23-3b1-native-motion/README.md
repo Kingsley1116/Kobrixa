@@ -36,3 +36,28 @@ product. `normalClose` means the actual composition cleanup and shell exit
 succeeded. Queue pressure, withheld readback, lost replies, three-repeat maximum
 load, independent review, physical hardware and real persistence remain separate
 gates. P160 and Stage 3 are not complete.
+
+## Common-queue and response-loss extension
+
+`node tests/desktop/declarative-ui-motion-run.mjs --stress` exited 0 for all
+three cases. `stress/` preserves the actual receipt bytes, hashes and log. The
+run used dirty 15ba291 with the UI revocation fix subsequently committed as
+b15ce44 and the accompanying stress harness. Eight real environment control
+events fill the common ledger; actual SDK ACKs are held and delivered late.
+The observed peak is seven queued ordinary controls, followed by the reserved
+resync notification. Revocation precedes its delivery.
+
+- Delayed readback: actual stop, then released readback, confirmed durable
+  disposition and ordinary composition close.
+- Withheld readback: unconfirmed durable fault survives killing the consumer
+  and releasing the late readback. Actual composition close rejects with
+  `CleanupBlocked`, `stopConfirmed:false`, `journalCommitted:true`. This case
+  explicitly exits the test shell afterward; it is **not** normal-close proof.
+- Lost start reply: public SDK reports its actual 5-second timeout; the consumer
+  queries the original operation, without a second prepare/start. Releasing the
+  original late reply/ACK does not restart motion; stop is confirmed.
+
+All child PIDs were absent. Related regression suite: 166 passed, types/lint
+passed. Replay both receipts with `KOBRIXA_UI_MOTION_REPORT=.../matrix.json` and
+`KOBRIXA_UI_MOTION_STRESS_REPORT=.../stress/matrix.json` using the test above.
+The 30-second slow-consumer load and maximum-load performance remain separate.

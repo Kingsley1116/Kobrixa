@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { setTimeout as pause } from "node:timers/promises";
 import { definePlugin, runPlugin, unwrap, type DevicesClient } from "@kobrixa/plugin-sdk";
 
-const { mode } = JSON.parse(readFileSync("motion.json", "utf8")) as {
+const { mode, stress } = JSON.parse(readFileSync("motion.json", "utf8")) as {
   mode: "jog" | "relative-angle";
+  stress?: string;
 };
 const operations = new Map<string, string>();
 let sessionId: string;
@@ -47,6 +48,18 @@ void runPlugin(
           if (operationId) await ctx.devices.motion.stop({ operationId, stopMode: "brake" });
           return { output: {}, fieldErrors: [] };
         }
+        if (stress) {
+          if (!invocation.context.binding) throw new Error("Expected panel binding");
+          const subscription = unwrap(
+            await ctx.ui.subscribe(
+              { binding: invocation.context.binding, topics: ["environment"] },
+              (event) => {
+                console.error(`MOTION_EVENT:${JSON.stringify(event)}`);
+              },
+            ),
+          );
+          console.error(`MOTION_SUBSCRIPTION:${subscription.subscriptionId}`);
+        }
         const result = await ctx.devices.motion.prepare({
           sessionId,
           contextRef,
@@ -61,9 +74,15 @@ void runPlugin(
         operations.set(trigger.gestureRef, operation.operationId);
         console.error(`MOTION_PREPARED:${operation.operationId}`);
         // Exactly one start for the original ID. Cancellation never retries prepare/start.
-        const started = await ctx.devices.motion.start({ operationId: operation.operationId });
-        console.error(`MOTION_START:${JSON.stringify(started)}`);
-        void observe(ctx.devices, operation.operationId);
+        try {
+          const started = await ctx.devices.motion.start({ operationId: operation.operationId });
+          console.error(`MOTION_START:${JSON.stringify(started)}`);
+        } catch (error) {
+          console.error(`MOTION_START_ERROR:${String(error)}`);
+          throw error;
+        } finally {
+          void observe(ctx.devices, operation.operationId);
+        }
         return { output: { "operation-id": operation.operationId }, fieldErrors: [] };
       });
     },

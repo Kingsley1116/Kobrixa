@@ -96,3 +96,113 @@ test(
     }
   },
 );
+
+test(
+  "actual common queue pressure retains stop disposition and original identity",
+  {
+    skip: !process.env.KOBRIXA_UI_MOTION_STRESS_REPORT,
+  },
+  async () => {
+    const file = process.env.KOBRIXA_UI_MOTION_STRESS_REPORT;
+    const matrix = await reportAt(file);
+    assert.equal(matrix.kind, "ui-motion-stress");
+    assert.deepEqual(matrix.reports.map((row) => row.scenario.stress).sort(), [
+      "delayed-readback",
+      "lost-start",
+      "withheld-readback",
+    ]);
+    for (const row of matrix.reports) {
+      const report = await reportAt(path.resolve(path.dirname(file), row.path));
+      assert.deepEqual(report.failures, []);
+      assert.deepEqual(report.remainingPids, []);
+      assert.equal(report.composition, "composeDesktopMain/createDesktopFoundation");
+      assert.equal(report.mockIntent, false);
+      assert.ok(report.queueSamples.some((sample) => sample.queuedEvents === 7));
+      assert.ok(
+        report.queueSamples.every(
+          (sample) => sample.queuedEvents <= 8 && sample.queuedBytes <= 8 * 16384,
+        ),
+      );
+      const messages = report.wire
+        .filter((event) => event.direction === "plugin-host")
+        .map((event) => event.message);
+      assert.equal(
+        messages.filter((message) => message.method === "devices/motion/prepare").length,
+        1,
+      );
+      assert.equal(
+        messages.filter((message) => message.method === "devices/motion/start").length,
+        1,
+      );
+      for (const message of messages.filter((message) =>
+        ["devices/motion/start", "devices/motion/query", "devices/motion/stop"].includes(
+          message.method,
+        ),
+      ))
+        assert.equal(message.params.operationId, report.operationId);
+      const resync = report.wire.find(
+        (event) =>
+          event.direction === "host-plugin" &&
+          event.message.params?.kind === "events.resyncRequired",
+      );
+      assert.ok(resync);
+      assert.equal(resync.message.params.data.reason, "overflow");
+      const revoke = report.events.find(
+        (event) => event.kind === "revoke" && event.time >= report.faultAt,
+      );
+      assert.ok(revoke && revoke.time <= resync.at);
+      const held = report.ackDeliveries.filter((event) => event.disposition === "held");
+      assert.ok(held.length > 0);
+      for (const ack of held)
+        assert.ok(
+          report.ackDeliveries.some(
+            (event) =>
+              event.disposition === "released" &&
+              JSON.stringify(event.message) === JSON.stringify(ack.message) &&
+              event.at >= revoke.time,
+          ),
+        );
+      assert.ok(report.trace.some((event) => event.step === "stop" && event.dispatch === "sent"));
+      assert.ok(Object.values(report.final).every((value) => value === 0));
+      if (row.scenario.stress === "withheld-readback") {
+        assert.equal(report.terminal.phase, "unconfirmed");
+        assert.equal(report.normalClose, false);
+        assert.equal(report.expectedBlockedClose.device.stopConfirmed, false);
+        assert.equal(report.expectedBlockedClose.device.journalCommitted, true);
+        const fault = report.recoverySnapshot.faults.find(
+          (fault) => fault.operationId === report.operationId,
+        );
+        assert.equal(fault.state, "unconfirmed");
+        assert.deepEqual(
+          report.afterRetirement.faults.find((item) => item.id === fault.id),
+          fault,
+        );
+      } else {
+        assert.equal(report.terminal.stopConfirmation, "confirmed");
+        assert.equal(report.normalClose, true);
+      }
+      if (row.scenario.stress === "lost-start") {
+        assert.ok(
+          report.logs.some(
+            (line) => line.includes("MOTION_START_ERROR:") && line.includes("timed out"),
+          ),
+        );
+        assert.ok(
+          report.logs.some(
+            (line) => line.includes("MOTION_QUERY:") && line.includes(report.operationId),
+          ),
+        );
+        const reply = report.deliveries.find((event) => event.disposition === "held");
+        assert.ok(reply);
+        assert.ok(
+          report.deliveries.some(
+            (event) =>
+              event.disposition === "released" &&
+              event.id === reply.id &&
+              event.at - reply.at >= 4900,
+          ),
+        );
+      }
+    }
+  },
+);

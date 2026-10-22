@@ -23,11 +23,20 @@ const cases = ["prepare", "start", "arm", "pulse"].flatMap((boundary) =>
   ["before", "after"].flatMap((position) => faults.map((fault) => ({ boundary, position, fault }))),
 );
 const args = process.argv.slice(2);
-assert.equal(args.length, 1, "Pass --all or --case=boundary:position:fault");
+assert.equal(args.length, 1, "Pass --all, --stress or --case=boundary:position:fault");
 const selected =
-  args[0] === "--all"
-    ? cases
-    : cases.filter((item) => args[0] === `--case=${item.boundary}:${item.position}:${item.fault}`);
+  args[0] === "--stress"
+    ? ["delayed-readback", "withheld-readback", "lost-start"].map((stress) => ({
+        boundary: "pulse",
+        position: "after",
+        fault: "queue-pressure",
+        stress,
+      }))
+    : args[0] === "--all"
+      ? cases
+      : cases.filter(
+          (item) => args[0] === `--case=${item.boundary}:${item.position}:${item.fault}`,
+        );
 assert.ok(selected.length > 0, "Unknown motion scenario");
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-motion-")));
 console.log(`Motion acceptance workspace: ${directory}`);
@@ -165,13 +174,16 @@ const artifact = {
 await writeFile(path.join(directory, "artifact-identity.json"), JSON.stringify(artifact, null, 2));
 const reports = [];
 for (const scenario of selected) {
-  const name = `${scenario.boundary}-${scenario.position}-${scenario.fault}`;
+  const name = scenario.stress ?? `${scenario.boundary}-${scenario.position}-${scenario.fault}`;
   const folder = path.join(directory, name);
   await cp(template, folder, { recursive: true });
   await mkdir(path.join(folder, "profile"));
   await writeFile(
     path.join(folder, "source/motion.json"),
-    JSON.stringify({ mode: scenario.boundary === "arm" ? "relative-angle" : "jog" }),
+    JSON.stringify({
+      mode: scenario.boundary === "arm" ? "relative-angle" : "jog",
+      stress: scenario.stress,
+    }),
   );
   const input = path.join(folder, "input.json"),
     output = path.join(folder, "report.json");
@@ -234,7 +246,7 @@ for (const scenario of selected) {
   while (alive() && performance.now() < deadline) await pause(25);
   report.remainingPids = alive() ? [report.pid] : [];
   report.artifact = artifact;
-  report.normalClose = true;
+  report.normalClose = !report.expectedBlockedClose;
   await writeFile(output, JSON.stringify(report, null, 2));
   assert.deepEqual(report.remainingPids, []);
   reports.push({ scenario, path: output });
@@ -242,8 +254,12 @@ for (const scenario of selected) {
 }
 await writeFile(
   path.join(directory, "matrix.json"),
-  JSON.stringify({ kind: "ui-motion-matrix", reports, artifact }, null, 2),
+  JSON.stringify(
+    { kind: args[0] === "--stress" ? "ui-motion-stress" : "ui-motion-matrix", reports, artifact },
+    null,
+    2,
+  ),
 );
 console.log(
-  `${reports.length}/${cases.length} native motion cases recorded; pressure and withheld stop/readback remain separate gates.`,
+  `${reports.length}/${selected.length} native motion cases recorded; other acceptance gates remain separate.`,
 );

@@ -15,6 +15,7 @@ import {
 } from "../../apps/desktop/src/main/plugins/controller.js";
 import {
   createDesktopFoundation,
+  CleanupBlocked,
   type DesktopMainComposition,
   type DesktopMainCompositionInput,
 } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
@@ -47,7 +48,14 @@ type Scenario = {
   boundary: "prepare" | "start" | "arm" | "pulse";
   position: "before" | "after";
   fault:
-    "hide" | "authority-loss" | "cancel" | "renderer-freeze" | "renderer-crash" | "plugin-kill";
+    | "hide"
+    | "authority-loss"
+    | "cancel"
+    | "renderer-freeze"
+    | "renderer-crash"
+    | "plugin-kill"
+    | "queue-pressure";
+  stress?: "delayed-readback" | "withheld-readback" | "lost-start";
 };
 const inputPath = app.commandLine.getSwitchValue("motion-input");
 const output = app.commandLine.getSwitchValue("motion-output");
@@ -91,6 +99,12 @@ const wire: Wire[] = [],
   events: FoundationDiagnosticEvent[] = [];
 const native: Array<{ at: number; type: string; detail?: unknown }> = [];
 const failures: string[] = [];
+const expectedCleanupReports: string[] = [];
+let allowBlockedCleanup = false;
+let holdAcks = false;
+const ackDeliveries: Array<{ at: number; message: Record<string, unknown>; disposition: string }> =
+  [];
+const releaseAcks: Array<() => void> = [];
 const ipc: Array<{
   at: number;
   channel: string;
@@ -142,6 +156,18 @@ function observingLauncher(hooks: Parameters<typeof createDesktopLauncher>[0]): 
           wire.push({ at: wall(), direction: "plugin-host", message });
           if (message.id !== undefined && typeof message.method === "string")
             requests.set(message.id, message.method);
+          if (holdAcks && message.method === "events/ack") {
+            ackDeliveries.push({ at: wall(), message, disposition: "held" });
+            releaseAcks.push(() => {
+              ackDeliveries.push({
+                at: wall(),
+                message,
+                disposition: exited ? "process-exited" : "released",
+              });
+              if (!exited) listener(text);
+            });
+            return;
+          }
           listener(text);
         });
       },
@@ -154,13 +180,14 @@ function observingLauncher(hooks: Parameters<typeof createDesktopLauncher>[0]): 
         if (method === "devices/motion/prepare" && result?.ok)
           operationId = result.value?.operation?.operationId;
         if (
-          method === `devices/motion/${scenario.boundary}` &&
+          method ===
+            `devices/motion/${scenario.stress === "lost-start" ? "start" : scenario.boundary}` &&
           !replyReached &&
-          ["prepare", "start"].includes(scenario.boundary)
+          (["prepare", "start"].includes(scenario.boundary) || scenario.stress === "lost-start")
         ) {
           assert.equal(result?.ok, true, `Unsuccessful ${method}: ${text}`);
           replyReached = true;
-          if (scenario.position === "before") {
+          if (scenario.position === "before" || scenario.stress === "lost-start") {
             deliveries.push({ at: wall(), id: message.id, disposition: "held" });
             releaseReply = () => {
               releaseReply = undefined;
@@ -295,7 +322,11 @@ async function run() {
         scope,
         currentScope,
         legacyFlush: async () => {},
-        report: (error) => failures.push(String(error)),
+        report: (error) => {
+          if (allowBlockedCleanup && error instanceof CleanupBlocked)
+            expectedCleanupReports.push(String(error));
+          else failures.push(String(error));
+        },
       });
       const composition = main;
       const ui = desktopUi(composition);
@@ -450,6 +481,10 @@ async function run() {
         step,
       };
       control.block(blocked.point, step);
+      if (scenario.stress) {
+        holdAcks = true;
+        control.block("before-exchange", "readback");
+      }
       window.webContents.sendInputEvent({
         type: "mouseDown",
         button: "left",
@@ -462,7 +497,28 @@ async function run() {
       assert.ok(operationId, "Original prepared operation ID absent");
       if (scenario.boundary === "prepare") assert.equal(control.trace().length, traceBefore);
       const faultAt = wall();
+      const queueSamples: Array<{
+        at: number;
+        subscriptions: number;
+        queuedEvents: number;
+        queuedBytes: number;
+      }> = [];
       switch (scenario.fault) {
+        case "queue-pressure":
+          assert.ok(logs.some((line) => line.includes("MOTION_SUBSCRIPTION:")));
+          queueSamples.push({ at: wall(), ...composition.foundation.broker.events.diagnostics() });
+          for (let i = 0; i < 8; i++) {
+            ui.states.setEnvironment(i % 2 ? "en" : "zh-TW", "dark");
+            queueSamples.push({
+              at: wall(),
+              ...composition.foundation.broker.events.diagnostics(),
+            });
+          }
+          assert.ok(
+            queueSamples.some((sample) => sample.queuedEvents >= 7),
+            "Real common queue did not fill",
+          );
+          break;
         case "hide":
           window.hide();
           break;
@@ -511,9 +567,35 @@ async function run() {
         "native cancellation/revocation",
       );
       const traceAtRevoke = control.trace().length;
-      releaseReply?.();
+      if (scenario.stress !== "lost-start") releaseReply?.();
       control.release(blocked.point, blocked.step);
       blocked = undefined;
+      if (scenario.stress) {
+        await bounded(control.reached("before-exchange", "readback"), "actual held readback");
+        await until(() => releaseAcks.length > 0, "actual SDK ACK under pressure");
+        assert.ok(
+          wire.some(
+            (row) =>
+              row.direction === "host-plugin" &&
+              JSON.stringify(row.message).includes("events.resyncRequired"),
+          ),
+          "Missing actual overflow notification",
+        );
+        if (scenario.stress !== "withheld-readback") {
+          await pause(150);
+          control.release("before-exchange", "readback");
+        }
+        if (scenario.stress === "lost-start") {
+          await until(
+            () => logs.some((line) => line.includes("MOTION_START_ERROR:")),
+            "public SDK start timeout",
+            8000,
+          );
+          releaseReply?.();
+        }
+        holdAcks = false;
+        for (const release of releaseAcks.splice(0)) release();
+      }
       if (scenario.fault === "renderer-freeze") {
         await window.webContents.debugger.sendCommand("Debugger.resume");
         window.webContents.debugger.detach();
@@ -561,8 +643,38 @@ async function run() {
       );
       if (trace.some((row) => effects.has(row.step) && row.dispatch !== "not-sent")) {
         assert.ok(trace.some((row) => row.step === "stop" && row.dispatch === "sent"));
-        assert.ok(trace.some((row) => row.step === "readback" && row.dispatch === "sent"));
-        assert.equal(terminal.stopConfirmation, "confirmed");
+        if (scenario.stress !== "withheld-readback") {
+          assert.ok(trace.some((row) => row.step === "readback" && row.dispatch === "sent"));
+          assert.equal(terminal.stopConfirmation, "confirmed");
+        }
+      }
+      let afterRetirement: unknown;
+      if (scenario.stress === "withheld-readback") {
+        assert.equal(terminal.phase, "unconfirmed");
+        assert.equal(terminal.stopConfirmation, "unconfirmed");
+        const originalFault = composition.foundation.broker.recovery
+          .snapshot()
+          .faults.find((fault) => fault.operationId === operationId);
+        assert.ok(originalFault && originalFault.state === "unconfirmed");
+        allowBlockedCleanup = true;
+        assert.ok(pid);
+        process.kill(pid, "SIGKILL");
+        await until(
+          () =>
+            composition.plugins
+              .state()
+              .plugins.some((plugin) => plugin.id === owner!.pluginId && !plugin.running),
+          "consumer retirement",
+        );
+        control.release("before-exchange", "readback");
+        await pause(100);
+        afterRetirement = composition.foundation.broker.recovery.snapshot();
+        assert.deepEqual(
+          composition.foundation.broker.recovery
+            .snapshot()
+            .faults.find((fault) => fault.operationId === operationId),
+          originalFault,
+        );
       }
       const prepared = wire.filter(
         (row) => row.direction === "plugin-host" && row.message.method === "devices/motion/prepare",
@@ -582,12 +694,22 @@ async function run() {
               "window.kobrixa.plugins.recovery.snapshot({})",
             );
       await retirement;
-      await bounded(composition.dispose(), "real composition cleanup", 25_000);
+      let expectedBlockedClose: { name: string; message: string; device: unknown } | undefined;
+      if (scenario.stress === "withheld-readback") {
+        try {
+          await bounded(composition.dispose(), "blocked real composition cleanup", 25_000);
+        } catch (error) {
+          assert.ok(error instanceof CleanupBlocked);
+          expectedBlockedClose = { name: error.name, message: error.message, device: error.device };
+        }
+        assert.ok(expectedBlockedClose, "Unconfirmed stop must block ordinary close");
+      } else await bounded(composition.dispose(), "real composition cleanup", 25_000);
       const final = diagnostics.snapshot();
-      assert.ok(
-        Object.values(final).every((value) => value === 0),
-        JSON.stringify(final),
-      );
+      if (!expectedBlockedClose)
+        assert.ok(
+          Object.values(final).every((value) => value === 0),
+          JSON.stringify(final),
+        );
       offEvents();
       offRecovery();
       offDevice();
@@ -609,6 +731,11 @@ async function run() {
             events,
             wire,
             deliveries,
+            ackDeliveries,
+            queueSamples,
+            afterRetirement,
+            expectedBlockedClose,
+            expectedCleanupReports,
             ipc,
             logs,
             native,
@@ -624,6 +751,12 @@ async function run() {
         ),
       );
       assert.deepEqual(failures, []);
+      if (expectedBlockedClose) {
+        // Test-only process teardown after retaining the actual refused-close receipt.
+        // No product cleanup success or normal-close acceptance is claimed.
+        app.exit(0);
+        return;
+      }
       closed = true;
       window.close();
       app.quit();
