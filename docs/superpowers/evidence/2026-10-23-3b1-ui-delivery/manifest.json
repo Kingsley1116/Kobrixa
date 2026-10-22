@@ -1,0 +1,90 @@
+{
+  "source": "867fc5282bfa3ba6f0620ccc9f33fe65eb07f798",
+  "notes": "Build/plugin smoke source c59ab80; UI fix/regression source 867fc52. Earlier failing regression retained, not PASS. Counts do not close receipt-only or manual gates.",
+  "files": [
+    {
+      "path": "kobrixa-b1-ui-state-desktop.log.gz",
+      "uncompressedBytes": 34750,
+      "uncompressedSha256": "3d38ed3a6c367441f9e6d71eae940f72cb0605508b22e8578f9022bc2b8a3c08",
+      "bytes": 10219,
+      "sha256": "b209212c96ee062495415c6b7bdb5203215be115e27d2f21d42c9517a606fae2"
+    },
+    {
+      "path": "kobrixa-b1-pending-hold-tests.log.gz",
+      "uncompressedBytes": 242,
+      "uncompressedSha256": "08ad4fb6891c23c6483a79fdf56ad9b8022058fb0868bb6c768fbaaa39e356d4",
+      "bytes": 207,
+      "sha256": "e1f349618e8b32eaced8a2220c714ace2fb5ac812f43b56813722f59ff075d62"
+    },
+    {
+      "path": "kobrixa-b1-pending-hold-check.log.gz",
+      "uncompressedBytes": 32,
+      "uncompressedSha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630",
+      "bytes": 49,
+      "sha256": "a60eba922b5bc3d00aca42d68c9f9630d5d251d066c3ebf5595ed53ef4fbbd29"
+    },
+    {
+      "path": "kobrixa-ui-state-envelope-red2.log.gz",
+      "uncompressedBytes": 1561,
+      "uncompressedSha256": "1c0298340d9892b45f12dfe93f54803a5e199ae209b59e77c7893357fb9f0715",
+      "bytes": 741,
+      "sha256": "d507e8a083ac300da7e53eaad9f2ef43bdf30464e0dcaf680077790c871aa891"
+    },
+    {
+      "path": "kobrixa-ui-state-protocol.log.gz",
+      "uncompressedBytes": 467,
+      "uncompressedSha256": "bf823fce1865ca1029b5eaf26c9e71f3c0e2672c9ad359744e4d028ce4cb68dd",
+      "bytes": 335,
+      "sha256": "47b9cdebf23bab5f5055b31ef8ef7b757e0cdc4e081f35b2fa8dae972c159712"
+    },
+    {
+      "path": "kobrixa-ui-state-runtime.log.gz",
+      "uncompressedBytes": 248,
+      "uncompressedSha256": "c2fda6e88e6c33981d4811698fba47a0c0bb23eb0fda6d83eaecbc7f9192c345",
+      "bytes": 206,
+      "sha256": "203b4ab2ed4e5e63fdad61336f944b50fe045c4524e6d5b9a695d0102b457873"
+    },
+    {
+      "path": "kobrixa-ui-state-sdk.log.gz",
+      "uncompressedBytes": 250,
+      "uncompressedSha256": "a13accaee96eaa79aa1402ead28f1cd5b15f90d014e6ccf073121a93cd7a30b6",
+      "bytes": 211,
+      "sha256": "f8a51845876bc33a52094c8da007a74201e29513aae6297f2d034d9d49eaf434"
+    },
+    {
+      "path": "kobrixa-ui-state-python.log.gz",
+      "uncompressedBytes": 7176,
+      "uncompressedSha256": "12c2d3f295ec85509687fe37b54ceeb6dd76c6359af20be9aa44db47b8eccd9c",
+      "bytes": 1596,
+      "sha256": "00994b497a94e01a62299f7e0c47f44f682d7318f1ff9c3848f8f2a3631b2610"
+    },
+    {
+      "path": "kobrixa-ui-state-schema.log.gz",
+      "uncompressedBytes": 57,
+      "uncompressedSha256": "b316cbe2a2efa0dbd205a7e0e327ccf1277bfa1af8cf76b7e88b36568538e9f4",
+      "bytes": 74,
+      "sha256": "0e9539a893ed33e1326de5fe4b75514a1c707542ebbdf5908ddf3e3f0e2af2c0"
+    },
+    {
+      "path": "kobrixa-ui-state-runtime-build.log.gz",
+      "uncompressedBytes": 23,
+      "uncompressedSha256": "29c5ee0f6b0b20dbb259b99d01276198c3d28190090706394608d4deda6d2c0b",
+      "bytes": 40,
+      "sha256": "09ea79e7081a39eccae01022b6ddfc4572567474c05bad00694fc97501bec5a4"
+    },
+    {
+      "path": "kobrixa-b1-c59ab80-package.log.gz",
+      "uncompressedBytes": 14313,
+      "uncompressedSha256": "756c5e913c4f44225eb84bfbd607674d765424d3422660f4a88a67ba6b946860",
+      "bytes": 3371,
+      "sha256": "e202a3b3bbd843e733de32f5c5d3bfcbe9cfa5a27d7798d159e50f4c8b87b750"
+    },
+    {
+      "path": "kobrixa-b1-c59ab80-plugin-smoke.log.gz",
+      "uncompressedBytes": 1700,
+      "uncompressedSha256": "faa31c4a7ace2bbeca1b05686befba02bf4da3a6dfecd541b47313c734db8540",
+      "bytes": 735,
+      "sha256": "47306af26cb9a4500e93fc7d8022e1d56ab78d2fce8301276496457b6ff6ecc5"
+    }
+  ]
+}

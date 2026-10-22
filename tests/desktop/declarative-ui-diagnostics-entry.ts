@@ -1,6 +1,7 @@
 // Test entry only: the App and diagnostics share this Vite module graph, so the
 // WeakMap lookups observe the real production singleton and its actual stores.
 import "../../apps/desktop/src/renderer/index.js";
+import * as presentation from "./declarative-ui-presentation.js";
 import { pluginUiWindow } from "../../apps/desktop/src/renderer/settings/settings-state.js";
 import { diagnosticsFor as hostDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
 import { diagnosticsFor as stateDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/state-store.js";
@@ -156,4 +157,4 @@ async function run(cycles: number) {
   events.length = 0;
   return result;
 }
-Object.assign(window, { declarativeDiagnostics: { run } });
+Object.assign(window, { declarativeDiagnostics: { run }, declarativePresentation: presentation });

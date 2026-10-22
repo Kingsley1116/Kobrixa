@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createConnection } from "node:net";
 import { app } from "electron";
 import {
   RpcPeer,
@@ -274,6 +275,38 @@ async function run() {
     await app.whenReady();
     assert.equal(app.isPackaged, true);
     const input = JSON.parse(await readFile(inputFile, "utf8"));
+    let isolation: { source: string; dependency: string; network: string } | undefined;
+    if (input.isolation) {
+      const deniedRead = async (file: string) => {
+        try {
+          await readFile(file);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          assert.ok(
+            code === "EPERM" || code === "EACCES",
+            `Expected OS denial for ${file}, received ${code}`,
+          );
+          return code;
+        }
+        throw new Error(`OS isolation did not deny ${file}`);
+      };
+      const network = await new Promise<string>((resolve, reject) => {
+        const socket = createConnection({ host: "127.0.0.1", port: input.isolation.networkPort });
+        socket.setTimeout(2000, () => socket.destroy(new Error("Network denial probe timed out")));
+        socket.once("connect", () =>
+          socket.destroy(new Error("OS isolation allowed a network connection")),
+        );
+        socket.once("error", (error: NodeJS.ErrnoException) => {
+          if (error.code === "EPERM" || error.code === "EACCES") resolve(error.code);
+          else reject(error);
+        });
+      });
+      isolation = {
+        source: await deniedRead(input.isolation.sourceFile),
+        dependency: await deniedRead(input.isolation.dependencyFile),
+        network,
+      };
+    }
     if (input.expectRejected) {
       // A resolver failure must precede any launcher invocation, not merely any later error.
       await assert.rejects(installedDescriptor(), { code: "PLUGIN_E_ENTRY" });
@@ -284,6 +317,7 @@ async function run() {
           rejected: true,
           phase: "resolve-before-launch",
           launched: false,
+          isolation,
         }),
       );
     } else {
@@ -302,6 +336,7 @@ async function run() {
             resolvedFromInstalledRoot: true,
             remainingPids: gone(result.pid) ? [] : [result.pid],
             versions: process.versions,
+            isolation,
           },
           null,
           2,

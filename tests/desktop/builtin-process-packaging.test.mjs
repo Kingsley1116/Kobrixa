@@ -111,5 +111,12 @@ test(
     assert.equal(report.resolvedFromInstalledRoot, true);
     assert.equal(report.results[0].exited, true);
     assert.deepEqual(report.remainingPids, []);
+    if (report.isolationProfile) {
+      assert.match(report.isolationProfile, /\(deny network\*\)/);
+      for (const run of [report, report.missing, report.corrupt]) {
+        for (const field of ["source", "dependency", "network"])
+          assert.ok(["EPERM", "EACCES"].includes(run.isolation[field]), field);
+      }
+    }
   },
 );

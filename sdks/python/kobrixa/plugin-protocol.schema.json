@@ -79623,7 +79623,7 @@
             },
             "delivery": {
               "type": "string",
-              "const": "control"
+              "const": "telemetry"
             },
             "data": {
               "type": "object",

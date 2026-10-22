@@ -117,3 +117,107 @@ it("U07 times out at thirty seconds and ignores a late successful handler", asyn
     vi.useRealTimers();
   }
 });
+
+it.each([16384, 16385])(
+  "U07 SDK dispatch validates %i serialized argument bytes",
+  async (bytes) => {
+    const args = {
+      a: "a".repeat(4000),
+      b: "b".repeat(4000),
+      c: "c".repeat(4000),
+      d: "界".repeat(1000),
+    };
+    args.d += "x".repeat(bytes - Buffer.byteLength(JSON.stringify(args)));
+    expect(Buffer.byteLength(JSON.stringify(args))).toBe(bytes);
+    const registry = new ContextCommands("test.ui");
+    const handler = vi.fn(() => ({ output: {}, fieldErrors: [] }));
+    registry.registerContext(
+      "test.ui.run",
+      Object.fromEntries(
+        Object.keys(args).map((key) => [
+          key,
+          { type: "string" as const, maxLength: 4000, nullable: false },
+        ]),
+      ),
+      handler,
+    );
+    const result = registry.invoke(
+      {
+        ...call(),
+        arguments: args,
+        context: {
+          ...call().context,
+          origin: "panel",
+          binding: {
+            contributionId: "test.ui.panel",
+            panelInstance: id(2),
+            kind: "panel",
+            uiResourceGeneration: 1,
+            generation: 1,
+            hostEpoch: id(3),
+            processEpoch: id(4),
+          },
+          form: { revision: 1, values: {} },
+        },
+      },
+      new AbortController().signal,
+    );
+    if (bytes === 16384) {
+      expect(await result).toMatchObject({ ok: true });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0]).toBeDefined();
+    } else {
+      await expect(result).rejects.toMatchObject({ code: -32602 });
+      expect(handler).not.toHaveBeenCalled();
+    }
+  },
+);
+
+import { createMemoryChannelPair, RpcPeer } from "@kobrixa/plugin-protocol";
+it("U07 lost ordinary command reply times out; a late reply and same-invocation retry never replay its mutation", async () => {
+  vi.useFakeTimers();
+  const [hostEnd, pluginEnd] = createMemoryChannelPair();
+  let held: string | undefined;
+  const registry = new ContextCommands("test.ui");
+  let mutations = 0;
+  const invocations: string[] = [];
+  registry.registerContext("test.ui.run", {}, (ctx) => {
+    invocations.push(ctx.invocationId);
+    mutations++;
+    return { output: { mutations }, fieldErrors: [] };
+  });
+  const plugin = new RpcPeer({
+    ...pluginEnd,
+    send: (text) => {
+      const message = JSON.parse(text);
+      if ("result" in message && held === undefined) held = text;
+      else pluginEnd.send(text);
+    },
+  });
+  const host = new RpcPeer(hostEnd);
+  plugin.handle("command/invoke", (input, context) => registry.invoke(input, context.signal));
+  try {
+    const first = host.request("command/invoke", call(), { timeoutMs: 100 });
+    const rejected = expect(first).rejects.toMatchObject({ code: -32001 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(held).toBeDefined();
+    expect(invocations).toEqual([call().invocationId]);
+    expect(mutations).toBe(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    pluginEnd.send(held!);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invocations).toEqual([call().invocationId]);
+    expect(mutations).toBe(1);
+    expect(await host.request("command/invoke", call())).toMatchObject({
+      ok: true,
+      value: { output: { mutations: 1 } },
+    });
+    expect(invocations).toEqual([call().invocationId]);
+    expect(mutations).toBe(1);
+  } finally {
+    host.close();
+    plugin.close();
+    vi.useRealTimers();
+  }
+});

@@ -15,13 +15,20 @@ const plainGlyphs = process.argv.slice(2).includes("--plain-glyphs");
 const diagnostics = process.argv.slice(2).includes("--renderer-diagnostics");
 const legacy = process.argv.slice(2).includes("--legacy-compatibility");
 const reopen = process.argv.slice(2).includes("--reopen");
+const presentation = process.argv.slice(2).includes("--presentation");
+const secondInstance = process.argv.slice(2).includes("--second-instance");
 assert.ok(
   process.argv
     .slice(2)
     .every((arg) =>
-      ["--plain-glyphs", "--renderer-diagnostics", "--legacy-compatibility", "--reopen"].includes(
-        arg,
-      ),
+      [
+        "--plain-glyphs",
+        "--renderer-diagnostics",
+        "--legacy-compatibility",
+        "--reopen",
+        "--presentation",
+        "--second-instance",
+      ].includes(arg),
     ),
 );
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-browser-")));
@@ -32,7 +39,7 @@ await cp(
   path.join(directory, "node_modules"),
   { recursive: true },
 );
-if (diagnostics) {
+if (diagnostics || presentation) {
   const { build: buildRenderer } = await import("vite");
   await buildRenderer({
     root: path.join(root, "apps/desktop"),
@@ -74,6 +81,17 @@ for (let n = 0; n < 2; n++) {
   // Diagnostic mode isolates a platform emoji-rasterization failure. Keep the
   // wire Unicode assertion intact; this mode cannot establish emoji UI support.
   if (plainGlyphs) data.panel.fields.note.initial = "界";
+  if (presentation) {
+    data.panel.nodes.push({
+      id: "recovery",
+      type: "action",
+      label: { en: "Core recovery", "zh-TW": "核心復原" },
+      variant: "normal",
+      enabledWhen: { op: "eq", left: { scope: "form", key: "enabled" }, right: false },
+      action: { kind: "core", action: "openRecovery" },
+    });
+    data.panel.nodes.find((node) => node.id === data.panel.root).children.push("recovery");
+  }
   for (const [file, object] of [
     ["kobrixa-plugin.json", data.manifest],
     ["panel.json", data.panel],
@@ -103,6 +121,15 @@ await build({
   format: "cjs",
   external: ["electron"],
 });
+if (secondInstance)
+  await build({
+    entryPoints: [path.join(root, "tests/desktop/declarative-ui-secondary-main.ts")],
+    outfile: path.join(directory, ".vite/build/ui-secondary.cjs"),
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    external: ["electron"],
+  });
 await build({
   entryPoints: [path.join(root, "tests/desktop/declarative-ui-browser.ts")],
   outfile: probe,
@@ -119,6 +146,7 @@ const artifact = {
     0,
   glyphs: plainGlyphs ? "cjk-diagnostic" : "emoji-and-cjk",
   rendererInstrumentation: diagnostics,
+  presentationInstrumentation: presentation,
   ...(compatibility ? { legacy: compatibility.provenance } : {}),
   sha256: Object.fromEntries(
     await Promise.all(
@@ -134,6 +162,7 @@ const artifact = {
           .filter((entry) => entry.isFile())
           .map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name))),
         ".vite/build/ui-browser-main.cjs",
+        ...(secondInstance ? [".vite/build/ui-secondary.cjs"] : []),
         "probe.js",
         "source-0/main.cjs",
         "source-1/main.cjs",
@@ -160,6 +189,8 @@ const child = spawn(
     `--ui-browser-output=${output}`,
     `--ui-browser-probe=${probe}`,
     ...(diagnostics ? ["--ui-browser-diagnostics"] : []),
+    ...(presentation ? ["--ui-browser-presentation"] : []),
+    ...(secondInstance ? ["--ui-browser-second-instance"] : []),
     ...(reopen ? ["--ui-browser-reopen"] : []),
     ...(compatibility ? ["--ui-browser-legacy", `--plugin-python=${compatibility.python}`] : []),
     `--user-data-dir=${path.join(directory, "profile")}`,

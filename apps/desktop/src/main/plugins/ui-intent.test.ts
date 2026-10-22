@@ -68,6 +68,10 @@ it("expires at issue+350, not receipt+350, and never accepts a challenge twice",
   await vi.advanceTimersByTimeAsync(1);
   expect(h.device.revokeScope).toHaveBeenCalled();
   expect(h.intent.begin(binding, "late")).toBeNull();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(h.intent.scope(binding)).toBeUndefined();
+  expect(h.intent.begin(binding, "still-late")).toBeNull();
+  expect(h.intent.pulse(binding, first, null, null)).toBe(false);
   h.intent.dispose();
 });
 it("release before a delayed command response tombstones the input token synchronously", () => {

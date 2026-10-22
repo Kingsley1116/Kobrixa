@@ -186,3 +186,310 @@ test("AM-19: actual shared validator rejects identical malformed resources and b
   });
   assert.equal(validate(overNodes).ok, false);
 });
+
+// Required T9 publication gate; observations must come from retained actual runs.
+const matrixChecks = {
+  U01: (row) => {
+    assert.deepEqual([...row.components].sort(), [...types].sort());
+    assert.deepEqual(row.settingsControls, ["boolean", "number", "text", "choice"]);
+    assert.equal(row.applyButton, false);
+    assert.equal(row.invalidDraftPreserved, true);
+  },
+  U02: (row) => {
+    for (const reason of [
+      "version",
+      "unknown-node",
+      "extra-field",
+      "translation",
+      "cycle",
+      "orphan",
+      "duplicate",
+      "reference",
+      "path",
+      "symlink",
+      "condition",
+      "prototype",
+    ])
+      assert.equal(row.rejections[reason].rejectedBeforeDispatch, true, reason);
+    assert.equal(row.htmlLiteral, true);
+    assert.equal(row.codeDetailPairsChecked, true);
+  },
+  U03: (row) => {
+    for (const name of [
+      "nodes",
+      "depth",
+      "resourceBytes",
+      "sourceBytes",
+      "hostBytes",
+      "codePoints",
+      "utf8",
+    ])
+      assert.deepEqual(row.boundaries[name], {
+        minusOne: true,
+        exact: true,
+        plusOneRejected: true,
+      });
+    assert.equal(row.repeatedPathCharged, true);
+    assert.equal(row.unicodeDeterministic, true);
+  },
+  U04: (row) => {
+    assert.ok(row.subscribeAt < row.firstCatalogAt);
+    for (const key of [
+      "stalePageDiscarded",
+      "lateResourceDiscarded",
+      "revocationImmediate",
+      "resourceAndExecutionGenerationsDistinct",
+      "adapterThrowQuarantined",
+      "latePatchRejected",
+    ])
+      assert.equal(row[key], true, key);
+  },
+  U05: (row) => {
+    for (const key of [
+      "atomicPatch",
+      "draftRetained",
+      "focusRetained",
+      "staleResourceDetail",
+      "gapSnapshotBarrier",
+      "terminalPreserved",
+    ])
+      assert.equal(row[key], true, key);
+    assert.ok(row.peakPatchQueue <= 4 && row.peakPatchBytes <= 65536);
+    assert.ok(row.overflowDurationMs >= 30_000);
+    assert.equal(row.linearQueueGrowth, false);
+  },
+  U06: (row) => {
+    assert.equal(row.savedSdkVersion, "1.4.0");
+    assert.match(row.savedSdkCommit, /^[0-9a-f]{40}$/);
+    assert.deepEqual(row.languages, ["js", "python"]);
+    assert.deepEqual(row.initializeFields, [
+      "apiVersion",
+      "grantedPermissions",
+      "locale",
+      "pluginId",
+    ]);
+    assert.equal(row.legacyResult, null);
+    assert.equal(row.newNotificationsToOldSdk, 0);
+    assert.equal(row.newSdkLegacyUsesExecute, true);
+    assert.equal(row.oldSdkUiFailure, "PLUGIN_E_HANDSHAKE");
+  },
+  U07: (row) => {
+    for (const key of [
+      "argsExact16KiBAccepted",
+      "argsPlusOneRejected",
+      "formRaceRejected",
+      "managementBindingAbsent",
+      "crossSourceRejected",
+      "argumentContextNotPromoted",
+      "duplicateInvokedOnce",
+      "invocationIdNotAction",
+      "actionClaimOnce",
+      "exceptionSanitized",
+      "cancelNoReplay",
+      "timeoutNoReplay",
+      "lostReplyNoReplay",
+    ])
+      assert.equal(row[key], true, key);
+  },
+  U08: (row) => {
+    assert.ok(row.maxSubscriptions <= 32 && row.maxPending <= 16);
+    assert.ok(row.maxTelemetryFrames <= 64 && row.maxTelemetryBytes <= 65536);
+    assert.ok(row.maxTelemetryQueueBytes <= 262144 && row.maxControlSlots <= 8);
+    for (const key of [
+      "validationBeforeEnqueue",
+      "enqueueBeforeAck",
+      "callbackDoesNotBlockControl",
+      "futureAckRejected",
+      "gapSnapshotBarrier",
+      "foreignUnsubscribeRejected",
+      "noRetirementLeak",
+      "noSettingsUnwatchAlias",
+    ])
+      assert.equal(row[key], true, key);
+    assert.deepEqual(row.unsubscribeResults, [true, false]);
+  },
+  U09: (row) => {
+    assert.equal(row.cadenceMs, 100);
+    assert.deepEqual(row.clock, { at349Live: true, at350Revoked: true, at351Revoked: true });
+    for (const key of [
+      "oldChallengeRejected",
+      "oldInputTokenRejected",
+      "oldGestureRejected",
+      "pointerCancel",
+      "keyUp",
+      "lostCapture",
+      "repeatSuppressed",
+      "multiPointerSuppressed",
+      "coastEscalatedToBrake",
+      "staleReceiptDoesNotRenew",
+    ])
+      assert.equal(row[key], true, key);
+  },
+  U10: (row) => {
+    assert.equal(row.broker, "actual-3A");
+    assert.equal(row.provider, "formal-3A-fake-provider");
+    assert.deepEqual(row.boundaries, ["prepare", "start", "arm", "pulse"]);
+    assert.equal(row.composition, "createDesktopFoundation");
+    assert.equal(row.mockIntent, false);
+    assert.equal(row.cases.length, 48);
+    const keys = new Set(
+      row.cases.map((item) => `${item.boundary}/${item.position}/${item.fault}`),
+    );
+    for (const boundary of row.boundaries)
+      for (const position of ["before", "after"])
+        for (const fault of [
+          "hide",
+          "authority-loss",
+          "cancel",
+          "renderer-freeze",
+          "renderer-crash",
+          "plugin-kill",
+        ])
+          assert.ok(keys.has(`${boundary}/${position}/${fault}`));
+    for (const item of row.cases) {
+      assert.ok(item.observations.some((event) => event.kind === "revoke"));
+      assert.ok(Array.isArray(item.trace));
+      assert.equal(item.oldStartCountAfterRevoke, 0);
+      assert.ok(item.wireProof.length > 0);
+    }
+    assert.equal(row.lostStartReplyReplayed, false);
+    assert.equal(row.lateAckRenewed, false);
+    assert.equal(row.stopReadbackUnderPressure, true);
+    for (const event of [
+      "hide",
+      "authority-loss",
+      "cancel",
+      "renderer-freeze",
+      "renderer-crash",
+      "plugin-kill",
+    ])
+      assert.equal(row.races[event].oldStartCountAfterRevoke, 0, event);
+    assert.equal(row.coreFaultRetained, true);
+  },
+  U11: (row) => {
+    for (const key of [
+      "requiredRefused",
+      "toggleWithoutDeveloperMode",
+      "togglePersisted",
+      "optionalOnlyCrashUnlocked",
+      "thirdPartyUncleanLocked",
+      "unresponsiveLocked",
+      "markerFailureBlocksThirdParty",
+      "corruptMarkerHandled",
+      "userDisableSurvivesRestore",
+      "recoveryVisibleWithAllOptionalDisabled",
+    ])
+      assert.equal(row[key], true, key);
+    assert.equal(row.coldSafeModeOptionalSpawns, 0);
+    assert.equal(row.coldSafeModeOptionalRegistrations, 0);
+  },
+  U13: (row) => {
+    assert.equal(row.windowMs, 300000);
+    assert.equal(row.failureLimit, 3);
+    assert.equal(row.launchFailuresCounted, true);
+    assert.equal(row.handshakeFailuresCounted, true);
+    assert.equal(row.normalShutdownCounted, false);
+    assert.equal(row.explicitReset, true);
+    assert.equal(row.automaticRestarts, 0);
+    assert.equal(row.replayedCommands, 0);
+    assert.equal(row.lateSpawnForceKilled, true);
+    assert.deepEqual(row.remainingPids, []);
+  },
+  U14: (row) => {
+    for (const key of [
+      "hashes",
+      "asarUnpack",
+      "arbitraryCwd",
+      "offline",
+      "noPathNode",
+      "noCheckout",
+      "noWorkspaceNodeModules",
+      "missingRejected",
+      "corruptRejected",
+    ])
+      assert.equal(row[key], true, key);
+    assert.equal(row.fixtureOnly, true);
+    assert.deepEqual(row.remainingPids, []);
+    assert.equal(row.productEntries, "pending-3C-3D-3E");
+  },
+  U15: (row) => {
+    assert.deepEqual(row.locales, ["en", "zh-TW"]);
+    assert.deepEqual(row.themes, ["light", "dark"]);
+    assert.equal(row.widthPx, 320);
+    assert.equal(row.scalePercent, 125);
+    for (const key of [
+      "keyboard",
+      "focus",
+      "conditions",
+      "coreRecoveryIndependent",
+      "siblingTabsExclusive",
+      "remountNoDuplicateSubscription",
+      "remountNoDuplicateGesture",
+    ])
+      assert.equal(row[key], true, key);
+    assert.equal(row.motorProductRelocation, "pending-3C");
+  },
+  U16: (row) => {
+    for (const key of [
+      "forgedSender",
+      "expired",
+      "consumed",
+      "oldWorkbench",
+      "oldHostEpoch",
+      "wrongItem",
+      "wrongSession",
+      "wrongRecord",
+      "actionRefSubstitution",
+      "invocationIdSubstitution",
+    ])
+      assert.equal(row.rejected[key], true, key);
+    assert.equal(row.pluginCannotStopForeignOwner, true);
+    assert.equal(row.resourceFreeDisconnectOrdered, true);
+    assert.equal(row.actualSaveDisconnect, "pending-X-T1");
+  },
+  U17: (row) => {
+    assert.equal(row.secondaryWriters, 0);
+    assert.equal(row.secondaryProviders, 0);
+    assert.equal(row.secondaryPlugins, 0);
+    assert.equal(row.primaryFocused, true);
+    assert.equal(row.suspendReason, "suspended");
+    assert.equal(row.healthyGenerationRetained, true);
+    assert.equal(row.wakeReplays, 0);
+    assert.equal(row.oldTokenRejected, true);
+    assert.equal(row.providerLossKeepsConsumer, true);
+    assert.equal(row.rendererLossRetiresConsumer, true);
+    assert.equal(row.fileExchangeMs, 10000);
+    assert.equal(row.ordinaryExchangeMs, 5000);
+    assert.equal(row.cleanupMs, 24000);
+    assert.equal(row.outerSafetyNetMs, 25000);
+    assert.equal(row.actualCheckpointRecovery, "pending-X-T1");
+  },
+};
+test(
+  "U01-U17: P160 matrix closes only observed real gates",
+  {
+    skip: process.env.KOBRIXA_UI_MATRIX
+      ? false
+      : "matrix evidence absent; not publication acceptance",
+  },
+  async () => {
+    const matrix = JSON.parse(await readFile(process.env.KOBRIXA_UI_MATRIX, "utf8"));
+    for (const [id, verify] of Object.entries(matrixChecks)) {
+      const row = matrix[id];
+      assert.ok(row, id);
+      assert.equal(row.level, "actual", `${id}: mock/port fixture cannot close a real gate`);
+      assert.ok(row.proof.length > 0, `${id}: raw evidence references required`);
+      for (const proof of row.proof)
+        assert.ok((await readFile(proof)).length > 0, `${id}: ${proof}`);
+      verify(row);
+    }
+    assert.equal(matrix.U12.status, "pending-real-persistence");
+    assert.equal(matrix.U12.closer, "X-T1");
+    assert.equal(
+      matrix.U12.producer,
+      "tests/desktop/plugin-persistence-main.ts#createFoundationFixture",
+    );
+    assert.equal(matrix.U12.portFixturePassed, true);
+    assert.equal(matrix.U12.realPassed, false);
+  },
+);
