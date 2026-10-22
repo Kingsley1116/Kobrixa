@@ -4,7 +4,12 @@ import { builtinModules, createRequire } from "node:module";
 import { cp, mkdir, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { repositoryRoot, readVersion } from "./common.mjs";
-import { copyNativeDependencies } from "../../apps/desktop/packaging.ts";
+import {
+  copyNativeDependencies,
+  buildBuiltinPayloads,
+  validateBuiltinPayloads,
+  BUILTIN_PAYLOAD_UNPACK,
+} from "./desktop-packaging.mjs";
 import { macIdentity, required, signingModes, windowsVersion } from "../../apps/desktop/signing.ts";
 
 const desktop = path.join(repositoryRoot, "apps/desktop");
@@ -12,6 +17,7 @@ const version = await readVersion();
 const platform = process.platform,
   arch = process.arch;
 const release = process.env.KOBRIXA_RELEASE_BUILD === "true";
+const fixtureBuild = process.env.KOBRIXA_PLUGIN_FIXTURE_BUILD === "1";
 const modes = release ? signingModes() : { macos: false, windows: false };
 const stage = path.join(desktop, "out/stage");
 const output = path.join(desktop, "out");
@@ -64,9 +70,11 @@ await viteBuild({
   base: "./",
   build: { outDir: ".vite/renderer/main_window" },
 });
+await buildBuiltinPayloads(fixtureBuild);
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
 await cp(path.join(desktop, ".vite"), path.join(stage, ".vite"), { recursive: true });
+await validateBuiltinPayloads(stage, fixtureBuild);
 await copyNativeDependencies(stage, platform, arch);
 // Stage a standalone app: workspace packages are bundled, only actual runtime dependencies remain.
 const dependencyVersions = new Map();
@@ -176,7 +184,7 @@ await packageElectron({
     beforeBuild: async () => false,
     nodeGypRebuild: false,
     asar: { smartUnpack: false },
-    asarUnpack: ["**/*.node"],
+    asarUnpack: [BUILTIN_PAYLOAD_UNPACK],
     files: [
       "**/*",
       { from: path.join(stage, "node_modules"), to: "node_modules", filter: ["**/*"] },

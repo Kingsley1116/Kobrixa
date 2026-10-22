@@ -1,3 +1,4 @@
+import type { PluginUiBridge, CoreRecoveryPort } from "./plugin-ui.js";
 import type {
   StaticLanguagesCatalog,
   ReportLanguageRegistrationFailureInput,
@@ -103,6 +104,8 @@ export type PluginsViewEvent =
   { type: "state"; state: PluginsView } | { type: "notice"; notice: StoredNotice };
 export type PluginEvent = PluginsViewEvent;
 export interface PluginsApi {
+  ui: PluginUiBridge;
+  recovery: CoreRecoveryPort;
   state(): Promise<PluginsView>;
   diagnosticHelp(): Promise<PluginHelpCatalogView>;
   staticLanguages(): Promise<StaticLanguagesCatalog>;

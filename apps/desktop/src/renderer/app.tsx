@@ -87,9 +87,14 @@ import { Toolbar } from "./workbench/toolbar.js";
 import { DevicePanel } from "./device/device-panel.js";
 import { BottomPanel } from "./workbench/bottom-panel.js";
 import { isModalOpen, subscribeModals } from "./components/modal.js";
-import { settingsStore, useSettings } from "./settings/settings-state.js";
+import { pluginUiWindow, settingsStore, useSettings } from "./settings/settings-state.js";
 import { useFilePreferences } from "./settings/file-settings.js";
 import { PluginRecoveryNotice } from "./settings/plugin-recovery.js";
+import { pluginRecoveryPort } from "./settings/plugins-panel.js";
+import { pluginUiCopy } from "./settings/plugin-copy.js";
+import { PluginToolsPane } from "./plugin-ui/panel-host.js";
+import { PluginStatusHost } from "./plugin-ui/status-host.js";
+import { CoreRecoveryView } from "./plugin-ui/core-recovery.js";
 import type { Settings } from "./settings/settings.js";
 import {
   SettingsPanel,
@@ -164,6 +169,11 @@ type HistoryReview = {
 
 export function App(): React.JSX.Element {
   const { runtime: staticLanguages, snapshot: staticLanguageState } = useStaticLanguages();
+  const pluginUi = pluginUiWindow();
+  const recoveryRequest = useSyncExternalStore(
+    pluginUi.session.subscribe,
+    pluginUi.session.getRecoveryRequest,
+  );
   const [simulator, setSimulator] = useState<{
     workspaceId: string;
     projectName: string;
@@ -224,17 +234,33 @@ export function App(): React.JSX.Element {
   } = settings;
   const deviceOpen = rightPanel !== null;
   const t = copy[locale];
+  const uiLabels = pluginUiCopy[locale];
   const [settingsCategory, setSettingsCategory] = useState<{
     category: "appearance" | "shortcuts" | "updates" | "plugins";
     request: number;
   }>({ category: "appearance", request: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsActive, setSettingsActive] = useState(false);
+  const [settingsActive, updateSettingsActive] = useState(false);
+  const setSettingsActive = (next: boolean): void => {
+    pluginUi.gate("settings", next);
+    updateSettingsActive(next);
+  };
+  const recoveryPort = useMemo(
+    () =>
+      pluginRecoveryPort(pluginUi.recovery, () => {
+        pluginUi.gate("settings", true);
+        setSettingsCategory((previous) => ({ category: "plugins", request: previous.request + 1 }));
+        setSettingsOpen(true);
+        updateSettingsActive(true);
+        document.getElementById("settings-title")?.focus({ preventScroll: true });
+      }),
+    [pluginUi],
+  );
   const [sidebarMode, setSidebarMode] = useState<"files" | "search">("files");
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [quickOpenWorkspace, setQuickOpenWorkspace] = useState<string>();
   const setToolTab = (value: Settings["ev3Tab"]): void => settingsStore.set("ev3Tab", value);
-  const toggleRightPanel = (panel: "ev3" | "collab"): void =>
+  const toggleRightPanel = (panel: "ev3" | "collab" | "plugins"): void =>
     settingsStore.set("rightPanel", (previous) => (previous === panel ? null : panel));
   const setFilesOpen = (
     value: Settings["filesOpen"] | ((previous: Settings["filesOpen"]) => Settings["filesOpen"]),
@@ -695,7 +721,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     restoration.current ??= (async () => {
       try {
-        await staticLanguages.ready;
+        await Promise.all([staticLanguages.ready, pluginUi.ready]);
         const saved = await window.kobrixa.workspace.restoreSession();
         setSessionIssues(saved.issues);
         for (const summary of saved.workspaces)
@@ -741,6 +767,9 @@ export function App(): React.JSX.Element {
     historyReview ||
     (workspace && quickOpenWorkspace === workspace.id),
   );
+  useLayoutEffect(() => {
+    pluginUi.gate("modal", modalOpen || updatePreparing);
+  }, [pluginUi, modalOpen, updatePreparing]);
   const diagnostics = useMemo(() => {
     const seen = new Set<string>();
     return [...liveDiagnostics, ...buildDiagnostics].filter((item) => {
@@ -1793,7 +1822,7 @@ export function App(): React.JSX.Element {
     selected: WorkspaceSummary,
     view?: WorkspaceView,
   ): Promise<ProjectSession> {
-    await staticLanguages.ready;
+    await Promise.all([staticLanguages.ready, pluginUi.ready]);
     const existing = sessions.get(selected.id);
     if (existing) return existing;
     const project = sessions.add(selected, view);
@@ -2000,7 +2029,7 @@ export function App(): React.JSX.Element {
     file: string,
     replaceTabs = false,
   ): Promise<boolean> {
-    await staticLanguages.ready;
+    await Promise.all([staticLanguages.ready, pluginUi.ready]);
     const target = `${current.id}\0${file}`;
     if (fileOpenRequest.current.target !== target) {
       fileOpenRequest.current.target = target;
@@ -2056,7 +2085,7 @@ export function App(): React.JSX.Element {
     workspaceId = workspaceStateRef.current?.id,
     reviewed?: WorkspaceFileSnapshot,
   ): Promise<boolean> {
-    await staticLanguages.ready;
+    await Promise.all([staticLanguages.ready, pluginUi.ready]);
     const project = sessions.get(workspaceId);
     if (!project || !workspaceId || !canMutateWorkspace(workspaceId)) return false;
     const sharedSync = collabFiles.for(workspaceId);
@@ -3232,13 +3261,22 @@ export function App(): React.JSX.Element {
           devicePanelOpen={rightPanel === "ev3"}
           onDevice={() => toggleRightPanel("ev3")}
           collab={
-            <CollabStatusChip
-              store={collab}
-              locale={locale}
-              active={rightPanel === "collab"}
-              pending={deviceControl?.state.requests.length ?? 0}
-              onOpen={() => toggleRightPanel("collab")}
-            />
+            <>
+              <button
+                className="plugin-tools-toggle"
+                aria-pressed={rightPanel === "plugins"}
+                onClick={() => toggleRightPanel("plugins")}
+              >
+                {uiLabels.tools}
+              </button>
+              <CollabStatusChip
+                store={collab}
+                locale={locale}
+                active={rightPanel === "collab"}
+                pending={deviceControl?.state.requests.length ?? 0}
+                onOpen={() => toggleRightPanel("collab")}
+              />
+            </>
           }
         />
         <ProjectTabs
@@ -3325,6 +3363,12 @@ export function App(): React.JSX.Element {
               }}
             />
           )}
+        <CoreRecoveryView
+          port={recoveryPort}
+          locale={locale}
+          labels={uiLabels}
+          request={recoveryRequest}
+        />
         <PluginRecoveryNotice
           locale={locale}
           onOpenSettings={() => {
@@ -4026,6 +4070,17 @@ export function App(): React.JSX.Element {
           className={`sidebar device-panel ${deviceOpen ? "" : "collapsed"}`}
           aria-hidden={!deviceOpen}
         >
+          <div
+            className="right-pane-content plugin-pane"
+            hidden={rightPanel !== "plugins" || settingsActive}
+          >
+            <PluginToolsPane
+              session={pluginUi.session}
+              locale={locale}
+              labels={uiLabels}
+              onClose={() => settingsStore.set("rightPanel", null)}
+            />
+          </div>
           <div className="right-pane-content" hidden={rightPanel !== "ev3"}>
             <ToolsPanel
               tab={toolTab}
@@ -4519,6 +4574,7 @@ export function App(): React.JSX.Element {
         />
       )}
       <footer>
+        <PluginStatusHost session={pluginUi.session} locale={locale} labels={uiLabels} />
         <div className="status-group">
           {active ? (
             <span className={active.dirty || activeConflict ? "dirty" : ""}>

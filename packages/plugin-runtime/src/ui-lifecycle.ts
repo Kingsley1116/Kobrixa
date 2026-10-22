@@ -225,3 +225,175 @@ export function resourceFreePersistence150(): PersistenceParticipant150 {
     },
   };
 }
+
+import type { UiBinding } from "@kobrixa/plugin-protocol";
+import type { UiStateRegistry } from "./ui-state.js";
+import type { UiSubscriptions } from "./ui-subscriptions.js";
+export function createUiLifetimePort(input: {
+  catalog: UiCatalogPort;
+  states: Pick<UiStateRegistry, "instances" | "retireExecution">;
+  subscriptions: Pick<UiSubscriptions, "retire">;
+  revoke(owner: ResourceOwner, binding: UiBinding): void;
+}): UiCatalogPort {
+  return {
+    catalog: (value) => input.catalog.catalog(value),
+    resource: (value) => input.catalog.resource(value),
+    onEvent: (listener) => input.catalog.onEvent(listener),
+    retire: (owner) => {
+      for (const binding of input.states.instances(owner)) input.revoke(owner, binding);
+      input.states.retireExecution(owner, "generation-retired");
+      input.subscriptions.retire(owner);
+      input.catalog.retire(owner);
+    },
+  };
+}
+
+const activationDeadlines = new WeakMap<AbortSignal, { deadline: number; now(): number }>();
+export function registerActivationDeadline(
+  signal: AbortSignal,
+  deadline: number,
+  now: () => number,
+): () => void {
+  if (activationDeadlines.has(signal)) throw new Error("Activation deadline already registered.");
+  activationDeadlines.set(signal, { deadline, now });
+  return () => {
+    activationDeadlines.delete(signal);
+  };
+}
+export function remainingActivationMs(signal: AbortSignal): number {
+  signal.throwIfAborted();
+  const entry = activationDeadlines.get(signal);
+  if (!entry) throw new Error("Missing supervisor activation deadline.");
+  const remaining = entry.deadline - entry.now();
+  if (remaining <= 0) throw new Error("Activation deadline expired.");
+  return remaining;
+}
+
+function phaseDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  void promise.catch(() => undefined);
+  return { promise, resolve, reject };
+}
+export class ChannelActivation {
+  readonly #initialized = phaseDeferred<Stage3ChannelContext>();
+  readonly #ready = phaseDeferred<void>();
+  readonly initialized = this.#initialized.promise;
+  readonly ready = this.#ready.promise;
+  #run: Promise<void> | undefined;
+  #disposed = false;
+  readonly #disposal = phaseDeferred<never>();
+  constructor(
+    readonly context: Stage3ChannelContext,
+    private readonly binding: Stage3ChannelBinding,
+    private readonly signal: AbortSignal,
+    private readonly current: () => boolean,
+  ) {
+    signal.addEventListener("abort", this.#abort, { once: true });
+    if (signal.aborted) this.#abort();
+  }
+  #abort = () => {
+    const reason = this.signal.reason ?? new Error("Channel activation aborted.");
+    this.#initialized.reject(reason);
+    this.#ready.reject(reason);
+  };
+  #check(): void {
+    this.signal.throwIfAborted();
+    if (this.#disposed || !this.current() || this.context.peer.closed)
+      throw new Error("Channel owner is no longer current.");
+  }
+  async #wait(work: Promise<void>): Promise<void> {
+    let abort!: () => void;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(this.signal.reason ?? new Error("Channel activation aborted."));
+      this.signal.addEventListener("abort", abort, { once: true });
+      if (this.signal.aborted) abort();
+    });
+    try {
+      await Promise.race([work, cancelled, this.#disposal.promise]);
+      this.#check();
+    } finally {
+      this.signal.removeEventListener("abort", abort);
+    }
+  }
+  afterInitialize(): Promise<void> {
+    if (!this.#run) {
+      const completion = phaseDeferred<void>();
+      this.#run = completion.promise;
+      void this.#advance().then(completion.resolve, completion.reject);
+    }
+    return this.#run;
+  }
+  async #advance(): Promise<void> {
+    try {
+      this.#check();
+      this.#initialized.resolve(this.context);
+      await this.#wait(this.binding.initialized(this.signal));
+      this.#check();
+      await this.#wait(this.binding.ready(this.signal));
+      this.#ready.resolve();
+    } catch (error) {
+      this.#initialized.reject(error);
+      this.#ready.reject(error);
+      throw error;
+    }
+  }
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.signal.removeEventListener("abort", this.#abort);
+    const error = new Error("Channel disposed.");
+    this.#disposal.reject(error);
+    this.#initialized.reject(error);
+    this.#ready.reject(error);
+    this.binding.dispose();
+  }
+}
+
+import type {
+  FoundationDiagnostics,
+  FoundationCounters,
+  FoundationDiagnosticEvent,
+} from "./ui-host-ports.js";
+const runtimeDiagnostics = new WeakMap<object, FoundationDiagnostics>();
+/** Internal registration for the manager-owned attachment; never exported from the barrel. */
+export function registerRuntimeDiagnostics(
+  instance: UiRuntimeAttachment,
+  owners: () => number,
+  timers: () => number,
+): void {
+  const listeners = new Set<(event: FoundationDiagnosticEvent) => void>();
+  runtimeDiagnostics.set(
+    instance,
+    Object.freeze({
+      snapshot: (): FoundationCounters =>
+        Object.freeze({
+          owners: owners(),
+          timers: timers(),
+          bindings: 0,
+          subscriptions: 0,
+          queuedEvents: 0,
+          queuedBytes: 0,
+          pendingInvocations: 0,
+          actionTokens: 0,
+          resourceReaders: 0,
+          workerJobs: 0,
+        }),
+      onEvent: (listener: (event: FoundationDiagnosticEvent) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    }),
+  );
+}
+export function diagnosticsFor(instance: object): FoundationDiagnostics {
+  const diagnostics = runtimeDiagnostics.get(instance);
+  if (!diagnostics) throw new Error("Unknown runtime attachment.");
+  return diagnostics;
+}

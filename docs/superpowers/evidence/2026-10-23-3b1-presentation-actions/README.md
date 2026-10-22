@@ -1,0 +1,11 @@
+# Native form and core-action observations
+
+Command: `node tests/desktop/declarative-ui-browser-run.mjs --plain-glyphs --presentation`, exit 0. Product main/preload built from ad2083c; the actual App/PanelTree renderer uses the test presentation observer in the same module graph. Dirty files were controller observers, the matrix gate and a temporary observer typecheck configuration. `artifact-identity.json.gz` records the source and built artifact hashes. No hardware was connected.
+
+Four en/zh-TW × light/dark cases at Electron zoom 1.25 and approximately 320 CSS px width passed. Each case retained the focused invalid numeric draft across patches, invoked the actual core recovery route while invalid and with its feature enabled-condition false, and observed an unchanged host formRevision. After native correction to 25 and Tab, an explicit action reached the actual host with accepted formRevision exactly previous +1 and speed 25. The first case also closes/reopens the invalid draft with a fresh panelInstance before submitting it. Subsequent cases exercise explicit revision reconciliation. Checkbox conditions, sibling panes, bounded DOM announcements and normal close with no remaining child PIDs passed. Eight screenshots and four AX trees are retained.
+
+This receipt does not attest screen-reader speech, default emoji rendering, physical motion, other OSes or clean-machine installation. It does not cover an oversized field draft: independent review subsequently found that boundary and a late-reconciliation-error issue, corrected separately in 7add202 with actual IPC and deferred-reply regressions. The original ad2083c receipt is intentionally unchanged.
+
+Original run: `/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-29LLms`. Passing log: `/private/tmp/kobrixa-b1-ad2083-presentation2.log`. The preceding observer attempt rejected an unsupported `secondary` button variant; the fixture was corrected to `normal`, without changing product validation.
+
+`files.json` hashes retained files and exact uncompressed originals. Validate with `KOBRIXA_UI_PRESENTATION_REPORT=docs/superpowers/evidence/2026-10-23-3b1-presentation-actions/browser.json.gz node --test tests/desktop/declarative-ui-presentation.test.mjs`: one passed, zero skipped. The observer typecheck and owned lint also passed.

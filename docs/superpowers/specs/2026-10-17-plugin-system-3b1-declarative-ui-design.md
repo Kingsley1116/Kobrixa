@@ -333,6 +333,8 @@ resource 讀取／重試採現有 [`readPackagedJson`](../../../packages/plugin-
 
 `uiResourceGeneration` 是每 source 的 counter；任一 UI resource／宣告／隔離結果變更即增加，保守撤該 source 舊 bindings，避免僅靠 owner 清單漏掉同 source 被移除的一個 panel。catalog revision 另為 host-global counter；同 epoch 整數耗盡必須重建 host epoch，不 wrap 到 0。status 先可展示已驗證 initial resource；process ready 後才取得 execution binding，process crash 時撤動態 state 並明示 unavailable，不保留假的 recording 狀態。
 
+C-G1：generic renderer 在同 workbench 以 host-private memory best-effort 保留自願關閉 panel 的 field draft（含選取與未提交 invalid raw），不使用 storage、不新增 wire／SDK API。identity 為 sourceKey／pluginId／id＋hostEpoch／uiResourceGeneration／resourceDigest，並要求新 binding 的 execution generation／processEpoch 相同；close 通知只表示該 instance 關閉，不能當成 owner retirement。只沿 admitted fields 複製 scalar／raw，不合併任意屬性；payload 皆為 clone。最多 16 contributions，serialized draft＋raw 每筆 ≤32,768 bytes、總計 ≤524,288 bytes，deterministic LRU；oversize 整筆不保留、不截斷，raw 每欄仍 ≤4,000 code points，不 coercion invalid raw。每次 reopen 新建 state store／intent／binding，僅還原 draft／raw，private edit generation 僅追蹤 restoration／edits，不作 wire formRevision；wire formRevision 只在實際 feature action／hold begin 以最近 accepted host formRevision +1 提交一次；不繼承 snapshot／revision／gesture／operation／authority／command／error，不觸發 invoke、edit telemetry 或 private setForm，也不改 resource initial。invalid start 仍被 UI validation 阻擋，實際新 action 由 main 重驗。source／host／resource digest 或 generation 變更、execution retirement／process replacement、quarantine、safe-mode withdrawal 與 renderer disposal 清除 affected drafts；無 live record 的 retirement 亦清除，延遲舊 open／patch 不得復活。host registry 以每 execution／workbench 一筆、至多 256 筆 closed notification receipt（僅 owner／UiOwner／binding metadata，無 draft／resource、無 timer）保留 retirement 通知路徑；retireExecution／retireResource 清除並沿既有 revoked event 通知，無 live binding 亦然，不撤 catalog 或啟動 process。滿額淘汰最舊 receipt 時先送既有 overflow revoked，renderer 清除該 execution volatile drafts。hide／tab 在 live binding 內的既有行為不變；ui/patch 仍只改 data。
+
 ### 6.2 Feature 公開 UI 方法
 
 新增下列 plugin → host requests；owner 一律由 process channel 決定，request 不接受 sourceKey。`Result` 沿用 3A；成功 value 一律 object。
@@ -402,7 +404,7 @@ panel 的 `motionScopeRef` 只在 3A port 已接齊且有 live panel scope 時�
 
 host completed-invocation cache 另限 256 筆／4 MiB，先淘汰最舊完成項；不淘汰 pending 來接受新工作。cache miss 不能觸發 replay，renderer bridge 只接受 node action，沒有「重送 invocationId」方法。
 
-arguments 與 form 分開：arguments 是已宣告 bindings 計算出的 command input；form 是動作時 canonical fields，讓 feature 返回 fieldErrors。每個動作先本地驗證、同步遞增 formRevision；trusted bridge 將完整 typed draft（包括 hidden／disabled 的暫存值，invalid 值為 null）交 main，main 先求 conditions，再遮蔽不可用欄位、驗 arguments，最後建立公開 context。plugin 只收到遮蔽後 form，不收到 raw input 字串。main 重驗最新 binding；renderer 不能傳 caller、window、role、holder、processEpoch 的任意替代。resource 可要求條件，但不能自授 collaboration authority。
+arguments 與 form 分開：arguments 是已宣告 bindings 計算出的 command input；form 是動作時 canonical fields，讓 feature 返回 fieldErrors。每個 feature 動作先本地驗證，只提交 accepted host formRevision +1；private edit generation 用於抵擋 edit 後 late fieldErrors，不隨 submission 遞增。前次 submission 結果不確定（含拒絕、transport rejection／lost reply）時，下次明確動作先經既有 snapshot 對齊 accepted host formRevision，再送一次新動作；不得自動重試或重放副作用。hold end／cancel 使用 begin 原始 submission 快照，先 stop。trusted bridge 將完整 typed draft（包括 hidden／disabled 的暫存值，invalid 值為 null）交 main，main 先求 conditions，再遮蔽不可用欄位、驗 arguments，最後建立公開 context。plugin 只收到遮蔽後 form，不收到 raw input 字串。main 重驗最新 binding；renderer 不能傳 caller、window、role、holder、processEpoch 的任意替代。resource 可要求條件，但不能自授 collaboration authority。
 
 `fieldErrors` 只允許該 form 內的 field ID，每欄一筆；management 必須為空。結果抵達時只對同 invocation、binding 及 formRevision 顯示 field errors，若使用者已修改不覆蓋新 draft。`ok:true` 表示 handler 回傳有效結果，不代表 motion 已完成；operation 進度／終態由 devices snapshots／events 取得。output 中帶 operation ID 仍須後續 broker 查權；feature 回傳 JSON 無權生成 capability。
 
@@ -507,13 +509,13 @@ core 使用 3A 的 `DeviceRecoveryPort.snapshot/subscribe/stopCurrent/reconcile/
 - close tools 隱藏 pane；關閉個別 tab 銷毀 instance。兩者都觸發 matrix 的 motor stop，Lab 的 background reservation 保留。切換到 collaboration／legacy EV3、收合 sidebar、顯示 settings overlay 導致 window／panel 不可操作時，均須撤 motor intent，不能只用 `toolTab === "monitor"` 判斷。
 - footer 加通用 status area，最多 16 items；窄畫面使用可鍵盤操作的 overflow 清單，core safety／save-error 固定顯示且不被 overflow 藏掉。v1 status 純展示；Lab v2 open／stop 將由 3D 明確擴充。
 
-保存的 layout 只含 sourceKey／panelId／selected tab／寬度，沒有 binding、gesture、operation 或 pending command。restore 先過 safe-mode／catalog barrier，只還原 eligible 的 view；process 可因 visible panel 按需啟動，**不得自動連線、start、record 或重放 command**。不還原 motor draft 為執行意圖；per-port 暫存 draft 可由 3C 在同 process 以公開 action data 維持，跨 app 不持久化。
+保存的 layout 只含 sourceKey／panelId／selected tab／寬度，沒有 binding、gesture、operation 或 pending command。restore 先過 safe-mode／catalog barrier，只還原 eligible 的 view；process 可因 visible panel 按需啟動，**不得自動連線、start、record 或重放 command**。不還原 motor draft 為執行意圖；per-port 未提交 draft／invalid raw 由 §6 的 generic renderer volatile cache 保留，公開 action data 只含 accepted action 快照，不能保存未提交 raw；跨 app 不持久化。
 
 ### 10.2 Accessibility、theme、i18n
 
 所有 input 有可見 label、help／error 的 `aria-describedby`；required／invalid 使用標準 aria 與文字提示。group 使用 fieldset／legend 或有 accessible name 的 group；choice segmented 是 radio group，方向鍵移動，Tab 進出；range 與 number 都可鍵盤設定。Tab 選單用既有 [`TabList`](../../../apps/desktop/src/renderer/components/tab-list.tsx) 的 tabs 語意接法，hidden subtree 不可聚焦。
 
-hold button 同時支援 pointer、Space、Enter，附「按住執行，放開停止」及 10 秒上限說明；不能只靠 hover。取消／forced stop 不須二次 confirmation。元件更新保持 DOM key／focus；條件隱藏目前 focused field 時移至相鄰可見 group／action，若 active hold 先 cancel。禁用 start 要提供可讀 blocked reason，core Stop 仍可達。
+hold button 同時支援 pointer、Space、Enter，附「按住執行，放開停止」及 10 秒上限說明；不能只靠 hover。取消／forced stop 不須二次 confirmation。元件更新保持 DOM key／focus；條件隱藏目前 focused field 時移至相鄰可見 group／action，若 active hold 先 cancel。禁用 start 要提供可讀 blocked reason；僅 core stop／disconnect／openRecovery 忽略 form invalidity、feature enabledWhen 與 ordinary pending，仍檢查 active／current binding／visibility，且各 node 至多一筆 core pending，獨立於 ordinary busy。core 不消耗 feature formRevision，不取消普通 pending；openPanel 不自動豁免。
 
 progress 有 accessible name、min/max/current；indeterminate 不設假 value。status 使用 polite live region，最多每秒一次；alert 的新錯誤、unconfirmed 與 authority loss 即刻 announcement，相同文字／revision 去重。不要每個 telemetry sample 都打斷 screen reader。danger 不只靠紅色，light／dark 都用 host semantic color tokens、focus ring 與現有字級／spacing；不接受 plugin CSS 或顏色字串。
 

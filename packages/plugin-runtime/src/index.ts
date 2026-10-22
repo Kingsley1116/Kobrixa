@@ -19,7 +19,15 @@ export type * from "./device-resources.js";
 export type * from "./profile-writer-lock.js";
 export type * from "./core-actions.js";
 export type * from "./builtin-launch.js";
-export type * from "./ui-lifecycle.js";
+export type {
+  Stage3RuntimePorts,
+  Stage3HostAttachment,
+  Stage3ChannelContext,
+  Stage3ChannelBinding,
+  UiRuntimeAttachment,
+  OwnerRetirement,
+  RetirementDisposition,
+} from "./ui-lifecycle.js";
 export type * from "./ui-subscriptions.js";
 export type {
   PluginUiBridge,
@@ -30,4 +38,19 @@ export type {
   FoundationDiagnosticEvent,
 } from "./ui-host-ports.js";
 
-export { retireStage3Owner, resourceFreePersistence150, unavailableUi150 } from "./ui-lifecycle.js";
+export {
+  createUiLifetimePort,
+  ChannelActivation,
+  registerActivationDeadline,
+  remainingActivationMs,
+  retireStage3Owner,
+  resourceFreePersistence150,
+  unavailableUi150,
+} from "./ui-lifecycle.js";
+
+export { UiCatalog } from "./ui-catalog.js";
+export type { UiCatalogDependencies } from "./ui-catalog.js";
+export type { UiCatalogSource } from "./ui-host-ports.js";
+export { UiStateRegistry, currentStatusBindings } from "./ui-state.js";
+export { UiSubscriptions } from "./ui-subscriptions.js";
+export { sameUiBinding, sameResourceOwner } from "./ui-host-ports.js";

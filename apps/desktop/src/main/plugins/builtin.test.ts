@@ -534,3 +534,15 @@ it("F01 refuses a wrong allowlist factory identity and detaches the state listen
     await h.close();
   }
 });
+
+it("K160 preserves required compiler sources and never fabricates future feature processes", () => {
+  for (const id of ["kobrixa.basic-plus", "kobrixa.ev3"]) {
+    const source = BUILTIN_PLUGIN_SOURCES.find(
+      (item) => item.kind === "builtin" && pluginManifestSchema.parse(item.manifest).id === id,
+    );
+    expect(source).toMatchObject({ kind: "builtin", policy: "required" });
+  }
+  expect(
+    BUILTIN_PLUGIN_SOURCES.filter((source) => source.kind === "builtin" && source.launch),
+  ).toEqual([]);
+});

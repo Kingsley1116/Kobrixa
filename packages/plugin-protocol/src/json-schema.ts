@@ -1,3 +1,4 @@
+import { uiResourceV1Schema } from "./ui-resource.js";
 import { z } from "zod";
 import { resourceOwnerSchema } from "./device-types.js";
 import { commonFailureSchema } from "./business-result.js";
@@ -13,6 +14,7 @@ import {
 } from "./static-languages.js";
 
 export const SCHEMA_DEFINITIONS: Record<string, z.ZodType> = {
+  "ui-resource-v1": uiResourceV1Schema,
   resourceOwner: resourceOwnerSchema,
   commonFailure: commonFailureSchema,
   manifest: pluginManifestSchema,

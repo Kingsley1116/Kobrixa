@@ -133,6 +133,15 @@ jobs:
             pnpm test:device-broker:smoke
           fi
       - run: pnpm build:desktop
+      - name: Declarative UI bridge and SDK acceptance
+        shell: bash
+        run: |
+          export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:declarative-ui:smoke
+          else
+            pnpm test:declarative-ui:smoke
+          fi
       - name: Smoke test the packaged application
         shell: bash
         run: |

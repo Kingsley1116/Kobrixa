@@ -477,3 +477,71 @@ it("F20 never grants required policy when host policy is absent", async () => {
   const loaded = await readSource(source, { safeMode: false });
   expect(loaded.problems.map((item) => item.code)).toContain("PLUGIN_E_MANIFEST");
 });
+
+import { sourcePolicy } from "./registry.js";
+import type { Stage3BuiltinSource } from "./builtin-launch.js";
+
+it("R160 derives required/canToggle from the trusted source, never manifest policy (U11)", () => {
+  const source: Stage3BuiltinSource = {
+    kind: "builtin",
+    manifest: { id: "kobrixa.fixture", policy: "required" },
+    resources: {},
+    policy: "optional",
+  };
+  expect(sourcePolicy(source)).toEqual({ required: false, canToggle: true });
+  expect(sourcePolicy({ ...source, policy: "required" })).toEqual({
+    required: true,
+    canToggle: false,
+  });
+  expect(sourcePolicy({ kind: "development", directory: "/fixture" })).toEqual({
+    required: false,
+    canToggle: true,
+  });
+});
+
+it("R160 admits onPanel activation for an optional shipped source and isolates malformed optional metadata", async () => {
+  const source: Stage3BuiltinSource = {
+    kind: "builtin",
+    policy: "optional",
+    resources: {},
+    manifest: {
+      id: "acme.panel",
+      version: "1.0.0",
+      apiVersion: "^1.6.0",
+      runtime: { kind: "node", entry: "main.cjs" },
+      activationEvents: ["onPanel:acme.panel.main"],
+      contributes: {
+        panels: [
+          {
+            id: "acme.panel.main",
+            title: { en: "Panel" },
+            location: "right",
+            resource: { version: 1, path: "panel.json" },
+          },
+        ],
+      },
+    },
+    launch: {
+      sourceKey: "builtin:acme.panel",
+      pluginId: "acme.panel",
+      policy: "optional",
+      runtime: "node",
+      packageRoot: "/fixture",
+      entry: "main.cjs",
+      manifest: "kobrixa-plugin.json",
+      resourceIndex: "resource-index.json",
+    },
+  };
+  expect((await readSource(source, { safeMode: false })).problems).toEqual([]);
+  expect(
+    (await readSource({ ...source, manifest: {} }, { safeMode: false })).problems.length,
+  ).toBeGreaterThan(0);
+  expect(
+    (
+      await readSource(
+        { ...source, launch: { ...source.launch!, packageRoot: "relative" } },
+        { safeMode: false },
+      )
+    ).problems,
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "PLUGIN_E_ENTRY" })]));
+});

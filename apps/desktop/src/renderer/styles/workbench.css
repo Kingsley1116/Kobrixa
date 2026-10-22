@@ -3187,3 +3187,51 @@ footer {
   font-style: italic;
   opacity: 0.7;
 }
+
+.plugin-tools-toggle {
+  -webkit-app-region: no-drag;
+  white-space: nowrap;
+}
+.plugin-tools-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.right-pane-content.plugin-pane {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.right-pane-content.plugin-pane[hidden] {
+  display: none !important;
+}
+.workbench-header > .core-recovery {
+  max-height: 30vh;
+  overflow: auto;
+  border-color: var(--border);
+}
+.core-recovery [data-state="unconfirmed"],
+.core-recovery [data-state="save-failed"],
+.core-recovery [data-state="interrupted"],
+.core-recovery [data-state="process-failed"] {
+  border-inline-start: 3px solid var(--error);
+  padding-inline-start: 0.5rem;
+}
+.plugin-ui [data-tone="error"],
+.plugin-ui [data-variant="danger"] {
+  color: var(--error);
+}
+.plugin-ui [data-tone="warning"] {
+  color: var(--warning);
+}
+.plugin-ui [data-tone="success"] {
+  color: var(--success);
+}
+footer > .plugin-status-host {
+  flex: 0 1 auto;
+  max-width: 40%;
+}
+@media (max-width: 800px) {
+  footer > .plugin-status-host {
+    max-width: 30%;
+  }
+}

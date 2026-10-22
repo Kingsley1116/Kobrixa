@@ -1,0 +1,15 @@
+✔ U06/U07/U13: actual MessagePort and Python stdio receipts (2.222ms)
+✔ U01/U15: fixture uses every v1 component and real number/choice/hold arguments (0.857542ms)
+✔ U02/U03: independent malformed fixtures cannot mutate the valid baseline (1.14725ms)
+✔ U03: capacity fixture has 16 panels, 16 statuses, exactly 8 MiB UTF-8 resources (43.23525ms)
+✔ Python browser fixture clones manifest and registered command identity together (1.497292ms)
+✔ AM-19: actual shared validator rejects identical malformed resources and byte +1 (75.008709ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 171.40925
+PASS transport only; evidence directory /var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-acceptance-mCIEUt

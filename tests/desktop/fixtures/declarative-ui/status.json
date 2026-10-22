@@ -1,0 +1,20 @@
+{
+  "kind": "status",
+  "data": {
+    "ticks": {
+      "schema": {
+        "type": "string",
+        "maxLength": 64,
+        "nullable": false
+      },
+      "initial": "tick:0"
+    }
+  },
+  "text": {
+    "ref": {
+      "scope": "data",
+      "key": "ticks"
+    }
+  },
+  "tone": "info"
+}

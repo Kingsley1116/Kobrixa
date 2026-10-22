@@ -518,6 +518,8 @@ export function createFakeDeviceProvider(input: {
   now: () => number;
   profile?: "maximum";
   providerId?: string;
+  /** Acceptance-only exchange sequence; ordinary fixtures retain their minimal behavior. */
+  motionProfile?: "staged";
 }): { provider: BuiltinDeviceProvider; control: FakeProviderControl } {
   type Barrier = { hit: Promise<void>; mark: () => void; wait: Promise<void>; release: () => void };
   const barriers = new Map<string, Barrier>();
@@ -663,12 +665,25 @@ export function createFakeDeviceProvider(input: {
     ) {
       return super.setInputMode(session, request, work(ctx));
     }
-    override executeFiniteMotion(
+    override async executeFiniteMotion(
       session: ProviderSessionKey,
       motion: MotionAdmission["motion"],
       ctx: ProviderOperationContext,
     ) {
-      return super.executeFiniteMotion(session, motion, work(ctx));
+      const guarded = work(ctx);
+      if (input.motionProfile !== "staged")
+        return super.executeFiniteMotion(session, motion, guarded);
+      await guarded.exchange("preflight", async () => {});
+      if (motion.mode === "relative-angle") {
+        for (const step of ["helper-upload", "helper-run", "helper-arm"] as const)
+          await guarded.exchange(step, async () => {});
+      } else await guarded.exchange("motion-pulse", async () => {});
+      // Even the final held reply must revalidate before reporting completion.
+      guarded.assertContinuation("readback");
+      return {
+        ...success<MotionCompletion>({ movement: "completed", angle: 90, displacement: 90 }),
+        dispatch: "sent" as const,
+      };
     }
     override async stopAndReadback(
       session: ProviderSessionKey,

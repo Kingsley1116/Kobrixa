@@ -4,14 +4,14 @@ import { MessageChannelMain, utilityProcess } from "electron";
 import { spawnPluginProcess, type LaunchablePlugin } from "@kobrixa/plugin-runtime";
 import type * as PluginRuntime from "@kobrixa/plugin-runtime";
 import { afterEach, expect, it, vi } from "vitest";
-import { createDesktopLauncher } from "./launchers.js";
+import { builtinProcessEnvironment, createDesktopLauncher } from "./launchers.js";
 
 vi.mock("electron", () => ({
   utilityProcess: { fork: vi.fn() },
   MessageChannelMain: vi.fn(function () {
     return {
-      port1: { start: vi.fn(), close: vi.fn(), postMessage: vi.fn() },
-      port2: {},
+      port1: { start: vi.fn(), close: vi.fn(), postMessage: vi.fn(), on: vi.fn(), off: vi.fn() },
+      port2: { close: vi.fn() },
     };
   }),
 }));
@@ -285,4 +285,104 @@ it("F02 SDK event binding is one-shot and child mutation cannot replace the trus
     hostPeer.close();
     peer.close();
   }
+});
+
+it("removes Node loader injection from the utility process environment", async () => {
+  vi.stubEnv("NODE_OPTIONS", "--require /injected.cjs");
+  vi.stubEnv("NODE_PATH", "/injected");
+  try {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      postMessage: vi.fn(),
+      kill: vi.fn(),
+      pid: undefined,
+    });
+    vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+    const launched = createDesktopLauncher({})(plugin);
+    child.emit("spawn");
+    await launched;
+    const options = vi.mocked(utilityProcess.fork).mock.calls.at(-1)![2]!;
+    expect(options.env).not.toHaveProperty("NODE_OPTIONS");
+    expect(options.env).not.toHaveProperty("NODE_PATH");
+    expect(options.cwd).toBe(plugin.directory);
+    child.emit("exit", 0);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+it("kills a late spawn after timeout and never creates a port for it", async () => {
+  vi.useFakeTimers();
+  try {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      postMessage: vi.fn(),
+      kill: vi.fn(),
+      pid: undefined,
+    });
+    vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+    const before = vi.mocked(MessageChannelMain).mock.calls.length;
+    const launched = createDesktopLauncher({ spawnTimeoutMs: 20 })(plugin);
+    const rejected = expect(launched).rejects.toMatchObject({ code: "PLUGIN_E_LAUNCH" });
+    await vi.advanceTimersByTimeAsync(20);
+    await rejected;
+    child.emit("spawn");
+    expect(child.kill).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(MessageChannelMain).mock.calls.length).toBe(before);
+    child.emit("exit", 1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("closes both ports and kills the child if port handoff throws", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    postMessage: vi.fn(() => {
+      throw new Error("handoff failed");
+    }),
+    kill: vi.fn(),
+    pid: undefined,
+  });
+  vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+  const launching = createDesktopLauncher({})(plugin);
+  child.emit("spawn");
+  await expect(launching).rejects.toMatchObject({ code: "PLUGIN_E_LAUNCH" });
+  const ports = vi.mocked(MessageChannelMain).mock.results.at(-1)!.value as {
+    port1: { close: ReturnType<typeof vi.fn> };
+    port2: { close: ReturnType<typeof vi.fn> };
+  };
+  expect(ports.port1.close).toHaveBeenCalled();
+  expect(ports.port2.close).toHaveBeenCalled();
+  expect(child.kill).toHaveBeenCalled();
+  child.emit("exit", 1);
+});
+it("observes an exit between spawn and port creation", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    postMessage: vi.fn(),
+    kill: vi.fn(),
+    pid: undefined,
+  });
+  vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+  const launching = createDesktopLauncher({})(plugin);
+  child.emit("spawn");
+  child.emit("exit", 2);
+  await expect(launching).rejects.toMatchObject({ code: "PLUGIN_E_LAUNCH" });
+  expect(child.postMessage).not.toHaveBeenCalled();
+});
+
+it("removes case variants of loader injection while preserving unrelated environment", () => {
+  const source = {
+    Node_Options: "--require /injected.cjs",
+    node_path: "/injected",
+    electron_run_as_node: "1",
+    kobrixa_resource_owner: "untrusted",
+    LANG: "zh_TW.UTF-8",
+  };
+  expect(builtinProcessEnvironment(source)).toEqual({ LANG: "zh_TW.UTF-8" });
+  expect(source.Node_Options).toBe("--require /injected.cjs");
 });

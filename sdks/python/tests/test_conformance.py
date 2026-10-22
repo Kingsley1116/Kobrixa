@@ -19,7 +19,7 @@ def expand(value):
 class ConformanceTest(unittest.TestCase):
     def test_language_services_are_strict_and_api_is_1_4(self):
         from kobrixa._plugin import API_VERSION
-        self.assertEqual(API_VERSION, "1.5.0")
+        self.assertEqual(API_VERSION, "1.6.0")
         validator = Validator.bundled()
         value = {"id": "test.language", "version": "1.0.0", "apiVersion": "^1.3.0",
                  "runtime": {"kind": "builtin"}, "contributes": {"languageServices": [

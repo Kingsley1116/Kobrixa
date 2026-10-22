@@ -1,6 +1,62 @@
 import type { Locale } from "../i18n/copy.js";
+import type { UiLabels } from "../plugin-ui/host-ports.js";
 import type { PythonChoice } from "../../shared/plugins.js";
 import type { PluginSummary } from "../../shared/plugins.js";
+
+export const pluginUiCopy: Record<Locale, UiLabels> = {
+  en: {
+    tools: "Plugin tools",
+    open: "Open panel",
+    close: "Close",
+    empty: "No plugin panels are available.",
+    unavailable: "Unavailable",
+    loading: "Loading plugin tools…",
+    invalid: "Enter a valid value.",
+    recovery: "Device and save recovery",
+    refresh: "Refresh",
+    reset: "Reset",
+    previous: "Previous",
+    next: "Next",
+    retry: "Retry",
+    export: "Export…",
+    discard: "Discard…",
+    checkpoint: "Only the last checkpoint may be available; a complete save cannot be retried.",
+    holdHint: "Hold to run; release to stop. Maximum 10 seconds.",
+    actions: {
+      stop: "Stop",
+      reconcile: "Check device state",
+      "clear-resolved": "Clear resolved",
+      "retry-save": "Retry save",
+      manage: "Manage recovery",
+    },
+  },
+  "zh-TW": {
+    tools: "插件工具",
+    open: "開啟面板",
+    close: "關閉",
+    empty: "目前沒有可用的插件面板。",
+    unavailable: "無法使用",
+    loading: "正在載入插件工具…",
+    invalid: "請輸入有效值。",
+    recovery: "設備與保存復原",
+    refresh: "重新整理",
+    reset: "重設",
+    previous: "上一頁",
+    next: "下一頁",
+    retry: "重試",
+    export: "匯出…",
+    discard: "捨棄…",
+    checkpoint: "可能只保留最後檢查點，無法重試完整保存。",
+    holdHint: "按住執行，放開停止；最長 10 秒。",
+    actions: {
+      stop: "停止",
+      reconcile: "確認設備狀態",
+      "clear-resolved": "清除已解決項目",
+      "retry-save": "重試保存",
+      manage: "管理復原項目",
+    },
+  },
+};
 
 export const pluginCopy = {
   en: {

@@ -92,3 +92,20 @@ export function unavailableUiCatalog(): UiCatalogPort {
   return { catalog: async () => unavailable(), resource: async () => unavailable(),
     retire() {}, onEvent: () => () => {} };
 }
+
+import type { ContextCommandDeclaration, PanelDeclaration, StatusDeclaration } from "@kobrixa/plugin-protocol";
+export type UiCatalogSource = {
+  owner: ResourceOwner;
+  eligible: boolean;
+  resources: { kind: "packaged"; root: string } | { kind: "builtin"; files: Readonly<Record<string, string>> };
+  commands: readonly ContextCommandDeclaration[];
+  panels: readonly PanelDeclaration[];
+  status: readonly StatusDeclaration[];
+};
+export const sameUiBinding = (left: UiBinding, right: UiBinding): boolean =>
+  left.contributionId === right.contributionId && left.panelInstance === right.panelInstance &&
+  left.kind === right.kind && left.uiResourceGeneration === right.uiResourceGeneration &&
+  left.generation === right.generation && left.hostEpoch === right.hostEpoch && left.processEpoch === right.processEpoch;
+export const sameResourceOwner = (left: ResourceOwner, right: ResourceOwner): boolean =>
+  left.sourceKey === right.sourceKey && left.pluginId === right.pluginId && left.generation === right.generation &&
+  left.hostEpoch === right.hostEpoch && left.processEpoch === right.processEpoch;

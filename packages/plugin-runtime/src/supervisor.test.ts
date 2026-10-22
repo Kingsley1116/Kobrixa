@@ -109,7 +109,7 @@ describe("PluginSupervisor", () => {
     expect(launches[0]!.killed()).toBe(true);
     expect(supervisor.problem?.code).toBe("PLUGIN_E_UNRESPONSIVE");
   });
-  it("reports launch failures without counting a crash loop", async () => {
+  it("counts launch failures and latches the crash loop", async () => {
     const supervisor = new PluginSupervisor(
       plugin,
       async () => {
@@ -119,9 +119,9 @@ describe("PluginSupervisor", () => {
     );
     for (let index = 0; index < 4; index++)
       await expect(supervisor.executeCommand("acme.hello.greet")).rejects.toMatchObject({
-        code: "PLUGIN_E_LAUNCH",
+        code: index < 2 ? "PLUGIN_E_LAUNCH" : "PLUGIN_E_CRASH_LOOP",
       });
-    expect(supervisor.state).toBe("idle");
+    expect(supervisor.state).toBe("failed");
   });
   it("rejects incompatible SDK API versions", async () => {
     const launcher = async () =>
@@ -251,10 +251,12 @@ describe("PluginSupervisor", () => {
     });
     const first = supervisor.executeCommand("acme.hello.greet").catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(30);
-    expect(await first).toMatchObject({ code: "PLUGIN_E_HANDSHAKE" });
-    expect(supervisor.state).toBe("idle");
-    await expect(supervisor.executeCommand("acme.hello.greet")).resolves.toBeUndefined();
-    expect(launcher).toHaveBeenCalledTimes(2);
+    expect(await first).toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
+    expect(supervisor.state).toBe("stopping");
+    await expect(supervisor.executeCommand("acme.hello.greet")).rejects.toMatchObject({
+      code: "PLUGIN_E_DISABLED",
+    });
+    expect(launcher).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
   it("gives up on a launch that never settles and kills the process if it appears later", async () => {
@@ -274,7 +276,9 @@ describe("PluginSupervisor", () => {
       exitTimeoutMs: 20,
     });
     const command = supervisor.executeCommand("acme.hello.greet").catch((error: unknown) => error);
-    const stopping = supervisor.stop("cancelled");
+    const stopping = expect(supervisor.stop("cancelled")).rejects.toMatchObject({
+      code: "PLUGIN_E_TIMEOUT",
+    });
     await vi.advanceTimersByTimeAsync(30);
     await stopping;
     expect(await command).toMatchObject({ code: "PLUGIN_E_CANCELLED" });
@@ -283,7 +287,7 @@ describe("PluginSupervisor", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(late.killed()).toBe(true);
   });
-  it("retains the stop cause when the exit-report deadline clears the stopping flag", async () => {
+  it("retains the stop cause and fences replacement after the exit-report deadline", async () => {
     vi.useFakeTimers();
     const launched = memoryPlugin((peer, { exit }) => ready(peer, exit));
     const supervisor = new PluginSupervisor(
@@ -294,14 +298,17 @@ describe("PluginSupervisor", () => {
     await supervisor.executeCommand("acme.hello.greet");
     const command = supervisor.executeCommand("acme.hello.hang").catch((error: unknown) => error);
     await Promise.resolve();
-    const stopping = supervisor.stop();
+    const stopping = expect(supervisor.stop()).rejects.toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
     await vi.advanceTimersByTimeAsync(30);
     await stopping;
     expect(await command).toMatchObject({
       code: "PLUGIN_E_DISABLED",
-      message: "acme.hello was stopped.",
+      message: "Plugin exit is not confirmed.",
     });
-    expect(supervisor.state).toBe("idle");
+    expect(supervisor.state).toBe("stopping");
+    await expect(supervisor.executeCommand("acme.hello.greet")).rejects.toMatchObject({
+      code: "PLUGIN_E_DISABLED",
+    });
     expect(vi.getTimerCount()).toBe(0);
   });
   it("caps the total stop wait when a late launch never reports exit", async () => {
@@ -320,9 +327,11 @@ describe("PluginSupervisor", () => {
     );
     const command = supervisor.executeCommand("acme.hello.greet").catch((error: unknown) => error);
     let settled = false;
-    const stopping = supervisor.stop().then(() => {
-      settled = true;
-    });
+    const stopping = expect(supervisor.stop())
+      .rejects.toMatchObject({ code: "PLUGIN_E_TIMEOUT" })
+      .then(() => {
+        settled = true;
+      });
     await vi.advanceTimersByTimeAsync(30);
     expect(settled).toBe(true);
     await stopping;
@@ -800,3 +809,191 @@ it.each(["stop", "forceKill", "handshake", "binding", "ready", "crash"] as const
     }
   },
 );
+
+describe("R160 crash-loop accounting (U13, B1-RF5)", () => {
+  it("counts rejected launches, latches failed, and never launches on a timer", async () => {
+    let now = 0;
+    const launch = vi.fn(async (): Promise<PluginProcess> => {
+      throw new Error("spawn denied");
+    });
+    const subject = new PluginSupervisor(plugin, launch, {
+      locale: "en",
+      onNotice: () => {},
+      now: () => now,
+    });
+    for (let i = 0; i < 3; i++) {
+      await expect(subject.executeCommand(plugin.commands[0]!)).rejects.toBeDefined();
+      now += 1_000;
+    }
+    expect(subject.state).toBe("failed");
+    now += 600_000;
+    await expect(subject.executeCommand(plugin.commands[0]!)).rejects.toMatchObject({
+      code: "PLUGIN_E_CRASH_LOOP",
+    });
+    expect(launch).toHaveBeenCalledTimes(3);
+  });
+  it("uses an exclusive five-minute window and one count per failed handshake", async () => {
+    let now = 0;
+    const launch = vi.fn(
+      async () =>
+        memoryPlugin((peer) => {
+          peer.handle("initialize", () => {
+            throw new Error("bad handshake");
+          });
+        }).process,
+    );
+    const subject = new PluginSupervisor(plugin, launch, {
+      locale: "en",
+      onNotice: () => {},
+      now: () => now,
+    });
+    await expect(subject.executeCommand(plugin.commands[0]!)).rejects.toBeDefined();
+    now = 300_000;
+    await expect(subject.executeCommand(plugin.commands[0]!)).rejects.toBeDefined();
+    now++;
+    await expect(subject.executeCommand(plugin.commands[0]!)).rejects.toBeDefined();
+    expect(subject.state).toBe("idle");
+    now++;
+    await expect(subject.executeCommand(plugin.commands[0]!)).rejects.toBeDefined();
+    expect(subject.state).toBe("failed");
+    expect(launch).toHaveBeenCalledTimes(4);
+  });
+  it("normal shutdown does not spend a crash attempt", async () => {
+    const h = setup();
+    for (let i = 0; i < 4; i++) {
+      await h.supervisor.executeCommand("acme.hello.greet");
+      await h.supervisor.stop();
+      expect(h.supervisor.state).toBe("idle");
+    }
+  });
+  it("uses a total four-second stop bound and keeps unconfirmed exit visible", async () => {
+    vi.useFakeTimers();
+    const h = memoryPlugin((peer, control) => ready(peer, control.exit));
+    const forceKill = vi.fn();
+    const subject = new PluginSupervisor(
+      plugin,
+      async () => ({
+        ...h.process,
+        kill: vi.fn(),
+        forceKill,
+        onExit: () => () => {},
+      }),
+      { locale: "en", onNotice: () => {} },
+    );
+    await subject.executeCommand("acme.hello.greet");
+    const stopping = subject.stop();
+    const rejected = expect(stopping).rejects.toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(forceKill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+    expect(forceKill).toHaveBeenCalledTimes(1);
+  });
+});
+
+import { randomUUID } from "node:crypto";
+describe("R160-1 startup failure cause survives the actual-exit fence", () => {
+  it.each([
+    ["initialize", false],
+    ["initialize", true],
+    ["bind", false],
+    ["bind", true],
+    ["initialized", false],
+    ["initialized", true],
+    ["ready", false],
+    ["ready", true],
+  ] as const)("counts each %s failure once (delayed exit: %s)", async (phase, delayed) => {
+    vi.useFakeTimers();
+    let exit!: () => void;
+    const launch = vi.fn(async () => {
+      const h = memoryPlugin((peer, control) => {
+        exit = () => control.exit(1);
+        ready(peer, control.exit);
+        if (phase === "initialize")
+          peer.handle("initialize", () => {
+            throw new Error("failed initialize");
+          });
+      });
+      return delayed ? { ...h.process, kill: vi.fn(), forceKill: vi.fn() } : h.process;
+    });
+    const hostEpoch = randomUUID();
+    const retired = vi.fn(async () => {});
+    const subject = new PluginSupervisor(plugin, launch, {
+      locale: "en",
+      onNotice: () => {},
+      exitTimeoutMs: 20,
+      hostEpoch,
+      resourceOwner: () => ({
+        sourceKey: "builtin:acme.hello",
+        pluginId: plugin.id,
+        generation: 1,
+        hostEpoch,
+        processEpoch: randomUUID(),
+      }),
+      bindChannel: () => {
+        if (phase === "bind") throw new Error("failed binding");
+        return {
+          initialized: async () => {
+            if (phase === "initialized") throw new Error("failed initialized");
+          },
+          ready: async () => {
+            if (phase === "ready") throw new Error("failed ready");
+          },
+          dispose: vi.fn(),
+        };
+      },
+      retireResources: retired,
+    });
+    for (let i = 0; i < 3; i++) {
+      const result = subject.executeCommand("acme.hello.greet").catch((error) => error);
+      if (delayed) {
+        await vi.advanceTimersByTimeAsync(21);
+        expect(await result).toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
+        expect(subject.state).toBe("stopping");
+        await expect(subject.executeCommand("acme.hello.greet")).rejects.toMatchObject({
+          code: "PLUGIN_E_DISABLED",
+        });
+        expect(launch).toHaveBeenCalledTimes(i + 1);
+        exit();
+      } else expect(await result).toBeInstanceOf(Error);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(subject.state).toBe(i === 2 ? "failed" : "idle");
+      expect(retired).toHaveBeenCalledTimes(i + 1);
+    }
+    await expect(subject.executeCommand("acme.hello.greet")).rejects.toMatchObject({
+      code: "PLUGIN_E_CRASH_LOOP",
+    });
+    expect(launch).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not count ordinary requested stops with late actual exits", async () => {
+    vi.useFakeTimers();
+    let exit!: () => void;
+    const launch = vi.fn(async () => {
+      const h = memoryPlugin((peer, control) => {
+        exit = () => control.exit();
+        ready(peer, control.exit);
+        peer.onNotification("exit", () => {});
+      });
+      return { ...h.process, kill: vi.fn(), forceKill: vi.fn() };
+    });
+    const subject = new PluginSupervisor(plugin, launch, {
+      locale: "en",
+      onNotice: () => {},
+      exitTimeoutMs: 20,
+    });
+    for (let i = 0; i < 4; i++) {
+      await subject.executeCommand("acme.hello.greet");
+      const stopped = expect(subject.stop()).rejects.toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(21);
+      await stopped;
+      expect(subject.state).toBe("stopping");
+      exit();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(subject.state).toBe("idle");
+    }
+    expect(launch).toHaveBeenCalledTimes(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

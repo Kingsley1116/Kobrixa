@@ -14,18 +14,33 @@ it("has no unused Basic Plus status copy", () => {
   for (const locale of ["en", "zh-TW"] as const)
     expect(copy[locale]).not.toHaveProperty("basicPlus");
 });
-it("places the same static barrier before restoration, project initialization, opening and formatting", () => {
+it("U04/U15 shares parallel UI/static barriers before restoration, project initialization, opening and formatting", () => {
+  expect(app).toContain("const pluginUi = pluginUiWindow();");
   expect(app).toMatch(
-    /await staticLanguages\.ready;\s*const saved = await window\.kobrixa\.workspace\.restoreSession\(\)/,
+    /await Promise\.all\(\[staticLanguages\.ready, pluginUi\.ready\]\);\s*const saved = await window\.kobrixa\.workspace\.restoreSession\(\)/,
   );
   for (const name of ["initializeProject", "openFile", "saveTab"]) {
     const start = app.indexOf(`async function ${name}(`);
     expect(start).toBeGreaterThan(0);
     const body = app.slice(start).match(/\): Promise<[^>]+> \{\s*([^\n]+)/);
-    expect(body?.[1]).toBe("await staticLanguages.ready;");
+    expect(body?.[1]).toBe("await Promise.all([staticLanguages.ready, pluginUi.ready]);");
   }
   expect(app).toContain("languageDisplayName(activeLexicalRoute, locale)");
   expect(app).not.toContain('endsWith(".json") ? "JSON" : t.basicPlus');
+});
+it("U15 mounts independent recovery, generic tools and footer status with pre-hide gates", () => {
+  expect(app).toContain("<CoreRecoveryView");
+  expect(app).toContain("pluginRecoveryPort(pluginUi.recovery,");
+  expect(app).toContain("port={recoveryPort}");
+  expect(app).toContain("request={recoveryRequest}");
+  expect(app).toContain('hidden={rightPanel !== "plugins" || settingsActive}');
+  expect(app).toMatch(/<footer>\s*<PluginStatusHost/);
+  expect(app).toContain('pluginUi.gate("settings", next);');
+  expect(app).toContain('pluginUi.gate("modal", modalOpen || updatePreparing);');
+  const pane = app.match(/<div\s+className="right-pane-content plugin-pane"[\s\S]*?<\/div>/)?.[0];
+  expect(pane).toContain("<PluginToolsPane");
+  expect(pane).not.toMatch(/MotorTest|MonitorWorkspace/);
+  expect(app).toContain("<PluginRecoveryNotice");
 });
 it.each(["en", "zh-TW"] as const)(
   "uses catalog aliases and localized fallback labels in %s",

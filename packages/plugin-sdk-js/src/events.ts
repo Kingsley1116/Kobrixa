@@ -1,14 +1,16 @@
 import {
   eventEnvelopeSchema,
   validateDeviceWire,
-  type DeviceEvent,
+  type Stage3EventEnvelope,
+  uiEventEnvelopeSchema,
   type ResourceOwner,
 } from "@kobrixa/plugin-protocol";
-type Listener = (event: DeviceEvent) => void | Promise<void>;
+type Listener = (event: Stage3EventEnvelope) => void | Promise<void>;
 type Slot = {
   last: number;
+  watermark: number;
   owner: string | null;
-  queue: Array<{ event: DeviceEvent; gap: boolean }>;
+  queue: Array<{ event: Stage3EventEnvelope; gap: boolean }>;
   bytes: number;
   controls: number;
   running: boolean;
@@ -19,7 +21,7 @@ const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 export class EventInbox {
   #enabled = false;
   #pending = 0;
-  #early: DeviceEvent[] = [];
+  #early: Stage3EventEnvelope[] = [];
   #slots = new Map<string, Slot>();
   constructor(
     private readonly ack: (id: string, sequence: number) => Promise<void>,
@@ -37,10 +39,11 @@ export class EventInbox {
       if (!this.#pending) this.#early = [];
     };
   }
-  open(id: string, listener: Listener, resync: () => Promise<void>): void {
+  open(id: string, listener: Listener, resync: () => Promise<void>, sequence = 0): void {
     if (this.#slots.size >= 32) throw new Error("Subscription queue full");
     this.#slots.set(id, {
-      last: 0,
+      last: sequence,
+      watermark: sequence,
       owner: null,
       queue: [],
       bytes: 0,
@@ -55,11 +58,19 @@ export class EventInbox {
       if (event.subscriptionId === id) this.accept(event);
       else this.#early.push(event);
   }
+  reconcile(id: Handle, sequence: Counter): void {
+    const slot = this.#slots.get(id);
+    if (!slot || sequence < slot.watermark) return;
+    slot.watermark = sequence;
+    slot.last = Math.max(slot.last, sequence);
+  }
+
   last(id: string): number {
     return this.#slots.get(id)?.last ?? 0;
   }
   close(id: string): void {
     this.#slots.delete(id);
+    this.#early = this.#early.filter((event) => event.subscriptionId !== id);
   }
   accept(value: unknown): boolean {
     if (!this.#enabled) return false;
@@ -104,7 +115,9 @@ export class EventInbox {
     void this.ack(event.subscriptionId, event.sequence).catch(() => {});
     if (!slot.running) {
       slot.running = true;
-      void this.#pump(slot);
+      queueMicrotask(() => {
+        void this.#pump(slot);
+      });
     }
     return true;
   }
@@ -112,9 +125,12 @@ export class EventInbox {
     try {
       while (slot.queue.length) {
         const { event, gap } = slot.queue[0]!;
+        if (this.#slots.get(event.subscriptionId) !== slot) return;
         try {
           if (gap || event.kind === "events.resyncRequired") await slot.resync();
-          await slot.listener(event);
+          if (this.#slots.get(event.subscriptionId) !== slot) return;
+          if (event.sequence > slot.watermark) await slot.listener(event);
+          if (this.#slots.get(event.subscriptionId) !== slot) return;
         } catch {
           /* Consumer failures do not replay device work. */
         }
@@ -164,4 +180,37 @@ export interface UiEventClientPort {
   }): void;
   forget(subscriptionId: Handle): void;
 }
-export declare function uiEventClientPort(peer: RpcPeer): UiEventClientPort;
+const uiInboxes = new WeakMap<UiEventClientPort, () => EventInbox>();
+export function beginUiSubscription(port: UiEventClientPort): () => void {
+  const inbox = uiInboxes.get(port);
+  if (!inbox) throw new TypeError("Unknown UI event projection");
+  inbox().enable();
+  return inbox().beginSubscription();
+}
+export function uiEventClientPort(peer: RpcPeer): UiEventClientPort {
+  const port: UiEventClientPort = {
+    adopt({ subscriptionId, sequence, snapshot, listener }) {
+      const inbox = eventInbox(peer);
+      inbox.enable();
+      inbox.open(
+        subscriptionId,
+        (event) => {
+          if (event.kind.startsWith("ui.")) {
+            const parsed = uiEventEnvelopeSchema.parse(event);
+            return listener(parsed);
+          }
+        },
+        async () => {
+          const result = await snapshot();
+          if (!result.ok) throw new Error(result.error.message);
+          inbox.reconcile(subscriptionId, result.value.sequence);
+        },
+        sequence,
+      );
+    },
+    forget: (subscriptionId) => eventInbox(peer).close(subscriptionId),
+  };
+  // Lookup is deferred until subscription; legacy hosts need no event metadata.
+  uiInboxes.set(port, () => eventInbox(peer));
+  return port;
+}

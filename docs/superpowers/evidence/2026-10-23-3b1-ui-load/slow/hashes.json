@@ -1,0 +1,20 @@
+[
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-SBmVAv/load-0/report.json",
+    "file": "report.json.gz",
+    "sha256": "84f189c460a79b6861045c2f5d1d07f572a3cd35901c31e8ff705053d751baff",
+    "gzipSha256": "1a6efb4282a6cb49c3d4ce8b07c277cc22c23b752805a3d10399715aa0244cae"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-SBmVAv/matrix.json",
+    "file": "matrix.json.gz",
+    "sha256": "68643f7a390a257979682b0ad636d405b90847f5653eb0d662dadc01675cd76c",
+    "gzipSha256": "591e8ea72e77f0ce00f454483d24055cc0656f124add516e10d473683953c3b5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b1-slow-native2.log",
+    "file": "run.log.gz",
+    "sha256": "1a4794bdd326c985f77356b7fa92ae96bebf97f75dce31170e390270f59729ab",
+    "gzipSha256": "19d039f6e6a3d238a8293379e88b188386f0300cde14ae6a1b168c0158f0317b"
+  }
+]

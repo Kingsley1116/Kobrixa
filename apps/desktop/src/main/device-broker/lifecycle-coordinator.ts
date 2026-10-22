@@ -62,6 +62,7 @@ import type { Handle } from "@kobrixa/plugin-protocol";
 import type {
   CoreActionReference,
   DeviceDisposition,
+  DeviceRecoveryPort,
   DeviceResourceParticipant,
   DeviceSessionControlPort,
   ReservationBindingPort,
@@ -114,23 +115,50 @@ export interface CoordinatorInput {
   shutdown(): Promise<void>;
   legacyFlush(reason: "close" | "update" | "suspend"): Promise<void>;
   report(error: unknown): void;
+  // Host composition only: never supply renderer-provided recovery snapshots.
+  recovery?: DeviceRecoveryPort;
 }
+export type RetirementReport = {
+  owner: ResourceOwner;
+  device: DeviceDisposition;
+  storage: DrainReport;
+  processStopped: boolean;
+  blocker: boolean;
+};
+export type CloseReport = {
+  blocker: boolean;
+  timedOut: boolean;
+  legacySaved: boolean;
+  device: DeviceDisposition;
+  owners: RetirementReport[];
+};
 type EndWork = {
   event: ReservationEnded;
   offer: DrainOffer | null;
   promise: Promise<DrainReport>;
   resolve(report: DrainReport): void;
   terminal: boolean;
+  report?: DrainReport;
 };
 type RetirementWork = {
+  owner: ResourceOwner;
   device: Promise<DeviceDisposition>;
   storage: Promise<DrainReport>;
   done: Promise<void>;
+  settled: boolean;
+  recoveredFaults: Set<Handle>;
+  report?: RetirementReport;
 };
+const unknownDevice = (): DeviceDisposition => ({
+  stopConfirmed: false,
+  journalCommitted: false,
+  faultIds: [],
+});
 type SuspendWork = {
   receipt: SessionQuiescence;
   deadline: number;
   work: Promise<void>;
+  legacy: Promise<void>;
   wake?: Promise<void>;
 };
 export class LifecycleCoordinator {
@@ -139,6 +167,7 @@ export class LifecycleCoordinator {
   readonly #suspending = new Map<Handle, SuspendWork>();
   readonly #disconnecting = new Map<string, Promise<void>>();
   readonly #off: () => void;
+  readonly #offRecovery: (() => void) | undefined;
   #close: Promise<void> | undefined;
   #closeStarted: number | undefined;
   #closed = false;
@@ -146,6 +175,7 @@ export class LifecycleCoordinator {
     if (input.ports.device !== input.resources || input.ports.persistence !== input.persistence)
       throw new Error("Coordinator must share the runtime participants.");
     this.#off = input.reservations.onEnded((event) => this.#ended(event));
+    this.#offRecovery = input.recovery?.subscribe(() => this.#reconcileDeviceRecovery());
   }
   #bounded<T>(work: Promise<T>, deadline: number, message: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -206,6 +236,7 @@ export class LifecycleCoordinator {
         pending,
         retirement ? event.endedMonotonicMs + 20_000 : (offer?.deadlineMonotonicMs ?? deadline),
       ).then((report) => {
+        work.report = report;
         work.terminal = report.state === "saved" && !report.blocker;
         resolve(report);
         // Unresolved evidence is never evicted; persistence enforces its 64-host recovery cap.
@@ -225,24 +256,170 @@ export class LifecycleCoordinator {
       existing = this.#retiring.get(key);
     if (existing) return existing.done;
     const t0 = this.input.now();
-    const receipt = retireStage3Owner(
-      this.input.ports,
-      owner,
-      this.input.alive(owner) ? reason : "crashed",
-      this.input.now,
-      this.input.dispatch,
-      deadlineMonotonicMs,
-    );
+    let resolve!: () => void;
+    const done = new Promise<void>((yes) => {
+      resolve = yes;
+    });
+    let accept!: (value: Awaited<ReturnType<typeof retireStage3Owner>>) => void;
+    let fail!: (error: unknown) => void;
+    const receipt = new Promise<Awaited<ReturnType<typeof retireStage3Owner>>>((yes, no) => {
+      accept = yes;
+      fail = no;
+    });
     const device = this.#bounded(
       receipt.then((value) => value.device),
       t0 + 20_000,
       "Device stop/journal deadline expired.",
     );
     const storage = receipt.then((value) => value.persistence);
-    const done = Promise.all([device, storage]).then(([d, report]) => this.#assert(d, [report]));
-    this.#retiring.set(key, { device, storage, done });
-    void done.catch((error: unknown) => this.input.report(error));
+    const row: RetirementWork = {
+      owner: { ...owner },
+      device,
+      storage,
+      done,
+      settled: false,
+      recoveredFaults: new Set(),
+    };
+    this.#retiring.set(key, row); // Publish before synchronous onEnded/reentrant retirement.
+    this.#reconcileDeviceRecovery();
+    try {
+      void retireStage3Owner(
+        this.input.ports,
+        owner,
+        this.input.alive(owner) ? reason : "crashed",
+        this.input.now,
+        this.input.dispatch,
+        deadlineMonotonicMs,
+      ).then(accept, fail);
+    } catch (error) {
+      fail(error);
+    }
+    void Promise.all([device, storage])
+      .then(([d, report]) => {
+        row.settled = true;
+        row.report = {
+          owner: row.owner,
+          device: structuredClone(d),
+          storage: report,
+          processStopped: this.#closed,
+          blocker: true,
+        };
+        this.#reconcileDeviceRecovery();
+        this.#refresh(row);
+        resolve(); // Resource disposition completed; close separately checks the authoritative report.
+      })
+      .catch((error: unknown) => {
+        row.settled = true;
+        row.report ??= {
+          owner: row.owner,
+          device: unknownDevice(),
+          storage: uncertain("Retirement unconfirmed."),
+          processStopped: false,
+          blocker: true,
+        };
+        resolve();
+        this.input.report(error);
+      });
+    void done.catch(() => undefined);
     return done;
+  }
+  #reconcileDeviceRecovery(): void {
+    // Read the injected host port, rather than accepting event/UI payloads as evidence.
+    const snapshot = this.input.recovery?.snapshot();
+    if (!snapshot || snapshot.journalHealth !== "ready") return;
+    for (const row of this.#retiring.values()) {
+      for (const fault of snapshot.faults) {
+        const proven =
+          fault.owner.kind === "plugin" &&
+          ownerKey(fault.owner.owner) === ownerKey(row.owner) &&
+          fault.state === "resolved" &&
+          fault.stopConfirmation === "confirmed" &&
+          fault.resolution !== null &&
+          (fault.resolution.kind === "confirmed-on-original-session" ||
+            fault.resolution.kind === "observed-idle") &&
+          !snapshot.blockers.includes(fault.id);
+        if (proven) row.recoveredFaults.add(fault.id);
+        else row.recoveredFaults.delete(fault.id);
+      }
+      // Retain positive committed proof through clearResolved, including when recovery
+      // finishes before the joined retirement receipt reveals its original fault IDs.
+      // Absence, journal health alone and an unknown/no-fault receipt prove nothing.
+      const device = row.report?.device;
+      if (device?.faultIds.length && device.faultIds.every((id) => row.recoveredFaults.has(id))) {
+        row.report!.device = { ...device, stopConfirmed: true, journalCommitted: true };
+        this.#refresh(row);
+      }
+    }
+  }
+  #refresh(row: RetirementWork): void {
+    if (!row.report) return;
+    try {
+      this.#assert(row.report.device, [row.report.storage]);
+      row.report.blocker = !row.report.processStopped;
+    } catch {
+      row.report.blocker = true;
+    }
+  }
+  reports(): RetirementReport[] {
+    return structuredClone(
+      [...this.#retiring.values()].flatMap((row) => (row.report ? [row.report] : [])),
+    );
+  }
+  reconcileProcesses(): void {
+    // R160 keeps an owner in this registry through disposition AND the original process exit.
+    const retained = new Set(this.input.owners().map(ownerKey));
+    for (const [key, row] of this.#retiring) {
+      if (row.report && !retained.has(key) && !this.input.alive(row.owner)) {
+        row.report.processStopped = true;
+        this.#refresh(row);
+      }
+    }
+  }
+  reconcile(owner: ResourceOwner, device: DeviceDisposition, storage: DrainReport): boolean {
+    const row = this.#retiring.get(ownerKey(owner));
+    if (!row?.settled || !row.report) return false;
+    // Callers pass actual core recovery results, never a UI-supplied processStopped boolean.
+    row.report = {
+      ...row.report,
+      device: structuredClone(device),
+      storage: structuredClone(storage),
+    };
+    for (const work of this.#ends.values())
+      if (ownerKey(work.event.owner) === ownerKey(owner)) {
+        work.report = structuredClone(storage);
+        work.terminal = !storage.blocker && storage.state === "saved";
+      }
+    this.#refresh(row);
+    return true;
+  }
+  reconcileRecovery(recovery: Handle, report: DrainReport): void {
+    for (const work of this.#ends.values())
+      if (work.report?.recovery === recovery) {
+        work.report = structuredClone(report);
+        work.terminal = !report.blocker && report.state === "saved";
+      }
+    for (const row of this.#retiring.values())
+      if (row.settled && row.report?.storage.recovery === recovery) {
+        row.report.storage = structuredClone(report);
+        this.#refresh(row);
+      }
+  }
+  async pendingSession(sessionId: Handle): Promise<DrainReport[]> {
+    return this.#sessionReports(sessionId);
+  }
+  async #retirementDisposition(
+    owner: ResourceOwner,
+    reason: OwnerRetirement,
+    deadline: number,
+  ): Promise<void> {
+    const pending = this.retire(owner, reason, deadline);
+    const row = this.#retiring.get(ownerKey(owner))!;
+    if (!row.settled) await pending.catch(() => undefined);
+    if (!row.report) throw new CleanupBlocked(null, []);
+    this.#assert(row.report.device, [row.report.storage]);
+  }
+  allowCloseRetry(): void {
+    // close already clears only its settled attempt. Keep #closeStarted, all work promises and grants.
   }
   #assert(device: DeviceDisposition, storage: readonly DrainReport[]): void {
     if (
@@ -263,7 +440,10 @@ export class LifecycleCoordinator {
     return Promise.all(
       [...this.#ends.values()]
         .filter((work) => work.event.sessionId === sessionId)
-        .map((work) => work.promise),
+        .map(async (work) => {
+          const original = await work.promise;
+          return work.report ?? original;
+        }),
     );
   }
   disconnect(sessionId: Handle, action: CoreActionReference): Promise<void> {
@@ -299,15 +479,15 @@ export class LifecycleCoordinator {
     const t0 = this.input.now();
     const quiescence = this.input.sessions.quiesce(sessionId, { reason: "suspended" });
     for (const event of quiescence.ended) this.#ended(event);
+    const legacy = this.input.legacyFlush("suspend");
     const work = Promise.all([
       this.#bounded(quiescence.settled, t0 + 20_000, "Suspend stop/journal deadline expired."),
       this.#sessionReports(sessionId),
-      this.input.legacyFlush("suspend"),
+      legacy,
     ]).then(([device, storage]) => this.#assert(device, storage));
-    const row: SuspendWork = { receipt: quiescence, deadline: t0 + 20_000, work };
+    const row: SuspendWork = { receipt: quiescence, deadline: t0 + 20_000, work, legacy };
     this.#suspending.set(sessionId, row);
     void work.catch((error: unknown) => {
-      if (this.#suspending.get(sessionId) === row) this.#suspending.delete(sessionId);
       this.input.report(error);
     });
     return work;
@@ -330,15 +510,29 @@ export class LifecycleCoordinator {
     );
     return wake;
   }
+  /** Recheck the original quiescence receipt without admitting new device work. */
+  async confirmSuspended(sessionId: Handle): Promise<void> {
+    const row = this.#suspending.get(sessionId);
+    if (!row) throw new Error("No original suspension receipt.");
+    await row.work.catch(() => undefined);
+    await row.legacy;
+    const device = await this.#bounded(
+      row.receipt.settled,
+      row.deadline,
+      "Suspend stop/journal observation deadline expired.",
+    );
+    this.#assert(device, await this.#sessionReports(sessionId));
+  }
   async #resume(row: SuspendWork): Promise<void> {
-    await row.work;
+    await row.work.catch(() => undefined);
+    await row.legacy;
     for (;;) {
       const device = await this.#bounded(
         row.receipt.settled,
         row.deadline,
         "Wake stop/journal observation deadline expired.",
       );
-      this.#assert(device, []);
+      this.#assert(device, await this.#sessionReports(row.receipt.sessionId));
       const state = resumeQuiescedSession(this.input.sessions, row.receipt);
       if (state === "resumed") return;
       if (state === "blocked") throw new Error("Session remains quiesced; wake is blocked.");
@@ -357,13 +551,24 @@ export class LifecycleCoordinator {
     const device = this.input.resources.beginShutdown();
     const owners = this.input
       .owners()
-      .map((owner) => this.retire(owner, reason === "update" ? "update" : "shutdown", t0 + 10_000));
+      .map((owner) =>
+        this.#retirementDisposition(
+          owner,
+          reason === "update" ? "update" : "shutdown",
+          t0 + 10_000,
+        ),
+      );
     const legacy = this.input.legacyFlush(reason);
     const attempt = Promise.all([
       this.#bounded(device, t0 + 20_000, "Host stop/journal deadline expired."),
       Promise.all(owners),
       this.#bounded(legacy, t0 + 10_000, "Legacy Lab save deadline expired."),
-      Promise.all([...this.#ends.values()].map((work) => work.promise)),
+      Promise.all(
+        [...this.#ends.values()].map(async (work) => {
+          const original = await work.promise;
+          return work.report ?? original;
+        }),
+      ),
     ]).then(async ([d, , , reports]) => {
       this.#assert(d, reports);
       await this.#bounded(
@@ -382,6 +587,11 @@ export class LifecycleCoordinator {
       () => {
         this.#close = undefined;
         this.#closed = true;
+        for (const row of this.#retiring.values())
+          if (row.report) {
+            row.report.processStopped = true;
+            this.#refresh(row);
+          }
       },
       (error: unknown) => {
         this.#close = undefined;
@@ -392,6 +602,7 @@ export class LifecycleCoordinator {
   }
   dispose(): void {
     this.#off();
+    this.#offRecovery?.();
   }
 }
 

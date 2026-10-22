@@ -1,0 +1,148 @@
+Real workbench browser workspace: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm
+vite v8.3.4 building client environment for production...
+transforming...
+✓ 1635 modules transformed.
+rendering chunks...
+computing gzip size...
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/index.html                                  0.67 kB │ gzip:     0.39 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/preview-worker-COrGvtsT.js          54.11 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/codicon-DF1abBS2.ttf               153.22 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/editor.worker-BmdWdrHZ.js          303.82 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/worker-Hcyo-D8p.js                 409.98 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/json.worker-DdeUAmHa.js            433.18 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/html.worker-C5yZDBHz.js            743.43 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/css.worker-C6lDtRpF.js           1,078.30 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/ts.worker-DGGa2mF8.js            6,928.08 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/index-DYi2Y7zO.css                 318.65 kB │ gzip:    50.94 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/javascript-DbUEZaBi.js               0.73 kB │ gzip:     0.45 kB │ map:      2.07 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/azcli-Bc_sGQ0U.js                    0.75 kB │ gzip:     0.32 kB │ map:      2.46 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/ini-sBoK_t0W.js                      1.00 kB │ gzip:     0.52 kB │ map:      3.17 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/workers-DXXEc1PF.js                  1.26 kB │ gzip:     0.60 kB │ map:      9.11 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/csp-bTuwJoIa.js                      1.31 kB │ gzip:     0.51 kB │ map:      3.02 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/pla-CopQ2nXW.js                      1.58 kB │ gzip:     0.64 kB │ map:      5.08 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/scheme-BeGwcela.js                   1.67 kB │ gzip:     0.81 kB │ map:      4.50 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/flow9-C5_-GSwl.js                    1.71 kB │ gzip:     0.85 kB │ map:      5.07 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/sb-CcwsVR0C.js                       1.72 kB │ gzip:     0.82 kB │ map:      4.98 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/bat-i0X4ZdIN.js                      1.73 kB │ gzip:     0.85 kB │ map:      4.72 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/dockerfile-DZFCIeNp.js               1.77 kB │ gzip:     0.66 kB │ map:      5.52 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/pascaligo-D-ptJ9y-.js                1.90 kB │ gzip:     0.90 kB │ map:      5.87 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/xml-Cahq6xib.js                      1.95 kB │ gzip:     0.76 kB │ map:      5.08 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/cameligo-DMUM7wLl.js                 2.02 kB │ gzip:     0.95 kB │ map:      6.17 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/lua-CsQS60Ue.js                      2.02 kB │ gzip:     0.92 kB │ map:      6.06 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/objective-c-FvmIjYaQ.js              2.15 kB │ gzip:     1.04 kB │ map:      5.86 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/graphql-fmXr3nnJ.js                  2.16 kB │ gzip:     1.03 kB │ map:      6.34 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/sparql-D_Lu-MrJ.js                   2.26 kB │ gzip:     1.14 kB │ map:      6.23 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/lexon-CfSJPG6W.js                    2.33 kB │ gzip:     0.92 kB │ map:      6.62 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/mips-CIPQ_RoX.js                     2.36 kB │ gzip:     1.06 kB │ map:      6.80 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/go-C-y9NEjX.js                       2.39 kB │ gzip:     1.15 kB │ map:      7.27 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/bicep-B5-_aFwp.js                    2.41 kB │ gzip:     0.95 kB │ map:      6.48 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/sophia-CRfGWb83.js                   2.52 kB │ gzip:     1.19 kB │ map:      6.92 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/m3-D-oSqn_W.js                       2.56 kB │ gzip:     1.32 kB │ map:      6.93 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/typespec-B8J7ngcE.js                 2.67 kB │ gzip:     1.05 kB │ map:      7.25 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/pascal-DrH0SRf2.js                   2.68 kB │ gzip:     1.38 kB │ map:      7.57 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/fsharp-C8Ef5oNN.js                   2.69 kB │ gzip:     1.31 kB │ map:      7.24 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/qsharp-DkqhCAOL.js                   2.76 kB │ gzip:     1.41 kB │ map:      7.95 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/shell-CC2rA5mh.js                    2.85 kB │ gzip:     1.20 kB │ map:      7.65 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/r-BwWrilGY.js                        2.87 kB │ gzip:     1.28 kB │ map:      7.79 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/java-BEtHBSE6.js                     2.94 kB │ gzip:     1.38 kB │ map:      8.12 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/cssMode-CYuTJ-cK.js                  3.01 kB │ gzip:     1.16 kB │ map:      9.94 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/redis-ClamHrr6.js                    3.07 kB │ gzip:     1.45 kB │ map:      7.94 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/kotlin-BOotOW0E.js                   3.08 kB │ gzip:     1.45 kB │ map:      8.26 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/cypher-CVaqCwHa.js                   3.09 kB │ gzip:     1.43 kB │ map:      8.40 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/powershell-DmHpPYUd.js               3.10 kB │ gzip:     1.37 kB │ map:      8.76 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/tcl-DISqw1ZD.js                      3.31 kB │ gzip:     1.36 kB │ map:      8.50 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/liquid-CwDd5Jir.js                   3.38 kB │ gzip:     1.45 kB │ map:      8.46 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/coffee-Ba7i2nA0.js                   3.40 kB │ gzip:     1.28 kB │ map:      9.46 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/htmlMode-jurna6D9.js                 3.46 kB │ gzip:     1.28 kB │ map:     11.23 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/hcl-CpzslTdj.js                      3.49 kB │ gzip:     1.49 kB │ map:      8.27 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/python-B1VmGDwS.js                   3.49 kB │ gzip:     1.46 kB │ map:     10.07 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/apex-BWPQTe0t.js                     3.51 kB │ gzip:     1.74 kB │ map:      9.82 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/yaml-DJNwjDyA.js                     3.58 kB │ gzip:     1.32 kB │ map:      9.50 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/markdown-Cimd5fb3.js                 3.68 kB │ gzip:     1.38 kB │ map:     10.62 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/rust-DdL9SqIa.js                     3.70 kB │ gzip:     1.84 kB │ map:      9.75 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/less-B9JPFI3C.js                     3.79 kB │ gzip:     1.40 kB │ map:      8.92 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/restructuredtext-BYgofb2h.js         3.79 kB │ gzip:     1.37 kB │ map:      9.14 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/dart-onAF5SnQ.js                     3.97 kB │ gzip:     1.64 kB │ map:     10.44 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/csharp-BKxtCVv1.js                   4.16 kB │ gzip:     1.70 kB │ map:     11.33 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/msdax-DauUninz.js                    4.31 kB │ gzip:     1.91 kB │ map:     10.29 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/mdx-D0-D12A8.js                      4.35 kB │ gzip:     1.24 kB │ map:     10.63 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/css-DIMkf-bt.js                      4.40 kB │ gzip:     1.37 kB │ map:     10.92 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/pug-Z5eAx3Zn.js                      4.50 kB │ gzip:     1.64 kB │ map:     13.34 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/swift-Bxkupp3x.js                    4.52 kB │ gzip:     2.02 kB │ map:     10.91 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/html-Duawqh3W.js                     4.55 kB │ gzip:     1.18 kB │ map:     12.51 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/ecl-D05T4iGw.js                      4.66 kB │ gzip:     2.23 kB │ map:     11.80 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/typescript-BZNPi5Nh.js               4.71 kB │ gzip:     1.98 kB │ map:     12.18 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/cpp-C7h46wYY.js                      4.78 kB │ gzip:     2.06 kB │ map:     12.25 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/vb-DV3o63ZY.js                       5.34 kB │ gzip:     2.05 kB │ map:     12.95 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/twig-De2hgUGE.js                     5.82 kB │ gzip:     1.52 kB │ map:     16.13 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/scss-gp-XZpBa.js                     6.30 kB │ gzip:     1.74 kB │ map:     15.90 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/handlebars-22qi_ICv.js               6.32 kB │ gzip:     1.40 kB │ map:     16.50 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/julia-Bri6UV-V.js                    6.54 kB │ gzip:     2.68 kB │ map:     16.37 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/systemverilog-Bz4Y3fRF.js            6.90 kB │ gzip:     2.76 kB │ map:     17.18 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/st-DbInun42.js                       6.98 kB │ gzip:     2.28 kB │ map:     16.73 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/scala-DHpiXF5c.js                    7.15 kB │ gzip:     2.11 kB │ map:     17.67 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/wgsl-DpFanUEy.js                     7.22 kB │ gzip:     2.76 kB │ map:     14.05 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/perl-oz_6vUea.js                     7.39 kB │ gzip:     3.13 kB │ map:     18.72 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/postiats-43DmfD33.js                 7.41 kB │ gzip:     2.43 kB │ map:     26.38 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/php-nr791fC2.js                      7.78 kB │ gzip:     2.06 kB │ map:     19.57 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/razor-CCgN3GWk.js                    8.15 kB │ gzip:     2.08 kB │ map:     20.82 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/clojure-Cm7r79vr.js                  8.25 kB │ gzip:     3.53 kB │ map:     17.99 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/ruby-DezsRK8O.js                     8.25 kB │ gzip:     2.59 kB │ map:     23.02 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/sql-NEE52Syq.js                      8.88 kB │ gzip:     3.78 kB │ map:     20.71 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/protobuf-C531GsRP.js                 8.94 kB │ gzip:     2.08 kB │ map:     21.76 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/mysql-SOo6toE5.js                    9.70 kB │ gzip:     4.02 kB │ map:     21.05 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/elixir-6RTg0lbw.js                  10.16 kB │ gzip:     2.54 kB │ map:     27.42 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/redshift-DT7zqm-g.js                10.37 kB │ gzip:     4.28 kB │ map:     20.93 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/abap-08VXUWAP.js                    11.73 kB │ gzip:     5.18 kB │ map:     28.71 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/pgsql-DTj74zXo.js                   11.95 kB │ gzip:     4.47 kB │ map:     22.97 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/jsonMode-ChkcUy_j.js                12.24 kB │ gzip:     4.48 kB │ map:     75.15 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/powerquery-D3hlyOfw.js              15.39 kB │ gzip:     4.77 kB │ map:     26.49 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/freemarker2-BAki4Smv.js             15.59 kB │ gzip:     4.01 kB │ map:     58.51 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/solidity-BEEn4gHE.js                16.03 kB │ gzip:     4.43 kB │ map:     32.17 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/tsMode-nvQPaDcH.js                  21.86 kB │ gzip:     6.17 kB │ map:     67.80 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/lspLanguageFeatures-D6NGmlQO.js     28.27 kB │ gzip:     7.21 kB │ map:    133.83 kB
+../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/index-DVVxnS1R.js                5,380.17 kB │ gzip: 1,441.79 kB │ map: 20,991.95 kB
+
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 2.11s
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[4386:1023/025622.566677:INFO:CONSOLE:973] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/index-DVVxnS1R.js (973)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[4386:1023/025622.640029:INFO:CONSOLE:911] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source:  (911)
+[plugin acceptance.ui-0] UI_PID:4392
+[plugin acceptance.ui-1] UI_PID:4393
+UI_PHASE browser-probe-complete
+UI_PHASE painted
+UI_RENDERER_METRICS {"pid":4391,"metrics":[{"cpu":{"cumulativeCPUUsage":0.797972,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":4386,"type":"Browser","creationTime":1792695381692.44,"memory":{"workingSetSize":216368,"peakWorkingSetSize":218432},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.244951,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":4389,"type":"GPU","creationTime":1792695382141.43,"serviceName":"GPU","memory":{"workingSetSize":132096,"peakWorkingSetSize":136272},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.096551,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":4390,"type":"Utility","creationTime":1792695382153.046,"serviceName":"network.mojom.NetworkService","name":"Network Service","memory":{"workingSetSize":85568,"peakWorkingSetSize":90800},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.531025,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":4391,"type":"Tab","creationTime":1792695382235.041,"memory":{"workingSetSize":220624,"peakWorkingSetSize":244880},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.164277,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":4392,"type":"Utility","creationTime":1792695382684.654,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-0","memory":{"workingSetSize":120384,"peakWorkingSetSize":131072},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.221085,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":4393,"type":"Utility","creationTime":1792695382854.606,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-1","memory":{"workingSetSize":122320,"peakWorkingSetSize":132288},"sandboxed":false}],"focused":true,"visible":true}
+UI_NATIVE_TARGET {"bounds":{"x":1241,"y":328,"focused":false},"size":[1420,872]}
+UI_PHASE captured
+UI_PHASE focus-requested
+UI_PHASE native-window-focused
+UI_PHASE native-input-complete
+UI_PHASE renderer-diagnostics-complete
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+PASS CJK diagnostic baseline: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/browser.json
+Motion races, renderer diagnostics and load remain separate acceptance gates.

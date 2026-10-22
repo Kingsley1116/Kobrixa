@@ -1,3 +1,4 @@
+import type { CoreRecoveryPort } from "@kobrixa/plugin-runtime";
 import { z } from "zod";
 import { compilerIdSchema, namespacedIdSchema } from "@kobrixa/plugin-protocol";
 import { sourceKeySchema } from "@kobrixa/plugin-runtime";
@@ -91,4 +92,22 @@ export function registerPluginIpc(
   );
   handle("plugins:clearSafeModeLock", () => plugins.clearSafeModeLock());
   return plugins.onEvent(publish);
+}
+
+export function registerCoreRecoveryIpc(
+  handle: IpcHandle,
+  recovery: CoreRecoveryPort,
+  changed: () => void,
+): () => void {
+  const reference = z
+    .string()
+    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  handle("plugins:recovery:snapshot", (_event, value: unknown) => {
+    const parsed = z.strictObject({ cursor: reference.optional() }).parse(value);
+    return recovery.snapshot(parsed.cursor === undefined ? {} : { cursor: parsed.cursor });
+  });
+  handle("plugins:recovery:act", (_event, value: unknown) =>
+    recovery.act(z.strictObject({ itemId: reference, actionId: reference }).parse(value)),
+  );
+  return recovery.onChanged(changed);
 }

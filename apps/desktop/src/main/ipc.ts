@@ -1,3 +1,4 @@
+import { UpdateInstallation } from "./updates/installation.js";
 import { filePreferencesPatchSchema } from "./workspace/preferences.js";
 import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
@@ -100,7 +101,10 @@ export function registerIpc(
   beforeUpdateInstall: () => Promise<void> = async () => {},
   plugins?: Pick<PluginController, "diagnosticHelpEntry">,
   deviceFoundation?: DesktopDeviceIpc,
-): void {
+  beforeWindowClose?: () => Promise<void>,
+  beforeUpdatePrepare?: () => Promise<void>,
+  resumeAfterUpdate?: () => Promise<void>,
+): UpdateInstallation {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
     if (!renderer || event.sender.id !== renderer.id || event.senderFrame !== renderer.mainFrame) {
@@ -250,16 +254,22 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  handle("updates:prepare", async () => {
-    await sensorTools?.motors?.flush();
-    await sensorTools?.lab.flush("update");
-    updates.prepareInstall();
-  });
-  handle("updates:cancel", () => updates.cancelInstall());
-  handle("updates:install", async () => {
-    await beforeUpdateInstall();
-    updates.install();
-  });
+  const installation = new UpdateInstallation(
+    updates,
+    async () => {
+      if (beforeUpdatePrepare) await beforeUpdatePrepare();
+      else {
+        await sensorTools?.motors?.flush();
+        await sensorTools?.lab.flush("update");
+      }
+    },
+    beforeUpdateInstall,
+    resumeAfterUpdate,
+    (error) => console.error("Update recovery blocked.", error),
+  );
+  handle("updates:prepare", () => installation.prepare());
+  handle("updates:cancel", () => installation.cancel());
+  handle("updates:install", () => installation.install());
   handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z
@@ -299,7 +309,8 @@ export function registerIpc(
     if (parsedReady) {
       await sensorTools?.motors?.flush();
       await sensorTools?.lab.flush("close");
-      await deviceFoundation?.beforeClose();
+      if (beforeWindowClose) await beforeWindowClose();
+      else await deviceFoundation?.beforeClose();
     }
     finishClose(parsedId, parsedReady);
   });
@@ -516,6 +527,7 @@ export function registerIpc(
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );
+  return installation;
 }
 
 import type { Principal } from "@kobrixa/plugin-runtime";

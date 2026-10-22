@@ -1,0 +1,9 @@
+{
+  "commit": "30d8593fb2bf41c0252e13ae24a93734f1c4656a",
+  "dirty": false,
+  "sha256": {
+    "main.cjs": "dd5013e1c5206386f777ff8e3888a405b271343b4a458ac61a3b1a82cd01b1e0",
+    "interop-js/main.cjs": "172f979bffa20d5b5be66852c8500233ca7e5661df835e293f303a2453d00449",
+    "interop-python/consumer.py": "1cd5ce7b564f227b7b54b9f158997d8c0ae3463e27f710d8c697f2bc91abf01d"
+  }
+}

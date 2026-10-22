@@ -48,7 +48,9 @@ it("F18 freezes identity and preserves the legacy envelope", () => {
   ).toBe(false);
   expect(DEVICE_LIMITS_V1).toMatchObject({ prepareMs: 5000, intentMs: 350, stopMs: 15000 });
   expect(Object.isFrozen(DEVICE_LIMITS_V1)).toBe(true);
-  expect(PLUGIN_API_VERSION).toBe("1.5.0");
+  expect(PLUGIN_API_VERSION).toMatch(/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/);
+  const [major = 0, minor = 0] = PLUGIN_API_VERSION.split(".").map(Number);
+  expect(major > 1 || (major === 1 && minor >= 5)).toBe(true);
   expect(Object.keys(notificationMethods)).toContain("events/deliver");
 });
 

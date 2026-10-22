@@ -205,7 +205,10 @@ export class OperationStore {
   #stop(r: Row, brake: boolean): void {
     r.snapshot.brakeRequired ||= brake;
     r.snapshot.stopRequested = true;
-    if (r.terminal) return;
+    // Readback may already be terminal while its journal commit is still in
+    // flight. A late release/cancel must not put that observation back into
+    // "stopping" forever; durable disposition still waits for #finish below.
+    if (r.terminal || r.snapshot.stage === "terminal") return;
     if (!r.snapshot.startAccepted) {
       r.consumed = true;
       r.snapshot.phase = "stopped";

@@ -518,6 +518,7 @@ describe("PluginManager", () => {
       expect(launch).toHaveBeenCalledTimes(1);
 
       const command = manager.executeCommand("acme.hello.greet");
+      await Promise.resolve(); // Launcher runs in a promise so synchronous throws share accounting.
       if (state === "running") {
         // This case checks graceful shutdown after resume; only launching reads #forced.
         finishLaunch(restarted.process);
@@ -576,6 +577,7 @@ describe("PluginManager", () => {
     const killA = vi.spyOn(restarted, "kill");
     const forceA = vi.spyOn(restarted, "forceKill");
     const command = manager.executeCommand("acme.a.greet");
+    await Promise.resolve();
     expect(launchA).toHaveBeenCalledTimes(2);
     const second = manager.shutdown();
     finishLaunch(restarted);
@@ -1694,3 +1696,859 @@ it("waits for every disposition after a failure before force-killing every hung 
   expect(children.every((child) => child.killed())).toBe(true);
   expect(manager.active).toBe(false);
 });
+
+function optionalNodeSource() {
+  return {
+    kind: "builtin" as const,
+    policy: "optional" as const,
+    resources: {},
+    manifest: {
+      id: "kobrixa.fixture",
+      version: "1.0.0",
+      apiVersion: "^1.6.0",
+      runtime: { kind: "node", entry: "main.cjs" },
+      contributes: {
+        commands: [{ id: "kobrixa.fixture.run", title: { en: "Run" } }],
+      },
+    },
+    launch: {
+      sourceKey: "builtin:kobrixa.fixture",
+      pluginId: "kobrixa.fixture",
+      policy: "optional" as const,
+      runtime: "node" as const,
+      packageRoot: root,
+      entry: "main.cjs" as const,
+      manifest: "kobrixa-plugin.json" as const,
+      resourceIndex: "resource-index.json" as const,
+    },
+  };
+}
+it("U11 optional Node is lazy and its ordinary-user disable persists across manager reconstruction", async () => {
+  const store = memoryStore();
+  const source = optionalNodeSource();
+  const options = {
+    sources: [{ ...builtin, policy: "required" as const }, source],
+    store,
+    safeMode: false,
+    launcher,
+    locale: "en" as const,
+  };
+  const first = await PluginManager.create(options);
+  expect(first.state().plugins.find((item) => item.id === "kobrixa.fixture")).toMatchObject({
+    required: false,
+    canToggle: true,
+    status: "enabled",
+    running: false,
+  });
+  expect(launcher).not.toHaveBeenCalled();
+  expect(await first.setEnabled(source.launch.sourceKey, false)).toMatchObject({ ok: true });
+  const second = await PluginManager.create(options);
+  expect(second.state().plugins.find((item) => item.id === "kobrixa.fixture")).toMatchObject({
+    status: "disabled",
+    disabledBy: "user",
+  });
+  expect(await second.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
+    ok: false,
+    code: "PLUGIN_E_BUILTIN_REQUIRED",
+  });
+  expect(launcher).not.toHaveBeenCalled();
+  await first.shutdown();
+  await second.shutdown();
+});
+it("U11 slow/failed disable storage cannot keep the source enabled; failed enable is never applied", async () => {
+  const source = optionalNodeSource();
+  const store = memoryStore();
+  let rejectSave!: (error: Error) => void;
+  store.save = () =>
+    new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store,
+    safeMode: false,
+    launcher,
+    locale: "en",
+  });
+  const disabling = manager.setEnabled(source.launch.sourceKey, false);
+  expect(manager.state().plugins[0]?.status).toBe("disabled");
+  await Promise.resolve();
+  rejectSave(new Error("disk full"));
+  expect(await disabling).toMatchObject({ ok: true, persisted: false });
+  expect(manager.state()).toMatchObject({ stateProblem: { code: "PLUGIN_E_STATE_SAVE" } });
+  const enabling = manager.setEnabled(source.launch.sourceKey, true);
+  expect(manager.state().plugins[0]?.status).toBe("disabled");
+  await Promise.resolve();
+  rejectSave(new Error("disk full"));
+  expect(await enabling).toMatchObject({ ok: false, code: "PLUGIN_E_STATE_SAVE" });
+  expect(manager.state().plugins[0]?.status).toBe("disabled");
+  expect(launcher).not.toHaveBeenCalled();
+  await manager.shutdown();
+});
+it("U11 corrupt administration keeps required builtins and suppresses an optional Node source", async () => {
+  const source = optionalNodeSource();
+  const store = memoryStore();
+  store.load = async () => {
+    throw new Error("corrupt administration");
+  };
+  const manager = await PluginManager.create({
+    sources: [{ ...builtin, policy: "required" }, source],
+    store,
+    safeMode: false,
+    launcher,
+    locale: "en",
+  });
+  expect(manager.state().safeMode).toBe(true);
+  expect(manager.state().plugins.find((item) => item.id === "kobrixa.basic-plus")?.status).toBe(
+    "enabled",
+  );
+  expect(manager.state().plugins.find((item) => item.id === "kobrixa.fixture")?.status).toBe(
+    "disabled",
+  );
+  expect(launcher).not.toHaveBeenCalled();
+  await manager.shutdown();
+});
+
+import { diagnosticsFor as runtimeDiagnostics, remainingActivationMs } from "./ui-lifecycle.js";
+import type { CommandInvocation } from "@kobrixa/plugin-protocol";
+function gate160<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((yes) => {
+    resolve = yes;
+  });
+  return { promise, resolve };
+}
+async function phased160() {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const initialize = gate160();
+  const initialBinding = gate160();
+  const readyGate = gate160();
+  const enteredInitialize = gate160();
+  const enteredReady = gate160();
+  const trace: string[] = [];
+  const requests: CommandInvocation[] = [];
+  let crash!: () => void;
+  const launch = vi.fn(
+    async () =>
+      memoryPlugin((peer, control) => {
+        crash = () => control.exit(1);
+        peer.handle("initialize", async () => {
+          enteredInitialize.resolve();
+          await initialize.promise;
+          return { apiVersion: "1.6.0", sdk: { name: "R160", version: "1" } };
+        });
+        peer.handle("command/invoke", (invocation) => {
+          requests.push(invocation);
+          return { ok: true, value: { output: {}, fieldErrors: [] } };
+        });
+        peer.handle("shutdown", () => null);
+        peer.onNotification("exit", () => control.exit());
+      }).process,
+  );
+  vi.mocked(fixture.host.bindChannel).mockImplementation((context) => {
+    fixture.contexts.push(context);
+    return {
+      initialized: async (signal) => {
+        trace.push("initialized");
+        expect(remainingActivationMs(signal)).toBeGreaterThan(0);
+        await initialBinding.promise;
+      },
+      ready: async () => {
+        trace.push("ready");
+        enteredReady.resolve();
+        await readyGate.promise;
+      },
+      dispose: vi.fn(),
+    };
+  });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    locale: "en",
+    launcher: launch,
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  return {
+    manager,
+    source,
+    fixture,
+    runtime: manager.stage3Runtime(),
+    launch,
+    requests,
+    trace,
+    initialize,
+    initialBinding,
+    readyGate,
+    enteredInitialize,
+    enteredReady,
+    crash: () => crash(),
+  };
+}
+
+it("R160 rejects ready before initialize on the actual manager channel", async () => {
+  const h = await phased160();
+  const signal = new AbortController().signal;
+  const opening = h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+  await h.enteredInitialize.promise;
+  await expect(h.runtime.ready(h.fixture.contexts[0]!.owner, signal)).rejects.toThrow(
+    "initialized",
+  );
+  h.initialize.resolve();
+  h.initialBinding.resolve();
+  h.readyGate.resolve();
+  await opening;
+  await h.manager.shutdown();
+});
+
+it("R160 concurrent lazy opens publish one owner before readiness, and cancel only their waiter", async () => {
+  const h = await phased160();
+  const signal = new AbortController().signal;
+  const cancelled = new AbortController();
+  const abandoned = expect(
+    h.runtime.activateInitialized(h.source.launch.sourceKey, cancelled.signal),
+  ).rejects.toThrow("cancelled open");
+  const a = h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+  const b = h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+  await h.enteredInitialize.promise;
+  cancelled.abort(new Error("cancelled open"));
+  await abandoned;
+  const diagnostics = runtimeDiagnostics(h.runtime);
+  expect(diagnostics.snapshot()).toMatchObject({ owners: 1, timers: 1 });
+  h.initialize.resolve();
+  const context = await a;
+  expect(await b).toBe(context);
+  expect(h.launch).toHaveBeenCalledTimes(1);
+  expect(h.trace).toEqual(["initialized"]);
+  let ready = false;
+  const complete = h.runtime.ready(context.owner, signal).then(() => {
+    ready = true;
+  });
+  h.initialBinding.resolve();
+  await h.enteredReady.promise;
+  expect(ready).toBe(false);
+  h.readyGate.resolve();
+  await complete;
+  expect(diagnostics.snapshot()).toMatchObject({ owners: 1, timers: 0 });
+  expect(h.manager.thirdPartyActive).toBe(false);
+  await h.manager.shutdown();
+  expect(diagnostics.snapshot()).toEqual({
+    owners: 0,
+    timers: 0,
+    bindings: 0,
+    subscriptions: 0,
+    queuedEvents: 0,
+    queuedBytes: 0,
+    pendingInvocations: 0,
+    actionTokens: 0,
+    resourceReaders: 0,
+    workerJobs: 0,
+  });
+  expect(() => runtimeDiagnostics({})).toThrow("Unknown");
+});
+
+it.each(["initialize", "initial-binding", "ready"] as const)(
+  "R160 crash at %s revokes one original owner and cleans diagnostics",
+  async (phase) => {
+    const h = await phased160();
+    const signal = new AbortController().signal;
+    const opening = h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+    const failedOpen = opening.catch((error) => error);
+    await h.enteredInitialize.promise;
+    let failedReady: Promise<unknown> | undefined;
+    if (phase !== "initialize") {
+      h.initialize.resolve();
+      const context = await opening;
+      failedReady = h.runtime.ready(context.owner, signal).catch((error) => error);
+      if (phase === "ready") {
+        h.initialBinding.resolve();
+        await h.enteredReady.promise;
+      }
+    }
+    h.crash();
+    if (phase === "initialize") expect(await failedOpen).toBeInstanceOf(Error);
+    else expect(await failedReady).toBeInstanceOf(Error);
+    h.initialize.resolve();
+    h.initialBinding.resolve();
+    h.readyGate.resolve();
+    await h.manager.shutdown();
+    expect(h.fixture.host.retireResources).toHaveBeenCalledTimes(1);
+    expect(runtimeDiagnostics(h.runtime).snapshot()).toMatchObject({ owners: 0, timers: 0 });
+  },
+);
+
+it("R160 keeps original peer evidence through disposition and real exit, with observational diagnostics", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const disposition = gate160();
+  const retired = gate160();
+  const exiting = gate160();
+  let actualExit!: () => void;
+  const launch = vi.fn(
+    async () =>
+      memoryPlugin((peer, control) => {
+        actualExit = () => control.exit();
+        peer.handle("initialize", () => ({
+          apiVersion: "1.6.0",
+          sdk: { name: "R160", version: "1" },
+        }));
+        peer.handle("shutdown", () => null);
+        peer.onNotification("exit", () => exiting.resolve());
+      }).process,
+  );
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  vi.mocked(fixture.host.retireResources).mockImplementation(async () => {
+    retired.resolve();
+    await disposition.promise;
+  });
+  const runtime = manager.stage3Runtime();
+  const signal = new AbortController().signal;
+  const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
+  await runtime.ready(context.owner, signal);
+  const diagnostics = runtimeDiagnostics(runtime);
+  const stopping = manager.setEnabled(source.launch.sourceKey, false);
+  await retired.promise;
+  expect(runtime.current(context.owner)).toBe(false);
+  expect(context.peer.closed).toBe(false);
+  expect(diagnostics.snapshot().owners).toBe(1);
+  expect(diagnostics.snapshot().owners).toBe(1);
+  // The retained peer is found by all five fields; no source-only fallback is allowed.
+  await expect(
+    runtime.dispatchDrain({ ...context.owner, processEpoch: "foreign" }, {} as never, signal),
+  ).rejects.toThrow("Original drain channel");
+  await expect(runtime.dispatchDrain(context.owner, {} as never, signal)).rejects.toThrow(
+    "unpublished before P170",
+  );
+  disposition.resolve();
+  await exiting.promise;
+  expect(diagnostics.snapshot().owners).toBe(1);
+  expect(context.peer.closed).toBe(false);
+  actualExit();
+  await stopping;
+  expect(context.peer.closed).toBe(true);
+  expect(diagnostics.snapshot().owners).toBe(0);
+  await manager.shutdown();
+});
+
+it("R160 inventory is lazy metadata; management context commands use only the original host-built envelope", async () => {
+  const source = optionalNodeSource();
+  const command = {
+    ...source.manifest.contributes.commands[0]!,
+    invocation: "context-v1" as const,
+    arguments: {},
+  };
+  const fixture = stage3Fixture();
+  const received: CommandInvocation[] = [];
+  const legacy = vi.fn();
+  const launch = vi.fn(
+    async () =>
+      memoryPlugin((peer, control) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.6.0",
+          sdk: { name: "R160", version: "1" },
+        }));
+        peer.handle("command/invoke", (invocation) => {
+          received.push(invocation);
+          return { ok: true, value: { output: {}, fieldErrors: [] } };
+        });
+        peer.handle("command/execute", () => {
+          legacy();
+          return null;
+        });
+        peer.handle("shutdown", () => null);
+        peer.onNotification("exit", () => control.exit());
+      }).process,
+  );
+  const manager = await PluginManager.create({
+    sources: [
+      { ...source, manifest: { ...source.manifest, contributes: { commands: [command] } } },
+    ],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const catalog = manager.uiCatalogSources();
+  expect(catalog[0]?.commands).toEqual([command]);
+  expect(launch).not.toHaveBeenCalled();
+  expect(runtime.current(catalog[0]!.owner)).toBe(false);
+  expect(await manager.executeCommand(command.id)).toEqual({ ok: true });
+  expect(legacy).not.toHaveBeenCalled();
+  expect(received).toHaveLength(1);
+  expect(received[0]?.context).toEqual({
+    origin: "management",
+    contextRef: null,
+    locale: "en",
+    trigger: { kind: "activate" },
+  });
+  const owner = runtime.owners()[0]!;
+  const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: "workbench" };
+  const authority = { ref: "authority", epoch: "epoch" };
+  fixture.host.principal = (admitted) => ({
+    kind: "plugin",
+    owner: admitted,
+    authorityContext: authority,
+  });
+  expect(runtime.context(owner, scope)).toEqual(authority);
+  expect(runtime.context(owner, { ...scope, hostEpoch: "other" })).toBeNull();
+  fixture.host.principal = (admitted) => ({
+    kind: "plugin",
+    owner: { ...admitted, generation: admitted.generation + 1 },
+    authorityContext: authority,
+  });
+  expect(runtime.context(owner, scope)).toBeNull();
+  await manager.shutdown();
+  expect(runtime.context(owner, scope)).toBeNull();
+});
+
+import { UiStateRegistry } from "./ui-state.js";
+import type { UiBinding } from "@kobrixa/plugin-protocol";
+it("R160 real first-open latch is released before the plugin ready handler queries instances", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const states = new UiStateRegistry({
+    current: (owner) =>
+      owner.sourceKey === source.launch.sourceKey &&
+      owner.pluginId === source.manifest.id &&
+      owner.uiResourceGeneration === 1,
+  });
+  const queried: UiBinding[][] = [];
+  const launch = vi.fn(
+    async () =>
+      memoryPlugin((peer, control) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.6.0",
+          sdk: { name: "R160", version: "1" },
+        }));
+        peer.handle("ui/negotiate", () => ({
+          ok: true,
+          value: { commandEnvelopeVersions: [1], uiResourceVersions: [1] },
+        }));
+        peer.handle("ui/ready", async () => {
+          const result = await peer.request("ui/instances", {});
+          if (!result.ok) throw new Error("instances unavailable");
+          queried.push(result.value.instances);
+          return { ok: true, value: {} };
+        });
+        peer.handle("shutdown", () => null);
+        peer.onNotification("exit", () => control.exit());
+      }).process,
+  );
+  vi.mocked(fixture.host.bindChannel).mockImplementation((context) => {
+    context.peer.handle("ui/instances", () => ({
+      ok: true,
+      value: { instances: states.instances(context.owner) },
+    }));
+    return {
+      initialized: async (signal) => {
+        await context.peer.request(
+          "ui/negotiate",
+          { commandEnvelopeVersions: [1], uiResourceVersions: [1] },
+          { signal, timeoutMs: remainingActivationMs(signal) },
+        );
+        await states.initialBindingsReady(context.owner, signal);
+      },
+      ready: async (signal) => {
+        await context.peer.request(
+          "ui/ready",
+          {},
+          { signal, timeoutMs: remainingActivationMs(signal) },
+        );
+      },
+      dispose: () => states.retireExecution(context.owner, "process-gone"),
+    };
+  });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const input: Parameters<UiStateRegistry["open"]>[0] = {
+    owner: {
+      sourceKey: source.launch.sourceKey,
+      pluginId: source.manifest.id,
+      uiResourceGeneration: 1,
+    },
+    id: "kobrixa.fixture.panel",
+    scope: { hostEpoch: fixture.host.hostEpoch, workbenchInstance: "workbench" },
+    resource: {
+      kind: "panel",
+      root: "root",
+      nodes: [{ id: "root", type: "group", layout: "stack", children: [] }],
+      fields: {},
+      data: {},
+    },
+    activateInitialized: runtime.activateInitialized,
+  };
+  const [a, b] = await Promise.all([states.open(input), states.open(input)]);
+  expect(a.ok).toBe(true);
+  expect(b).toEqual(a);
+  if (!a.ok) throw new Error("open failed");
+  const owner = states.executionOwner(a.value.binding)!;
+  await runtime.ready(owner, new AbortController().signal);
+  expect(queried).toEqual([[a.value.binding]]);
+  expect(launch).toHaveBeenCalledTimes(1);
+  await manager.shutdown();
+  expect(states.instances(owner)).toEqual([]);
+});
+
+it.each(["initialize", "initial-binding", "ready"] as const)(
+  "R160 reload at %s rejects the old waiter before admitting a replacement",
+  async (phase) => {
+    const h = await phased160();
+    const signal = new AbortController().signal;
+    const opening = h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+    const oldOpen = opening.catch((error) => error);
+    await h.enteredInitialize.promise;
+    const oldOwner = h.fixture.contexts[0]!.owner;
+    let oldReady: Promise<unknown> | undefined;
+    if (phase !== "initialize") {
+      h.initialize.resolve();
+      await opening;
+      oldReady = h.runtime.ready(oldOwner, signal).catch((error) => error);
+      if (phase === "ready") {
+        h.initialBinding.resolve();
+        await h.enteredReady.promise;
+      }
+    }
+    const reloading = h.manager.reloadSource(h.source.launch.sourceKey);
+    if (phase === "initialize") expect(await oldOpen).toBeInstanceOf(Error);
+    else expect(await oldReady).toBeInstanceOf(Error);
+    await reloading;
+    expect(h.runtime.current(oldOwner)).toBe(false);
+    h.initialize.resolve();
+    h.initialBinding.resolve();
+    h.readyGate.resolve();
+    const replacement = await h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+    await h.runtime.ready(replacement.owner, signal);
+    expect(replacement.owner.generation).toBeGreaterThan(oldOwner.generation);
+    expect(replacement.peer).not.toBe(h.fixture.contexts[0]!.peer);
+    expect(h.fixture.host.retireResources).toHaveBeenCalledTimes(1);
+    await h.manager.shutdown();
+  },
+);
+
+it("R160 a later disable cannot be undone by an earlier pending enable save", async () => {
+  const source = optionalNodeSource();
+  const store = memoryStore();
+  const manager = await PluginManager.create({
+    sources: [source],
+    store,
+    safeMode: false,
+    launcher,
+    locale: "en",
+  });
+  await manager.setEnabled(source.launch.sourceKey, false);
+  const entered = gate160();
+  const saved = gate160();
+  const original = store.save;
+  store.save = async (state) => {
+    entered.resolve();
+    await saved.promise;
+    await original(state);
+  };
+  const enabling = manager.setEnabled(source.launch.sourceKey, true);
+  await entered.promise;
+  const disabling = manager.setEnabled(source.launch.sourceKey, false);
+  expect(manager.state().plugins[0]?.status).toBe("disabled");
+  saved.resolve();
+  expect(await enabling).toMatchObject({ ok: false, code: "PLUGIN_E_CANCELLED" });
+  await disabling;
+  expect(manager.state().plugins[0]?.status).toBe("disabled");
+  expect(launcher).not.toHaveBeenCalled();
+  await manager.shutdown();
+});
+
+it("R160 the real handshake ready phase cannot borrow another initialization deadline", async () => {
+  vi.useFakeTimers();
+  const h = await phased160();
+  const signal = new AbortController().signal;
+  const open = h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+  await h.enteredInitialize.promise;
+  await vi.advanceTimersByTimeAsync(9_500);
+  h.initialize.resolve();
+  const context = await open;
+  const failed = expect(h.runtime.ready(context.owner, signal)).rejects.toMatchObject({
+    code: "PLUGIN_E_HANDSHAKE",
+  });
+  h.initialBinding.resolve();
+  await h.enteredReady.promise;
+  await vi.advanceTimersByTimeAsync(499);
+  expect(runtimeDiagnostics(h.runtime).snapshot()).toMatchObject({ owners: 1, timers: 1 });
+  await vi.advanceTimersByTimeAsync(1);
+  await failed;
+  expect(h.fixture.host.retireResources).toHaveBeenCalledTimes(1);
+  expect(runtimeDiagnostics(h.runtime).snapshot()).toMatchObject({ owners: 0, timers: 0 });
+  h.readyGate.resolve();
+  await h.manager.shutdown();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("R160 safe mode neither launches nor exposes catalog entries for optional shipped Node sources", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const manager = await PluginManager.create({
+    sources: [builtin, source],
+    store: memoryStore(),
+    safeMode: true,
+    launcher,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  expect(manager.uiCatalogSources().map((row) => row.owner.sourceKey)).toEqual([
+    "builtin:kobrixa.basic-plus",
+  ]);
+  await expect(
+    manager
+      .stage3Runtime()
+      .activateInitialized(source.launch.sourceKey, new AbortController().signal),
+  ).rejects.toThrow("no admitted process");
+  expect(launcher).not.toHaveBeenCalled();
+  expect(manager.thirdPartyActive).toBe(false);
+  await manager.shutdown();
+});
+
+it("R160 retirement during initialization retains the peer until actual exit even after disposition settles", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const entered = gate160();
+  const killed = gate160();
+  const initialize = gate160();
+  let actualExit!: () => void;
+  const process = memoryPlugin((peer, control) => {
+    actualExit = () => control.exit();
+    peer.handle("initialize", async () => {
+      entered.resolve();
+      await initialize.promise;
+      return { apiVersion: "1.6.0", sdk: { name: "R160", version: "1" } };
+    });
+  }).process;
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    locale: "en",
+    launcher: async () => ({
+      ...process,
+      kill: () => killed.resolve(),
+      forceKill: () => killed.resolve(),
+    }),
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const open = runtime
+    .activateInitialized(source.launch.sourceKey, new AbortController().signal)
+    .catch((error) => error);
+  await entered.promise;
+  const context = fixture.contexts[0]!;
+  const disabling = manager.setEnabled(source.launch.sourceKey, false);
+  await killed.promise;
+  expect(runtime.current(context.owner)).toBe(false);
+  expect(context.peer.closed).toBe(false);
+  expect(runtimeDiagnostics(runtime).snapshot().owners).toBe(1);
+  actualExit();
+  expect(await open).toBeInstanceOf(Error);
+  await disabling;
+  expect(runtimeDiagnostics(runtime).snapshot().owners).toBe(0);
+  initialize.resolve();
+  await manager.shutdown();
+});
+
+it("R160 declared UI on an old peer fails negotiation once without replay or leaked ownership", async () => {
+  const source = optionalNodeSource();
+  const fixture = stage3Fixture();
+  const launch = vi.fn(
+    async () =>
+      memoryPlugin((peer, control) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.5.0",
+          sdk: { name: "old", version: "1" },
+        }));
+        peer.handle("shutdown", () => null);
+        peer.onNotification("exit", () => control.exit());
+      }).process,
+  );
+  vi.mocked(fixture.host.bindChannel).mockImplementation((context) => ({
+    initialized: async (signal) => {
+      await context.peer.request(
+        "ui/negotiate",
+        { commandEnvelopeVersions: [1], uiResourceVersions: [1] },
+        { signal, timeoutMs: remainingActivationMs(signal) },
+      );
+    },
+    ready: async () => {
+      throw new Error("ready must not run after failed negotiation");
+    },
+    dispose: vi.fn(),
+  }));
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    launcher: launch,
+    locale: "en",
+    stage3: fixture.stage3,
+    stage3Host: fixture.host,
+  });
+  fixture.assign(manager);
+  const runtime = manager.stage3Runtime();
+  const signal = new AbortController().signal;
+  const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
+  await expect(runtime.ready(context.owner, signal)).rejects.toBeDefined();
+  expect(launch).toHaveBeenCalledTimes(1);
+  expect(fixture.host.retireResources).toHaveBeenCalledTimes(1);
+  await manager.shutdown();
+  expect(runtimeDiagnostics(runtime).snapshot()).toMatchObject({ owners: 0, timers: 0 });
+});
+
+it("R160 an enable save cannot overwrite a concurrent disable of another source", async () => {
+  const a = await devPlugin("enable-a");
+  const b = await devPlugin("disable-b");
+  const store = memoryStore();
+  const manager = await create([a, b], store);
+  await manager.setEnabled(keyOf(a), false);
+  const saving = gate160();
+  const release = gate160();
+  const original = store.save;
+  store.save = async (state) => {
+    saving.resolve();
+    await release.promise;
+    await original(state);
+  };
+  const enabled = manager.setEnabled(keyOf(a), true);
+  await saving.promise;
+  const disabled = manager.setEnabled(keyOf(b), false);
+  const exposed: string[] = [];
+  const unsubscribe = manager.onEvent((event) => {
+    if (
+      event.type === "state" &&
+      event.state.plugins.find((row) => row.sourceKey === keyOf(b))?.status === "enabled"
+    )
+      exposed.push("enabled");
+  });
+  release.resolve();
+  await enabled;
+  await disabled;
+  expect(exposed).toEqual([]);
+  unsubscribe();
+  await manager.shutdown();
+});
+
+it("R160 actual exit cannot untrack a disabled supervisor whose disposition is still pending", async () => {
+  const h = await phased160();
+  const signal = new AbortController().signal;
+  h.initialize.resolve();
+  h.initialBinding.resolve();
+  h.readyGate.resolve();
+  const context = await h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+  await h.runtime.ready(context.owner, signal);
+  const disposition = gate160();
+  const retiring = gate160();
+  vi.mocked(h.fixture.host.retireResources).mockImplementation(async () => {
+    retiring.resolve();
+    await disposition.promise;
+  });
+  const disabled = h.manager.setEnabled(h.source.launch.sourceKey, false);
+  await retiring.promise;
+  h.crash();
+  await Promise.resolve();
+  expect(context.peer.closed).toBe(true);
+  expect(h.manager.active).toBe(true);
+  expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
+  const shutdown = h.manager.shutdown();
+  disposition.resolve();
+  await disabled;
+  await shutdown;
+  expect(h.manager.active).toBe(false);
+  expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(0);
+});
+
+it.each(["state", "host"] as const)(
+  "R160-2 reserves disable FIFO before a reentrant %s callback enables the source",
+  async (callback) => {
+    const source = optionalNodeSource();
+    const store = memoryStore();
+    const fixture = stage3Fixture();
+    const manager = await PluginManager.create({
+      sources: [source],
+      store,
+      safeMode: false,
+      launcher,
+      locale: "en",
+      stage3: fixture.stage3,
+      stage3Host: fixture.host,
+    });
+    fixture.assign(manager);
+    let enabling: Promise<unknown> | undefined;
+    let invoked = false;
+    const enable = () => {
+      if (invoked) return;
+      invoked = true;
+      expect(manager.state().plugins[0]?.status).toBe("disabled");
+      enabling = manager.setEnabled(source.launch.sourceKey, true);
+    };
+    let unsubscribe = () => {};
+    if (callback === "state")
+      unsubscribe = manager.onEvent((event) => {
+        if (event.type === "state" && event.state.plugins[0]?.status === "disabled") enable();
+      });
+    else {
+      const runtime = manager.stage3Runtime();
+      const signal = new AbortController().signal;
+      const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
+      await runtime.ready(context.owner, signal);
+      const retire = fixture.host.retireResources;
+      fixture.host.retireResources = (owner, reason) => {
+        enable();
+        return retire(owner, reason);
+      };
+    }
+    const disabling = manager.setEnabled(source.launch.sourceKey, false);
+    expect(manager.state().plugins[0]?.status).toBe("disabled");
+    expect(invoked).toBe(true);
+    await disabling;
+    await enabling;
+    expect(manager.state().plugins[0]?.status).toBe("enabled");
+    expect(store.saved.map((state) => [...state.disabled])).toEqual([
+      [source.launch.sourceKey],
+      [],
+    ]);
+    const reconstructed = await PluginManager.create({
+      sources: [source],
+      store,
+      safeMode: false,
+      launcher,
+      locale: "en",
+    });
+    expect(reconstructed.state().plugins[0]?.status).toBe("enabled");
+    unsubscribe();
+    await manager.shutdown();
+    await reconstructed.shutdown();
+  },
+);

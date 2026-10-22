@@ -66,7 +66,11 @@ type SourceRead = Omit<ReadPlugin, "sourceKey">;
 
 const problem = (code: PluginErrorCode, message: string): PluginProblem => ({ code, message });
 
-function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]): PluginProblem[] {
+function semanticProblems(
+  manifest: PluginManifest,
+  source: ReadPlugin["source"],
+  allowBuiltinNode = false,
+): PluginProblem[] {
   const problems: PluginProblem[] = [];
   if (RESERVED_PLUGIN_IDS.has(manifest.id))
     problems.push(problem("PLUGIN_E_RESERVED_ID", `${manifest.id} is reserved by Kobrixa.`));
@@ -95,7 +99,10 @@ function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]
       ),
     );
   const builtinRuntime = manifest.runtime.kind === "builtin";
-  if (builtinRuntime !== (source === "builtin"))
+  if (
+    builtinRuntime !== (source === "builtin") &&
+    !(source === "builtin" && allowBuiltinNode && manifest.runtime.kind === "node")
+  )
     problems.push(
       problem(
         "PLUGIN_E_RUNTIME_NOT_ALLOWED",
@@ -129,7 +136,7 @@ function semanticProblems(manifest: PluginManifest, source: ReadPlugin["source"]
       problem("PLUGIN_E_DUPLICATE_COMMAND", `Command ${id} is declared more than once.`),
     );
   for (const event of manifest.activationEvents ?? [])
-    if (!commands.includes(event.slice("onCommand:".length)))
+    if (event.startsWith("onCommand:") && !commands.includes(event.slice("onCommand:".length)))
       problems.push(
         problem(
           "PLUGIN_E_ACTIVATION",
@@ -160,6 +167,7 @@ function checkManifest(
   value: unknown,
   source: ReadPlugin["source"],
   fallbackId: string,
+  allowBuiltinNode = false,
 ): SourceRead {
   if (source !== "builtin" && value && typeof value === "object" && "contributes" in value) {
     const contributes = value.contributes;
@@ -205,7 +213,7 @@ function checkManifest(
     id: parsed.data.id,
     source,
     manifest: parsed.data,
-    problems: semanticProblems(parsed.data, source),
+    problems: semanticProblems(parsed.data, source, allowBuiltinNode),
   };
 }
 
@@ -260,34 +268,62 @@ export async function readSource(
 ): Promise<ReadPlugin> {
   const resourceBudget = new SourceReadBudget(options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS);
   if (source.kind === "builtin") {
-    if (source.policy !== "required" && source.policy !== "optional") {
-      const manifest = source.manifest;
-      const id =
-        manifest &&
-        typeof manifest === "object" &&
-        "id" in manifest &&
-        typeof manifest.id === "string"
-          ? manifest.id
-          : "invalid-builtin";
+    const launch = source.launch;
+    const allowNode = source.policy === "optional" && launch !== undefined;
+    const plugin = await resourceBudget.run(async () =>
+      checkManifest(source.manifest, "builtin", "builtin", allowNode),
+    );
+    const sourceKey = `builtin:${launch?.pluginId ?? plugin.id}`;
+    const invalid = (message: string): ReadPlugin => ({
+      ...plugin,
+      sourceKey,
+      resourceBudget,
+      policy: source.policy,
+      problems: [...plugin.problems, problem("PLUGIN_E_ENTRY", message)],
+    });
+    if (source.policy !== "required" && source.policy !== "optional")
       return {
-        id,
-        source: "builtin",
-        sourceKey: `builtin:${id}`,
-        resourceBudget,
+        ...invalid("Builtin policy was not supplied by the host."),
         problems: [
           problem("PLUGIN_E_MANIFEST", "Built-in sources require an explicit host policy."),
         ],
       };
+    if (plugin.problems.length) {
+      if (source.policy === "required")
+        throw new Error(
+          `Invalid built-in plugin manifest: ${plugin.problems.map((item) => item.message).join("; ")}`,
+        );
+      return { ...plugin, sourceKey, resourceBudget, policy: source.policy };
     }
-    const plugin = await resourceBudget.run(async () =>
-      checkManifest(source.manifest, "builtin", "builtin"),
-    );
-    if (plugin.problems.length)
-      throw new Error(
-        `Invalid built-in plugin manifest: ${plugin.problems.map((item) => item.message).join("; ")}`,
-      );
-    return { ...plugin, policy: source.policy, sourceKey: `builtin:${plugin.id}`, resourceBudget };
+    const manifest = plugin.manifest!;
+    if (
+      launch &&
+      (source.policy !== "optional" ||
+        launch.policy !== "optional" ||
+        launch.pluginId !== manifest.id ||
+        launch.sourceKey !== sourceKey ||
+        manifest.runtime.kind !== "node" ||
+        manifest.runtime.entry !== "main.cjs" ||
+        launch.runtime !== "node" ||
+        launch.entry !== "main.cjs" ||
+        launch.manifest !== "kobrixa-plugin.json" ||
+        launch.resourceIndex !== "resource-index.json" ||
+        !path.isAbsolute(launch.packageRoot))
+    )
+      return invalid("Invalid shipped plugin launch descriptor.");
+    if (manifest.runtime.kind === "node" && !launch)
+      return invalid("Shipped Node execution requires a validated descriptor.");
+    return {
+      ...plugin,
+      sourceKey,
+      resourceBudget,
+      policy: source.policy,
+      ...(launch
+        ? { directory: launch.packageRoot, entry: path.join(launch.packageRoot, launch.entry) }
+        : {}),
+    };
   }
+
   const directory = path.resolve(source.directory);
   const placeholder = {
     sourceKey: developmentSourceKey(directory),
@@ -385,4 +421,9 @@ export async function loadPlugins(
 ): Promise<RegisteredPlugin[]> {
   const read = await Promise.all(sources.map((source) => readSource(source, options)));
   return resolvePlugins(read, options);
+}
+
+export function sourcePolicy(source: PluginSource): { required: boolean; canToggle: boolean } {
+  const required = source.kind === "builtin" && source.policy === "required";
+  return { required, canToggle: !required };
 }

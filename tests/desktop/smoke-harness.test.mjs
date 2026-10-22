@@ -99,6 +99,29 @@ function assertApiKeys(actual, expected, prefix = "kobrixa") {
   }
 }
 
+test("smoke UI observers use separate targeted channels and dispose once", async () => {
+  const { api, calls, ipcRenderer } = loadPreload();
+  const seen = [[], []];
+  const first = api.plugins.ui.onEvent((value) => seen[0].push(value));
+  const second = api.plugins.ui.onEvent((value) => seen[1].push(value));
+  ipcRenderer.emit("plugins:ui:event:2", {}, { type: "catalog", revision: 4 });
+  assert.deepEqual(seen, [[], [{ type: "catalog", revision: 4 }]]);
+  first();
+  first();
+  second();
+  assert.equal(ipcRenderer.listenerCount("plugins:ui:event:1"), 0);
+  assert.equal(ipcRenderer.listenerCount("plugins:ui:event:2"), 0);
+  assert.deepEqual(
+    calls.filter((row) => row[0] === "plugins:ui:unsubscribe"),
+    [
+      ["plugins:ui:unsubscribe", 1],
+      ["plugins:ui:unsubscribe", 2],
+    ],
+  );
+  await api.plugins.ui.snapshot({ binding: "opaque" });
+  assert.deepEqual(calls.at(-1), ["plugins:ui:snapshot", { binding: "opaque" }]);
+});
+
 test("smoke preload contains the real preload's complete API key tree", async () => {
   const source = await readFile(
     new URL("../../apps/desktop/src/preload/index.ts", import.meta.url),

@@ -44,3 +44,99 @@ class EventsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(peer.devices.inbox)
         self.assertTrue(all(task.cancelled() for task in started))
         with self.assertRaises(ValueError):bind_event_channel(peer,event(1)['owner'])
+
+OWNER = event(1)["owner"]
+
+class UiCommonEventsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_gap_snapshot_race_and_close(self):
+        ack, callbacks = [], []
+        gate = asyncio.Event()
+        async def acknowledge(id, sequence):
+            ack.append(sequence)
+        inbox = EventInbox(acknowledge, OWNER)
+        inbox.enable()
+        id = "00000000-0000-4000-8000-000000000090"
+        async def snapshot():
+            await gate.wait()
+            inbox.reconcile(id, 3)
+        inbox.open(id, lambda event: callbacks.append(event["sequence"]), snapshot)
+        def event(sequence):
+            return {"version":1,"owner":OWNER,"subscriptionId":id,"sequence":sequence,
+                    "delivery":"control","kind":"ui.environment","data":{"locale":"en","theme":"dark"}}
+        for sequence in (2, 3, 4):
+            self.assertTrue(inbox.accept(event(sequence)))
+        await asyncio.sleep(0)
+        self.assertEqual(ack, [2, 3, 4])
+        self.assertEqual(callbacks, [])
+        gate.set()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(callbacks, [4])
+        self.assertFalse(inbox.accept(event(4)))
+        inbox.close(id)
+        self.assertFalse(inbox.accept(event(5)))
+
+    async def test_mixed_domain_saturation_and_callback_failure(self):
+        ack, entered = [], []
+        gate = asyncio.Event()
+        async def acknowledge(id, sequence):
+            ack.append((id, sequence))
+        async def callback(event):
+            entered.append(event["sequence"])
+            await gate.wait()
+            raise ValueError("isolated callback failure")
+        inbox = EventInbox(acknowledge, OWNER)
+        inbox.enable()
+        ids = ["00000000-0000-4000-8000-000000000091", "00000000-0000-4000-8000-000000000092"]
+        async def snapshot():
+            return None
+        for id in ids:
+            inbox.open(id, callback, snapshot)
+        for sequence in range(1, 5):
+            for index, id in enumerate(ids):
+                kind = "devices.catalog" if index == 0 else "ui.environment"
+                data = {"revision":sequence,"providers":[],"sessions":[]} if index == 0 else {"locale":"en","theme":"dark"}
+                self.assertTrue(inbox.accept({"version":1,"owner":OWNER,"subscriptionId":id,
+                    "sequence":sequence,"delivery":"control","kind":kind,"data":data}))
+        await asyncio.sleep(0)
+        self.assertEqual(len(ack), 8)
+        self.assertFalse(inbox.accept({"version":1,"owner":OWNER,"subscriptionId":ids[1],
+            "sequence":5,"delivery":"control","kind":"ui.environment","data":{"locale":"en","theme":"dark"}}))
+        gate.set()
+        for _ in range(12):
+            await asyncio.sleep(0)
+        self.assertEqual(len(entered), 8)
+        for id in ids:
+            inbox.close(id)
+
+    async def test_terminal_adapter_retains_delivery_until_callback_then_forgets(self):
+        from types import SimpleNamespace
+        from kobrixa._events import bind_event_channel, ui_event_client_port, _BOUND
+        class Peer:
+            def __init__(self):
+                self.devices = SimpleNamespace(inbox=None)
+                self.requests = []
+            async def _request(self, method, params):
+                self.requests.append((method, params))
+                return {"ok":True,"value":{"acknowledged":params["sequence"]}}
+        peer = Peer()
+        bind_event_channel(peer, OWNER)
+        port = ui_event_client_port(peer)
+        id = "00000000-0000-4000-8000-000000000093"
+        seen = []
+        binding = {"contributionId":"acme.test.panel","panelInstance":id,"kind":"panel",
+                   "uiResourceGeneration":1,"generation":OWNER["generation"],
+                   "hostEpoch":OWNER["hostEpoch"],"processEpoch":OWNER["processEpoch"]}
+        async def snapshot():
+            return {"ok":True,"value":{"sequence":0,"snapshot":{"instances":[],"states":[],"locale":"en","theme":"light"}}}
+        async def callback(event):
+            self.assertEqual(peer.requests[0][0], "events/ack")
+            seen.append(event["kind"])
+            port.forget(id)
+        port.adopt(subscription_id=id, sequence=0, snapshot=snapshot, listener=callback)
+        self.assertTrue(_BOUND[peer].accept({"version":1,"owner":OWNER,"subscriptionId":id,
+            "sequence":1,"delivery":"control","kind":"ui.revoked","data":{"binding":binding,"reason":"closed"}}))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(seen, ["ui.revoked"])
+        self.assertNotIn(id, _BOUND[peer]._slots)

@@ -76,6 +76,13 @@ const lifecycleListeners = new WeakMap<
   DeviceBrokerPort,
   Set<(event: BrokerLifecycleEvent) => void>
 >();
+const recoverySessions = new WeakMap<DeviceBrokerPort, () => DeviceSessionSnapshot[]>();
+/** Main-only recovery observation; never grants session ownership or starts device work. */
+export function readDeviceRecoverySessions(broker: DeviceBrokerPort): DeviceSessionSnapshot[] {
+  const read = recoverySessions.get(broker);
+  if (!read) throw new Error("Device recovery observation is unavailable.");
+  return read();
+}
 export function observeBrokerLifecycle(
   broker: DeviceBrokerPort,
   listener: (event: BrokerLifecycleEvent) => void,
@@ -2315,5 +2322,9 @@ export function createBroker(
     },
   };
   lifecycleListeners.set(broker, lifecycle);
+  recoverySessions.set(broker, () => {
+    input.profile.assertHeld();
+    return session ? [structuredClone(sessionSnapshot(session))] : [];
+  });
   return broker;
 }

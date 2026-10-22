@@ -50,12 +50,41 @@ export type { PersistenceActionRequestMap } from "./persistence-actions.js";
 export type * from "./device-types.js";
 export type * from "./business-result.js";
 export type * from "./events.js";
-export type * from "./ui-types.js";
-export type * from "./ui-methods.js";
-export type * from "./ui-validation.js";
+
+export type { Text } from "./ui-resource.js";
+export type * from "./device-methods.js";
+
+export * from "./device-types.js";
+export * from "./business-result.js";
+export * from "./device-methods.js";
+export * from "./device-limits.js";
+export * from "./device-validation.js";
+export * from "./events.js";
+
+export * from "./ui-limits.js";
+export * from "./ui-types.js";
+export * from "./ui-methods.js";
+export * from "./ui-validation.js";
+export {
+  localIdSchema,
+  uiTextSchema,
+  uiLabelSchema,
+  uiScalarSchema,
+  valueSpecSchema,
+  valueRefSchema,
+  displayValueSchema,
+  displayTextSchema,
+  conditionSchema,
+  argumentBindingsSchema,
+  uiActionSchema,
+  uiNodeV1Schema,
+  panelResourceV1Schema,
+  statusResourceV1Schema,
+  uiResourceV1Schema,
+} from "./ui-resource.js";
 export type {
   LocalId,
-  Text,
+  Text as UiText,
   Scalar as UiScalar,
   ValueSpec,
   DataSlot,
@@ -72,11 +101,3 @@ export type {
   UiNumberNode,
   UiNodeV1,
 } from "./ui-resource.js";
-export type * from "./device-methods.js";
-
-export * from "./device-types.js";
-export * from "./business-result.js";
-export * from "./device-methods.js";
-export * from "./device-limits.js";
-export * from "./device-validation.js";
-export * from "./events.js";

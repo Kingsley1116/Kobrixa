@@ -8,6 +8,8 @@ const call =
 const unsupportedPluginOperation = async () => {
   throw new Error("Development plugin operations are not supported by the smoke harness.");
 };
+let nextUiListener = 0;
+const uiRequest = (method) => (input) => ipcRenderer.invoke(`plugins:ui:${method}`, input);
 contextBridge.exposeInMainWorld("kobrixa", {
   // The harness does not customize the native Windows title bar.
   ...(process.platform === "win32" ? { windowChrome: { setAppearance: async () => {} } } : {}),
@@ -51,6 +53,43 @@ contextBridge.exposeInMainWorld("kobrixa", {
   documentation: { open: call("documentationOpen") },
   // No development plugins; built-in help entries come from the renderer's catalog.
   plugins: {
+    // General workbench smoke has no dynamic plugins. Keep real IPC forwarding
+    // so missing main handlers fail visibly; UI acceptance has its own real host.
+    ui: {
+      catalog: uiRequest("catalog"),
+      resource: uiRequest("resource"),
+      open: uiRequest("open"),
+      close: uiRequest("close"),
+      visibility: uiRequest("visibility"),
+      invoke: uiRequest("invoke"),
+      hold: uiRequest("hold"),
+      pulse: uiRequest("pulse"),
+      snapshot: uiRequest("snapshot"),
+      reportFailure: uiRequest("report-failure"),
+      onEvent(listener) {
+        const id = ++nextUiListener,
+          channel = `plugins:ui:event:${id}`;
+        const receive = (_event, value) => listener(value);
+        ipcRenderer.on(channel, receive);
+        void ipcRenderer.invoke("plugins:ui:subscribe", id).catch(() => {});
+        let active = true;
+        return () => {
+          if (!active) return;
+          active = false;
+          ipcRenderer.removeListener(channel, receive);
+          void ipcRenderer.invoke("plugins:ui:unsubscribe", id).catch(() => {});
+        };
+      },
+    },
+    recovery: {
+      snapshot: (input) => ipcRenderer.invoke("plugins:recovery:snapshot", input),
+      act: (input) => ipcRenderer.invoke("plugins:recovery:act", input),
+      onChanged(listener) {
+        const receive = () => listener();
+        ipcRenderer.on("plugins:recovery:changed", receive);
+        return () => ipcRenderer.removeListener("plugins:recovery:changed", receive);
+      },
+    },
     execute: unsupportedPluginOperation,
     cancel: unsupportedPluginOperation,
     setEnabled: unsupportedPluginOperation,
