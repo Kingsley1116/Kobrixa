@@ -323,6 +323,17 @@ export async function composeMotor(input: {
       const action = actions.mint(scope, { kind: "device-current-stop", sessionId });
       return broker.stopCurrentDevice({ sessionId, action });
     },
+    quiesceForTest(sessionId: string, reason: "suspended" | "core-disconnect") {
+      return broker.sessions.quiesce(
+        sessionId,
+        reason === "suspended"
+          ? { reason }
+          : {
+              reason,
+              action: actions.mint(scope, { kind: "device-disconnect", sessionId }),
+            },
+      );
+    },
     setWritable,
     setBusy(value: boolean) {
       busy = value;
@@ -383,7 +394,10 @@ import {
   type DesktopMainCompositionInput,
 } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
 import { type FakeProviderControl } from "../../apps/desktop/src/main/device-broker/fake-provider.js";
-import type { ProviderStep } from "../../apps/desktop/src/main/device-broker/provider.js";
+import {
+  exchangeBudget,
+  type ProviderStep,
+} from "../../apps/desktop/src/main/device-broker/provider.js";
 import { createJournal } from "../../apps/desktop/src/main/device-broker/journal.js";
 import { createJournalFilesystem } from "../../apps/desktop/src/main/device-broker/journal-filesystem.js";
 import { startPrimary } from "../../apps/desktop/src/main/plugins/profile-writer-lock.js";
@@ -1202,8 +1216,28 @@ export function runNativeMotor() {
             },
           );
         };
+        const originalOwner = { ...owner };
         const sourceKey = owner.sourceKey;
         counterSamples.push({ at: wall(), label: "boundary", counters: diagnostics.snapshot() });
+        const heldLifecyclePulse =
+          scenario.boundary === "pulse" &&
+          scenario.position === "after" &&
+          ["motor-disable", "provider-disable", "suspend", "disconnect"].includes(scenario.fault);
+        const queryOriginal = async () => {
+          const result = await composition.foundation.broker.request(
+            principal,
+            "devices/motion/query",
+            { operationId: operationId! },
+            new AbortController().signal,
+          );
+          hostQueries.push({ at: wall(), operationId: operationId!, result });
+          assert.ok(result.ok, "Original owner must retain original-operation query");
+          assert.equal(result.value.operation.operationId, operationId);
+          assert.equal(result.value.operation.sessionId, sessionId);
+          return result.value.operation;
+        };
+        const beforeStop = heldLifecyclePulse ? await queryOriginal() : undefined;
+        if (beforeStop) assert.equal(beforeStop.stopRequested, false);
         const faultAt = wall();
         native.push({ at: faultAt, type: scenario.fault });
         const traceAtFault = control.trace().length;
@@ -1416,7 +1450,45 @@ export function runNativeMotor() {
                 .faults.some((f) => f.operationId === operationId),
             "source loss durable fault",
           );
-        else if (hostLifecycle)
+        else if (heldLifecyclePulse) {
+          // Admission is synchronous; hardware acknowledgement must wait for the
+          // original transport exchange. Never wait for that acknowledgement while
+          // holding the very exchange that ExchangeLane must drain first.
+          const admitted = await until(async () => {
+            const operation = await queryOriginal();
+            return (
+              operation.stopRequested &&
+              operation.brakeRequired &&
+              operation.phase === "stopping" &&
+              operation.startAccepted &&
+              operation
+            );
+          }, "original host lifecycle stop admission");
+          const pulse = control
+            .trace()
+            .slice(traceBefore)
+            .find(
+              (r) =>
+                r.operationId === operationId && r.step === "motion-pulse" && r.dispatch === "sent",
+            );
+          assert.ok(pulse);
+          const exchangeDeadline =
+            performance.timeOrigin + pulse.time + exchangeBudget("motion-pulse");
+          assert.ok(wall() < exchangeDeadline, "Admission must precede held-exchange timeout");
+          const originalFault = composition.foundation.broker.recovery
+            .snapshot()
+            .faults.find((f) => f.operationId === operationId && f.sessionId === sessionId);
+          assert.ok(originalFault && originalFault.owner.kind === "plugin");
+          assert.deepEqual(originalFault.owner.owner, originalOwner);
+          lifecycleReceipt.stopBarrier = {
+            owner: originalOwner,
+            originalFault,
+            before: beforeStop,
+            admitted,
+            admittedAt: wall(),
+            exchangeDeadline,
+          };
+        } else if (hostLifecycle)
           await until(
             () =>
               control!
@@ -1472,6 +1544,19 @@ export function runNativeMotor() {
           );
         }
         releaseReply?.();
+        if (heldLifecyclePulse) {
+          const receipt = lifecycleReceipt.stopBarrier as {
+            exchangeDeadline: number;
+            releasedAt?: number;
+          };
+          receipt.releasedAt = wall();
+          assert.ok(
+            receipt.releasedAt < receipt.exchangeDeadline,
+            "Release must precede exchange timeout",
+          );
+          assert.equal(blocked?.point, "after-exchange");
+          assert.equal(blocked?.step, "motion-pulse");
+        }
         if (blocked) {
           control.release(blocked.point, blocked.step);
           blocked = undefined;
@@ -1505,6 +1590,20 @@ export function runNativeMotor() {
           25_000,
         );
         const stoppedAt = wall();
+        if (heldLifecyclePulse) {
+          assert.equal(terminal?.sessionId, sessionId);
+          assert.equal(terminal?.stopConfirmation, "confirmed");
+          for (const step of ["stop", "readback"] as const)
+            assert.ok(
+              control
+                .trace()
+                .slice(traceAtFault)
+                .some(
+                  (r) => r.operationId === operationId && r.step === step && r.dispatch === "sent",
+                ),
+              `Actual original-operation ${step} required before cleanup`,
+            );
+        }
         if (scenario.key)
           assert.equal(
             wire.filter(
@@ -1655,6 +1754,7 @@ export function runNativeMotor() {
               revokedAt,
               stoppedAt,
               operationId,
+              owner: originalOwner,
               terminal,
               trace: trace.map((r) => ({ ...r, time: performance.timeOrigin + r.time })),
               traceAtRevoke: traceAtRevoke - traceBefore,

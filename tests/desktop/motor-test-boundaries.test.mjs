@@ -9,6 +9,7 @@ import {
   root,
   until,
   validateNativeInput,
+  validateLifecycleBarrier,
   nativeCases,
 } from "./motor-test-public-run.mjs";
 const require = createRequire(import.meta.url);
@@ -294,5 +295,189 @@ test("native close contract rejects pointer release without original-binding clo
     const invalid = JSON.parse(JSON.stringify(report));
     mutate(invalid);
     assert.throws(() => validateNativeInput(invalid, scenario));
+  }
+});
+
+// Real broker and fake transport: all lifecycle routes must admit stop while the
+// original exchange is held, then acknowledge only after that exchange releases.
+for (const fault of ["motor-disable", "provider-disable", "suspend", "disconnect"]) {
+  test(`held pulse lifecycle barrier: ${fault}`, { timeout: 15000 }, async () => {
+    const c = await compose();
+    let held = false;
+    let disposition;
+    try {
+      await until(() => c.states.state(c.owner, c.panel.binding).value?.data.available, "catalog");
+      await c.invoke("select-current");
+      c.fake.control.block("after-exchange", "motion-pulse");
+      held = true;
+      await c.invoke("jog", { ...c.panel.form, "a-mode": "jog" }, "begin");
+      await c.fake.control.reached("after-exchange", "motion-pulse");
+      const pulse = c.fake.control
+        .trace()
+        .find((r) => r.step === "motion-pulse" && r.dispatch === "sent");
+      assert.ok(pulse);
+      const query = async () => {
+        const result = await c.broker.request(
+          c.principal,
+          "devices/motion/query",
+          { operationId: pulse.operationId },
+          new AbortController().signal,
+        );
+        assert.ok(result.ok);
+        return result.value.operation;
+      };
+      const before = await query();
+      assert.equal(before.stopRequested, false);
+      if (fault === "motor-disable")
+        disposition = c.broker.resources.retire(c.owner, "disabled").settled;
+      else if (fault === "provider-disable") {
+        const session = await c.broker.request(
+          c.principal,
+          "devices/session",
+          { sessionId: before.sessionId },
+          new AbortController().signal,
+        );
+        assert.ok(session.ok);
+        disposition = c.broker.resources.retireProvider(
+          c.fake.provider.id,
+          session.value.session.providerGeneration,
+        );
+      } else
+        disposition = c.quiesceForTest(
+          before.sessionId,
+          fault === "suspend" ? "suspended" : "core-disconnect",
+        ).settled;
+      const admitted = await query();
+      assert.equal(admitted.operationId, pulse.operationId);
+      assert.equal(admitted.sessionId, before.sessionId);
+      assert.equal(admitted.stopRequested, true);
+      assert.equal(admitted.brakeRequired, true);
+      assert.equal(admitted.phase, "stopping");
+      assert.equal(
+        c.fake.control.trace().some((r) => r.step === "stop"),
+        false,
+        "Hardware stop cannot enter the occupied original lane",
+      );
+      assert.ok(performance.now() < pulse.time + 2000, "No exchange timeout accepted");
+      c.fake.control.release("after-exchange", "motion-pulse");
+      held = false;
+      const result = await disposition;
+      assert.equal(result.stopConfirmed, true);
+      assert.equal(result.journalCommitted, true);
+      const terminal = await query();
+      assert.equal(terminal.stopConfirmation, "confirmed");
+      assert.equal(terminal.sessionId, before.sessionId);
+      for (const step of ["stop", "readback"])
+        assert.ok(
+          c.fake.control
+            .trace()
+            .some(
+              (r) =>
+                r.operationId === pulse.operationId && r.step === step && r.dispatch === "sent",
+            ),
+        );
+      assert.deepEqual(
+        c.fake.control
+          .trace()
+          .filter(
+            (r) =>
+              r.time > pulse.time &&
+              ["helper-upload", "helper-run", "helper-arm", "motion-pulse"].includes(r.step) &&
+              r.dispatch !== "not-sent",
+          ),
+        [],
+      );
+    } finally {
+      if (held) c.fake.control.release("after-exchange", "motion-pulse");
+      await disposition;
+      await c.dispose();
+    }
+  });
+}
+
+test("lifecycle receipt rejects wrong original identity, timeout, and cleanup-only acknowledgement", () => {
+  const before = { operationId: "original", sessionId: "session", stopRequested: false };
+  const admitted = {
+    ...before,
+    stopRequested: true,
+    startAccepted: true,
+    brakeRequired: true,
+    phase: "stopping",
+  };
+  const owner = { hostEpoch: "host", processEpoch: "process" };
+  const report = {
+    owner,
+    operationId: "original",
+    faultAt: 10,
+    stoppedAt: 16,
+    terminal: { sessionId: "session", stopConfirmation: "confirmed" },
+    lifecycleReceipt: {
+      stopBarrier: {
+        owner,
+        originalFault: {
+          operationId: "original",
+          sessionId: "session",
+          owner: { kind: "plugin", owner },
+        },
+        before,
+        admitted,
+        admittedAt: 11,
+        releasedAt: 12,
+        exchangeDeadline: 20,
+      },
+    },
+    hostQueries: [before, admitted].map((operation) => ({
+      result: { ok: true, value: { operation } },
+    })),
+    trace: ["stop", "readback"].map((step, i) => ({
+      operationId: "original",
+      step,
+      dispatch: "sent",
+      time: 13 + i,
+    })),
+  };
+  const scenario = { boundary: "pulse", position: "after", fault: "suspend" };
+  validateLifecycleBarrier(report, scenario);
+  for (const mutate of [
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.owner.processEpoch = "other";
+    },
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.admitted.operationId = "other";
+    },
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.admitted.sessionId = "other";
+    },
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.admitted.stopRequested = false;
+    },
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.admitted.phase = "timeout";
+    },
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.releasedAt = 20;
+    },
+    (r) => {
+      r.lifecycleReceipt.stopBarrier.originalFault.owner.owner.processEpoch = "other";
+    },
+    (r) => {
+      r.hostQueries = [];
+    },
+    (r) => {
+      r.trace[0].operationId = "other";
+    },
+    (r) => {
+      r.trace[1].time = 17;
+    },
+    (r) => {
+      r.trace[1].time = 11;
+    },
+    (r) => {
+      r.terminal.stopConfirmation = "unconfirmed";
+    },
+  ]) {
+    const invalid = JSON.parse(JSON.stringify(report));
+    mutate(invalid);
+    assert.throws(() => validateLifecycleBarrier(invalid, scenario));
   }
 });

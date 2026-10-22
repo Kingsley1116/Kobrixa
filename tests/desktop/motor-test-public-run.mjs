@@ -171,6 +171,56 @@ export const lifecycleMatrix = ["prepare", "start", "arm", "pulse"].flatMap((bou
     ].map((fault) => ({ boundary, position, fault })),
   ),
 );
+// A stop request is admission evidence, never hardware acknowledgement.
+export function validateLifecycleBarrier(report, scenario) {
+  if (
+    scenario.boundary !== "pulse" ||
+    scenario.position !== "after" ||
+    !["motor-disable", "provider-disable", "suspend", "disconnect"].includes(scenario.fault)
+  )
+    return;
+  const b = report.lifecycleReceipt?.stopBarrier;
+  assert.ok(b, "Original held-exchange admission receipt required");
+  assert.deepEqual(b.owner, report.owner);
+  assert.ok(b.owner?.processEpoch && b.owner?.hostEpoch);
+  assert.equal(b.originalFault.operationId, report.operationId);
+  assert.equal(b.originalFault.sessionId, b.before.sessionId);
+  assert.equal(b.originalFault.owner.kind, "plugin");
+  assert.deepEqual(b.originalFault.owner.owner, b.owner);
+  assert.equal(b.before.operationId, report.operationId);
+  assert.equal(b.before.stopRequested, false);
+  assert.equal(b.admitted.operationId, report.operationId);
+  assert.equal(b.admitted.sessionId, b.before.sessionId);
+  assert.equal(b.admitted.startAccepted, true);
+  assert.equal(b.admitted.stopRequested, true);
+  assert.equal(b.admitted.brakeRequired, true);
+  assert.equal(b.admitted.phase, "stopping");
+  assert.ok(report.faultAt <= b.admittedAt && b.admittedAt <= b.releasedAt);
+  assert.ok(b.releasedAt < b.exchangeDeadline, "Timeout cannot satisfy the barrier");
+  assert.ok(b.releasedAt <= report.stoppedAt);
+  assert.equal(report.terminal.sessionId, b.before.sessionId);
+  assert.equal(report.terminal.stopConfirmation, "confirmed");
+  for (const operation of [b.before, b.admitted])
+    assert.ok(
+      report.hostQueries.some(
+        (q) =>
+          q.result?.ok && JSON.stringify(q.result.value.operation) === JSON.stringify(operation),
+      ),
+      "Actual host query required",
+    );
+  for (const step of ["stop", "readback"])
+    assert.ok(
+      report.trace.some(
+        (r) =>
+          r.operationId === report.operationId &&
+          r.step === step &&
+          r.dispatch === "sent" &&
+          r.time >= b.releasedAt &&
+          r.time <= report.stoppedAt,
+      ),
+      "Hardware acknowledgement before cleanup required",
+    );
+}
 // Validate observed native sequencing separately so negative receipt samples stay Node-only.
 export function validateNativeInput(report, scenario) {
   const mode = scenario.mode ?? (scenario.boundary === "arm" ? "relative-angle" : "jog");
@@ -244,6 +294,7 @@ export function validateNative(report, identity, scenario) {
   }
   assert.ok(report.wire?.length && report.native?.length);
   validateNativeInput(report, scenario);
+  validateLifecycleBarrier(report, scenario);
   assert.ok(Array.isArray(report.trace), "Actual provider trace required");
   if (report.trace.length === 0) {
     assert.equal(report.terminal?.dispatch, "not-sent");
