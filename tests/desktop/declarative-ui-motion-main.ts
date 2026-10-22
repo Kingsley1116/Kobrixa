@@ -4,6 +4,8 @@ import path from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 import {
   readSource,
+  PluginManager,
+  type FoundationDiagnostics,
   type FoundationDiagnosticEvent,
   type PluginLauncher,
 } from "@kobrixa/plugin-runtime";
@@ -43,8 +45,11 @@ import {
 import { BUILTIN_PLUGIN_SOURCES } from "../../apps/desktop/src/main/plugins/builtin.js";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
 import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
+import { diagnosticsFor as runtimeDiagnostics } from "../../packages/plugin-runtime/src/ui-lifecycle.js";
+import { runUiLoad } from "./declarative-ui-load-main.js";
 
 type Scenario = {
+  load?: { durationMs: number; cycles: number };
   boundary: "prepare" | "start" | "arm" | "pulse";
   position: "before" | "after";
   fault:
@@ -99,6 +104,7 @@ const wire: Wire[] = [],
   events: FoundationDiagnosticEvent[] = [];
 const native: Array<{ at: number; type: string; detail?: unknown }> = [];
 const failures: string[] = [];
+const loadPids = new Set<number>();
 const expectedCleanupReports: string[] = [];
 let allowBlockedCleanup = false;
 let holdAcks = false;
@@ -136,11 +142,14 @@ function observingLauncher(hooks: Parameters<typeof createDesktopLauncher>[0]): 
       logs.push(line);
       const match = /MOTION_PID:(\d+)/.exec(line);
       if (match) pid = Number(match[1]);
+      const loadPid = /UI_PID:(\d+)/.exec(line);
+      if (loadPid) loadPids.add(Number(loadPid[1]));
     },
   });
   return async (plugin) => {
     owner = plugin.channelOwner;
     const child = await launch(plugin);
+    if (scenario.load) return child;
     let exited = false;
     let offExit = () => {};
     offExit = child.onExit(() => {
@@ -212,8 +221,21 @@ async function run() {
   const primary = startPrimary(
     app,
     async (profile) => {
-      const directory = await realpath(path.join(root, "source"));
-      const admitted = await readSource({ kind: "development", directory }, { safeMode: false });
+      const folders = scenario.load
+        ? await Promise.all(
+            Array.from({ length: 8 }, (_, n) => realpath(path.join(root, `ui-${n}`))),
+          )
+        : [await realpath(path.join(root, "source"))];
+      const directory = folders[0]!;
+      const sources = await Promise.all(
+        folders.map((directory) =>
+          readSource({ kind: "development", directory }, { safeMode: false }),
+        ),
+      );
+      const sourceFor = (sourceKey: string) =>
+        sources.find((source) => source.sourceKey === sourceKey);
+      let nextFolder = 0;
+      let loadRuntime: FoundationDiagnostics | undefined;
       const authority = new AuthorityContexts(profile.hostEpoch);
       const now = () => performance.now();
       win = new BrowserWindow({
@@ -263,9 +285,9 @@ async function run() {
       );
       await journal.load();
       main = await composeDesktopMain({
-        createFoundation(options) {
+        async createFoundation(options) {
           assert.equal(options.providerFactory, undefined);
-          return createDesktopFoundation({
+          const foundation = await createDesktopFoundation({
             ...options,
             providerFactory(catalog) {
               assert.equal(control, undefined);
@@ -278,6 +300,15 @@ async function run() {
               return fake.provider;
             },
           });
+          if (scenario.load) {
+            const attach = foundation.attachProvider.bind(foundation);
+            foundation.attachProvider = (manager) => {
+              attach(manager);
+              assert.ok(manager instanceof PluginManager);
+              loadRuntime = runtimeDiagnostics(manager.stage3Runtime());
+            };
+          }
+          return foundation;
         },
         foundationOptions: {
           profile,
@@ -289,11 +320,10 @@ async function run() {
             principal.kind === "core"
               ? currentScope(principal) &&
                 ["devices.read", "devices.connect", "devices.control"].includes(permission)
-              : principal.owner.sourceKey === admitted.sourceKey &&
-                !!admitted.manifest?.permissions?.includes(permission),
+              : !!sourceFor(principal.owner.sourceKey)?.manifest?.permissions?.includes(permission),
           requirements: (resourceOwner) =>
-            resourceOwner.sourceKey === admitted.sourceKey
-              ? (admitted.manifest?.requires?.devices ?? [])
+            sourceFor(resourceOwner.sourceKey)
+              ? (sourceFor(resourceOwner.sourceKey)?.manifest?.requires?.devices ?? [])
               : null,
           connectionPolicy: () => ({
             wifiConnectTimeoutMs: 10000,
@@ -308,10 +338,14 @@ async function run() {
           userData: app.getPath("userData"),
           builtins: BUILTIN_PLUGIN_SOURCES,
           locale: "en",
-          commandLine: { developmentDirectories: [directory], safeMode: false },
+          commandLine: {
+            developmentDirectories: scenario.load ? [] : [directory],
+            safeMode: false,
+          },
           dialogs: {
             confirmDeveloperMode: async () => true,
-            chooseFolder: async () => undefined,
+            chooseFolder: async () =>
+              scenario.load ? folders[nextFolder++ % folders.length] : undefined,
             confirmLink: async () => true,
             confirmUnlink: async () => true,
             choosePython: async () => undefined,
@@ -331,7 +365,9 @@ async function run() {
       const composition = main;
       const ui = desktopUi(composition);
       const diagnostics = diagnosticsFor(ui.bridge);
-      const offDiagnostics = diagnostics.onEvent((event) => events.push(event));
+      const offDiagnostics = diagnostics.onEvent((event) => {
+        if (!scenario.load) events.push(event);
+      });
       const trusted = (event: { sender: { id: number }; senderFrame: unknown }) =>
         !window.isDestroyed() && trustedWorkbench(event, window.webContents);
       const handle: IpcHandle = (name, action) =>
@@ -340,8 +376,12 @@ async function run() {
           const row = { at: wall(), channel: name, args: args.slice(1) };
           const result = action(...args);
           void Promise.resolve(result).then(
-            (value) => ipc.push({ ...row, result: value }),
-            (error) => ipc.push({ ...row, error: String(error) }),
+            (value) => {
+              if (!scenario.load) ipc.push({ ...row, result: value });
+            },
+            (error) => {
+              if (!scenario.load) ipc.push({ ...row, error: String(error) });
+            },
           );
           return result;
         });
@@ -415,6 +455,30 @@ async function run() {
           (error) => failures.push(String(error)),
         );
       });
+      if (scenario.load) {
+        assert.ok(loadRuntime);
+        const report = await runUiLoad({
+          window,
+          composition,
+          runtime: loadRuntime,
+          directory: root,
+          folders,
+          ...scenario.load,
+        });
+        assert.deepEqual(failures, []);
+        offEvents();
+        offRecovery();
+        offDevice();
+        offDiagnostics();
+        await writeFile(
+          output,
+          JSON.stringify({ ...report, childPids: [...loadPids], failures }, null, 2),
+        );
+        closed = true;
+        window.close();
+        app.quit();
+        return;
+      }
       await window.loadFile(path.join(root, "renderer/index.html"));
       window.show();
       window.focus();
@@ -770,10 +834,13 @@ async function run() {
   assert.ok(primary, "Actual profile lock unavailable");
   await primary.ready;
 }
-const deadline = setTimeout(() => {
-  console.error("Motion runner deadline");
-  app.exit(2);
-}, 65_000);
+const deadline = setTimeout(
+  () => {
+    console.error("Motion runner deadline");
+    app.exit(2);
+  },
+  app.commandLine.hasSwitch("ui-load") ? 600_000 : 65_000,
+);
 void run()
   .then(() => clearTimeout(deadline))
   .catch(async (error: unknown) => {

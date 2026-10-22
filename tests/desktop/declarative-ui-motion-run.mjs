@@ -8,7 +8,7 @@ import path from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { build } from "esbuild";
 import { build as buildRenderer } from "vite";
-import { root } from "./declarative-ui-harness.mjs";
+import { root, materialize, padJson } from "./declarative-ui-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 
 const faults = [
@@ -23,9 +23,20 @@ const cases = ["prepare", "start", "arm", "pulse"].flatMap((boundary) =>
   ["before", "after"].flatMap((position) => faults.map((fault) => ({ boundary, position, fault }))),
 );
 const args = process.argv.slice(2);
+const load = ["--load", "--load-probe"].includes(args[0]);
 assert.equal(args.length, 1, "Pass --all, --stress or --case=boundary:position:fault");
-const selected =
-  args[0] === "--stress"
+const selected = load
+  ? Array.from({ length: args[0] === "--load" ? 3 : 1 }, (_, repeat) => ({
+      boundary: "pulse",
+      position: "after",
+      fault: "cancel",
+      repeat,
+      load: {
+        durationMs: args[0] === "--load" ? 60000 : 5000,
+        cycles: args[0] === "--load" ? 1000 : 5,
+      },
+    }))
+  : args[0] === "--stress"
     ? ["delayed-readback", "withheld-readback", "lost-start"].map((stress) => ({
         boundary: "pulse",
         position: "after",
@@ -109,6 +120,28 @@ await writeFile(
     },
   }),
 );
+if (load) {
+  const sources = await materialize(template, { sources: 8, maximum: true });
+  for (const folder of sources) {
+    await build({
+      entryPoints: [path.join(root, "tests/desktop/fixtures/declarative-ui/consumer.ts")],
+      outfile: path.join(folder, "main.cjs"),
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+      alias,
+      banner: { js: 'console.error("UI_PID:" + process.pid);' },
+    });
+    // Preserve full UTF-8 resource budgets while excluding the independently
+    // reproduced CoreText emoji crash. This is explicitly a CJK diagnostic run.
+    for (const name of ["panel-0.json", "panel-1.json", "status-0.json", "status-1.json"]) {
+      const value = JSON.parse(
+        (await readFile(path.join(folder, name), "utf8")).replaceAll("🙂", "界"),
+      );
+      await writeFile(path.join(folder, name), padJson(value, 256 * 1024));
+    }
+  }
+}
 await writeFile(
   path.join(template, "source/panel.json"),
   JSON.stringify({
@@ -143,7 +176,7 @@ await buildRenderer({
         handler: (html) =>
           html.replace(
             'src="/src/renderer/index.tsx"',
-            `src="/@fs/${path.join(root, "tests/desktop/declarative-ui-motion-renderer.tsx")}"`,
+            `src="/@fs/${path.join(root, load ? "tests/desktop/declarative-ui-load-renderer.tsx" : "tests/desktop/declarative-ui-motion-renderer.tsx")}"`,
           ),
       },
     },
@@ -155,6 +188,27 @@ const artifact = {
   dirty:
     execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim().length >
     0,
+  ...(load
+    ? {
+        scope: "production pane and status load; CJK diagnostic glyphs",
+        fixture: {
+          panels: 16,
+          statuses: 16,
+          nodesPerPanel: 256,
+          depth: 8,
+          resourceBytes: (
+            await Promise.all(
+              Array.from({ length: 8 }, (_, n) =>
+                ["panel-0.json", "panel-1.json", "status-0.json", "status-1.json"].map(
+                  async (name) => (await readFile(path.join(template, `ui-${n}`, name))).byteLength,
+                ),
+              ).flat(),
+            )
+          ).reduce((a, b) => a + b, 0),
+          producerMinimumIntervalMs: 100,
+        },
+      }
+    : {}),
   sha256: Object.fromEntries(
     await Promise.all(
       [
@@ -174,7 +228,9 @@ const artifact = {
 await writeFile(path.join(directory, "artifact-identity.json"), JSON.stringify(artifact, null, 2));
 const reports = [];
 for (const scenario of selected) {
-  const name = scenario.stress ?? `${scenario.boundary}-${scenario.position}-${scenario.fault}`;
+  const name = scenario.load
+    ? `load-${scenario.repeat}`
+    : (scenario.stress ?? `${scenario.boundary}-${scenario.position}-${scenario.fault}`);
   const folder = path.join(directory, name);
   await cp(template, folder, { recursive: true });
   await mkdir(path.join(folder, "profile"));
@@ -190,7 +246,12 @@ for (const scenario of selected) {
   await writeFile(input, JSON.stringify(scenario));
   const child = spawn(
     require("electron"),
-    [path.join(directory, "main.cjs"), `--motion-input=${input}`, `--motion-output=${output}`],
+    [
+      path.join(directory, "main.cjs"),
+      `--motion-input=${input}`,
+      `--motion-output=${output}`,
+      ...(load ? ["--ui-load"] : []),
+    ],
     {
       cwd: folder,
       env: { ...process.env },
@@ -213,10 +274,13 @@ for (const scenario of selected) {
       }
   };
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    terminate();
-  }, 75_000);
+  const timer = setTimeout(
+    () => {
+      timedOut = true;
+      terminate();
+    },
+    load ? 620_000 : 75_000,
+  );
   let result;
   try {
     result = await new Promise((resolve, reject) => {
@@ -231,11 +295,12 @@ for (const scenario of selected) {
   assert.equal(timedOut, false, name);
   assert.equal(result.code, 0, `${name}: ${JSON.stringify(result)}; see ${folder}`);
   const report = JSON.parse(await readFile(output, "utf8"));
-  assert.equal(report.kind, "ui-motion-race");
-  assert.ok(report.pid > 0);
-  const alive = () => {
+  assert.equal(report.kind, load ? "ui-maximum-load-run" : "ui-motion-race");
+  const pids = load ? report.childPids : [report.pid];
+  assert.ok(pids.length && pids.every((pid) => pid > 0));
+  const alive = (pid) => {
     try {
-      process.kill(report.pid, 0);
+      process.kill(pid, 0);
       return true;
     } catch (error) {
       if (error.code === "ESRCH") return false;
@@ -243,19 +308,27 @@ for (const scenario of selected) {
     }
   };
   const deadline = performance.now() + 5000;
-  while (alive() && performance.now() < deadline) await pause(25);
-  report.remainingPids = alive() ? [report.pid] : [];
+  while (pids.some(alive) && performance.now() < deadline) await pause(25);
+  report.remainingPids = pids.filter(alive);
   report.artifact = artifact;
   report.normalClose = !report.expectedBlockedClose;
   await writeFile(output, JSON.stringify(report, null, 2));
   assert.deepEqual(report.remainingPids, []);
   reports.push({ scenario, path: output });
-  console.log(`PASS native motion ${name}: ${output}`);
+  console.log(`${load ? "RECORDED native UI load" : "PASS native motion"} ${name}: ${output}`);
 }
 await writeFile(
   path.join(directory, "matrix.json"),
   JSON.stringify(
-    { kind: args[0] === "--stress" ? "ui-motion-stress" : "ui-motion-matrix", reports, artifact },
+    {
+      kind: load
+        ? "ui-maximum-load"
+        : args[0] === "--stress"
+          ? "ui-motion-stress"
+          : "ui-motion-matrix",
+      reports,
+      artifact,
+    },
     null,
     2,
   ),
