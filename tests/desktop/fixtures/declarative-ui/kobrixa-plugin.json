@@ -15,6 +15,12 @@
   "contributes": {
     "commands": [
       {
+        "id": "acceptance.ui.inspect",
+        "title": { "en": "Inspect management invocation" },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
         "id": "acceptance.ui.activate",
         "title": {
           "en": "activate"

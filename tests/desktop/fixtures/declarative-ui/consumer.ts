@@ -7,6 +7,14 @@ let ticks = 0;
 runPlugin(
   definePlugin({
     activate(ctx) {
+      ctx.commands.registerContext(`${ctx.pluginId}.inspect`, {}, async (invocation) => ({
+        output: {
+          "has-binding": Boolean(invocation.context.binding),
+          "has-motion": Boolean(invocation.context.motionScopeRef),
+          "argument-count": Object.keys(invocation.arguments).length,
+        },
+        fieldErrors: [],
+      }));
       ctx.commands.register(`${ctx.pluginId}.legacy`, async () => {});
       ctx.commands.registerContext(
         `${ctx.pluginId}.activate`,
@@ -17,6 +25,7 @@ runPlugin(
         async (invocation) => {
           if (invocation.arguments.speed === -99) throw new Error("fixture callback failed");
           if (invocation.arguments.speed === -98) {
+            console.error(`UI_CALLBACK_WAIT:${invocation.invocationId}`);
             await new Promise<void>((resolve, reject) => {
               const abort = () => {
                 clearTimeout(wait);
@@ -37,8 +46,8 @@ runPlugin(
               speed: invocation.arguments.speed!,
               mode: invocation.arguments.mode!,
               origin: invocation.context.origin,
-              hasBinding: Boolean(invocation.context.binding),
-              hasMotion: Boolean(invocation.context.motionScopeRef),
+              "has-binding": Boolean(invocation.context.binding),
+              "has-motion": Boolean(invocation.context.motionScopeRef),
               unicode: "🙂界",
             },
             fieldErrors: [],

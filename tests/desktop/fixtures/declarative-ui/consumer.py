@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from kobrixa import Plugin
 
 plugin = Plugin()
@@ -6,6 +7,12 @@ calls = 0
 ticks = 0
 producer = None
 stopped = False
+
+@plugin.context_command("acceptance.ui.inspect", {})
+async def inspect(ctx):
+    return {"output": {"has-binding": "binding" in ctx.context,
+                       "has-motion": "motionScopeRef" in ctx.context,
+                       "argument-count": len(ctx.arguments)}, "fieldErrors": []}
 
 @plugin.command("acceptance.ui.legacy")
 async def legacy(ctx):
@@ -20,12 +27,13 @@ async def activate(ctx):
     if ctx.arguments["speed"] == -99:
         raise RuntimeError("fixture callback failed")
     if ctx.arguments["speed"] == -98:
+        print("UI_CALLBACK_WAIT:" + ctx.invocation_id, file=sys.stderr, flush=True)
         await asyncio.sleep(60)
     calls += 1
     return {"output": {
         "calls": calls, "speed": ctx.arguments["speed"], "mode": ctx.arguments["mode"],
-        "origin": ctx.context["origin"], "hasBinding": "binding" in ctx.context,
-        "hasMotion": "motionScopeRef" in ctx.context, "unicode": "🙂界"
+        "origin": ctx.context["origin"], "has-binding": "binding" in ctx.context,
+        "has-motion": "motionScopeRef" in ctx.context, "unicode": "🙂界"
     }, "fieldErrors": []}
 
 @plugin.context_command("acceptance.ui.hold", {
