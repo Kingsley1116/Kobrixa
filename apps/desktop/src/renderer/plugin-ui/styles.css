@@ -1,34 +1,151 @@
-.plugin-ui, .plugin-tools-pane, .core-recovery, .core-persistence-detail {
+.plugin-ui,
+.plugin-tools-pane,
+.core-recovery,
+.core-persistence-detail {
   min-width: 0;
   max-width: 100%;
   color: inherit;
   font: inherit;
   overflow-wrap: anywhere;
 }
-.plugin-tools-pane { height: 100%; overflow: auto; padding: 0.75rem; box-sizing: border-box; }
-.plugin-tools-pane > header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.plugin-tools-pane h2 { font-size: 1rem; flex: 1; }
-.plugin-ui-group { display: flex; gap: 0.625rem; min-width: 0; }
-.plugin-ui-stack { flex-direction: column; }
-.plugin-ui-row { flex-direction: row; flex-wrap: wrap; }
-.plugin-ui-row > .plugin-ui-node { flex: 1 1 9rem; }
-.plugin-ui-node { min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; margin-block: 0.375rem; }
-.plugin-ui [hidden], .plugin-tools-pane [hidden] { display: none !important; }
-.plugin-ui input:not([type="checkbox"]):not([type="radio"]), .plugin-ui select, .plugin-ui progress { width: 100%; box-sizing: border-box; min-width: 0; }
-.plugin-ui input, .plugin-ui select, .plugin-ui button { font: inherit; color: inherit; }
-.plugin-ui button, .core-recovery button, .core-persistence-detail button { min-height: 2rem; white-space: normal; }
-.plugin-ui fieldset { min-width: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.plugin-ui dl { margin: 0; }
-.plugin-ui dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.5rem; }
-.plugin-ui dd { margin: 0; }
-.plugin-ui :focus-visible, .core-recovery :focus-visible, .core-persistence-detail :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-.plugin-ui-help { opacity: 0.8; font-size: 0.9em; }
-.plugin-status-host { display: flex; gap: 0.75rem; min-width: 0; align-items: center; }
-.plugin-status-host > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12rem; }
-.plugin-status-host details { position: relative; }
-.plugin-status-overflow { position: absolute; bottom: 100%; right: 0; width: min(18rem, 80vw); padding: 0.75rem; background: Canvas; color: CanvasText; border: 1px solid currentColor; z-index: 20; display: grid; gap: 0.5rem; }
-.core-recovery { border-block: 1px solid currentColor; padding: 0.375rem 0.75rem; }
-.core-recovery article, .core-persistence-detail article { padding-block: 0.5rem; }
-.core-recovery button, .core-persistence-detail button { margin: 0.125rem; }
-.core-recovery h3, .core-persistence-detail h3 { font-size: 1em; margin-block: 0.25rem; }
-@media (max-width: 400px) { .plugin-ui-row { flex-direction: column; } .plugin-ui-row > .plugin-ui-node { flex-basis: auto; } }
+.plugin-tools-pane {
+  height: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+  box-sizing: border-box;
+}
+.plugin-tools-pane > header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.plugin-tools-pane h2 {
+  font-size: 1rem;
+  flex: 1;
+}
+.plugin-ui-group {
+  display: flex;
+  gap: 0.625rem;
+  min-width: 0;
+}
+.plugin-ui-stack {
+  flex-direction: column;
+}
+.plugin-ui-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.plugin-ui-row > .plugin-ui-node {
+  flex: 1 1 9rem;
+}
+.plugin-ui-node {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-block: 0.375rem;
+}
+.plugin-ui [hidden],
+.plugin-tools-pane [hidden] {
+  display: none !important;
+}
+.plugin-ui input:not([type="checkbox"]):not([type="radio"]),
+.plugin-ui select,
+.plugin-ui progress {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.plugin-ui input,
+.plugin-ui select,
+.plugin-ui button {
+  font: inherit;
+  color: inherit;
+}
+.plugin-ui button,
+.core-recovery button,
+.core-persistence-detail button {
+  min-height: 2rem;
+  white-space: normal;
+}
+.plugin-ui fieldset {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.plugin-ui dl {
+  margin: 0;
+}
+.plugin-ui dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem;
+}
+.plugin-ui dd {
+  margin: 0;
+}
+.plugin-ui :focus-visible,
+.core-recovery :focus-visible,
+.core-persistence-detail :focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.plugin-ui-help {
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+.plugin-status-host {
+  display: flex;
+  gap: 0.75rem;
+  min-width: 0;
+  align-items: center;
+}
+.plugin-status-host > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 12rem;
+}
+.plugin-status-host details {
+  position: relative;
+}
+.plugin-status-overflow {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  width: min(18rem, 80vw);
+  padding: 0.75rem;
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid currentColor;
+  z-index: 20;
+  display: grid;
+  gap: 0.5rem;
+}
+.core-recovery {
+  border-block: 1px solid currentColor;
+  padding: 0.375rem 0.75rem;
+}
+.core-recovery article,
+.core-persistence-detail article {
+  padding-block: 0.5rem;
+}
+.core-recovery button,
+.core-persistence-detail button {
+  margin: 0.125rem;
+}
+.core-recovery h3,
+.core-persistence-detail h3 {
+  font-size: 1em;
+  margin-block: 0.25rem;
+}
+@media (max-width: 400px) {
+  .plugin-ui-row {
+    flex-direction: column;
+  }
+  .plugin-ui-row > .plugin-ui-node {
+    flex-basis: auto;
+  }
+}

@@ -83,7 +83,6 @@ The follow-up ad2083c separates private edits from host submission revisions, ro
 
 Actual Electron action acceptance at ad2083c passed all four presentation combinations, including edited/reopened form accepted at host revision +1 and invalid-form core recovery without consuming a revision. The [action evidence](../evidence/2026-10-23-3b1-presentation-actions/README.md) retains original receipts, screenshots and explicit limits; it is not a claim that the later oversized-input boundary was exercised natively. The T9 matrix validator is now implemented from the approved plan; an empty actual input fails U01 as required. A populated, evidence-backed aggregate matrix is still pending and P160 is not yet published.
 
-
 ## Native controls and software boundary continuation
 
 - [Native controls and second instance](../evidence/2026-10-23-3b1-native-controls/README.md): four locale/theme combinations passed actual range keyboard, radio pointer/keyboard, checkbox, form submission and invalid-field core recovery. Actual second production process denied the lock and exited before startup callbacks, windows or utility processes; the primary restored focus. Normal close left no children. Both receipt validators passed with zero skips. Main/preload provenance remains ad2083c, renderer 7add202 plus observers; no latest whole-product/manual claim.
