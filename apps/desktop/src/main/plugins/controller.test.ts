@@ -2705,6 +2705,83 @@ it("BM-18 D160 uses one injected factory/provider and one UI registry", async ()
     await f.cleanup();
   }
 });
+it("common queue overflow withdraws UI intent before notifying the consumer", async () => {
+  const f = await compositionInput();
+  f.input.foundationOptions.requirements = () => [];
+  const composition = await composeDesktopMain(f.input);
+  const [a, b] = createMemoryChannelPair();
+  const peer = new RpcPeer(a),
+    child = new RpcPeer(b);
+  const owner = {
+    sourceKey: "dev:0000000000000001",
+    pluginId: "test.overflow",
+    generation: 1,
+    hostEpoch: f.input.foundationOptions.profile.hostEpoch,
+    processEpoch: randomUUID(),
+  };
+  const ui = desktopUi(composition);
+  const binding = {
+    ...owner,
+    contributionId: "test.overflow.panel",
+    panelInstance: randomUUID(),
+    kind: "panel" as const,
+    uiResourceGeneration: 1,
+  };
+  const attach = vi.spyOn(composition.foundation.broker, "attachChannel");
+  const channel = composition.stage3Host.bindChannel({
+    peer,
+    owner,
+    requirements: [],
+    principal: () => f.input.principal(owner),
+  });
+  try {
+    const attachment = attach.mock.results[0]!.value;
+    attachment.negotiated("ui", 1);
+    const off = ui.bridge.onEvent((event) => {
+      if (event.type === "pulse") ui.intent.pulse(event.binding, event.challenge, null, null);
+    });
+    ui.intent.bind(binding, {
+      owner,
+      contextRef: randomUUID(),
+      panelInstance: binding.panelInstance,
+      uiResourceGeneration: 1,
+      workbenchInstance: f.input.scope().workbenchInstance,
+    });
+    expect(ui.intent.scope(binding)).toBeDefined();
+    expect(ui.intent.timerCount()).toBe(2);
+    const seen: Array<{ kind: string; scope: string | undefined; timers: number }> = [];
+    const notify = peer.notify.bind(peer);
+    vi.spyOn(peer, "notify").mockImplementation((method, params) => {
+      if (method === "events/deliver")
+        seen.push({
+          kind: (params as { kind: string }).kind,
+          scope: ui.intent.scope(binding),
+          timers: ui.intent.timerCount(),
+        });
+      return notify(method, params);
+    });
+    const ledger = composition.foundation.broker.events;
+    const subscription = ledger.create(owner);
+    if (!subscription.ok) throw new Error("subscription failed");
+    attachment.activate(subscription.value.subscriptionId);
+    for (let i = 0; i < 8; i++)
+      ledger.publish(
+        owner,
+        subscription.value.subscriptionId,
+        { kind: "ui.environment", data: { locale: "en", theme: "dark" } },
+        "control",
+      );
+    expect(seen.at(-1)).toEqual({ kind: "events.resyncRequired", scope: undefined, timers: 0 });
+    expect(ui.intent.scope(binding)).toBeUndefined();
+    off();
+  } finally {
+    channel.dispose();
+    peer.close();
+    child.close();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
 it.each(["live", "closed", "disposed"] as const)(
   "BM-06 retirement uses the original %s peer even when its owner is not current",
   async (state) => {

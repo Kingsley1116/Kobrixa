@@ -162,6 +162,25 @@ it("broker rejection between pulse and begin removes local intent immediately", 
   expect(h.device.revokeScope).toHaveBeenCalledWith("scope", "resource-retired");
   h.intent.dispose();
 });
+it("common channel revocation matches the entire owner identity", () => {
+  const h = harness();
+  h.intent.pulse(binding, h.challenges[0]!, null, null);
+  h.intent.begin(binding, "pressed");
+  for (const foreign of [
+    { ...owner, sourceKey: "builtin:other" },
+    { ...owner, pluginId: "test.other" },
+    { ...owner, generation: owner.generation + 1 },
+    { ...owner, hostEpoch: "other-host" },
+    { ...owner, processEpoch: "other-process" },
+  ])
+    h.intent.revokeOwner(foreign);
+  expect(h.intent.scope(binding)).toBeDefined();
+  h.intent.revokeOwner({ ...owner });
+  expect(h.intent.scope(binding)).toBeUndefined();
+  expect(h.intent.timerCount()).toBe(0);
+  expect(h.device.endGesture).toHaveBeenCalledWith("gesture", "cancelled");
+  h.intent.dispose();
+});
 it("hide then re-show requires a new scope and first fresh heartbeat", () => {
   const h = harness();
   const stale = h.challenges[0]!;

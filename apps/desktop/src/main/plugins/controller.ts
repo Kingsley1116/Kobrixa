@@ -1184,7 +1184,9 @@ import { ShutdownCoordinator } from "./shutdown-coordinator.js";
 function bindDesktopChannel(
   context: Stage3ChannelContext,
   broker: DeviceBrokerPort,
-  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment">,
+  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment"> & {
+    revokeIntent(owner: ImportedResourceOwner): void;
+  },
   originalChannels: Map<string, Stage3ChannelContext>,
 ): Stage3ChannelBinding {
   const principal = context.principal();
@@ -1204,7 +1206,15 @@ function bindDesktopChannel(
       if (key === "attachChannel")
         return (args: Parameters<DeviceBrokerPort["attachChannel"]>[0]) => {
           if (attachment) throw new Error("Second channel attachment.");
-          attachment = target.attachChannel(args);
+          attachment = target.attachChannel({
+            ...args,
+            send(event) {
+              // The common ledger already withdrew broker scopes. Withdraw the
+              // corresponding UI heartbeat/gesture before the consumer sees resync.
+              if (event.kind === "events.resyncRequired") input.revokeIntent(event.owner);
+              args.send(event);
+            },
+          });
           return attachment;
         };
       return Reflect.get(target, key, receiver);
@@ -1509,7 +1519,14 @@ export async function composeDesktopMain(
       bindDesktopChannel(
         context,
         broker,
-        { catalog, states, subscriptions, runtime: runtimePort, scope: input.scope },
+        {
+          catalog,
+          states,
+          subscriptions,
+          runtime: runtimePort,
+          scope: input.scope,
+          revokeIntent: (owner) => intent.revokeOwner(owner),
+        },
         originalChannels,
       ),
     retireResources: (owner, reason) => lifecycle.retire(owner, reason),

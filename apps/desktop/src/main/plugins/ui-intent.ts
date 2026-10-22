@@ -226,6 +226,17 @@ export class UiIntent {
     for (const session of [...this.#sessions.values()])
       if (session.contextRef === contextRef) this.revoke(session.binding, "resource-retired");
   }
+  revokeOwner(owner: ResourceOwner): void {
+    for (const session of [...this.#sessions.values()])
+      if (
+        session.owner.sourceKey === owner.sourceKey &&
+        session.owner.pluginId === owner.pluginId &&
+        session.owner.generation === owner.generation &&
+        session.owner.hostEpoch === owner.hostEpoch &&
+        session.owner.processEpoch === owner.processEpoch
+      )
+        this.forget(session.binding);
+  }
   dispose(): void {
     for (const session of [...this.#sessions.values()]) this.revoke(session.binding, "window-lost");
     this.#tombstones.clear();
