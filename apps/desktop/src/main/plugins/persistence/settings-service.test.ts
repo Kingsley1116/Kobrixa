@@ -732,3 +732,38 @@ it("throwing local observers neither silence peers nor invalidate public subscri
   expect(f.events.unsubscribe).not.toHaveBeenCalled();
   f.bound.dispose(binding);
 });
+
+it("bound: source retirement removes watches immediately and rejects stale calls before backend work", async () => {
+  const f = boundFixture();
+  const stale = (await f.open()).binding;
+  f.bound.watch(stale, vi.fn());
+  await vi.waitFor(() => expect(f.subscriptions.size).toBe(1));
+  expect(
+    await f.bound.update(stale, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).toMatchObject({ ok: true });
+  settingsRequests(f.backend).retire(owner.sourceKey);
+  expect(f.subscriptions.size).toBe(0);
+  f.changeGeneration();
+  const fresh = await f.open();
+  expect(fresh.snapshot.values).toContainEqual({ key: "enabled", value: false });
+  const reads = vi.mocked(f.backend.reads.settings);
+  reads.mockClear();
+  const reserve = vi.spyOn(f.backend.engine, "reserve");
+  await expect(f.bound.read(stale)).rejects.toThrow("Stale");
+  await expect(
+    f.bound.update(stale, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).rejects.toThrow("Stale");
+  expect(() => f.bound.watch(stale, vi.fn())).toThrow("Stale");
+  expect(reads).not.toHaveBeenCalled();
+  expect(reserve).not.toHaveBeenCalled();
+  expect(await f.bound.read(fresh.binding)).toMatchObject({ ok: true });
+  await settingsRequests(f.backend).dispose();
+});

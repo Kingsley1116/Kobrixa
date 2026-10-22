@@ -569,84 +569,126 @@ export function registerPersistenceWindow170(input: {
 }): () => void {
   const original = input.renderer();
   if (!original) throw new Error("No workbench renderer");
-  const originalScope = structuredClone(input.facets.scope());
+  let disposed = false;
+  let documentScope = structuredClone(input.facets.scope());
+  let documentFrame = original.mainFrame;
+  let attached = false;
+  let documentReady = true;
+  let retireDocument = () => {};
+  const routes = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const registered = new Set<string>();
+  const sameScope = (a: CoreWindowScope, b: CoreWindowScope) =>
+    a.hostEpoch === b.hostEpoch && a.workbenchInstance === b.workbenchInstance;
   const scope = () => {
-    const current = input.renderer();
-    const now = input.facets.scope();
     if (
-      current !== original ||
+      disposed ||
+      !attached ||
+      input.renderer() !== original ||
       original.isDestroyed() ||
-      now.hostEpoch !== originalScope.hostEpoch ||
-      now.workbenchInstance !== originalScope.workbenchInstance
+      original.mainFrame !== documentFrame ||
+      !sameScope(input.facets.scope(), documentScope)
     )
       throw new Error("Stale persistence window");
-    return originalScope;
+    return documentScope;
   };
-  const handle: IpcHandle = <T extends unknown[], R>(
-    channel: string,
-    action: (event: IpcMainInvokeEvent, ...args: T) => R,
-  ) =>
-    input.handle(channel, (event, ...args: T) => {
-      scope();
+  // Register native-window routes once. Their document handlers are replaceable,
+  // so pending old opens and subscriptions retain their retired closures.
+  const handle: IpcHandle = (channel, action) => {
+    routes.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+    if (registered.has(channel)) return;
+    registered.add(channel);
+    input.handle(channel, (event, ...args: unknown[]) => {
       if (event.sender !== original || event.senderFrame !== original.mainFrame)
         throw new Error("Rejected IPC from an untrusted sender.");
-      return action(event, ...args);
+      if (
+        !disposed &&
+        documentReady &&
+        !attached &&
+        !sameScope(input.facets.scope(), documentScope)
+      )
+        attach();
+      scope();
+      return routes.get(channel)!(event, ...args);
     });
-  const publish = (expected: CoreWindowScope, channel: string, value: unknown) => {
-    const current = input.renderer();
-    let now: CoreWindowScope;
-    try {
-      now = scope();
-    } catch {
-      return;
-    }
-    if (
-      current !== original ||
-      original.isDestroyed() ||
-      expected.hostEpoch !== now.hostEpoch ||
-      expected.workbenchInstance !== now.workbenchInstance
-    )
-      return;
-    original.send(channel, value);
   };
-  const offLegacy = registerLegacyPreferencesIpc170(handle, input.facets.imports, () => scope());
-  const offCore = input.coreRecovery.attachPersistence170(input.facets.detail);
-  const offSettings = registerSettingsIpc170({
-    handle,
-    service: input.facets.settings,
-    scope,
-    publish,
-  });
-  const offRecovery = registerPersistenceRecoveryIpc170({
-    handle,
-    bridge: input.facets.detail.bridge,
-    scope,
-    publish,
-  });
-  let disposed = false;
+  const publish = (expected: CoreWindowScope, channel: string, value: unknown) => {
+    try {
+      if (sameScope(expected, scope())) original.send(channel, value);
+    } catch {
+      /* Retired document publications are dropped. */
+    }
+  };
+  const attach = () => {
+    documentScope = structuredClone(input.facets.scope());
+    documentFrame = original.mainFrame;
+    attached = true;
+    const expected = documentScope;
+    const documentScopeFor = () => {
+      const current = scope();
+      if (!sameScope(expected, current)) throw new Error("Stale persistence window");
+      return expected;
+    };
+    const offLegacy = registerLegacyPreferencesIpc170(
+      handle,
+      input.facets.imports,
+      documentScopeFor,
+    );
+    const offCore = input.coreRecovery.attachPersistence170(input.facets.detail);
+    const offSettings = registerSettingsIpc170({
+      handle,
+      service: input.facets.settings,
+      scope: documentScopeFor,
+      publish,
+    });
+    const offRecovery = registerPersistenceRecoveryIpc170({
+      handle,
+      bridge: input.facets.detail.bridge,
+      scope: documentScopeFor,
+      publish,
+    });
+    retireDocument = () => {
+      if (!attached) return;
+      attached = false;
+      offLegacy();
+      offSettings();
+      offRecovery();
+      offCore();
+      input.facets.imports.retirePreferences(expected);
+    };
+  };
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    offLegacy();
-    offSettings();
-    offRecovery();
-    offCore();
-    input.facets.imports.retirePreferences(originalScope);
+    retireDocument();
+    routes.clear();
     original.removeListener("destroyed", dispose);
-    original.removeListener("render-process-gone", dispose);
+    original.removeListener("render-process-gone", retireDocumentOnCrash);
     original.removeListener("did-start-navigation", navigation);
+    original.removeListener("did-navigate", documentCommitted);
+  };
+  const retireDocumentOnCrash = () => {
+    documentReady = false;
+    retireDocument();
+  };
+  const documentCommitted = () => {
+    documentReady = true;
   };
   const navigation = (
     _event: Electron.Event,
     _url: string,
-    _inPlace: boolean,
+    inPlace: boolean,
     mainFrame: boolean,
   ) => {
-    if (mainFrame) dispose();
+    if (mainFrame && !inPlace) {
+      documentReady = false;
+      retireDocument();
+    }
   };
+  attach();
   original.once("destroyed", dispose);
-  original.once("render-process-gone", dispose);
+  original.on("render-process-gone", retireDocumentOnCrash);
   original.on("did-start-navigation", navigation);
+  original.on("did-navigate", documentCommitted);
   return dispose;
 }
 

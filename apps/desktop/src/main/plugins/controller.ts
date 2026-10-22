@@ -1420,6 +1420,7 @@ export async function composeDesktopMain(
     revoke: (_owner, binding) => intent.forget(binding),
   });
   const sourceProjection = createPersistenceSources170({
+    onRetire: (sourceKey) => settingsRequests(backend).retire(sourceKey),
     currentScope: input.currentScope,
     currentRuntime: (owner) => runtimeAttachment?.current(owner) ?? false,
     beforeDelivery: (sourceKey) => {
@@ -1809,18 +1810,27 @@ export async function composeDesktopMain(
             loaded.push({ owner, eligible: true });
             continue;
           }
-          if (source.settings.version !== 1)
-            throw new Error("Unsupported settings resource version");
-          const document =
-            source.resources.kind === "builtin"
-              ? readBuiltinJson(source.resources.files, source.settings.path, 65536)
-              : await readPackagedJson(
-                  source.resources.root,
-                  source.settings.path,
-                  65536,
-                  new SourceReadBudget(5000, now),
-                );
-          loaded.push({ owner, eligible: true, document });
+          try {
+            if (source.settings.version !== 1)
+              throw new Error("Unsupported settings resource version");
+            const document =
+              source.resources.kind === "builtin"
+                ? readBuiltinJson(source.resources.files, source.settings.path, 65536)
+                : await readPackagedJson(
+                    source.resources.root,
+                    source.settings.path,
+                    65536,
+                    new SourceReadBudget(5000, now),
+                  );
+            validateSettingsResource(document.value, document.bytes);
+            loaded.push({ owner, eligible: true, document });
+          } catch (cause) {
+            sourceProjection.revoke(owner.sourceKey);
+            loaded.push({ owner, eligible: true });
+            input.report(
+              new Error(`Settings contribution unavailable: ${owner.sourceKey}`, { cause }),
+            );
+          }
         }
         if (JSON.stringify(plugins!.persistenceCatalogSources()) !== key) return;
         for (const source of loaded) {
@@ -1854,7 +1864,8 @@ export async function composeDesktopMain(
         foundation.attachProvider(providers);
         offSources = providers.onEvent((event) => {
           if (event.type === "state" && plugins) {
-            sourceProjection.reconcileSources(plugins.persistenceCatalogSources());
+            if (sourceProjection.reconcileSources(plugins.persistenceCatalogSources()))
+              inventory = "";
             void refreshCatalog();
           }
         });
@@ -2309,6 +2320,7 @@ export function legacyPreferencesFor170(
 
 type PersistenceSourceRow170 = {
   owner: UiOwner;
+  sourceGeneration: number;
   settings: {
     resourceDigest: Sha256;
     resource: SettingsResourceV1;
@@ -2316,13 +2328,16 @@ type PersistenceSourceRow170 = {
   } | null;
 };
 export function createPersistenceSources170(input: {
+  onRetire?: (sourceKey: string) => void;
   currentScope: (scope: CoreWindowScope) => boolean;
   currentRuntime: (owner: ResourceOwner) => boolean;
   beforeDelivery: (sourceKey: string) => void;
 }) {
   const rows = new Map<string, PersistenceSourceRow170>();
   const namespaces = new Map<string, ResourceOwner>();
-  const retiredScopes = new Set<string>();
+  // Only the latest retiring window needs a fence; currentScope rejects all older windows.
+  let retiredScope: string | undefined;
+  let generation = 0;
   const scopeKey = (scope: CoreWindowScope) =>
     JSON.stringify([scope.hostEpoch, scope.workbenchInstance]);
   const key = (owner: ResourceOwner) =>
@@ -2333,6 +2348,9 @@ export function createPersistenceSources170(input: {
       owner.hostEpoch,
       owner.processEpoch,
     ]);
+  const retire = (sourceKey: string) => {
+    if (rows.get(sourceKey)?.settings) input.onRetire?.(sourceKey);
+  };
   const port: PersistenceSourcePort = {
     current(owner) {
       return (
@@ -2361,12 +2379,12 @@ export function createPersistenceSources170(input: {
     },
     coreOwner({ sourceKey, scope }) {
       const row = rows.get(sourceKey);
-      if (!row || retiredScopes.has(scopeKey(scope)) || !input.currentScope(scope)) return null;
+      if (!row || retiredScope === scopeKey(scope) || !input.currentScope(scope)) return null;
       const id = JSON.stringify([sourceKey, scope.hostEpoch, scope.workbenchInstance]);
       const owner: ResourceOwner = {
         sourceKey,
         pluginId: row.owner.pluginId,
-        generation: row.owner.uiResourceGeneration,
+        generation: row.sourceGeneration,
         hostEpoch: scope.hostEpoch,
         processEpoch: scope.workbenchInstance,
       };
@@ -2382,6 +2400,7 @@ export function createPersistenceSources170(input: {
       document?: { value: unknown; bytes: number; digest: string };
     }) {
       if (!input.eligible) {
+        retire(input.owner.sourceKey);
         rows.delete(input.owner.sourceKey);
         for (const [id, owner] of namespaces)
           if (owner.sourceKey === input.owner.sourceKey) namespaces.delete(id);
@@ -2396,29 +2415,56 @@ export function createPersistenceSources170(input: {
           .digest("hex");
         settings = { resourceDigest, resource, validationDigest };
       }
-      rows.set(input.owner.sourceKey, { owner: structuredClone(input.owner), settings });
+      const existing = rows.get(input.owner.sourceKey);
+      if (
+        existing &&
+        existing.sourceGeneration === input.owner.uiResourceGeneration &&
+        existing.owner.pluginId === input.owner.pluginId &&
+        existing.settings?.resourceDigest === settings?.resourceDigest &&
+        existing.settings?.validationDigest === settings?.validationDigest
+      ) {
+        return existing.settings
+          ? {
+              owner: structuredClone(existing.owner),
+              resource: structuredClone(existing.settings.resource),
+              validationDigest: existing.settings.validationDigest,
+            }
+          : null;
+      }
+      // Form authority has its own monotonic lifetime; durable backend ownership
+      // continues to use the manager's actual source generation.
+      retire(input.owner.sourceKey);
+      generation = Math.max(generation + 1, input.owner.uiResourceGeneration);
+      const owner = { ...input.owner, uiResourceGeneration: generation };
+      rows.set(input.owner.sourceKey, {
+        owner,
+        sourceGeneration: input.owner.uiResourceGeneration,
+        settings,
+      });
       for (const [id, owner] of namespaces)
         if (owner.sourceKey === input.owner.sourceKey) namespaces.delete(id);
       return settings
         ? {
-            owner: structuredClone(input.owner),
+            owner: structuredClone(owner),
             resource: structuredClone(settings.resource),
             validationDigest: settings.validationDigest,
           }
         : null;
     },
     revoke(sourceKey: string) {
+      retire(sourceKey);
       rows.delete(sourceKey);
       for (const [id, owner] of namespaces)
         if (owner.sourceKey === sourceKey) namespaces.delete(id);
     },
     retireScope(scope: CoreWindowScope) {
-      retiredScopes.add(scopeKey(scope));
+      retiredScope = scopeKey(scope);
       for (const [id, owner] of namespaces)
         if (owner.hostEpoch === scope.hostEpoch && owner.processEpoch === scope.workbenchInstance)
           namespaces.delete(id);
     },
     reconcileSources(sources: readonly { owner: ResourceOwner; eligible: boolean }[]) {
+      let changed = false;
       const admitted = new Map(
         sources
           .filter((source) => source.eligible)
@@ -2429,13 +2475,16 @@ export function createPersistenceSources170(input: {
         if (
           owner &&
           owner.pluginId === row.owner.pluginId &&
-          owner.generation === row.owner.uiResourceGeneration
+          owner.generation === row.sourceGeneration
         )
           continue;
+        changed = true;
+        retire(key);
         rows.delete(key);
         for (const [id, namespace] of namespaces)
           if (namespace.sourceKey === key) namespaces.delete(id);
       }
+      return changed;
     },
     currentSource: (sourceKey: string) => rows.has(sourceKey),
   };

@@ -3738,12 +3738,39 @@ it("composeDesktopMain uses the real worker/host for data-only settings, preserv
     expect(control).toBeDefined();
     expect(handles.channels()).toEqual([]);
     const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
-    const opened = await handles.host.settings.open({
+    let opened = await handles.host.settings.open({
       sourceKey: "builtin:test.settings",
       resourceDigest,
       scope: f.input.scope(),
     });
     expect(opened.snapshot.values).toEqual([{ key: "device.choice", value: 1 }]);
+    const stale = opened.binding;
+    await composition.plugins.setEnabled("builtin:test.settings", false);
+    await composition.plugins.setEnabled("builtin:test.settings", true);
+    opened = await vi.waitFor(() =>
+      handles.host.settings.open({
+        sourceKey: "builtin:test.settings",
+        resourceDigest,
+        scope: f.input.scope(),
+      }),
+    );
+    const reserve = vi.spyOn(handles.backend.engine, "reserve");
+    const reads = vi.spyOn(handles.backend.reads, "settings");
+    await expect(handles.host.settings.read(stale)).rejects.toThrow("Stale");
+    await expect(
+      handles.host.settings.update(stale, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "device.choice", value: "1" }],
+      }),
+    ).rejects.toThrow("Stale");
+    expect(() => handles.host.settings.watch(stale, vi.fn())).toThrow("Stale");
+    expect(opened.binding.owner.uiResourceGeneration).toBeGreaterThan(
+      stale.owner.uiResourceGeneration,
+    );
+    expect(reserve).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+    expect(await handles.host.settings.read(opened.binding)).toMatchObject({ ok: true });
     const changed = vi.fn();
     const off = handles.host.settings.watch(opened.binding, changed);
     const saved = await handles.host.settings.update(opened.binding, {
@@ -3759,6 +3786,9 @@ it("composeDesktopMain uses the real worker/host for data-only settings, preserv
       },
     });
     await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(reserve.mock.calls[0]![0].owner.generation).toBe(
+      composition.plugins.persistenceCatalogSources()[0]!.owner.generation,
+    );
     off();
     await composition.plugins.setEnabled("builtin:test.settings", false);
     await expect(handles.host.settings.read(opened.binding)).rejects.toThrow("Stale");
@@ -4466,3 +4496,157 @@ it.each(["1.7.0+build.1", "1.8.0-beta.1"])(
     }
   },
 );
+
+it.each(["malformed", "missing", "oversize", "invalid"])(
+  "isolates %s optional settings at startup and refresh while healthy settings and recovery remain available",
+  async (kind) => {
+    const f = await compositionInput();
+    const bad = staticSource170(
+      "test.bad",
+      kind === "malformed"
+        ? "{bad"
+        : kind === "oversize"
+          ? " ".repeat(65537)
+          : kind === "invalid"
+            ? "{}"
+            : settingsRaw170,
+    );
+    if (kind === "missing") bad.resources = {};
+    f.input.plugins.builtins = [bad, staticSource170()];
+    let composition: DesktopMainComposition | undefined;
+    try {
+      composition = await composeDesktopMain(f.input, {
+        worker: { entry: testWorkerEntry170, control: () => {} },
+      });
+      const settings = composition.plugins.persistence170!.settings;
+      const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
+      const open = () =>
+        settings.open({
+          sourceKey: "builtin:test.settings",
+          resourceDigest,
+          scope: f.input.scope(),
+        });
+      expect((await open()).snapshot.values).toEqual([{ key: "device.choice", value: 1 }]);
+      expect(f.input.report).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("builtin:test.bad") }),
+      );
+      expect(
+        desktopFoundationTestHandles(composition).host.participant.recoverySnapshot(),
+      ).toBeDefined();
+      await expect(
+        settings.open({ sourceKey: "builtin:test.bad", resourceDigest, scope: f.input.scope() }),
+      ).rejects.toThrow("not admitted");
+      await composition.plugins.setEnabled("builtin:test.bad", false);
+      await composition.plugins.setEnabled("builtin:test.bad", true);
+      await vi.waitFor(() => expect(f.input.report).toHaveBeenCalledTimes(2));
+      expect((await open()).snapshot.values).toEqual([{ key: "device.choice", value: 1 }]);
+    } finally {
+      await composition?.dispose();
+      await f.cleanup();
+    }
+  },
+);
+
+it.each(["disable", "removal", "reload"])(
+  "source %s gets a new form lifetime while retaining actual backend ownership",
+  async (kind) => {
+    const sources = createPersistenceSources170({
+      currentScope: () => true,
+      currentRuntime: () => false,
+      beforeDelivery: () => {},
+    });
+    const owner = {
+      sourceKey: "builtin:test.settings",
+      pluginId: "test.settings",
+      uiResourceGeneration: 7,
+    };
+    const scope = { hostEpoch: h170, workbenchInstance: h170 };
+    const document = {
+      value: JSON.parse(settingsRaw170),
+      bytes: Buffer.byteLength(settingsRaw170),
+      digest: "a".repeat(64),
+    };
+    const first = sources.admit({ owner, eligible: true, document })!;
+    if (kind === "disable")
+      sources.reconcileSources([
+        {
+          owner: { ...owner, generation: 7, hostEpoch: h170, processEpoch: h170 },
+          eligible: false,
+        },
+      ]);
+    else if (kind === "removal") sources.reconcileSources([]);
+    else owner.uiResourceGeneration++;
+    const fresh = sources.admit({ owner, eligible: true, document })!;
+    expect(fresh.owner.uiResourceGeneration).toBeGreaterThan(first.owner.uiResourceGeneration);
+    expect(
+      (await sources.port.settings({
+        sourceKey: owner.sourceKey,
+        resourceDigest: document.digest,
+      }))!.owner,
+    ).toEqual(fresh.owner);
+    expect(sources.port.coreOwner({ sourceKey: owner.sourceKey, scope })!.generation).toBe(
+      owner.uiResourceGeneration,
+    );
+    expect(sources.admit({ owner, eligible: true, document })!.owner).toEqual(fresh.owner);
+  },
+);
+
+import * as staticResources170 from "@kobrixa/plugin-runtime";
+it("disabling an optional source during an asynchronous resource read prevents late readmission", async () => {
+  const f = await compositionInput();
+  const directory = await pluginFolder("async-settings");
+  const manifestPath = path.join(directory, "kobrixa-plugin.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.apiVersion = "^1.7.0";
+  manifest.permissions = ["settings.read", "settings.write"];
+  manifest.contributes.settings = { version: 1, path: "settings.json" };
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(path.join(directory, "settings.json"), settingsRaw170);
+  f.input.plugins.commandLine.developmentDirectories = [directory];
+  f.input.plugins.builtins = [staticSource170()];
+  const composition = await composeDesktopMain(f.input, {
+    worker: { entry: testWorkerEntry170, control: () => {} },
+  });
+  const sourceKey = developmentSourceKey(await realpath(directory));
+  const read = staticResources170.readPackagedJson;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const heldRead = vi
+    .spyOn(staticResources170, "readPackagedJson")
+    .mockImplementation(async (...args) => {
+      await gate;
+      return read(...args);
+    });
+  try {
+    await composition.plugins.setEnabled(sourceKey, false);
+    await composition.plugins.setEnabled(sourceKey, true);
+    await vi.waitFor(() => expect(heldRead).toHaveBeenCalled());
+    await composition.plugins.setEnabled(sourceKey, false);
+    release();
+    // A later healthy-source exchange is queued behind the held read and its stale completion.
+    await composition.plugins.setEnabled("builtin:test.settings", false);
+    await composition.plugins.setEnabled("builtin:test.settings", true);
+    const settings = composition.plugins.persistence170!.settings;
+    const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
+    await vi.waitFor(async () =>
+      expect(
+        (
+          await settings.open({
+            sourceKey: "builtin:test.settings",
+            resourceDigest,
+            scope: f.input.scope(),
+          })
+        ).snapshot.values,
+      ).toHaveLength(1),
+    );
+    await expect(
+      settings.open({ sourceKey, resourceDigest, scope: f.input.scope() }),
+    ).rejects.toThrow("not admitted");
+  } finally {
+    release();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});

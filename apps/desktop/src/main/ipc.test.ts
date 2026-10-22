@@ -1719,11 +1719,13 @@ function persistenceWindowFixture170() {
     watch: unexpected,
     dispose: vi.fn(),
   };
+  const offOpen = vi.fn(),
+    offChanged = vi.fn();
   const bridge: PluginsApi["persistenceRecovery"] = {
     snapshot: vi.fn(async () => ({ ok: true as const, value: { revision: 0, items: [] } })),
     act: unexpected,
-    onOpen: vi.fn(() => () => {}),
-    onChanged: vi.fn(() => () => {}),
+    onOpen: vi.fn(() => offOpen),
+    onChanged: vi.fn(() => offChanged),
   };
   const facets: NonNullable<PluginController["persistence170"]> = {
     settings,
@@ -1773,6 +1775,8 @@ function persistenceWindowFixture170() {
   } as unknown as IpcMainInvokeEvent;
   return {
     renderer,
+    offOpen,
+    offChanged,
     facets,
     challenge,
     event,
@@ -1892,3 +1896,68 @@ afterAll(async () => {
 });
 
 import type { PersistenceFaultControl as PersistenceFaultControl170 } from "./plugins/persistence/worker.js";
+
+it("persistence routes survive in-place/subframe navigation and admit only a fresh document scope after reload", async () => {
+  const f = persistenceWindowFixture170();
+  try {
+    await f.call("plugins:persistence-recovery:subscribe");
+    for (const [inPlace, mainFrame] of [
+      [true, true],
+      [false, false],
+    ]) {
+      f.renderer.emit("did-start-navigation", {}, "app://page#part", inPlace, mainFrame);
+      await f.call("persistence:legacy-preferences-challenge", "test.preferences");
+    }
+    expect(f.retirePreferences).not.toHaveBeenCalled();
+    const oldSettings = (await f.call("plugins:settings:open", {
+      sourceKey: "builtin:test.settings",
+      resourceDigest: "a".repeat(64),
+    })) as { binding: unknown };
+    const oldFrame = f.event.senderFrame;
+    f.renderer.emit("did-start-navigation", {}, "app://page", false, true);
+    expect(f.retirePreferences).toHaveBeenCalledExactlyOnceWith(f.challenge.scope);
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    expect(f.offOpen).toHaveBeenCalledOnce();
+    expect(f.offChanged).toHaveBeenCalledTimes(2);
+    expect(f.facets.settings.dispose).toHaveBeenCalledOnce();
+    f.replace();
+    // The authority epoch can rotate at navigation start, before the new document commits.
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    f.renderer.mainFrame = {};
+    f.renderer.emit("did-navigate", {}, "app://page");
+    const freshEvent = { ...f.event, senderFrame: f.renderer.mainFrame };
+    expect(() =>
+      handlers.get("persistence:legacy-preferences-challenge")!(
+        { ...f.event, senderFrame: oldFrame },
+        "test.preferences",
+      ),
+    ).toThrow("untrusted");
+    await handlers.get("persistence:legacy-preferences-challenge")!(freshEvent, "test.preferences");
+    await expect(
+      handlers.get("persistence:legacy-preferences-submit")!(freshEvent, {
+        nonce: f.challenge.nonce,
+        scope: f.challenge.scope,
+        entries: [],
+      }),
+    ).rejects.toThrow("scope");
+    await expect(
+      handlers.get("plugins:settings:read")!(freshEvent, oldSettings.binding),
+    ).rejects.toThrow("Stale");
+    await handlers.get("plugins:settings:open")!(freshEvent, {
+      sourceKey: "builtin:test.settings",
+      resourceDigest: "a".repeat(64),
+    });
+    await handlers.get("plugins:persistence-recovery:subscribe")!(freshEvent);
+    await handlers.get("plugins:persistence-recovery:snapshot")!(freshEvent, { itemId: id(6) });
+    expect(f.facets.detail.bridge.onOpen).toHaveBeenCalledTimes(2);
+    expect(f.renderer.listenerCount("did-start-navigation")).toBe(1);
+  } finally {
+    f.dispose();
+    f.dispose();
+  }
+  expect(f.retirePreferences).toHaveBeenCalledTimes(2);
+});

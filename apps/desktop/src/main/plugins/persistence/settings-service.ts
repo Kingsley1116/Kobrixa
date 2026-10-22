@@ -578,6 +578,13 @@ export function createBoundSettingsService(input: {
           const result = input.events.create(form.owner);
           if (!result.ok) throw result.error;
           form.subscription = result.value.subscriptionId;
+          const offRemoved = input.events.onRemoved((id) => {
+            if (form.subscription !== id) return;
+            delete form.subscription;
+            offRemoved();
+            form.cleanups.delete(offRemoved);
+          });
+          form.cleanups.add(offRemoved);
           input.events.activate(form.owner, form.subscription);
         })
         .catch(invalidateForm);
@@ -610,8 +617,9 @@ export function createBoundSettingsService(input: {
     },
     dispose,
   };
-  service.bind(bound, () => {
-    if (active) dispose(active.binding);
+  service.bind(bound, (sourceKey) => {
+    if (active && (sourceKey === undefined || active.owner.sourceKey === sourceKey))
+      dispose(active.binding);
   });
   return bound;
 }
@@ -642,7 +650,7 @@ function makeSettingsComposition(input: CompositionInput) {
   const listeners = new Map<string, Set<() => void>>();
   let disposed = false;
   let bound: BoundSettingsService | undefined;
-  let closeForm = () => {};
+  let closeForm = (_sourceKey?: string) => {};
   const offRemoved = input.events.onRemoved((id) => subscriptions.delete(id));
   const requireLive = () => {
     if (disposed) throw new Error("Settings service disposed.");
@@ -725,7 +733,7 @@ function makeSettingsComposition(input: CompositionInput) {
     get bound() {
       return bound;
     },
-    bind(value: BoundSettingsService, close: () => void) {
+    bind(value: BoundSettingsService, close: (sourceKey?: string) => void) {
       bound = value;
       closeForm = close;
     },
@@ -737,6 +745,15 @@ function makeSettingsComposition(input: CompositionInput) {
       )
         throw new Error("Wrong catalog owner.");
       admitted.set(owner.sourceKey, { digest, resolved: structuredClone(resolved) });
+    },
+    retire(sourceKey: string) {
+      closeForm(sourceKey);
+      admitted.delete(sourceKey);
+      for (const [id, owner] of subscriptions) {
+        if (owner.sourceKey !== sourceKey) continue;
+        input.events.unsubscribe(owner, id);
+        subscriptions.delete(id);
+      }
     },
     request<M extends keyof SettingsRequestMap>(
       principal: Principal,
