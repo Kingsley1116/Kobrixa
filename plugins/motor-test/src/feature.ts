@@ -52,6 +52,7 @@ type Attempt = {
   cancelled: boolean;
   forced: boolean;
   gesture?: string;
+  holdNode?: string;
   spec?: MotionSpec;
   id?: string;
   snapshot?: MotionSnapshot;
@@ -226,7 +227,12 @@ class MotorFeature {
       generation: this.generation,
       cancelled: false,
       forced: false,
-      ...(x.trigger.kind === "hold" ? { gesture: x.trigger.gestureRef } : {}),
+      ...(x.trigger.kind === "hold"
+        ? {
+            gesture: x.trigger.gestureRef,
+            holdNode: `${String(port).toLowerCase()}-${direction === 1 ? "forward" : "reverse"}`,
+          }
+        : {}),
       spec: checked.spec,
       queryPending: false,
       stopConfigured: false,
@@ -852,7 +858,7 @@ class MotorFeature {
       void this.context.ui.unsubscribe(instance.subscription).catch(() => {});
     }
   }
-  private data(): Record<string, UiScalar> {
+  private data(binding: UiBinding): Record<string, UiScalar> {
     const available =
       this.capable &&
       !!this.session &&
@@ -860,7 +866,24 @@ class MotorFeature {
       !!this.sources &&
       this.session.capabilities.includes("finiteMotion.v1");
     const a = this.active;
-    const motion = a?.snapshot && a.spec ? presentMotion(a.snapshot, a.spec, this.locale).data : {};
+    const presentation =
+      a?.snapshot && a.spec ? presentMotion(a.snapshot, a.spec, this.locale) : undefined;
+    // Start admission stays locked; only the original live jog node may continue its hold.
+    // A patch to another panel instance must never inherit that eligibility.
+    const activeHold =
+      available &&
+      this.selected &&
+      a &&
+      this.valid(a) &&
+      !a.settled &&
+      !presentation?.terminal &&
+      a.spec?.mode === "jog" &&
+      key(a.binding) === key(binding) &&
+      this.sources?.actuators.some(
+        (source) => source.actuatorId === a.spec!.actuatorId && source.state === "ready",
+      )
+        ? (a.holdNode ?? null)
+        : null;
     return {
       session: boundedText(
         this.session?.name ?? this.t("No connection selected", "尚未選取連線"),
@@ -879,6 +902,7 @@ class MotorFeature {
         : "—",
       available,
       "can-start": available && !!this.selected && (!a || a.settled),
+      "active-hold": activeHold,
       availability: available
         ? this.selected
           ? this.t("Current connection selected.", "已選取目前連線。")
@@ -904,7 +928,7 @@ class MotorFeature {
       ),
       error: "",
       "has-error": false,
-      ...motion,
+      ...presentation?.data,
       ...(a && !a.snapshot
         ? {
             // No public snapshot means no evidence about dispatch or stop confirmation.
@@ -973,7 +997,7 @@ class MotorFeature {
         key(this.active.binding) === key(instance.binding)
       )
         this.cancel(this.active, true);
-      const data = this.data();
+      const data = this.data(instance.binding);
       const set = instance.binding.kind === "status" ? { summary: data.summary! } : data;
       instance.last = performance.now();
       const result = await this.context.ui.patch(

@@ -191,6 +191,23 @@
         "nullable": true
       },
       "initial": null
+    },
+    "active-hold": {
+      "schema": {
+        "type": "enum",
+        "values": [
+          "a-forward",
+          "a-reverse",
+          "b-forward",
+          "b-reverse",
+          "c-forward",
+          "c-reverse",
+          "d-forward",
+          "d-reverse"
+        ],
+        "nullable": true
+      },
+      "initial": null
     }
   },
   "fields": {
@@ -1284,12 +1301,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "a-forward"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -1318,12 +1348,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "a-reverse"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -1654,12 +1697,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "b-forward"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -1688,12 +1744,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "b-reverse"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -2024,12 +2093,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "c-forward"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -2058,12 +2140,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "c-reverse"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -2394,12 +2489,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "d-forward"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",
@@ -2428,12 +2536,25 @@
         "right": "jog"
       },
       "enabledWhen": {
-        "op": "eq",
-        "left": {
-          "scope": "data",
-          "key": "can-start"
-        },
-        "right": true
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "d-reverse"
+          }
+        ]
       },
       "help": {
         "en": "Hold pointer, Space, or Enter. Release to stop.",

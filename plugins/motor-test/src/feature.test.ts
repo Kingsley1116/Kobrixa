@@ -12,6 +12,7 @@ import {
   deviceRequestSchemas,
   deviceSessionSnapshotSchema,
   eventEnvelopeSchema,
+  evaluateCondition,
   motionSnapshotSchema,
   panelResourceV1Schema,
   statusResourceV1Schema,
@@ -33,7 +34,7 @@ import {
   type UiScalar,
 } from "@kobrixa/plugin-protocol";
 import { createMotorPlugin } from "./feature.js";
-import { initialForm } from "./model.js";
+import { PORTS, initialForm } from "./model.js";
 
 const panelResource = panelResourceV1Schema.parse(
   JSON.parse(readFileSync(new URL("../panel.json", import.meta.url), "utf8")),
@@ -509,6 +510,212 @@ afterEach(() => {
 });
 
 describe("public motor process", () => {
+  // Evaluate the shipped resource against data accepted by actual ui.patch validation.
+  const enabled = (nodeId: string, b = binding) => {
+    const node = panelResource.nodes.find((node) => node.id === nodeId)!;
+    return !node.enabledWhen || evaluateCondition(node.enabledWhen, f.data(b), initialForm());
+  };
+  const holdIds = panelResource.nodes
+    .filter((node) => node.type === "holdAction")
+    .map((node) => node.id);
+  const startIds = panelResource.nodes
+    .filter((node) => node.id.endsWith("-start"))
+    .map((node) => node.id);
+
+  it.each(PORTS.flatMap((port) => ([1, -1] as const).map((direction) => ({ port, direction }))))(
+    "$port direction $direction keeps only the original bound hold enabled through prepare, start and running",
+    async ({ port, direction }) => {
+      const other = uiBindingSchema.parse({ ...binding, panelInstance: id(40) });
+      f.instances = [binding, other, status];
+      f.sources = {
+        ...f.sources,
+        actuators: PORTS.map((port, i) => ({
+          actuatorId: id(4 + i),
+          portId: port,
+          name: "Motor",
+          typeId: "large",
+          state: "ready",
+        })),
+      };
+      await f.boot();
+      await f.select();
+      const prepare = barrier<DeviceResult<"devices/motion/prepare">>();
+      const start = barrier<DeviceResult<"devices/motion/start">>();
+      const stop = barrier<DeviceResult<"devices/motion/stop">>();
+      f.overrides.set("devices/motion/prepare", () => prepare.promise);
+      f.overrides.set("devices/motion/start", () => start.promise);
+      f.overrides.set("devices/motion/stop", () => stop.promise);
+      const trigger = { kind: "hold", phase: "begin", gestureRef: id(20) } as const;
+      const form = {
+        revision: 1,
+        values: { ...initialForm(), port, [`${port.toLowerCase()}-mode`]: "jog" },
+      };
+      const nodeId = `${port.toLowerCase()}-${direction === 1 ? "forward" : "reverse"}`;
+      const checkBusy = async () => {
+        await vi.advanceTimersByTimeAsync(100);
+        expect(f.data(binding)["can-start"]).toBe(false);
+        expect(holdIds.filter((id) => enabled(id))).toEqual([nodeId]);
+        expect(holdIds.filter((id) => enabled(id, other))).toEqual([]);
+        expect(startIds.filter((id) => enabled(id))).toEqual([]);
+      };
+      await f.invoke(f.invocation("jog", { trigger, form }, { direction: String(direction) }));
+      await drain();
+      await checkBusy();
+      // Even direct invocations of the still-enabled node cannot bypass the synchronous lock.
+      await f.invoke(f.invocation("jog", { trigger, form }, { direction: String(direction) }));
+      await f.invoke(
+        f.invocation(
+          "jog",
+          { trigger: { ...trigger, gestureRef: id(21) }, form },
+          { direction: String(-direction) },
+        ),
+      );
+      await f.invoke(
+        f.invocation(
+          "jog",
+          {
+            trigger,
+            form: { revision: 2, values: { ...initialForm(), port: port === "A" ? "B" : "A" } },
+          },
+          { direction: "1" },
+        ),
+      );
+      await f.invoke();
+      expect(f.calls("devices/motion/prepare")).toHaveLength(1);
+      prepare.resolve({ ok: true, value: { operation: snap() } });
+      await drain();
+      expect(f.calls("devices/motion/start")).toHaveLength(1);
+      await checkBusy();
+      f.operation = snap({
+        revision: 2,
+        phase: "running",
+        stage: "moving",
+        startAccepted: true,
+        dispatch: "sent",
+        stopConfirmation: "pending",
+      });
+      start.resolve({ ok: true, value: { operation: f.operation } });
+      await drain();
+      await checkBusy();
+      // A foreign binding or gesture cannot release the original operation.
+      await f.invoke(
+        f.invocation(
+          "jog",
+          { binding: other, trigger: { ...trigger, phase: "end" } },
+          { direction: String(direction) },
+        ),
+      );
+      await f.invoke(
+        f.invocation(
+          "jog",
+          { trigger: { ...trigger, phase: "end", gestureRef: id(22) } },
+          { direction: String(direction) },
+        ),
+      );
+      expect(f.calls("devices/motion/stop")).toHaveLength(0);
+      const phase = direction === 1 ? "end" : "cancel";
+      await f.invoke(
+        f.invocation(
+          "jog",
+          { trigger: { ...trigger, phase }, form: { revision: 3, values: {} } },
+          { direction: String(direction) },
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.calls("devices/motion/stop").map((call) => call.params)).toEqual([
+        { operationId: id(10), stopMode: phase === "end" ? "configured" : "brake" },
+      ]);
+      expect(holdIds.filter((id) => enabled(id))).toEqual([]);
+      expect(startIds.filter((id) => enabled(id))).toEqual([]);
+      const terminal = snap({
+        revision: 3,
+        phase: "stopped",
+        stage: "terminal",
+        stopRequested: true,
+        dispatch: "sent",
+        stopConfirmation: "confirmed",
+      });
+      stop.resolve({ ok: true, value: { operation: terminal } });
+      await drain();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.data(binding)["active-hold"]).toBeNull();
+      expect(f.data(binding)["can-start"]).toBe(true);
+    },
+  );
+
+  it.each(["connection", "source", "authority", "hidden", "replacement", "unconfirmed"] as const)(
+    "%s loss removes active hold eligibility while unresolved work stays locked",
+    async (loss) => {
+      await f.boot();
+      await f.select();
+      f.overrides.set("devices/motion/stop", () => barrier<unknown>().promise);
+      await f.invoke(
+        f.invocation(
+          "jog",
+          { trigger: { kind: "hold", phase: "begin", gestureRef: id(20) } },
+          { direction: "1" },
+        ),
+      );
+      await drain();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(enabled("a-forward")).toBe(true);
+      if (loss === "connection") {
+        f.session = { ...f.session, state: "disconnected" };
+        f.deviceEvent("catalog", "devices.catalog", f.list());
+      } else if (loss === "source") {
+        f.sources = { ...f.sources, sourceRevision: 2, actuators: [] };
+        f.session = { ...f.session, sourceRevision: 2 };
+        f.deviceEvent("session", "devices.session", { session: f.session, sourcesChanged: true });
+      } else if (loss === "authority") {
+        f.deviceEvent("authority", "devices.authority", {
+          contextRef: id(5),
+          revision: 2,
+          state: "restricted",
+          reason: "viewer",
+        });
+      } else if (loss === "hidden") {
+        f.visible = false;
+        f.uiEvent("ui.visibility", { binding, visible: false });
+      } else if (loss === "replacement") {
+        const replacement = uiBindingSchema.parse({ ...binding, uiResourceGeneration: 2 });
+        f.instances = [replacement, status];
+        f.uiEvent("ui.instances", { instances: [replacement, status] });
+        await drain();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(f.data(replacement)["active-hold"]).toBeNull();
+        expect(holdIds.filter((id) => enabled(id, replacement))).toEqual([]);
+        expect(f.calls("devices/motion/stop")[0]?.params).toEqual({
+          operationId: id(10),
+          stopMode: "brake",
+        });
+        return;
+      } else {
+        f.deviceEvent(
+          "motion",
+          "devices.motion",
+          snap({
+            revision: 3,
+            phase: "unconfirmed",
+            stage: "terminal",
+            dispatch: "sent",
+            stopConfirmation: "unconfirmed",
+          }),
+        );
+      }
+      await drain();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.data(binding)["active-hold"]).toBeNull();
+      expect(holdIds.filter((id) => enabled(id))).toEqual([]);
+      expect(startIds.filter((id) => enabled(id))).toEqual([]);
+      await f.invoke();
+      expect(f.calls("devices/motion/prepare")).toHaveLength(1);
+      if (loss !== "unconfirmed")
+        expect(f.calls("devices/motion/stop")[0]?.params).toEqual({
+          operationId: id(10),
+          stopMode: "brake",
+        });
+    },
+  );
   it.each(["devices/list", "devices/context"] as const)(
     "hidden cancellation drains patches while %s is held and after settling before prepare",
     async (method) => {
@@ -757,6 +964,10 @@ describe("public motor process", () => {
         { direction: "-1" },
       ),
     );
+    await vi.advanceTimersByTimeAsync(100);
+    expect(f.data(binding)["active-hold"]).toBeNull();
+    expect(holdIds.filter((id) => enabled(id))).toEqual([]);
+    expect(f.data(binding)["can-start"]).toBe(false);
     held.resolve({ ok: true, value: { operation: snap() } });
     await drain();
     expect(f.calls("devices/motion/start")).toHaveLength(0);
