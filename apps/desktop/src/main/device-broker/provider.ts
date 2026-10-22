@@ -228,7 +228,18 @@ export class ExchangeLane {
     if (this.foreground === id && !this.#inflight && !this.quarantined) this.foreground = null;
   }
   async drain(deadline: number): Promise<void> {
-    if (this.#inflight) await this.#bounded(this.#inflight, deadline);
+    // Wait for ownership of the transport lane, not for the previous caller's
+    // successful result. In particular, an aborted work exchange must not reject
+    // an independent safety stop queued behind it. The bounded wait still rejects
+    // and quarantines the lane if the underlying transport has not settled.
+    if (this.#inflight)
+      await this.#bounded(
+        this.#inflight.then(
+          () => {},
+          () => {},
+        ),
+        deadline,
+      );
   }
   async #bounded<T>(promise: Promise<T>, deadline: number): Promise<T> {
     const delay = deadline - this.now();
