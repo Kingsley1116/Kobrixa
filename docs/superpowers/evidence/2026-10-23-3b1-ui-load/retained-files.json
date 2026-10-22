@@ -1,0 +1,306 @@
+[
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/report.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-0/report.json.gz",
+    "bytes": 721128,
+    "sha256": "8e660b352ad553b8c3e14337d571633f36d23096e70e462d76887991f42f999d",
+    "gzipBytes": 14620,
+    "gzipSha256": "5c9b88b293723e63de1f89abb64e30ebc021b5f478e9bd8715a5d7e16c225709"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/renderer-events.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-0/renderer-events.json.gz",
+    "bytes": 5102980,
+    "sha256": "585cec349ab8c19d22ba4809ed181f60f7a8ede28b1000fc4937739297c72162",
+    "gzipBytes": 103226,
+    "gzipSha256": "b18ae4a0fc7e11681b67b087c4cb20dee6fbc07b66ad82441953905a85b3496d"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/main-events.jsonl",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-0/main-events.jsonl.gz",
+    "bytes": 9550428,
+    "sha256": "7a5fe9cd3ddc45c85a3bad9d2b16474b7c59ba36a60f2ccb30c6690133a5df58",
+    "gzipBytes": 213661,
+    "gzipSha256": "1808358e7a9616e3390a6d79e4ac35995a0789acedf0a58811bd998932ce99e9"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/electron.log",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-0/electron.log.gz",
+    "bytes": 608,
+    "sha256": "e35ae589bac08b960720c0aedade1438a9529dab91b7398e8b4905647c7f99ce",
+    "gzipBytes": 140,
+    "gzipSha256": "2cd8dd8cfae5d605328a433e1dcd4bc087422e07d40c348641d5b69fbb5c9c19"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/empty-warm-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/empty-warm-main.heapsnapshot.gz",
+    "bytes": 23385661,
+    "sha256": "9a3c33a204227db00d980c0ef48ccbb55b5632c96ee1833eeeba461e8581e247",
+    "gzipBytes": 4391242,
+    "gzipSha256": "7c4b80fd92d5dfa853527fe9d5f6e7515fa2249daad54e57aa953b42e9036cf8"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/full-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/full-renderer.heapsnapshot.gz",
+    "bytes": 13363070,
+    "sha256": "decce61754b3975681a67ef6bbc904a21fce6f67744a8b06e56517c2b32fe9b8",
+    "gzipBytes": 2523776,
+    "gzipSha256": "a3c0666be4e03801f8d1cf3215b50ccd9194e62164ae7718919cd72e6ebb3950"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/after-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/after-main.heapsnapshot.gz",
+    "bytes": 24658275,
+    "sha256": "7a06a48168945d3f5d72cd1818bee5b262a6de358dc6adb57d5aa88c4f58f29e",
+    "gzipBytes": 4595641,
+    "gzipSha256": "84ca71bc1241e82ad8ba83e70752bfd255a630bcd6c85fae32c697955893cb4d"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/empty-warm-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/empty-warm-renderer.heapsnapshot.gz",
+    "bytes": 9446829,
+    "sha256": "3ce9aa99579e1b136b2f5817831f719e2645b7f08fefd25b3534dba1551eeb3c",
+    "gzipBytes": 1881474,
+    "gzipSha256": "4abca9ba9efaa6e214c3a5c69a6127b9cee36d55873f7c4acdd15e9b880ee6cc"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/full-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/full-main.heapsnapshot.gz",
+    "bytes": 30680896,
+    "sha256": "588ab76fc425f8471ff05fb01ff3f75199351e6038ec4c3dc59290b5d530418c",
+    "gzipBytes": 5482373,
+    "gzipSha256": "6404cc5251e02f6f455bdf84599b82d6bed60a6c0964f38b4fb699f13fd4357a"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/cold-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/cold-renderer.heapsnapshot.gz",
+    "bytes": 8428044,
+    "sha256": "6c8c634df10c02099ca162fa54915c0a8b4fd537b762716e403efdf117eba3c3",
+    "gzipBytes": 1658928,
+    "gzipSha256": "03b24c2da2a3346ae2a173b424984f5c13dfc0c3914e7961c41256f761c48260"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/after-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/after-renderer.heapsnapshot.gz",
+    "bytes": 9757586,
+    "sha256": "d0b282e7d42af4bc2f8f19738976bd67c31fd77d9c50b63b4ceef61d622916e2",
+    "gzipBytes": 1953360,
+    "gzipSha256": "d39ed69db3e8dcd2078d15c481054493838453c86e773f8b4c41402b485860e8"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-0/cold-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-0/cold-main.heapsnapshot.gz",
+    "bytes": 21294943,
+    "sha256": "05ec8f3af3dedf5cf0d4707b1e97c958a72c16567a8abcbec6a2f373dea6b775",
+    "gzipBytes": 3889595,
+    "gzipSha256": "dc6815608cfef0f12c6e4c8047df95828ac7e8b0c17159069858a28c728f44f8"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/report.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-1/report.json.gz",
+    "bytes": 721134,
+    "sha256": "da7df4821669e2921581e34c4fd4672a526fac82b20b02b80a4909e880c69768",
+    "gzipBytes": 14599,
+    "gzipSha256": "d759916d5d7d4ba82795a6ffcb81dd5f5ba2b2663dc34d561ee1af9c9498b200"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/renderer-events.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-1/renderer-events.json.gz",
+    "bytes": 5098466,
+    "sha256": "df7262e3395662f7db4cc315c7de053aa07ba9ae0884c0f8252fdc8b10ad74d8",
+    "gzipBytes": 101012,
+    "gzipSha256": "7314f65ffe7a52729c840fb3e06b622b6e25fa448ad56d43086c17764c7c36a2"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/main-events.jsonl",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-1/main-events.jsonl.gz",
+    "bytes": 9558362,
+    "sha256": "06ccdc59ab95b420c1d663bc1b25507eab568c9bec1ed542a1f75e31c0c14f51",
+    "gzipBytes": 214009,
+    "gzipSha256": "81cd4b25380e7c31510e74257ce2956d09a877f521c45237e41a49b0bc8272b2"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/electron.log",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-1/electron.log.gz",
+    "bytes": 608,
+    "sha256": "cd051bba4a0b59f509d2b3e774cf06c66f5fc1f5ffb7839699c76c035478556b",
+    "gzipBytes": 138,
+    "gzipSha256": "417b179e33f4c93f665d90bee13bbe0992d4af3d9a6daf8dabee038546b2ee76"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/empty-warm-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/empty-warm-main.heapsnapshot.gz",
+    "bytes": 23387450,
+    "sha256": "f333294cfbd0b8927f525e363cbac9e13bfb441ba9a831f44d5780a39e992081",
+    "gzipBytes": 4404322,
+    "gzipSha256": "b245f2309d5a001989f4e447eeebae3905afe0d36b2a4b8e3035db8d670b448c"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/full-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/full-renderer.heapsnapshot.gz",
+    "bytes": 13340148,
+    "sha256": "b305bd193a76d676ab3a8b5c05796943d616dae1840447b59d172b72b1ab9cb7",
+    "gzipBytes": 2531914,
+    "gzipSha256": "98c44ffe87328032497f0a0691425719178d312322e22e2ac6d7b7a25445c280"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/after-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/after-main.heapsnapshot.gz",
+    "bytes": 24647386,
+    "sha256": "a37a3404068967c46ca5716ea8f86d77b6bbfa5e9a2ecf36639c54387f1a8391",
+    "gzipBytes": 4604831,
+    "gzipSha256": "05339030b3b51640d1adc61a8050674c59509476fbd8f511827f1eeeb99ec1ac"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/empty-warm-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/empty-warm-renderer.heapsnapshot.gz",
+    "bytes": 9451991,
+    "sha256": "54c524543abea7ae401cf9fdc3cf19e86139dfd5bd3a0e5a8029822ad8d61d6e",
+    "gzipBytes": 1887933,
+    "gzipSha256": "898a22d651ae1b558400d8949199faf86a71fd433be9d0bca13d634d3949b251"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/full-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/full-main.heapsnapshot.gz",
+    "bytes": 30652683,
+    "sha256": "c7a99cf5b57c4011b892b35e47c041908f42ccfca6773fc7b1cc842b6254bcfe",
+    "gzipBytes": 5496639,
+    "gzipSha256": "5aefb88fd0893e5228684c0a4170dc7be036e6c599bb9198860415103ab0d300"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/cold-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/cold-renderer.heapsnapshot.gz",
+    "bytes": 8431002,
+    "sha256": "471eb44463c5be567b237be00371399ee44a3ec784b106244117406704ccf169",
+    "gzipBytes": 1630836,
+    "gzipSha256": "7afc19385ddcec2fb9b92e3e79baaaf6b3c598f72f8622550c84020c06d469f9"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/after-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/after-renderer.heapsnapshot.gz",
+    "bytes": 9756988,
+    "sha256": "474ff3760d62137c3e652d89a39187f3d3cb8af7f0e79f601370359468fe8b06",
+    "gzipBytes": 1956735,
+    "gzipSha256": "e4c2bef5a6c6986703ee9e65cbdb0396c381797c62c3b6142e66924b38952ca1"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-1/cold-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-1/cold-main.heapsnapshot.gz",
+    "bytes": 21305533,
+    "sha256": "120422855590ec386b7f7d5d47a2bcb36d6b05e166623cc4006b13dc09ceaaee",
+    "gzipBytes": 3880024,
+    "gzipSha256": "cc64cf06ff5d21ffb3e3da2ec9415b9117fa4595dfda0f3a7c1beeb961c5881a"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/report.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-2/report.json.gz",
+    "bytes": 721098,
+    "sha256": "eb5c952952c85a73adaabaa6b94c94988f578a9312b5e16d41aadb348d738cb6",
+    "gzipBytes": 14615,
+    "gzipSha256": "e20ab2aa031e3cca53f2c892419f298a02ff2848ea67d7836296fad0a5b66726"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/renderer-events.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-2/renderer-events.json.gz",
+    "bytes": 5108455,
+    "sha256": "2af58883bbb82b97d849763ea287e3d83f6761c2f448e1def00cead2e10fe761",
+    "gzipBytes": 101009,
+    "gzipSha256": "4fe7d903acd0d4cddc9947b2f3abc35d5d07fa0c96c8509764f084c47fbb94e4"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/main-events.jsonl",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-2/main-events.jsonl.gz",
+    "bytes": 9575077,
+    "sha256": "1e32baf89d037827462dffeb31088a372804a19962746ccc0e3029774b52befe",
+    "gzipBytes": 213512,
+    "gzipSha256": "c73c4857222b1f696babc1eb4e7352469a943c98771ac68225f18e6c4348b311"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/electron.log",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/load-2/electron.log.gz",
+    "bytes": 608,
+    "sha256": "9997fd26ab766f6b573fe39a31d82a115621b4ffe3b3cd91bcaf96474a914e73",
+    "gzipBytes": 139,
+    "gzipSha256": "a26826b760f18a2707990db6dbfd3478e75ae76266df0165b3e57de6619ba841"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/empty-warm-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/empty-warm-main.heapsnapshot.gz",
+    "bytes": 23387106,
+    "sha256": "5eb76dcfddac463999ce18ecf26814b6c7a0c84d0353f2d2882232cf7a7e3b7c",
+    "gzipBytes": 4385831,
+    "gzipSha256": "4afbee294ffbb3cc17fcf1a4cac0a71641b45b695c6d4fd4628642a94a2875a2"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/full-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/full-renderer.heapsnapshot.gz",
+    "bytes": 13451321,
+    "sha256": "d8e37abca4bf21fbfd170b96f9cec7e4774db7da5431e245a9a9782e9f12ab91",
+    "gzipBytes": 2527896,
+    "gzipSha256": "9a2ab1e28a85b45bf659c8c9c8592bd1be3e6bd1ce3fb719af629a8297904a18"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/after-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/after-main.heapsnapshot.gz",
+    "bytes": 24638591,
+    "sha256": "2790932c06e72aefdb823c5dd056f94188cc3107f2ed82376295f264b0eb8795",
+    "gzipBytes": 4582643,
+    "gzipSha256": "39c1ed1fd59ae07c66cbd66308c4b333aadde6843dc2975d5795617927de53c5"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/empty-warm-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/empty-warm-renderer.heapsnapshot.gz",
+    "bytes": 9456646,
+    "sha256": "6cc3ff358fb2cff9fc0b6826b9277a9d5317542b51f4eea411cdec3cc233e232",
+    "gzipBytes": 1881039,
+    "gzipSha256": "e6cb70b487cb9dc91a7b3a28bee1511f61ac949279e56b8f0787ca68c847160b"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/full-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/full-main.heapsnapshot.gz",
+    "bytes": 30697650,
+    "sha256": "8d8fe6ffbc24d32a28386c2c85882371958257c127098b8d04c10a6cd7b42ed8",
+    "gzipBytes": 5488171,
+    "gzipSha256": "d5295c136480ff401a8b452e9de660c40729fac6904836c747c7dd2c27c2b365"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/cold-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/cold-renderer.heapsnapshot.gz",
+    "bytes": 8424206,
+    "sha256": "3fd9a667d6b545e24ffbcba18d5a6f6fd1eebf97038a0f6c6148408f815570b3",
+    "gzipBytes": 1636025,
+    "gzipSha256": "cea8639ea9dbb77616fe21c0f70d11be3e68301d0955d3d31c9727a905b45bae"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/after-renderer.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/after-renderer.heapsnapshot.gz",
+    "bytes": 9763477,
+    "sha256": "d7cbd9a30afd65826346f5433024ee31cccb9f3765c129b9a3dce08291f9123c",
+    "gzipBytes": 1940300,
+    "gzipSha256": "1fc247e2d3c647a6c4f26173933208cbbae8a81d1d435401b15433b911ff2a5b"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/load-2/cold-main.heapsnapshot",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/evidence/ui-load-S1rP2E/load-2/cold-main.heapsnapshot.gz",
+    "bytes": 21293472,
+    "sha256": "7cdb4e089d8424d411b12e7b4201a6bd0fe13fb8b40d455da3377781c665a26a",
+    "gzipBytes": 3950143,
+    "gzipSha256": "c23096f872b605beb7ef12366407082f4514758790ebd224eea43e7db3c421cd"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-motion-S1rP2E/matrix.json",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/original-matrix.json.gz",
+    "bytes": 8301,
+    "sha256": "52040874a45b7f65a071bd6c150781bb4d5127b7a1da925d794dc7d0bb088bd6",
+    "gzipBytes": 2244,
+    "gzipSha256": "149a30a241098bceb297e735c434f4096a47ff27e90bb832e66996cef3d39b17"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b1-load-full1.log",
+    "retained": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/docs/superpowers/evidence/2026-10-23-3b1-ui-load/run.log.gz",
+    "bytes": 3126,
+    "sha256": "7ecd77b2de23ad509a002c9968a4df3a919c9b6f690649626809c23c508b350c",
+    "gzipBytes": 694,
+    "gzipSha256": "fe4b3d58680fde6b7803a1530c571a494ac0c78a5f1cb3a5e22d4fc15fe2e417"
+  }
+]
