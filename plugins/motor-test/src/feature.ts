@@ -389,11 +389,14 @@ class MotorFeature {
     );
   }
   private cancel(a: Attempt, forced: boolean) {
+    if (a.settled) return;
+    const brakeRequired = a.forced || forced || a.snapshot?.brakeRequired === true;
+    const changed = !a.cancelled || a.forced !== brakeRequired;
     a.cancelled = true;
-    a.forced ||= forced || a.snapshot?.brakeRequired === true;
+    a.forced = brakeRequired;
     a.detach();
     if (!a.id) {
-      this.paint();
+      if (changed) this.paint();
       return;
     }
     const brake = a.forced;
@@ -899,9 +902,24 @@ class MotorFeature {
           })(),
         ]),
       ),
+      error: "",
+      "has-error": false,
       ...motion,
       ...(a && !a.snapshot
         ? {
+            // No public snapshot means no evidence about dispatch or stop confirmation.
+            // Patch merges data, so replace every reading/result from the previous attempt.
+            operation: null,
+            phase: this.t("Preparing", "準備中"),
+            stage: "—",
+            movement: this.t("Unknown", "未知"),
+            dispatch: this.t("Unknown", "未知"),
+            "stop-requested": this.t("No", "否"),
+            confirmation: this.t("Unknown", "未知"),
+            angle: this.t("No reading", "無讀值"),
+            displacement: this.t("No reading", "無讀值"),
+            elapsed: "—",
+            progress: null,
             summary: a.cancelled
               ? this.t("Cancelled; awaiting reconciliation", "已取消；等待對帳")
               : this.t("Preparing", "準備中"),
@@ -948,7 +966,12 @@ class MotorFeature {
         return;
       }
       if (version === instance.version) instance.visible = state.value.visible;
-      if (!instance.visible && this.active && key(this.active.binding) === key(instance.binding))
+      if (
+        !instance.visible &&
+        this.active &&
+        !this.active.settled &&
+        key(this.active.binding) === key(instance.binding)
+      )
         this.cancel(this.active, true);
       const data = this.data();
       const set = instance.binding.kind === "status" ? { summary: data.summary! } : data;

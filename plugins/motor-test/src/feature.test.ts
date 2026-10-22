@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   UiClient,
@@ -12,6 +13,9 @@ import {
   deviceSessionSnapshotSchema,
   eventEnvelopeSchema,
   motionSnapshotSchema,
+  panelResourceV1Schema,
+  statusResourceV1Schema,
+  validateUiData,
   sourceCatalogSchema,
   uiBindingSchema,
   uiEventEnvelopeSchema,
@@ -31,6 +35,12 @@ import {
 import { createMotorPlugin } from "./feature.js";
 import { initialForm } from "./model.js";
 
+const panelResource = panelResourceV1Schema.parse(
+  JSON.parse(readFileSync(new URL("../panel.json", import.meta.url), "utf8")),
+);
+const statusResource = statusResourceV1Schema.parse(
+  JSON.parse(readFileSync(new URL("../status.json", import.meta.url), "utf8")),
+);
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const owner = {
   sourceKey: "builtin:motor",
@@ -112,6 +122,20 @@ function fixture() {
   let visible = true;
   let instances: UiBinding[] = [binding, status];
   const revisions = new Map<string, number>();
+  const resourceData = new Map<string, Record<string, UiScalar>>();
+  function data(b: UiBinding) {
+    const k = JSON.stringify(b);
+    if (!resourceData.has(k)) {
+      const resource = b.kind === "panel" ? panelResource : statusResource;
+      resourceData.set(
+        k,
+        Object.fromEntries(
+          Object.entries(resource.data).map(([name, slot]) => [name, slot.initial]),
+        ),
+      );
+    }
+    return resourceData.get(k)!;
+  }
   const handlers = new Map<string, ContextCommandHandler>();
   const deviceListeners = new Map<
     string,
@@ -274,7 +298,7 @@ function fixture() {
   const state = (b: UiBinding) => ({
     binding: b,
     revision: revisions.get(JSON.stringify(b)) ?? 0,
-    data: {},
+    data: { ...data(b) },
     formRevision: 1,
     form: initialForm(),
     valid: true,
@@ -297,6 +321,11 @@ function fixture() {
     checked("ui/state", { binding: b }, state(b)),
   );
   vi.spyOn(ui, "patch").mockImplementation(async (b, baseRevision, set) => {
+    const merged = { ...data(b), ...set };
+    expect(validateUiData(b.kind === "panel" ? panelResource : statusResource, merged).ok).toBe(
+      true,
+    );
+    resourceData.set(JSON.stringify(b), merged);
     patches.push({ binding: b, set, time: performance.now() });
     revisions.set(JSON.stringify(b), baseRevision + 1);
     return checked("ui/patch", { binding: b, baseRevision, set }, { revision: baseRevision + 1 });
@@ -435,6 +464,7 @@ function fixture() {
     calls,
     requests,
     patches,
+    data,
     overrides,
     deviceListeners,
     uiListeners,
@@ -479,6 +509,191 @@ afterEach(() => {
 });
 
 describe("public motor process", () => {
+  it.each(["devices/list", "devices/context"] as const)(
+    "hidden cancellation drains patches while %s is held and after settling before prepare",
+    async (method) => {
+      await f.boot();
+      await f.select();
+      const held = barrier<unknown>();
+      f.overrides.set(method, () => held.promise);
+      await f.invoke();
+      await drain();
+      // Discover hidden state through ui.state, without a visibility event.
+      f.visible = false;
+      const before = f.patches.length;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(f.patches.length - before).toBeLessThanOrEqual(4);
+      expect(vi.getTimerCount()).toBe(0);
+      f.overrides.delete(method);
+      held.resolve({
+        ok: true,
+        value:
+          method === "devices/list"
+            ? f.list()
+            : {
+                contextRef: id(5),
+                revision: 1,
+                state: "local",
+                reason: "local",
+              },
+      });
+      await drain();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(vi.getTimerCount()).toBe(0);
+      const settled = f.patches.length;
+      f.uiEvent("ui.environment", { locale: "en", theme: "dark" });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(f.patches.length - settled).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(f.calls("devices/motion/prepare")).toHaveLength(0);
+      expect(f.calls("devices/motion/start")).toHaveLength(0);
+      expect(f.calls("devices/motion/stop")).toHaveLength(0);
+    },
+  );
+  it("hidden lost prepare drains presentation timers while retaining uncertainty and the admission lock", async () => {
+    await f.boot();
+    await f.select();
+    f.overrides.set("devices/motion/prepare", async () => {
+      throw new Error("lost");
+    });
+    await f.invoke();
+    await drain();
+    f.visible = false;
+    f.uiEvent("ui.visibility", { binding, visible: false });
+    const before = f.patches.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.patches.length - before).toBeLessThanOrEqual(4);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(f.data(binding)).toMatchObject({
+      operation: null,
+      confirmation: "Unknown",
+      "can-start": false,
+      "has-error": true,
+      phase: "Stopping",
+      "stop-requested": "Yes",
+    });
+    f.visible = true;
+    f.uiEvent("ui.visibility", { binding, visible: true });
+    await f.invoke();
+    await drain();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(f.calls("devices/motion/prepare")).toHaveLength(1);
+    for (const method of ["start", "query", "stop"])
+      expect(f.calls(`devices/motion/${method}`)).toHaveLength(0);
+  });
+  it("does not cancel a confirmed settled operation on hide or hidden state reads", async () => {
+    await f.boot();
+    await f.select();
+    await f.invoke();
+    await drain();
+    f.deviceEvent(
+      "motion",
+      "devices.motion",
+      snap({
+        revision: 5,
+        phase: "completed",
+        stage: "terminal",
+        movement: "completed",
+        dispatch: "sent",
+        stopConfirmation: "confirmed",
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(100);
+    f.visible = false;
+    f.uiEvent("ui.visibility", { binding, visible: false });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.calls("devices/motion/stop")).toHaveLength(0);
+    expect(f.data(binding)).toMatchObject({ phase: "Completed", confirmation: "Confirmed" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each(["en", "zh-TW"] as const)(
+    "resets merged operation presentation in %s for a delayed then lost second prepare",
+    async (locale) => {
+      await f.boot();
+      f.uiEvent("ui.environment", { locale, theme: "light" });
+      await f.select();
+      await f.invoke();
+      await drain();
+      f.deviceEvent(
+        "motion",
+        "devices.motion",
+        snap({
+          revision: 5,
+          phase: "completed",
+          stage: "terminal",
+          movement: "completed",
+          dispatch: "sent",
+          stopConfirmation: "confirmed",
+          elapsedMs: 1000,
+          angle: 360,
+          displacement: 90,
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.data(binding)).toMatchObject({
+        operation: id(10),
+        progress: 1,
+        confirmation: locale === "en" ? "Confirmed" : "已確認",
+      });
+      const prepare = barrier<unknown>();
+      f.overrides.set("devices/motion/prepare", () => prepare.promise);
+      await f.invoke();
+      await drain();
+      await vi.advanceTimersByTimeAsync(100);
+      const pending = {
+        operation: null,
+        phase: locale === "en" ? "Preparing" : "準備中",
+        stage: "—",
+        movement: locale === "en" ? "Unknown" : "未知",
+        dispatch: locale === "en" ? "Unknown" : "未知",
+        confirmation: locale === "en" ? "Unknown" : "未知",
+        "stop-requested": locale === "en" ? "No" : "否",
+        angle: locale === "en" ? "No reading" : "無讀值",
+        displacement: locale === "en" ? "No reading" : "無讀值",
+        elapsed: "—",
+        progress: null,
+        "can-start": false,
+      };
+      expect(f.data(binding)).toMatchObject({ ...pending, error: "", "has-error": false });
+      expect(f.data(status).summary).toBe(pending.phase);
+      prepare.reject(new Error("lost prepare reply"));
+      await drain();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.data(binding)).toMatchObject({ ...pending, "has-error": true });
+      expect(f.data(binding).error).not.toBe("");
+      await f.invoke();
+      await drain();
+      expect(f.calls("devices/motion/prepare")).toHaveLength(2);
+      expect(f.calls("devices/motion/start")).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+  it.each(["selection", "new attempt"])(
+    "clears merged transport error flags after successful explicit %s",
+    async (recovery) => {
+      await f.boot();
+      await f.select();
+      const held = barrier<unknown>();
+      f.overrides.set("devices/context", () => held.promise);
+      await f.invoke();
+      await drain();
+      held.reject(new Error("context read failed"));
+      await drain();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.data(binding)["has-error"]).toBe(true);
+      expect(f.data(binding).error).not.toBe("");
+      f.overrides.delete("devices/context");
+      if (recovery === "selection") await f.select();
+      else {
+        f.overrides.set("devices/context", () => barrier<unknown>().promise);
+        await f.invoke();
+        await drain();
+      }
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.data(binding)).toMatchObject({ error: "", "has-error": false });
+    },
+  );
   it("initializes without connect/motion, registers once, and presents truthful availability in both locales", async () => {
     await f.boot();
     await f.plugin.activate(f.context);
