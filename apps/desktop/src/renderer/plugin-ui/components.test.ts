@@ -566,3 +566,50 @@ it.each(["stop", "disconnect", "openRecovery"] as const)(
     }
   },
 );
+
+it("keeps keyboard hold focus while the original begin acknowledgement is pending", async () => {
+  const f = fixture();
+  let resolve!: (value: Awaited<ReturnType<typeof f.bridge.hold>>) => void;
+  f.bridge.hold.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  const state = new UiStateStore(f.bridge, panel, snapshot());
+  const intent = new UiIntentController(f.bridge, state);
+  const div = document.createElement("div");
+  document.body.append(div);
+  const root = createRoot(div);
+  try {
+    await act(async () =>
+      root.render(createElement(PanelTree, { state, intent, locale: "en", labels })),
+    );
+    const button = div.querySelector<HTMLButtonElement>('[data-ui-node="hold"] button')!;
+    button.focus();
+    await act(async () => {
+      intent.begin("hold", {
+        trusted: true,
+        kind: "key",
+        id: "Enter",
+        primary: true,
+        repeat: false,
+      });
+    });
+    expect(state.getSnapshot().busy).toBe(true);
+    expect(button.disabled).toBe(false);
+    expect(document.activeElement).toBe(button);
+    expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual(["begin"]);
+    await act(async () => {
+      button.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    });
+    expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual(["begin", "end"]);
+    await act(async () => resolve({ ok: true, value: { gesture: crypto.randomUUID() } }));
+    expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual(["begin", "end"]);
+  } finally {
+    await act(async () => root.unmount());
+    intent.dispose();
+    state.retire();
+    div.remove();
+  }
+});
