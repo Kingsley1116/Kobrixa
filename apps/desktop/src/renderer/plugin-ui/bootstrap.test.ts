@@ -29,6 +29,38 @@ it("U04 bootstrap fails open to the editor at 5 seconds and recovers only from f
   f.emit({ type: "catalog", hostEpoch: handle(1), revision: 1, owners: [entry] });
   await session.catalog.refresh(); expect(session.catalog.getSnapshot().phase).toBe("ready"); session.dispose();
 });
+it("V160 M1 keeps the empty bootstrap fallback after two late pages until a fresh revision", async () => {
+  vi.useFakeTimers(); const f = fixture();
+  const second = { ...entry, id: "acme.ui.second" };
+  let revision = 1;
+  f.bridge.catalog.mockImplementation(({ cursor }) => new Promise((resolve) => {
+    const pageRevision = revision;
+    setTimeout(() => resolve({ ok: true, value: { hostEpoch: handle(1), revision: pageRevision,
+      entries: [cursor ? second : entry], nextCursor: cursor ? null : handle(4) } }), 3000);
+  }));
+  const session = new RendererSession(f.bridge);
+  const restored = vi.fn(() => session.catalog.getSnapshot().entries);
+  const ready = bootstrapPluginUi(session).then(restored);
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(restored).not.toHaveBeenCalled();
+  expect(f.bridge.catalog).toHaveBeenNthCalledWith(2, { cursor: handle(4) });
+  await vi.advanceTimersByTimeAsync(1); await ready;
+  expect(restored).toHaveReturnedWith([]);
+  expect(session.catalog.getSnapshot()).toMatchObject({ phase: "failed", entries: [] });
+  await vi.advanceTimersByTimeAsync(1000);
+  await session.catalog.refresh(); await session.start();
+  expect(session.catalog.getSnapshot()).toMatchObject({ phase: "failed", entries: [] });
+  expect(f.bridge.catalog).toHaveBeenCalledTimes(2);
+  expect(f.bridge.open).not.toHaveBeenCalled();
+
+  // A later revision gets normal bounded page reads, without the expired initial budget.
+  revision = 2;
+  f.emit({ type: "catalog", hostEpoch: handle(1), revision, owners: [entry, second] });
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(session.catalog.getSnapshot()).toMatchObject({ phase: "ready", revision, entries: [entry, second] });
+  expect(f.bridge.catalog).toHaveBeenCalledTimes(4);
+  session.dispose(); expect(vi.getTimerCount()).toBe(0);
+});
 it("U04 old epoch/resource cannot resurrect and malformed adapter output isolates its contribution", async () => {
   const f = fixture(); const session = new RendererSession(f.bridge); await session.start();
   session.showPane(true, "sidebar");

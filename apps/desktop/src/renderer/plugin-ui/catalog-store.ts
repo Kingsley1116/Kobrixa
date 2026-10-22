@@ -52,6 +52,9 @@ export class UiCatalogStore {
   private off: (() => void) | undefined;
   private flight: Promise<void> | undefined;
   private again = false;
+  private started = false;
+  private initialDeadline: number | undefined;
+  private initialExpired = false;
   constructor(
     private api: Pick<PluginUiBridge, "catalog" | "resource" | "onEvent">,
     private immediate: (event: UiBridgeEvent) => void,
@@ -67,6 +70,9 @@ export class UiCatalogStore {
   }
   start(): Promise<void> {
     if (this.dead) return Promise.resolve();
+    if (!this.started) {
+      this.started = true; this.initialDeadline = Date.now() + 5000;
+    }
     if (!this.off) this.off = this.api.onEvent((event) => {
       if (this.dead) return;
       if (event.type === "catalog") {
@@ -77,6 +83,7 @@ export class UiCatalogStore {
           this.target = -1; this.resources.clear();
         }
         this.target = Math.max(this.target, event.revision);
+        this.initialExpired = false;
         this.owners = new Set(event.owners.map(ownerKey));
         this.serial++;
         const entries = event.hostEpoch === this.view.epoch
@@ -89,8 +96,14 @@ export class UiCatalogStore {
     });
     return this.refresh();
   }
+  expireBootstrap(): void {
+    if (this.dead || this.initialDeadline === undefined) return;
+    this.initialDeadline = undefined; this.initialExpired = true;
+    this.serial++; this.again = false;
+    this.view = { ...this.view, phase: "failed", entries: [] }; this.publish();
+  }
   refresh(): Promise<void> {
-    if (this.dead) return Promise.resolve();
+    if (this.dead || this.initialExpired) return Promise.resolve();
     if (this.flight) { this.again = true; return this.flight; }
     this.flight = (async () => {
       do {
@@ -101,8 +114,13 @@ export class UiCatalogStore {
           const entries: UiCatalogEntry[] = []; const cursors = new Set<string>();
           const ids = new Set<string>(); let bytes = 0;
           do {
-            const result = await this.wait(this.api.catalog(cursor === undefined ? {} : { cursor }));
+            // All initial pages (including revision retries) share one bootstrap budget.
+            const remaining = this.initialDeadline === undefined ? 5000 : this.initialDeadline - Date.now();
+            if (remaining <= 0) throw new Error("UI bootstrap deadline");
+            const result = await this.wait(this.api.catalog(cursor === undefined ? {} : { cursor }), remaining);
             if (this.dead || serial !== this.serial) break;
+            if (this.initialDeadline !== undefined && Date.now() >= this.initialDeadline)
+              throw new Error("UI bootstrap deadline");
             if (!result.ok) throw new Error(result.error.code);
             const value = result.value;
             if (value.entries.length > 16 || new TextEncoder().encode(JSON.stringify(value)).length > 262144)
@@ -134,12 +152,14 @@ export class UiCatalogStore {
           this.view = { phase: "ready", epoch, revision, entries };
           this.publish();
         } catch {
-          if (!this.dead && serial === this.serial) {
+          if (this.initialDeadline !== undefined && Date.now() >= this.initialDeadline) {
+            this.expireBootstrap();
+          } else if (!this.dead && serial === this.serial) {
             this.view = { ...this.view, phase: "failed" }; this.publish();
           }
         }
       } while (this.again && !this.dead);
-    })().finally(() => { this.flight = undefined; });
+    })().finally(() => { this.flight = undefined; this.initialDeadline = undefined; });
     return this.flight;
   }
   resource(entry: UiCatalogEntry): Promise<Resource | null> {

@@ -1,7 +1,8 @@
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { PluginUiBridge, UiBridgeEvent } from "@kobrixa/plugin-runtime";
 import type { UiCatalogEntry, UiCatalogPage } from "@kobrixa/plugin-protocol";
 import { UiCatalogStore } from "./catalog-store.js";
+afterEach(() => vi.useRealTimers());
 const epoch = "00000000-0000-4000-8000-000000000001";
 const entry = (generation = 1): UiCatalogEntry => ({
   sourceKey: "builtin:acme.ui", pluginId: "acme.ui", id: "acme.ui.panel",
@@ -17,6 +18,48 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
+it("V160 M1 bounds initial pagination by one absolute deadline without an outer bootstrap timer", async () => {
+  vi.useFakeTimers();
+  const api = {
+    onEvent: () => () => {}, resource: vi.fn<PluginUiBridge["resource"]>(),
+    catalog: vi.fn<PluginUiBridge["catalog"]>().mockImplementation(({ cursor }) => new Promise((resolve) => {
+      setTimeout(() => resolve({ ok: true, value: { ...page(1, cursor ? [] : [entry()]),
+        nextCursor: cursor ? null : epoch } }), 3000);
+    })),
+  };
+  const store = new UiCatalogStore(api, () => {});
+  const ready = store.start();
+  await vi.advanceTimersByTimeAsync(5000); await ready;
+  expect(api.catalog).toHaveBeenCalledTimes(2);
+  expect(store.getSnapshot()).toMatchObject({ phase: "failed", entries: [] });
+  expect(store.timerCount()).toBe(0);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(store.getSnapshot()).toMatchObject({ phase: "failed", entries: [] });
+  store.dispose(); expect(vi.getTimerCount()).toBe(0);
+});
+it("V160 M1 invalidates bootstrap work and consumes a late rejection before revision recovery is disposed", async () => {
+  vi.useFakeTimers();
+  let emit!: (event: UiBridgeEvent) => void;
+  let reject!: (error: Error) => void;
+  const late = new Promise<Awaited<ReturnType<PluginUiBridge["catalog"]>>>((_resolve, fail) => { reject = fail; });
+  const recovery = deferred<Awaited<ReturnType<PluginUiBridge["catalog"]>>>();
+  const api = {
+    onEvent: (listener: typeof emit) => { emit = listener; return () => {}; },
+    resource: vi.fn<PluginUiBridge["resource"]>(),
+    catalog: vi.fn<PluginUiBridge["catalog"]>().mockReturnValueOnce(late).mockReturnValueOnce(recovery.promise),
+  };
+  const store = new UiCatalogStore(api, () => {}); const ready = store.start();
+  store.expireBootstrap(); await store.refresh();
+  reject(new Error("Late adapter failure")); await ready;
+  expect(store.getSnapshot()).toMatchObject({ phase: "failed", entries: [] });
+  expect(api.catalog).toHaveBeenCalledTimes(1); expect(store.timerCount()).toBe(0);
+  emit({ type: "catalog", hostEpoch: epoch, revision: 2, owners: [entry(2)] });
+  const recovering = store.refresh(); store.dispose(); await recovering;
+  recovery.resolve({ ok: true, value: page(2, [entry(2)]) });
+  await Promise.resolve();
+  expect(store.getSnapshot().entries).toEqual([]);
+  expect(store.timerCount()).toBe(0); expect(vi.getTimerCount()).toBe(0);
+});
 it("U04/RF1 subscribes first, revokes immediately and discards a late page", async () => {
   let emit!: (event: UiBridgeEvent) => void;
   const first = deferred<Awaited<ReturnType<PluginUiBridge["catalog"]>>>();

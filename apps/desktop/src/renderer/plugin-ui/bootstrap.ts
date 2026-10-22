@@ -205,5 +205,8 @@ export class RendererSession {
   }
 }
 export async function bootstrapPluginUi(session: RendererSession): Promise<void> {
-  try { await session.catalog.wait(session.start()); } catch { /* editor restoration proceeds after the single 5s budget */ }
+  try { await session.catalog.wait(session.start()); } catch {
+    session.catalog.expireBootstrap();
+    // Editor restoration proceeds with an empty catalog until a fresh revision event.
+  }
 }
