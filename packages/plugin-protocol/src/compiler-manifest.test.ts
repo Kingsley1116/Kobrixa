@@ -29,7 +29,7 @@ const manifest = {
   contributes: { frontends: [frontend], backends: [backend] },
 };
 it("exports API 1.4 and accepts complete compiler declarations", () => {
-  expect(PLUGIN_API_VERSION).toBe("1.6.0");
+  expect(PLUGIN_API_VERSION).toBe("1.7.0");
   expect(pluginManifestSchema.parse(manifest).contributes?.backends).toEqual([backend]);
   expect(compilerDeclarationProblems(pluginManifestSchema.parse(manifest))).toEqual([]);
 });

@@ -154,6 +154,10 @@
         "lifetime": null,
         "persistedSha256": null
       }
-    }
-  ]
+    },
+    {"id": "p170-publication: read settings", "schema": "settings/read", "phase": "params", "input": {"schemaVersion": 1}, "valid": true, "expected": {"numericCode": null, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: nullable initial revision", "schema": "settings/update", "phase": "params", "input": {"schemaVersion": 1, "expectedRevision": null, "changes": [{"key": "fixture.enabled", "value": true}]}, "valid": true, "expected": {"numericCode": null, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: zero byte record", "schema": "storage/beginWrite", "phase": "params", "input": {"target": {"mode": "create"}, "kind": "test.fixture", "schemaVersion": 1, "label": "Empty", "mediaType": "application/octet-stream", "byteLength": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, "valid": true, "expected": {"numericCode": null, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: drain submitted is not saved", "schema": "storage/drain", "phase": "result", "input": {"ok": true, "value": {"status": "submitted", "writes": []}}, "valid": true, "expected": {"numericCode": null, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}}
+]
 }

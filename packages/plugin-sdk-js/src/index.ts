@@ -1,3 +1,81 @@
+import { createSettingsClient, type PersistenceRequest } from "./settings.js";
+import { createStorageClient } from "./storage.js";
+import { createPersistenceActionsClient } from "./persistence-actions.js";
+import { eventChannelBound, eventInbox } from "./events.js";
+import type {
+  DrainRequest,
+  Handle,
+  ParamsOf,
+  ResultOf,
+  Stage3EventEnvelope,
+} from "@kobrixa/plugin-protocol";
+export * from "./settings.js";
+export * from "./storage.js";
+export * from "./persistence-actions.js";
+
+export function createPersistenceContext(peer: RpcPeer, signal?: AbortSignal) {
+  const send = peer.request.bind(peer) as PersistenceRequest;
+  const request: PersistenceRequest = (method, params, options) => {
+    const boundSignal = options.signal ?? signal;
+    return send(method, params, { ...options, ...(boundSignal ? { signal: boundSignal } : {}) });
+  };
+  const client = createSettingsClient(request);
+  // The domain client is frozen. Compose queue/unwatch sugar without mutating it.
+  const settings = {
+    ...client,
+    async watch(
+      params: ParamsOf<"settings/watch">,
+      watchSignal?: AbortSignal,
+      listener: (
+        event: Extract<Stage3EventEnvelope, { kind: "settings.changed" }>,
+      ) => void | Promise<void> = () => {},
+    ) {
+      const inbox = eventInbox(peer);
+      inbox.enable();
+      const finish = inbox.beginSubscription();
+      try {
+        const result = await client.watch(params, watchSignal);
+        if (result.ok)
+          inbox.open(
+            result.value.subscriptionId,
+            (event) => (event.kind === "settings.changed" ? listener(event) : undefined),
+            async () => {
+              const snapshot = await client.read(params);
+              if (!snapshot.ok) throw new Error(snapshot.error.message);
+            },
+            result.value.sequence,
+          );
+        return result;
+      } finally {
+        finish();
+      }
+    },
+    async unwatch(params: ParamsOf<"events/unsubscribe">, unwatchSignal?: AbortSignal) {
+      const boundSignal = unwatchSignal ?? signal;
+      const result = await peer.request("events/unsubscribe", params, {
+        timeoutMs: 10000,
+        ...(boundSignal ? { signal: boundSignal } : {}),
+      });
+      if (result.ok && eventChannelBound(peer)) eventInbox(peer).close(params.subscriptionId);
+      return result;
+    },
+  };
+  const storage = createStorageClient(request);
+  const actions: ReturnType<typeof createPersistenceActionsClient> & {
+    readonly actionRef?: Handle;
+  } = createPersistenceActionsClient(request);
+  return { settings, storage, actions, ui: { copyText: actions.copyText } };
+}
+export interface PersistenceDrainContext {
+  readonly request: DrainRequest;
+  readonly signal: AbortSignal;
+  readonly storage: ReturnType<typeof createStorageClient>;
+}
+function supportsPersistence(version: string): boolean {
+  const match = /^1\.([0-9]+)\.[0-9]+$/.exec(version);
+  return match !== null && Number(match[1]) >= 7;
+}
+
 import { ContextCommands, type ContextCommandHandler } from "./commands.js";
 import { UiClient } from "./ui.js";
 import { uiEventClientPort } from "./events.js";
@@ -23,6 +101,9 @@ export const API_VERSION = PLUGIN_API_VERSION;
 export const SDK_VERSION = "0.1.0";
 export type CommandHandler = (context: { readonly signal: AbortSignal }) => void | Promise<void>;
 export interface PluginContext {
+  readonly settings: ReturnType<typeof createPersistenceContext>["settings"];
+  readonly storage: ReturnType<typeof createStorageClient>;
+  readonly actions: ReturnType<typeof createPersistenceContext>["actions"];
   readonly devices: DevicesClient;
   readonly pluginId: string;
   readonly locale: PluginLocale;
@@ -34,9 +115,12 @@ export interface PluginContext {
       handler: ContextCommandHandler,
     ): void;
   };
-  readonly ui: UiClient;
+  readonly ui: UiClient & ReturnType<typeof createPersistenceContext>["ui"];
 }
 export interface PluginDefinition {
+  drain?(
+    context: PersistenceDrainContext,
+  ): ResultOf<"storage/drain"> | Promise<ResultOf<"storage/drain">>;
   ready?(context: PluginContext): void | Promise<void>;
   activate(context: PluginContext): void | Promise<void>;
   deactivate?(): void | Promise<void>;
@@ -89,7 +173,23 @@ export async function runPlugin(
   if (launchOwner !== undefined)
     bindEventChannel(peer, resourceOwnerSchema.parse(JSON.parse(launchOwner)));
   const commands = new Map<string, CommandHandler>();
-  const ui = new UiClient(peer.request.bind(peer), uiEventClientPort(peer));
+  const persistence = createPersistenceContext(peer);
+  const ui = Object.assign(
+    new UiClient(peer.request.bind(peer), uiEventClientPort(peer)),
+    persistence.ui,
+  );
+  let persistenceNegotiated = false;
+  peer.handle("storage/drain", async (request, { signal }) => {
+    if (!persistenceNegotiated || !definition.drain)
+      throw new RpcError(
+        RPC_ERRORS.methodNotFound,
+        "Persistence drain was not negotiated or registered.",
+      );
+    const send = peer.request.bind(peer) as PersistenceRequest;
+    const drainRequest: PersistenceRequest = (method, params, options) =>
+      send(method, params, { ...options, signal: options.signal ?? signal });
+    return definition.drain({ request, signal, storage: createStorageClient(drainRequest) });
+  });
   let contextCommands: ContextCommands | undefined;
   let pluginContext: PluginContext | undefined;
   let negotiated = false;
@@ -135,8 +235,10 @@ export async function runPlugin(
   });
   const devices = createDevicesClient(peer, ready);
   peer.handle("initialize", async ({ pluginId, locale, apiVersion }, request) => {
+    persistenceNegotiated = supportsPersistence(apiVersion);
     contextCommands = new ContextCommands(pluginId);
     pluginContext = {
+      ...persistence,
       devices,
       pluginId,
       locale,
@@ -201,7 +303,17 @@ export function createInvocationContext(
   invocation: CommandInvocation,
   signal: AbortSignal,
 ): PluginContext & { readonly invocation: CommandInvocation; readonly signal: AbortSignal } {
+  const actionRef = invocation.context.actionRef;
+  const actions = Object.create(base.actions);
+  if (actionRef !== undefined)
+    Object.defineProperty(actions, "actionRef", {
+      enumerable: true,
+      configurable: false,
+      get: () => actionRef,
+    });
+  Object.freeze(actions);
   return Object.create(base, {
+    actions: { value: actions, enumerable: true },
     invocation: { value: Object.freeze(structuredClone(invocation)), enumerable: true },
     signal: { value: signal, enumerable: true },
   });

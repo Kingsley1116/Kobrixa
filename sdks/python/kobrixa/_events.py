@@ -121,3 +121,41 @@ class _UiEventClientPort:
 
 def ui_event_client_port(peer):
     return _UiEventClientPort(peer)
+
+
+class _SettingsEventClient:
+    def __init__(self, peer, client):
+        self._peer = peer
+        self._client = client
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    async def watch(self, params, listener=None):
+        inbox = _BOUND[self._peer]
+        inbox.enable()
+        finish = inbox.begin_subscription()
+        try:
+            result = await self._client.watch(params)
+            if result["ok"]:
+                async def resync():
+                    snapshot = await self._client.read(params)
+                    if not snapshot["ok"]:
+                        raise ValueError(snapshot["error"]["message"])
+                def receive(event):
+                    if event["kind"] == "settings.changed" and listener is not None:
+                        return listener(event)
+                inbox.open(result["value"]["subscriptionId"], receive, resync, result["value"]["sequence"])
+            return result
+        finally:
+            finish()
+
+    async def unwatch(self, params):
+        result = await self._peer._request("events/unsubscribe", params)
+        if result["ok"] and self._peer in _BOUND:
+            _BOUND[self._peer].close(params["subscriptionId"])
+        return result
+
+
+def settings_event_client(peer, client):
+    return _SettingsEventClient(peer, client)

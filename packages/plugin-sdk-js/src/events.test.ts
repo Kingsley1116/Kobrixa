@@ -210,3 +210,58 @@ it("device and UI slots share saturation and callback failure cannot hold ACK", 
   inbox.close(device);
   inbox.close(ui);
 });
+
+import { createMemoryChannelPair } from "@kobrixa/plugin-protocol";
+import { createPersistenceContext } from "./index.js";
+it("settings watches share ACK, gap reconciliation and unsubscribe on the bound peer", async () => {
+  const [a, b] = createMemoryChannelPair();
+  const host = new RpcPeer(a),
+    peer = new RpcPeer(b);
+  bindEventChannel(peer, owner);
+  const order: string[] = [];
+  const snapshot = { schemaVersion: 1, revision: null, values: [] };
+  host.handle("settings/watch", () => ({
+    ok: true as const,
+    value: { subscriptionId: id, sequence: 0 as const, snapshot },
+  }));
+  host.handle("settings/read", () => {
+    order.push("read");
+    return { ok: true as const, value: snapshot };
+  });
+  host.handle("events/ack", ({ sequence }) => {
+    order.push("ack");
+    return { ok: true as const, value: { acknowledged: sequence } };
+  });
+  host.handle("events/unsubscribe", () => ({ ok: true as const, value: { removed: true } }));
+  const context = createPersistenceContext(peer);
+  try {
+    const watch = await context.settings.watch({ schemaVersion: 1 }, undefined, () => {
+      order.push("callback");
+    });
+    expect(watch.ok).toBe(true);
+    const changed = {
+      ...event(2),
+      delivery: "telemetry" as const,
+      kind: "settings.changed" as const,
+      data: {
+        revision: "r_" + "1".repeat(32),
+        schemaVersion: 1,
+        changedKeys: ["fixture.enabled"],
+        cause: "update" as const,
+      },
+    };
+    expect(eventInbox(peer).accept({ ...changed, owner: { ...owner, generation: 9 } })).toBe(false);
+    expect(eventInbox(peer).accept({ ...changed, data: { ...changed.data, values: [] } })).toBe(
+      false,
+    );
+    host.notify("events/deliver", changed);
+    await vi.waitFor(() => expect(order).toContain("callback"));
+    expect(order.indexOf("ack")).toBeLessThan(order.indexOf("callback"));
+    expect(order.indexOf("read")).toBeLessThan(order.indexOf("callback"));
+    await context.settings.unwatch({ subscriptionId: id });
+    expect(eventInbox(peer).accept({ ...changed, sequence: 3 })).toBe(false);
+  } finally {
+    host.close();
+    peer.close();
+  }
+});

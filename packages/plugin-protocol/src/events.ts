@@ -9,7 +9,7 @@ export type EventKindV150 =
   | "devices.recordingFrames"
   | "devices.authority"
   | "events.resyncRequired";
-export type EventKind = EventKindV150 | UiEvent["kind"]; // 後續 API 批次由唯一 registry 擴充。
+export type EventKind = EventKindV150 | UiEvent["kind"] | "settings.changed"; // 後續 API 批次由唯一 registry 擴充。
 export type EventEnvelope<Data> = {
   version: 1;
   subscriptionId: Handle;
@@ -21,6 +21,7 @@ export type EventEnvelope<Data> = {
 };
 
 import type { UiEvent } from "./ui-types.js";
+import { settingsChangedSchema } from "./settings.js";
 import type { SettingsRevision, Version, SettingKey } from "./settings.js";
 
 export type Stage3EventData = {
@@ -92,7 +93,9 @@ export const uiEventDataSchemas = {
   "ui.state": uiEventSchema.options[4].shape.data,
   "ui.revoked": uiEventSchema.options[5].shape.data,
 } as const satisfies Record<UiEvent["kind"], z.ZodType>;
+export const settingsEventDataSchemas = { "settings.changed": settingsChangedSchema } as const;
 export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
+  event("settings.changed", "telemetry", settingsChangedSchema),
   event("devices.catalog", "control", deviceEventDataSchemas["devices.catalog"]),
   event("devices.session", "control", deviceEventDataSchemas["devices.session"]),
   event("devices.telemetry", "telemetry", deviceEventDataSchemas["devices.telemetry"]),

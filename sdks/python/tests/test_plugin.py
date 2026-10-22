@@ -98,7 +98,7 @@ class PluginProcessTest(unittest.TestCase):
             "apiVersion": "1.1.0", "pluginId": "acme.behaviors", "locale": "zh-TW",
             "grantedPermissions": ["ui.notifications"]}})
         reply = self.receive()
-        self.assertEqual(reply["result"]["apiVersion"], "1.6.0")
+        self.assertEqual(reply["result"]["apiVersion"], "1.7.0")
 
     def test_command_round_trip_with_print_redirected(self):
         self.initialize()
@@ -334,7 +334,7 @@ class InvocationFactoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_overlapping_contexts_are_isolated(self):
         from types import SimpleNamespace
         from kobrixa import create_invocation_context
-        base = SimpleNamespace(plugin_id="acme.ui")
+        base = SimpleNamespace(plugin_id="acme.ui", actions=SimpleNamespace())
         first = {"context": {"actionRef": "first"}}
         a = create_invocation_context(base, first)
         b = create_invocation_context(base, {"context": {"actionRef": "second"}})
@@ -348,9 +348,10 @@ class InvocationFactoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen, ["second", "first", None])
         a.invocation["context"]["actionRef"] = "changed again"
         self.assertEqual(a.invocation["context"]["actionRef"], "first")
-        self.assertEqual(vars(base), {"plugin_id": "acme.ui"})
+        self.assertEqual(base.plugin_id, "acme.ui")
+        self.assertFalse(hasattr(base.actions, "actionRef"))
         for context in (base, a, b, c):
-            for name in ("actions", "settings", "storage", "drain"):
+            for name in ("settings", "storage", "drain"):
                 self.assertFalse(hasattr(context, name))
 
     async def test_panel_dispatch_uses_factory_with_nested_immutable_context(self):
@@ -370,7 +371,7 @@ class InvocationFactoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.version, 1)
             self.assertEqual(ctx.invocation_id, ctx.invocation["invocationId"])
             self.assertEqual(dict(ctx.arguments), {})
-            self.assertEqual(set(vars(ctx._base)), {"plugin_id", "locale", "ui", "devices"})
+            self.assertEqual(set(vars(ctx._base)), {"plugin_id", "locale", "ui", "devices", "settings", "storage", "actions"})
             self.assertEqual(set(vars(ctx._command_context)), {"version", "invocation_id", "command", "arguments", "context"})
             with self.assertRaises(TypeError):
                 ctx.context["form"]["values"]["field"] = "changed"
@@ -389,3 +390,111 @@ class InvocationFactoryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(seen, [call])
         finally:
             sys.stdout = original
+
+class PersistenceContextTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.output = io.BytesIO()
+        self.redirect = redirect_stdout(io.TextIOWrapper(self.output, encoding="utf-8"))
+        self.redirect.__enter__()
+        self.addCleanup(self.redirect.__exit__, None, None, None)
+
+    async def test_clients_preserve_wire_keys_business_errors_and_unwatch(self):
+        from kobrixa._plugin import CommandContext
+        plugin = Plugin()
+        calls = []
+        result = {"ok": False, "error": {"code": "PLUGIN_E_SETTINGS_CONFLICT",
+            "message": "Revision changed", "detail": {"kind": "persistence", "reason": "revision-mismatch"}}}
+        async def request(method, params, **options):
+            calls.append((method, params))
+            if method == "events/unsubscribe":
+                return {"ok":True,"value":{"removed":True}}
+            return result
+        plugin._request = request
+        ctx = CommandContext(plugin)
+        params = {"schemaVersion": 1, "expectedRevision": None,
+                  "changes": [{"key": "fixture.enabled", "value": True}]}
+        self.assertEqual(await ctx.settings.update(params), result)
+        self.assertEqual(calls[-1], ("settings/update", params))
+        await ctx.settings.unwatch({"subscriptionId": "11111111-1111-4111-8111-111111111111"})
+        self.assertEqual(calls[-1][0], "events/unsubscribe")
+        self.assertFalse(hasattr(ctx.actions, "actionRef"))
+
+    async def test_actions_copy_only_action_ref_and_never_invocation_id(self):
+        from kobrixa._plugin import CommandContext, create_invocation_context
+        plugin = Plugin()
+        base = CommandContext(plugin)
+        invocation = {"invocationId":"11111111-1111-4111-8111-111111111111", "context":{}}
+        self.assertFalse(hasattr(create_invocation_context(base, invocation).actions, "actionRef"))
+        invocation["context"]["actionRef"] = "22222222-2222-4222-8222-222222222222"
+        first = create_invocation_context(base, invocation)
+        invocation["context"]["actionRef"] = "33333333-3333-4333-8333-333333333333"
+        second = create_invocation_context(base, invocation)
+        self.assertEqual(first.actions.actionRef, "22222222-2222-4222-8222-222222222222")
+        self.assertEqual(second.actions.actionRef, "33333333-3333-4333-8333-333333333333")
+        with self.assertRaises(AttributeError):
+            first.actions.actionRef = "forged"
+        self.assertFalse(hasattr(base.actions, "actionRef"))
+
+    async def test_old_host_or_missing_callback_cannot_dispatch_drain(self):
+        from kobrixa import RpcError
+        request = {"token": "11111111-1111-4111-8111-111111111111", "reason": "shutdown",
+                   "remainingMs": 10000, "checkpoints": [], "writes": []}
+        for version in ("1.4.0", "1.5.0", "1.6.0", "1.7.0"):
+            plugin = Plugin()
+            plugin._host_api_version = version
+            with self.assertRaises(RpcError) as error:
+                await plugin._dispatch("storage/drain", request)
+            self.assertEqual(error.exception.code, -32601)
+
+    async def test_drain_is_independent_of_an_ordinary_cancelled_task(self):
+        import asyncio
+        plugin = Plugin()
+        plugin._host_api_version = "1.7.0"
+        calls = []
+        @plugin.drain
+        async def drain(ctx):
+            calls.append(ctx.request["token"])
+            return {"ok": True, "value": {"status": "checkpoint-only", "writes": []}}
+        ordinary = asyncio.create_task(asyncio.sleep(100))
+        ordinary.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await ordinary
+        request = {"token": "11111111-1111-4111-8111-111111111111", "reason": "shutdown",
+                   "remainingMs": 10000, "checkpoints": [], "writes": []}
+        result = await plugin._dispatch("storage/drain", request)
+        self.assertEqual(result["value"]["status"], "checkpoint-only")
+        self.assertEqual(calls, [request["token"]])
+
+    async def test_registered_drain_still_requires_a_negotiated_host(self):
+        from kobrixa import RpcError
+        plugin = Plugin()
+        calls = []
+        @plugin.drain
+        async def drain(ctx):
+            calls.append(ctx.request)
+            return {"ok": True, "value": {"status": "submitted", "writes": []}}
+        for version in ("0.0.0", "1.4.0", "1.5.0", "1.6.0"):
+            plugin._host_api_version = version
+            with self.subTest(version=version), self.assertRaises(RpcError) as error:
+                await plugin._dispatch("storage/drain", {"token": "11111111-1111-4111-8111-111111111111",
+                    "reason": "shutdown", "remainingMs": 10000, "checkpoints": [], "writes": []})
+            self.assertEqual(error.exception.code, -32601)
+        self.assertEqual(calls, [])
+        with self.assertRaises(ValueError):
+            plugin.drain(drain)
+        with self.assertRaises(TypeError):
+            Plugin().drain(lambda ctx: None)
+
+    async def test_persistence_does_not_convert_or_retry_legacy_permission_errors(self):
+        from kobrixa import RpcError
+        from kobrixa._plugin import CommandContext
+        plugin = Plugin()
+        calls = []
+        async def request(method, params):
+            calls.append(method)
+            raise RpcError(-32002, "Denied")
+        plugin._request = request
+        with self.assertRaises(RpcError) as error:
+            await CommandContext(plugin).settings.read({"schemaVersion": 1})
+        self.assertEqual(error.exception.code, -32002)
+        self.assertEqual(calls, ["settings/read"])

@@ -53237,5 +53237,6 @@
         "flags": ""
       }
     }
-  }
+  },
+    {"name": "p170-publication: unsubscribe tombstone", "definition": "events/unsubscribe.result", "valid": true, "value": {"ok": true, "value": {"removed": false}}}
 ]

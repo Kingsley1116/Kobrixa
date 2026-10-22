@@ -20,9 +20,9 @@ function keywords(node: unknown, found = new Set<string>(), inProperties = false
 }
 
 describe("published JSON Schema", () => {
-  it("publishes the 1.6.0 schema and a strict language service declaration", () => {
+  it("publishes the 1.7.0 schema and a strict language service declaration", () => {
     const schema = JSON.parse(serializeJsonSchema());
-    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.6.0.json");
+    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.7.0.json");
     const services = schema.$defs.manifest.properties.contributes.properties.languageServices;
     expect(services.maxItems).toBe(8);
     expect(services.items.additionalProperties).toBe(false);
@@ -72,9 +72,9 @@ describe("published JSON Schema", () => {
   });
 });
 
-it("publishes exactly the 1.6.0 UI batch without future persistence methods", () => {
+it("publishes the cumulative 1.7.0 UI and persistence batches", () => {
   const schema = JSON.parse(serializeJsonSchema());
-  expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.6.0.json");
+  expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.7.0.json");
   for (const name of [
     "ui/negotiate",
     "ui/ready",
@@ -87,7 +87,43 @@ it("publishes exactly the 1.6.0 UI batch without future persistence methods", ()
   ])
     expect(schema.$defs).toHaveProperty([`${name}.params`]);
   for (const name of ["ui/copyText", "settings/read", "storage/drain", "storage/exportBegin"])
-    expect(schema.$defs).not.toHaveProperty([`${name}.params`]);
+    expect(schema.$defs).toHaveProperty([`${name}.params`]);
   expect(Object.keys(requestMethods)).not.toContain("ui/ack");
   expect(Object.keys(notificationMethods)).not.toContain("ui/event");
+});
+
+it("publishes settings.changed with a closed payload and no settings.gap", () => {
+  const notification = notificationMethods["events/deliver"];
+  const event = {
+    version: 1,
+    subscriptionId: "11111111-1111-4111-8111-111111111111",
+    owner: {
+      sourceKey: "builtin:test.persistence",
+      pluginId: "test.persistence",
+      generation: 1,
+      hostEpoch: "22222222-2222-4222-8222-222222222222",
+      processEpoch: "33333333-3333-4333-8333-333333333333",
+    },
+    sequence: 1,
+    delivery: "telemetry",
+    kind: "settings.changed",
+    data: {
+      revision: "r_" + "1".repeat(32),
+      schemaVersion: 1,
+      changedKeys: ["fixture.enabled"],
+      cause: "update",
+    },
+  };
+  expect(notification.safeParse(event).success).toBe(true);
+  expect(notification.safeParse({ ...event, data: { ...event.data, values: [] } }).success).toBe(
+    false,
+  );
+  expect(notification.safeParse({ ...event, kind: "settings.gap" }).success).toBe(false);
+  expect(notification.safeParse({ ...event, delivery: "control" }).success).toBe(false);
+  expect(
+    notification.safeParse({
+      ...event,
+      data: { ...event.data, changedKeys: Array.from({ length: 129 }, (_, i) => `key${i}`) },
+    }).success,
+  ).toBe(false);
 });

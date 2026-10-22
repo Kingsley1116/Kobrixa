@@ -1,3 +1,35 @@
+from ._settings import create_settings_client
+from ._storage import create_storage_client
+from ._persistence_actions import create_persistence_actions_client
+from ._events import settings_event_client
+
+
+class PersistenceDrainContext:
+    def __init__(self, request, storage):
+        self.request = request
+        self.storage = storage
+
+
+def _supports_persistence(version):
+    parts = version.split(".")
+    return len(parts) == 3 and all(part.isascii() and part.isdigit() for part in parts) and int(parts[0]) == 1 and int(parts[1]) >= 7
+
+
+class _InvocationActions:
+    def __init__(self, client, invocation):
+        self._client = client
+        self._action_ref = invocation.get("context", {}).get("actionRef")
+
+    @property
+    def actionRef(self):
+        if self._action_ref is None:
+            raise AttributeError("actionRef")
+        return self._action_ref
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
 from ._ui import Ui, validate_invocation
 from ._commands import ContextCommands, ContextCommandContext
 from ._events import ui_event_client_port
@@ -17,7 +49,7 @@ from ._events import bind_event_channel, close_event_channel
 from ._framing import Decoder, FramingError, encode
 from ._schema import SchemaError, Validator
 
-API_VERSION = "1.6.0"
+API_VERSION = "1.7.0"
 SDK_VERSION = "0.1.0"
 _CANCELLED, _INVALID_REQUEST, _INVALID_PARAMS, _METHOD_NOT_FOUND, _INTERNAL = (
     -32800, -32600, -32602, -32601, -32603
@@ -48,6 +80,10 @@ class CommandContext:
         self.locale = plugin.locale
         self.ui = plugin.ui
         self.devices = plugin.devices
+        self.settings = settings_event_client(plugin, create_settings_client(plugin._request))
+        self.storage = create_storage_client(plugin._request)
+        self.actions = create_persistence_actions_client(plugin._request)
+        self.ui.copy_text = self.actions.copy_text
 
 
 class Plugin:
@@ -60,6 +96,8 @@ class Plugin:
             bind_event_channel(self, json.loads(launch_owner, parse_constant=_reject_json_constant))
         self._context_commands = ContextCommands(lambda: self.plugin_id)
         self.ui = Ui(self._request, ui_event_client_port(self))
+        self._host_api_version = "0.0.0"
+        self._drain_handler = None
         self._ready_callback = None
         self._deactivate_callback = None
         self._ui_negotiated = False
@@ -74,6 +112,14 @@ class Plugin:
         self._output = sys.stdout.buffer
         # Reserve real stdout for protocol frames before any top-level print() after Plugin().
         sys.stdout = sys.stderr
+
+    def drain(self, handler):
+        if not inspect.iscoroutinefunction(handler):
+            raise TypeError("Kobrixa drain handlers must be async functions.")
+        if self._drain_handler is not None:
+            raise ValueError("A drain handler is already registered.")
+        self._drain_handler = handler
+        return handler
 
     def command(self, command_id: str):
         def register(handler):
@@ -261,8 +307,13 @@ class Plugin:
     async def _dispatch(self, method: str, params: dict):
         if method == "initialize":
             self.plugin_id, self.locale = params["pluginId"], params["locale"]
+            self._host_api_version = params["apiVersion"]
             asyncio.get_running_loop().call_soon(self.devices.initialized, params["apiVersion"])
             return {"apiVersion": API_VERSION, "sdk": {"name": "kobrixa-plugin-sdk", "version": SDK_VERSION}}
+        if method == "storage/drain":
+            if not _supports_persistence(self._host_api_version) or self._drain_handler is None:
+                raise RpcError(_METHOD_NOT_FOUND, "Persistence drain was not negotiated or registered.")
+            return await self._drain_handler(PersistenceDrainContext(params, create_storage_client(self._request)))
         if method == "command/execute":
             handler = self._commands.get(params["command"])
             if handler is None:
@@ -306,7 +357,7 @@ class Plugin:
         self._validator.validate(f"{method}.params", params)
         if not valid_wire(method, "params", params):
             raise RpcError(_INVALID_PARAMS, "Invalid UI parameters.")
-        if method.startswith("ui/") and method != "ui/showMessage": timeout = 5
+        if method.startswith("ui/") and method not in ("ui/showMessage", "ui/copyText"): timeout = 5
         request_id = self._next_id
         self._next_id += 1
         future = self._loop.create_future()
@@ -331,6 +382,7 @@ class _InvocationContext:
         import copy
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_invocation", copy.deepcopy(invocation))
+        object.__setattr__(self, "actions", _InvocationActions(base.actions, invocation))
 
     @property
     def invocation(self):

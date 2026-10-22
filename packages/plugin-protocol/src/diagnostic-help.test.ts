@@ -19,7 +19,7 @@ const entry = (overrides: Record<string, unknown> = {}) => ({
 });
 const parse = (entries: unknown[]) => pluginDiagnosticHelpFileSchema.safeParse({ entries });
 
-it("is API 1.6.0", () => expect(PLUGIN_API_VERSION).toBe("1.6.0"));
+it("is API 1.7.0", () => expect(PLUGIN_API_VERSION).toBe("1.7.0"));
 it("accepts a minimal English entry and a helpKey variant", () => {
   expect(parse([entry(), entry({ helpKey: "missing-paren" })]).success).toBe(true);
 });

@@ -102,6 +102,11 @@ export type FrontendDecl = z.infer<typeof frontendDeclSchema>;
 export type BackendDecl = z.infer<typeof backendDeclSchema>;
 export type ArtifactDecl = z.infer<typeof artifactDeclSchema>;
 
+export const settingsResourceDeclarationSchema = z.strictObject({
+  version: z.literal(1),
+  path: diagnosticHelpDeclSchema.shape.path,
+});
+
 /** Unknown fields are allowed for forward compatibility; invalid known fields are errors. */
 export const pluginManifestSchema = z.looseObject({
   id: namespacedIdSchema,
@@ -162,6 +167,7 @@ export const pluginManifestSchema = z.looseObject({
       frontends: z.array(frontendDeclSchema).max(8).optional(),
       backends: z.array(backendDeclSchema).max(8).optional(),
       diagnosticHelp: diagnosticHelpDeclSchema.optional(),
+      settings: settingsResourceDeclarationSchema.optional(),
       languageServices: z.array(languageServiceDeclSchema).max(8).optional(),
       languages: z.array(staticLanguageDeclSchema).max(8).optional(),
     })
@@ -234,6 +240,7 @@ export function staticLanguageDeclarationProblems(manifest: PluginManifest): str
       "frontends",
       "backends",
       "languageServices",
+      "settings",
       "panels",
       "status",
     ] as const)

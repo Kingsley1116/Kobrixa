@@ -140,3 +140,44 @@ class UiCommonEventsTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         self.assertEqual(seen, ["ui.revoked"])
         self.assertNotIn(id, _BOUND[peer]._slots)
+
+class SettingsCommonEventsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_settings_gap_ack_and_unwatch_use_the_shared_queue(self):
+        from kobrixa._events import bind_event_channel, close_event_channel, settings_event_client
+        from kobrixa._settings import create_settings_client
+        from kobrixa._devices import Devices
+        order = []
+        snapshot = {"schemaVersion": 1, "revision": None, "values": []}
+        class Peer:
+            async def _request(self, method, params):
+                if method == "settings/watch":
+                    return {"ok": True, "value": {"subscriptionId": ID, "sequence": 0, "snapshot": snapshot}}
+                if method == "settings/read":
+                    order.append("read")
+                    return {"ok": True, "value": snapshot}
+                if method == "events/ack":
+                    order.append("ack")
+                    return {"ok": True, "value": {"acknowledged": params["sequence"]}}
+                if method == "events/unsubscribe":
+                    return {"ok": True, "value": {"removed": True}}
+                raise AssertionError(method)
+        peer = Peer()
+        peer.devices = Devices(peer._request)
+        bind_event_channel(peer, OWNER)
+        client = settings_event_client(peer, create_settings_client(peer._request))
+        try:
+            await client.watch({"schemaVersion": 1}, lambda e: order.append("callback"))
+            changed = dict(event(2), delivery="telemetry", kind="settings.changed", data={
+                "revision": "r_" + "1" * 32, "schemaVersion": 1, "changedKeys": ["fixture.enabled"], "cause": "update"})
+            self.assertFalse(peer.devices.inbox.accept(dict(changed, owner=dict(OWNER, generation=2))))
+            self.assertFalse(peer.devices.inbox.accept(dict(changed, data=dict(changed["data"], values=[]))))
+            self.assertTrue(peer.devices.inbox.accept(changed))
+            for _ in range(10):
+                if "callback" in order: break
+                await asyncio.sleep(0)
+            self.assertLess(order.index("ack"), order.index("callback"))
+            self.assertLess(order.index("read"), order.index("callback"))
+            await client.unwatch({"subscriptionId": ID})
+            self.assertFalse(peer.devices.inbox.accept(dict(changed, sequence=3)))
+        finally:
+            close_event_channel(peer)

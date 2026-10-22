@@ -1,8 +1,19 @@
 import { EventEmitter } from "node:events";
 import { MessageChannel } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
-import { createMemoryChannelPair, RpcPeer, type ParamsOf } from "@kobrixa/plugin-protocol";
-import { API_VERSION, definePlugin, electronParentPortChannel, runPlugin } from "./index.js";
+import {
+  createMemoryChannelPair,
+  RpcError,
+  RpcPeer,
+  type ParamsOf,
+} from "@kobrixa/plugin-protocol";
+import {
+  createPersistenceContext,
+  API_VERSION,
+  definePlugin,
+  electronParentPortChannel,
+  runPlugin,
+} from "./index.js";
 
 const init: ParamsOf<"initialize"> = {
   apiVersion: "1.1.0",
@@ -132,7 +143,7 @@ describe("JS plugin SDK", () => {
     }
   });
   it("exposes the same API version as its initialize response", () => {
-    expect(API_VERSION).toBe("1.6.0");
+    expect(API_VERSION).toBe("1.7.0");
   });
   it("activates during initialize and runs registered commands", async () => {
     const messages: unknown[] = [];
@@ -150,7 +161,7 @@ describe("JS plugin SDK", () => {
       return null;
     });
     await expect(host.request("initialize", init)).resolves.toMatchObject({
-      apiVersion: "1.6.0",
+      apiVersion: "1.7.0",
       sdk: { name: "@kobrixa/plugin-sdk" },
     });
     await host.request("command/execute", { command: "acme.hello.greet" });
@@ -339,10 +350,208 @@ it("isolates overlapping invocation factories without mutating the base context"
     expect(c.invocation.context).not.toHaveProperty("actionRef");
     expect(Object.keys(base)).toEqual(before);
     for (const context of [base, a, b, c])
-      for (const key of ["actions", "storage", "settings", "drain"])
-        expect(context).not.toHaveProperty(key);
+      for (const key of ["drain"]) expect(context).not.toHaveProperty(key);
     expect(base).not.toHaveProperty("invocation");
   } finally {
     host.close();
+  }
+});
+
+it("preserves business errors and sends unwatch through events/unsubscribe", async () => {
+  const [a, b] = createMemoryChannelPair();
+  const host = new RpcPeer(a);
+  const client = new RpcPeer(b);
+  const denied = {
+    ok: false as const,
+    error: {
+      code: "PLUGIN_E_SETTINGS_CONFLICT" as const,
+      message: "Revision changed",
+      detail: { kind: "persistence" as const, reason: "revision-mismatch" as const },
+    },
+  };
+  const ids: string[] = [];
+  host.handle("settings/update", () => denied);
+  host.handle("events/unsubscribe", ({ subscriptionId }) => {
+    const removed = !ids.includes(subscriptionId);
+    ids.push(subscriptionId);
+    return { ok: true as const, value: { removed } };
+  });
+  const ctx = createPersistenceContext(client);
+  try {
+    expect(
+      await ctx.settings.update({
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "fixture.enabled", value: true }],
+      }),
+    ).toEqual(denied);
+    const params = { subscriptionId: "11111111-1111-4111-8111-111111111111" };
+    expect(await ctx.settings.unwatch(params)).toEqual({ ok: true, value: { removed: true } });
+    expect(await ctx.settings.unwatch(params)).toEqual({ ok: true, value: { removed: false } });
+    expect(ctx.actions.actionRef).toBeUndefined();
+  } finally {
+    host.close();
+    client.close();
+  }
+});
+it("isolates overlapping invocation actionRefs without changing the base", async () => {
+  let base!: PluginContext;
+  const { host } = connect(
+    definePlugin({
+      activate(ctx) {
+        base = ctx;
+      },
+    }),
+  );
+  const invocation = {
+    version: 1 as const,
+    invocationId: "11111111-1111-4111-8111-111111111111",
+    command: "test.action",
+    arguments: {},
+    context: {
+      contextRef: null,
+      origin: "management" as const,
+      locale: "en" as const,
+      trigger: { kind: "activate" as const },
+    },
+  };
+  try {
+    await host.request("initialize", { ...init, apiVersion: "1.7.0" });
+    const signal = new AbortController().signal;
+    const first = createInvocationContext(
+      base,
+      {
+        ...invocation,
+        context: { ...invocation.context, actionRef: "22222222-2222-4222-8222-222222222222" },
+      },
+      signal,
+    );
+    const second = createInvocationContext(
+      base,
+      {
+        ...invocation,
+        context: { ...invocation.context, actionRef: "33333333-3333-4333-8333-333333333333" },
+      },
+      signal,
+    );
+    expect(first.actions.actionRef).toBe("22222222-2222-4222-8222-222222222222");
+    expect(second.actions.actionRef).toBe("33333333-3333-4333-8333-333333333333");
+    expect(first.actions).not.toBe(second.actions);
+    expect(Object.getOwnPropertyDescriptor(first.actions, "actionRef")?.set).toBeUndefined();
+    expect(createInvocationContext(base, invocation, signal).actions.actionRef).toBeUndefined();
+    expect(base.actions.actionRef).toBeUndefined();
+  } finally {
+    host.close();
+  }
+});
+it.each(["1.4.0", "1.5.0", "1.6.0"])(
+  "never invokes a drain callback for host %s",
+  async (apiVersion) => {
+    const drain = vi.fn(async () => ({
+      ok: true as const,
+      value: { status: "submitted" as const, writes: [] },
+    }));
+    const { host } = connect(definePlugin({ activate() {}, drain }));
+    try {
+      await host.request("initialize", { ...init, apiVersion });
+      await expect(
+        host.request("storage/drain", {
+          token: "11111111-1111-4111-8111-111111111111",
+          reason: "shutdown",
+          remainingMs: 10000,
+          checkpoints: [],
+          writes: [],
+        }),
+      ).rejects.toMatchObject({ code: -32601 });
+      expect(drain).not.toHaveBeenCalled();
+    } finally {
+      host.close();
+    }
+  },
+);
+it("keeps drain cancellation separate from the ordinary command", async () => {
+  let commandStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    commandStarted = resolve;
+  });
+  let drainSignal: AbortSignal | undefined;
+  const { host } = connect(
+    definePlugin({
+      activate(ctx) {
+        ctx.commands.register(
+          "test.wait",
+          ({ signal }) =>
+            new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+              commandStarted();
+            }),
+        );
+      },
+      drain(ctx) {
+        drainSignal = ctx.signal;
+        return { ok: true, value: { status: "checkpoint-only", writes: [] } };
+      },
+    }),
+  );
+  try {
+    await host.request("initialize", { ...init, apiVersion: "1.7.0" });
+    const ordinary = new AbortController();
+    const command = host.request(
+      "command/execute",
+      { command: "test.wait" },
+      { signal: ordinary.signal },
+    );
+    const rejected = expect(command).rejects.toMatchObject({ code: -32800 });
+    await started;
+    ordinary.abort();
+    await rejected;
+    expect(
+      await host.request("storage/drain", {
+        token: "11111111-1111-4111-8111-111111111111",
+        reason: "shutdown",
+        remainingMs: 10000,
+        checkpoints: [],
+        writes: [],
+      }),
+    ).toEqual({ ok: true, value: { status: "checkpoint-only", writes: [] } });
+    expect(drainSignal?.aborted).toBe(false);
+  } finally {
+    host.close();
+  }
+});
+
+it.each([undefined, "1.7.0"])("rejects drain without a callback (host %s)", async (apiVersion) => {
+  const { host } = connect(definePlugin({ activate() {} }));
+  try {
+    if (apiVersion) await host.request("initialize", { ...init, apiVersion });
+    await expect(
+      host.request("storage/drain", {
+        token: "11111111-1111-4111-8111-111111111111",
+        reason: "shutdown",
+        remainingMs: 10000,
+        checkpoints: [],
+        writes: [],
+      }),
+    ).rejects.toMatchObject({ code: -32601 });
+  } finally {
+    host.close();
+  }
+});
+it("preserves legacy numeric permission errors without retrying a persistence call", async () => {
+  const [a, b] = createMemoryChannelPair();
+  const host = new RpcPeer(a),
+    peer = new RpcPeer(b);
+  const denied = vi.fn(() => {
+    throw new RpcError(-32002, "Denied");
+  });
+  host.handle("settings/read", denied);
+  try {
+    await expect(
+      createPersistenceContext(peer).settings.read({ schemaVersion: 1 }),
+    ).rejects.toMatchObject({ code: -32002 });
+    expect(denied).toHaveBeenCalledTimes(1);
+  } finally {
+    host.close();
+    peer.close();
   }
 });

@@ -152,3 +152,86 @@ it("keeps legacy service declarations compatible and validates frozen Basic Plus
     }),
   ).toMatchObject({ ok: true, rules: 9, regexes: 11, expandedRules: 9 });
 });
+
+import { z } from "zod";
+import { chunkSchema, jsonBytes, validateSettingsResource } from "./persistence-validation.js";
+import { settingsResourceV1Schema } from "./settings.js";
+// T1's frozen fixtures separate method and phase. Resolve only registered keys.
+const fixtureSchemas: Record<string, z.ZodType> = {
+  ...SCHEMA_DEFINITIONS,
+  settingsResourceV1: settingsResourceV1Schema,
+  chunk: chunkSchema(),
+};
+const definitionFor = (schema: string, phase: string) =>
+  (schema === "settingsResourceV1" && phase === "resource") ||
+  (schema === "chunk" && phase === "params")
+    ? schema
+    : `${schema}.${phase}`;
+const fixtureExpectedSchema = z.strictObject({
+  numericCode: z.number().int().nullable(),
+  businessCode: z.string().nullable(),
+  reason: z.string().nullable(),
+  permission: z.string().nullable(),
+  lifetime: z.string().nullable(),
+  persistedSha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .nullable(),
+});
+const contractFixtureFileSchema = z.strictObject({
+  formatVersion: z.literal(1),
+  family: z.literal("settings-storage-v1"),
+  cases: z
+    .array(
+      z
+        .strictObject({
+          id: z.string().min(1),
+          schema: z.string(),
+          phase: z.enum(["params", "result", "resource", "event"]),
+          input: z.unknown(),
+          valid: z.boolean(),
+          expected: fixtureExpectedSchema,
+        })
+        .refine((c) => Object.hasOwn(fixtureSchemas, definitionFor(c.schema, c.phase))),
+    )
+    .refine((cases) => new Set(cases.map((c) => c.id)).size === cases.length)
+    .refine((cases) =>
+      cases.every((c) => !c.valid || Object.values(c.expected).every((v) => v === null)),
+    ),
+});
+for (const family of ["valid", "invalid", "maximum"] as const) {
+  const document: unknown = JSON.parse(
+    await readFile(
+      new URL(`../test-fixtures/settings-storage-v1/${family}.json`, import.meta.url),
+      "utf8",
+    ),
+  );
+  const file = contractFixtureFileSchema.parse(document);
+  it(`${family}: strict persistence fixture format`, () => {
+    const entry = file.cases[0]!;
+    for (const patch of [
+      { extra: true },
+      { formatVersion: 2 },
+      { family: "foreign" },
+      { cases: [entry, entry] },
+      { cases: [{ ...entry, extra: true }] },
+      { cases: [{ ...entry, schema: "__proto__" }] },
+      { cases: [{ ...entry, phase: "arbitrary" }] },
+      { cases: [{ ...entry, expected: { ...entry.expected, extra: true } }] },
+    ])
+      expect(contractFixtureFileSchema.safeParse({ ...file, ...patch }).success).toBe(false);
+  });
+  for (const entry of file.cases)
+    it(`${family}: ${entry.id}`, () => {
+      const schema = fixtureSchemas[definitionFor(entry.schema, entry.phase)]!;
+      let accepted = schema.safeParse(entry.input).success;
+      if (accepted && entry.schema === "settingsResourceV1") {
+        try {
+          validateSettingsResource(entry.input, jsonBytes(entry.input));
+        } catch {
+          accepted = false;
+        }
+      }
+      expect(accepted).toBe(entry.valid);
+    });
+}

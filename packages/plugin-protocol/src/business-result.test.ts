@@ -83,7 +83,7 @@ it("keeps public P150 closed while isolated UI results compile", () => {
   ).toBe(false);
 });
 
-it("keeps every persistence code and resource outside the P160 publication", () => {
+it("publishes persistence codes and resources while retaining the P160 projection", () => {
   for (const resource of [
     "storage-write",
     "storage-read",
@@ -92,7 +92,7 @@ it("keeps every persistence code and resource outside the P160 publication", () 
     "storage-watch",
   ]) {
     expect(
-      commonFailureSchema.safeParse({
+      commonFailureSchemaFor("1.7.0").safeParse({
         ok: false,
         error: {
           code: "PLUGIN_E_STALE_RESOURCE",
@@ -100,7 +100,7 @@ it("keeps every persistence code and resource outside the P160 publication", () 
           detail: { kind: "resource", reason: "stale", resource },
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   }
   for (const code of [
     "PLUGIN_E_SETTINGS_SCHEMA",
@@ -111,7 +111,7 @@ it("keeps every persistence code and resource outside the P160 publication", () 
     "PLUGIN_E_STORAGE_IO",
     "PLUGIN_E_STORAGE_VERSION",
   ]) {
-    expect(pluginErrorCodeSchema.safeParse(code).success).toBe(false);
+    expect(pluginErrorCodeSchema.safeParse(code).success).toBe(true);
   }
 });
 import { pluginErrorCodeSchema } from "./business-result.js";

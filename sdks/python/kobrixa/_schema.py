@@ -71,6 +71,7 @@ class Validator:
         if errors:
             raise SchemaError(errors[0])
         _device_semantics(name, value)
+        _persistence_semantics(name, value)
 
     def _check(self, schema: dict, value, path: str) -> list:
         if schema is False: return [f"{path}: forbidden value"]
@@ -181,3 +182,75 @@ def _device_semantics(name,value):
                 if size>(16384 if node['delivery']=='control' else 65536): fail()
             for k,v in node.items(): walk(v,k,node)
     walk(value)
+
+
+_PERSISTENCE_REASONS = {
+    'PLUGIN_E_SETTINGS_SCHEMA': ('invalid-resource', 'invalid-value', 'duplicate-key', 'unknown-key', 'size-limit', 'schema-changed-without-version', 'migration-required', 'downgrade', 'unsupported-format', 'corrupt'),
+    'PLUGIN_E_SETTINGS_CONFLICT': ('revision-mismatch',),
+    'PLUGIN_E_SETTINGS_SAVE': ('disk-full', 'permission', 'read-only', 'io', 'sync-failed', 'publish-uncertain', 'import-pending'),
+    'PLUGIN_E_STORAGE_QUOTA': ('record-count', 'source-bytes', 'host-bytes', 'temporary-bytes'),
+    'PLUGIN_E_STORAGE_CONFLICT': ('revision-mismatch', 'write-in-progress', 'offset-mismatch', 'sealed', 'incomplete', 'checksum-mismatch', 'flush-incomplete', 'export-not-ready'),
+    'PLUGIN_E_STORAGE_IO': ('not-found', 'disk-full', 'permission', 'read-only', 'io', 'sync-failed', 'publish-uncertain', 'corrupt', 'import-pending', 'input-changed', 'clipboard-unavailable', 'destination-changed', 'unsupported-filesystem'),
+    'PLUGIN_E_STORAGE_VERSION': ('unsupported-format', 'schema-mismatch'),
+}
+
+
+def _persistence_semantics(name, value):
+    if not (name.startswith(("settings/", "storage/")) or name in ("settings-resource-v1", "ui/copyText.params", "ui/copyText.result")):
+        return
+    from ._settings import validate_resource, wire_bytes, key, text, number
+    from ._storage import canonical_base64_length, validate_record_write
+    from ._persistence_actions import validate_copy, validate_export
+    try:
+        if name == "settings-resource-v1":
+            validate_resource(value, wire_bytes(value))
+            return
+        if name == "ui/copyText.params": validate_copy(value)
+        if name == "storage/exportBegin.params": validate_export(value)
+        if name == "storage/beginWrite.params": validate_record_write(value)
+        if name in ("storage/writeChunk.params", "storage/exportChunk.params"):
+            canonical_base64_length(value["data"])
+        if name == "storage/readChunk.result" and value["ok"]:
+            canonical_base64_length(value["value"]["data"], allow_empty=True)
+
+        if name == "settings/reset.params" and len(set(value["keys"])) != len(value["keys"]):
+            raise ValueError("duplicate-key")
+        if name == "storage/list.result" and wire_bytes(value) > 262144:
+            raise ValueError("size-limit")
+
+        def walk(node):
+            if isinstance(node, list):
+                for item in node: walk(item)
+            elif isinstance(node, dict):
+                if "label" in node and "mediaType" in node:
+                    text(node["label"], 0, 160, 640, True)
+                    if "createdAt" in node and wire_bytes(node) > 2048:
+                        raise ValueError("size-limit")
+                for field in ("keys", "changedKeys"):
+                    if field in node:
+                        for setting_key in node[field]: key(setting_key)
+                if "code" in node and "message" in node:
+                    text(node["message"], 0, 2000, 8000)
+                for field in ("changes", "values"):
+                    if field in node:
+                        entries = node[field]
+                        if wire_bytes(entries) > 65536 or len({key(e["key"]) for e in entries}) != len(entries):
+                            raise ValueError("invalid-values")
+                        for entry in entries:
+                            scalar = entry["value"]
+                            if isinstance(scalar, str): text(scalar, 0, 4000, 4096)
+                            elif not isinstance(scalar, bool): number(scalar)
+                if "code" in node and "detail" in node:
+                    code, detail = node["code"], node["detail"]
+                    kind, reason = detail["kind"], detail["reason"]
+                    valid = False
+                    if code in _PERSISTENCE_REASONS:
+                        valid = kind == "persistence" and reason in _PERSISTENCE_REASONS[code]
+                    elif code == "PLUGIN_E_PERMISSION_DENIED": valid = kind == "permission"
+                    elif code == "PLUGIN_E_STALE_RESOURCE": valid = kind == "resource" and reason == "stale"
+                    elif code == "PLUGIN_E_RESOURCE_LIMIT": valid = kind == "resource" and reason != "stale"
+                    if not valid or wire_bytes(detail) > 2048: raise ValueError("invalid-error-detail")
+                for item in node.values(): walk(item)
+        walk(value)
+    except (ValueError, UnicodeError, OverflowError) as error:
+        raise SchemaError("Invalid persistence wire value") from error

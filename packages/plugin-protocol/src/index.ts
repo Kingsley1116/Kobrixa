@@ -12,33 +12,36 @@ export * from "./memory-channel.js";
 export * from "./static-language-limits.js";
 export * from "./static-languages.js";
 
-export type {
-  Version,
-  SettingsRevision,
-  RecordRevision,
-  RecordId,
-  Sha256,
-  SettingKey,
-  Scalar as SettingsScalar,
-  Values,
-  Durability,
-  Receipt,
-  SettingsText,
-  CommonField,
-  SettingsField,
-  SettingsResourceV1,
-  SettingsSnapshot,
-  SettingsMutation,
-  SettingsRequestMap,
+export {
+  settingsRequestSchemas,
+  settingsResourceV1Schema,
+  type Version,
+  type SettingsRevision,
+  type RecordRevision,
+  type RecordId,
+  type Sha256,
+  type SettingKey,
+  type Scalar as SettingsScalar,
+  type Values,
+  type Durability,
+  type Receipt,
+  type SettingsText,
+  type CommonField,
+  type SettingsField,
+  type SettingsResourceV1,
+  type SettingsSnapshot,
+  type SettingsMutation,
+  type SettingsRequestMap,
 } from "./settings.js";
-export type {
-  RecordMeta,
-  RecordTarget,
-  RecordWrite,
-  WriteProgress,
-  DrainReason,
-  DrainRequest,
-  StorageRequestMap,
+export {
+  storageRequestSchemas,
+  type RecordMeta,
+  type RecordTarget,
+  type RecordWrite,
+  type WriteProgress,
+  type DrainReason,
+  type DrainRequest,
+  type StorageRequestMap,
 } from "./storage.js";
 export type {
   PersistenceDetail,
@@ -46,7 +49,10 @@ export type {
   PersistenceReason,
   PersistenceResult,
 } from "./persistence-validation.js";
-export type { PersistenceActionRequestMap } from "./persistence-actions.js";
+export {
+  persistenceActionRequestSchemas,
+  type PersistenceActionRequestMap,
+} from "./persistence-actions.js";
 export type * from "./device-types.js";
 export type * from "./business-result.js";
 export type * from "./events.js";
@@ -101,3 +107,5 @@ export type {
   UiNumberNode,
   UiNodeV1,
 } from "./ui-resource.js";
+
+export { validateSettingsResource } from "./persistence-validation.js";

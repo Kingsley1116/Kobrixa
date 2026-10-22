@@ -1,3 +1,6 @@
+import { settingsRequestSchemas } from "./settings.js";
+import { storageRequestSchemas } from "./storage.js";
+import { persistenceActionRequestSchemas } from "./persistence-actions.js";
 import { uiRequestSchemas } from "./ui-methods.js";
 import { z } from "zod";
 import { deviceRequestSchemas } from "./device-methods.js";
@@ -17,6 +20,9 @@ export type Severity = z.infer<typeof severitySchema>;
 const empty = z.strictObject({});
 
 export const requestMethods = {
+  ...settingsRequestSchemas,
+  ...storageRequestSchemas,
+  ...persistenceActionRequestSchemas,
   ...uiRequestSchemas,
   ...deviceRequestSchemas,
   initialize: {

@@ -52,6 +52,13 @@ export const PLUGIN_ERROR_CODES = [
   "PLUGIN_E_DEVICE_STOP_UNCONFIRMED",
   "PLUGIN_E_UI_RESOURCE",
   "PLUGIN_E_UI_VERSION",
+  "PLUGIN_E_SETTINGS_SCHEMA",
+  "PLUGIN_E_SETTINGS_CONFLICT",
+  "PLUGIN_E_SETTINGS_SAVE",
+  "PLUGIN_E_STORAGE_QUOTA",
+  "PLUGIN_E_STORAGE_CONFLICT",
+  "PLUGIN_E_STORAGE_IO",
+  "PLUGIN_E_STORAGE_VERSION",
 ] as const;
 export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 // 新增；每個方法以具體 Value／Detail union 匯出 schema，沒有 any JSON detail。
@@ -73,7 +80,7 @@ export type PermissionErrorDetail = {
 };
 export type ResourceKindV150 =
   "operation" | "subscription" | "candidate" | "reservation" | "journal" | "rpc";
-export type ResourceKind = ResourceKindV160; // 1.5.0；後續批次依下表擴充閉合 union。
+export type ResourceKind = ResourceKindV170;
 export type ResourceErrorDetail = {
   kind: "resource";
   reason: "stale" | "quota" | "rate" | "queue";
@@ -104,7 +111,11 @@ export type ResourceErrorDetailFor<K extends ResourceKindV170> = Omit<
   "resource"
 > & { resource: K };
 export type PublishedCommonFailure = Extract<
-  BusinessResult<never, PermissionErrorDetail | ResourceErrorDetail>,
+  BusinessResult<
+    never,
+    PermissionErrorDetail | ResourceErrorDetailFor<ResourceKindV160>,
+    PluginErrorCodeV160
+  >,
   { ok: false }
 >;
 export type ContractBatch = "1.5.0" | "1.6.0" | "1.7.0";
@@ -198,6 +209,11 @@ export const resourceErrorDetailSchema = z.strictObject({
     "journal",
     "rpc",
     "ui-binding",
+    "storage-write",
+    "storage-read",
+    "storage-list",
+    "storage-export",
+    "storage-watch",
   ]),
   limit: counterSchema.exactOptional(),
 });
@@ -255,69 +271,45 @@ const resources170 = [
 export function commonFailureSchemaFor<B extends ContractBatch>(
   batch: B,
 ): z.ZodType<CommonFailureFor<B>> {
-  const resource = z.strictObject({
-    kind: z.literal("resource"),
-    reason: z.enum(["stale", "quota", "rate", "queue"]),
-    resource: z.enum(
-      batch === "1.5.0" ? resources150 : batch === "1.6.0" ? resources160 : resources170,
-    ),
-    limit: counterSchema.exactOptional(),
-  });
-  const shape = z.strictObject({
-    ok: z.literal(false),
-    error: z.strictObject({
-      code: z.enum([
-        "PLUGIN_E_PERMISSION_DENIED",
-        "PLUGIN_E_STALE_RESOURCE",
-        "PLUGIN_E_RESOURCE_LIMIT",
-      ]),
-      message: wireText(1, 2000),
-      detail: z.union([permissionErrorDetailSchema, resource]),
+  const resources =
+    batch === "1.5.0" ? resources150 : batch === "1.6.0" ? resources160 : resources170;
+  return z.union([
+    z.strictObject({
+      ok: z.literal(false),
+      error: z.strictObject({
+        code: z.literal("PLUGIN_E_PERMISSION_DENIED"),
+        message: wireText(1, 2000),
+        detail: permissionErrorDetailSchema,
+      }),
     }),
-  });
-  return z.custom<CommonFailureFor<B>>((input) => {
-    const parsed = shape.safeParse(input);
-    if (!parsed.success) return false;
-    const { code, detail } = parsed.data.error;
-    return detail.kind === "permission"
-      ? code === "PLUGIN_E_PERMISSION_DENIED"
-      : code ===
-          (detail.reason === "stale" ? "PLUGIN_E_STALE_RESOURCE" : "PLUGIN_E_RESOURCE_LIMIT");
-  });
+    z.strictObject({
+      ok: z.literal(false),
+      error: z.strictObject({
+        code: z.literal("PLUGIN_E_STALE_RESOURCE"),
+        message: wireText(1, 2000),
+        detail: z.strictObject({
+          kind: z.literal("resource"),
+          reason: z.literal("stale"),
+          resource: z.enum(resources),
+          limit: counterSchema.exactOptional(),
+        }),
+      }),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      error: z.strictObject({
+        code: z.literal("PLUGIN_E_RESOURCE_LIMIT"),
+        message: wireText(1, 2000),
+        detail: z.strictObject({
+          kind: z.literal("resource"),
+          reason: z.enum(["quota", "rate", "queue"]),
+          resource: z.enum(resources),
+          limit: counterSchema.exactOptional(),
+        }),
+      }),
+    }),
+  ]) as z.ZodType<CommonFailureFor<B>>;
 }
-export const commonFailureSchema: z.ZodType<PublishedCommonFailure> = z.union([
-  z.strictObject({
-    ok: z.literal(false),
-    error: z.strictObject({
-      code: z.literal("PLUGIN_E_PERMISSION_DENIED"),
-      message: wireText(1, 2000),
-      detail: permissionErrorDetailSchema,
-    }),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    error: z.strictObject({
-      code: z.literal("PLUGIN_E_STALE_RESOURCE"),
-      message: wireText(1, 2000),
-      detail: z.strictObject({
-        kind: z.literal("resource"),
-        reason: z.literal("stale"),
-        resource: z.enum(resources160),
-        limit: counterSchema.exactOptional(),
-      }),
-    }),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    error: z.strictObject({
-      code: z.literal("PLUGIN_E_RESOURCE_LIMIT"),
-      message: wireText(1, 2000),
-      detail: z.strictObject({
-        kind: z.literal("resource"),
-        reason: z.enum(["quota", "rate", "queue"]),
-        resource: z.enum(resources160),
-        limit: counterSchema.exactOptional(),
-      }),
-    }),
-  }),
-]);
+// Legacy UI results consume this P160 projection; persistence uses the explicit P170 batch.
+export const commonFailureSchema: z.ZodType<PublishedCommonFailure> =
+  commonFailureSchemaFor("1.6.0");

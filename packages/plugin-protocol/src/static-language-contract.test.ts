@@ -14,7 +14,7 @@ import {
 } from "./index.js";
 
 it("freezes the public types, strict static variant and immutable v1 limits", async () => {
-  expect(PLUGIN_API_VERSION).toBe("1.6.0");
+  expect(PLUGIN_API_VERSION).toBe("1.7.0");
   expect(STATIC_LANGUAGE_FORMAT_VERSION).toBe(1);
   expect(STATIC_LANGUAGE_LIMITS_V1).toEqual({
     patternLength: 2048,

@@ -299,6 +299,12 @@
         "lifetime": null,
         "persistedSha256": null
       }
-    }
-  ]
+    },
+    {"id": "p170-publication: source spoof", "schema": "settings/read", "phase": "params", "input": {"schemaVersion": 1, "sourceKey": "builtin:foreign"}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: boolean is not version", "schema": "settings/read", "phase": "params", "input": {"schemaVersion": true}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: unsafe offset", "schema": "storage/readChunk", "phase": "params", "input": {"read": "11111111-1111-4111-8111-111111111111", "offset": 9007199254740992, "maxBytes": 1}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: invocation id is not copy params", "schema": "ui/copyText", "phase": "params", "input": {"invocationId": "11111111-1111-4111-8111-111111111111", "text": "Synthetic"}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: plugin cannot report saved", "schema": "storage/drain", "phase": "result", "input": {"ok": true, "value": {"status": "saved", "writes": []}}, "valid": false, "expected": {"numericCode": null, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
+    {"id": "p170-publication: record over maximum", "schema": "storage/beginWrite", "phase": "params", "input": {"target": {"mode": "create"}, "kind": "test.fixture", "schemaVersion": 1, "label": "Large", "mediaType": "application/octet-stream", "byteLength": 8388609, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}}
+]
 }
