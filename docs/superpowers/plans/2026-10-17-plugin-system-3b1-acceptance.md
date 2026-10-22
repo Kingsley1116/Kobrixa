@@ -72,3 +72,9 @@ Evidence: [browser/renderer/compatibility](../evidence/2026-10-23-3b1-browser-di
 Additional evidence: [SDK backpressure](../evidence/2026-10-23-3b1-sdk-backpressure/README.md), [native window reopen](../evidence/2026-10-23-3b1-window-reopen/README.md).
 
 Installed isolation and independent reviews: [scoped evidence](../evidence/2026-10-23-3b1-installed-isolation/README.md).
+
+## C-G1 and presentation follow-up
+
+31629d0 adds bounded volatile field/raw retention for voluntary panel close/reopen. Controller focused tests: 43 passed. The independent scoped review found two issues (submission revision mismatch and absent retirement notification after the last binding closes); those are under correction, so C-G1 is not accepted yet. A separate 3C resource review confirmed the existing renderer also blocks core safety actions on invalid forms/pending ordinary commands, contrary to §4/§7. That generic fix belongs to B1 before 3C integration. Earlier D160/V160/K160 findings remain closed; this is additional scope, not a retroactive blanket pass.
+
+The actual Electron presentation experiment on product 31629d0 plus test observers passes four en/zh-TW × light/dark cases at 125% zoom and approximately 320 CSS px pane width, native input/focus/Tab/Space, conditional controls, bounded live-region DOM updates, sibling-pane exclusivity and draft-only close/reopen. All children exit on normal close. Original receipts, screenshots, AX trees and explicit scope limits are retained in [presentation evidence](../evidence/2026-10-23-3b1-presentation/README.md). The actual receipt validator passes one test with zero skips. This does not prove action submission, core Stop, process-retirement purge, screen-reader speech or physical motion; remaining fixes and manual gates are unchanged.
