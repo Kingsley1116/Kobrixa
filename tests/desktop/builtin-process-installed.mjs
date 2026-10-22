@@ -16,6 +16,8 @@ import {
 import { constants } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
+import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { createPackageWithOptions, listPackage, statFile } from "@electron/asar";
@@ -129,6 +131,11 @@ async function run(executable, args, options) {
   }
 }
 async function main() {
+  const isolated = process.argv.includes("--isolated");
+  assert.ok(
+    !isolated || process.platform === "darwin",
+    "OS-enforced isolation is implemented for macOS only",
+  );
   const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-installed-ui-"));
   console.log(`Installed fixture workspace (retained on failure): ${directory}`);
   const installed = path.join(directory, "installed");
@@ -241,6 +248,27 @@ async function main() {
     delete env[key];
   const input = path.join(directory, "input.json");
   const output = path.join(directory, "installed.json");
+  const isolationProfile = path.join(directory, "isolation.sb");
+  const checkout = path.dirname(
+    await realpath(
+      execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        cwd: root,
+        encoding: "utf8",
+      }).trim(),
+    ),
+  );
+  const sourceFile = path.join(root, "package.json");
+  const dependencyFile = await realpath(
+    createRequire(path.join(root, "apps/desktop/package.json")).resolve("zod/package.json"),
+  );
+  if (isolated) {
+    await readFile(sourceFile);
+    await readFile(dependencyFile);
+    await writeFile(
+      isolationProfile,
+      `(version 1)\n(allow default)\n(deny network*)\n(deny file-read* (subpath ${JSON.stringify(checkout)}))\n`,
+    );
+  }
   const launch = async (expectRejected, suffix) => {
     if (process.platform === "darwin") {
       // Only this temporary synthetic test host is changed. Keep a valid local
@@ -264,18 +292,35 @@ async function main() {
         { cwd: directory },
       );
     }
-    await writeFile(input, JSON.stringify({ expectRejected }));
+    const server = isolated ? createServer((socket) => socket.end()) : undefined;
+    if (server)
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+    const isolation = server
+      ? { sourceFile, dependencyFile, networkPort: server.address().port }
+      : undefined;
+    await writeFile(input, JSON.stringify({ expectRejected, isolation }));
     await rm(output, { force: true });
-    await run(
-      executable,
-      [
-        "--ui-acceptance-mode=installed",
-        `--ui-acceptance-input=${input}`,
-        `--ui-acceptance-output=${output}`,
-        `--user-data-dir=${path.join(directory, suffix)}`,
-      ],
-      { cwd, env },
-    );
+    try {
+      await run(
+        isolated ? "/usr/bin/sandbox-exec" : executable,
+        [
+          ...(isolated ? ["-f", isolationProfile, executable] : []),
+          "--ui-acceptance-mode=installed",
+          `--ui-acceptance-input=${input}`,
+          `--ui-acceptance-output=${output}`,
+          `--user-data-dir=${path.join(directory, suffix)}`,
+        ],
+        { cwd, env },
+      );
+    } finally {
+      if (server)
+        await new Promise((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+    }
     return JSON.parse(await readFile(output, "utf8"));
   };
   const result = await launch(false, "healthy-profile");
@@ -301,6 +346,7 @@ async function main() {
     missing,
     corrupt,
     artifact,
+    isolationProfile: isolated ? await readFile(isolationProfile, "utf8") : null,
   });
   await writeFile(output, JSON.stringify(result, null, 2));
   await run(
@@ -310,7 +356,9 @@ async function main() {
   );
   console.log(`Synthetic installed evidence: ${output}`);
   console.log(
-    "Clean installation/offline/no-checkout access remains a controller environment gate.",
+    isolated
+      ? "macOS sandbox denied network, checkout and workspace dependencies in the installed synthetic host; other OS and production installation remain separate gates."
+      : "Clean installation/offline/no-checkout access remains a controller environment gate.",
   );
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
