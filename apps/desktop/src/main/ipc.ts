@@ -1,3 +1,4 @@
+import { UpdateInstallation } from "./updates/installation.js";
 import { filePreferencesPatchSchema } from "./workspace/preferences.js";
 import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
@@ -102,7 +103,8 @@ export function registerIpc(
   deviceFoundation?: DesktopDeviceIpc,
   beforeWindowClose?: () => Promise<void>,
   beforeUpdatePrepare?: () => Promise<void>,
-): void {
+  resumeAfterUpdate?: () => Promise<void>,
+): UpdateInstallation {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
     if (!renderer || event.sender.id !== renderer.id || event.senderFrame !== renderer.mainFrame) {
@@ -252,39 +254,22 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  let preparing: Promise<void> | undefined;
-  handle("updates:prepare", () => {
-    if (preparing) return preparing;
-    const work = Promise.resolve().then(async () => {
-      // Publish the reversible admission gate before awaiting existing work.
-      updates.prepareInstall();
+  const installation = new UpdateInstallation(
+    updates,
+    async () => {
       if (beforeUpdatePrepare) await beforeUpdatePrepare();
       else {
         await sensorTools?.motors?.flush();
         await sensorTools?.lab.flush("update");
       }
-    });
-    preparing = work;
-    void work.then(
-      () => {
-        if (preparing === work) preparing = undefined;
-      },
-      () => {
-        if (preparing === work) preparing = undefined;
-        updates.cancelInstall();
-      },
-    );
-    return work;
-  });
-  handle("updates:cancel", async () => {
-    await preparing?.catch(() => undefined);
-    updates.cancelInstall();
-  });
-  handle("updates:install", async () => {
-    await preparing;
-    await beforeUpdateInstall();
-    updates.install();
-  });
+    },
+    beforeUpdateInstall,
+    resumeAfterUpdate,
+    (error) => console.error("Update recovery blocked.", error),
+  );
+  handle("updates:prepare", () => installation.prepare());
+  handle("updates:cancel", () => installation.cancel());
+  handle("updates:install", () => installation.install());
   handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z
@@ -542,6 +527,7 @@ export function registerIpc(
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );
+  return installation;
 }
 
 import type { Principal } from "@kobrixa/plugin-runtime";

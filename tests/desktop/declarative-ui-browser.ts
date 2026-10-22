@@ -140,8 +140,13 @@ export async function run() {
       );
       value(await api.close({ binding: opened.binding }));
     }
-    (document.querySelector(".plugin-tools-toggle") as HTMLButtonElement).click();
-    await until(() => !!document.querySelector(".plugin-tools-pane"), "actual plugin pane");
+    const tools = document.querySelector(".plugin-tools-toggle") as HTMLButtonElement;
+    // Reopened windows restore the layout. Open the pane only if it is currently collapsed.
+    if (tools.getAttribute("aria-pressed") !== "true") tools.click();
+    await until(
+      () => (document.querySelector(".plugin-tools-pane")?.getBoundingClientRect().width ?? 0) > 0,
+      "actual visible plugin pane",
+    );
     const pane = document.querySelector(".plugin-tools-pane")!;
     const titles = Object.values(panels[0]!.title);
     const tab = [...pane.querySelectorAll<HTMLButtonElement>("[role=tab]")].find((button) =>
@@ -190,6 +195,13 @@ export async function run() {
       pluginPids.push(...pids);
     }
     return {
+      currentBinding: value(
+        await api.open({
+          sourceKey: panels[0]!.sourceKey,
+          id: panels[0]!.id,
+          uiResourceGeneration: panels[0]!.uiResourceGeneration,
+        }),
+      ).binding,
       kind: "ui-browser-baseline",
       opened: live.length,
       unicode: invoked.output.unicode,

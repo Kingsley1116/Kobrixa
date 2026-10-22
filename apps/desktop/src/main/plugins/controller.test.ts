@@ -2250,70 +2250,86 @@ it("BM-18 creates one foundation and forwards the exact host/runtime pair", asyn
     await f.cleanup();
   }
 });
-it("update preparation fences new commands, awaits actual exit and permits lazy reuse after cancel without global shutdown", async () => {
-  const { memoryPlugin } =
-    await import("../../../../../packages/plugin-runtime/src/test-process.js");
-  const f = await compositionInput();
-  const directory = await pluginFolder("update-consumer");
-  f.input.plugins.commandLine.developmentDirectories = [directory];
-  const pluginRef: { current?: PluginController } = {};
-  let launches = 0,
-    exitRequested = false;
-  let exit = () => {};
-  f.input.foundationOptions.requirements = (owner) =>
-    pluginRef.current ? desktopDeviceAccess(pluginRef.current).requirements(owner) : null;
-  f.input.plugins.launcher = () => async () => {
-    const first = ++launches === 1;
-    return memoryPlugin((remote, control) => {
-      if (first) exit = () => control.exit();
-      remote.handle("initialize", () => ({
-        apiVersion: "1.6.0",
-        sdk: { name: "test", version: "1" },
-      }));
-      remote.handle("command/execute", () => null);
-      remote.handle("shutdown", () => null);
-      remote.onNotification("exit", () => {
-        if (first) exitRequested = true;
-        else control.exit();
+it.each(
+  (["prepareUpdate", "prepareWindowClose"] as const).flatMap((method) => [
+    { method, failSave: false },
+    { method, failSave: true },
+  ]),
+)(
+  "$method (failed save=$failSave) waits for actual exit before readmission",
+  async ({ method, failSave }) => {
+    const { memoryPlugin } =
+      await import("../../../../../packages/plugin-runtime/src/test-process.js");
+    const f = await compositionInput();
+    if (failSave)
+      f.input.legacyFlush = vi
+        .fn(async () => {})
+        .mockRejectedValueOnce(new Error("legacy save failed"));
+    const directory = await pluginFolder("update-consumer");
+    f.input.plugins.commandLine.developmentDirectories = [directory];
+    const pluginRef: { current?: PluginController } = {};
+    let launches = 0,
+      exitRequested = false;
+    let exit = () => {};
+    f.input.foundationOptions.requirements = (owner) =>
+      pluginRef.current ? desktopDeviceAccess(pluginRef.current).requirements(owner) : null;
+    f.input.plugins.launcher = () => async () => {
+      const first = ++launches === 1;
+      return memoryPlugin((remote, control) => {
+        if (first) exit = () => control.exit();
+        remote.handle("initialize", () => ({
+          apiVersion: "1.6.0",
+          sdk: { name: "test", version: "1" },
+        }));
+        remote.handle("command/execute", () => null);
+        remote.handle("shutdown", () => null);
+        remote.onNotification("exit", () => {
+          if (first) exitRequested = true;
+          else control.exit();
+        });
+      }).process;
+    };
+    const composition = await composeDesktopMain(f.input);
+    const plugins = composition.plugins;
+    pluginRef.current = plugins;
+    const shutdown = vi.spyOn(composition.foundation.broker.resources, "beginShutdown");
+    try {
+      expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({ ok: true });
+      let finished = false;
+      const preparing = desktopUi(composition)
+        [method]()
+        .finally(() => {
+          finished = true;
+        });
+      const checked = failSave
+        ? expect(preparing).rejects.toThrow("legacy save failed")
+        : preparing;
+      expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_SHUTTING_DOWN",
       });
-    }).process;
-  };
-  const composition = await composeDesktopMain(f.input);
-  const plugins = composition.plugins;
-  pluginRef.current = plugins;
-  const shutdown = vi.spyOn(composition.foundation.broker.resources, "beginShutdown");
-  try {
-    expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({ ok: true });
-    let finished = false;
-    const preparing = desktopUi(composition)
-      .prepareUpdate()
-      .then(() => {
-        finished = true;
+      await vi.waitFor(() => expect(exitRequested).toBe(true));
+      expect(finished).toBe(false);
+      expect(shutdown).not.toHaveBeenCalled();
+      exit();
+      await checked;
+      expect(desktopLifecycle(composition).reports()[0]).toMatchObject({
+        processStopped: true,
+        blocker: false,
       });
-    expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({
-      ok: false,
-      code: "PLUGIN_E_SHUTTING_DOWN",
-    });
-    await vi.waitFor(() => expect(exitRequested).toBe(true));
-    expect(finished).toBe(false);
-    expect(shutdown).not.toHaveBeenCalled();
-    exit();
-    await preparing;
-    expect(desktopLifecycle(composition).reports()[0]).toMatchObject({
-      processStopped: true,
-      blocker: false,
-    });
-    await plugins.resume();
-    expect(launches).toBe(1);
-    expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({ ok: true });
-    expect(launches).toBe(2);
-    expect(shutdown).not.toHaveBeenCalled();
-  } finally {
-    exit();
-    await composition.dispose();
-    await f.cleanup();
-  }
-});
+      await plugins.resume();
+      expect(launches).toBe(1);
+      expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({ ok: true });
+      expect(launches).toBe(2);
+      expect(shutdown).not.toHaveBeenCalled();
+    } finally {
+      f.input.legacyFlush = async () => {};
+      exit();
+      await composition.dispose();
+      await f.cleanup();
+    }
+  },
+);
 it("BM-18 secondary never calls the foundation or manager factories", async () => {
   const f = await compositionInput();
   const create = vi.spyOn(PluginManager, "create");

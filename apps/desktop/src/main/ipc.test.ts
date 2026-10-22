@@ -1556,3 +1556,97 @@ it("D150 catalog rejects foreign sessions and invalidates its allocator on real 
     await f.cleanup();
   }
 });
+
+import { WorkbenchLifecycle } from "./window/workbench-lifecycle.js";
+import { UpdateInstallation } from "./updates/installation.js";
+import { desktopUi } from "./plugins/controller.js";
+it.each(["window", "update"] as const)(
+  "real composition %s retirement preserves the host for safe lazy readmission",
+  async (reason) => {
+    const f = await foundationIpc();
+    const ui = desktopUi(f.composition);
+    const shutdown = vi.spyOn(f.broker.resources, "beginShutdown");
+    const workbench = new WorkbenchLifecycle({
+      sessions: () => [f.sessionId],
+      suspend: (id) => f.coordinator.suspend(id),
+      verify: (id) => f.coordinator.confirmSuspended(id),
+      retire: (mode) => (mode === "update" ? ui.prepareUpdate() : ui.prepareWindowClose()),
+      resume: (id) => f.coordinator.resume(id),
+      readmit: () => f.controller.resume(),
+    });
+    try {
+      const operationId = await prepareMotion(f);
+      f.control.block("after-exchange", "motion-pulse");
+      expect((await f.peer.request("devices/motion/start", { operationId })).ok).toBe(true);
+      await f.control.reached("after-exchange", "motion-pulse");
+      const closing = workbench.close(reason);
+      f.control.release("after-exchange", "motion-pulse");
+      await closing;
+      expect(f.shutdown).toHaveBeenCalledOnce();
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(f.controller.acceptingUi).toBe(false);
+      expect(f.journal.snapshot().blockers).toEqual([]);
+      expect(
+        f.control.trace().some((row) => row.step === "readback" && row.dispatch === "sent"),
+      ).toBe(true);
+      const commands = f.commands.mock.calls.length;
+      await workbench.reopen();
+      expect(f.controller.acceptingUi).toBe(true);
+      expect(f.commands).toHaveBeenCalledTimes(commands);
+      expect(
+        await f.broker.request(f.principal, "devices/list", {}, new AbortController().signal),
+      ).toMatchObject({
+        ok: true,
+        value: { sessions: [{ sessionId: f.sessionId, state: "connected" }] },
+      });
+      expect(await f.controller.execute("test.consumer.start")).toMatchObject({ ok: true });
+      expect(f.commands).toHaveBeenCalledTimes(commands + 1);
+      expect(shutdown).not.toHaveBeenCalled();
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+it("real update backend failure can readmit after stop/save/process exit without reviving old consumers", async () => {
+  const f = await foundationIpc();
+  const ui = desktopUi(f.composition);
+  const shutdown = vi.spyOn(f.broker.resources, "beginShutdown");
+  const workbench = new WorkbenchLifecycle({
+    sessions: () => [f.sessionId],
+    suspend: (id) => f.coordinator.suspend(id),
+    verify: (id) => f.coordinator.confirmSuspended(id),
+    retire: () => ui.prepareUpdate(),
+    resume: (id) => f.coordinator.resume(id),
+    readmit: () => f.controller.resume(),
+  });
+  const installation = new UpdateInstallation(
+    f.update,
+    () => ui.prepareUpdate(),
+    () => workbench.close("update"),
+    async () => {
+      await workbench.reopen();
+      await f.controller.resume();
+    },
+  );
+  const off = f.update.onInstallationFailed(() => {
+    void installation.failed();
+  });
+  try {
+    await f.update.check();
+    await installation.prepare();
+    f.installer.mockImplementationOnce(() => {
+      expect(f.shutdown).toHaveBeenCalledOnce();
+      expect(f.journal.snapshot().blockers).toEqual([]);
+      throw new Error("installer failed");
+    });
+    await expect(installation.install()).rejects.toThrow("installer failed");
+    await installation.failed();
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(f.controller.acceptingUi).toBe(true);
+    expect(f.commands).toHaveBeenCalledOnce();
+    expect(await f.controller.execute("test.consumer.start")).toMatchObject({ ok: true });
+  } finally {
+    off();
+    await f.cleanup();
+  }
+});

@@ -3,6 +3,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
 import type {
   DeviceDisposition,
+  DeviceRecoveryPort,
+  DeviceRecoverySnapshot,
+  SafetyFaultEntry,
   DeviceDrainGrant,
   ReservationEnded,
   PersistenceParticipant,
@@ -60,7 +63,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function fixture() {
+function fixture(recovery?: DeviceRecoveryPort) {
   const trace: string[] = [];
   let onEnded: (event: ReservationEnded) => void = () => {};
   let now = 0;
@@ -122,6 +125,7 @@ function fixture() {
   });
   const alive = vi.fn(() => true);
   const input: CoordinatorInput = {
+    ...(recovery ? { recovery } : {}),
     ports: { device: resources, persistence, ui: unavailableUi150() },
     resources,
     sessions,
@@ -827,4 +831,242 @@ it("F17/F19 U12 uses one host fence and waits for actual original supervisor exi
   await closing;
   expect(didExit).toBe(true);
   expect(f.coordinator.reports()[0]!.blocker).toBe(false);
+});
+
+function recoveryFixture() {
+  let snapshot: DeviceRecoverySnapshot = {
+    revision: 1,
+    journalHealth: "ready",
+    faults: [],
+    blockers: [],
+  };
+  const listeners = new Set<(value: DeviceRecoverySnapshot) => void>();
+  const port: DeviceRecoveryPort = {
+    snapshot: () => structuredClone(snapshot),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    stopCurrent: vi.fn(),
+    reconcile: vi.fn(),
+    clearResolved: vi.fn(),
+  };
+  return {
+    port,
+    listeners,
+    publish(
+      faults: SafetyFaultEntry[],
+      journalHealth: DeviceRecoverySnapshot["journalHealth"] = "ready",
+    ) {
+      snapshot = {
+        revision: snapshot.revision + 1,
+        journalHealth,
+        faults,
+        blockers: faults.filter((fault) => fault.state !== "resolved").map((fault) => fault.id),
+      };
+      for (const listener of listeners) listener(port.snapshot());
+    },
+  };
+}
+function recoveredFault(n: number, original = owner): SafetyFaultEntry {
+  return {
+    id: id(n),
+    revision: 2,
+    owner: { kind: "plugin", owner: { ...original } },
+    providerId: "test.provider",
+    providerGeneration: 1,
+    physical: {
+      providerId: "test.provider",
+      family: "ev3",
+      basis: "serial",
+      digest: "a".repeat(64),
+      strength: "stable",
+    },
+    sessionId: id(3),
+    operationId: id(n + 100),
+    operationClass: "safety-stop",
+    createdAt: 1,
+    updatedAt: 2,
+    state: "resolved",
+    dispatch: "unknown",
+    movement: "interrupted",
+    stopRequested: true,
+    stopConfirmation: "confirmed",
+    cause: "none",
+    resolution: {
+      kind: "observed-idle",
+      at: 2,
+      sessionId: id(30),
+      identityEvidence: "serial-match",
+    },
+  };
+}
+it("I2 reconciles all original faults, preserving owner, storage and actual process exit", async () => {
+  const recovery = recoveryFixture(),
+    f = fixture(recovery.port);
+  const failedStorage = { ...saved, recovery: id(55), state: "retryable" as const, blocker: true };
+  const original = { stopConfirmed: false, journalCommitted: false, faultIds: [id(70), id(71)] };
+  const retiring = f.coordinator.retire(owner, "update", 8000);
+  f.device.resolve(original);
+  f.storage.resolve(failedStorage);
+  await retiring;
+  recovery.publish([recoveredFault(70)]);
+  expect(f.coordinator.reports()[0]!.device).toEqual(original);
+  // A later clear cannot erase proof already observed for the first original fault.
+  recovery.publish([recoveredFault(71)]);
+  expect(f.coordinator.reports()[0]).toMatchObject({
+    owner,
+    device: { ...original, stopConfirmed: true, journalCommitted: true },
+    storage: failedStorage,
+    processStopped: false,
+    blocker: true,
+  });
+  f.coordinator.reconcileRecovery(id(55), saved);
+  expect(f.coordinator.reports()[0]!.blocker).toBe(true);
+  f.alive.mockReturnValue(false);
+  f.input.owners = () => [];
+  f.coordinator.reconcileProcesses();
+  expect(f.coordinator.reports()[0]!.blocker).toBe(false);
+  expect(await f.coordinator.pendingSession(id(3))).toEqual([saved]);
+  expect(f.coordinator.retire(owner, "update", 99000)).toBe(retiring);
+  expect(f.resources.retire).toHaveBeenCalledOnce();
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(vi.mocked(f.persistence.freeze).mock.calls[0]![2]).toBe(8000);
+  expect(recovery.port.stopCurrent).not.toHaveBeenCalled();
+  expect(recovery.port.reconcile).not.toHaveBeenCalled();
+  f.coordinator.dispose();
+  expect(recovery.listeners.size).toBe(0);
+});
+it("I2 captures proven recovery cleared before the retirement receipt settles", async () => {
+  const recovery = recoveryFixture(),
+    f = fixture(recovery.port);
+  const retiring = f.coordinator.retire(owner, "update");
+  recovery.publish([recoveredFault(70)]);
+  recovery.publish([]);
+  f.device.resolve({ stopConfirmed: false, journalCommitted: false, faultIds: [id(70)] });
+  f.storage.resolve(saved);
+  await retiring;
+  expect(f.coordinator.reports()[0]!.device).toEqual({
+    stopConfirmed: true,
+    journalCommitted: true,
+    faultIds: [id(70)],
+  });
+  expect(f.coordinator.reports()[0]!.processStopped).toBe(false);
+  f.coordinator.dispose();
+});
+it.each([
+  "missing",
+  "wrong-owner",
+  "unconfirmed",
+  "no-resolution",
+  "unwritable",
+  "corrupt",
+  "full",
+  "mixed",
+  "no-fault",
+])("I2 fails closed for %s recovery evidence", async (kind) => {
+  const recovery = recoveryFixture(),
+    f = fixture(recovery.port);
+  const original = {
+    stopConfirmed: false,
+    journalCommitted: false,
+    faultIds: kind === "no-fault" ? [] : kind === "mixed" ? [id(70), id(71)] : [id(70)],
+  };
+  const retiring = f.coordinator.retire(owner, "update");
+  f.device.resolve(original);
+  f.storage.resolve(saved);
+  await retiring;
+  const fault = recoveredFault(
+    70,
+    kind === "wrong-owner" ? { ...owner, processEpoch: id(99) } : owner,
+  );
+  if (kind === "unconfirmed") fault.stopConfirmation = "unconfirmed";
+  if (kind === "no-resolution") fault.resolution = null;
+  const health = kind === "unwritable" || kind === "corrupt" || kind === "full" ? kind : "ready";
+  recovery.publish(kind === "missing" ? [] : [fault], health);
+  f.alive.mockReturnValue(false);
+  f.input.owners = () => [];
+  f.coordinator.reconcileProcesses();
+  expect(f.coordinator.reports()[0]).toMatchObject({ device: original, blocker: true });
+  f.coordinator.dispose();
+});
+
+it("I2 failed journal publication followed by clear is not recovery proof", async () => {
+  const recovery = recoveryFixture(),
+    f = fixture(recovery.port);
+  const retiring = f.coordinator.retire(owner, "update");
+  recovery.publish([recoveredFault(70)], "unwritable");
+  recovery.publish([]);
+  const original = { stopConfirmed: true, journalCommitted: false, faultIds: [id(70)] };
+  f.device.resolve(original);
+  f.storage.resolve(saved);
+  await retiring;
+  expect(f.coordinator.reports()[0]!.device).toEqual(original);
+  recovery.publish([recoveredFault(70)]);
+  expect(f.coordinator.reports()[0]!.device.journalCommitted).toBe(true);
+  f.coordinator.dispose();
+});
+it("I2 a later unresolved original fault invalidates proof before receipt settlement", async () => {
+  const recovery = recoveryFixture(),
+    f = fixture(recovery.port);
+  const retiring = f.coordinator.retire(owner, "update");
+  recovery.publish([recoveredFault(70), recoveredFault(71)]);
+  recovery.publish([
+    { ...recoveredFault(71), revision: 3, state: "unconfirmed", resolution: null },
+  ]);
+  const original = { stopConfirmed: false, journalCommitted: false, faultIds: [id(70), id(71)] };
+  f.device.resolve(original);
+  f.storage.resolve(saved);
+  await retiring;
+  expect(f.coordinator.reports()[0]!.device).toEqual(original);
+  recovery.publish([{ ...recoveredFault(71), revision: 4 }]);
+  expect(f.coordinator.reports()[0]!.device).toEqual({
+    ...original,
+    stopConfirmed: true,
+    journalCommitted: true,
+  });
+  f.coordinator.dispose();
+});
+it("I2 reads authoritative existing proof at retirement admission", async () => {
+  const recovery = recoveryFixture();
+  recovery.publish([recoveredFault(70)]);
+  const f = fixture(recovery.port);
+  const retiring = f.coordinator.retire(owner, "update");
+  recovery.publish([]);
+  f.device.resolve({ stopConfirmed: false, journalCommitted: false, faultIds: [id(70)] });
+  f.storage.resolve(saved);
+  await retiring;
+  expect(f.coordinator.reports()[0]!.device).toEqual({
+    stopConfirmed: true,
+    journalCommitted: true,
+    faultIds: [id(70)],
+  });
+  f.coordinator.dispose();
+});
+
+it("workbench retry observes the original suspended receipt without wake, another quiesce or a new deadline", async () => {
+  const f = fixture();
+  let observed: DeviceDisposition = {
+    stopConfirmed: false,
+    journalCommitted: true,
+    faultIds: [id(91)],
+  };
+  f.sessions.quiesce.mockImplementation(() => ({
+    sessionId: id(3),
+    ended: [],
+    get settled() {
+      return Promise.resolve(observed);
+    },
+  }));
+  await expect(f.coordinator.suspend(id(3))).rejects.toThrow();
+  await expect(f.coordinator.confirmSuspended(id(3))).rejects.toThrow();
+  observed = { ...observed, stopConfirmed: true };
+  await f.coordinator.confirmSuspended(id(3));
+  expect(f.sessions.quiesce).toHaveBeenCalledOnce();
+  expect(f.sessions.resume).not.toHaveBeenCalled();
+  expect(f.legacyFlush).toHaveBeenCalledOnce();
+  await expect(f.coordinator.confirmSuspended(id(99))).rejects.toThrow("original suspension");
+  f.coordinator.dispose();
 });

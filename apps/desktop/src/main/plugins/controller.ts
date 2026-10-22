@@ -1261,6 +1261,7 @@ type DesktopUi = {
   actions: UserPersistenceActions;
   coordinator: ShutdownCoordinator;
   prepareUpdate(): Promise<void>;
+  prepareWindowClose(): Promise<void>;
   setRecoveryNavigation(navigate: () => void): void;
 };
 const desktopUis = new WeakMap<DesktopMainComposition, DesktopUi>();
@@ -1370,6 +1371,7 @@ export async function composeDesktopMain(
   const lifecycle = new LifecycleCoordinator({
     ports: stage3,
     resources: broker.resources,
+    recovery: broker.recovery,
     sessions: broker.sessions,
     reservations: broker.reservations,
     persistence: stage3.persistence,
@@ -1594,6 +1596,29 @@ export async function composeDesktopMain(
         disposed = true;
       },
     };
+    const prepareRetirement = async (reason: "update" | "window-destroyed") => {
+      plugins!.beginUpdatePreparation();
+      intent.dispose();
+      actions.dispose();
+      const owners = [...runtime().owners()];
+      const dispositions = owners.map((owner) => lifecycle.retire(owner, reason));
+      // Window close and update preparation are reversible. Global beginShutdown belongs to app exit.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const legacy = new Promise<void>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Legacy save deadline expired.")), 10_000);
+        void Promise.resolve()
+          .then(() => input.legacyFlush(reason === "update" ? "update" : "close"))
+          .then(resolve, reject);
+      }).finally(() => clearTimeout(timer));
+      // A failed save must not release update cancellation ahead of pending device retirement.
+      const settled = await Promise.allSettled([legacy, ...dispositions]);
+      await Promise.all(owners.map((owner) => desktopDeviceAccess(plugins!).retire(owner)));
+      lifecycle.reconcileProcesses();
+      const failure = settled.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+      if (lifecycle.reports().some((report) => report.blocker))
+        throw new Error("Plugin retirement remains blocked.");
+    };
     lifecycles.set(composition, lifecycle);
     desktopUis.set(composition, {
       bridge,
@@ -1603,19 +1628,8 @@ export async function composeDesktopMain(
       intent,
       actions,
       coordinator,
-      async prepareUpdate() {
-        plugins!.beginUpdatePreparation();
-        intent.dispose();
-        actions.dispose();
-        const owners = [...runtime().owners()];
-        const dispositions = owners.map((owner) => lifecycle.retire(owner, "update"));
-        // Preserve the reversible update gate. Global beginShutdown belongs to actual install.
-        await Promise.all([input.legacyFlush("update"), ...dispositions]);
-        await Promise.all(owners.map((owner) => desktopDeviceAccess(plugins!).retire(owner)));
-        lifecycle.reconcileProcesses();
-        if (lifecycle.reports().some((report) => report.blocker))
-          throw new Error("Plugin retirement remains blocked.");
-      },
+      prepareUpdate: () => prepareRetirement("update"),
+      prepareWindowClose: () => prepareRetirement("window-destroyed"),
       setRecoveryNavigation(navigate) {
         navigateRecovery = navigate;
       },

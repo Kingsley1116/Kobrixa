@@ -62,6 +62,7 @@ import type { Handle } from "@kobrixa/plugin-protocol";
 import type {
   CoreActionReference,
   DeviceDisposition,
+  DeviceRecoveryPort,
   DeviceResourceParticipant,
   DeviceSessionControlPort,
   ReservationBindingPort,
@@ -114,6 +115,8 @@ export interface CoordinatorInput {
   shutdown(): Promise<void>;
   legacyFlush(reason: "close" | "update" | "suspend"): Promise<void>;
   report(error: unknown): void;
+  // Host composition only: never supply renderer-provided recovery snapshots.
+  recovery?: DeviceRecoveryPort;
 }
 export type RetirementReport = {
   owner: ResourceOwner;
@@ -143,6 +146,7 @@ type RetirementWork = {
   storage: Promise<DrainReport>;
   done: Promise<void>;
   settled: boolean;
+  recoveredFaults: Set<Handle>;
   report?: RetirementReport;
 };
 const unknownDevice = (): DeviceDisposition => ({
@@ -163,6 +167,7 @@ export class LifecycleCoordinator {
   readonly #suspending = new Map<Handle, SuspendWork>();
   readonly #disconnecting = new Map<string, Promise<void>>();
   readonly #off: () => void;
+  readonly #offRecovery: (() => void) | undefined;
   #close: Promise<void> | undefined;
   #closeStarted: number | undefined;
   #closed = false;
@@ -170,6 +175,7 @@ export class LifecycleCoordinator {
     if (input.ports.device !== input.resources || input.ports.persistence !== input.persistence)
       throw new Error("Coordinator must share the runtime participants.");
     this.#off = input.reservations.onEnded((event) => this.#ended(event));
+    this.#offRecovery = input.recovery?.subscribe(() => this.#reconcileDeviceRecovery());
   }
   #bounded<T>(work: Promise<T>, deadline: number, message: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -266,8 +272,16 @@ export class LifecycleCoordinator {
       "Device stop/journal deadline expired.",
     );
     const storage = receipt.then((value) => value.persistence);
-    const row: RetirementWork = { owner: { ...owner }, device, storage, done, settled: false };
+    const row: RetirementWork = {
+      owner: { ...owner },
+      device,
+      storage,
+      done,
+      settled: false,
+      recoveredFaults: new Set(),
+    };
     this.#retiring.set(key, row); // Publish before synchronous onEnded/reentrant retirement.
+    this.#reconcileDeviceRecovery();
     try {
       void retireStage3Owner(
         this.input.ports,
@@ -285,11 +299,12 @@ export class LifecycleCoordinator {
         row.settled = true;
         row.report = {
           owner: row.owner,
-          device: d,
+          device: structuredClone(d),
           storage: report,
           processStopped: this.#closed,
           blocker: true,
         };
+        this.#reconcileDeviceRecovery();
         this.#refresh(row);
         resolve(); // Resource disposition completed; close separately checks the authoritative report.
       })
@@ -307,6 +322,34 @@ export class LifecycleCoordinator {
       });
     void done.catch(() => undefined);
     return done;
+  }
+  #reconcileDeviceRecovery(): void {
+    // Read the injected host port, rather than accepting event/UI payloads as evidence.
+    const snapshot = this.input.recovery?.snapshot();
+    if (!snapshot || snapshot.journalHealth !== "ready") return;
+    for (const row of this.#retiring.values()) {
+      for (const fault of snapshot.faults) {
+        const proven =
+          fault.owner.kind === "plugin" &&
+          ownerKey(fault.owner.owner) === ownerKey(row.owner) &&
+          fault.state === "resolved" &&
+          fault.stopConfirmation === "confirmed" &&
+          fault.resolution !== null &&
+          (fault.resolution.kind === "confirmed-on-original-session" ||
+            fault.resolution.kind === "observed-idle") &&
+          !snapshot.blockers.includes(fault.id);
+        if (proven) row.recoveredFaults.add(fault.id);
+        else row.recoveredFaults.delete(fault.id);
+      }
+      // Retain positive committed proof through clearResolved, including when recovery
+      // finishes before the joined retirement receipt reveals its original fault IDs.
+      // Absence, journal health alone and an unknown/no-fault receipt prove nothing.
+      const device = row.report?.device;
+      if (device?.faultIds.length && device.faultIds.every((id) => row.recoveredFaults.has(id))) {
+        row.report!.device = { ...device, stopConfirmed: true, journalCommitted: true };
+        this.#refresh(row);
+      }
+    }
   }
   #refresh(row: RetirementWork): void {
     if (!row.report) return;
@@ -467,6 +510,19 @@ export class LifecycleCoordinator {
     );
     return wake;
   }
+  /** Recheck the original quiescence receipt without admitting new device work. */
+  async confirmSuspended(sessionId: Handle): Promise<void> {
+    const row = this.#suspending.get(sessionId);
+    if (!row) throw new Error("No original suspension receipt.");
+    await row.work.catch(() => undefined);
+    await row.legacy;
+    const device = await this.#bounded(
+      row.receipt.settled,
+      row.deadline,
+      "Suspend stop/journal observation deadline expired.",
+    );
+    this.#assert(device, await this.#sessionReports(sessionId));
+  }
   async #resume(row: SuspendWork): Promise<void> {
     await row.work.catch(() => undefined);
     await row.legacy;
@@ -546,6 +602,7 @@ export class LifecycleCoordinator {
   }
   dispose(): void {
     this.#off();
+    this.#offRecovery?.();
   }
 }
 

@@ -14,11 +14,14 @@ const require = createRequire(path.join(root, "apps/desktop/package.json"));
 const plainGlyphs = process.argv.slice(2).includes("--plain-glyphs");
 const diagnostics = process.argv.slice(2).includes("--renderer-diagnostics");
 const legacy = process.argv.slice(2).includes("--legacy-compatibility");
+const reopen = process.argv.slice(2).includes("--reopen");
 assert.ok(
   process.argv
     .slice(2)
     .every((arg) =>
-      ["--plain-glyphs", "--renderer-diagnostics", "--legacy-compatibility"].includes(arg),
+      ["--plain-glyphs", "--renderer-diagnostics", "--legacy-compatibility", "--reopen"].includes(
+        arg,
+      ),
     ),
 );
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-browser-")));
@@ -157,6 +160,7 @@ const child = spawn(
     `--ui-browser-output=${output}`,
     `--ui-browser-probe=${probe}`,
     ...(diagnostics ? ["--ui-browser-diagnostics"] : []),
+    ...(reopen ? ["--ui-browser-reopen"] : []),
     ...(compatibility ? ["--ui-browser-legacy", `--plugin-python=${compatibility.python}`] : []),
     `--user-data-dir=${path.join(directory, "profile")}`,
     `--plugin-dev-dir=${sources.join(path.delimiter)}`,

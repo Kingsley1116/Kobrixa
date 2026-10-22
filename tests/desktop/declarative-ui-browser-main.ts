@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { app, crashReporter } from "electron";
+import { app, crashReporter, type BrowserWindow } from "electron";
 
 const output = app.commandLine.getSwitchValue("ui-browser-output");
 const probe = app.commandLine.getSwitchValue("ui-browser-probe");
@@ -167,8 +167,53 @@ app.on("browser-window-created", (_event, window) => {
           2,
         ),
       );
-      window.once("closed", () => app.quit());
-      window.close(); // Exercise the production handshake, flush and retirement path.
+      if (app.commandLine.hasSwitch("ui-browser-reopen")) {
+        assert.equal(
+          process.platform,
+          "darwin",
+          "last-window activation is a macOS acceptance case",
+        );
+        const replacement = new Promise<BrowserWindow>((resolve) => {
+          app.once("browser-window-created", (_event, next) =>
+            next.webContents.once("did-finish-load", () => resolve(next)),
+          );
+        });
+        window.once("closed", () => {
+          app.emit("activate");
+        });
+        window.close();
+        const next = await replacement;
+        next.show();
+        next.focus();
+        const focusedAt = performance.now();
+        while (
+          (!next.isFocused() ||
+            !(await next.webContents.executeJavaScript("document.hasFocus()"))) &&
+          performance.now() - focusedAt < 5000
+        )
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(next.isFocused(), true, "replacement workbench focus");
+        await next.webContents.executeJavaScript(await readFile(probe, "utf8"));
+        const reopened = await next.webContents.executeJavaScript(
+          'declarativeProbe.run().catch(error => { console.error(JSON.stringify({focus:document.hasFocus(), pane:document.querySelector(".plugin-tools-pane")?.outerHTML})); throw error; })',
+        );
+        const receipt = JSON.parse(await readFile(output, "utf8"));
+        assert.equal(reopened.currentBinding.hostEpoch, report.currentBinding.hostEpoch);
+        assert.notEqual(reopened.currentBinding.processEpoch, report.currentBinding.processEpoch);
+        assert.notEqual(reopened.currentBinding.panelInstance, report.currentBinding.panelInstance);
+        const stale = await next.webContents.executeJavaScript(
+          `window.kobrixa.plugins.ui.snapshot({binding:${JSON.stringify(report.currentBinding)}})`,
+        );
+        assert.equal(stale.ok, false, "old window binding survived replacement");
+        receipt.reopened = { ...reopened, oldWindowBindingRejected: true };
+        receipt.childPids.push(...reopened.pluginPids);
+        await writeFile(output, JSON.stringify(receipt, null, 2));
+        next.once("closed", () => app.quit());
+        next.close();
+      } else {
+        window.once("closed", () => app.quit());
+        window.close(); // Exercise the production handshake, flush and retirement path.
+      }
     })().catch(fail);
   });
 });
