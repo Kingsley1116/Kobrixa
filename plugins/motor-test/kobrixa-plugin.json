@@ -1,0 +1,96 @@
+{
+  "id": "kobrixa.motor-test",
+  "version": "1.0.0",
+  "apiVersion": "^1.6.0",
+  "displayName": {
+    "en": "Motor test",
+    "zh-TW": "馬達測試"
+  },
+  "runtime": {
+    "kind": "node",
+    "entry": "main.cjs"
+  },
+  "permissions": ["devices.read", "devices.control", "ui.panels", "ui.status"],
+  "requires": {
+    "devices": [
+      {
+        "capability": "finiteMotion.v1",
+        "required": true
+      }
+    ]
+  },
+  "activationEvents": ["onPanel:kobrixa.motor-test.panel"],
+  "contributes": {
+    "panels": [
+      {
+        "id": "kobrixa.motor-test.panel",
+        "title": {
+          "en": "Motor test",
+          "zh-TW": "馬達測試"
+        },
+        "location": "right",
+        "resource": {
+          "version": 1,
+          "path": "panel.json"
+        }
+      }
+    ],
+    "status": [
+      {
+        "id": "kobrixa.motor-test.status",
+        "title": {
+          "en": "Motor test status",
+          "zh-TW": "馬達測試狀態"
+        },
+        "resource": {
+          "version": 1,
+          "path": "status.json"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "kobrixa.motor-test.select-current",
+        "title": {
+          "en": "Use current connection",
+          "zh-TW": "使用目前連線"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.motor-test.refresh",
+        "title": {
+          "en": "Refresh availability",
+          "zh-TW": "重新整理可用性"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.motor-test.start",
+        "title": {
+          "en": "Start motion",
+          "zh-TW": "開始運轉"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.motor-test.jog",
+        "title": {
+          "en": "Hold to jog",
+          "zh-TW": "按住點動"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "direction": {
+            "type": "enum",
+            "values": ["1", "-1"],
+            "nullable": false
+          }
+        }
+      }
+    ]
+  }
+}
