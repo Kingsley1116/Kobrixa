@@ -103,7 +103,7 @@ computing gzip size...
 ../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/lspLanguageFeatures-D6NGmlQO.js     28.27 kB │ gzip:     7.21 kB │ map:    133.83 kB
 ../../../../../../../private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-dhyqlm/.vite/renderer/main_window/assets/index-DVVxnS1R.js                5,380.17 kB │ gzip: 1,441.79 kB │ map: 20,991.95 kB
 
-[plugin builtin:vite-reporter] 
+[plugin builtin:vite-reporter]
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
 - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting

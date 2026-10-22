@@ -37,7 +37,8 @@ test(
     assert.ok(Object.values(data.final.counters).every((value) => value === 0));
     assert.ok(data.baseline.counters.resourceReaders > 0);
     assert.ok(data.events.some((event) => event.kind === "apply"));
-    assert.ok(data.events.some((event) => event.kind === "revoke"));
+    // No motion gesture is started in these mount/unmount cycles. Revocation
+    // observations belong to the separate native motion acceptance matrix.
     const heap = report.rendererHeap;
     assert.equal(heap.scope, "renderer-isolate-only");
     assert.equal(heap.before.length, 3);
