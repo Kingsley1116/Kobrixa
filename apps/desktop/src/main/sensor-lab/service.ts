@@ -25,7 +25,7 @@ export interface SensorLabDependencies {
   directory: string;
   device(sessionId: string): DeviceDescriptor;
   /** Resolves after a fresh sample; shares the visible monitor's existing scheduler. */
-  acquire(sessionId: string): void | Promise<void>;
+  acquire(sessionId: string, channels: SensorChannel[]): void | Promise<void>;
   /** Drains a pending exchange without cancelling it. */
   release(sessionId: string): void | Promise<void>;
   publish(state: SensorLabState): void;
@@ -120,7 +120,10 @@ export class SensorLabService {
         throw new Error("The 50-recording limit has been reached. Delete a recording first.");
       let keepSubscription = false;
       try {
-        await this.dependencies.acquire(parsed.sessionId);
+        await this.dependencies.acquire(
+          parsed.sessionId,
+          parsed.channels.map((value) => value.source),
+        );
         const update =
           this.dependencies.latest?.(parsed.sessionId) ?? this.updates.get(parsed.sessionId);
         const snapshot = update?.snapshot;

@@ -12,9 +12,10 @@ export async function checkPackagedStaticLanguages({ js, send, until, profile, s
   assert.equal(Object.hasOwn(builtin.configuration, "wordPattern"), false);
   assert.equal(Object.hasOwn(builtin.configuration, "onEnterRules"), false);
   assert.ok(builtin.resourceBytes.tokenizer > 0 && builtin.resourceBytes.configuration > 0);
+  // Monaco exposes data-mode-id on its host .editor, not the inner .monaco-editor.
   assert.equal(
     await js(
-      "Boolean(document.querySelector('.editor-stage .monaco-editor[data-mode-id=\"bp\"]'))",
+      "Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"bp\"]'))",
     ),
     true,
   );
@@ -32,7 +33,7 @@ export async function checkPackagedStaticLanguages({ js, send, until, profile, s
   assert.equal((await marker()).thirdPartyStaticContributions, true);
   assert.equal((await marker()).thirdPartyRunning, false);
   const mode = (id) =>
-    js(`Boolean(document.querySelector('.editor-stage .monaco-editor[data-mode-id="${id}"]'))`);
+    js(`Boolean(document.querySelector('.editor-stage .editor[data-mode-id="${id}"]'))`);
   const select = async (file, language) => {
     await js(`document.querySelector('[data-tree-path="${file}"]').click()`);
     await until(() => mode(language));

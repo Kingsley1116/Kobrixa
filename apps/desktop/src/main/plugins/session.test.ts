@@ -160,3 +160,22 @@ it("throws on a failed checked write and retries instead of caching an unwritten
   expect((await onDisk()).thirdPartyStaticContributions).toBe(true);
   expect(marker().begin()).toBe("unclean-exit");
 });
+import { filePluginStateStore } from "./state-store.js";
+it.each([false, true])(
+  "D150 crash recovery risk=%s never re-enables a persisted optional builtin",
+  async (risk) => {
+    const store = filePluginStateStore(root);
+    await store.load();
+    await store.save({
+      disabled: new Set(["builtin:kobrixa.device-ev3"]),
+      legacyDisabledIds: new Set(),
+    });
+    const crashed = marker();
+    crashed.begin();
+    crashed.update({ thirdPartyRunning: risk });
+    expect(marker().begin()).toBe(risk ? "unclean-exit" : undefined);
+    expect((await filePluginStateStore(root).load()).disabled).toEqual(
+      new Set(["builtin:kobrixa.device-ev3"]),
+    );
+  },
+);

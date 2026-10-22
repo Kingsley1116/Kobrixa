@@ -1,4 +1,19 @@
-import type { Handle, Counter, Timestamp, BoundedId, DeviceCandidate, CapabilityId, SourceCatalog, TelemetryFrame, InputModesValue, ReadSnapshot, MotionSpec, MotionSnapshot, DispatchOutcome, DeviceErrorReason } from "@kobrixa/plugin-protocol";
+import type {
+  Handle,
+  Counter,
+  Timestamp,
+  BoundedId,
+  DeviceCandidate,
+  CapabilityId,
+  SourceCatalog,
+  TelemetryFrame,
+  InputModesValue,
+  ReadSnapshot,
+  MotionSpec,
+  MotionSnapshot,
+  DispatchOutcome,
+  DeviceErrorReason,
+} from "@kobrixa/plugin-protocol";
 import type { OperationClass, PhysicalIdentity } from "@kobrixa/plugin-runtime";
 import type { RemoteEntry } from "@kobrixa/device";
 // Provider-local opaque objects; only provider construction can create these.
@@ -6,11 +21,12 @@ export declare const candidateBrand: unique symbol;
 export declare const sessionBrand: unique symbol;
 export type ProviderCandidateKey = { readonly [candidateBrand]: true };
 export type ProviderSessionKey = { readonly [sessionBrand]: true };
-export type DeviceConnectionPolicy=Readonly<{
-  wifiConnectTimeoutMs:3000|5000|10000|30000;
-  wifiHandshakeTimeoutMs:1000|3000|5000|10000;
-  usbAutoReconnect:boolean;usbRetryInterval:"backoff"|1000|2000|5000|10000;
-  usbRetryLimit:"unlimited"|3|5|10;
+export type DeviceConnectionPolicy = Readonly<{
+  wifiConnectTimeoutMs: 3000 | 5000 | 10000 | 30000;
+  wifiHandshakeTimeoutMs: 1000 | 3000 | 5000 | 10000;
+  usbAutoReconnect: boolean;
+  usbRetryInterval: "backoff" | 1000 | 2000 | 5000 | 10000;
+  usbRetryLimit: "unlimited" | 3 | 5 | 10;
 }>;
 export interface ProviderCatalogPort {
   connectionPolicy(): DeviceConnectionPolicy;
@@ -192,4 +208,179 @@ export interface ProviderCleanupContext {
     step: "stop" | "readback" | "file-close" | "disconnect",
     invoke: (transportSignal: AbortSignal, timeoutMs: number) => Promise<T>,
   ): Promise<T>;
+}
+
+import { deviceFailure } from "./registry.js";
+export class ExchangeLane {
+  foreground: string | null = null;
+  quarantined = false;
+  #inflight: Promise<unknown> | null = null;
+  constructor(private readonly now: () => number) {}
+  get occupied(): boolean {
+    return this.#inflight !== null;
+  }
+  reserve(id: string): void {
+    if (this.foreground !== null || this.quarantined)
+      return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
+    this.foreground = id;
+  }
+  release(id: string): void {
+    if (this.foreground === id && !this.#inflight && !this.quarantined) this.foreground = null;
+  }
+  async drain(deadline: number): Promise<void> {
+    if (this.#inflight) await this.#bounded(this.#inflight, deadline);
+  }
+  async #bounded<T>(promise: Promise<T>, deadline: number): Promise<T> {
+    const delay = deadline - this.now();
+    const remaining = Number.isNaN(delay) ? 2147483647 : Math.min(delay, 2147483647);
+    if (remaining <= 0) return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            this.quarantined = true;
+            reject(new Error("Provider exchange deadline"));
+          }, remaining);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  async exchange<T>(
+    id: string,
+    deadline: number,
+    limit: number,
+    check: () => void,
+    invoke: (signal: AbortSignal, timeout: number) => Promise<T>,
+  ): Promise<T> {
+    if (this.foreground !== null && this.foreground !== id)
+      return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
+    await this.drain(deadline);
+    while (this.#inflight) await this.drain(deadline);
+    if (this.foreground !== null && this.foreground !== id)
+      return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
+    check();
+    const delay = Math.min(limit, deadline - this.now());
+    const timeout = Number.isNaN(delay) ? 2147483647 : Math.min(delay, 2147483647);
+    if (timeout <= 0) return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    const promise = Promise.resolve().then(() => {
+      check();
+      return invoke(controller.signal, timeout);
+    });
+    this.#inflight = promise;
+    void promise.then(
+      () => {
+        if (this.#inflight === promise) this.#inflight = null;
+      },
+      () => {
+        if (this.#inflight === promise) this.#inflight = null;
+      },
+    );
+    try {
+      const result = await this.#bounded(promise, this.now() + timeout);
+      check();
+      return result;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+export function exchangeBudget(step: ProviderStep): number {
+  return ["helper-upload", "file-begin", "file-chunk", "file-copy", "file-close"].includes(step)
+    ? 10000
+    : ["preflight", "helper-run", "helper-arm", "motion-pulse", "stop", "readback"].includes(step)
+      ? 2000
+      : 5000;
+}
+export function createContexts(input: {
+  id: string;
+  sessionId: string | null;
+  generation: number;
+  operationClass: OperationClass;
+  deadline: number;
+  rearmMs?: number;
+  now: () => number;
+  lane: ExchangeLane;
+  check: () => void;
+  progress: ProviderOperationContext["publishProgress"];
+  onStop: (reason: DeviceErrorReason) => void;
+}) {
+  const cancellation = new AbortController(),
+    cleanupSignal = new AbortController();
+  let requested = false,
+    brake = false,
+    stopDeadline: number | null = null;
+  const stop = (reason: DeviceErrorReason, forced: boolean) => {
+    const changed = !requested || (forced && !brake);
+    brake = brake || forced;
+    requested = true;
+    stopDeadline ??= input.now() + 15000;
+    cancellation.abort();
+    if (changed) input.onStop(reason);
+  };
+  let deadline = input.deadline;
+  const check = () => {
+    if (requested || cancellation.signal.aborted)
+      return deviceFailure("PLUGIN_E_CANCELLED", "cancelled");
+    if (input.now() >= deadline && input.rearmMs === undefined) {
+      stop("deadline", true);
+      return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
+    }
+    input.check();
+  };
+  const work: ProviderOperationContext = {
+    operationId: input.id,
+    sessionId: input.sessionId,
+    providerGeneration: input.generation,
+    operationClass: input.operationClass,
+    cancellation: cancellation.signal,
+    get deadlineMonotonicMs() {
+      return input.rearmMs === undefined ? deadline : input.now() + input.rearmMs;
+    },
+    now: input.now,
+    assertContinuation: (step) =>
+      step === "file-close" ? cleanup.assertCleanup("file-close") : check(),
+    shouldYield: () => requested,
+    stopState: () => ({ requested, brakeRequired: brake }),
+    exchange: (step, invoke) => {
+      if (step === "file-close") return cleanup.exchange("file-close", invoke);
+      if (input.rearmMs !== undefined) deadline = input.now() + input.rearmMs;
+      return input.lane.exchange(input.id, deadline, exchangeBudget(step), check, invoke);
+    },
+    publishProgress: input.progress,
+    requestSafetyStop: (reason) => stop(reason, true),
+  };
+  const cleanupCheck = () => {
+    if (stopDeadline === null) stopDeadline = input.now() + 15000;
+    if (input.now() >= stopDeadline)
+      return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "stop-deadline", "unknown");
+  };
+  const cleanup: ProviderCleanupContext = {
+    operationId: input.id,
+    sessionId: input.sessionId,
+    providerGeneration: input.generation,
+    signal: cleanupSignal.signal,
+    get deadlineMonotonicMs() {
+      return stopDeadline ?? input.now() + 15000;
+    },
+    now: input.now,
+    brakeRequired: () => brake,
+    assertCleanup: () => cleanupCheck(),
+    exchange: (step, invoke) => {
+      cleanupCheck();
+      return input.lane.exchange(
+        input.id,
+        stopDeadline!,
+        exchangeBudget(step),
+        cleanupCheck,
+        invoke,
+      );
+    },
+  };
+  return { work, cleanup, stop };
 }

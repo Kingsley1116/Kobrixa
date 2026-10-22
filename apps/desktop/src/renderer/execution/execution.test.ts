@@ -96,6 +96,7 @@ function setup() {
       setPreferences: vi.fn(),
       files: vi.fn(),
       prepareFiles: vi.fn(),
+      renewFiles: vi.fn(),
       executeFiles: vi.fn(),
       stopFiles: vi.fn(),
       onEvent: vi.fn((listener) => {
@@ -652,6 +653,73 @@ describe("USB recovery state", () => {
     expect(h.controller.getSnapshot().session?.id).toBe("s2");
   });
 
+  it("retains recovery for retry when cancellation cleanup fails", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.emitDevice(waiting);
+    const recovery = h.controller.getSnapshot().recovery;
+    h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
+    await h.controller.disconnect();
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.controller.getSnapshot().recovery).toEqual(recovery);
+    expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
+  });
+
+  it.each([usb, "192.168.0.2"])(
+    "does not connect after failed recovery cancellation, but permits an explicit retry (%s)",
+    async (target) => {
+      const h = setup();
+      await h.controller.connect(usb);
+      h.emitDevice(waiting);
+      const recovery = h.controller.getSnapshot().recovery;
+      h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
+      await h.controller.connect(target);
+      expect(h.api.device.connect).toHaveBeenCalledTimes(1);
+      expect(h.api.device.connectWifi).not.toHaveBeenCalled();
+      expect(h.controller.getSnapshot().session).toBeUndefined();
+      expect(h.controller.getSnapshot().recovery).toEqual(recovery);
+      expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
+      await h.controller.connect(target);
+      expect(h.api.device.disconnect).toHaveBeenCalledTimes(2);
+      expect(h.controller.getSnapshot().recovery).toBeUndefined();
+      expect(h.controller.getSnapshot().session?.id).toBe(typeof target === "string" ? "s2" : "s1");
+      expect(h.controller.getSnapshot().error).toBeUndefined();
+    },
+  );
+
+  it.each(["disconnect", "connect"] as const)(
+    "does not start another connection while %s cancels recovery",
+    async (initiator) => {
+      const h = setup();
+      await h.controller.connect(usb);
+      h.emitDevice(waiting);
+      const cancelled = deferred<void>();
+      h.api.device.disconnect.mockReturnValueOnce(cancelled.promise);
+      const pending =
+        initiator === "disconnect"
+          ? h.controller.disconnect()
+          : h.controller.connect("192.168.0.2");
+      try {
+        expect(h.controller.locked).toBe(true);
+        await h.controller.connect(usb);
+        await h.controller.connect("192.168.0.3");
+        h.emitDevice(recovered);
+        expect(h.api.device.connect).toHaveBeenCalledTimes(1);
+        expect(h.api.device.connectWifi).not.toHaveBeenCalled();
+        expect(h.controller.getSnapshot().session).toBeUndefined();
+        expect(h.controller.getSnapshot().recovery).toBeUndefined();
+      } finally {
+        cancelled.resolve();
+        await pending;
+      }
+      expect(h.controller.locked).toBe(false);
+      expect(h.api.device.connect).toHaveBeenCalledTimes(1);
+      expect(h.api.device.connectWifi).toHaveBeenCalledTimes(initiator === "connect" ? 1 : 0);
+      if (initiator === "connect")
+        expect(h.api.device.connectWifi).toHaveBeenCalledWith("192.168.0.2");
+    },
+  );
+
   it("does not restore changed files or a closed project's uploaded version", async () => {
     const h = setup();
     await h.controller.connect(usb);
@@ -764,4 +832,25 @@ it("keeps a successful non-deployable build without a build error", async () => 
     detail: "BUILD1005: This target cannot deploy to EV3.",
     failed: false,
   });
+});
+
+it("F17 core Disconnect keeps the session until stop/save/disconnect acknowledges", async () => {
+  const { controller, api } = setup();
+  await controller.connect(usb);
+  let reject!: (error: Error) => void;
+  api.device.disconnect.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      }),
+  );
+  const disconnect = controller.disconnect();
+  expect(controller.getSnapshot().session?.id).toBe("s1");
+  expect(controller.locked).toBe(true);
+  expect(controller.getSnapshot().phase).toBe("disconnecting");
+  reject(new Error("Stop is unconfirmed; journal blocker retained"));
+  await disconnect;
+  expect(controller.getSnapshot().session?.id).toBe("s1");
+  expect(controller.getSnapshot().error?.detail).toContain("unconfirmed");
+  expect(controller.locked).toBe(false);
 });

@@ -178,3 +178,111 @@ it("sends output lines to the output hook together with the plugin", async () =>
     "hi",
   );
 });
+
+const channelOwner = Object.freeze({
+  sourceKey: "dev:0123456789abcdef",
+  pluginId: "acme.logs",
+  generation: 4,
+  hostEpoch: "00000000-0000-4000-8000-000000000001",
+  processEpoch: "00000000-0000-4000-8000-000000000002",
+});
+
+afterEach(() => vi.unstubAllEnvs());
+it.each(["node", "python"] as const)(
+  "F02 %s launch replaces inherited owner metadata and strips it for legacy children",
+  async (runtime) => {
+    vi.stubEnv("KOBRIXA_RESOURCE_OWNER", '{"pluginId":"malicious.owner"}');
+    for (const owner of [channelOwner, undefined]) {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        postMessage: vi.fn(),
+        kill: vi.fn(),
+      });
+      vi.mocked(utilityProcess.fork).mockReturnValue(child as unknown as Electron.UtilityProcess);
+      const launched = createDesktopLauncher({
+        python: () => ({ executable: "/python", args: [] }),
+      })({
+        ...plugin,
+        runtime,
+        ...(owner ? { channelOwner: owner } : {}),
+      });
+      if (runtime === "node") child.emit("spawn");
+      await launched;
+      const env =
+        runtime === "node"
+          ? vi.mocked(utilityProcess.fork).mock.calls.at(-1)![2]!.env!
+          : vi.mocked(spawnPluginProcess).mock.calls.at(-1)![2].env!;
+      if (owner)
+        expect(JSON.parse(Reflect.get(env, "KOBRIXA_RESOURCE_OWNER") as string)).toEqual(owner);
+      else expect(env).not.toHaveProperty("KOBRIXA_RESOURCE_OWNER");
+      if (runtime === "python")
+        expect(env).toMatchObject({
+          PYTHONUNBUFFERED: "1",
+          PYTHONIOENCODING: "utf-8",
+          PYTHONUTF8: "1",
+        });
+      expect(process.env.KOBRIXA_RESOURCE_OWNER).toBe('{"pluginId":"malicious.owner"}');
+      if (runtime === "node") child.emit("exit", 0);
+    }
+  },
+);
+
+it.each(["node", "python"] as const)(
+  "F02 %s rejects invalid channel metadata before spawning",
+  async (runtime) => {
+    const before = [
+      vi.mocked(utilityProcess.fork).mock.calls.length,
+      vi.mocked(spawnPluginProcess).mock.calls.length,
+    ];
+    await expect(
+      createDesktopLauncher({ python: () => ({ executable: "/python", args: [] }) })({
+        ...plugin,
+        runtime,
+        channelOwner: { ...channelOwner, processEpoch: "invalid" },
+      }),
+    ).rejects.toThrow();
+    expect([
+      vi.mocked(utilityProcess.fork).mock.calls.length,
+      vi.mocked(spawnPluginProcess).mock.calls.length,
+    ]).toEqual(before);
+  },
+);
+
+it("F02 SDK event binding is one-shot and child mutation cannot replace the trusted owner", async () => {
+  const { bindEventChannel, eventInbox } =
+    await import("../../../../../packages/plugin-sdk-js/src/events.js");
+  const { createMemoryChannelPair, RpcPeer } = await import("@kobrixa/plugin-protocol");
+  const [host, child] = createMemoryChannelPair();
+  const hostPeer = new RpcPeer(host);
+  const peer = new RpcPeer(child);
+  try {
+    const childCopy = JSON.parse(JSON.stringify(channelOwner));
+    bindEventChannel(peer, childCopy);
+    expect(() => bindEventChannel(peer, childCopy)).toThrow("already bound");
+    const inbox = eventInbox(peer);
+    inbox.enable();
+    const subscriptionId = "00000000-0000-4000-8000-000000000003";
+    inbox.open(
+      subscriptionId,
+      () => {},
+      async () => {},
+    );
+    childCopy.processEpoch = "00000000-0000-4000-8000-000000000099";
+    const event = {
+      version: 1,
+      subscriptionId,
+      owner: channelOwner,
+      sequence: 1,
+      delivery: "control",
+      kind: "devices.catalog",
+      data: { revision: 1, providers: [], sessions: [] },
+    };
+    expect(inbox.accept({ ...event, owner: childCopy })).toBe(false);
+    expect(inbox.accept(event)).toBe(true);
+    expect(channelOwner.processEpoch).toBe("00000000-0000-4000-8000-000000000002");
+  } finally {
+    hostPeer.close();
+    peer.close();
+  }
+});

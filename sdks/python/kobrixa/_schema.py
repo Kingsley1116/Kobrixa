@@ -5,6 +5,8 @@ String lengths count Unicode code points, as JSON Schema and Zod 4 do, and an
 anchored trailing "$" means end of string, as in ECMAScript.
 """
 import json
+import math
+import ipaddress
 import re
 from functools import lru_cache
 from importlib import resources
@@ -28,7 +30,7 @@ def _regex(pattern: str) -> "re.Pattern[str]":
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (isinstance(value, int) or math.isfinite(value))
 
 
 def _is_type(value, name: str) -> bool:
@@ -66,6 +68,7 @@ class Validator:
         errors = self._check(self._definitions[name], value, "$")
         if errors:
             raise SchemaError(errors[0])
+        _device_semantics(name, value)
 
     def _check(self, schema: dict, value, path: str) -> list:
         unknown = set(schema) - SUPPORTED_KEYWORDS
@@ -112,3 +115,55 @@ class Validator:
                 elif isinstance(schema.get("additionalProperties"), dict):
                     errors += self._check(schema["additionalProperties"], item, f"{path}.{key}")
         return errors
+
+_DEVICE_REASONS={
+ 'PLUGIN_E_DEVICE_UNAVAILABLE':('provider-disabled','disconnected','quarantined','ui-scope-unavailable'),
+ 'PLUGIN_E_DEVICE_CAPABILITY':('unsupported-capability',),
+ 'PLUGIN_E_DEVICE_BUSY':('foreground','recording','connecting','source-changing'),
+ 'PLUGIN_E_DEVICE_AUTHORITY':('unbound','joining','unsynced','not-holder','viewer','authority-changed','scope-expired'),
+ 'PLUGIN_E_DEVICE_OPERATION':('preflight-program-running','preflight-output-unknown','preflight-output-moving','motor-unavailable','source-changed','mode-unavailable','provider-failure','provider-contract','journal-unwritable','journal-corrupt','identity-ambiguous'),
+ 'PLUGIN_E_DEVICE_STOP_UNCONFIRMED':('readback-failed','stop-deadline','connection-lost','provider-stalled'),
+ 'PLUGIN_E_TIMEOUT':('deadline',),'PLUGIN_E_CANCELLED':('cancelled',),'PLUGIN_E_DISABLED':('disabled',),
+ 'PLUGIN_E_SAFE_MODE':('safe-mode',),'PLUGIN_E_SHUTTING_DOWN':('shutting-down',),'PLUGIN_E_CRASHED':('process-lost',),
+ 'PLUGIN_E_PROTOCOL':('protocol',),'PLUGIN_E_PROVIDER_CONFLICT':('provider-conflict',),
+}
+def _device_semantics(name,value):
+    if not name.startswith(('devices/','events/')): return
+    def fail(): raise SchemaError('Invalid device wire value')
+    try: size=len(json.dumps(value,ensure_ascii=True,separators=(',',':'),allow_nan=False).encode('utf-8'))
+    except (ValueError,UnicodeError): fail()
+    if size>1048576: fail()
+    if name.endswith('.params') and name!='events/deliver.params' and size>16384: fail()
+    if name=='devices/recording/read.result' and size>65536: fail()
+    if name.endswith('.result') and (name.startswith('devices/motion/') or name=='devices/recording/query.result') and size>16384: fail()
+    def walk(node,key='',parent=None):
+        if isinstance(node,str):
+            if '\0' in node or any(0xD800<=ord(c)<=0xDFFF for c in node): fail()
+            maximum=None
+            if key=='name': maximum=80 if parent and any(k in parent for k in ('channelId','actuatorId','modeId')) else 200
+            if key=='modeName': maximum=80
+            if key=='unit': maximum=32
+            if key=='message': maximum=2000
+            if maximum is not None and len(node)>maximum: fail()
+            if key=='address':
+                try:
+                    if '%' in node or str(ipaddress.ip_address(node))!=node: fail()
+                except ValueError: fail()
+        elif isinstance(node,list):
+            if key in ('channelIds','capabilities','affected') and len(set(json.dumps(v,sort_keys=True) for v in node))!=len(node): fail()
+            unique={'channels':'channelId','actuators':'actuatorId','values':'channelId','candidates':'candidateId','providers':'providerId','sessions':'sessionId','modes':'modeId'}.get(key)
+            if unique and len({v[unique] for v in node})!=len(node): fail()
+            for child in node: walk(child,key)
+        elif isinstance(node,dict):
+            if 'fromSequence' in node and node['fromSequence']>node['toSequence']: fail()
+            if 'motionScopeRef' in node and (node['motion']['mode']=='jog')!=('gestureRef' in node): fail()
+            if 'code' in node and 'detail' in node:
+                detail=node['detail'];code=node['code'];kind=detail['kind']
+                if kind=='permission' and code!='PLUGIN_E_PERMISSION_DENIED': fail()
+                elif kind=='resource' and code!=('PLUGIN_E_STALE_RESOURCE' if detail['reason']=='stale' else 'PLUGIN_E_RESOURCE_LIMIT'): fail()
+                elif kind=='device' and detail['reason'] not in _DEVICE_REASONS.get(code,()): fail()
+                elif kind not in ('permission','resource','device'): fail()
+            if node.get('version')==1 and 'delivery' in node:
+                if size>(16384 if node['delivery']=='control' else 65536): fail()
+            for k,v in node.items(): walk(v,k,node)
+    walk(value)

@@ -1,14 +1,12 @@
-import type { IpcMainInvokeEvent, WebContents } from "electron";
-import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import type { WebContents } from "electron";
+import type { Principal } from "@kobrixa/plugin-runtime";
+import type { IpcHandle } from "../ipc.js";
+import { AuthorityContexts } from "../device-broker/authority-context.js";
 
-export const DEVICE_CONTROL_DENIED = "Device control is held by another collaborator.";
-
-/**
- * Channels that write to or drive an EV3. They are rejected while the sending
- * window is in a collaboration room without holding device control. Stop
- * channels, monitoring reads and connection management stay available.
- */
-const GATED_CHANNELS = new Set([
+export const DEVICE_CONTROL_DENIED =
+  "Device control is held by another collaborator or is unavailable.";
+const writes = new Set([
   "device:upload",
   "device:deploy",
   "device:run",
@@ -17,101 +15,73 @@ const GATED_CHANNELS = new Set([
   "device:motor-test-keepalive",
   "device:set-input-mode",
 ]);
-
-/** `device:files` single-entry actions that change the brick's filesystem. */
-const GATED_FILE_ACTIONS = new Set(["upload", "mkdir", "rename", "delete"]);
-
-/**
- * Per-window device-control flag reported by the renderer. `false` means the
- * window is in a room and another participant holds control; `true`/absent means
- * no restriction.
- */
+const fileWrites = new Set(["upload", "mkdir", "rename", "delete"]);
+type Sender = Pick<WebContents, "id" | "once">;
+const actionOf = (value: unknown): unknown =>
+  value && typeof value === "object" && "action" in value ? value.action : undefined;
+function batchKey(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const object = value as Record<string, unknown>;
+  return ["sessionId", "requestId", "planId"].every((key) => typeof object[key] === "string")
+    ? JSON.stringify([object.sessionId, object.requestId, object.planId])
+    : null;
+}
 export class DeviceControlGate {
-  readonly #holders = new Map<number, boolean>();
   readonly #watched = new Set<number>();
-  readonly #downloadPlans = new Map<number, string>();
-
-  set(sender: Pick<WebContents, "id" | "once">, holder: boolean | null): void {
-    if (holder === null) {
-      this.#holders.delete(sender.id);
-      return;
+  readonly #downloads = new Map<number, string>();
+  constructor(readonly contexts = new AuthorityContexts(randomUUID())) {}
+  open(sender: Sender): { document: string } {
+    if (!this.#watched.has(sender.id)) {
+      this.#watched.add(sender.id);
+      sender.once("destroyed", () => {
+        this.invalidate(sender.id);
+        this.#watched.delete(sender.id);
+      });
     }
-    this.#holders.set(sender.id, holder);
-    this.#watch(sender);
+    return { document: this.contexts.open(sender.id) };
   }
-
-  #watch(sender: Pick<WebContents, "id" | "once">): void {
-    if (this.#watched.has(sender.id)) return;
-    this.#watched.add(sender.id);
-    const senderId = sender.id;
-    sender.once("destroyed", () => {
-      this.#holders.delete(senderId);
-      this.#downloadPlans.delete(senderId);
-      this.#watched.delete(senderId);
-    });
+  set(sender: Sender, report: unknown): void {
+    this.contexts.report(sender.id, report);
   }
-
-  /** Trust only a plan returned by the main-process file service, never renderer claims. */
-  rememberBatch(sender: Pick<WebContents, "id" | "once">, snapshot: unknown): void {
-    this.#watch(sender);
-    this.#downloadPlans.delete(sender.id);
-    if (actionOf(snapshot) === "download") {
-      const key = batchKey(snapshot);
-      if (key) this.#downloadPlans.set(sender.id, key);
+  invalidate(sender: number): void {
+    this.#downloads.delete(sender);
+    this.contexts.invalidate(sender);
+  }
+  principal(sender: number, adapter: Extract<Principal, { kind: "core" }>["adapter"]): Principal {
+    return this.contexts.core(sender, adapter);
+  }
+  get(sender: number): boolean {
+    try {
+      const p = this.contexts.core(sender, "deployment");
+      this.contexts.assertContinuation(p, p.authorityContext!.ref);
+      return true;
+    } catch {
+      return false;
     }
   }
-
-  get(senderId: number): boolean | null {
-    return this.#holders.get(senderId) ?? null;
+  rememberBatch(sender: Sender, snapshot: unknown): void {
+    const key = batchKey(snapshot);
+    if (actionOf(snapshot) === "download" && key) this.#downloads.set(sender.id, key);
+    else this.#downloads.delete(sender.id);
   }
-
-  /** Throws when `channel` is a device write and the sender does not hold control. */
-  assert(senderId: number, channel: string, args: readonly unknown[]): void {
-    if (this.#holders.get(senderId) !== false) return;
-    if (
-      GATED_CHANNELS.has(channel) ||
-      (channel === "device:files" && gatedFileAction(args[0])) ||
+  assert(sender: number, channel: string, args: readonly unknown[]): void {
+    const gated =
+      writes.has(channel) ||
+      (channel === "device:files" && fileWrites.has(String(actionOf(args[0])))) ||
       (channel === "device:files-prepare" && actionOf(args[0]) !== "download") ||
-      (channel === "device:files-execute" &&
-        (!batchKey(args[0]) || this.#downloadPlans.get(senderId) !== batchKey(args[0])))
-    )
-      throw new Error(DEVICE_CONTROL_DENIED);
+      (channel === "device:files-execute" && this.#downloads.get(sender) !== batchKey(args[0]));
+    if (gated && !this.get(sender)) throw new Error(DEVICE_CONTROL_DENIED);
   }
 }
-
-function actionOf(request: unknown): unknown {
-  return request && typeof request === "object"
-    ? (request as { action?: unknown }).action
-    : undefined;
-}
-
-function batchKey(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const ref = value as Record<string, unknown>;
-  const parts = [ref.sessionId, ref.requestId, ref.planId];
-  return parts.every((part) => typeof part === "string") ? JSON.stringify(parts) : undefined;
-}
-
-function gatedFileAction(request: unknown): boolean {
-  const action = actionOf(request);
-  return typeof action === "string" && GATED_FILE_ACTIONS.has(action);
-}
-
-type Handle = <T extends unknown[], R>(
-  channel: string,
-  action: (event: IpcMainInvokeEvent, ...args: T) => R,
-) => void;
-
-/** Registers `collab:set-device-control` through the caller's trusted `handle`. */
 export function registerDeviceControlIpc(
-  handle: Handle,
+  handle: IpcHandle,
   gate: DeviceControlGate,
-  onRevoke?: () => Promise<void>,
+  onRevoke: () => Promise<void> = async () => {},
 ): void {
-  handle("collab:set-device-control", async (event, holder: unknown) => {
-    const parsed = z.boolean().nullable().parse(holder);
+  handle("collab:device-control-context", (event) => gate.open(event.sender));
+  handle("collab:set-device-control", async (event, report: unknown) => {
     const previous = gate.get(event.sender.id);
-    gate.set(event.sender, parsed);
-    if (parsed === false && previous !== false) await onRevoke?.();
+    gate.set(event.sender, report);
+    if (previous && !gate.get(event.sender.id)) await onRevoke();
   });
 }

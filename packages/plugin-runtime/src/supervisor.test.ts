@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RpcPeer } from "@kobrixa/plugin-protocol";
+import type { RpcPeer, ResourceOwner } from "@kobrixa/plugin-protocol";
 import {
   PluginSupervisor,
   spawnPluginProcess,
@@ -436,3 +436,367 @@ describe("PluginSupervisor", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
+
+it("F02 F17 channel identity is host allocated and stop waits for original disposition", async () => {
+  const { PluginSupervisor: Supervisor } = await import("./supervisor.js");
+  const { memoryPlugin: processFixture } = await import("./test-process.js");
+  const owners: ResourceOwner[] = [];
+  const owner = Object.freeze({
+    sourceKey: "dev:0123456789abcdef",
+    pluginId: "acme.probe",
+    generation: 7,
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    processEpoch: "00000000-0000-4000-8000-000000000002",
+  });
+  const calls: string[] = [];
+  let finish!: () => void;
+  const child = processFixture((peer, control) => {
+    peer.handle("initialize", () => ({
+      apiVersion: "1.5.0",
+      sdk: { name: "fixture", version: "1" },
+    }));
+    peer.handle("command/execute", () => null);
+    peer.handle("shutdown", () => {
+      calls.push("shutdown");
+      return null;
+    });
+    peer.onNotification("exit", () => control.exit());
+  });
+  const supervisor = new Supervisor(
+    {
+      id: "acme.probe",
+      sourceKey: "dev:0123456789abcdef",
+      directory: "/fixture",
+      entry: "/fixture/main.cjs",
+      runtime: "node",
+      permissions: [],
+      commands: ["acme.probe.run"],
+    },
+    async (plugin) => {
+      expect(plugin.channelOwner).toBe(owner);
+      return child.process;
+    },
+    {
+      locale: "en",
+      onNotice() {},
+      resourceOwner: () => owner,
+      hostEpoch: owner.hostEpoch,
+      bindChannel(context) {
+        owners.push(context.owner);
+        return {
+          async initialized(signal) {
+            signal.throwIfAborted();
+          },
+          async ready(signal) {
+            signal.throwIfAborted();
+          },
+          dispose() {
+            calls.push("detach");
+          },
+        };
+      },
+      retireResources(owner, reason) {
+        expect(owner).toBe(owners[0]);
+        expect(reason).toBe("disable");
+        calls.push("retire");
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    },
+  );
+  await supervisor.executeCommand("acme.probe.run");
+  expect(owners[0]).toMatchObject({ generation: 7, pluginId: "acme.probe" });
+  expect(owners[0]!.processEpoch).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+  const stop = supervisor.stop();
+  expect(calls).toEqual(["retire"]);
+  await Promise.resolve();
+  expect(child.killed()).toBe(false);
+  finish();
+  await stop;
+  expect(calls).toEqual(["retire", "shutdown", "detach"]);
+});
+
+const channelOwner = Object.freeze({
+  sourceKey: "dev:0123456789abcdef",
+  pluginId: "acme.hello",
+  generation: 1,
+  hostEpoch: "00000000-0000-4000-8000-000000000001",
+  processEpoch: "00000000-0000-4000-8000-000000000002",
+});
+const latch = <T = void>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+};
+
+it.each(["resourceOwner", "hostEpoch", "bindChannel", "retireResources"] as const)(
+  "F02 rejects partial supervisor options missing %s",
+  (missing) => {
+    const options = {
+      resourceOwner: () => channelOwner,
+      hostEpoch: channelOwner.hostEpoch,
+      bindChannel: () => ({ initialized: async () => {}, ready: async () => {}, dispose() {} }),
+      retireResources: async () => {},
+    };
+    Reflect.deleteProperty(options, missing);
+    expect(() => setup(options)).toThrow("Stage 3 supervisor options must be supplied together");
+  },
+);
+
+it("F02 binds before initialize, exposes initialized before ready, and shares one deadline and launch", async () => {
+  const order: string[] = [];
+  const signals: AbortSignal[] = [];
+  const release = latch();
+  const child = memoryPlugin((peer, { exit }) => {
+    ready(peer, exit);
+    peer.handle("initialize", () => {
+      order.push("initialize");
+      return { apiVersion: "1.5.0", sdk: { name: "test", version: "1" } };
+    });
+  });
+  const launcher = vi.fn(async () => child.process);
+  const supervisor = new PluginSupervisor(plugin, launcher, {
+    locale: "en",
+    onNotice() {},
+    resourceOwner: () => channelOwner,
+    hostEpoch: channelOwner.hostEpoch,
+    retireResources: async () => {},
+    bindChannel() {
+      order.push("bind");
+      return {
+        initialized: async (signal) => {
+          signals.push(signal);
+          await release.promise;
+        },
+        ready: async (signal) => {
+          signals.push(signal);
+        },
+        dispose() {},
+      };
+    },
+  });
+  const signal = new AbortController().signal;
+  const [a, b] = await Promise.all([
+    supervisor.activateInitialized(signal),
+    supervisor.activateInitialized(signal),
+  ]);
+  expect(a).toBe(b);
+  expect(order).toEqual(["bind", "initialize"]);
+  expect(supervisor.state).toBe("starting");
+  release.resolve();
+  await supervisor.ready(signal);
+  expect(signals).toHaveLength(2);
+  expect(signals[0]).toBe(signals[1]);
+  expect(launcher).toHaveBeenCalledTimes(1);
+  await supervisor.stop();
+});
+
+it.each(["initialize", "initialized", "ready"] as const)(
+  "F17 physical exit during %s retires the original owner and rejects activation",
+  async (phase) => {
+    const entered = latch();
+    const pending = latch();
+    let exit!: () => void;
+    const retired = vi.fn(async () => {});
+    const dispose = vi.fn();
+    const child = memoryPlugin((peer, control) => {
+      exit = control.exit;
+      ready(peer, control.exit);
+      peer.handle("initialize", async () => {
+        if (phase === "initialize") {
+          entered.resolve();
+          await pending.promise;
+        }
+        return { apiVersion: "1.5.0", sdk: { name: "test", version: "1" } };
+      });
+    });
+    const supervisor = new PluginSupervisor(plugin, async () => child.process, {
+      locale: "en",
+      onNotice() {},
+      resourceOwner: () => channelOwner,
+      hostEpoch: channelOwner.hostEpoch,
+      retireResources: retired,
+      bindChannel: () => ({
+        initialized: async () => {
+          if (phase === "initialized") {
+            entered.resolve();
+            await pending.promise;
+          }
+        },
+        ready: async () => {
+          if (phase === "ready") {
+            entered.resolve();
+            await pending.promise;
+          }
+        },
+        dispose,
+      }),
+    });
+    const started = supervisor.ready(new AbortController().signal);
+    const rejected = expect(started).rejects.toThrow();
+    await entered.promise;
+    exit();
+    await rejected;
+    expect(retired).toHaveBeenCalledExactlyOnceWith(channelOwner, "crashed");
+    expect(dispose).toHaveBeenCalledOnce();
+    pending.resolve();
+    await supervisor.stop();
+  },
+);
+
+it("F17 a failed launcher retires its preallocated owner before another launch", async () => {
+  const retired = vi.fn(async () => {});
+  const supervisor = new PluginSupervisor(
+    plugin,
+    async () => {
+      throw new Error("launch failed");
+    },
+    {
+      locale: "en",
+      onNotice() {},
+      resourceOwner: () => channelOwner,
+      hostEpoch: channelOwner.hostEpoch,
+      retireResources: retired,
+      bindChannel: () => ({ initialized: async () => {}, ready: async () => {}, dispose() {} }),
+    },
+  );
+  await expect(supervisor.ready(new AbortController().signal)).rejects.toThrow("launch failed");
+  expect(retired).toHaveBeenCalledExactlyOnceWith(channelOwner, "crashed");
+});
+
+it("F17 binding failure retires before killing the child", async () => {
+  const disposition = latch();
+  const retired = vi.fn(() => disposition.promise);
+  const child = memoryPlugin((peer, { exit }) => ready(peer, exit));
+  const supervisor = new PluginSupervisor(plugin, async () => child.process, {
+    locale: "en",
+    onNotice() {},
+    resourceOwner: () => channelOwner,
+    hostEpoch: channelOwner.hostEpoch,
+    retireResources: retired,
+    bindChannel: () => {
+      throw new Error("bind failed");
+    },
+  });
+  const started = supervisor.ready(new AbortController().signal);
+  const rejected = expect(started).rejects.toThrow("bind failed");
+  await vi.waitFor(() => expect(retired).toHaveBeenCalledOnce());
+  expect(child.killed()).toBe(false);
+  disposition.resolve();
+  await rejected;
+  expect(child.killed()).toBe(true);
+});
+
+it("F02 applies one activation deadline even when a host ready callback ignores cancellation", async () => {
+  const entered = latch();
+  const pending = latch();
+  const retired = vi.fn(async () => {});
+  const child = memoryPlugin((peer, { exit }) => ready(peer, exit));
+  const supervisor = new PluginSupervisor(plugin, async () => child.process, {
+    locale: "en",
+    onNotice() {},
+    initializeTimeoutMs: 50,
+    resourceOwner: () => channelOwner,
+    hostEpoch: channelOwner.hostEpoch,
+    retireResources: retired,
+    bindChannel: () => ({
+      initialized: async () => {},
+      ready: async () => {
+        entered.resolve();
+        await pending.promise;
+      },
+      dispose() {},
+    }),
+  });
+  const started = supervisor.ready(new AbortController().signal);
+  const rejected = expect(started).rejects.toThrow();
+  await entered.promise;
+  await rejected;
+  expect(retired).toHaveBeenCalledExactlyOnceWith(channelOwner, "crashed");
+  expect(child.killed()).toBe(true);
+  pending.resolve();
+});
+
+it.each(["stop", "forceKill", "handshake", "binding", "ready", "crash"] as const)(
+  "tears down after rejected retirement during %s without unhandled rejections",
+  async (mode) => {
+    const disposition = latch();
+    const retired = vi.fn(() => disposition.promise);
+    const shutdown = vi.fn();
+    let crash!: () => void;
+    const child = memoryPlugin((peer, { exit }) => {
+      crash = () => exit(1);
+      ready(peer, exit);
+      peer.handle("shutdown", () => {
+        shutdown();
+        return null;
+      });
+      if (mode === "handshake")
+        peer.handle("initialize", () => {
+          throw new Error("handshake failed");
+        });
+    });
+    let launched = false;
+    const supervisor = new PluginSupervisor(
+      plugin,
+      async () => {
+        if (launched) throw new Error("next launch reached");
+        launched = true;
+        return child.process;
+      },
+      {
+        locale: "en",
+        onNotice() {},
+        resourceOwner: () => channelOwner,
+        hostEpoch: channelOwner.hostEpoch,
+        retireResources: retired,
+        bindChannel: () => {
+          if (mode === "binding") throw new Error("binding failed");
+          return {
+            initialized: async () => {},
+            ready: async () => {
+              if (mode === "ready") throw new Error("ready failed");
+            },
+            dispose() {},
+          };
+        },
+      },
+    );
+    const started = supervisor.ready(new AbortController().signal);
+    let result: Promise<unknown>;
+    if (["handshake", "binding", "ready"].includes(mode)) {
+      result = expect(started).rejects.toThrow(`${mode} failed`);
+    } else {
+      await started;
+      if (mode === "stop") result = expect(supervisor.stop()).rejects.toThrow("retirement failed");
+      else {
+        if (mode === "forceKill") supervisor.forceKill();
+        else crash();
+        result = Promise.resolve();
+      }
+    }
+    await vi.waitFor(() => expect(retired).toHaveBeenCalledOnce());
+    expect(child.killed()).toBe(false);
+    expect(shutdown).not.toHaveBeenCalled();
+    disposition.reject(new Error("retirement failed"));
+    await result;
+    await vi.waitFor(() => expect(supervisor.state).toBe("idle"));
+    if (mode === "stop") expect(shutdown).toHaveBeenCalledOnce();
+    else if (mode !== "crash") expect(child.killed()).toBe(true);
+    // A failed retirement must not leave the stopping/terminating admission fence stuck.
+    if (["stop", "forceKill", "crash"].includes(mode)) {
+      await vi.waitFor(async () => {
+        await expect(supervisor.ready(new AbortController().signal)).rejects.toThrow(
+          "next launch reached",
+        );
+      });
+    }
+  },
+);

@@ -1,5 +1,12 @@
+import type { Handle, ResourceOwner } from "@kobrixa/plugin-protocol";
+import type {
+  OwnerRetirement,
+  Stage3ChannelContext,
+  Stage3ChannelBinding,
+} from "./ui-lifecycle.js";
 import {
   PLUGIN_API_VERSION,
+  resourceOwnerSchema,
   RPC_ERRORS,
   RpcError,
   RpcPeer,
@@ -11,6 +18,7 @@ import { messageOf, PluginError, type PluginErrorCode, type PluginProblem } from
 import type { PluginProcess, ProcessExit } from "./process.js";
 
 export interface LaunchablePlugin {
+  readonly channelOwner?: ResourceOwner;
   readonly id: string;
   /** The manager's source key, so launchers can file output under the right source. */
   readonly sourceKey?: string;
@@ -23,8 +31,12 @@ export interface LaunchablePlugin {
 export type PluginLauncher = (plugin: LaunchablePlugin) => Promise<PluginProcess>;
 export type SupervisorState = "idle" | "starting" | "running" | "stopping" | "failed";
 /** Why a stop interrupts running commands: a disable, or a reload/removal that cancels them. */
-export type StopReason = "disabled" | "cancelled";
+export type StopReason = "disabled" | "cancelled" | "removed" | "shutdown";
 export interface SupervisorOptions {
+  resourceOwner?: () => ResourceOwner;
+  hostEpoch?: Handle;
+  bindChannel?: (context: Stage3ChannelContext) => Stage3ChannelBinding;
+  retireResources?: (owner: ResourceOwner, reason: OwnerRetirement) => Promise<void>;
   locale: PluginLocale;
   onNotice(notice: { severity: Severity; message: string }): void;
   onStateChange?(): void;
@@ -50,6 +62,32 @@ const DEFAULTS = {
 const major = (version: string) => version.split(".")[0];
 const describeExit = (exit: ProcessExit) => exit.reason ?? `exit code ${exit.code ?? "unknown"}`;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  // A process may exit before anyone requests the initialized barrier.
+  void promise.catch(() => undefined);
+  return { promise, resolve, reject };
+}
+
+async function withSignal<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, cancelled]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 export class PluginSupervisor {
   #state: SupervisorState = "idle";
   #problem: PluginProblem | undefined;
@@ -64,6 +102,34 @@ export class PluginSupervisor {
   /** Set while a launch is in flight; stop() calls it when the launch outlives the stop bound. */
   #abandonLaunch: (() => void) | undefined;
   #crashes: number[] = [];
+  #resourceOwner: ResourceOwner | undefined;
+  #channelBinding: Stage3ChannelBinding | undefined;
+  #channelContext: Stage3ChannelContext | undefined;
+  #activation: AbortController | undefined;
+  #activationSignal: AbortSignal | undefined;
+  #initialized = deferred<Stage3ChannelContext>();
+  #resourceRetirement: Promise<void> | undefined;
+  #terminatingChannel = false;
+
+  #retireResources(reason: OwnerRetirement): Promise<void> {
+    const owner = this.#resourceOwner;
+    if (!owner) return Promise.resolve();
+    if (this.#resourceRetirement) return this.#resourceRetirement;
+    const receipt = deferred<void>();
+    this.#resourceRetirement = receipt.promise;
+    try {
+      const retired = this.#options.retireResources!(owner, reason);
+      void retired.then(receipt.resolve, receipt.reject);
+    } catch (error) {
+      receipt.reject(error);
+    }
+    return receipt.promise;
+  }
+
+  async settleResources(reason: OwnerRetirement): Promise<void> {
+    if (this.#resourceOwner && this.#state === "starting") this.#activation?.abort();
+    await this.#retireResources(reason);
+  }
   // Error continuations may run after stop() has already cleared #stopping.
   readonly #stoppedPeers = new WeakSet<RpcPeer>();
   readonly #options: SupervisorOptions & typeof DEFAULTS;
@@ -73,6 +139,17 @@ export class PluginSupervisor {
     private readonly launcher: PluginLauncher,
     options: SupervisorOptions,
   ) {
+    const configured = [
+      options.resourceOwner,
+      options.hostEpoch,
+      options.bindChannel,
+      options.retireResources,
+    ];
+    if (
+      configured.some((value) => value !== undefined) &&
+      configured.some((value) => value === undefined)
+    )
+      throw new Error("Stage 3 supervisor options must be supplied together");
     this.#options = { ...DEFAULTS, ...options };
   }
 
@@ -81,6 +158,23 @@ export class PluginSupervisor {
   }
   get problem(): PluginProblem | undefined {
     return this.#problem;
+  }
+
+  async activateInitialized(signal: AbortSignal): Promise<Stage3ChannelContext> {
+    signal.throwIfAborted();
+    const started = this.#ensureStarted();
+    const barrier = this.#initialized;
+    void started.catch((error) => barrier.reject(error));
+    const context = await withSignal(barrier.promise, signal);
+    signal.throwIfAborted();
+    if (this.#peer !== context.peer || this.#stopping)
+      throw this.#stopError("Retired initialized channel");
+    return context;
+  }
+  async ready(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    await withSignal(this.#ensureStarted(), signal);
+    signal.throwIfAborted();
   }
 
   async executeCommand(command: string, signal?: AbortSignal): Promise<void> {
@@ -109,7 +203,27 @@ export class PluginSupervisor {
   stop(reason: StopReason = "disabled"): Promise<void> {
     // Concurrent callers (disable, then app shutdown) share one stop: one shutdown request only.
     if (!this.#stoppingRun) this.#stopReason = reason;
-    this.#stoppingRun ??= this.#stop().finally(() => {
+    this.#stopping = true;
+    if (this.#resourceOwner && this.#state === "starting") this.#activation?.abort();
+    const retirement =
+      reason === "cancelled"
+        ? "reload"
+        : reason === "disabled"
+          ? "disable"
+          : reason === "removed"
+            ? "remove"
+            : reason;
+    const stop = () =>
+      this.#resourceOwner
+        ? this.#retireResources(retirement).then(
+            () => this.#stop(),
+            async (error: unknown) => {
+              await this.#stop();
+              throw error;
+            },
+          )
+        : this.#stop();
+    this.#stoppingRun ??= stop().finally(() => {
       this.#stoppingRun = undefined;
     });
     return this.#stoppingRun;
@@ -176,7 +290,9 @@ export class PluginSupervisor {
 
   #stopError(message: string): PluginError {
     return new PluginError(
-      this.#stopReason === "cancelled" ? "PLUGIN_E_CANCELLED" : "PLUGIN_E_DISABLED",
+      this.#stopReason === "cancelled" || this.#stopReason === "removed"
+        ? "PLUGIN_E_CANCELLED"
+        : "PLUGIN_E_DISABLED",
       message,
     );
   }
@@ -184,10 +300,21 @@ export class PluginSupervisor {
   /** Terminates immediately, e.g. when the manager's overall shutdown deadline is reached. */
   forceKill(): void {
     if (this.#stopping) this.#forced = true;
-    this.#process?.forceKill();
+    const child = this.#process;
+    if (!this.#resourceOwner) {
+      child?.forceKill();
+      return;
+    }
+    void this.#retireResources("shutdown")
+      .catch(() => undefined)
+      .then(() => child?.forceKill());
   }
 
   #ensureStarted(): Promise<RpcPeer> {
+    if (this.#terminatingChannel)
+      return Promise.reject(
+        new PluginError("PLUGIN_E_DISABLED", "Previous process resources are retiring."),
+      );
     if (this.#stopping) return Promise.reject(this.#stopError(`${this.plugin.id} is stopping.`));
     if (this.#state === "failed")
       return Promise.reject(
@@ -197,9 +324,28 @@ export class PluginSupervisor {
         ),
       );
     if (this.#state === "running" && this.#peer) return Promise.resolve(this.#peer);
-    this.#starting ??= this.#start().finally(() => {
-      this.#starting = undefined;
-    });
+    this.#starting ??= this.#start()
+      .catch(async (error: unknown) => {
+        this.#activation?.abort();
+        this.#initialized.reject(error);
+        if (this.#resourceOwner) {
+          // Includes launcher/bind failures and either activation barrier. Never release
+          // the shared start promise while the original process can still be alive.
+          await this.#retireResources("crashed").catch(() => undefined);
+          const child = this.#process;
+          const peer = this.#peer;
+          if (child && peer) {
+            const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
+            child.kill();
+            if (!(await this.#within(exited, this.#stopBoundMs)))
+              this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
+          } else if (this.#state === "starting") this.#setState("idle");
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.#starting = undefined;
+      });
     return this.#starting;
   }
 
@@ -208,7 +354,25 @@ export class PluginSupervisor {
     // undefined after this assignment even though callbacks change it across awaits.
     this.#problem = undefined;
     this.#setState("starting");
-    const launching = this.launcher(this.plugin);
+    this.#resourceOwner = this.#options.resourceOwner?.();
+    this.#resourceRetirement = undefined;
+    if (this.#resourceOwner) {
+      resourceOwnerSchema.parse(this.#resourceOwner);
+      Object.freeze(this.#resourceOwner);
+    }
+    if (this.#resourceOwner && this.#resourceOwner.hostEpoch !== this.#options.hostEpoch)
+      throw new Error("Primary profile epoch mismatch");
+    this.#activation = new AbortController();
+    this.#initialized = deferred<Stage3ChannelContext>();
+    void this.#initialized.promise.catch(() => undefined);
+    this.#activationSignal = AbortSignal.any([
+      this.#activation.signal,
+      AbortSignal.timeout(this.#options.initializeTimeoutMs),
+    ]);
+    const launching = this.launcher({
+      ...this.plugin,
+      ...(this.#resourceOwner ? { channelOwner: this.#resourceOwner } : {}),
+    });
     const abandoned = new Promise<"abandoned">((resolve) => {
       this.#abandonLaunch = () => resolve("abandoned");
     });
@@ -260,10 +424,22 @@ export class PluginSupervisor {
     this.#process = child;
     this.#peer = peer;
     child.onExit((exit) => this.#exited(child, peer, exit));
-    // stop() started during the launch: it terminates this process; skip the handshake.
+    // A stop during launch has already fenced this owner: do not bind it again.
     if (this.#stopping) {
       if (this.#forced) child.forceKill();
       throw this.#stopError(`${this.plugin.id} is stopping.`);
+    }
+    if (this.#resourceOwner) {
+      const owner = this.#resourceOwner;
+      // The manager wrapper replaces these unbound values with admitted registry data
+      // before any host router sees the context. No caller message supplies identity.
+      this.#channelContext = {
+        peer,
+        owner,
+        principal: () => ({ kind: "plugin", owner, authorityContext: null }),
+        requirements: Object.freeze([]),
+      };
+      this.#channelBinding = this.#options.bindChannel!(this.#channelContext);
     }
     try {
       const result = await peer.request(
@@ -274,7 +450,7 @@ export class PluginSupervisor {
           locale: this.#options.locale,
           grantedPermissions: [...this.plugin.permissions],
         },
-        { timeoutMs: this.#options.initializeTimeoutMs },
+        { timeoutMs: this.#options.initializeTimeoutMs, signal: this.#activationSignal },
       );
       if (major(result.apiVersion) !== major(PLUGIN_API_VERSION))
         throw new PluginError(
@@ -287,6 +463,7 @@ export class PluginSupervisor {
         // Otherwise a retry could replace #process while the failed child is still alive.
         const exited = new Promise<void>((resolve) => child.onExit(() => resolve()));
         this.#terminate(child, { code: "PLUGIN_E_HANDSHAKE", message: messageOf(error) });
+        await this.#retireResources("crashed").catch(() => undefined);
         if (!(await this.#within(exited, this.#stopBoundMs)))
           this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
       }
@@ -304,6 +481,24 @@ export class PluginSupervisor {
         this.problem?.code ?? "PLUGIN_E_CRASHED",
         this.problem?.message ?? `${this.plugin.id} exited during startup.`,
       );
+    if (this.#channelBinding) {
+      const signal = this.#activationSignal!;
+      this.#initialized.resolve(this.#channelContext!);
+      try {
+        const binding = this.#channelBinding;
+        await withSignal(binding.initialized(signal), signal);
+        signal.throwIfAborted();
+        await withSignal(binding.ready(signal), signal);
+        signal.throwIfAborted();
+        if (this.#peer !== peer || this.#stopping)
+          throw this.#stopError("Retired during activation");
+      } catch (error) {
+        this.#activation!.abort();
+        await this.#retireResources("crashed").catch(() => undefined);
+        child.kill();
+        throw error;
+      }
+    }
     this.#setState("running");
     return peer;
   }
@@ -311,11 +506,32 @@ export class PluginSupervisor {
   #terminate(child: PluginProcess, problem: PluginProblem): void {
     if (this.#process !== child) return;
     this.#problem ??= problem;
-    child.kill();
+    if (!this.#resourceOwner) {
+      child.kill();
+      return;
+    }
+    this.#terminatingChannel = true;
+    void this.#retireResources("crashed")
+      .catch(() => undefined)
+      .then(() => child.kill());
   }
 
   #exited(child: PluginProcess, peer: RpcPeer, exit: ProcessExit): void {
     if (this.#process !== child) return;
+    // An OS-reported exit cannot be delayed. Revoke synchronously before clearing identity.
+    if (this.#resourceOwner) {
+      this.#terminatingChannel = true;
+      void this.#retireResources("crashed")
+        .catch(() => undefined)
+        .finally(() => {
+          this.#terminatingChannel = false;
+        });
+    }
+    this.#activation?.abort();
+    this.#initialized.reject(new Error("Channel retired during initialize"));
+    this.#channelBinding?.dispose();
+    this.#channelBinding = undefined;
+    this.#channelContext = undefined;
     this.#process = undefined;
     this.#peer = undefined;
     if (this.#stopping) {

@@ -1,3 +1,8 @@
+import { bindEventChannel } from "./events.js";
+import { resourceOwnerSchema } from "@kobrixa/plugin-protocol";
+import { createDevicesClient, type DevicesClient } from "./devices.js";
+export * from "./devices.js";
+export { unwrap } from "@kobrixa/plugin-protocol";
 import {
   PLUGIN_API_VERSION,
   RPC_ERRORS,
@@ -12,6 +17,7 @@ export const API_VERSION = PLUGIN_API_VERSION;
 export const SDK_VERSION = "0.1.0";
 export type CommandHandler = (context: { readonly signal: AbortSignal }) => void | Promise<void>;
 export interface PluginContext {
+  readonly devices: DevicesClient;
   readonly pluginId: string;
   readonly locale: PluginLocale;
   readonly commands: { register(commandId: string, handler: CommandHandler): void };
@@ -65,9 +71,18 @@ export async function runPlugin(
   const channel = options.channel ?? (await electronParentPortChannel());
   const exit = options.exit ?? ((code: number) => process.exit(code));
   const peer = new RpcPeer(channel, { onProtocolError: () => exit(1) });
+  const launchOwner = process.env.KOBRIXA_RESOURCE_OWNER;
+  if (launchOwner !== undefined)
+    bindEventChannel(peer, resourceOwnerSchema.parse(JSON.parse(launchOwner)));
   const commands = new Map<string, CommandHandler>();
-  peer.handle("initialize", async ({ pluginId, locale }) => {
+  let initialized!: (version: string) => void;
+  const ready = new Promise<string>((resolve) => {
+    initialized = resolve;
+  });
+  const devices = createDevicesClient(peer, ready);
+  peer.handle("initialize", async ({ pluginId, locale, apiVersion }, request) => {
     await definition.activate({
+      devices,
       pluginId,
       locale,
       commands: {
@@ -83,6 +98,12 @@ export async function runPlugin(
         },
       },
     });
+    // Readiness follows successful response publication, without a timer racing
+    // the first command or activation continuations overtaking the handshake.
+    request.afterReply(
+      () => initialized(apiVersion),
+      () => {},
+    );
     return {
       apiVersion: PLUGIN_API_VERSION,
       sdk: { name: "@kobrixa/plugin-sdk", version: SDK_VERSION },

@@ -1,3 +1,4 @@
+import { resourceOwnerSchema } from "@kobrixa/plugin-protocol";
 import { MessageChannelMain, utilityProcess } from "electron";
 import {
   escalatingKill,
@@ -11,6 +12,14 @@ import {
 } from "@kobrixa/plugin-runtime";
 import type { PythonCommand } from "./python.js";
 
+function channelEnvironment(plugin: LaunchablePlugin): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.KOBRIXA_RESOURCE_OWNER;
+  if (plugin.channelOwner)
+    env.KOBRIXA_RESOURCE_OWNER = JSON.stringify(resourceOwnerSchema.parse(plugin.channelOwner));
+  return env;
+}
+
 /** A utilityProcess that reports neither spawn nor exit must not hang the launch. */
 export const PLUGIN_SPAWN_TIMEOUT_MS = 10_000;
 
@@ -21,6 +30,7 @@ async function launchNode(
 ): Promise<PluginProcess> {
   const child = utilityProcess.fork(plugin.entry, [], {
     cwd: plugin.directory,
+    env: channelEnvironment(plugin),
     serviceName: `Kobrixa plugin ${plugin.id}`,
     stdio: "pipe",
   });
@@ -105,7 +115,12 @@ export function createDesktopLauncher(options: {
     return spawnPluginProcess(python.executable, [...python.args, "-u", plugin.entry], {
       onOutput,
       cwd: plugin.directory,
-      env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+      env: {
+        ...channelEnvironment(plugin),
+        PYTHONUNBUFFERED: "1",
+        PYTHONIOENCODING: "utf-8",
+        PYTHONUTF8: "1",
+      },
     });
   };
 }

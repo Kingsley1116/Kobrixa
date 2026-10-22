@@ -9,8 +9,11 @@ export * from "./static-languages.js";
 
 export type * from "./persistence-participant.js";
 export type {
-  SettingsFormBinding, SettingsFormPort, BoundSettingsService,
-  ContributedSettingsForm, SettingsFieldMap,
+  SettingsFormBinding,
+  SettingsFormPort,
+  BoundSettingsService,
+  ContributedSettingsForm,
+  SettingsFieldMap,
 } from "./settings-form-port.js";
 export type * from "./device-resources.js";
 export type * from "./profile-writer-lock.js";
@@ -19,6 +22,12 @@ export type * from "./builtin-launch.js";
 export type * from "./ui-lifecycle.js";
 export type * from "./ui-subscriptions.js";
 export type {
-  PluginUiBridge, UiCatalogPort, UiBridgeEvent, FoundationDiagnostics,
-  FoundationCounters, FoundationDiagnosticEvent,
+  PluginUiBridge,
+  UiCatalogPort,
+  UiBridgeEvent,
+  FoundationDiagnostics,
+  FoundationCounters,
+  FoundationDiagnosticEvent,
 } from "./ui-host-ports.js";
+
+export { retireStage3Owner, resourceFreePersistence150, unavailableUi150 } from "./ui-lifecycle.js";
