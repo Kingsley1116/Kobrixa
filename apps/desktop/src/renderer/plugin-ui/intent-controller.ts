@@ -33,6 +33,9 @@ export class UiIntentController {
       if (this.held && (!state.nodeEnabled(this.held.nodeId) || !state.valid())) this.cancel();
     });
   }
+  isHolding(nodeId: string): boolean {
+    return this.held?.nodeId === nodeId;
+  }
   begin(nodeId: string, input: Input): boolean {
     if (
       this.dead ||
