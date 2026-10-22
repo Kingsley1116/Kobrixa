@@ -77,8 +77,7 @@ async function transport(directory: string, language: "js" | "python", python: s
   );
   // Deliberately a mock UI host: this receipt is SDK/transport parity only.
   peer.handle("ui/instances", () => ({ ok: true, value: { instances: [] } }));
-  let originalFailure: unknown;
-  try {
+  const attempt = async () => {
     const initialize = {
       pluginId: manifest.id,
       apiVersion: "1.6.0",
@@ -200,8 +199,13 @@ async function transport(directory: string, language: "js" | "python", python: s
       logs,
       wire,
     };
+  };
+  const failures: unknown[] = [];
+  let receipt: Awaited<ReturnType<typeof attempt>> | undefined;
+  try {
+    receipt = await attempt();
   } catch (error) {
-    originalFailure = error;
+    failures.push(error);
     await writeFile(
       `${output}.${language}.failure.json`,
       JSON.stringify(
@@ -216,8 +220,7 @@ async function transport(directory: string, language: "js" | "python", python: s
         null,
         2,
       ),
-    );
-    throw error;
+    ).catch((saveError) => failures.push(saveError));
   } finally {
     peer.close();
     try {
@@ -227,17 +230,18 @@ async function transport(directory: string, language: "js" | "python", python: s
       }
       if (pid > 0) await until(() => gone(pid), "failed-run OS cleanup");
     } catch (cleanupError) {
-      if (originalFailure !== undefined)
-        throw new AggregateError(
-          [originalFailure, cleanupError],
-          "Transport failed and child cleanup did not settle",
-          { cause: originalFailure },
-        );
-      throw cleanupError;
+      failures.push(cleanupError);
     } finally {
       offExit();
     }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "Transport failed with additional receipt/cleanup errors", {
+      cause: failures[0],
+    });
+  assert.ok(receipt);
+  return receipt;
 }
 
 async function run() {
