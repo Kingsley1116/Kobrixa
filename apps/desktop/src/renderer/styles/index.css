@@ -1,4 +1,5 @@
 @import "./workbench.css";
+@import "../plugin-ui/styles.css";
 @import "./keybindings.css";
 @import "./tab-list.css";
 @import "./segmented.css";

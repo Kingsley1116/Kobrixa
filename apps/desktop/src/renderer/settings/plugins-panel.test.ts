@@ -68,6 +68,24 @@ const snapshot: PluginsView = {
 };
 const unsubscribe = vi.fn();
 const api = {
+  ui: {
+    catalog: vi.fn<PluginsApi["ui"]["catalog"]>(),
+    resource: vi.fn<PluginsApi["ui"]["resource"]>(),
+    open: vi.fn<PluginsApi["ui"]["open"]>(),
+    close: vi.fn<PluginsApi["ui"]["close"]>(),
+    visibility: vi.fn<PluginsApi["ui"]["visibility"]>(),
+    invoke: vi.fn<PluginsApi["ui"]["invoke"]>(),
+    hold: vi.fn<PluginsApi["ui"]["hold"]>(),
+    pulse: vi.fn<PluginsApi["ui"]["pulse"]>(),
+    snapshot: vi.fn<PluginsApi["ui"]["snapshot"]>(),
+    reportFailure: vi.fn<PluginsApi["ui"]["reportFailure"]>(),
+    onEvent: vi.fn<PluginsApi["ui"]["onEvent"]>(),
+  },
+  recovery: {
+    snapshot: vi.fn<PluginsApi["recovery"]["snapshot"]>(),
+    act: vi.fn<PluginsApi["recovery"]["act"]>(),
+    onChanged: vi.fn<PluginsApi["recovery"]["onChanged"]>(),
+  },
   state: vi.fn(async () => snapshot),
   execute: vi.fn<PluginsApi["execute"]>(async () => ({
     ok: false as const,
@@ -260,7 +278,7 @@ it("retranslates a structured failure when the locale changes", async () => {
   expect(api.state).toHaveBeenCalledOnce();
 });
 
-it("disables development plugins but never offers it for built-ins", async () => {
+it("disables development plugins but never offers it for required built-ins", async () => {
   await render();
   const toggles = [...container.querySelectorAll("button")].filter(
     (item) => item.textContent === "停用",
@@ -269,6 +287,96 @@ it("disables development plugins but never offers it for built-ins", async () =>
   await act(async () => toggles[0]!.click());
   expect(api.setEnabled).toHaveBeenCalledWith("dev:0123456789abcdef", false);
   expect(container.textContent).toContain("已停用");
+});
+
+it("U11 guards required sources even if canToggle is inconsistent", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    plugins: [{ ...snapshot.plugins[0]!, canToggle: true }],
+  });
+  await render("en");
+  for (const action of ["Disable", "Enable", "Reload"]) expect(button(action)).toBeUndefined();
+});
+
+it("U11 blocks development enable/reload without developer mode but keeps linked management", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    developer: { enabled: false, commandLine: false, linkedCount: 1 },
+    plugins: [{ ...snapshot.plugins[1]!, status: "disabled", disabledBy: "user" }],
+  });
+  await render("en");
+  expect(button("Enable").disabled).toBe(true);
+  expect(button("Reload").disabled).toBe(true);
+  expect(button("Unlink").disabled).toBe(false);
+});
+
+it("U11 retains relink/unlink/log for a development source that cannot toggle", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    plugins: [{ ...snapshot.plugins[1]!, status: "invalid", canToggle: false }],
+  });
+  await render("en");
+  expect(button(pluginCopy.en.relink).disabled).toBe(false);
+  expect(button(pluginCopy.en.unlink).disabled).toBe(false);
+  expect(button(pluginCopy.en.showLog)).toBeDefined();
+  expect(button(pluginCopy.en.reload)).toBeUndefined();
+});
+
+it("U11 optional builtin reload works without developer mode and preserves persistence warnings", async () => {
+  const optional = {
+    ...snapshot.plugins[0]!,
+    id: "acme.optional",
+    sourceKey: "builtin:acme.optional",
+    required: false,
+    canToggle: true,
+    runtime: "node" as const,
+  };
+  const state = {
+    ...snapshot,
+    developmentMode: false,
+    developer: { enabled: false, commandLine: false, linkedCount: 0 },
+    plugins: [optional],
+  };
+  api.state.mockResolvedValueOnce(state);
+  api.reload.mockResolvedValueOnce({ ok: true, state });
+  api.setEnabled.mockResolvedValueOnce({
+    ok: true,
+    persisted: false,
+    state: { ...state, plugins: [{ ...optional, status: "disabled", disabledBy: "user" }] },
+  });
+  await render("en");
+  expect(button("Reload").disabled).toBe(false);
+  await act(async () => button("Reload").click());
+  expect(api.reload).toHaveBeenCalledWith(optional.sourceKey);
+  await act(async () => button("Disable").click());
+  expect(api.setEnabled).toHaveBeenCalledWith(optional.sourceKey, false);
+  expect(container.querySelector("[role=alert]")?.textContent).toBe(pluginCopy.en.notPersisted);
+  expect(button("Enable").disabled).toBe(false);
+  expect(button(pluginCopy.en.unlink)).toBeUndefined();
+  expect(button(pluginCopy.en.relink)).toBeUndefined();
+});
+
+it("U11/U13 missing packaged entry and crash-loop remain visible without automatic recovery", async () => {
+  api.state.mockResolvedValueOnce({
+    ...snapshot,
+    developer: { enabled: false, commandLine: false, linkedCount: 0 },
+    plugins: (["PLUGIN_E_LAUNCH", "PLUGIN_E_CRASH_LOOP"] as const).map((code, index) => ({
+      ...snapshot.plugins[0]!,
+      id: `acme.optional${index}`,
+      sourceKey: `builtin:acme.optional${index}`,
+      required: false,
+      canToggle: true,
+      runtime: "node",
+      status: "failed",
+      problems: [{ code, message: `Unavailable ${index}` }],
+    })),
+  });
+  await render("en");
+  expect(container.textContent).toContain("Unavailable 0");
+  expect(container.textContent).toContain("Unavailable 1");
+  expect(api.reload).not.toHaveBeenCalled();
+  expect(api.execute).not.toHaveBeenCalled();
+  expect(api.setEnabled).not.toHaveBeenCalled();
 });
 
 it("shows notices with their plugin id", async () => {
