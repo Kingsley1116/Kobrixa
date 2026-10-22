@@ -3,7 +3,8 @@ import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import ts from "typescript";
+import { buildSync } from "esbuild";
+import { fileURLToPath } from "node:url";
 import {
   basicPlusSmokeCatalog,
   createStaticLanguagesHarness,
@@ -26,6 +27,8 @@ function loadPreload(source = preload, platform = "win32") {
   };
   runInNewContext(source, {
     exports: {},
+    TextEncoder,
+    TextDecoder,
     process: { platform },
     require: () => ({
       contextBridge: {
@@ -99,6 +102,114 @@ function assertApiKeys(actual, expected, prefix = "kobrixa") {
   }
 }
 
+test("smoke persistence facets preserve bindings, watch identities and one recovery subscription", async () => {
+  const { api, calls, ipcRenderer } = loadPreload();
+  const binding = {
+    owner: {
+      sourceKey: "builtin:test.settings",
+      pluginId: "test.settings",
+      uiResourceGeneration: 1,
+    },
+    scope: {
+      hostEpoch: "00000000-0000-4000-8000-000000000001",
+      workbenchInstance: "00000000-0000-4000-8000-000000000002",
+    },
+    resourceDigest: "a".repeat(64),
+  };
+  const change = {
+    schemaVersion: 1,
+    expectedRevision: null,
+    changes: [{ key: "test.enabled", value: true }],
+  };
+  await api.plugins.settings.open({
+    sourceKey: binding.owner.sourceKey,
+    resourceDigest: binding.resourceDigest,
+  });
+  await api.plugins.settings.read(binding);
+  await api.plugins.settings.update(binding, change);
+  assert.deepEqual(structuredClone(calls.at(-1)), ["plugins:settings:update", binding, change]);
+  await api.plugins.settings.reset(binding, {
+    schemaVersion: 1,
+    expectedRevision: null,
+    keys: ["test.enabled"],
+  });
+  let changes = 0;
+  const off = api.plugins.settings.watch(binding, () => changes++);
+  await Promise.resolve();
+  assert.equal(changes, 1);
+  ipcRenderer.emit("plugins:settings:changed", {}, { binding, watch: 2 });
+  assert.equal(changes, 1);
+  ipcRenderer.emit("plugins:settings:changed", {}, { binding, watch: 1 });
+  assert.equal(changes, 2);
+  off();
+  off();
+  ipcRenderer.emit("plugins:settings:changed", {}, { binding, watch: 1 });
+  assert.equal(changes, 2);
+  assert.equal(calls.filter((row) => row[0] === "plugins:settings:unwatch").length, 1);
+  api.plugins.settings.dispose(binding);
+  await api.plugins.legacyPreferences.challenge("test.preferences");
+  const snapshot = {
+    nonce: binding.scope.hostEpoch,
+    scope: binding.scope,
+    entries: [{ key: "test.layout", raw: "001" }],
+  };
+  await api.plugins.legacyPreferences.submit(snapshot);
+  assert.deepEqual(structuredClone(calls.at(-1)), [
+    "persistence:legacy-preferences-submit",
+    snapshot,
+  ]);
+  const seen = [];
+  const offOpen = api.plugins.persistenceRecovery.onOpen((value) => seen.push(value));
+  const offChanged = api.plugins.persistenceRecovery.onChanged(() => seen.push("changed"));
+  assert.equal(
+    calls.filter((row) => row[0] === "plugins:persistence-recovery:subscribe").length,
+    1,
+  );
+  const selected = { itemId: binding.scope.hostEpoch };
+  ipcRenderer.emit("plugins:persistence-recovery:open", {}, selected);
+  await api.plugins.persistenceRecovery.snapshot(selected);
+  await api.plugins.persistenceRecovery.act({
+    ...selected,
+    optionId: binding.scope.workbenchInstance,
+  });
+  offOpen();
+  offOpen();
+  assert.equal(
+    calls.filter((row) => row[0] === "plugins:persistence-recovery:unsubscribe").length,
+    0,
+  );
+  ipcRenderer.emit("plugins:persistence-recovery:changed", {});
+  offChanged();
+  ipcRenderer.emit("plugins:persistence-recovery:changed", {});
+  assert.deepEqual(seen, [selected, "changed"]);
+  assert.equal(
+    calls.filter((row) => row[0] === "plugins:persistence-recovery:unsubscribe").length,
+    1,
+  );
+  assert.equal(ipcRenderer.listenerCount("plugins:settings:changed"), 0);
+});
+
+test("a disposed smoke settings watcher ignores a late registration reply", async () => {
+  const { api, ipcRenderer } = loadPreload();
+  let resolve;
+  ipcRenderer.invoke = (channel) =>
+    channel === "plugins:settings:watch"
+      ? new Promise((done) => {
+          resolve = done;
+        })
+      : Promise.resolve();
+  let changes = 0;
+  const off = api.plugins.settings.watch(
+    { scope: {}, owner: {}, resourceDigest: "a".repeat(64) },
+    () => changes++,
+  );
+  off();
+  resolve();
+  await Promise.resolve();
+  assert.equal(changes, 0);
+  assert.equal(ipcRenderer.listenerCount("plugins:settings:changed"), 0);
+});
+
 test("smoke UI observers use separate targeted channels and dispose once", async () => {
   const { api, calls, ipcRenderer } = loadPreload();
   const seen = [[], []];
@@ -127,9 +238,18 @@ test("smoke preload contains the real preload's complete API key tree", async ()
     new URL("../../apps/desktop/src/preload/index.ts", import.meta.url),
     "utf8",
   );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText;
+  const compiled = buildSync({
+    stdin: {
+      contents: source,
+      loader: "ts",
+      resolveDir: fileURLToPath(new URL("../../apps/desktop/src/preload/", import.meta.url)),
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    external: ["electron"],
+    write: false,
+  }).outputFiles[0].text;
   for (const platform of ["win32", "darwin", "linux"]) {
     const real = loadPreload(compiled, platform).api;
     const smoke = loadPreload(preload, platform).api;

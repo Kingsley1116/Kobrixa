@@ -10,6 +10,70 @@ const unsupportedPluginOperation = async () => {
 };
 let nextUiListener = 0;
 const uiRequest = (method) => (input) => ipcRenderer.invoke(`plugins:ui:${method}`, input);
+function createSettingsPreload170() {
+  let nextWatch = 0;
+  return {
+    open: (input) => ipcRenderer.invoke("plugins:settings:open", input),
+    read: (binding) => ipcRenderer.invoke("plugins:settings:read", binding),
+    update: (binding, params) => ipcRenderer.invoke("plugins:settings:update", binding, params),
+    reset: (binding, params) => ipcRenderer.invoke("plugins:settings:reset", binding, params),
+    watch(binding, changed) {
+      const watch = ++nextWatch;
+      let active = true;
+      const receive = (_event, value) => {
+        if (
+          active &&
+          value?.watch === watch &&
+          JSON.stringify(value.binding) === JSON.stringify(binding)
+        )
+          changed();
+      };
+      ipcRenderer.on("plugins:settings:changed", receive);
+      void ipcRenderer.invoke("plugins:settings:watch", { binding, watch }).then(
+        () => {
+          if (active) changed();
+        },
+        () => {
+          if (active) changed();
+        },
+      );
+      return () => {
+        if (!active) return;
+        active = false;
+        ipcRenderer.removeListener("plugins:settings:changed", receive);
+        void ipcRenderer.invoke("plugins:settings:unwatch", { binding, watch }).catch(() => {});
+      };
+    },
+    dispose(binding) {
+      void ipcRenderer.invoke("plugins:settings:dispose", binding).catch(() => {});
+    },
+  };
+}
+function createPersistenceRecoveryPreload170() {
+  let listeners = 0;
+  function listen(channel, callback) {
+    let active = true;
+    const receive = (_event, value) => {
+      if (active) callback(value);
+    };
+    ipcRenderer.on(channel, receive);
+    if (listeners++ === 0)
+      void ipcRenderer.invoke("plugins:persistence-recovery:subscribe").catch(() => {});
+    return () => {
+      if (!active) return;
+      active = false;
+      ipcRenderer.removeListener(channel, receive);
+      if (--listeners === 0)
+        void ipcRenderer.invoke("plugins:persistence-recovery:unsubscribe").catch(() => {});
+    };
+  }
+  return {
+    snapshot: (input) => ipcRenderer.invoke("plugins:persistence-recovery:snapshot", input),
+    act: (input) => ipcRenderer.invoke("plugins:persistence-recovery:act", input),
+    onOpen: (listener) => listen("plugins:persistence-recovery:open", listener),
+    onChanged: (listener) => listen("plugins:persistence-recovery:changed", listener),
+  };
+}
 contextBridge.exposeInMainWorld("kobrixa", {
   // The harness does not customize the native Windows title bar.
   ...(process.platform === "win32" ? { windowChrome: { setAppearance: async () => {} } } : {}),
@@ -53,6 +117,13 @@ contextBridge.exposeInMainWorld("kobrixa", {
   documentation: { open: call("documentationOpen") },
   // No development plugins; built-in help entries come from the renderer's catalog.
   plugins: {
+    settings: createSettingsPreload170(),
+    legacyPreferences: {
+      challenge: (descriptorId) =>
+        ipcRenderer.invoke("persistence:legacy-preferences-challenge", descriptorId),
+      submit: (snapshot) => ipcRenderer.invoke("persistence:legacy-preferences-submit", snapshot),
+    },
+    persistenceRecovery: createPersistenceRecoveryPreload170(),
     // General workbench smoke has no dynamic plugins. Keep real IPC forwarding
     // so missing main handlers fail visibly; UI acceptance has its own real host.
     ui: {
