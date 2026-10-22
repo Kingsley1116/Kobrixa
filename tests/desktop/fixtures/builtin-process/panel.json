@@ -1,0 +1,20 @@
+{
+  "kind": "panel",
+  "data": {},
+  "fields": {},
+  "root": "root",
+  "nodes": [
+    { "id": "root", "type": "group", "layout": "stack", "children": ["run"] },
+    {
+      "id": "run",
+      "type": "action",
+      "label": { "en": "Activate", "zh-TW": "執行" },
+      "variant": "primary",
+      "action": {
+        "kind": "command",
+        "command": "acceptance.ui.activate",
+        "arguments": { "speed": { "literal": 20 }, "mode": { "literal": "brake" } }
+      }
+    }
+  ]
+}
