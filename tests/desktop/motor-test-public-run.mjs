@@ -192,7 +192,13 @@ export function validateNative(report, identity, scenario) {
     assert.deepEqual(report.failures, []);
     return report;
   }
-  assert.ok(report.wire?.length && report.native?.length && report.trace?.length);
+  assert.ok(report.wire?.length && report.native?.length);
+  assert.ok(Array.isArray(report.trace), "Actual provider trace required");
+  if (report.trace.length === 0) {
+    assert.equal(report.terminal?.dispatch, "not-sent");
+    assert.equal(report.terminal?.movement, "not-started");
+    assert.equal(report.terminal?.stopConfirmation, "not-required");
+  }
   assert.ok(report.operationId);
   const preparedReply = report.wire.find(
     (r) =>
@@ -242,7 +248,12 @@ export function validateNative(report, identity, scenario) {
   assert.ok(
     ["stopped", "completed", "timeout", "failed", "unconfirmed"].includes(report.terminal?.phase),
   );
-  assert.ok(["confirmed", "unconfirmed"].includes(report.terminal.stopConfirmation));
+  assert.ok(
+    ["confirmed", "unconfirmed"].includes(report.terminal.stopConfirmation) ||
+      (report.terminal.stopConfirmation === "not-required" &&
+        report.terminal.dispatch === "not-sent" &&
+        report.terminal.movement === "not-started"),
+  );
   assert.deepEqual(report.failures, []);
   assert.ok(report.orphanCheckMs >= 5000);
   assert.deepEqual(report.remainingPids, []);

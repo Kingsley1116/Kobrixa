@@ -165,12 +165,24 @@ test(
         "session catalog",
       );
       await c.invoke("select-current");
-      await c.invoke("start", { ...c.panel.form, "a-mode": "timed" });
-      await until(
-        () => c.wire.some((r) => r.message.method === "devices/motion/stop"),
-        "actual motion trace",
-      );
-      auditTrace(c.wire);
+      c.fake.control.block("after-exchange", "motion-pulse");
+      try {
+        await c.invoke("jog", { ...c.panel.form, "a-mode": "jog" }, "begin");
+        await c.fake.control.reached("after-exchange", "motion-pulse");
+        await c.invoke("refresh");
+        await c.invoke("jog", { ...c.panel.form, "a-mode": "jog" }, "cancel");
+        await until(
+          () => c.wire.some((r) => r.message.method === "devices/motion/query"),
+          "actual query",
+        );
+        await until(
+          () => c.wire.some((r) => r.message.method === "devices/motion/stop"),
+          "actual stop",
+        );
+        auditTrace(c.wire);
+      } finally {
+        c.fake.control.release("after-exchange", "motion-pulse");
+      }
     } finally {
       await c.dispose();
     }

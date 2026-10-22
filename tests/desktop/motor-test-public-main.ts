@@ -1346,7 +1346,7 @@ export function runNativeMotor() {
             () =>
               events
                 .slice(eventBefore)
-                .filter((e) => performance.timeOrigin + e.time >= faultAt)
+                .filter((e) => e.time >= faultAt)
                 .some(
                   (e) =>
                     e.kind ===
@@ -1359,7 +1359,7 @@ export function runNativeMotor() {
         }
         const cancellation = events
           .slice(eventBefore)
-          .filter((e) => performance.timeOrigin + e.time >= faultAt)
+          .filter((e) => e.time >= faultAt)
           .find(
             (e) =>
               e.kind ===
@@ -1368,7 +1368,7 @@ export function runNativeMotor() {
                 : "revoke"),
           );
         assert.ok(cancellation || hostLifecycle);
-        const revokedAt = cancellation ? performance.timeOrigin + cancellation.time : faultAt,
+        const revokedAt = cancellation ? cancellation.time : faultAt,
           traceAtRevoke = control.trace().length;
         if (scenario.stress === "lost-start") {
           const heldAt = wire.find(

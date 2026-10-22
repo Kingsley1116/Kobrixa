@@ -134,17 +134,35 @@ for (const boundary of ["prepare", "start"])
       fixture(async (c) => {
         await selected(c);
         c.hold(boundary);
+        if (boundary === "start") c.fake.control.block("before-exchange", "motion-pulse");
         await c.invoke("start", form(c, "timed"));
         await until(c.held, "held original reply");
         c.hide();
+        if (boundary === "start") c.fake.control.release("before-exchange", "motion-pulse");
         c.release();
         await until(() => requests(c, "stop").length, "original ID stop");
         const stop = requests(c, "stop")[0].message.params.operationId;
         assert.equal(requests(c, "prepare").length, 1);
         assert.ok(requests(c, "start").length <= (boundary === "prepare" ? 0 : 1));
-        await until(
-          () => requests(c, "query").some((r) => r.message.params.operationId === stop),
-          "original ID query",
+        const receipt = await until(
+          () =>
+            c.wire.find(
+              (r) =>
+                r.direction === "host-plugin" &&
+                r.message.id === requests(c, "stop")[0].message.id &&
+                r.message.result?.ok,
+            )?.message.result.value.operation,
+          "original stop receipt",
+        );
+        assert.equal(receipt.operationId, stop);
+        assert.ok(
+          receipt.stopConfirmation === "confirmed" ||
+            (receipt.stopConfirmation === "not-required" && receipt.dispatch === "not-sent"),
+        );
+        assert.equal(
+          c.fake.control.trace().filter((r) => r.step === "motion-pulse" && r.dispatch === "sent")
+            .length,
+          0,
         );
       }),
   );
@@ -238,9 +256,11 @@ for (const boundary of ["prepare", "start"])
     fixture(async (c) => {
       await selected(c);
       c.hold(boundary);
+      if (boundary === "start") c.fake.control.block("before-exchange", "motion-pulse");
       await c.invoke("jog", form(c, "jog"), "begin");
       await until(c.held, "pending SDK reply");
       await c.invoke("jog", form(c, "jog"), "cancel");
+      if (boundary === "start") c.fake.control.release("before-exchange", "motion-pulse");
       c.release();
       await until(() => requests(c, "stop").length, "cancel original operation");
       assert.equal(requests(c, "prepare").length, 1);
