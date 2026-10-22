@@ -12,7 +12,7 @@ import {
   validateLifecycleBarrier,
   nativeCases,
   validateProviderTrace,
-  validateCoreStop,
+  validateNative,
   validateCancellation,
   waitElapsed,
 } from "./motor-test-public-run.mjs";
@@ -565,28 +565,566 @@ test("disconnect trace retains original motor identity and ordered separate conn
   }
 });
 
-test("core Stop requires original admission and actual trusted native IPC", () => {
-  const invocation = {
-    at: 12,
-    channel: "plugins:ui:invoke",
-    args: [{ nodeId: "stop", form: {} }],
-    result: { ok: true, value: { fieldErrors: [] } },
-  };
+test("core Stop binds native IPC, queried snapshots and sent hardware evidence", async (t) => {
+  // Selected records/fields from retained kRcDR0/start-before-stop-timed-invalid-stop/report.json.
+  // Exact observed values, including revisions and fractional timestamps; presentation
+  // samples retain timestamps only. This is a validator fixture, not a new execution receipt.
   const report = {
-    operationId: "motion",
-    terminal: { sessionId: "session" },
-    faultAt: 10,
+    kind: "motor-public-native",
+    composition: "composeDesktopMain/createDesktopFoundation",
+    scenario: {
+      boundary: "start",
+      position: "before",
+      fault: "stop",
+      mode: "timed",
+      parity: "invalid-stop",
+    },
+    artifact: {
+      harnessSha256: {
+        "motor-test-public-main.ts":
+          "688b768de566b24e18340378eb6ed7eda1b9a62ef22eef2ec361cc13a0d19266",
+        "motor-test-public-renderer.tsx":
+          "514990073a7450f203a44f054e993b6f50d2849a5d04202353f4b9bf7a13c30c",
+        "motor-test-public-run.mjs":
+          "3982fffa8348b213bbc45dbcb008ff72f732fb88f2dadfb1fa56e029f299ef79",
+        "motor-test-smoke.mjs": "33e63fa1bcadf52ca67c437dd6bba32a0aa50f17bdd603ada713800461a4e39a",
+        "motor-test-public.test.mjs":
+          "4472a2ce16a2687789211916ee865bf804ee5557486d0a8f66355ac58938c1cb",
+        "motor-test-boundaries.test.mjs":
+          "4f8c03baff67bd1750679db6becc187f1695ae893a9c1c67a8c8dfcd52cae66d",
+      },
+      entry: "plugins/motor-test/src/main.ts",
+      sha256: {
+        "src/main.ts": "bc244191eaa95fa0830431ce852ccbacb6906e05eb08429f2dc05d44f1ffcc55",
+        "src/feature.ts": "b494c0aeea5c450e2b954c5fad27a78184db8e416e01ed2ca8f1975dd7b404dd",
+        "src/model.ts": "a36e5bd43a72ad91c74bbf09052ffaa9c0056accb79787bd4841b4e05e84316c",
+        "kobrixa-plugin.json": "f556a7fbdf65eeee6f26e0c233c80b8f0c1e6712050d547204795a5fdc1792d6",
+        "panel.json": "1a68d65232df2b559e53ad80fe708439121ef6cbb8800da366733cf6fd815c9b",
+        "status.json": "644d91d7c69295bf072e6e4846e17fd4618135e71dcfbfafc7436557134e4781",
+      },
+      bundleSha256: "ca05882d4543c7292486c35075b66fc5fba5b1087992b134ddf6d721a163be0c",
+      nativeBuildSha256: {
+        "main.cjs": "c7535ce6c2388594bdd68bd43fc339798d8afa6cb1033d6e4782c70bbef1fd1a",
+        "template/preload.cjs": "b61153c2b9bb2c2f9cdcd22779ba7bee9d641d95cd5885412511c73ce2732e80",
+        "template/source/main.cjs":
+          "2f37e54218d91f96d1a6163653dcda49939edcf3df6043bed4d877e5e2d147ab",
+        "template/renderer/index.html":
+          "e8fc5468837a297ebe3448605851d37803982203ecec3bdd006a413733736b8c",
+        "template/renderer/assets/index-Ctv-p2WS.css":
+          "35b19a04601f52a29ec5472c63ac8fe5b97c1ef863157b2bfa48bdb15271ec83",
+        "template/renderer/assets/index-DWmIIMqB.js":
+          "e081884b28c6755f589bc17ce5b32c4f583228519269f6a4c3cc6e5a414475c5",
+      },
+    },
+    stdout:
+      'Motor native case {"boundary":"start","position":"before","fault":"stop","mode":"timed","parity":"invalid-stop"}\n[plugin kobrixa.motor-test] MOTOR_PID:76295\n',
+    faultAt: 1792712907854.564,
+    revokedAt: 1792712907854.564,
+    stoppedAt: 1792712908017.3796,
+    operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+    terminal: {
+      operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+      sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+      revision: 5,
+      phase: "stopped",
+      stage: "terminal",
+      startAccepted: true,
+      stopRequested: true,
+      dispatch: "unknown",
+      movement: "interrupted",
+      stopConfirmation: "confirmed",
+      brakeRequired: true,
+      elapsedMs: 0,
+      angle: null,
+      displacement: null,
+      preparedRemainingMs: 0,
+    },
+    trace: [
+      {
+        step: "stop",
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        time: 1792712907995.8372,
+        dispatch: "not-sent",
+      },
+      {
+        step: "stop",
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        time: 1792712907995.8535,
+        dispatch: "sent",
+      },
+      {
+        step: "readback",
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        time: 1792712907995.895,
+        dispatch: "not-sent",
+      },
+      {
+        step: "readback",
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        time: 1792712907995.9717,
+        dispatch: "sent",
+      },
+    ],
+    traceAtRevoke: 0,
     lifecycleReceipt: {
       coreStop: {
-        admitted: { operationId: "motion", sessionId: "session", stopRequested: true },
-        admittedAt: 13,
+        admitted: {
+          operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+          sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+          revision: 3,
+          phase: "stopping",
+          stage: "readback",
+          startAccepted: true,
+          stopRequested: true,
+          dispatch: "unknown",
+          movement: "not-started",
+          stopConfirmation: "pending",
+          brakeRequired: true,
+          elapsedMs: 0,
+          angle: null,
+          displacement: null,
+          preparedRemainingMs: 0,
+        },
+        admittedAt: 1792712907995.371,
       },
-      coreStopInvocation: invocation,
+      coreStopInvocation: {
+        at: 1792712907961.6553,
+        channel: "plugins:ui:invoke",
+        args: [
+          {
+            binding: {
+              contributionId: "kobrixa.motor-test.panel",
+              panelInstance: "4cf1fda9-2195-4c0b-b7ad-f0fe91096de8",
+              kind: "panel",
+              uiResourceGeneration: 4,
+              generation: 0,
+              hostEpoch: "33c33306-0ca3-4640-9bfc-8bdfca111547",
+              processEpoch: "8e545e6b-239d-4c7a-b3de-c53397fc14b4",
+            },
+            formRevision: 2,
+            form: {},
+            nodeId: "stop",
+          },
+        ],
+        result: {
+          ok: true,
+          value: {
+            output: {},
+            fieldErrors: [],
+          },
+        },
+      },
     },
-    ipc: [invocation],
-    inputReceipts: [{ isTrusted: true, node: "stop", type: "pointerdown", at: 11 }],
+    hostQueries: [
+      {
+        at: 1792712907995.358,
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        result: {
+          ok: true,
+          value: {
+            operation: {
+              operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+              sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+              revision: 3,
+              phase: "stopping",
+              stage: "readback",
+              startAccepted: true,
+              stopRequested: true,
+              dispatch: "unknown",
+              movement: "not-started",
+              stopConfirmation: "pending",
+              brakeRequired: true,
+              elapsedMs: 0,
+              angle: null,
+              displacement: null,
+              preparedRemainingMs: 0,
+            },
+          },
+        },
+      },
+      {
+        at: 1792712907995.682,
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        result: {
+          ok: true,
+          value: {
+            operation: {
+              operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+              sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+              revision: 3,
+              phase: "stopping",
+              stage: "readback",
+              startAccepted: true,
+              stopRequested: true,
+              dispatch: "unknown",
+              movement: "not-started",
+              stopConfirmation: "pending",
+              brakeRequired: true,
+              elapsedMs: 0,
+              angle: null,
+              displacement: null,
+              preparedRemainingMs: 0,
+            },
+          },
+        },
+      },
+      {
+        at: 1792712908006.6802,
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        result: {
+          ok: true,
+          value: {
+            operation: {
+              operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+              sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+              revision: 4,
+              phase: "stopped",
+              stage: "terminal",
+              startAccepted: true,
+              stopRequested: true,
+              dispatch: "unknown",
+              movement: "interrupted",
+              stopConfirmation: "confirmed",
+              brakeRequired: true,
+              elapsedMs: 0,
+              angle: null,
+              displacement: null,
+              preparedRemainingMs: 0,
+            },
+          },
+        },
+      },
+      {
+        at: 1792712908017.3523,
+        operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+        result: {
+          ok: true,
+          value: {
+            operation: {
+              operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+              sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+              revision: 5,
+              phase: "stopped",
+              stage: "terminal",
+              startAccepted: true,
+              stopRequested: true,
+              dispatch: "unknown",
+              movement: "interrupted",
+              stopConfirmation: "confirmed",
+              brakeRequired: true,
+              elapsedMs: 0,
+              angle: null,
+              displacement: null,
+              preparedRemainingMs: 0,
+            },
+          },
+        },
+      },
+    ],
+    final: {
+      owners: 0,
+      bindings: 0,
+      subscriptions: 0,
+      queuedEvents: 0,
+      queuedBytes: 0,
+      timers: 0,
+      pendingInvocations: 0,
+      actionTokens: 0,
+      resourceReaders: 0,
+      workerJobs: 0,
+    },
+    failures: [],
+    orphanCheckMs: 5002.091709,
+    remainingPids: [],
+    counterSamples: [
+      {
+        at: 1792712906846.346,
+        label: "composed",
+        counters: {
+          owners: 0,
+          bindings: 0,
+          subscriptions: 0,
+          queuedEvents: 0,
+          queuedBytes: 0,
+          timers: 0,
+          pendingInvocations: 0,
+          actionTokens: 0,
+          resourceReaders: 0,
+          workerJobs: 0,
+        },
+      },
+      {
+        at: 1792712907854.5105,
+        label: "boundary",
+        counters: {
+          owners: 0,
+          bindings: 0,
+          subscriptions: 0,
+          queuedEvents: 0,
+          queuedBytes: 0,
+          timers: 2,
+          pendingInvocations: 0,
+          actionTokens: 2,
+          resourceReaders: 0,
+          workerJobs: 0,
+        },
+      },
+      {
+        at: 1792712908528.1018,
+        label: "disposed",
+        counters: {
+          owners: 0,
+          bindings: 0,
+          subscriptions: 0,
+          queuedEvents: 0,
+          queuedBytes: 0,
+          timers: 0,
+          pendingInvocations: 0,
+          actionTokens: 0,
+          resourceReaders: 0,
+          workerJobs: 0,
+        },
+      },
+    ],
+    parity: {
+      invalidStop: {
+        raw: "bad",
+        fieldErrorVisible: true,
+      },
+    },
+    ipc: [
+      {
+        at: 1792712907961.6553,
+        channel: "plugins:ui:invoke",
+        args: [
+          {
+            binding: {
+              contributionId: "kobrixa.motor-test.panel",
+              panelInstance: "4cf1fda9-2195-4c0b-b7ad-f0fe91096de8",
+              kind: "panel",
+              uiResourceGeneration: 4,
+              generation: 0,
+              hostEpoch: "33c33306-0ca3-4640-9bfc-8bdfca111547",
+              processEpoch: "8e545e6b-239d-4c7a-b3de-c53397fc14b4",
+            },
+            formRevision: 2,
+            form: {},
+            nodeId: "stop",
+          },
+        ],
+        result: {
+          ok: true,
+          value: {
+            output: {},
+            fieldErrors: [],
+          },
+        },
+      },
+    ],
+    inputReceipts: [
+      {
+        at: 1792712907929.2,
+        type: "pointerdown",
+        isTrusted: true,
+        node: "stop",
+        key: null,
+        repeat: null,
+      },
+      {
+        at: 1792712907961.4001,
+        type: "pointerup",
+        isTrusted: true,
+        node: "stop",
+        key: null,
+        repeat: null,
+      },
+    ],
+    native: [
+      {
+        at: 1792712907028.8179,
+        type: "mouseDown",
+        detail: {
+          x: 40,
+          y: 134,
+        },
+      },
+      {
+        at: 1792712907278.5996,
+        type: "mouseDown",
+        detail: {
+          x: 320,
+          y: 362,
+        },
+      },
+      {
+        at: 1792712907412.2327,
+        type: "mouseDown",
+        detail: {
+          x: 320,
+          y: 366,
+        },
+      },
+      {
+        at: 1792712907512.8481,
+        type: "mode-observed",
+        detail: {
+          value: "jog",
+          focused: true,
+        },
+      },
+      {
+        at: 1792712907548.2375,
+        type: "mode-observed",
+        detail: {
+          value: "jog",
+          focused: true,
+        },
+      },
+      {
+        at: 1792712907612.4495,
+        type: "mode-observed",
+        detail: {
+          value: "timed",
+          focused: true,
+        },
+      },
+      {
+        at: 1792712907680.1516,
+        type: "mouseDown",
+        detail: {
+          x: 320,
+          y: 366,
+        },
+      },
+      {
+        at: 1792712907778.9412,
+        type: "mouseDown",
+        detail: {
+          x: 320,
+          y: 366,
+        },
+      },
+      {
+        at: 1792712907928.9014,
+        type: "mouseDown",
+        detail: {
+          x: 320,
+          y: 366,
+        },
+      },
+    ],
+    wire: [
+      {
+        at: 1792712907700.8135,
+        direction: "plugin-host",
+        message: {
+          jsonrpc: "2.0",
+          id: 43,
+          method: "devices/motion/prepare",
+          params: {
+            sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+            contextRef: "39645382-a237-4417-989a-190461a727c7",
+            motionScopeRef: "e9e36378-9bfd-4cf0-bb37-128f783e798c",
+            motion: {
+              actuatorId: "00000000-0000-4000-8000-000000000002",
+              power: 20,
+              direction: 1,
+              brake: true,
+              mode: "timed",
+              durationMs: 1000,
+            },
+          },
+        },
+      },
+      {
+        at: 1792712907703.0547,
+        direction: "host-plugin",
+        message: {
+          jsonrpc: "2.0",
+          id: 43,
+          result: {
+            ok: true,
+            value: {
+              operation: {
+                operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+                sessionId: "f463908f-87a7-47bd-b02f-327392c97878",
+                revision: 1,
+                phase: "preparing",
+                stage: "prepared",
+                startAccepted: false,
+                stopRequested: false,
+                dispatch: "not-sent",
+                movement: "not-started",
+                stopConfirmation: "not-required",
+                brakeRequired: true,
+                elapsedMs: 0,
+                angle: null,
+                displacement: null,
+                preparedRemainingMs: 4999,
+              },
+            },
+          },
+        },
+      },
+      {
+        at: 1792712907706.455,
+        direction: "plugin-host",
+        message: {
+          jsonrpc: "2.0",
+          id: 47,
+          method: "devices/motion/start",
+          params: {
+            operationId: "868b57db-4faa-4b86-a55b-221fa6c5b015",
+          },
+        },
+      },
+    ],
+    presentationSamples: [
+      {
+        at: 1792712907195.629,
+      },
+      {
+        at: 1792712907196.401,
+      },
+      {
+        at: 1792712907298.578,
+      },
+      {
+        at: 1792712907298.833,
+      },
+      {
+        at: 1792712907403.82,
+      },
+      {
+        at: 1792712907404.153,
+      },
+      {
+        at: 1792712907697.2217,
+      },
+      {
+        at: 1792712907698.6365,
+      },
+      {
+        at: 1792712907798.9302,
+      },
+      {
+        at: 1792712907799.4233,
+      },
+      {
+        at: 1792712907965.8542,
+      },
+      {
+        at: 1792712907966.0994,
+      },
+      {
+        at: 1792712908069.6343,
+      },
+      {
+        at: 1792712908070.209,
+      },
+    ],
   };
-  validateCoreStop(report);
+  validateNative(report, report.artifact, report.scenario);
   for (const mutate of [
     (r) => {
       r.lifecycleReceipt.coreStop.admitted.operationId = "other";
@@ -609,6 +1147,144 @@ test("core Stop requires original admission and actual trusted native IPC", () =
   ]) {
     const invalid = JSON.parse(JSON.stringify(report));
     mutate(invalid);
-    assert.throws(() => validateCoreStop(invalid));
+    assert.throws(() => validateNative(invalid, report.artifact, report.scenario));
   }
+  for (const [name, mutate] of [
+    [
+      "reject every host query failing",
+      (r) => {
+        for (const q of r.hostQueries) q.result = { ok: false };
+      },
+    ],
+    ...[3, 5].map((revision) => [
+      `reject failed revision ${revision} queries despite other successful queries`,
+      (r) => {
+        for (const q of r.hostQueries)
+          if (q.result.value.operation.revision === revision) q.result.ok = false;
+      },
+    ]),
+    [
+      "reject foreign terminal operation",
+      (r) => {
+        r.terminal.operationId = "foreign";
+      },
+    ],
+    [
+      "reject only not-sent stop/readback rows",
+      (r) => {
+        r.trace = r.trace.filter((row) => row.dispatch !== "sent");
+      },
+    ],
+    [
+      "reject unobserved admission revision",
+      (r) => {
+        r.lifecycleReceipt.coreStop.admitted.revision = 999;
+      },
+    ],
+    ...["admission", "terminal"].map((which) => [
+      `reject missing ${which} revision even in matching queries`,
+      (r) => {
+        const snapshot = which === "admission" ? r.lifecycleReceipt.coreStop.admitted : r.terminal;
+        for (const q of r.hostQueries)
+          if (q.result.value.operation.revision === snapshot.revision)
+            delete q.result.value.operation.revision;
+        delete snapshot.revision;
+      },
+    ]),
+    [
+      "reject unobserved terminal revision",
+      (r) => {
+        r.terminal.revision = 999;
+      },
+    ],
+    [
+      "reject admission queries for another operation",
+      (r) => {
+        for (const q of r.hostQueries)
+          if (q.result.value.operation.revision === 3)
+            q.result.value.operation.operationId = "foreign";
+      },
+    ],
+    [
+      "reject query session differing from admission",
+      (r) => {
+        for (const q of r.hostQueries) q.result.value.operation.sessionId = "foreign";
+      },
+    ],
+    [
+      "reject consistently foreign session relative to preparation",
+      (r) => {
+        r.terminal.sessionId = "foreign";
+        r.lifecycleReceipt.coreStop.admitted.sessionId = "foreign";
+        for (const q of r.hostQueries) q.result.value.operation.sessionId = "foreign";
+      },
+    ],
+    [
+      "reject admission queried before Stop IPC",
+      (r) => {
+        for (const q of r.hostQueries)
+          if (q.result.value.operation.revision === 3)
+            q.at = r.lifecycleReceipt.coreStopInvocation.at - 1;
+      },
+    ],
+    [
+      "reject admission recorded before its query",
+      (r) => {
+        r.lifecycleReceipt.coreStop.admittedAt = r.hostQueries[0].at - 1;
+      },
+    ],
+    [
+      "reject terminal query before admission capture",
+      (r) => {
+        r.hostQueries.at(-1).at = r.lifecycleReceipt.coreStop.admittedAt - 1;
+      },
+    ],
+    [
+      "reject terminal query after stoppedAt",
+      (r) => {
+        r.hostQueries.at(-1).at = r.stoppedAt + 1;
+      },
+    ],
+    ...["stop", "readback"].flatMap((step) => [
+      [
+        `reject missing sent ${step}`,
+        (r) => {
+          r.trace = r.trace.filter((row) => row.step !== step || row.dispatch !== "sent");
+        },
+      ],
+      [
+        `reject sent ${step} before Stop IPC`,
+        (r) => {
+          r.trace.find((row) => row.step === step && row.dispatch === "sent").time =
+            r.lifecycleReceipt.coreStopInvocation.at - 1;
+        },
+      ],
+      [
+        `reject sent ${step} after terminal query`,
+        (r) => {
+          r.trace.find((row) => row.step === step && row.dispatch === "sent").time =
+            r.hostQueries.at(-1).at + 1;
+        },
+      ],
+      [
+        `reject foreign sent ${step}`,
+        (r) => {
+          r.trace.find((row) => row.step === step && row.dispatch === "sent").operationId =
+            "foreign";
+        },
+      ],
+    ]),
+    [
+      "reject readback preceding stop",
+      (r) => {
+        r.trace.find((row) => row.step === "readback" && row.dispatch === "sent").time =
+          r.trace.find((row) => row.step === "stop" && row.dispatch === "sent").time - 1;
+      },
+    ],
+  ])
+    await t.test(name, () => {
+      const invalid = structuredClone(report);
+      mutate(invalid);
+      assert.throws(() => validateNative(invalid, report.artifact, report.scenario));
+    });
 });

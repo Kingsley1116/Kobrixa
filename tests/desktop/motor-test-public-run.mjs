@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
+import { isDeepStrictEqual } from "node:util";
 import { spawn } from "node:child_process";
 import { setTimeout as pause } from "node:timers/promises";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
@@ -344,6 +345,61 @@ export function validateCoreStop(report) {
         r.at <= invocation.at,
     ),
   );
+  const prepared = report.wire.find(
+    (r) =>
+      r.direction === "host-plugin" &&
+      r.message.result?.ok === true &&
+      r.message.result.value?.operation?.operationId === report.operationId,
+  )?.message.result.value.operation;
+  assert.ok(prepared?.sessionId, "Original operation/session must be observed on the wire");
+  assert.equal(admission.admitted.sessionId, prepared.sessionId);
+  assert.equal(report.terminal.operationId, report.operationId);
+  assert.equal(report.terminal.sessionId, prepared.sessionId);
+  assert.equal(report.terminal.stopConfirmation, "confirmed");
+  for (const snapshot of [admission.admitted, report.terminal])
+    assert.ok(Number.isSafeInteger(snapshot.revision), "Observed snapshot revision required");
+
+  // queryOriginal records its response before capturing admittedAt. Terminal
+  // polling likewise records the exact snapshot before capturing stoppedAt.
+  // Compare the whole snapshot, including revision; a later revision is not
+  // evidence for the snapshot claimed by either receipt.
+  const observed = (operation, from, through) =>
+    report.hostQueries?.find(
+      (q) =>
+        q.operationId === report.operationId &&
+        q.result?.ok === true &&
+        Number.isFinite(q.at) &&
+        q.at >= from &&
+        q.at <= through &&
+        isDeepStrictEqual(q.result.value?.operation, operation),
+    );
+  assert.ok(
+    observed(admission.admitted, invocation.at, admission.admittedAt),
+    "Core Stop admission requires its exact successful original-operation query",
+  );
+  const terminalQuery = observed(report.terminal, admission.admittedAt, report.stoppedAt);
+  assert.ok(
+    terminalQuery,
+    "Core Stop terminal requires its exact successful original-operation query",
+  );
+  // IPC at is invocation entry, not completion. The stop can be sent before
+  // admission is polled; both sent exchanges must precede terminal observation.
+  let after = invocation.at;
+  for (const step of ["stop", "readback"]) {
+    const sent = report.trace.find(
+      (r) =>
+        r.operationId === report.operationId &&
+        r.step === step &&
+        r.dispatch === "sent" &&
+        r.time >= after &&
+        r.time <= terminalQuery.at,
+    );
+    assert.ok(
+      sent,
+      `Core Stop requires ordered sent original-operation ${step} before terminal query`,
+    );
+    after = sent.time;
+  }
 }
 export function validateNative(report, identity, scenario) {
   assert.equal(report.kind, scenario.safeMode ? "motor-public-native-cold" : "motor-public-native");
