@@ -21,6 +21,16 @@ export class WorkbenchLifecycle {
   get closing(): boolean {
     return !!this.#close;
   }
+  async openWindow(create: () => void, report: (error: unknown) => void): Promise<void> {
+    try {
+      await this.reopen();
+    } catch (error) {
+      // Core recovery must remain reachable even while device or plugin
+      // readmission is blocked. Reopen keeps the original receipts and fence.
+      report(error);
+    }
+    create();
+  }
   close(reason: "window" | "update" = "window"): Promise<void> {
     if (this.#close && !this.#failed) return this.#close;
     const retry = !!this.#close;

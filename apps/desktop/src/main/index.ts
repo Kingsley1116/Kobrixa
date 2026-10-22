@@ -47,6 +47,7 @@ import {
   type PluginController,
 } from "./plugins/controller.js";
 import { createDesktopFoundation } from "./device-broker/lifecycle-coordinator.js";
+import { readDeviceRecoverySessions } from "./device-broker/broker.js";
 import { createJournal } from "./device-broker/journal.js";
 import { createJournalFilesystem } from "./device-broker/journal-filesystem.js";
 import {
@@ -359,16 +360,7 @@ const primary = startPrimary(
       now,
       entries: createRecoveryEntries({
         device: broker.recovery,
-        sessions: async () => {
-          const result = await broker.request(
-            currentCorePrincipal(),
-            "devices/list",
-            {},
-            new AbortController().signal,
-          );
-          if (!result.ok) throw new Error("Device recovery is unavailable.");
-          return result.value.sessions;
-        },
+        sessions: async () => readDeviceRecoverySessions(broker),
         processes: () => plugins.state().plugins,
         confirmDevice: async (device) => {
           const window = mainWindow;
@@ -697,8 +689,7 @@ const primary = startPrimary(
     const openWindow = () => {
       if (opening) return opening;
       const work = (async () => {
-        await workbench.reopen();
-        createWindow(flushDeviceWork);
+        await workbench.openWindow(() => createWindow(flushDeviceWork), reportCleanupError);
         primary?.windowReady();
         if (mainWindow) {
           const window = mainWindow,

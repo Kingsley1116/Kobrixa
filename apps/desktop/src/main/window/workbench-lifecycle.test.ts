@@ -57,6 +57,48 @@ it("an unconfirmed stop or failed save keeps the window close and replacement ad
   expect(readmit).not.toHaveBeenCalled();
 });
 
+it.each(["wake", "cleanup"])(
+  "opens the core recovery window after a blocked %s, without releasing admission or replacing receipts",
+  async (failure) => {
+    const error = new Error(failure === "wake" ? "disconnected before activation" : "save failed");
+    const suspend = vi.fn(async () => {});
+    const verify = vi.fn(async () => {});
+    const retire = vi.fn(async () => {
+      if (failure === "cleanup") throw error;
+    });
+    const resume = vi.fn(async () => {
+      if (failure === "wake") throw error;
+    });
+    const readmit = vi.fn(async () => {});
+    const life = new WorkbenchLifecycle({
+      sessions: () => ["original"],
+      suspend,
+      verify,
+      retire,
+      resume,
+      readmit,
+    });
+    await life.close().catch(() => {});
+    const create = vi.fn(() => {
+      expect(life.closing).toBe(true);
+    });
+    const report = vi.fn();
+    await life.openWindow(create, report);
+    expect(create).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenCalledExactlyOnceWith(error);
+    expect(life.closing).toBe(true);
+    expect(readmit).not.toHaveBeenCalled();
+    expect(suspend).toHaveBeenCalledExactlyOnceWith("original");
+    if (failure === "cleanup") {
+      expect(resume).not.toHaveBeenCalled();
+      expect(verify).toHaveBeenCalledExactlyOnceWith("original");
+    } else {
+      expect(resume).toHaveBeenCalledExactlyOnceWith("original");
+      expect(retire).toHaveBeenCalledOnce();
+    }
+  },
+);
+
 it("explicit retry verifies the original stop receipt after recovery without another stop or deadline", async () => {
   let resolved = false;
   const suspend = vi.fn(async () => {
