@@ -143,7 +143,10 @@ export async function run() {
     (document.querySelector(".plugin-tools-toggle") as HTMLButtonElement).click();
     await until(() => !!document.querySelector(".plugin-tools-pane"), "actual plugin pane");
     const pane = document.querySelector(".plugin-tools-pane")!;
-    const tab = pane.querySelector<HTMLButtonElement>("[role=tab]");
+    const titles = Object.values(panels[0]!.title);
+    const tab = [...pane.querySelectorAll<HTMLButtonElement>("[role=tab]")].find((button) =>
+      titles.includes(button.textContent?.trim() ?? ""),
+    );
     check(tab, "actual plugin tab absent");
     tab.click();
     await until(
@@ -206,4 +209,124 @@ export async function run() {
     off();
     // The normal workbench close owns its live panel and all remaining processes.
   }
+}
+
+export async function runLegacy() {
+  const plugins = (await window.kobrixa.plugins.state()).plugins.filter((plugin) =>
+    plugin.id.startsWith("acceptance.legacy-"),
+  );
+  check(plugins.length === 6, `missing preserved SDK cases: ${plugins.map((plugin) => plugin.id)}`);
+  const cases = [];
+  const pluginPids: number[] = [];
+  for (const plugin of plugins) {
+    check(
+      plugin.status === "enabled",
+      `legacy source rejected before execution: ${JSON.stringify(plugin)}`,
+    );
+    const result = await window.kobrixa.plugins.execute(`${plugin.id}.legacy`);
+    const ui = plugin.id.includes("old-ui");
+    if (ui)
+      check(
+        !result.ok && result.code === "PLUGIN_E_HANDSHAKE",
+        `old SDK UI did not fail handshake: ${JSON.stringify(result)}`,
+      );
+    else check(result.ok, `legacy command failed: ${JSON.stringify(result)}`);
+    await pause(100);
+    const log = await window.kobrixa.plugins.readLog(plugin.sourceKey, 0);
+    check(!log.truncated, "legacy wire evidence truncated");
+    type Wire = {
+      direction: string;
+      message: {
+        id?: number | string;
+        method?: string;
+        params?: Record<string, unknown>;
+        result?: unknown;
+        error?: { code?: number };
+      };
+    };
+    const wire: Wire[] = log.lines.flatMap((line) => {
+      const prefix = "UI_LEGACY_WIRE:";
+      const start = line.text.indexOf(prefix);
+      return start < 0 ? [] : [JSON.parse(line.text.slice(start + prefix.length)) as Wire];
+    });
+    const initialize = wire.find(
+      (row) => row.direction === "host" && row.message.method === "initialize",
+    )?.message;
+    check(
+      initialize &&
+        JSON.stringify(Object.keys(initialize.params ?? {}).sort()) ===
+          JSON.stringify(["apiVersion", "grantedPermissions", "locale", "pluginId"]),
+      "legacy initialize params changed",
+    );
+    const initialized = wire.find(
+      (row) => row.direction === "plugin" && row.message.id === initialize.id,
+    )?.message;
+    const hello = initialized?.result as { apiVersion?: string } | undefined;
+    const execute = wire.find(
+      (row) => row.direction === "host" && row.message.method === "command/execute",
+    )?.message;
+    if (ui) {
+      check(!execute, "UI handshake failure fell back to legacy execute");
+      check(
+        !log.lines.some((line) => line.text.includes("UI_LEGACY_EXECUTED:")),
+        "old UI callback executed",
+      );
+      // The preserved strict 1.4 permission schema may reject ui.panels during
+      // initialize, before negotiation. This is still the mandatory fail-closed
+      // handshake, with the same four fields and no legacy callback fallback.
+      if (hello) {
+        check(hello.apiVersion === "1.4.0", "old UI fixture is not old SDK");
+        const negotiate = wire.find(
+          (row) => row.direction === "host" && row.message.method === "ui/negotiate",
+        )?.message;
+        check(
+          negotiate &&
+            wire.some(
+              (row) =>
+                row.direction === "plugin" &&
+                row.message.id === negotiate.id &&
+                row.message.error?.code === -32601,
+            ),
+          "old UI negotiation did not reject unknown method",
+        );
+      } else
+        check(
+          initialized?.error?.code === -32602,
+          "old SDK did not reject new initialize permission",
+        );
+    } else {
+      check(
+        hello?.apiVersion === (plugin.id.includes("legacy-new") ? "1.6.0" : "1.4.0"),
+        "preserved SDK version mismatch",
+      );
+      check(execute, "legacy execute absent");
+      check(
+        wire.some(
+          (row) =>
+            row.direction === "plugin" &&
+            row.message.id === execute.id &&
+            row.message.result === null,
+        ),
+        "legacy execute result is not null",
+      );
+      check(
+        !wire.some(
+          (row) => row.message.method === "command/invoke" || row.message.method?.startsWith("ui/"),
+        ),
+        "legacy manifest acquired UI/context protocol",
+      );
+      check(
+        !wire.some((row) => row.message.method && row.message.id === undefined),
+        "legacy manifest received new notifications",
+      );
+    }
+    const pids = log.lines.flatMap((line) => {
+      const match = /UI_PID:([0-9]+)/.exec(line.text);
+      return match ? [Number(match[1])] : [];
+    });
+    check(pids.length === 1, "legacy process PID absent or replayed activation");
+    pluginPids.push(...pids);
+    cases.push({ id: plugin.id, result, wire, pids });
+  }
+  return { cases, pluginPids };
 }

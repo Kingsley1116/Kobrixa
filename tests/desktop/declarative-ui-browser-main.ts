@@ -43,6 +43,9 @@ app.on("browser-window-created", (_event, window) => {
         "declarativeProbe.run().catch(error => { console.error(error.stack); throw error; })",
       );
       assert.equal(report.kind, "ui-browser-baseline");
+      const legacy = app.commandLine.hasSwitch("ui-browser-legacy")
+        ? await window.webContents.executeJavaScript("declarativeProbe.runLegacy()")
+        : undefined;
       console.error("UI_PHASE browser-probe-complete");
       await window.webContents.executeJavaScript(
         "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
@@ -147,10 +150,12 @@ app.on("browser-window-created", (_event, window) => {
             productionRenderer: true,
             ...(rendererDiagnostics ? { rendererDiagnostics } : {}),
             ...(rendererHeap ? { rendererHeap } : {}),
+            ...(legacy ? { legacy } : {}),
             versions: process.versions,
             childPids: [
               ...new Set([
                 ...report.pluginPids,
+                ...(legacy?.pluginPids ?? []),
                 ...app
                   .getAppMetrics()
                   .map((item) => item.pid)

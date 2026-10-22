@@ -8,12 +8,18 @@ import path from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { build } from "esbuild";
 import { root, fixture, readFixtures } from "./declarative-ui-harness.mjs";
+import { legacyFixtures } from "./declarative-ui-legacy-fixtures.mjs";
 
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
 const plainGlyphs = process.argv.slice(2).includes("--plain-glyphs");
 const diagnostics = process.argv.slice(2).includes("--renderer-diagnostics");
+const legacy = process.argv.slice(2).includes("--legacy-compatibility");
 assert.ok(
-  process.argv.slice(2).every((arg) => ["--plain-glyphs", "--renderer-diagnostics"].includes(arg)),
+  process.argv
+    .slice(2)
+    .every((arg) =>
+      ["--plain-glyphs", "--renderer-diagnostics", "--legacy-compatibility"].includes(arg),
+    ),
 );
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-browser-")));
 console.log(`Real workbench browser workspace: ${directory}`);
@@ -55,6 +61,8 @@ const alias = Object.fromEntries(
   ]),
 );
 const sources = [];
+const compatibility = legacy ? await legacyFixtures(directory) : undefined;
+if (compatibility) sources.push(...compatibility.sources);
 for (let n = 0; n < 2; n++) {
   const folder = path.join(directory, `source-${n}`);
   sources.push(folder);
@@ -108,6 +116,7 @@ const artifact = {
     0,
   glyphs: plainGlyphs ? "cjk-diagnostic" : "emoji-and-cjk",
   rendererInstrumentation: diagnostics,
+  ...(compatibility ? { legacy: compatibility.provenance } : {}),
   sha256: Object.fromEntries(
     await Promise.all(
       [
@@ -125,6 +134,7 @@ const artifact = {
         "probe.js",
         "source-0/main.cjs",
         "source-1/main.cjs",
+        ...(compatibility?.artifacts ?? []),
         ...[0, 1].flatMap((n) =>
           ["kobrixa-plugin.json", "panel.json", "status.json"].map((name) => `source-${n}/${name}`),
         ),
@@ -147,10 +157,22 @@ const child = spawn(
     `--ui-browser-output=${output}`,
     `--ui-browser-probe=${probe}`,
     ...(diagnostics ? ["--ui-browser-diagnostics"] : []),
+    ...(compatibility ? ["--ui-browser-legacy", `--plugin-python=${compatibility.python}`] : []),
     `--user-data-dir=${path.join(directory, "profile")}`,
     `--plugin-dev-dir=${sources.join(path.delimiter)}`,
   ],
-  { cwd: directory, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" },
+  {
+    cwd: directory,
+    env: {
+      ...process.env,
+      PYTHONPATH: path.join(root, "sdks/python"),
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONUTF8: "1",
+      PYTHONUNBUFFERED: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  },
 );
 const log = [];
 for (const stream of [child.stdout, child.stderr])
