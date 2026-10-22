@@ -78,7 +78,16 @@ function fixture() {
         pending.set(ticket.id, { values: [], version: ticket.metadata.schemaVersion });
       },
       append: async (ticket, _offset, bytes) => {
-        pending.get(ticket.id)!.values = JSON.parse(new TextDecoder().decode(bytes));
+        const document = JSON.parse(new TextDecoder().decode(bytes));
+        expect(document.formatVersion).toBe(1);
+        expect(ticket.metadata.kind).toBe("settings");
+        expect(document.schemaVersion).toBe(
+          ticket.metadata.kind === "settings" ? ticket.metadata.schemaVersion : undefined,
+        );
+        expect(document.validationDigest).toBe(
+          ticket.metadata.kind === "settings" ? ticket.metadata.validationDigest : undefined,
+        );
+        pending.get(ticket.id)!.values = document.values;
         return bytes.length;
       },
       seal: async () => {},

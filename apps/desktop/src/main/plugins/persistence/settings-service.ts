@@ -255,7 +255,14 @@ export function createSettingsService(deps: SettingsDependencies) {
       },
       target: { kind: "settings" as const, expectedRevision: expected },
     });
-    const bytes = Buffer.from(JSON.stringify(values));
+    const bytes = Buffer.from(
+      JSON.stringify({
+        formatVersion: 1,
+        schemaVersion: version,
+        validationDigest: state.validationDigest,
+        values,
+      }),
+    );
     const check = () => {
       if (signal.aborted)
         throw { ok: false, error: { code: "PLUGIN_E_CANCELLED", message: "Cancelled." } };

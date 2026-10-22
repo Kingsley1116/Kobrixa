@@ -1,4 +1,5 @@
 import { createHash,randomUUID } from "node:crypto";
+import type { SettingsResourceV1 } from "@kobrixa/plugin-protocol";
 import { mkdtemp,rm,mkdir,realpath,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -325,3 +326,120 @@ it("T6 fix round1 child ENOENT blocks actual-worker import and retry imports the
     await rm(path.join(directory,"child-race.trigger"),{force:true});
   }
 },30000);
+
+
+it("settings saved by the service reopen through the real worker with CAS, reset and migration", async () => {
+  const { createSettingsService } = await import("./settings-service.js");
+  const userData = path.join(directory, randomUUID());
+  let resource: SettingsResourceV1 = {
+    schemaVersion: 1,
+    title: { en: "Settings" },
+    fields: [{ key: "enabled", type: "boolean", label: { en: "Enabled" }, default: true }],
+  };
+  let validationDigest = "a".repeat(64);
+  const setup = (env: Awaited<ReturnType<typeof launch>>) => {
+    const owner = ownerFor(env.profile.hostEpoch);
+    const service = createSettingsService({
+      now: () => performance.now(),
+      allowed: () => true,
+      readResource: async () => ({ resource, digest: "b".repeat(64), validationDigest }),
+      validateResource: () => true,
+      evidence: env.backend.evidence,
+      read: env.backend.reads,
+      engine: env.backend.engine,
+      watch: { register: () => randomUUID(), changed: () => {}, invalidate: () => {} },
+    });
+    return {
+      owner,
+      service,
+      principal: { kind: "plugin" as const, owner, authorityContext: null },
+    };
+  };
+  const signal = () => new AbortController().signal;
+  const first = await launch(userData);
+  let savedRevision: string;
+  try {
+    const f = setup(first);
+    const saved = await f.service.request(
+      f.principal,
+      "settings/update",
+      {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "enabled", value: false }],
+      },
+      signal(),
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) throw new Error("save failed");
+    savedRevision = saved.value.snapshot.revision!;
+    expect(
+      await f.service.request(f.principal, "settings/read", { schemaVersion: 1 }, signal()),
+    ).toEqual({ ok: true, value: saved.value.snapshot });
+    expect(await first.backend.reads.settings(f.owner)).toEqual(saved.value.snapshot);
+  } finally {
+    await first.backend.dispose();
+  }
+  const second = await launch(userData);
+  try {
+    expect(second.profile.hostEpoch).not.toBe(first.profile.hostEpoch);
+    const f = setup(second);
+    expect(
+      await f.service.request(f.principal, "settings/read", { schemaVersion: 1 }, signal()),
+    ).toEqual({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        revision: savedRevision!,
+        values: [{ key: "enabled", value: false }],
+      },
+    });
+    expect(
+      await f.service.request(
+        f.principal,
+        "settings/update",
+        {
+          schemaVersion: 1,
+          expectedRevision: null,
+          changes: [{ key: "enabled", value: true }],
+        },
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_SETTINGS_CONFLICT" } });
+    const reset = await f.service.request(
+      f.principal,
+      "settings/reset",
+      {
+        schemaVersion: 1,
+        expectedRevision: savedRevision!,
+        keys: ["enabled"],
+      },
+      signal(),
+    );
+    expect(reset.ok).toBe(true);
+    if (!reset.ok) throw new Error("reset failed");
+    expect(await second.backend.reads.settings(f.owner)).toEqual(reset.value.snapshot);
+    resource = { ...resource, schemaVersion: 2 };
+    validationDigest = "c".repeat(64);
+    const migrated = await f.service.request(
+      f.principal,
+      "settings/migrate",
+      {
+        fromSchemaVersion: 1,
+        schemaVersion: 2,
+        expectedRevision: reset.value.receipt.revision,
+        values: [{ key: "enabled", value: false }],
+      },
+      signal(),
+    );
+    expect(migrated.ok).toBe(true);
+    if (!migrated.ok) throw new Error("migration failed");
+    expect(await second.backend.reads.settings(f.owner)).toEqual(migrated.value.snapshot);
+    expect(await second.backend.evidence.settingsDigest(f.owner)).toMatchObject({
+      schemaVersion: 2,
+      validationDigest,
+    });
+  } finally {
+    await second.backend.dispose();
+  }
+});
