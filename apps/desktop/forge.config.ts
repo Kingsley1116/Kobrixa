@@ -3,6 +3,8 @@ import {
   BUILTIN_PAYLOAD_UNPACK,
   builtinProcessBuilds,
   validateBuiltinPayloads,
+  PERSISTENCE_WORKER_ENTRY,
+  withPersistenceWorkerUnpack,
 } from "./packaging.js";
 const fixtureBuild = process.env.KOBRIXA_PLUGIN_FIXTURE_BUILD === "1";
 import type { ForgeConfig } from "@electron-forge/shared-types";
@@ -39,7 +41,7 @@ const config: ForgeConfig = {
     },
     ...macSigningConfig(),
     icon: platformIcon,
-    asar: { unpack: BUILTIN_PAYLOAD_UNPACK },
+    asar: { unpack: withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK) },
     ignore: (file) =>
       Boolean(file) &&
       ![
@@ -67,6 +69,7 @@ const config: ForgeConfig = {
           target,
         })),
         { entry: "src/main/index.ts", config: "vite.main.config.ts", target: "main" },
+        { entry: PERSISTENCE_WORKER_ENTRY, config: "vite.main.config.ts", target: "main" },
         {
           entry: "src/main/workspace/build-worker.ts",
           config: "vite.build-worker.config.ts",

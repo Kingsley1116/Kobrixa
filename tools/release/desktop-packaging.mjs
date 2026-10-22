@@ -8,8 +8,13 @@ const desktop = path.join(repositoryRoot, "apps/desktop");
 const { module: packaging } = await runnerImport(path.join(desktop, "packaging.ts"), {
   configFile: false,
 });
-export const { copyNativeDependencies, validateBuiltinPayloads, BUILTIN_PAYLOAD_UNPACK } =
-  packaging;
+export const {
+  copyNativeDependencies,
+  validateBuiltinPayloads,
+  BUILTIN_PAYLOAD_UNPACK,
+  PERSISTENCE_WORKER_ENTRY,
+  withPersistenceWorkerUnpack,
+} = packaging;
 
 export async function buildBuiltinPayloads(fixture, buildRoot = path.join(desktop, ".vite/build")) {
   for (const leaf of packaging.builtinProcessBuilds(fixture)) {

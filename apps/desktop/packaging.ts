@@ -124,6 +124,42 @@ export async function copyNativeDependencies(
 }
 
 export const BUILTIN_PAYLOAD_UNPACK = "{**/*.node,**/.vite/build/plugins/**}";
+export const PERSISTENCE_WORKER_ENTRY = "src/main/plugins/persistence/worker.ts";
+
+export function persistenceWorkerPath(input: {
+  packaged: boolean;
+  resourcesPath: string;
+  buildRoot: string;
+}): string {
+  const root = input.packaged ? input.resourcesPath : input.buildRoot;
+  if (!path.isAbsolute(root)) throw new Error("Persistence worker root must be absolute");
+  return input.packaged
+    ? path.join(root, "app.asar.unpacked", ".vite", "build", "persistence-worker.cjs")
+    : path.join(root, "persistence-worker.cjs");
+}
+
+export function withPersistenceWorkerUnpack(existing: string): string {
+  const worker = "**/.vite/build/persistence-worker.cjs";
+  const body =
+    existing.startsWith("{") && existing.endsWith("}") ? existing.slice(1, -1) : existing;
+  const patterns: string[] = [];
+  let depth = 0;
+  let start = 0;
+  // Only split the outer alternatives, preserving nested native glob groups.
+  for (let index = 0; index < body.length; index++) {
+    if (body[index] === "{") depth++;
+    if (body[index] === "}") depth--;
+    if (body[index] === "," && depth === 0) {
+      patterns.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  if (body.length) patterns.push(body.slice(start));
+  if (patterns.includes(worker)) return existing;
+  patterns.push(worker);
+  return patterns.length === 1 ? worker : `{${patterns.join(",")}}`;
+}
+
 export const DELIVERED_BUILTIN_PROCESS_BUILDS: readonly {
   entry: string;
   config: string;

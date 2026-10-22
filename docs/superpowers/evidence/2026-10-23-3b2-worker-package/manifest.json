@@ -1,0 +1,53 @@
+{
+  "kind": "persistence-installed-worker-probe",
+  "sourceBase": "d4f3e2f",
+  "artifact": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b2/apps/desktop/out/Kobrixa-darwin-arm64/kobrixa.app/Contents/Resources/app.asar.unpacked/.vite/build/persistence-worker.cjs",
+  "artifactSha256": "bab6dad2a10538ffd7e68f4bc4e5f6bc9daa2c8fd0466f1dc47a36353e0f65d8",
+  "result": "ready + normal exit",
+  "installedTests": {
+    "pass": 10,
+    "skip": 0
+  },
+  "releaseTests": 2,
+  "logs": [
+    {
+      "path": "kobrixa-k170-red.log.gz",
+      "rawSha256": "d273a467a1bda50c82d02fa6ae086b5ebefaed03d47f0ca417ae2a6266fc181b",
+      "compressedSha256": "34149f0002e401889d8c3c015dd235931c468930e13ea72979c4264762c2dba8"
+    },
+    {
+      "path": "kobrixa-k170-unit.log.gz",
+      "rawSha256": "ba72f46e5bfa91c94e17a4ae246bdccf564ad47d02dd0e665130a157b1370acd",
+      "compressedSha256": "ece36e7109040637b6ac22d067d24af4f1b396d905a50866c456ef548105e0f0"
+    },
+    {
+      "path": "kobrixa-k170-release.log.gz",
+      "rawSha256": "d2ffa2dda2c6d96575beb4e87508a56b5317bda5b12a41f4ddbca886fd04b2a9",
+      "compressedSha256": "e5ceee776cca2f984e5f4daf9e792917efe34fbba0797e0852e4c4df25f8b41a"
+    },
+    {
+      "path": "kobrixa-k170-package-rebuilt.log.gz",
+      "rawSha256": "5be65b22afaf484ab11de7a6ee6ba87341a43ca2bffd140cb474713550738360",
+      "compressedSha256": "d6b8a43c51df4c81d712c67dba4529a3da497cfa7499d3250138a5aa5276b577"
+    },
+    {
+      "path": "kobrixa-k170-installed2.log.gz",
+      "rawSha256": "60c22a76f01346510dddbae576546ffa2f55ebee0b55d55dcb0faa5835d36415",
+      "compressedSha256": "626386050eff518d87b76226904954423482e21ceb9e673cda12020e2f40e80a"
+    },
+    {
+      "path": "kobrixa-k170-lint.log.gz",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compressedSha256": "f1b651238a58fe290baec6c5e32f3bdb1943dd2bd582f02569231f7a757c7837"
+    },
+    {
+      "path": "kobrixa-k170-format.log.gz",
+      "rawSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "compressedSha256": "d64010ae55eaddf0a918163db8e4a6821b3d87a770c6df0154973888c7113c59"
+    }
+  ],
+  "limits": [
+    "Private worker transport probe only; full Electron lifecycle/T7 and P170 acceptance remain pending.",
+    "Worker probe uses an absolute test-runner Node executable with empty PATH; it is not evidence of Electron-only installed application startup."
+  ]
+}

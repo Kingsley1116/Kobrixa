@@ -1,8 +1,15 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectBundledNotices, copyNativeDependencies } from "../../packaging.js";
+import {
+  collectBundledNotices,
+  copyNativeDependencies,
+  PERSISTENCE_WORKER_ENTRY,
+  persistenceWorkerPath,
+  withPersistenceWorkerUnpack,
+} from "../../packaging.js";
 
 const roots: string[] = [];
 
@@ -135,3 +142,143 @@ it("does not externalize SDK or protocol or share chunks between process leaves"
     inlineDynamicImports: true,
   });
 });
+
+describe("persistence worker packaging", () => {
+  it("selects only the development or installed artifact root", () => {
+    expect(PERSISTENCE_WORKER_ENTRY).toBe("src/main/plugins/persistence/worker.ts");
+    expect(
+      persistenceWorkerPath({ packaged: false, resourcesPath: "ignored", buildRoot: "/build" }),
+    ).toBe(path.join("/build", "persistence-worker.cjs"));
+    expect(
+      persistenceWorkerPath({
+        packaged: true,
+        resourcesPath: "/installed/resources",
+        buildRoot: "ignored",
+      }),
+    ).toBe(
+      path.join(
+        "/installed/resources",
+        "app.asar.unpacked",
+        ".vite",
+        "build",
+        "persistence-worker.cjs",
+      ),
+    );
+    for (const packaged of [false, true]) {
+      expect(() =>
+        persistenceWorkerPath({ packaged, resourcesPath: "relative", buildRoot: "relative" }),
+      ).toThrow("absolute");
+    }
+  });
+
+  it("preserves nested native and plugin unpack patterns and adds the worker once", () => {
+    const worker = "**/.vite/build/persistence-worker.cjs";
+    for (const existing of [
+      "",
+      "**/*.node",
+      BUILTIN_PAYLOAD_UNPACK,
+      "{**/*.{node,dll},**/plugin-bundles/**}",
+      worker,
+      `{**/*.node,${worker}}`,
+    ]) {
+      const once = withPersistenceWorkerUnpack(existing);
+      expect(withPersistenceWorkerUnpack(once)).toBe(once);
+      expect(once.split(worker)).toHaveLength(2);
+      if (existing.includes("**/*.node")) expect(once).toContain("**/*.node");
+      if (existing.includes("**/*.{node,dll}")) expect(once).toContain("**/*.{node,dll}");
+      if (existing.includes("**/.vite/build/plugins/**"))
+        expect(once).toContain("**/.vite/build/plugins/**");
+    }
+    expect(withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)).toBe(
+      "{**/*.node,**/.vite/build/plugins/**,**/.vite/build/persistence-worker.cjs}",
+    );
+  });
+
+  it("registers one worker entry without replacing the main entry", async () => {
+    const config = await readFile(new URL("../../forge.config.ts", import.meta.url), "utf8");
+    expect(config.match(/entry:\s*PERSISTENCE_WORKER_ENTRY/g)).toHaveLength(1);
+    expect(config).toContain("withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)");
+    const mainConfig = await readFile(
+      new URL("../../vite.main.config.ts", import.meta.url),
+      "utf8",
+    );
+    expect(mainConfig).toContain('"persistence-worker.cjs"');
+    expect(mainConfig).toContain('"main.cjs"');
+  });
+});
+
+const installedResources = process.env.PERSISTENCE_INSTALLED_RESOURCES;
+it.skipIf(!installedResources)(
+  "starts the installed worker from arbitrary cwd and observes normal exit",
+  async () => {
+    if (!installedResources) throw new Error("installed resources required");
+    const entry = persistenceWorkerPath({
+      packaged: true,
+      resourcesPath: installedResources,
+      buildRoot: "unused",
+    });
+    const cwd = await mkdtemp(path.join(tmpdir(), "kobrixa-installed-worker-"));
+    roots.push(cwd);
+    const script = `
+    const { Worker } = require("node:worker_threads");
+    const { mkdirSync, realpathSync } = require("node:fs");
+    const path = require("node:path");
+    const directory = path.join(process.cwd(), "store");
+    mkdirSync(directory, { mode: 0o700 });
+    const root = realpathSync(directory);
+    // Match the host's openStoreRoot bootstrap before passing its private root.
+    mkdirSync(path.join(root, "namespaces"), { mode: 0o700 });
+    const held = new SharedArrayBuffer(16 + 1024 * 16 + 1024 * 4);
+    Atomics.store(new Int32Array(held), 0, 1);
+    const worker = new Worker(process.argv[1], { workerData: {} });
+    let ready = false;
+    const timer = setTimeout(() => {
+      console.error("installed worker did not exit normally");
+      worker.terminate().then(() => { process.exitCode = 2; });
+    }, 10000);
+    worker.once("error", error => { console.error(error); process.exitCode = 1; });
+    worker.once("message", message => {
+      if (message.version !== 1 || message.kind !== "ready" || message.recovery !== "ready") {
+        console.error("invalid worker readiness", JSON.stringify(message));
+        worker.terminate().then(() => { process.exitCode = 3; });
+        return;
+      }
+      ready = true;
+      worker.postMessage({ version: 1, kind: "close" });
+    });
+    worker.once("exit", code => {
+      clearTimeout(timer);
+      Atomics.store(new Int32Array(held), 0, 0);
+      if (ready && code === 0) process.stdout.write("installed-worker-ready-and-exited");
+      else process.exitCode = 4;
+    });
+    worker.postMessage({ version: 1, kind: "boot", hostEpoch: "10000000-0000-4000-8000-000000000001", root, held });
+  `;
+    const child = spawn(process.execPath, ["-e", script, entry], {
+      cwd,
+      env: { ...process.env, PATH: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 12000);
+    try {
+      const exit = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+      expect(stderr).toBe("");
+      expect(exit).toBe(0);
+      expect(stdout).toBe("installed-worker-ready-and-exited");
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+  15000,
+);

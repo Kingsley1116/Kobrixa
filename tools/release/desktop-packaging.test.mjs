@@ -8,6 +8,8 @@ import {
   buildBuiltinPayloads,
   validateBuiltinPayloads,
   BUILTIN_PAYLOAD_UNPACK,
+  PERSISTENCE_WORKER_ENTRY,
+  withPersistenceWorkerUnpack,
 } from "./desktop-packaging.mjs";
 
 test("release packaging builds, validates and unpacks the same builtin leaves as Forge", async (t) => {
@@ -28,8 +30,11 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
   assert.equal(index.pluginId, "kobrixa.motor-test");
   await mkdir(path.join(stage, "node_modules/native"), { recursive: true });
   await writeFile(path.join(stage, "node_modules/native/addon.node"), "native");
+  await writeFile(path.join(stage, ".vite/build/persistence-worker.cjs"), "worker fixture");
   const archive = path.join(root, "app.asar");
-  await createPackageWithOptions(stage, archive, { unpack: BUILTIN_PAYLOAD_UNPACK });
+  await createPackageWithOptions(stage, archive, {
+    unpack: withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK),
+  });
   for (const name of [...index.files.map((file) => file.path), "resource-index.json"]) {
     const relative = `.vite/build/plugins/motor-test/${name}`;
     assert.equal(statFile(archive, relative).unpacked, true);
@@ -39,8 +44,24 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
     );
   }
   assert.equal(statFile(archive, "node_modules/native/addon.node").unpacked, true);
+  assert.equal(statFile(archive, ".vite/build/persistence-worker.cjs").unpacked, true);
+  assert.equal(
+    await readFile(`${archive}.unpacked/.vite/build/persistence-worker.cjs`, "utf8"),
+    "worker fixture",
+  );
   await writeFile(path.join(leaf, "main.cjs"), "corrupt");
   await assert.rejects(validateBuiltinPayloads(stage, true), { code: "PLUGIN_E_ENTRY" });
   await rm(leaf, { recursive: true });
   await assert.rejects(validateBuiltinPayloads(stage, true), { code: "PLUGIN_E_ENTRY" });
+});
+
+test("release builder registers the same persistence worker and unpack rule as Forge", async () => {
+  assert.equal(PERSISTENCE_WORKER_ENTRY, "src/main/plugins/persistence/worker.ts");
+  const builder = await readFile(new URL("./build-desktop.mjs", import.meta.url), "utf8");
+  assert.match(
+    builder,
+    /\["vite\.main\.config\.ts", PERSISTENCE_WORKER_ENTRY, "persistence-worker\.cjs"\]/,
+  );
+  assert.match(builder, /forgeConfigSelf: \{ entry \}/);
+  assert.match(builder, /asarUnpack: \[withPersistenceWorkerUnpack\(BUILTIN_PAYLOAD_UNPACK\)\]/);
 });

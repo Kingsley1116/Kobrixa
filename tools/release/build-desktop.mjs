@@ -9,6 +9,8 @@ import {
   buildBuiltinPayloads,
   validateBuiltinPayloads,
   BUILTIN_PAYLOAD_UNPACK,
+  PERSISTENCE_WORKER_ENTRY,
+  withPersistenceWorkerUnpack,
 } from "./desktop-packaging.mjs";
 import { macIdentity, required, signingModes, windowsVersion } from "../../apps/desktop/signing.ts";
 
@@ -33,12 +35,13 @@ const external = [
 ];
 for (const [config, entry, name] of [
   ["vite.main.config.ts", "src/main/index.ts", "main.cjs"],
+  ["vite.main.config.ts", PERSISTENCE_WORKER_ENTRY, "persistence-worker.cjs"],
   ["vite.language.config.ts", "src/main/language/language-worker.ts", "language-worker.cjs"],
   ["vite.build-worker.config.ts", "src/main/workspace/build-worker.ts", "build-worker.cjs"],
   ["vite.preload.config.ts", "src/preload/index.ts", "preload.cjs"],
 ]) {
   const user = await loadConfigFromFile(
-    { command: "build", mode: "production" },
+    { command: "build", mode: "production", forgeConfigSelf: { entry } },
     path.join(desktop, config),
   );
   await viteBuild(
@@ -184,7 +187,7 @@ await packageElectron({
     beforeBuild: async () => false,
     nodeGypRebuild: false,
     asar: { smartUnpack: false },
-    asarUnpack: [BUILTIN_PAYLOAD_UNPACK],
+    asarUnpack: [withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)],
     files: [
       "**/*",
       { from: path.join(stage, "node_modules"), to: "node_modules", filter: ["**/*"] },
