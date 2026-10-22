@@ -26,7 +26,11 @@ const cases = ["prepare", "start", "arm", "pulse"].flatMap((boundary) =>
 const args = process.argv.slice(2);
 const slow = args[0] === "--slow-consumer";
 const load = ["--load", "--load-probe", "--slow-consumer"].includes(args[0]);
-assert.equal(args.length, 1, "Pass --all, --stress or --case=boundary:position:fault");
+assert.equal(
+  args.length,
+  1,
+  "Pass --all, --stress, --backpressure or --case=boundary:position:fault",
+);
 const selected = load
   ? Array.from({ length: args[0] === "--load" ? 3 : 1 }, (_, repeat) => ({
       boundary: "pulse",
@@ -39,18 +43,27 @@ const selected = load
         ...(slow ? { slow: true } : {}),
       },
     }))
-  : args[0] === "--stress"
-    ? ["delayed-readback", "withheld-readback", "lost-start"].map((stress) => ({
-        boundary: "pulse",
-        position: "after",
-        fault: "queue-pressure",
-        stress,
-      }))
-    : args[0] === "--all"
-      ? cases
-      : cases.filter(
-          (item) => args[0] === `--case=${item.boundary}:${item.position}:${item.fault}`,
-        );
+  : args[0] === "--backpressure"
+    ? [
+        {
+          boundary: "pulse",
+          position: "after",
+          fault: "queue-pressure",
+          stress: "continuous-backpressure",
+        },
+      ]
+    : args[0] === "--stress"
+      ? ["delayed-readback", "withheld-readback", "lost-start"].map((stress) => ({
+          boundary: "pulse",
+          position: "after",
+          fault: "queue-pressure",
+          stress,
+        }))
+      : args[0] === "--all"
+        ? cases
+        : cases.filter(
+            (item) => args[0] === `--case=${item.boundary}:${item.position}:${item.fault}`,
+          );
 assert.ok(selected.length > 0, "Unknown motion scenario");
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-motion-")));
 console.log(`Motion acceptance workspace: ${directory}`);
@@ -332,9 +345,11 @@ await writeFile(
         ? "ui-slow-renderer"
         : load
           ? "ui-maximum-load"
-          : args[0] === "--stress"
-            ? "ui-motion-stress"
-            : "ui-motion-matrix",
+          : args[0] === "--backpressure"
+            ? "ui-sdk-backpressure"
+            : args[0] === "--stress"
+              ? "ui-motion-stress"
+              : "ui-motion-matrix",
       reports,
       artifact,
     },

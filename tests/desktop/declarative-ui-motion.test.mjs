@@ -10,6 +10,80 @@ async function reportAt(file) {
 }
 
 test(
+  "actual slow SDK callback keeps the common queue bounded and the original stop recoverable",
+  {
+    skip: !process.env.KOBRIXA_UI_BACKPRESSURE_REPORT,
+  },
+  async () => {
+    const report = await reportAt(process.env.KOBRIXA_UI_BACKPRESSURE_REPORT);
+    assert.equal(report.kind, "ui-motion-race");
+    assert.equal(report.scenario.stress, "continuous-backpressure");
+    assert.equal(report.composition, "composeDesktopMain/createDesktopFoundation");
+    assert.equal(report.mockIntent, false);
+    assert.deepEqual(report.failures, []);
+    assert.deepEqual(report.remainingPids, []);
+    assert.equal(report.normalClose, true);
+    assert.ok(report.orphanCheckMs >= 5000);
+    assert.equal(Object.keys(report.final).length, 10);
+    assert.ok(Object.values(report.final).every((count) => count === 0));
+    assert.ok(report.backpressure.endedAt - report.backpressure.startedAt >= 30000);
+    assert.ok(report.backpressure.produced >= 300);
+    assert.ok(report.queueSamples.length >= 300);
+    assert.ok(report.queueSamples.some((sample) => sample.queuedEvents === 7));
+    assert.ok(
+      report.queueSamples.every(
+        (sample) => sample.queuedEvents <= 8 && sample.queuedBytes <= 262144,
+      ),
+    );
+    const callbackStart = Number(
+      report.logs.find((line) => line.startsWith("MOTION_CALLBACK_START:")).split(":")[1],
+    );
+    const callbackEnd = Number(
+      report.logs.find((line) => line.startsWith("MOTION_CALLBACK_END:")).split(":")[1],
+    );
+    assert.ok(callbackEnd - callbackStart >= 30000);
+    const resync = report.wire.find(
+      (row) =>
+        row.direction === "host-plugin" && row.message.params?.kind === "events.resyncRequired",
+    );
+    assert.ok(resync);
+    assert.equal(resync.message.params.data.reason, "overflow");
+    const revoke = report.events.find(
+      (event) => event.kind === "revoke" && event.time >= report.faultAt,
+    );
+    assert.ok(revoke && revoke.time <= resync.at && revoke.time < callbackEnd);
+    const requests = report.wire
+      .filter((row) => row.direction === "plugin-host")
+      .map((row) => row.message);
+    assert.equal(requests.filter((row) => row.method === "devices/motion/prepare").length, 1);
+    assert.equal(requests.filter((row) => row.method === "devices/motion/start").length, 1);
+    for (const row of requests.filter((row) =>
+      ["devices/motion/start", "devices/motion/query", "devices/motion/stop"].includes(row.method),
+    ))
+      assert.equal(row.params.operationId, report.operationId);
+    assert.equal(report.terminal.operationId, report.operationId);
+    assert.equal(report.terminal.stopConfirmation, "confirmed");
+    const held = report.ackDeliveries.filter((row) => row.disposition === "held");
+    assert.ok(held.length > 0);
+    for (const ack of held)
+      assert.ok(
+        report.ackDeliveries.some(
+          (row) =>
+            row.disposition === "released" &&
+            row.at >= report.backpressure.endedAt &&
+            JSON.stringify(row.message) === JSON.stringify(ack.message),
+        ),
+      );
+    for (const fault of report.recoverySnapshot.faults.filter(
+      (fault) => fault.operationId === report.operationId,
+    )) {
+      assert.equal(fault.state, "resolved");
+      assert.equal(fault.stopConfirmation, "confirmed");
+    }
+  },
+);
+
+test(
   "actual native UI motion matrix retains original operations and safety disposition",
   {
     skip: !process.env.KOBRIXA_UI_MOTION_REPORT,

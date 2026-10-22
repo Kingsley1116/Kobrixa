@@ -46,7 +46,7 @@
     "test:device-broker": "node --test tests/desktop/device-broker-*.test.mjs",
     "test:device-broker:smoke": "node tests/desktop/device-broker-run.mjs",
     "test:declarative-ui": "node --test tests/desktop/declarative-ui-*.test.mjs tests/desktop/builtin-process-*.test.mjs",
-    "test:declarative-ui:smoke": "node tests/desktop/declarative-ui-run.mjs --transport-only && node tests/desktop/declarative-ui-browser-run.mjs && node tests/desktop/declarative-ui-motion-run.mjs --load"
+    "test:declarative-ui:smoke": "node tests/desktop/declarative-ui-run.mjs --transport-only && node tests/desktop/declarative-ui-browser-run.mjs && node tests/desktop/declarative-ui-motion-run.mjs --backpressure && node tests/desktop/declarative-ui-motion-run.mjs --load"
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",

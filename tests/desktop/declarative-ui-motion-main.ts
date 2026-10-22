@@ -61,7 +61,7 @@ type Scenario = {
     | "renderer-crash"
     | "plugin-kill"
     | "queue-pressure";
-  stress?: "delayed-readback" | "withheld-readback" | "lost-start";
+  stress?: "delayed-readback" | "withheld-readback" | "lost-start" | "continuous-backpressure";
 };
 const inputPath = app.commandLine.getSwitchValue("motion-input");
 const output = app.commandLine.getSwitchValue("motion-output");
@@ -566,6 +566,7 @@ async function run() {
       assert.ok(operationId, "Original prepared operation ID absent");
       if (scenario.boundary === "prepare") assert.equal(control.trace().length, traceBefore);
       const faultAt = wall();
+      let backpressure: { startedAt: number; endedAt: number; produced: number } | undefined;
       const queueSamples: Array<{
         at: number;
         subscriptions: number;
@@ -662,8 +663,34 @@ async function run() {
           );
           releaseReply?.();
         }
+        if (scenario.stress === "continuous-backpressure") {
+          await until(
+            () => logs.some((line) => line.includes("MOTION_CALLBACK_START:")),
+            "real delayed SDK callback",
+          );
+          const startedAt = wall();
+          let produced = 0;
+          do {
+            ui.states.setEnvironment(produced++ % 2 ? "en" : "zh-TW", "light");
+            const sample = { at: wall(), ...composition.foundation.broker.events.diagnostics() };
+            queueSamples.push(sample);
+            assert.ok(
+              sample.queuedEvents <= 8 && sample.queuedBytes <= 262144,
+              "common queue exceeded its control/byte bounds",
+            );
+            await pause(50);
+          } while (wall() - startedAt < 30_000);
+          backpressure = { startedAt, endedAt: wall(), produced };
+          assert.ok(produced >= 400, "insufficient continuous pressure");
+        }
         holdAcks = false;
         for (const release of releaseAcks.splice(0)) release();
+        if (scenario.stress === "continuous-backpressure")
+          await until(
+            () => logs.some((line) => line.includes("MOTION_CALLBACK_END:")),
+            "original SDK callback settlement",
+            5000,
+          );
       }
       if (scenario.fault === "renderer-freeze") {
         await window.webContents.debugger.sendCommand("Debugger.resume");
@@ -802,6 +829,7 @@ async function run() {
             deliveries,
             ackDeliveries,
             queueSamples,
+            backpressure,
             afterRetirement,
             expectedBlockedClose,
             expectedCleanupReports,

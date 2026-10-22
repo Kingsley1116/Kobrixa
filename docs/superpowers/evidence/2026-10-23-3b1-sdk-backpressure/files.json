@@ -1,0 +1,14 @@
+{
+  "report.json": {
+    "sha256": "a700bc2d9579256515ba268ff5c7d988b6ebe2719b28403d0284cf68cd17ac87",
+    "bytes": 133727
+  },
+  "electron.log": {
+    "sha256": "dde684cad444198e089e33d6869d88e2563ce894d3ee4540b46f4280cdb1590e",
+    "bytes": 5518
+  },
+  "matrix.json": {
+    "sha256": "20f977ec999a93de1b930f05d22fc44e4d69818a19fb352ec2368f6eedf348dd",
+    "bytes": 1585
+  }
+}

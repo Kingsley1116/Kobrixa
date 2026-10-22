@@ -34,6 +34,7 @@ test("P160 scripts include actual transport, browser and maximum-load runners", 
   const smoke = scripts["test:declarative-ui:smoke"];
   assert.ok(smoke.includes("declarative-ui-run.mjs --transport-only"));
   assert.ok(smoke.includes("declarative-ui-browser-run.mjs"));
+  assert.ok(smoke.includes("declarative-ui-motion-run.mjs --backpressure"));
   assert.ok(smoke.includes("declarative-ui-motion-run.mjs --load"));
   assert.ok(
     !smoke.includes("--plain-glyphs"),

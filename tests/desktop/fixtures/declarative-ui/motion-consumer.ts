@@ -53,8 +53,13 @@ void runPlugin(
           const subscription = unwrap(
             await ctx.ui.subscribe(
               { binding: invocation.context.binding, topics: ["environment"] },
-              (event) => {
+              async (event) => {
                 console.error(`MOTION_EVENT:${JSON.stringify(event)}`);
+                if (stress === "continuous-backpressure") {
+                  console.error(`MOTION_CALLBACK_START:${Date.now()}`);
+                  await pause(31_000);
+                  console.error(`MOTION_CALLBACK_END:${Date.now()}`);
+                }
               },
             ),
           );
