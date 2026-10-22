@@ -54,6 +54,7 @@ P160 and Stage 3 remain incomplete. No blanket sign-off is implied by these scop
 - Installed fixture: real release builder/resolver/launcher, empty PATH/no NODE_PATH/arbitrary working directory, missing/corrupt leaf rejected before launch, no remaining child. OS-enforced offline/check-out denial and other delivered OS/architecture gates remain unrun.
 - Main close currently logs recovery-snapshot unavailability during teardown. Normal close succeeds, but that observation still needs assessment.
 - Independent D160/V160/K160fix review remains pending because the closed review agents reached their quota. Author checks are not an independent PASS.
-- Native 48-case motion/broker races, complete maximum-load three-repeat performance, main diagnostics, full regression/packaged smoke and manual/physical gates remain open. U12 remains pending-real-persistence for P170/X-T1.
+- Native 48-case motion/broker races passed through the actual host, SDK, production pane and formal fake provider. Original operation identity, no post-revocation effects, required confirmed stop/readback, durable disposition, ten final main UI counters at zero and no orphan PIDs are retained in the [native motion evidence](../evidence/2026-10-23-3b1-native-motion/README.md). Pressure/withheld-readback/lost-reply cases remain open, so U10 is partial.
+- Complete maximum-load three-repeat performance, main retained memory, full regression/packaged smoke and manual/physical gates remain open. U12 remains pending-real-persistence for P170/X-T1.
 
 Evidence: [browser/renderer/compatibility](../evidence/2026-10-23-3b1-browser-diagnostics/README.md), [transport and installed fixture](../evidence/2026-10-23-3b1-transport-installed/README.md).
