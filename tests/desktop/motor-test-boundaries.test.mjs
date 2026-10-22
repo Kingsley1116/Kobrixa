@@ -240,7 +240,7 @@ test("native input contract retains all 77 cases and requires each select acknow
   const scenario = { boundary: "arm", fault: "hide" };
   // Validator samples only; these are never emitted as native receipts.
   const report = {
-    native: ["jog", "jog", "timed", "relative-angle"].map((value, at) => ({
+    native: ["jog", "jog", "relative-angle"].map((value, at) => ({
       at,
       type: "mode-observed",
       detail: { value, focused: true },

@@ -228,9 +228,7 @@ export function validateNativeInput(report, scenario) {
     const observed = report.native.filter((r) => r.type === "mode-observed");
     assert.deepEqual(
       observed.map((r) => r.detail),
-      ["jog", "jog", ...(mode === "timed" ? ["timed"] : ["timed", "relative-angle"])].map(
-        (value) => ({ value, focused: true }),
-      ),
+      ["jog", "jog", mode].map((value) => ({ value, focused: true })),
       "Native closed-select focus/value observations required",
     );
     for (let i = 1; i < observed.length; i++)

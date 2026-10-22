@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PluginStatusHost } from "../../apps/desktop/src/renderer/plugin-ui/status-host.js";
 import { PluginToolsPane } from "../../apps/desktop/src/renderer/plugin-ui/panel-host.js";
@@ -61,10 +61,14 @@ for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "key
   );
 }
 settingsStore.set("rightPanel", "plugins");
+settingsStore.set("locale", "en");
 const owner = pluginUiWindow();
 function Harness() {
   const { values } = useSettings();
   const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    document.documentElement.lang = values.locale;
+  }, [values.locale]);
   return (
     <>
       <nav aria-label="Test shell">

@@ -1010,9 +1010,13 @@ export function runNativeMotor() {
           key("keyDown", "Home");
           key("keyUp", "Home");
           await observeMode("jog");
-          for (const value of mode === "timed" ? ["timed"] : ["timed", "relative-angle"]) {
-            key("keyDown", "Down");
-            key("keyUp", "Down");
+          for (const value of [mode]) {
+            const character = value === "timed" ? "t" : "r";
+            key("keyDown", character.toUpperCase());
+            native.push({ at: wall(), type: "char", detail: { keyCode: character } });
+            window.webContents.sendInputEvent({ type: "char", keyCode: character });
+            key("keyUp", character.toUpperCase());
+            await paint();
             await observeMode(value);
           }
           await until(
@@ -1040,10 +1044,12 @@ export function runNativeMotor() {
             keyCode: "A",
             modifiers: [process.platform === "darwin" ? "meta" : "control"],
           });
+          await paint();
           key("keyDown", "Backspace");
           key("keyUp", "Backspace");
+          await paint();
           native.push({ at: wall(), type: "insertText", detail: { node, value } });
-          window.webContents.insertText(value);
+          await window.webContents.insertText(value);
           await until(async () => (await readField(node)) === value, `native field ${node}`);
         };
         if (scenario.parity === "drafts") {
