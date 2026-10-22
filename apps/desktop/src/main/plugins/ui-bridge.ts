@@ -8,6 +8,7 @@ import {
   RpcError,
   RPC_ERRORS,
   UI_LIMITS_V1,
+  resourceFailure,
   uiRequestSchemas,
   type RequestContext,
   type Handle,
@@ -252,6 +253,18 @@ export function createPluginUiBridge(input: {
   const { execution, intent } = input;
   let disposed = false;
   const inflight = new Map<string, Set<AbortController>>();
+  // Source quotas span panels and execution generations until their bindings retire.
+  // Controller identity makes release idempotent even after a replacement dispatch.
+  const pending = new Map<AbortController, string>();
+  const admission = (owner: ResourceOwner): Result<never> | null => {
+    if (pending.size >= UI_LIMITS_V1.hostPending)
+      return resourceFailure("queue", UI_LIMITS_V1.hostPending);
+    let sourcePending = 0;
+    for (const sourceKey of pending.values()) if (sourceKey === owner.sourceKey) sourcePending++;
+    return sourcePending >= UI_LIMITS_V1.sourcePending
+      ? resourceFailure("queue", UI_LIMITS_V1.sourcePending)
+      : null;
+  };
   const holds = new Map<
     string,
     { invocation: CommandInvocation; owner: ResourceOwner; gesture: string }
@@ -279,7 +292,9 @@ export function createPluginUiBridge(input: {
   };
   const abort = (binding: UiBinding) => {
     const key = bindKey(binding);
-    for (const control of inflight.get(key) ?? []) control.abort();
+    const requests = inflight.get(key);
+    inflight.delete(key);
+    for (const control of requests ?? []) control.abort();
     for (const [token, held] of holds)
       if (held.invocation.context.binding && bindKey(held.invocation.context.binding) === key)
         holds.delete(token);
@@ -290,6 +305,10 @@ export function createPluginUiBridge(input: {
   ): Promise<Result<CommandValue>> => {
     const key = bindKey(resolved.state.binding);
     const control = new AbortController();
+    const cleanup = invocation.context.trigger.kind === "hold" && invocation.context.trigger.phase !== "begin";
+    if (!cleanup) pending.set(control, resolved.owner.sourceKey);
+    const release = () => { pending.delete(control); };
+    control.signal.addEventListener("abort", release, { once: true });
     const requests = inflight.get(key) ?? new Set<AbortController>();
     requests.add(control);
     inflight.set(key, requests);
@@ -302,8 +321,10 @@ export function createPluginUiBridge(input: {
     } catch {
       return stale();
     } finally {
+      control.signal.removeEventListener("abort", release);
+      release();
       requests.delete(control);
-      if (requests.size === 0) inflight.delete(key);
+      if (requests.size === 0 && inflight.get(key) === requests) inflight.delete(key);
     }
   };
   const bridge: PluginUiBridge = {
@@ -361,6 +382,8 @@ export function createPluginUiBridge(input: {
       // Core safety routes do not depend on feature form validity or enabledWhen.
       if (node?.type === "action" && node.action.kind === "core")
         return execution.core(resolved, node.id);
+      const limited = admission(resolved.owner);
+      if (limited) return limited;
       const built = buildInvocation(
         resolved,
         value.nodeId,
@@ -413,6 +436,8 @@ export function createPluginUiBridge(input: {
       }
       const resolved = resolve(value.binding);
       if (!resolved) return stale();
+      const limited = admission(resolved.owner);
+      if (limited) return limited;
       const built = buildInvocation(
         resolved,
         value.nodeId,
@@ -482,6 +507,7 @@ export function createPluginUiBridge(input: {
     disposed = true;
     for (const requests of inflight.values()) for (const request of requests) request.abort();
     inflight.clear();
+    pending.clear();
     holds.clear();
     offLifetime();
     intent.dispose();

@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { SettingsFormBinding } from "@kobrixa/plugin-runtime";
-import type { SettingsResourceV1 } from "@kobrixa/plugin-protocol";
+import type { SettingsScalar, SettingsResourceV1 } from "@kobrixa/plugin-protocol";
 import { labels } from "./contract.test.js";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 import { entry, handle } from "./contract.test.js";
@@ -118,4 +118,204 @@ it.each(["string", "number"] as const)("defers %s IME drafts and Enter/blur save
     await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(change).toHaveBeenCalledExactlyOnceWith(binding, "value", type === "string" ? final : 23, "enter");
   } finally { await act(async () => root.unmount()); div.remove(); controls.destroy(); }
+});
+
+it("U01 port fixture sends one key immediately for boolean/text/enum/number and retains committed CAS snapshot, draft and error", async () => {
+  // T7 port fixture only: no BoundSettingsService implementation or disk persistence.
+  const controls = new SettingsControls();
+  const fields: SettingsResourceV1["fields"] = [
+    { key: "editor.enabled", type: "boolean", label: { en: "Enabled" }, default: false },
+    {
+      key: "editor.name",
+      type: "string",
+      label: { en: "Name" },
+      default: "old",
+      minLength: 0,
+      maxLength: 100,
+      maxBytes: 400,
+    },
+    ...resource.fields,
+  ];
+  const settings = { ...resource, fields };
+  let baseline = {
+    schemaVersion: 1,
+    revision: null as string | null,
+    values: fields.map((field) => ({ key: field.key, value: field.default })),
+  };
+  let draft = structuredClone(baseline.values);
+  let errors: Array<{ key: string; message: { en: string } }> = [];
+  const writes: Array<{
+    baseRevision: string | null;
+    set: Array<{ key: string; value: SettingsScalar }>;
+  }> = [];
+  let failure: string | null = null;
+  const render = () =>
+    controls.render(binding, settings, { baseline, draft, busyKeys: [], errors });
+  controls.onChange((_binding, key, value) => {
+    writes.push({ baseRevision: baseline.revision, set: [{ key, value }] });
+    draft = draft.map((item) => (item.key === key ? { key, value } : item));
+    if (failure) errors = [{ key, message: { en: failure } }];
+    else {
+      baseline = {
+        ...baseline,
+        revision: "r_" + String(writes.length).repeat(32),
+        values: structuredClone(draft),
+      };
+      errors = [];
+    }
+    render();
+  });
+  render();
+  const div = document.createElement("div");
+  document.body.append(div);
+  const root = createRoot(div);
+  try {
+    await act(async () =>
+      root.render(createElement(SettingsControlsView, { controls, locale: "en", labels })),
+    );
+    await act(async () => div.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toEqual({
+      baseRevision: null,
+      set: [{ key: "editor.enabled", value: true }],
+    });
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    const text = div.querySelector<HTMLInputElement>('input[inputmode="text"]')!;
+    await act(async () => {
+      set.call(text, "new");
+      text.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(writes).toHaveLength(1);
+    await act(async () => text.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(writes[1]!.set).toEqual([{ key: "editor.name", value: "new" }]);
+    const select = div.querySelector("select")!;
+    await act(async () => {
+      select.value = "option1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(writes[2]!.set).toEqual([{ key: "editor.mode", value: "1" }]);
+    const number = div.querySelector<HTMLInputElement>('input[inputmode="decimal"]')!;
+    await act(async () => {
+      set.call(number, "23");
+      number.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      number.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(writes[3]!.set).toEqual([{ key: "editor.size", value: 23 }]);
+    expect(writes).toHaveLength(4);
+    await act(async () =>
+      [...div.querySelectorAll("button")].filter((b) => b.textContent === labels.reset)[3]!.click(),
+    );
+    expect(writes[4]!.set).toEqual([{ key: "editor.size", value: 12 }]);
+    const committed = structuredClone(baseline);
+    for (const message of ["Stale CAS", "Write failed"]) {
+      failure = message;
+      await act(async () => {
+        set.call(number, "31");
+        number.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () =>
+        number.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+      );
+      expect(writes.at(-1)).toEqual({
+        baseRevision: committed.revision,
+        set: [{ key: "editor.size", value: 31 }],
+      });
+      expect(controls.getSnapshot()!.state.baseline).toEqual(committed);
+      expect(
+        controls.getSnapshot()!.state.draft.find((item) => item.key === "editor.size")!.value,
+      ).toBe(31);
+      expect(number.value).toBe("31");
+      expect(div.querySelector('[role="alert"]')!.textContent).toBe(message);
+    }
+    expect(writes).toHaveLength(7);
+    expect(writes.every((write) => write.set.length === 1)).toBe(true);
+    expect(
+      [...div.querySelectorAll("button")].some((button) => button.textContent === "Apply"),
+    ).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+    div.remove();
+    controls.destroy();
+  }
+});
+
+it("U01 Enter followed by committed-snapshot delivery and blur must not emit a duplicate mutation", () => {
+  const controls = new SettingsControls();
+  const change = vi.fn();
+  controls.onChange(change);
+  const baseline = {
+    schemaVersion: 1,
+    revision: null,
+    values: [
+      { key: "editor.mode", value: 1 },
+      { key: "editor.size", value: 12 },
+    ],
+  };
+  try {
+    controls.render(binding, resource, {
+      baseline,
+      draft: baseline.values,
+      busyKeys: [],
+      errors: [],
+    });
+    controls.raw("editor.size", "23");
+    controls.commit("editor.size", "enter");
+    const committed = {
+      ...baseline,
+      revision: "r_" + "1".repeat(32),
+      values: [
+        { key: "editor.mode", value: 1 },
+        { key: "editor.size", value: 23 },
+      ],
+    };
+    controls.render(binding, resource, {
+      baseline: committed,
+      draft: committed.values,
+      busyKeys: [],
+      errors: [],
+    });
+    controls.commit("editor.size", "blur");
+    expect(change).toHaveBeenCalledExactlyOnceWith(binding, "editor.size", 23, "enter");
+  } finally {
+    controls.destroy();
+  }
+});
+
+it("U01 clean blur stays idle while edits after success and failed-save blur remain writable", () => {
+  const controls = new SettingsControls();
+  const change = vi.fn();
+  controls.onChange(change);
+  const render = (value: number, error = false) => {
+    const values = [{ key: "editor.size", value }];
+    controls.render(binding, resource, {
+      baseline: { schemaVersion: 1, revision: null, values },
+      draft: values,
+      busyKeys: [],
+      errors: error ? [{ key: "editor.size", message: { en: "Stale CAS" } }] : [],
+    });
+  };
+  try {
+    render(12);
+    controls.commit("editor.size", "blur");
+    expect(change).not.toHaveBeenCalled();
+    controls.raw("editor.size", "23.0");
+    controls.commit("editor.size", "enter");
+    render(23);
+    controls.commit("editor.size", "blur");
+    expect(change).toHaveBeenCalledTimes(1);
+    controls.raw("editor.size", "24");
+    controls.commit("editor.size", "blur");
+    expect(change).toHaveBeenLastCalledWith(binding, "editor.size", 24, "blur");
+    render(24);
+    controls.raw("editor.size", "23");
+    controls.commit("editor.size", "enter");
+    render(24, true);
+    controls.commit("editor.size", "blur");
+    expect(change).toHaveBeenCalledTimes(4);
+    expect(change).toHaveBeenLastCalledWith(binding, "editor.size", 23, "blur");
+    expect(controls.getSnapshot()!.raw["editor.size"]).toBe("23");
+    expect(controls.getSnapshot()!.state.baseline.values[0]!.value).toBe(24);
+  } finally { controls.destroy(); }
 });

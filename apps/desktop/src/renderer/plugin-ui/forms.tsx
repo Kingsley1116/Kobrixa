@@ -63,7 +63,8 @@ export class SettingsControls implements SettingsControlsPort {
     const value = phase === "reset" ? field.default : immediate !== undefined ? immediate : raw === undefined ? draft
       : field.type === "number" || field.type === "integer" ? numericDraft(raw) : raw;
     if (value === null || !settingValid(field, value)) { this.view = { ...view, invalid: [...new Set([...view.invalid, key])] }; this.publish(); return; }
-    if (phase === "blur" && this.sent.get(key) === value && !view.state.errors.some((error) => error.key === key)) return;
+    // A successful snapshot clears raw/sent; leaving that clean field is not a new edit.
+    if (phase === "blur" && (raw === undefined || this.sent.get(key) === value) && !view.state.errors.some((error) => error.key === key)) return;
     this.sent.set(key, value);
     if (phase === "reset") { const next = { ...view.raw }; delete next[key]; this.view = { ...view, raw: next, invalid: view.invalid.filter((item) => item !== key) }; this.publish(); }
     this.changes.forEach((listener) => listener(view.binding, key, value, phase));
