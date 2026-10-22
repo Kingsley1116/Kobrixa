@@ -1,0 +1,14 @@
+{
+  "commit": "4f49ab972ddb41554e49c7cd95d2a1f348615d17",
+  "dirty": true,
+  "glyphs": "cjk-diagnostic",
+  "sha256": {
+    ".vite/build/main.cjs": "374494c072368c10142c3def31b4f66bd8ca05651298155e2c6284c7e1b12c8b",
+    ".vite/build/preload.cjs": "e310565098eb66087ca0258a5c6fa84b4014a970dd3fcf8c0705a8617b3cec63",
+    ".vite/renderer/main_window/index.html": "f197cc1a3e48ef5cf5f9b3d1abf927beadecb0e6b33f107462457c1f06fa369a",
+    ".vite/build/ui-browser-main.cjs": "a78675094c97d4514bedb20108f47de34f306b12a7e4fea1f23011ca42fbb3ef",
+    "probe.js": "25008512ef7ea9b5c8f51e5d817cbc14ac48a94c7f73a4f3f8fb6739c52d6d98",
+    "source-0/main.cjs": "9a5efaba463ef2ccd2494688d055296b9261931010d87d2b5f97a84310c48e9c",
+    "source-1/main.cjs": "9a5efaba463ef2ccd2494688d055296b9261931010d87d2b5f97a84310c48e9c"
+  }
+}

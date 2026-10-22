@@ -1,0 +1,1263 @@
+{
+  "kind": "ui-transport",
+  "mockHost": true,
+  "results": [
+    {
+      "language": "js",
+      "initializeKeys": [
+        "apiVersion",
+        "grantedPermissions",
+        "locale",
+        "pluginId"
+      ],
+      "apiVersion": "1.6.0",
+      "legacy": null,
+      "negotiated": {
+        "commandEnvelopeVersions": [
+          1
+        ],
+        "uiResourceVersions": [
+          1
+        ]
+      },
+      "duplicateCalls": 1,
+      "managementHasBinding": false,
+      "managementHasMotion": false,
+      "unicode": "🙂界",
+      "callbackError": "PLUGIN_E_COMMAND_FAILED",
+      "cancelled": true,
+      "cancellationId": "e6305d44-ad3f-44c1-88c7-85d3aa2b3660",
+      "callbackStarted": true,
+      "afterCancellationCalls": 2,
+      "exited": true,
+      "pid": 62725,
+      "logs": [
+        "UI_PID:62725",
+        "UI_CALLBACK_WAIT:e6305d44-ad3f-44c1-88c7-85d3aa2b3660"
+      ],
+      "wire": [
+        {
+          "direction": "host",
+          "at": 427.417667,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "apiVersion": "1.6.0",
+              "pluginId": "acceptance.ui",
+              "locale": "en",
+              "grantedPermissions": [
+                "ui.panels",
+                "ui.status"
+              ]
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 566.314417,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "apiVersion": "1.6.0",
+              "sdk": {
+                "name": "@kobrixa/plugin-sdk",
+                "version": "0.1.0"
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 567.553125,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "ui/negotiate",
+            "params": {
+              "commandEnvelopeVersions": [
+                1
+              ],
+              "uiResourceVersions": [
+                1
+              ]
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 568.117042,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "ok": true,
+              "value": {
+                "commandEnvelopeVersions": [
+                  1
+                ],
+                "uiResourceVersions": [
+                  1
+                ]
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 568.422583,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "ui/ready",
+            "params": {}
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 568.819292,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "ui/instances",
+            "params": {}
+          }
+        },
+        {
+          "direction": "host",
+          "at": 569.242875,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "ok": true,
+              "value": {
+                "instances": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 569.765958,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+              "ok": true,
+              "value": {}
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 570.388042,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "command/execute",
+            "params": {
+              "command": "acceptance.ui.legacy"
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 570.589458,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": null
+          }
+        },
+        {
+          "direction": "host",
+          "at": 571.484208,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "a0138fa2-1ba2-4396-8a96-222a1592c50d",
+              "command": "acceptance.ui.inspect",
+              "arguments": {},
+              "context": {
+                "contextRef": null,
+                "origin": "management",
+                "locale": "en",
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 573.1935,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "has-binding": false,
+                  "has-motion": false,
+                  "argument-count": 0
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 574.613625,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "b3738a1a-c281-467f-a70c-fb7738d0b354",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": 20,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "8bfe22ba-f759-4073-b18e-cf25fbbdc9eb",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "0aad54ea-4538-47d3-b5f8-6b372edb4149",
+                  "processEpoch": "8da42fb9-e774-4f97-93d1-9f7545addc9b"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 575.874917,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "calls": 1,
+                  "speed": 20,
+                  "mode": "brake",
+                  "origin": "panel",
+                  "has-binding": true,
+                  "has-motion": false,
+                  "unicode": "🙂界"
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 576.229625,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "b3738a1a-c281-467f-a70c-fb7738d0b354",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": 20,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "8bfe22ba-f759-4073-b18e-cf25fbbdc9eb",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "0aad54ea-4538-47d3-b5f8-6b372edb4149",
+                  "processEpoch": "8da42fb9-e774-4f97-93d1-9f7545addc9b"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 576.580458,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "calls": 1,
+                  "speed": 20,
+                  "mode": "brake",
+                  "origin": "panel",
+                  "has-binding": true,
+                  "has-motion": false,
+                  "unicode": "🙂界"
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 576.839292,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "f3df1f9e-ce38-436b-bd1a-695aa1c6302f",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": -99,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "8bfe22ba-f759-4073-b18e-cf25fbbdc9eb",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "0aad54ea-4538-47d3-b5f8-6b372edb4149",
+                  "processEpoch": "8da42fb9-e774-4f97-93d1-9f7545addc9b"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 577.959583,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "result": {
+              "ok": false,
+              "error": {
+                "code": "PLUGIN_E_COMMAND_FAILED",
+                "message": "Command failed."
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 578.896542,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "e6305d44-ad3f-44c1-88c7-85d3aa2b3660",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": -98,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "8bfe22ba-f759-4073-b18e-cf25fbbdc9eb",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "0aad54ea-4538-47d3-b5f8-6b372edb4149",
+                  "processEpoch": "8da42fb9-e774-4f97-93d1-9f7545addc9b"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 590.347375,
+          "message": {
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": {
+              "id": 9
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 590.535125,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "5b5a0692-a152-40db-b27e-8d1ddc0b8745",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": 20,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "8bfe22ba-f759-4073-b18e-cf25fbbdc9eb",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "0aad54ea-4538-47d3-b5f8-6b372edb4149",
+                  "processEpoch": "8da42fb9-e774-4f97-93d1-9f7545addc9b"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 591.013333,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "error": {
+              "code": -32800,
+              "message": "command/invoke was cancelled."
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 591.31925,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "calls": 2,
+                  "speed": 20,
+                  "mode": "brake",
+                  "origin": "panel",
+                  "has-binding": true,
+                  "has-motion": false,
+                  "unicode": "🙂界"
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 591.457417,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "shutdown",
+            "params": {}
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 591.56875,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "result": null
+          }
+        },
+        {
+          "direction": "host",
+          "at": 591.62075,
+          "message": {
+            "jsonrpc": "2.0",
+            "method": "exit",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "language": "python",
+      "initializeKeys": [
+        "apiVersion",
+        "grantedPermissions",
+        "locale",
+        "pluginId"
+      ],
+      "apiVersion": "1.6.0",
+      "legacy": null,
+      "negotiated": {
+        "commandEnvelopeVersions": [
+          1
+        ],
+        "uiResourceVersions": [
+          1
+        ]
+      },
+      "duplicateCalls": 1,
+      "managementHasBinding": false,
+      "managementHasMotion": false,
+      "unicode": "🙂界",
+      "callbackError": "PLUGIN_E_COMMAND_FAILED",
+      "cancelled": true,
+      "cancellationId": "b177c916-812b-483f-b3bc-8f86d2a55ec1",
+      "callbackStarted": true,
+      "afterCancellationCalls": 2,
+      "exited": true,
+      "pid": 62729,
+      "logs": [
+        "UI_PID:62729",
+        "UI_CALLBACK_WAIT:b177c916-812b-483f-b3bc-8f86d2a55ec1"
+      ],
+      "wire": [
+        {
+          "direction": "host",
+          "at": 605.195667,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "apiVersion": "1.6.0",
+              "pluginId": "acceptance.ui",
+              "locale": "en",
+              "grantedPermissions": [
+                "ui.panels",
+                "ui.status"
+              ]
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 902.3385,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "apiVersion": "1.6.0",
+              "sdk": {
+                "name": "kobrixa-plugin-sdk",
+                "version": "0.1.0"
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 902.613667,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "ui/negotiate",
+            "params": {
+              "commandEnvelopeVersions": [
+                1
+              ],
+              "uiResourceVersions": [
+                1
+              ]
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 903.77075,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "ok": true,
+              "value": {
+                "commandEnvelopeVersions": [
+                  1
+                ],
+                "uiResourceVersions": [
+                  1
+                ]
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 903.906542,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "ui/ready",
+            "params": {}
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 904.740958,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "ui/instances",
+            "params": {}
+          }
+        },
+        {
+          "direction": "host",
+          "at": 904.910167,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "ok": true,
+              "value": {
+                "instances": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 905.703792,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "ui/instances",
+            "params": {}
+          }
+        },
+        {
+          "direction": "host",
+          "at": 905.769333,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "ok": true,
+              "value": {
+                "instances": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 905.965125,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+              "ok": true,
+              "value": {}
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 906.04775,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "command/execute",
+            "params": {
+              "command": "acceptance.ui.legacy"
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 907.983667,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": null
+          }
+        },
+        {
+          "direction": "host",
+          "at": 908.915625,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "8b215b62-c6f0-4d20-8528-852ffbe7c5ce",
+              "command": "acceptance.ui.inspect",
+              "arguments": {},
+              "context": {
+                "contextRef": null,
+                "origin": "management",
+                "locale": "en",
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1001.85725,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "has-binding": false,
+                  "has-motion": false,
+                  "argument-count": 0
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1002.587833,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "e0b5ad10-640f-4c8c-a0a8-4313d46132fa",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": 20,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "34dd1793-c4a2-4e0f-be14-1b0fae781e57",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "17e49903-b227-4688-9953-63c799f7f79a",
+                  "processEpoch": "e946623d-9cb8-4de5-b3fe-6b9baa62d44c"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1008.701167,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "ui/instances",
+            "params": {}
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1008.851542,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+              "ok": true,
+              "value": {
+                "instances": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1104.525875,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "calls": 1,
+                  "speed": 20,
+                  "mode": "brake",
+                  "origin": "panel",
+                  "has-binding": true,
+                  "has-motion": false,
+                  "unicode": "🙂界"
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1104.803542,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "e0b5ad10-640f-4c8c-a0a8-4313d46132fa",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": 20,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "34dd1793-c4a2-4e0f-be14-1b0fae781e57",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "17e49903-b227-4688-9953-63c799f7f79a",
+                  "processEpoch": "e946623d-9cb8-4de5-b3fe-6b9baa62d44c"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1182.783625,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "calls": 1,
+                  "speed": 20,
+                  "mode": "brake",
+                  "origin": "panel",
+                  "has-binding": true,
+                  "has-motion": false,
+                  "unicode": "🙂界"
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1183.104083,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "105a4d0e-1ebb-411d-b8fe-ac4da2250585",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": -99,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "34dd1793-c4a2-4e0f-be14-1b0fae781e57",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "17e49903-b227-4688-9953-63c799f7f79a",
+                  "processEpoch": "e946623d-9cb8-4de5-b3fe-6b9baa62d44c"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1183.44,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "ui/instances",
+            "params": {}
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1183.5305,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {
+              "ok": true,
+              "value": {
+                "instances": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1217.992542,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "result": {
+              "ok": false,
+              "error": {
+                "code": "PLUGIN_E_COMMAND_FAILED",
+                "message": "Command failed."
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1218.510875,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "b177c916-812b-483f-b3bc-8f86d2a55ec1",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": -98,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "34dd1793-c4a2-4e0f-be14-1b0fae781e57",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "17e49903-b227-4688-9953-63c799f7f79a",
+                  "processEpoch": "e946623d-9cb8-4de5-b3fe-6b9baa62d44c"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1331.713458,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "ui/instances",
+            "params": {}
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1331.84025,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "result": {
+              "ok": true,
+              "value": {
+                "instances": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1339.255708,
+          "message": {
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": {
+              "id": 9
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1339.444458,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "command/invoke",
+            "params": {
+              "version": 1,
+              "invocationId": "0ed2d30a-9298-476d-810e-38c582ab1f76",
+              "command": "acceptance.ui.activate",
+              "arguments": {
+                "speed": 20,
+                "mode": "brake"
+              },
+              "context": {
+                "contextRef": null,
+                "origin": "panel",
+                "locale": "en",
+                "binding": {
+                  "contributionId": "acceptance.ui.panel",
+                  "panelInstance": "34dd1793-c4a2-4e0f-be14-1b0fae781e57",
+                  "kind": "panel",
+                  "uiResourceGeneration": 1,
+                  "generation": 1,
+                  "hostEpoch": "17e49903-b227-4688-9953-63c799f7f79a",
+                  "processEpoch": "e946623d-9cb8-4de5-b3fe-6b9baa62d44c"
+                },
+                "form": {
+                  "revision": 0,
+                  "values": {
+                    "speed": 20,
+                    "mode": "brake"
+                  }
+                },
+                "trigger": {
+                  "kind": "activate"
+                }
+              }
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1380.237333,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "error": {
+              "code": -32800,
+              "message": "command/invoke was cancelled."
+            }
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1416.761208,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "result": {
+              "ok": true,
+              "value": {
+                "output": {
+                  "calls": 2,
+                  "speed": 20,
+                  "mode": "brake",
+                  "origin": "panel",
+                  "has-binding": true,
+                  "has-motion": false,
+                  "unicode": "🙂界"
+                },
+                "fieldErrors": []
+              }
+            }
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1416.980833,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "shutdown",
+            "params": {}
+          }
+        },
+        {
+          "direction": "plugin",
+          "at": 1418.138,
+          "message": {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "result": null
+          }
+        },
+        {
+          "direction": "host",
+          "at": 1418.195292,
+          "message": {
+            "jsonrpc": "2.0",
+            "method": "exit",
+            "params": {}
+          }
+        }
+      ]
+    }
+  ],
+  "versions": {
+    "node": "24.21.0",
+    "acorn": "8.18.0",
+    "ada": "4.0.0",
+    "amaro": "1.1.11",
+    "ares": "1.34.8",
+    "brotli": "1.2.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.4.3",
+    "merve": "1.2.2",
+    "modules": "149",
+    "napi": "10",
+    "nbytes": "0.1.4",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.70.0",
+    "nghttp3": "",
+    "ngtcp2": "",
+    "openssl": "0.0.0",
+    "simdjson": "4.6.7",
+    "simdutf": "7.7.0",
+    "sqlite": "3.53.4",
+    "tz": "2026d",
+    "undici": "7.29.1",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "15.2.124.28-electron.0",
+    "zlib": "1.3.2.1-motley",
+    "zstd": "1.6.0",
+    "electron": "44.7.0",
+    "chrome": "152.0.7977.130"
+  },
+  "artifact": {
+    "commit": "30d8593fb2bf41c0252e13ae24a93734f1c4656a",
+    "dirty": false,
+    "sha256": {
+      "main.cjs": "dd5013e1c5206386f777ff8e3888a405b271343b4a458ac61a3b1a82cd01b1e0",
+      "interop-js/main.cjs": "172f979bffa20d5b5be66852c8500233ca7e5661df835e293f303a2453d00449",
+      "interop-python/consumer.py": "1cd5ce7b564f227b7b54b9f158997d8c0ae3463e27f710d8c697f2bc91abf01d"
+    }
+  },
+  "remainingPids": []
+}

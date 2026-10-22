@@ -68,12 +68,16 @@ async def ready(ctx):
             if stopped:
                 return
             if not state["ok"]:
+                if state["error"]["code"] == "PLUGIN_E_STALE_RESOURCE":
+                    continue
                 return failed(state["error"]["code"])
             patched = await ctx.ui.patch(binding, state["value"]["revision"],
                                          {"ticks": "tick:" + str(ticks)})
             if stopped:
                 return
             if not patched["ok"]:
+                if patched["error"]["code"] == "PLUGIN_E_STALE_RESOURCE":
+                    continue
                 return failed(patched["error"]["code"])
     async def loop():
         while not stopped:

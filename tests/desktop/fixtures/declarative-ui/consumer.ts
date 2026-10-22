@@ -87,12 +87,18 @@ runPlugin(
         for (const binding of listed.value.instances) {
           const state = await ctx.ui.state(binding);
           if (stopped) return;
-          if (!state.ok) return failed(state.error.code);
+          if (!state.ok) {
+            if (state.error.code === "PLUGIN_E_STALE_RESOURCE") continue;
+            return failed(state.error.code);
+          }
           const patched = await ctx.ui.patch(binding, state.value.revision, {
             ticks: `tick:${ticks}`,
           });
           if (stopped) return;
-          if (!patched.ok) return failed(patched.error.code);
+          if (!patched.ok) {
+            if (patched.error.code === "PLUGIN_E_STALE_RESOURCE") continue;
+            return failed(patched.error.code);
+          }
         }
       };
       const loop = async () => {
@@ -110,7 +116,7 @@ runPlugin(
             () => {
               void loop();
             },
-            Math.max(0, 100 - (performance.now() - started)),
+            Math.max(0, Math.ceil(100 - (performance.now() - started))),
           );
       };
       await tick();
