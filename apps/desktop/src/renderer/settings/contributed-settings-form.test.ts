@@ -157,7 +157,7 @@ it("failed watch setup disposes controls and permits another open", () => {
   };
   const service: BoundSettingsService = {
     open: vi.fn(),
-    read: vi.fn(),
+    read: vi.fn(async () => ({ ok: true as const, value: snapshot })),
     update: vi.fn(),
     reset: vi.fn(),
     dispose: vi.fn(),

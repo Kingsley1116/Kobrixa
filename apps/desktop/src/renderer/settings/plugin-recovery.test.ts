@@ -10,6 +10,41 @@ import { SettingsStore } from "./settings.js";
 import { createPluginUiWindow, pluginUiWindow, settingsStore } from "./settings-state.js";
 import { pluginRecoveryPort } from "./plugins-panel.js";
 import { pluginUiCopy } from "./plugin-copy.js";
+import { CorePersistenceRecovery } from "../plugin-ui/core-persistence-detail.js";
+import type { PluginsApi } from "../../shared/plugins.js";
+
+it("mounts persistence detail with all optional features off", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  let open: (input: { itemId: string }) => void = () => {};
+  const off = vi.fn();
+  const port: PluginsApi["persistenceRecovery"] = {
+    snapshot: vi.fn<PluginsApi["persistenceRecovery"]["snapshot"]>(async () => ({
+      ok: true,
+      value: { revision: 0, items: [] },
+    })),
+    act: vi.fn<PluginsApi["persistenceRecovery"]["act"]>(async () => ({
+      ok: true,
+      value: { revision: 0, items: [] },
+    })),
+    onOpen: vi.fn((listener) => {
+      open = listener;
+      return off;
+    }),
+    onChanged: vi.fn(() => off),
+  };
+  const element = document.createElement("div");
+  const detailRoot = createRoot(element);
+  try {
+    await act(async () =>
+      detailRoot.render(createElement(CorePersistenceRecovery, { port, labels: pluginUiCopy.en })),
+    );
+    await act(async () => open({ itemId: "00000000-0000-4000-8000-000000000001" }));
+    expect(port.snapshot).toHaveBeenCalledWith({ itemId: "00000000-0000-4000-8000-000000000001" });
+  } finally {
+    await act(async () => detailRoot.unmount());
+  }
+  expect(off).toHaveBeenCalledTimes(2);
+});
 
 const layoutKey = "kobrixa.layout.pluginPanel";
 function backing(initial: Record<string, string> = {}) {

@@ -95,6 +95,7 @@ export function createContributedSettingsForm(
     open(binding, resource, snapshot) {
       close(binding);
       createSettingsFieldMap(resource);
+      let readGeneration = 0;
       const store = createContributedSettingsStore(snapshot, {
         validate: (key, value) => {
           try {
@@ -109,35 +110,51 @@ export function createContributedSettingsForm(
           if (!result.ok) throw result.error;
           return result.value;
         },
-        mutate: (input) =>
-          input.reset
-            ? service.reset(binding, {
-                schemaVersion: input.schemaVersion,
-                expectedRevision: input.expectedRevision,
-                keys: [input.key],
-              })
-            : service.update(binding, {
-                schemaVersion: input.schemaVersion,
-                expectedRevision: input.expectedRevision,
-                changes: [{ key: input.key, value: input.value }],
-              }),
+        async mutate(input) {
+          ++readGeneration;
+          try {
+            return await (input.reset
+              ? service.reset(binding, {
+                  schemaVersion: input.schemaVersion,
+                  expectedRevision: input.expectedRevision,
+                  keys: [input.key],
+                })
+              : service.update(binding, {
+                  schemaVersion: input.schemaVersion,
+                  expectedRevision: input.expectedRevision,
+                  changes: [{ key: input.key, value: input.value }],
+                }));
+          } finally {
+            // An earlier read cannot replace this mutation's result. Refresh once settled.
+            refresh();
+          }
+        },
       });
       const draw = () => controls.render(binding, resource, store.state());
       const offDraw = store.subscribe(draw);
-      let offWatch: () => void;
-      try {
-        offWatch = service.watch(binding, () => {
-          void service
-            .read(binding)
-            .then((result) => {
-              if (!matches(binding)) return;
+      const refresh = () => {
+        const generation = ++readGeneration;
+        void store
+          .idle()
+          .then(() => {
+            if (current?.store !== store || generation !== readGeneration) return;
+            return service.read(binding);
+          })
+          .then(
+            (result) => {
+              if (!result || current?.store !== store || generation !== readGeneration) return;
               if (result.ok) store.external(result.value);
               else store.fail(result.error.message);
-            })
-            .catch(() => {
-              if (matches(binding)) store.fail("Current saved values are unavailable.");
-            });
-        });
+            },
+            () => {
+              if (current?.store === store && generation === readGeneration)
+                store.fail("Current saved values are unavailable.");
+            },
+          );
+      };
+      let offWatch: () => void;
+      try {
+        offWatch = service.watch(binding, refresh);
       } catch (error) {
         offDraw();
         store.dispose();
@@ -162,6 +179,7 @@ export function createContributedSettingsForm(
       });
       current = { binding: structuredClone(binding), resource, store, off, change };
       draw();
+      refresh();
     },
     replaceSnapshot(binding, snapshot) {
       if (matches(binding)) current!.store.external(snapshot);

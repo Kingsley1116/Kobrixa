@@ -30,6 +30,9 @@ it("U04/U15 shares parallel UI/static barriers before restoration, project initi
 });
 it("U15 mounts independent recovery, generic tools and footer status with pre-hide gates", () => {
   expect(app).toContain("<CoreRecoveryView");
+  expect(app).toMatch(
+    /<CoreRecoveryView[\s\S]*?\/>\s*<CorePersistenceRecovery\s+port=\{window\.kobrixa\.plugins\.persistenceRecovery\}\s+labels=\{uiLabels\}\s*\/>/,
+  );
   expect(app).toContain("pluginRecoveryPort(pluginUi.recovery,");
   expect(app).toContain("port={recoveryPort}");
   expect(app).toContain("request={recoveryRequest}");

@@ -95,6 +95,7 @@ import { pluginUiCopy } from "./settings/plugin-copy.js";
 import { PluginToolsPane } from "./plugin-ui/panel-host.js";
 import { PluginStatusHost } from "./plugin-ui/status-host.js";
 import { CoreRecoveryView } from "./plugin-ui/core-recovery.js";
+import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
 import type { Settings } from "./settings/settings.js";
 import {
   SettingsPanel,
@@ -3368,6 +3369,10 @@ export function App(): React.JSX.Element {
           locale={locale}
           labels={uiLabels}
           request={recoveryRequest}
+        />
+        <CorePersistenceRecovery
+          port={window.kobrixa.plugins.persistenceRecovery}
+          labels={uiLabels}
         />
         <PluginRecoveryNotice
           locale={locale}
