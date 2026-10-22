@@ -161,13 +161,14 @@ export class UiStateStore {
   setVisible(visible: boolean): void { this.visible = visible; if (this.view.active) this.publish({ snapshot: { ...this.view.snapshot, visible } }); }
   needsReconcile(): boolean { return this.uncertain; }
   async reconcileAction(): Promise<boolean> {
+    const generation = this.view.localRevision;
     try {
       const result = await this.deadline(this.bridge.snapshot({ binding: this.view.snapshot.binding }));
       if (!this.view.active || !result.ok || bindingKey(result.value.binding) !== bindingKey(this.view.snapshot.binding)
         || result.value.formRevision < this.acceptedRevision || result.value.revision < this.view.snapshot.revision) return false;
       this.acceptedRevision = result.value.formRevision; this.uncertain = false;
       this.publish({ snapshot: result.value }); return true;
-    } catch { if (this.view.active) this.publish({ problem: "snapshot" }); return false; }
+    } catch { if (this.view.active && this.view.localRevision === generation) this.publish({ problem: "snapshot" }); return false; }
   }
   nextAction(): boolean {
     if (this.uncertain || this.view.busy || this.acceptedRevision >= Number.MAX_SAFE_INTEGER) return false;
@@ -203,7 +204,10 @@ export class UiStateStore {
     if (!this.actionEnabled(nodeId)) return;
     if (this.safetyAction(nodeId)) {
       this.corePending.add(nodeId); this.publish({});
-      try { const result = await this.deadline(this.bridge.invoke({ ...this.form(), nodeId }), 30000);
+      // Core actions resolve their targets from host-owned data, never the field draft.
+      // Invalid or over-budget user input must not prevent reaching the safety route.
+      try { const result = await this.deadline(this.bridge.invoke({ binding: this.view.snapshot.binding,
+        formRevision: this.submissionRevision, form: {}, nodeId }), 30000);
         if (this.view.active && result.ok && result.value.fieldErrors.length === 0) this.onAccepted(nodeId); }
       catch { /* Host safety state remains authoritative. */ }
       finally { this.corePending.delete(nodeId); if (this.view.active) this.publish({}); }

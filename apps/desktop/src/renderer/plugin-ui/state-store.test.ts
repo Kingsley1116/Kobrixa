@@ -93,7 +93,7 @@ it("C-G1 restoration is a cloned local draft with fresh revision and no edit or 
 
 import { UiStateRegistry } from "../../../../../packages/plugin-runtime/src/ui-state.js";
 import { RpcPeer, createMemoryChannelPair, type ResourceOwner } from "@kobrixa/plugin-protocol";
-import { buildInvocation } from "../../main/plugins/ui-bridge.js";
+import { buildInvocation, registerUiIpc } from "../../main/plugins/ui-bridge.js";
 import { UiIntentController } from "./intent-controller.js";
 async function admittedStore() {
   const f = fixture(); const owner: ResourceOwner = { sourceKey: entry.sourceKey, pluginId: entry.pluginId,
@@ -206,4 +206,44 @@ it("C-G1 a failed reconciliation sends nothing and requires another explicit act
     await h.store.invoke("go"); expect(h.f.bridge.invoke).toHaveBeenCalledTimes(2);
     expect(h.f.bridge.invoke.mock.calls[1]![0].formRevision).toBe(2);
   } finally { h.dispose(); }
+});
+
+it("C-G1 late reconciliation rejection cannot restore a problem after an edit", async () => {
+  const h = await admittedStore();
+  try {
+    await h.store.invoke("go");
+    let reject!: (reason: Error) => void;
+    h.f.bridge.snapshot.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+    const work = h.store.invoke("go"); h.store.edit("speed", 6, "6");
+    reject(new Error("late transport failure")); await work;
+    expect(h.store.getSnapshot()).toMatchObject({ problem: null, busy: false, draft: { speed: 6 } });
+    expect(h.f.bridge.invoke).toHaveBeenCalledTimes(1);
+  } finally { h.dispose(); }
+});
+
+it.each(["stop", "disconnect", "openRecovery"] as const)("C-G2 %s crosses actual IPC with an oversized invalid draft", async (action) => {
+  const f = fixture(); const resource = structuredClone(panel);
+  const root = resource.nodes.find((node) => node.type === "group")!;
+  for (let i = 0; i < 5; i++) {
+    const id = `text${i}`;
+    resource.fields[id] = { schema: { type: "string", maxLength: 4000, nullable: false }, initial: "", required: true };
+    resource.nodes.push({ id, type: "textInput", field: id, label: { en: id } });
+    root.children.push(id);
+  }
+  resource.nodes.push({ id: "safety", type: "action", label: { en: "Safety" }, variant: "danger", action:
+    action === "stop" ? { kind: "core", action, operation: { scope: "data", key: "operation" } } :
+      action === "disconnect" ? { kind: "core", action, session: { scope: "data", key: "session" } } : { kind: "core", action } });
+  root.children.push("safety");
+  type Listener = Parameters<Parameters<typeof registerUiIpc>[0]["handle"]>[1];
+  const handlers = new Map<string, Listener>();
+  registerUiIpc({ handle: (name, handler) => { handlers.set(name, handler as Listener); }, bridge: f.bridge, trusted: () => true });
+  const state = new UiStateStore({ snapshot: f.bridge.snapshot, invoke: async (input) =>
+    handlers.get("plugins:ui:invoke")!({ sender: { id: 1 }, senderFrame: null } as Parameters<Listener>[0], input) as ReturnType<typeof f.bridge.invoke> }, resource, snapshot());
+  try {
+    for (let i = 0; i < 5; i++) state.edit(`text${i}`, "x".repeat(4000));
+    expect(Buffer.byteLength(JSON.stringify(state.getSnapshot().draft))).toBeGreaterThan(16384);
+    expect(state.valid()).toBe(false);
+    await state.invoke("safety");
+    expect(f.bridge.invoke).toHaveBeenCalledExactlyOnceWith({ binding, nodeId: "safety", formRevision: 0, form: {} });
+  } finally { state.retire(); }
 });
