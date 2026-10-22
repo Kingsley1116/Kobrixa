@@ -92,6 +92,22 @@ function keyValid(key: string): boolean {
     /^[a-z][a-z0-9-]{0,31}$/.test(key) && !["__proto__", "constructor", "prototype"].includes(key)
   );
 }
+function hasForbiddenKey(value: unknown): boolean {
+  // Zod record parsing can omit __proto__. Inspect the original JSON before
+  // parsing, including nested records, so an invalid key cannot become valid.
+  const pending: unknown[] = [value];
+  const seen = new WeakSet<object>();
+  while (pending.length > 0) {
+    const item = pending.pop();
+    if (item === null || typeof item !== "object" || seen.has(item)) continue;
+    seen.add(item);
+    for (const [key, child] of Object.entries(item)) {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") return true;
+      if (child !== null && typeof child === "object") pending.push(child);
+    }
+  }
+  return false;
+}
 export function validValueSpec(spec: ValueSpec): boolean {
   if (!valueSpecSchema.safeParse(spec).success) return false;
   if (spec.type === "number")
@@ -187,6 +203,7 @@ export function validateUiResource(
       "resourceBytes",
       Number.isSafeInteger(rawBytes) && rawBytes >= 0 ? rawBytes : undefined,
     );
+  if (hasForbiddenKey(value)) return uiFailure("schema", "$");
   const parsed = uiResourceV1Schema.safeParse(value);
   if (!parsed.success) {
     // Classify structural failures without relaxing the resource grammar.
@@ -461,6 +478,7 @@ export function validateUiData(
   return { ok: true, value: structuredClone(data) };
 }
 export function validateCommandInvocation(value: unknown): Result<CommandInvocation> {
+  if (hasForbiddenKey(value)) return uiFailure("schema", "$.invocation");
   const parsed = commandInvocationSchema.safeParse(value);
   if (!parsed.success) return uiFailure("schema", "$.invocation");
   const invocation = parsed.data;
@@ -500,6 +518,7 @@ export function validateCommandValue(
   value: unknown,
   invocation: CommandInvocation,
 ): Result<CommandValue> {
+  if (hasForbiddenKey(value)) return uiFailure("schema", "$.result");
   const parsed = commandValueSchema.safeParse(value);
   if (!parsed.success) return uiFailure("schema", "$.result");
   const result = parsed.data;
@@ -543,6 +562,7 @@ export function validUiWire(
   ]);
   if (!methods.has(method)) return true;
   try {
+    if (hasForbiddenKey(value)) return false;
     const item = value as Record<string, unknown>;
     if (phase === "params") {
       if (method === "command/invoke") return validateCommandInvocation(value).ok;

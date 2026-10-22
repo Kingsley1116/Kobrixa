@@ -51,9 +51,13 @@ describe("U01/U02 strict UI resources", () => {
       expect(validate({ ...panel(), nodes }).ok).toBe(false);
   });
   it("forbids prototype keys and form references in status", () => {
-    const value = JSON.parse(
-      '{"kind":"panel","data":{"__proto__":{"schema":{"type":"boolean","nullable":false},"initial":true}},"fields":{},"root":"root","nodes":[]}',
-    );
+    const value = {
+      ...panel(),
+      data: JSON.parse(
+        '{"__proto__":{"schema":{"type":"boolean","nullable":false},"initial":true}}',
+      ),
+    };
+    expect(validate(panel()).ok).toBe(true);
     expect(validate(value).ok).toBe(false);
     expect(
       uiResourceV1Schema.safeParse({

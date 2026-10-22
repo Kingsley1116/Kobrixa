@@ -152,7 +152,7 @@ export class RpcPeer {
       return Promise.reject(new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`));
     const parsed = (requestMethods[method].params as z.ZodType).parse(params);
     validateDeviceWire(`${method}.params`, parsed);
-    if (!validUiWire(method, "params", parsed))
+    if (!validUiWire(method, "params", params))
       return Promise.reject(
         new RpcError(RPC_ERRORS.invalidParams, `Invalid parameters for ${method}.`),
       );
@@ -298,7 +298,7 @@ export class RpcPeer {
         error: { code: RPC_ERRORS.invalidRequest, message: "Duplicate request id." },
       });
     const input = definition.params.safeParse(params);
-    if (!input.success || !validUiWire(method, "params", input.data))
+    if (!input.success || !validUiWire(method, "params", params))
       return this.#trySend({
         jsonrpc: "2.0",
         id,
@@ -332,8 +332,9 @@ export class RpcPeer {
       },
     };
     try {
-      const result = definition.result.parse(await handler(input.data, context));
-      if (!validUiWire(method, "result", result, input.data))
+      const rawResult = await handler(input.data, context);
+      const result = definition.result.parse(rawResult);
+      if (!validUiWire(method, "result", rawResult, input.data))
         throw new RpcError(RPC_ERRORS.internalError, `Invalid result for ${method}.`);
       validateDeviceWire(`${method}.result`, result);
       if (controller.signal.aborted)
@@ -398,7 +399,7 @@ export class RpcPeer {
     if ("error" in outcome)
       return pending.reject(new RpcError(outcome.error.code, outcome.error.message));
     const result = requestMethods[pending.method].result.safeParse(outcome.result);
-    if (result.success && validUiWire(pending.method, "result", result.data, pending.uiInput)) {
+    if (result.success && validUiWire(pending.method, "result", outcome.result, pending.uiInput)) {
       try {
         validateDeviceWire(`${pending.method}.result`, result.data, serialized);
         pending.resolve(result.data);
