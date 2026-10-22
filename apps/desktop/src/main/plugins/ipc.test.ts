@@ -5,6 +5,9 @@ import { registerPluginIpc, type PluginIpcTarget } from "./ipc.js";
 import { emptyStaticLanguagesCatalog } from "@kobrixa/plugin-runtime";
 import type { ReportLanguageRegistrationFailureInput } from "../../shared/static-languages.js";
 import { registerIpc } from "../ipc.js";
+import { registerCoreRecoveryIpc } from "./ipc.js";
+import { registerUiIpc, trustedWorkbench } from "./ui-bridge.js";
+import type { CoreRecoveryPort, PluginUiBridge } from "@kobrixa/plugin-runtime";
 
 const electronHandlers = vi.hoisted(
   () => new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
@@ -17,6 +20,70 @@ vi.mock("electron", () => ({
 }));
 
 const key = "dev:0123456789abcdef";
+it("UI and recovery routes use the actual trusted wrapper and reject renderer-minted authority", async () => {
+  electronHandlers.clear();
+  const renderer = { id: 4, mainFrame: {} };
+  const invoke = vi.fn<PluginUiBridge["invoke"]>(async () => ({
+    ok: true,
+    value: { output: {}, fieldErrors: [] },
+  }));
+  const bridge = { invoke } as Pick<PluginUiBridge, "invoke"> as PluginUiBridge;
+  const snapshot = {
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    revision: 0,
+    items: [],
+    nextCursor: null,
+  };
+  const recovery: CoreRecoveryPort = {
+    snapshot: vi.fn(async () => ({ ok: true as const, value: snapshot })),
+    act: vi.fn(async () => ({ ok: true as const, value: snapshot })),
+    onChanged: () => () => {},
+  };
+  registerIpc(
+    () => renderer as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    { run: (_channel: string, work: () => unknown) => work() } as never,
+    undefined,
+    undefined,
+    undefined,
+    [
+      (handle) => {
+        registerUiIpc({ handle, bridge, trusted: (event) => trustedWorkbench(event, renderer) });
+        registerCoreRecoveryIpc(handle, recovery, () => {});
+      },
+    ],
+  );
+  const trusted = { sender: renderer, senderFrame: renderer.mainFrame };
+  for (const channel of [
+    "plugins:ui:invoke",
+    "plugins:recovery:act",
+    "plugins:recovery:snapshot",
+  ]) {
+    for (const event of [
+      { ...trusted, sender: { id: 7 } },
+      { ...trusted, senderFrame: {} },
+    ])
+      expect(() => electronHandlers.get(channel)!(event, {})).toThrow("untrusted");
+  }
+  const act = electronHandlers.get("plugins:recovery:act")!;
+  const selection = {
+    itemId: snapshot.hostEpoch,
+    actionId: "00000000-0000-4000-8000-000000000002",
+  };
+  expect(() => act(trusted, { ...selection, actionToken: "forged" })).toThrow();
+  expect(() => act(trusted, { ...selection, itemId: "device:foreign" })).toThrow();
+  expect(recovery.act).not.toHaveBeenCalled();
+  expect(await act(trusted, selection)).toEqual({ ok: true, value: snapshot });
+  expect(recovery.act).toHaveBeenCalledExactlyOnceWith(selection);
+  expect(
+    await electronHandlers.get("plugins:ui:invoke")!(trusted, { ...selection, owner: "forged" }),
+  ).toMatchObject({ ok: false });
+  expect(invoke).not.toHaveBeenCalled();
+});
 function setup() {
   const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
   const handle = ((channel, action) => handlers.set(channel, action as never)) as IpcHandle;

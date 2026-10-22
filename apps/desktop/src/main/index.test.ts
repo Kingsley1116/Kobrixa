@@ -93,3 +93,107 @@ it("re-arms restored USB sessions without retaining their old loss episode", asy
   handle({ type: "usb-recovery", state: "waiting", previousSessionId: "old", descriptor });
   expect(lost).toHaveBeenCalledTimes(2);
 });
+
+import { EventEmitter } from "node:events";
+
+import { attachNativeLifecycle } from "./plugins/shutdown-coordinator.js";
+const owner = {
+  sourceKey: "builtin:acme.fixture",
+  pluginId: "acme.fixture",
+  generation: 1,
+  hostEpoch: "host",
+  processEpoch: "process",
+};
+it("native hide stops intent but preserves a healthy background consumer", () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const retire = vi.fn(async () => {});
+  const revokeIntent = vi.fn();
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => ["session"],
+    revokeIntent,
+    revokeActions: vi.fn(),
+    replaceWorkbench: vi.fn(),
+    markUnresponsive: vi.fn(),
+    retire,
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    failed: vi.fn(),
+  });
+  window.emit("hide");
+  window.emit("blur");
+  window.emit("minimize");
+  expect(revokeIntent).toHaveBeenCalledTimes(3);
+  expect(retire).not.toHaveBeenCalled();
+});
+it("renderer loss revokes before retirement and publication, while only a hang marks recovery risk", async () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const trace: string[] = [];
+  const markUnresponsive = vi.fn();
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => [],
+    revokeIntent: () => {
+      trace.push("intent");
+    },
+    revokeActions: () => {
+      trace.push("actions");
+    },
+    replaceWorkbench: () => {
+      trace.push("new-workbench");
+    },
+    markUnresponsive,
+    retire: async (_owner, reason) => {
+      trace.push(reason);
+    },
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    failed: vi.fn(),
+  });
+  contents.emit("render-process-gone", {}, { reason: "crashed" });
+  expect(trace).toEqual(["intent", "actions", "renderer-crash", "new-workbench"]);
+  expect(markUnresponsive).not.toHaveBeenCalled();
+  window.emit("unresponsive");
+  expect(markUnresponsive).toHaveBeenCalledTimes(1);
+});
+it("suspend/wake routes each session through quiesce/reconcile without retiring owners or replaying work", async () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const suspend = vi.fn(async () => {}),
+    resume = vi.fn(async () => {}),
+    retire = vi.fn(async () => {});
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => ["s1", "s2"],
+    revokeIntent: vi.fn(),
+    revokeActions: vi.fn(),
+    replaceWorkbench: vi.fn(),
+    markUnresponsive: vi.fn(),
+    retire,
+    suspend,
+    resume,
+    failed: vi.fn(),
+  });
+  power.emit("suspend");
+  expect(suspend.mock.calls).toEqual([["s1"], ["s2"]]);
+  power.emit("resume");
+  expect(resume.mock.calls).toEqual([["s1"], ["s2"]]);
+  expect(retire).not.toHaveBeenCalled();
+});

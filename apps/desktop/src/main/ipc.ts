@@ -100,6 +100,8 @@ export function registerIpc(
   beforeUpdateInstall: () => Promise<void> = async () => {},
   plugins?: Pick<PluginController, "diagnosticHelpEntry">,
   deviceFoundation?: DesktopDeviceIpc,
+  beforeWindowClose?: () => Promise<void>,
+  beforeUpdatePrepare?: () => Promise<void>,
 ): void {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
@@ -250,13 +252,36 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  handle("updates:prepare", async () => {
-    await sensorTools?.motors?.flush();
-    await sensorTools?.lab.flush("update");
-    updates.prepareInstall();
+  let preparing: Promise<void> | undefined;
+  handle("updates:prepare", () => {
+    if (preparing) return preparing;
+    const work = Promise.resolve().then(async () => {
+      // Publish the reversible admission gate before awaiting existing work.
+      updates.prepareInstall();
+      if (beforeUpdatePrepare) await beforeUpdatePrepare();
+      else {
+        await sensorTools?.motors?.flush();
+        await sensorTools?.lab.flush("update");
+      }
+    });
+    preparing = work;
+    void work.then(
+      () => {
+        if (preparing === work) preparing = undefined;
+      },
+      () => {
+        if (preparing === work) preparing = undefined;
+        updates.cancelInstall();
+      },
+    );
+    return work;
   });
-  handle("updates:cancel", () => updates.cancelInstall());
+  handle("updates:cancel", async () => {
+    await preparing?.catch(() => undefined);
+    updates.cancelInstall();
+  });
   handle("updates:install", async () => {
+    await preparing;
     await beforeUpdateInstall();
     updates.install();
   });
@@ -299,7 +324,8 @@ export function registerIpc(
     if (parsedReady) {
       await sensorTools?.motors?.flush();
       await sensorTools?.lab.flush("close");
-      await deviceFoundation?.beforeClose();
+      if (beforeWindowClose) await beforeWindowClose();
+      else await deviceFoundation?.beforeClose();
     }
     finishClose(parsedId, parsedReady);
   });

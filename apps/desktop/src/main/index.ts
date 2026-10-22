@@ -30,11 +30,14 @@ import { CollabProjects } from "./collab/projects.js";
 import { registerCollabIpc } from "./collab/ipc.js";
 import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
-import { registerPluginIpc } from "./plugins/ipc.js";
+import { registerPluginIpc, registerCoreRecoveryIpc } from "./plugins/ipc.js";
+import { registerUiIpc, trustedWorkbench } from "./plugins/ui-bridge.js";
+import { attachNativeLifecycle, requireCleanClose } from "./plugins/shutdown-coordinator.js";
 import { installPluginQuitCleanup, createQuitRecovery } from "./plugins/quit.js";
 import {
   composeDesktopMain,
   desktopLifecycle,
+  desktopUi,
   desktopDeviceAccess,
   createWindowRetirementHandler,
   createLegacyActionAdmission,
@@ -45,13 +48,17 @@ import {
 import { createDesktopFoundation } from "./device-broker/lifecycle-coordinator.js";
 import { createJournal } from "./device-broker/journal.js";
 import { createJournalFilesystem } from "./device-broker/journal-filesystem.js";
-import { createCoreActionLedger } from "./plugins/core-recovery.js";
+import {
+  createCoreActionLedger,
+  CoreRecovery,
+  createRecoveryEntries,
+} from "./plugins/core-recovery.js";
 import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
 import { LegacyFiles } from "./device-broker/legacy-files.js";
 import type { CoreWindowScope, Principal } from "@kobrixa/plugin-runtime";
 import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
 import { electronPluginDialogs } from "./plugins/dialogs.js";
-import { quitOnSignals, watchRendererHealth } from "./plugins/session.js";
+import { quitOnSignals } from "./plugins/session.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -324,6 +331,62 @@ const primary = startPrimary(
     const plugins = composition.plugins;
     controller.current = plugins;
     const coordinator = desktopLifecycle(composition);
+    const ui = desktopUi(composition);
+    const focusRecovery = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    };
+    ui.setRecoveryNavigation(focusRecovery);
+    const recovery = new CoreRecovery({
+      scope: currentCoreScope,
+      actions: coreActions,
+      now,
+      entries: createRecoveryEntries({
+        device: broker.recovery,
+        sessions: async () => {
+          const result = await broker.request(
+            currentCorePrincipal(),
+            "devices/list",
+            {},
+            new AbortController().signal,
+          );
+          if (!result.ok) throw new Error("Device recovery is unavailable.");
+          return result.value.sessions;
+        },
+        processes: () => plugins.state().plugins,
+        confirmDevice: async (device) => {
+          const window = mainWindow;
+          if (!window || window.isDestroyed()) return false;
+          const zh = pluginLanguage === "zh-TW";
+          const result = await dialog.showMessageBox(window, {
+            type: "warning",
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+            buttons: zh ? ["確認為同一設備", "取消"] : ["Confirm same device", "Cancel"],
+            message: zh ? "核對設備安全紀錄" : "Reconcile device safety record",
+            detail: zh
+              ? `請確認目前連線的「${device.name}」就是此紀錄的設備。核對會讀取停止狀態，不會重新執行動作。`
+              : `Confirm that the connected device “${device.name}” is the device in this record. Reconciliation reads its stopped state and does not replay movement.`,
+          });
+          return result.response === 0;
+        },
+      }),
+      openDetail: (_item, scope) => {
+        if (isCurrentCoreScope(scope)) focusRecovery();
+      },
+    });
+    const offDeviceRecovery = broker.recovery.subscribe(() => recovery.changed());
+    const offProcessRecovery = plugins.onEvent((event) => {
+      if (event.type === "state") recovery.changed();
+    });
+    let offUi: (() => void) | undefined;
+    const detachUi = () => {
+      offUi?.();
+      offUi = undefined;
+    };
     installPluginQuitCleanup(
       app,
       async () => {
@@ -335,7 +398,12 @@ const primary = startPrimary(
         void quitRecovery.blocked(error).catch(reportCleanupError);
       },
     );
-    app.on("quit", () => plugins.finishSession());
+    app.on("quit", () => {
+      detachUi();
+      offDeviceRecovery();
+      offProcessRecovery();
+      plugins.finishSession();
+    });
     quitOnSignals(process, () => app.quit());
     const renderer = () => {
       // Reading webContents itself throws once its BrowserWindow is destroyed.
@@ -474,7 +542,7 @@ const primary = startPrimary(
     // On macOS the application can outlive its last window. A quit in that state
     // still has to finish any crash recovery / background checkpoint writes.
     const mainQuit = new MainProcessCloseGuard(
-      () => coordinator.close("close"),
+      () => requireCleanClose(ui.coordinator, "shutdown"),
       () => app.quit(),
       (error) => retryDeviceWork(error),
       () => {
@@ -506,6 +574,7 @@ const primary = startPrimary(
       ),
     );
     powerMonitor.on("suspend", () => {
+      ui.intent.dispose();
       for (const id of legacy.sessionIds()) void coordinator.suspend(id).catch(reportCleanupError);
       void sensorLab.suspend().catch(reportCleanupError);
     });
@@ -513,29 +582,6 @@ const primary = startPrimary(
       for (const id of legacy.sessionIds()) void coordinator.resume(id).catch(reportCleanupError);
     });
     void sensorLab.getState().catch(reportCleanupError);
-    app.on("web-contents-created", (_event, contents) => {
-      if (contents.getType() !== "window") return;
-      const handler = createWindowRetirementHandler({
-        composition,
-        coreActions,
-        scope: () => {
-          const principal = authority.principal(contents.id, "recovery");
-          if (principal.kind !== "core") throw new Error("Core workbench required.");
-          return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
-        },
-        invalidate: () => authority.invalidate(contents.id),
-        flush: () => sensorLab.flush("close"),
-        pause: () => monitor.pause(),
-      });
-      const retire = (destroyed: boolean) => {
-        void handler(destroyed).catch(reportCleanupError);
-      };
-      contents.on("destroyed", () => retire(true));
-      contents.on("render-process-gone", () => retire(false));
-      contents.on("did-start-navigation", (_event, _url, inPlace, isMainFrame) => {
-        if (isMainFrame && !inPlace) retire(false);
-      });
-    });
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
     updates = await createUpdateService(
       renderer,
@@ -570,22 +616,78 @@ const primary = startPrimary(
           ),
         (handle) => {
           registerPluginIpc(handle, plugins, (event) => send("plugins:event", event));
+          registerUiIpc({
+            handle,
+            bridge: ui.bridge,
+            trusted: (event) => {
+              const current = renderer();
+              return !!current && trustedWorkbench(event, current);
+            },
+          });
+          const offRecovery = registerCoreRecoveryIpc(handle, recovery, () =>
+            send("plugins:recovery:changed", null),
+          );
+          app.once("quit", offRecovery);
+          handle("plugins:ui:subscribe", () => {
+            detachUi();
+            offUi = ui.bridge.onEvent((event) => send("plugins:ui:event", event));
+          });
+          handle("plugins:ui:unsubscribe", detachUi);
         },
       ],
-      () => coordinator.close("update"),
+      () => requireCleanClose(ui.coordinator, "update"),
       plugins,
       {
         authority,
         stop: admittedDeviceActions.stop,
         disconnect: admittedDeviceActions.disconnect,
-        beforeClose: () => coordinator.close("close"),
+        beforeClose: () => requireCleanClose(ui.coordinator, "shutdown"),
       },
+      () => requireCleanClose(ui.coordinator, "shutdown"),
+      () => ui.prepareUpdate(),
     );
-    const flushDeviceWork = () => coordinator.close("close");
+    const flushDeviceWork = () => requireCleanClose(ui.coordinator, "shutdown");
     const openWindow = () => {
       createWindow(flushDeviceWork);
       primary?.windowReady();
-      if (mainWindow) watchRendererHealth(mainWindow, () => plugins.markRendererUnresponsive());
+      if (mainWindow) {
+        const window = mainWindow,
+          contents = window.webContents;
+        const scope = () => {
+          const principal = authority.principal(contents.id, "recovery");
+          if (principal.kind !== "core") throw new Error("Core workbench required.");
+          return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
+        };
+        const retire = createWindowRetirementHandler({
+          composition,
+          coreActions,
+          scope,
+          invalidate: () => authority.invalidate(contents.id),
+          flush: () => sensorLab.flush("close"),
+          pause: () => monitor.pause(),
+        });
+        const offNative = attachNativeLifecycle({
+          window,
+          contents,
+          scope,
+          owners: () => [],
+          sessions: () => legacy.sessionIds(),
+          revokeIntent: () => ui.intent.dispose(),
+          revokeActions: (value) => {
+            coreActions.retire(value);
+            ui.actions.revokeWindow(value);
+            detachUi();
+          },
+          windowLost: (_scope, destroyed) => retire(destroyed),
+          replaceWorkbench: () => {},
+          markUnresponsive: () => plugins.markRendererUnresponsive(),
+          retire: (owner, reason) => coordinator.retire(owner, reason),
+          suspend: (id) => coordinator.suspend(id),
+          resume: (id) => coordinator.resume(id),
+          failed: reportCleanupError,
+        });
+        contents.once("destroyed", offNative);
+      }
       mainWindow?.on("blur", () => {
         void motors.stopAll();
       });

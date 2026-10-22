@@ -125,11 +125,64 @@ it("uses the narrow authority-report bridge without adding a raw device RPC esca
   ]);
   expect(Object.hasOwn(api.device, "request")).toBe(false);
   expect(Object.hasOwn(api.plugins, "storage")).toBe(false);
-  expect(Object.hasOwn(api.plugins, "ui")).toBe(false);
+  expect(Object.hasOwn(api.plugins.ui, "request")).toBe(false);
 });
 
 it("forwards explicit file renewal on the exact channel", async () => {
   const ref = { sessionId: "session", requestId: "request", planId: "plan" };
   await api.device.renewFiles(ref);
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith("device:files-renew", ref);
+});
+
+it("forwards UI requests without accepting principal, context, tokens or native paths", async () => {
+  const value = {
+    sourceKey: "builtin:acme.fixture",
+    id: "acme.fixture.panel",
+    uiResourceGeneration: 1,
+  };
+  electron.invoke.mockResolvedValueOnce({
+    ok: false,
+    error: { code: "PLUGIN_E_STALE_RESOURCE", message: "stale" },
+  });
+  await api.plugins.ui.open(value);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith("plugins:ui:open", value);
+  expect(api.plugins.ui).not.toHaveProperty("mint");
+  expect(api.plugins.ui).not.toHaveProperty("setOwner");
+});
+it("subscribes to UI changes and removes precisely its handler", () => {
+  const callback = vi.fn();
+  const off = api.plugins.ui.onEvent(callback);
+  const [channel, handler] = electron.on.mock.calls[0]!;
+  expect(channel).toBe("plugins:ui:event");
+  const event = { type: "catalog", hostEpoch: "host", revision: 2, owners: [] };
+  handler({}, event);
+  expect(callback).toHaveBeenCalledExactlyOnceWith(event);
+  off();
+  expect(electron.removeListener).toHaveBeenCalledExactlyOnceWith(channel, handler);
+});
+it("core act sends option identifiers, never a renderer-supplied CoreActionReference", async () => {
+  await api.plugins.recovery.act({ itemId: "item", actionId: "option" });
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith("plugins:recovery:act", {
+    itemId: "item",
+    actionId: "option",
+  });
+});
+it("preserves main-admitted resource metadata without renderer inference", async () => {
+  const input = {
+    sourceKey: "builtin:acme.ui",
+    id: "acme.ui.panel",
+    uiResourceGeneration: 7,
+    resourceDigest: "a".repeat(64),
+  };
+  const admitted = {
+    ok: true,
+    value: {
+      resource: { kind: "panel" },
+      validationContext: { pluginId: "acme.ui", commands: [] },
+      rawBytes: 123,
+    },
+  };
+  electron.invoke.mockResolvedValueOnce(admitted);
+  expect(await api.plugins.ui.resource(input)).toBe(admitted);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith("plugins:ui:resource", input);
 });

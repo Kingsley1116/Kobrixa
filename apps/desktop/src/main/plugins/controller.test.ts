@@ -1,3 +1,5 @@
+import type * as LifecycleModule from "../device-broker/lifecycle-coordinator.js";
+import { RpcPeer, createMemoryChannelPair } from "@kobrixa/plugin-protocol";
 import type {
   ResourceOwner as ImportedResourceOwner,
   RpcPeer as ImportedRpcPeer,
@@ -489,7 +491,7 @@ describe("startPlugins", () => {
   });
 
   it.each([false, true])(
-    "ignores renderer hangs without development sources (developer mode: %s)",
+    "locks recovery after renderer hangs even without development sources (developer mode: %s)",
     async (developerMode) => {
       const controller = await enabled();
       await controller.setDeveloperMode(developerMode);
@@ -497,12 +499,14 @@ describe("startPlugins", () => {
       const marker = JSON.parse(
         await readFile(path.join(userData, "plugins/session.json"), "utf8"),
       );
-      expect.soft(marker.rendererUnresponsive).toBe(false);
+      expect.soft(marker.rendererUnresponsive).toBe(true);
       controller.finishSession();
       const restarted = await start();
-      expect.soft(restarted.state().safeMode).toBe(false);
-      expect.soft(restarted.state().safeModeLock).toBeUndefined();
-      expect((await saved()).safeModeLock).toBeUndefined();
+      expect.soft(restarted.state().safeMode).toBe(true);
+      expect
+        .soft(restarted.state().safeModeLock)
+        .toMatchObject({ reason: "renderer-unresponsive" });
+      expect((await saved()).safeModeLock).toMatchObject({ reason: "renderer-unresponsive" });
     },
   );
 
@@ -1339,6 +1343,7 @@ describe("PluginController with a fake manager", () => {
         state: currentSnapshot,
       })),
       active: false,
+      thirdPartyActive: false,
       state: () => currentSnapshot,
       resolveLanguageService: vi.fn((language: string) => ({
         ok: false as const,
@@ -1382,6 +1387,7 @@ describe("PluginController with a fake manager", () => {
     const marker = {
       update: vi.fn(),
       finish: vi.fn(),
+      markThirdPartyUiContributions: vi.fn(),
       markThirdPartyStaticContributions: vi.fn(),
     };
     let document: PluginStateDocument = {
@@ -1562,6 +1568,7 @@ describe("PluginController with a fake manager", () => {
   it("records third-party processes and renderer hangs in the session marker", () => {
     const { controller, manager, marker, emit } = setup();
     manager.active = true;
+    manager.thirdPartyActive = true;
     emit({ type: "state", state: snapshot });
     expect(marker.update).toHaveBeenLastCalledWith({ thirdPartyRunning: true });
     controller.markRendererUnresponsive();
@@ -2105,7 +2112,7 @@ describe("PluginController with a fake manager", () => {
   });
 });
 
-import { composeDesktopMain, desktopLifecycle } from "./controller.js";
+import { composeDesktopMain, desktopLifecycle, desktopUi } from "./controller.js";
 import { createDesktopFoundation } from "../device-broker/lifecycle-coordinator.js";
 import type { DesktopMainCompositionInput } from "../device-broker/lifecycle-coordinator.js";
 import { createJournal } from "../device-broker/journal.js";
@@ -2204,6 +2211,70 @@ it("BM-18 creates one foundation and forwards the exact host/runtime pair", asyn
     await composition.dispose();
   } finally {
     create.mockRestore();
+    await f.cleanup();
+  }
+});
+it("update preparation fences new commands, awaits actual exit and permits lazy reuse after cancel without global shutdown", async () => {
+  const { memoryPlugin } =
+    await import("../../../../../packages/plugin-runtime/src/test-process.js");
+  const f = await compositionInput();
+  const directory = await pluginFolder("update-consumer");
+  f.input.plugins.commandLine.developmentDirectories = [directory];
+  const pluginRef: { current?: PluginController } = {};
+  let launches = 0,
+    exitRequested = false;
+  let exit = () => {};
+  f.input.foundationOptions.requirements = (owner) =>
+    pluginRef.current ? desktopDeviceAccess(pluginRef.current).requirements(owner) : null;
+  f.input.plugins.launcher = () => async () => {
+    const first = ++launches === 1;
+    return memoryPlugin((remote, control) => {
+      if (first) exit = () => control.exit();
+      remote.handle("initialize", () => ({
+        apiVersion: "1.6.0",
+        sdk: { name: "test", version: "1" },
+      }));
+      remote.handle("command/execute", () => null);
+      remote.handle("shutdown", () => null);
+      remote.onNotification("exit", () => {
+        if (first) exitRequested = true;
+        else control.exit();
+      });
+    }).process;
+  };
+  const composition = await composeDesktopMain(f.input);
+  const plugins = composition.plugins;
+  pluginRef.current = plugins;
+  const shutdown = vi.spyOn(composition.foundation.broker.resources, "beginShutdown");
+  try {
+    expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({ ok: true });
+    let finished = false;
+    const preparing = desktopUi(composition)
+      .prepareUpdate()
+      .then(() => {
+        finished = true;
+      });
+    expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SHUTTING_DOWN",
+    });
+    await vi.waitFor(() => expect(exitRequested).toBe(true));
+    expect(finished).toBe(false);
+    expect(shutdown).not.toHaveBeenCalled();
+    exit();
+    await preparing;
+    expect(desktopLifecycle(composition).reports()[0]).toMatchObject({
+      processStopped: true,
+      blocker: false,
+    });
+    await plugins.resume();
+    expect(launches).toBe(1);
+    expect(await plugins.execute("acme.update-consumer.greet")).toMatchObject({ ok: true });
+    expect(launches).toBe(2);
+    expect(shutdown).not.toHaveBeenCalled();
+  } finally {
+    exit();
+    await composition.dispose();
     await f.cleanup();
   }
 });
@@ -2473,7 +2544,7 @@ it.each([false, true])(
   },
 );
 it.each([false, true])(
-  "D150 actual controller crash risk=%s preserves disabled optional source",
+  "D160 actual controller hang with development risk=%s preserves disabled optional source",
   async (risk) => {
     const optional = "builtin:kobrixa.device-ev3";
     const directories = risk ? [await pluginFolder("risk")] : [];
@@ -2488,9 +2559,256 @@ it.each([false, true])(
     expect(recovered.state().plugins.find((row) => row.sourceKey === optional)?.status).toBe(
       "disabled",
     );
-    expect(recovered.state().safeMode).toBe(risk);
-    if (risk) expect(await recovered.setEnabled(optional, true)).toMatchObject({ ok: false });
+    expect(recovered.state().safeMode).toBe(true);
+    expect(await recovered.setEnabled(optional, true)).toMatchObject({ ok: false });
     await recovered.shutdown();
     recovered.finishSession();
   },
 );
+
+it("a prior renderer-unresponsive marker locks recovery even without development sources", async () => {
+  await mkdir(path.join(userData, "plugins"), { recursive: true });
+  await writeFile(
+    path.join(userData, "plugins/session.json"),
+    JSON.stringify({
+      startedAt: "2026-10-15T00:00:00.000Z",
+      thirdPartyRunning: false,
+      thirdPartyStaticContributions: false,
+      thirdPartyUiContributions: false,
+      rendererUnresponsive: true,
+    }),
+  );
+  const controller = await start();
+  expect(controller.state().safeMode).toBe(true);
+});
+it("a sticky third-party UI marker locks recovery after linked folders have been removed", async () => {
+  await mkdir(path.join(userData, "plugins"), { recursive: true });
+  await writeFile(
+    path.join(userData, "plugins/session.json"),
+    JSON.stringify({
+      startedAt: "2026-10-15T00:00:00.000Z",
+      thirdPartyRunning: false,
+      thirdPartyStaticContributions: false,
+      thirdPartyUiContributions: true,
+      rendererUnresponsive: false,
+    }),
+  );
+  const controller = await start();
+  expect(controller.state().safeMode).toBe(true);
+});
+
+// Hoisted partial mock preserves the real factory for the other composition cases.
+vi.mock("../device-broker/lifecycle-coordinator.js", async (orig) => {
+  const actual = await orig<typeof LifecycleModule>();
+  return { ...actual, createDesktopFoundation: vi.fn(actual.createDesktopFoundation) };
+});
+it("BM-18 D160 uses one injected factory/provider and one UI registry", async () => {
+  const f = await compositionInput();
+  f.input.foundationOptions.requirements = () => [];
+  let providers = 0;
+  let attached = 0;
+  f.factory.mockImplementation(async (options) => {
+    const foundation = await createDesktopFoundation({
+      ...options,
+      providerFactory: (catalog) => {
+        providers++;
+        return createFakeDeviceProvider({ catalog, now: options.now }).provider;
+      },
+    });
+    const attach = foundation.attachProvider.bind(foundation);
+    foundation.attachProvider = (manager) => {
+      attached++;
+      attach(manager);
+    };
+    return foundation;
+  });
+  try {
+    const composition = await composeDesktopMain(f.input);
+    expect(f.factory).toHaveBeenCalledExactlyOnceWith(f.input.foundationOptions);
+    expect(providers).toBe(1);
+    expect(attached).toBe(1);
+    const ui = desktopUi(composition);
+    expect(desktopUi(composition)).toBe(ui);
+    expect(ui.coordinator).toBe(desktopUi(composition).coordinator);
+    const [a, b] = createMemoryChannelPair();
+    const peer = new RpcPeer(a),
+      child = new RpcPeer(b);
+    const owner = {
+      sourceKey: "dev:test",
+      pluginId: "test.ui",
+      generation: 1,
+      hostEpoch: f.input.foundationOptions.profile.hostEpoch,
+      processEpoch: randomUUID(),
+    };
+    const attach = vi.spyOn(composition.foundation.broker, "attachChannel");
+    const handlers = vi.spyOn(peer, "handle");
+    const channel = composition.stage3Host.bindChannel({
+      peer,
+      owner,
+      requirements: [],
+      principal: () => f.input.principal(owner),
+    });
+    expect(attach).toHaveBeenCalledOnce();
+    const names = handlers.mock.calls.map((call) => call[0]);
+    for (const method of [
+      "events/ack",
+      "events/unsubscribe",
+      "ui/instances",
+      "ui/state",
+      "ui/patch",
+      "ui/snapshot",
+      "ui/subscribe",
+    ])
+      expect(names.filter((name) => name === method)).toHaveLength(1);
+    channel.dispose();
+    channel.dispose();
+    peer.close();
+    child.close();
+    await composition.dispose();
+  } finally {
+    await f.cleanup();
+  }
+});
+it.each(["live", "closed", "disposed"] as const)(
+  "BM-06 retirement uses the original %s peer even when its owner is not current",
+  async (state) => {
+    const f = await compositionInput();
+    f.input.foundationOptions.requirements = () => [];
+    const composition = await composeDesktopMain(f.input);
+    const [a, b] = createMemoryChannelPair();
+    const peer = new RpcPeer(a),
+      child = new RpcPeer(b);
+    const owner = {
+      sourceKey: "dev:retained",
+      pluginId: "test.retained",
+      generation: 1,
+      hostEpoch: f.input.foundationOptions.profile.hostEpoch,
+      processEpoch: randomUUID(),
+    };
+    const retire = vi.spyOn(composition.stage3.device, "retire");
+    const freeze = vi.spyOn(composition.stage3.persistence, "freeze");
+    const drain = vi.spyOn(composition.stage3.persistence, "drain");
+    const lost = vi.spyOn(composition.stage3.persistence, "ownerLost");
+    const binding = composition.stage3Host.bindChannel({
+      peer,
+      owner,
+      requirements: [],
+      principal: () => f.input.principal(owner),
+    });
+    try {
+      // This synthetic retained owner has never been in the manager's current registry.
+      if (state === "closed") peer.close();
+      if (state === "disposed") {
+        binding.dispose();
+        expect(peer.closed).toBe(false);
+      }
+      await composition.stage3Host.retireResources({ ...owner }, "disable");
+      expect(retire).toHaveBeenCalledExactlyOnceWith(
+        owner,
+        state === "live" ? "disabled" : "crashed",
+      );
+      if (state === "live") {
+        expect(freeze).toHaveBeenCalledOnce();
+        expect(drain).toHaveBeenCalledOnce();
+        expect(lost).not.toHaveBeenCalled();
+      } else {
+        expect(lost).toHaveBeenCalledExactlyOnceWith(owner);
+        expect(freeze).not.toHaveBeenCalled();
+        expect(drain).not.toHaveBeenCalled();
+      }
+    } finally {
+      binding.dispose();
+      peer.close();
+      child.close();
+      retire.mockRestore();
+      freeze.mockRestore();
+      drain.mockRestore();
+      lost.mockRestore();
+      await composition.dispose();
+      await f.cleanup();
+    }
+  },
+);
+it("D160 rejects a channel owner mismatch before installing routes", async () => {
+  const f = await compositionInput();
+  const composition = await composeDesktopMain(f.input);
+  const [a, b] = createMemoryChannelPair();
+  const peer = new RpcPeer(a),
+    child = new RpcPeer(b);
+  const owner = {
+    sourceKey: "dev:test",
+    pluginId: "test.ui",
+    generation: 1,
+    hostEpoch: f.input.foundationOptions.profile.hostEpoch,
+    processEpoch: randomUUID(),
+  };
+  const attach = vi.spyOn(composition.foundation.broker, "attachChannel");
+  const handle = vi.spyOn(peer, "handle");
+  try {
+    expect(() =>
+      composition.stage3Host.bindChannel({
+        peer,
+        owner,
+        requirements: [],
+        principal: () => f.input.principal({ ...owner, processEpoch: randomUUID() }),
+      }),
+    ).toThrow("Channel owner mismatch.");
+    expect(attach).not.toHaveBeenCalled();
+    expect(handle).not.toHaveBeenCalled();
+  } finally {
+    attach.mockRestore();
+    handle.mockRestore();
+    peer.close();
+    child.close();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+it("D160 requirements are a frozen copy and preserve unknown-owner null", async () => {
+  const f = await compositionInput();
+  const declarations = [{ capability: "motion", required: true }];
+  f.input.foundationOptions.requirements = (owner) =>
+    owner.generation === 1 ? declarations : null;
+  const composition = await composeDesktopMain(f.input);
+  const owner = {
+    sourceKey: "dev:test",
+    pluginId: "test.ui",
+    generation: 1,
+    hostEpoch: f.input.foundationOptions.profile.hostEpoch,
+    processEpoch: randomUUID(),
+  };
+  try {
+    const copy = composition.stage3Host.requirements(owner);
+    expect(copy).toEqual([{ capability: "motion", required: true }]);
+    expect(copy).not.toBe(declarations);
+    expect(copy![0]).not.toBe(declarations[0]);
+    expect(Object.isFrozen(copy)).toBe(true);
+    expect(Object.isFrozen(copy![0])).toBe(true);
+    declarations[0]!.required = false;
+    declarations.push({ capability: "files", required: false });
+    expect(copy).toEqual([{ capability: "motion", required: true }]);
+    expect(composition.stage3Host.requirements({ ...owner, generation: 2 })).toBeNull();
+    declarations.length = 0;
+    expect(composition.stage3Host.requirements(owner)).toEqual([]);
+    expect(Object.isFrozen(composition.stage3Host.requirements(owner))).toBe(true);
+  } finally {
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+it("BM-18 D160 import has no provider, process or profile side effects", async () => {
+  vi.resetModules();
+  const runtime = await import("@kobrixa/plugin-runtime");
+  const module = await import("../device-broker/lifecycle-coordinator.js");
+  const create = vi.spyOn(runtime.PluginManager, "create");
+  const factory = vi.mocked(module.createDesktopFoundation);
+  factory.mockClear();
+  try {
+    await import("./controller.js");
+    expect(create).not.toHaveBeenCalled();
+    expect(factory).not.toHaveBeenCalled();
+  } finally {
+    create.mockRestore();
+    factory.mockClear();
+  }
+});

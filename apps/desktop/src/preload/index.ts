@@ -1,3 +1,5 @@
+import type { UiBridgeEvent } from "../shared/plugin-ui.js";
+let uiListenerCount = 0;
 import type { LanguageStatusEvent } from "../shared/language-services.js";
 import type { MotorTestState } from "../shared/motor-test.js";
 import type { UpdateState } from "../shared/updates.js";
@@ -55,6 +57,40 @@ const api: KobrixaApi = {
     },
   },
   plugins: {
+    ui: {
+      catalog: (input) => ipcRenderer.invoke("plugins:ui:catalog", input),
+      resource: (input) => ipcRenderer.invoke("plugins:ui:resource", input),
+      open: (input) => ipcRenderer.invoke("plugins:ui:open", input),
+      close: (input) => ipcRenderer.invoke("plugins:ui:close", input),
+      visibility: (input) => ipcRenderer.invoke("plugins:ui:visibility", input),
+      invoke: (input) => ipcRenderer.invoke("plugins:ui:invoke", input),
+      hold: (input) => ipcRenderer.invoke("plugins:ui:hold", input),
+      pulse: (input) => ipcRenderer.invoke("plugins:ui:pulse", input),
+      snapshot: (input) => ipcRenderer.invoke("plugins:ui:snapshot", input),
+      reportFailure: (input) => ipcRenderer.invoke("plugins:ui:report-failure", input),
+      onEvent: (listener) => {
+        const receive = (_event: Electron.IpcRendererEvent, value: UiBridgeEvent) =>
+          listener(value);
+        ipcRenderer.on("plugins:ui:event", receive);
+        if (++uiListenerCount === 1) void ipcRenderer.invoke("plugins:ui:subscribe");
+        let active = true;
+        return () => {
+          if (!active) return;
+          active = false;
+          ipcRenderer.removeListener("plugins:ui:event", receive);
+          if (--uiListenerCount === 0) void ipcRenderer.invoke("plugins:ui:unsubscribe");
+        };
+      },
+    },
+    recovery: {
+      snapshot: (input) => ipcRenderer.invoke("plugins:recovery:snapshot", input),
+      act: (input) => ipcRenderer.invoke("plugins:recovery:act", input),
+      onChanged: (listener) => {
+        const receive = () => listener();
+        ipcRenderer.on("plugins:recovery:changed", receive);
+        return () => ipcRenderer.removeListener("plugins:recovery:changed", receive);
+      },
+    },
     state: () => ipcRenderer.invoke("plugins:state"),
     diagnosticHelp: () => ipcRenderer.invoke("plugins:diagnosticHelp"),
     staticLanguages: () => ipcRenderer.invoke("plugins:static-languages"),

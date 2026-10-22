@@ -161,6 +161,38 @@ function fixture() {
   };
 }
 afterEach(() => vi.useRealTimers());
+it("a closed channel cannot substitute for actual exit while the owner is still retained", async () => {
+  const f = fixture();
+  const retiring = f.coordinator.retire(owner, "update");
+  f.device.resolve(clean);
+  f.storage.resolve(saved);
+  await retiring;
+  f.alive.mockReturnValue(false);
+  f.coordinator.reconcileProcesses();
+  expect(f.coordinator.reports()[0]).toMatchObject({ processStopped: false, blocker: true });
+  f.input.owners = () => [];
+  f.coordinator.reconcileProcesses();
+  expect(f.coordinator.reports()[0]).toMatchObject({ processStopped: true, blocker: false });
+  expect(f.resources.retire).toHaveBeenCalledOnce();
+  f.coordinator.dispose();
+});
+it("D160 wake rechecks reconciled storage on the original suspension without another drain", async () => {
+  const f = fixture();
+  const suspension = f.coordinator.suspend(id(3));
+  const blocked = expect(suspension).rejects.toThrow("disposition");
+  f.device.resolve(clean);
+  f.storage.resolve({ ...saved, recovery: id(55), state: "retryable", blocker: true });
+  await blocked;
+  await expect(f.coordinator.resume(id(3))).rejects.toThrow("disposition");
+  expect(f.sessions.resume).not.toHaveBeenCalled();
+  f.coordinator.reconcileRecovery(id(55), saved);
+  await f.coordinator.resume(id(3));
+  expect(f.sessions.resume).toHaveBeenCalledOnce();
+  expect(f.sessions.quiesce).toHaveBeenCalledOnce();
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.legacyFlush).toHaveBeenCalledOnce();
+  f.coordinator.dispose();
+});
 it("A-RF5/F19 installs one listener, fences synchronously, and merges same-turn retire/freeze", async () => {
   const f = fixture();
   expect(f.input.reservations.onEnded).toHaveBeenCalledOnce();
@@ -369,9 +401,10 @@ it.each([
 it("F17 crash uses ownerLost and does not issue an impossible drain callback", async () => {
   const f = fixture();
   const task = f.coordinator.retire(owner, "crashed");
-  const assertion = expect(task).rejects.toThrow("disposition");
+  const assertion = expect(task).resolves.toBeUndefined();
   f.device.resolve(clean);
   await assertion;
+  expect(f.coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
   expect(f.resources.retire).toHaveBeenCalledWith(owner, "crashed");
   expect(f.persistence.freeze).not.toHaveBeenCalled();
   expect(f.persistence.drain).not.toHaveBeenCalled();
@@ -472,7 +505,8 @@ it("F17 crashed original peer reconciles without a drain callback or a second fe
   expect(f.resources.retire).toHaveBeenCalledWith(owner, "crashed");
   expect(f.persistence.freeze).not.toHaveBeenCalled();
   f.device.resolve(clean);
-  await expect(retired).rejects.toThrow("disposition");
+  await expect(retired).resolves.toBeUndefined();
+  expect(f.coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
   expect(f.persistence.ownerLost).toHaveBeenCalledOnce();
   expect(f.persistence.drain).not.toHaveBeenCalled();
   expect(f.coordinator.retire({ ...owner }, "crashed")).toBe(retired);
@@ -654,4 +688,143 @@ it("stale suspend rejects asynchronously so other sessions can still be suspende
     pending = f.coordinator.suspend(id(3));
   }).not.toThrow();
   await expect(pending).rejects.toThrow("stale");
+});
+
+it("U12 reconciliation preserves pending promises and the original deadline", async () => {
+  const f = fixture();
+  const first = f.coordinator.retire(owner, "disable", 8_000);
+  expect(f.coordinator.reconcile(owner, clean, saved)).toBe(false);
+  expect(f.coordinator.retire({ ...owner }, "shutdown", 50_000)).toBe(first);
+  expect(vi.mocked(f.persistence.freeze).mock.calls[0]![2]).toBe(8_000);
+  f.storage.resolve({ ...saved, state: "retryable", blocker: true });
+  f.device.resolve(clean);
+  await first; // Disposition is observed; its report still blocks close.
+  expect(f.coordinator.reconcile(owner, clean, saved)).toBe(true);
+  expect(await f.coordinator.pendingSession(ended.sessionId)).toEqual([saved]);
+  expect(f.coordinator.retire(owner, "shutdown", 99_000)).toBe(first);
+  expect(f.coordinator.reports()[0]).toMatchObject({ blocker: true, processStopped: false });
+  await f.coordinator.close("close");
+  expect(f.coordinator.reports()[0]).toMatchObject({ blocker: false, processStopped: true });
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.resources.retire).toHaveBeenCalledOnce();
+  expect(f.input.reservations.onEnded).toHaveBeenCalledOnce();
+});
+it("U12 clear waits for the actual supervisor shutdown receipt", async () => {
+  const f = fixture();
+  let exit!: () => void;
+  f.shutdown.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        exit = resolve;
+      }),
+  );
+  const work = f.coordinator.retire(owner, "disable");
+  f.device.resolve(clean);
+  f.storage.resolve(saved);
+  await work;
+  const closing = f.coordinator.close("close");
+  for (let i = 0; i < 20 && !exit; i++) await Promise.resolve();
+  expect(f.shutdown).toHaveBeenCalledOnce();
+  expect(f.coordinator.reports()[0]!.processStopped).toBe(false);
+  f.coordinator.allowCloseRetry();
+  expect(f.coordinator.close("update")).toBe(closing);
+  exit();
+  await closing;
+  expect(f.coordinator.reports()[0]!.blocker).toBe(false);
+});
+it("U12 reservation recovery updates settled evidence without redispatch", async () => {
+  const f = fixture();
+  f.emit();
+  const failed = { ...saved, recovery: id(44), state: "retryable" as const, blocker: true };
+  f.storage.resolve(failed);
+  f.device.resolve(clean);
+  await f.coordinator.pendingSession(id(3));
+  f.coordinator.reconcileRecovery(id(44), saved);
+  expect(await f.coordinator.pendingSession(id(3))).toEqual([saved]);
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.resources.retire).not.toHaveBeenCalled();
+});
+it("U12 crashed original owner uses ownerLost with no replacement dispatch", async () => {
+  const f = fixture();
+  f.alive.mockReturnValue(false);
+  const work = f.coordinator.retire(owner, "disable");
+  f.storage.resolve(saved);
+  f.device.resolve(clean);
+  await work;
+  expect(f.persistence.ownerLost).toHaveBeenCalledExactlyOnceWith(owner);
+  expect(f.persistence.drain).not.toHaveBeenCalled();
+  expect(f.persistence.freeze).not.toHaveBeenCalled();
+});
+
+import { PluginSupervisor, type Stage3HostAttachment } from "@kobrixa/plugin-runtime";
+import { memoryPlugin } from "../../../../../packages/plugin-runtime/src/test-process.js";
+it("F17/F19 U12 uses one host fence and waits for actual original supervisor exit", async () => {
+  const f = fixture();
+  let exit!: () => void;
+  let exitRequested = false,
+    didExit = false;
+  const child = memoryPlugin((peer, control) => {
+    exit = () => control.exit(0);
+    peer.handle("initialize", () => ({
+      apiVersion: "1.6.0",
+      sdk: { name: "fixture", version: "1" },
+    }));
+    peer.handle("command/execute", () => null);
+    peer.handle("shutdown", () => null);
+    peer.onNotification("exit", () => {
+      exitRequested = true;
+    });
+  });
+  child.process.onExit(() => {
+    didExit = true;
+  });
+  const host: Stage3HostAttachment = {
+    hostEpoch: owner.hostEpoch,
+    principal: (value) => ({ kind: "plugin", owner: value, authorityContext: null }),
+    requirements: () => [],
+    hasPermission: () => false,
+    bindChannel: () => ({
+      initialized: async (signal) => signal.throwIfAborted(),
+      ready: async (signal) => signal.throwIfAborted(),
+      dispose() {},
+    }),
+    retireResources: (value, reason) => f.coordinator.retire(value, reason),
+  };
+  const supervisor = new PluginSupervisor(
+    {
+      id: owner.pluginId,
+      sourceKey: owner.sourceKey,
+      directory: "/fixture",
+      entry: "/fixture/main.js",
+      runtime: "node",
+      permissions: [],
+      commands: ["test.run"],
+    },
+    async () => child.process,
+    {
+      locale: "en",
+      onNotice() {},
+      resourceOwner: () => owner,
+      hostEpoch: host.hostEpoch,
+      bindChannel: host.bindChannel,
+      retireResources: host.retireResources,
+    },
+  );
+  f.shutdown.mockImplementation(() => supervisor.stop());
+  await supervisor.executeCommand("test.run");
+  const closing = f.coordinator.close("close");
+  f.device.resolve(clean);
+  f.storage.resolve(saved);
+  for (let turn = 0; turn < 100 && !exitRequested; turn++) await Promise.resolve();
+  expect(exitRequested).toBe(true);
+  expect(didExit).toBe(false);
+  expect(f.coordinator.reports()[0]!.processStopped).toBe(false);
+  expect(f.resources.retire).toHaveBeenCalledOnce();
+  expect(f.persistence.freeze).toHaveBeenCalledOnce();
+  expect(f.persistence.drain).toHaveBeenCalledOnce();
+  expect(f.input.reservations.onEnded).toHaveBeenCalledOnce();
+  exit();
+  await closing;
+  expect(didExit).toBe(true);
+  expect(f.coordinator.reports()[0]!.blocker).toBe(false);
 });
