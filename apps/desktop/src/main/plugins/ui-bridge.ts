@@ -7,6 +7,7 @@ import type {
 import {
   RpcError,
   RPC_ERRORS,
+  UI_LIMITS_V1,
   uiRequestSchemas,
   type RequestContext,
   type Handle,
@@ -619,6 +620,16 @@ export function registerUiIpc(input: {
   );
 }
 
+const scheduledStateFlushes = new WeakSet<UiStateRegistry>();
+function flushStateAfterReply(states: UiStateRegistry): void {
+  if (scheduledStateFlushes.has(states)) return;
+  scheduledStateFlushes.add(states);
+  queueMicrotask(() => {
+    scheduledStateFlushes.delete(states);
+    states.flush();
+  });
+}
+
 export function createUiChannelBinding(
   context: Stage3ChannelContext,
   input: {
@@ -669,7 +680,14 @@ export function createUiChannelBinding(
   context.peer.handle("ui/patch", (params, request) => {
     check(request);
     const parsed = uiRequestSchemas["ui/patch"].params.parse(params);
-    return uiRequestSchemas["ui/patch"].result.parse(input.states.patch(context.owner, parsed));
+    const result = input.states.patch(context.owner, parsed);
+    if (result.ok) {
+      // Committed data must reach the renderer even if its RPC reply is abandoned.
+      // One microtask per registry coalesces notifications without per-panel timers.
+      const flush = () => flushStateAfterReply(input.states);
+      request.afterReply(flush, flush);
+    }
+    return uiRequestSchemas["ui/patch"].result.parse(result);
   });
   context.peer.handle("ui/snapshot", (params, request) => {
     check(request);
@@ -777,9 +795,46 @@ export function createUiExecutionAdapter(input: {
   scope(): CoreWindowScope;
   runtime: UiRuntimeAttachment;
   core: UiExecutionAdapter["core"];
+  now?: () => number;
 }): UiExecutionAdapter {
   const openings = new Set<AbortController>();
   let disposed = false;
+  const now = input.now ?? (() => performance.now());
+  // A bounded completed-operation receipt allows lost-reply retries without
+  // retaining resource trees or reviving a retired binding. It uses the existing
+  // host completed-operation budget and 30-second retention window.
+  const closed = new Map<
+    string,
+    {
+      binding: UiBinding;
+      owner: ResourceOwner;
+      scope: CoreWindowScope;
+      time: number;
+    }
+  >();
+  const pruneClosed = () => {
+    let scope: CoreWindowScope;
+    try {
+      scope = input.scope();
+    } catch {
+      closed.clear();
+      return;
+    }
+    for (const [id, receipt] of closed) {
+      if (
+        now() - receipt.time >= UI_LIMITS_V1.invocationRetentionMs ||
+        !input.runtime.current(receipt.owner) ||
+        !input.catalog.isCurrent({
+          ...receipt.owner,
+          uiResourceGeneration: receipt.binding.uiResourceGeneration,
+        }) ||
+        receipt.scope.hostEpoch !== scope.hostEpoch ||
+        receipt.scope.workbenchInstance !== scope.workbenchInstance
+      )
+        closed.delete(id);
+    }
+  };
+  const offClosedCatalog = input.catalog.onEvent(pruneClosed);
   // Only binding metadata lives here. All data/form/visibility/revisions stay in T2's registry.
   const metadata = new Map<string, Omit<ResolvedUi, "state"> & { binding: UiBinding }>();
   const offMetadata = input.states.onEvent((_owner, event) => {
@@ -818,6 +873,8 @@ export function createUiExecutionAdapter(input: {
       for (const opening of openings) opening.abort();
       openings.clear();
       offMetadata();
+      offClosedCatalog();
+      closed.clear();
       metadata.clear();
     },
     open: async (value) => {
@@ -894,10 +951,25 @@ export function createUiExecutionAdapter(input: {
       }
     },
     close: async ({ binding }) => {
+      if (disposed) return stale();
+      pruneClosed();
+      const previous = closed.get(binding.panelInstance);
+      if (previous && sameUiBinding(previous.binding, binding))
+        return { ok: true, value: { closed: true } };
       const value = resolve(binding);
       if (!value) return stale();
       const result = input.states.close(value.owner, binding);
       metadata.delete(binding.panelInstance);
+      if (result.ok) {
+        closed.set(binding.panelInstance, {
+          binding: { ...binding },
+          owner: { ...value.owner },
+          scope: { ...input.scope() },
+          time: now(),
+        });
+        while (closed.size > UI_LIMITS_V1.hostCompletedInvocations)
+          closed.delete(closed.keys().next().value!);
+      }
       return result;
     },
     visibility: async ({ binding, visible }) => {

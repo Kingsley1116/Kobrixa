@@ -308,6 +308,7 @@ function executionFixture() {
     states,
     runtime,
     scope: () => scope,
+    now: () => now,
     core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }),
   });
   const events = new UiBridgeEvents(() => []);
@@ -602,6 +603,94 @@ async function channelFixture() {
     },
   };
 }
+it("actual patch RPCs drain coalesced state notifications without a manual test flush", async () => {
+  const h = await channelFixture();
+  try {
+    h.release();
+    await h.binding.initialized(h.controller.signal);
+    const opened = await h.bridge.open(h.descriptor);
+    if (!opened.ok) throw new Error("open failed");
+    const revisions: number[] = [];
+    h.states.onEvent((_owner, event) => {
+      if (event.kind === "ui.state") revisions.push(event.data.revision);
+    });
+    for (let n = 0; n < 6; n++) {
+      h.time(n * 250);
+      expect(
+        await h.child.request("ui/patch", {
+          binding: opened.value.binding,
+          baseRevision: n,
+          set: { value: n + 1 },
+        }),
+      ).toEqual({ ok: true, value: { revision: n + 1 } });
+    }
+    await Promise.resolve();
+    expect(revisions.at(-1)).toBe(6);
+  } finally {
+    h.dispose();
+  }
+});
+it("repeated closes acknowledge the same closed binding but never a forged or retired owner", async () => {
+  const h = executionFixture();
+  try {
+    h.release();
+    const opened = await h.bridge.open(await h.load());
+    if (!opened.ok) throw new Error("open failed");
+    const input = { binding: opened.value.binding };
+    const closed = await h.bridge.close(input);
+    expect(closed).toEqual({ ok: true, value: { closed: true } });
+    expect(await h.bridge.close(input)).toEqual(closed);
+    expect(
+      (
+        await h.bridge.close({
+          binding: { ...input.binding, processEpoch: "00000000-0000-4000-8000-000000000099" },
+        })
+      ).ok,
+    ).toBe(false);
+    expect((await h.bridge.snapshot(input)).ok).toBe(false);
+    await h.catalog.replace([]);
+    expect((await h.bridge.close(input)).ok).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
+it("completed close receipts expire without retaining live bindings", async () => {
+  const h = executionFixture();
+  try {
+    h.release();
+    const opened = await h.bridge.open(await h.load());
+    if (!opened.ok) throw new Error("open failed");
+    const input = { binding: opened.value.binding };
+    await h.bridge.close(input);
+    h.time(29_999);
+    expect((await h.bridge.close(input)).ok).toBe(true);
+    h.time(30_000);
+    expect((await h.bridge.close(input)).ok).toBe(false);
+    expect(stateDiagnostics(h.states).snapshot().bindings).toBe(0);
+  } finally {
+    h.dispose();
+  }
+});
+it("completed close receipts stay within the bounded host budget during rapid reopen", async () => {
+  const h = executionFixture();
+  try {
+    h.release();
+    const descriptor = await h.load();
+    let first: UiBinding | undefined, last: UiBinding | undefined;
+    for (let n = 0; n < 257; n++) {
+      const opened = await h.bridge.open(descriptor);
+      if (!opened.ok) throw new Error("open failed");
+      first ??= opened.value.binding;
+      last = opened.value.binding;
+      await h.bridge.close({ binding: last });
+    }
+    expect((await h.bridge.close({ binding: first! })).ok).toBe(false);
+    expect((await h.bridge.close({ binding: last! })).ok).toBe(true);
+    expect(stateDiagnostics(h.states).snapshot().bindings).toBe(0);
+  } finally {
+    h.dispose();
+  }
+});
 it("BM-12 routes all five requests on the original peer and ready can query instances", async () => {
   const h = await channelFixture();
   try {

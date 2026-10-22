@@ -222,6 +222,11 @@ const primary = startPrimary(
       return authority.principal(mainWindow.webContents.id, "recovery");
     };
     const currentCoreScope = (): CoreWindowScope => {
+      // Recovery and non-device UI can mount before the renderer reports its
+      // document. Establish only the host-owned window identity here; open()
+      // leaves device authority invalid until an actual document report arrives.
+      if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
+      authority.open(mainWindow.webContents);
       const principal = currentCorePrincipal();
       if (principal.kind !== "core") throw new Error("Core workbench required.");
       return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };

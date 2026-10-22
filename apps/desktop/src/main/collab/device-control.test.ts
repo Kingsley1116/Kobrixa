@@ -27,6 +27,27 @@ function fixture() {
     });
   return { gate, sender, report, callbacks };
 }
+it("opening an early recovery workbench establishes identity without granting device writes", () => {
+  const contexts = new AuthorityContexts(id(1));
+  const gate = new DeviceControlGate(contexts);
+  const sender = { id: 17, once: vi.fn() };
+  const document = gate.open(sender).document;
+  const principal = gate.principal(sender.id, "recovery");
+  expect(principal.kind).toBe("core");
+  expect(principal.authorityContext).not.toBeNull();
+  expect(gate.open(sender).document).toBe(document);
+  expect(gate.principal(sender.id, "recovery")).toEqual(principal);
+  expect(() => contexts.assertContinuation(principal, principal.authorityContext!.ref)).toThrow(
+    "unbound",
+  );
+  expect(() => gate.assert(sender.id, "device:run", [])).toThrow(DEVICE_CONTROL_DENIED);
+  gate.invalidate(sender.id);
+  gate.open(sender);
+  expect(gate.principal(sender.id, "recovery")).not.toEqual(principal);
+  expect(() => contexts.assertContinuation(principal, principal.authorityContext!.ref)).toThrow(
+    "authority-changed",
+  );
+});
 it("F03 denies missing reports and F14 preserves reads and stop after revoke", () => {
   const f = fixture();
   for (const sender of [7, 99])
