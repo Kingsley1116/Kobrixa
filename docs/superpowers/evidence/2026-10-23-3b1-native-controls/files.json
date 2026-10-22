@@ -1,0 +1,138 @@
+[
+  {
+    "file": "browser.json.gz",
+    "bytes": 14279,
+    "sha256": "eaaf7c1e5eb1e4a97434df434fec987d3074ce7b8e641153faf403662224aed6",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/browser.json",
+    "originalBytes": 87096,
+    "originalSha256": "1fc7c1e46c2159a8c16a8bec417cbc37e106e454d05a2263f107169e5383f7e8"
+  },
+  {
+    "file": "artifact-identity.json.gz",
+    "bytes": 10402,
+    "sha256": "f823a40bbb5672bbc186994d35a71ab09324cce25fbdaa586f8a0d7356d0bc72",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/artifact-identity.json",
+    "originalBytes": 26553,
+    "originalSha256": "056b08f497f4110da7ed0a72254456b8fa77984ff07842de8fa9a888c4ec87ec"
+  },
+  {
+    "file": "electron.log.gz",
+    "bytes": 871,
+    "sha256": "908cb0e5d0e741dfdfacf51cc5d3380507ea33170eb7823d186d60546784e4f2",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/electron.log",
+    "originalBytes": 2615,
+    "originalSha256": "1076b8f9ac1f5946f3b7676d335b659a777247c814e9ac2b677f4d057c1dfd8e"
+  },
+  {
+    "file": "secondary.json.gz",
+    "bytes": 410,
+    "sha256": "4fb351ce2ea3de6fe8df1fdcaec9074592386e3ac2c39bdb8c1af1f0f5129b95",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/secondary.json",
+    "originalBytes": 877,
+    "originalSha256": "2a4fc76b89d8311716b0783600dcf699412a833559b9f0f90cb0b74bc95d6a2a"
+  },
+  {
+    "file": "secondary.log.gz",
+    "bytes": 20,
+    "sha256": "f1b651238a58fe290baec6c5e32f3bdb1943dd2bd582f02569231f7a757c7837",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/secondary.log",
+    "originalBytes": 0,
+    "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "presentation-en-dark-bottom.png",
+    "bytes": 244627,
+    "sha256": "01186c514f2734ab3028d7323d44e9239f86e07311c21a995ca6a9ac120f3d0f",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-en-dark-bottom.png",
+    "originalBytes": 244627,
+    "originalSha256": "01186c514f2734ab3028d7323d44e9239f86e07311c21a995ca6a9ac120f3d0f"
+  },
+  {
+    "file": "presentation-en-dark-top.png",
+    "bytes": 242289,
+    "sha256": "16142badcce86772e013aa1ea9db9f027599c96cb9f17593598b15a3813d32d2",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-en-dark-top.png",
+    "originalBytes": 242289,
+    "originalSha256": "16142badcce86772e013aa1ea9db9f027599c96cb9f17593598b15a3813d32d2"
+  },
+  {
+    "file": "presentation-en-dark.ax.json.gz",
+    "bytes": 9272,
+    "sha256": "164587633620017a445d5570b2db97dfa1c2a54612fc403e1a480a3be53d04e5",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-en-dark.ax.json",
+    "originalBytes": 213169,
+    "originalSha256": "4671f1f4052b3834edae9beb71c96855b214ac6f5a35c5f4d4c71337214a56cf"
+  },
+  {
+    "file": "presentation-en-light-bottom.png",
+    "bytes": 243503,
+    "sha256": "a53bbe055b706c9f951d1bb04a135a2f284079ee63ba792882b3a948a0bcc24b",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-en-light-bottom.png",
+    "originalBytes": 243503,
+    "originalSha256": "a53bbe055b706c9f951d1bb04a135a2f284079ee63ba792882b3a948a0bcc24b"
+  },
+  {
+    "file": "presentation-en-light-top.png",
+    "bytes": 241657,
+    "sha256": "25e2418f6da2ef1bc5fd6677a03d295ab7c1ace72e68ea620326db21a755a3c8",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-en-light-top.png",
+    "originalBytes": 241657,
+    "originalSha256": "25e2418f6da2ef1bc5fd6677a03d295ab7c1ace72e68ea620326db21a755a3c8"
+  },
+  {
+    "file": "presentation-en-light.ax.json.gz",
+    "bytes": 9256,
+    "sha256": "f9a935cc7a81189363612016fed75e42eb0f5c1f8fe4d793cc767cb92ece3010",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-en-light.ax.json",
+    "originalBytes": 213163,
+    "originalSha256": "89400a389f05ec916d4211c0bf1e2fda1d1ca7a3551c01ef4e8344c7ea0b8d10"
+  },
+  {
+    "file": "presentation-zh-TW-dark-bottom.png",
+    "bytes": 250430,
+    "sha256": "08ecc3672c1123f667cacc96b46140ebfc21b39d22f7d79b4856255ebf2a78ab",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-zh-TW-dark-bottom.png",
+    "originalBytes": 250430,
+    "originalSha256": "08ecc3672c1123f667cacc96b46140ebfc21b39d22f7d79b4856255ebf2a78ab"
+  },
+  {
+    "file": "presentation-zh-TW-dark-top.png",
+    "bytes": 253310,
+    "sha256": "51560533c45837c6f87f19d323e3887190920e9b9f73bcee5ad7799318950ea5",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-zh-TW-dark-top.png",
+    "originalBytes": 253310,
+    "originalSha256": "51560533c45837c6f87f19d323e3887190920e9b9f73bcee5ad7799318950ea5"
+  },
+  {
+    "file": "presentation-zh-TW-dark.ax.json.gz",
+    "bytes": 9505,
+    "sha256": "a06779f0d2cc147fba597d0dab2faef0195f094cd747b4f8dcd0761f3f5cef7e",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-zh-TW-dark.ax.json",
+    "originalBytes": 212784,
+    "originalSha256": "1906881defb8d3776737a5c629816e8a32f982e18e29f702ef249a4050355ded"
+  },
+  {
+    "file": "presentation-zh-TW-light-bottom.png",
+    "bytes": 248168,
+    "sha256": "a9f44a5c42e63bf0c8e090ed746d2d95483c668cc88f33516a467e737741e756",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-zh-TW-light-bottom.png",
+    "originalBytes": 248168,
+    "originalSha256": "a9f44a5c42e63bf0c8e090ed746d2d95483c668cc88f33516a467e737741e756"
+  },
+  {
+    "file": "presentation-zh-TW-light-top.png",
+    "bytes": 250718,
+    "sha256": "e15682b9fddc11d9fce01652d2ffa3837ae98d1b14313fbe905848fd6bba6e6d",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-zh-TW-light-top.png",
+    "originalBytes": 250718,
+    "originalSha256": "e15682b9fddc11d9fce01652d2ffa3837ae98d1b14313fbe905848fd6bba6e6d"
+  },
+  {
+    "file": "presentation-zh-TW-light.ax.json.gz",
+    "bytes": 9487,
+    "sha256": "3d12909fdefc016e5eda3fd68c0cba0d78a4278f5a443632bc76135c8c0a35a9",
+    "original": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-vWsZrG/presentation-zh-TW-light.ax.json",
+    "originalBytes": 212784,
+    "originalSha256": "4a77a52aaed8ca5fdca87c53c66a727dbb9fe83bdb7308dacad5cf6a1b458535"
+  }
+]

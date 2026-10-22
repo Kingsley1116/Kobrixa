@@ -68,7 +68,7 @@ export async function configure(locale: "en" | "zh-TW", theme: "light" | "dark")
     hidden: !!node.closest("[hidden]"),
     width: node.getBoundingClientRect().width,
   }));
-  check(nodes.length === 14, `expected14 actual${nodes.length}`);
+  check(nodes.length === 15, `expected14components+coreAction actual${nodes.length}`);
   check(
     nodes.every((node) => node.hidden || node.width <= root.clientWidth + 1),
     "node overflow",
@@ -102,12 +102,44 @@ export function inputSnapshot() {
     invalid: input.getAttribute("aria-invalid"),
     focused: document.activeElement === input,
     activeNode: document.activeElement?.closest<HTMLElement>("[data-ui-node]")?.dataset.uiNode,
+    activeType:
+      document.activeElement instanceof HTMLInputElement ? document.activeElement.type : null,
     alertVisible: !control('[data-ui-node="alert"]').hidden,
     enabled: view.draft.enabled,
     binding: view.snapshot.binding,
     revision: view.localRevision,
     draft: { ...view.draft },
     raw: { ...view.raw },
+  };
+}
+export async function acceptedForm() {
+  const { record } = selected();
+  const result = await window.kobrixa.plugins.ui.snapshot({ binding: record.state.form().binding });
+  check(result.ok, "actual host snapshot failed");
+  return result.value;
+}
+export async function acceptedAction(revision: number, speed: number) {
+  await until(() => !selected().record.state.getSnapshot().busy, "action did not settle");
+  const state = selected().record.state.getSnapshot();
+  check(state.problem === null, `action failed: ${state.problem}`);
+  const snapshot = await acceptedForm();
+  check(
+    snapshot.formRevision === revision,
+    `accepted revision ${snapshot.formRevision} != ${revision}`,
+  );
+  check(snapshot.form.speed === speed, "actual host did not accept edited form");
+  return snapshot;
+}
+export function recoveryRequest() {
+  return selected().session.getRecoveryRequest();
+}
+export async function recovered(previous: number) {
+  await until(() => recoveryRequest() === previous + 1, "core recovery action rejected");
+  const form = await acceptedForm();
+  return {
+    request: recoveryRequest(),
+    formRevision: form.formRevision,
+    invalid: inputSnapshot().invalid,
   };
 }
 export async function retainInvalidThroughClose() {

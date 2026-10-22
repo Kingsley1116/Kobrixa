@@ -1,0 +1,110 @@
+{
+  "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-29LLms",
+  "files": [
+    {
+      "file": "browser.json.gz",
+      "bytes": 13424,
+      "sha256": "82bbee7050a9b20c9a6dfc4e8d55e9d18657d22539c9adc98c1c835100db3a21",
+      "originalBytes": 73359,
+      "originalSha256": "580a8aed801600baa0d189805972ec22bc052b0ec7d2773a7ce240fad7da5100"
+    },
+    {
+      "file": "artifact-identity.json.gz",
+      "bytes": 10359,
+      "sha256": "da9fc5e162e8cde7ffe52d19b266e1d969e090244dd7d35fc679838c66c87ff1",
+      "originalBytes": 26449,
+      "originalSha256": "e99a8efb7c2dcb604c5781d00c4141b4e39820ac71bd16d857902e59b277bfbe"
+    },
+    {
+      "file": "electron.log.gz",
+      "bytes": 874,
+      "sha256": "40688f6a0b166212c7872489b164e652b239dc211e08d9645d0fbaf3fee7ec0a",
+      "originalBytes": 2622,
+      "originalSha256": "84d4973b4e6ecc93249d6f2ecb0ec0aeaf5fc3a2ab86d054a5d501dd6b40edba"
+    },
+    {
+      "file": "presentation-en-dark.ax.json.gz",
+      "bytes": 9265,
+      "sha256": "62cc8ba737caa32e996b9751b24a6d878ffa53d9815b980a6d52036b4ff1fb0c",
+      "originalBytes": 213181,
+      "originalSha256": "6760cc29e4e82cba011e4f308ede2e136ee341979f9503ac658099dc827287cd"
+    },
+    {
+      "file": "presentation-en-light.ax.json.gz",
+      "bytes": 9250,
+      "sha256": "f1164b44001cba262a19feb809428a6cbe56b67f150db18399c88824150afc8a",
+      "originalBytes": 213175,
+      "originalSha256": "32b3189c9e8e0948d17ce2cf600cdb49de5540f2b5c4fc11c01f35d4a0858729"
+    },
+    {
+      "file": "presentation-zh-TW-dark.ax.json.gz",
+      "bytes": 9490,
+      "sha256": "07c97f99af50b6ad30c9171989cc1564c496fa18adf31fa6bbb1ac376a82be1c",
+      "originalBytes": 212796,
+      "originalSha256": "606149bc4a9dceef31a722f5751268e6153207a43abdd74ca6fc63c5eb689f17"
+    },
+    {
+      "file": "presentation-zh-TW-light.ax.json.gz",
+      "bytes": 9477,
+      "sha256": "4bc720fcc62b3f74293ba71d570aa08ab13187fea589beec71b38421b249ad2c",
+      "originalBytes": 212796,
+      "originalSha256": "c2706a528b9824af7fa1a0c072ead25c6b364136a7608b181984e5b69671d125"
+    },
+    {
+      "file": "presentation-en-dark-bottom.png",
+      "bytes": 243226,
+      "sha256": "f8f746b0c4924392054320918ef3c3cf6826ea4695da099bc83ab4d12cac3585",
+      "originalBytes": 243226,
+      "originalSha256": "f8f746b0c4924392054320918ef3c3cf6826ea4695da099bc83ab4d12cac3585"
+    },
+    {
+      "file": "presentation-en-dark-top.png",
+      "bytes": 242153,
+      "sha256": "f84e5a8ede78a458456cb4c82dfc42b022c9afb0647b316ae6a35772bfaaa660",
+      "originalBytes": 242153,
+      "originalSha256": "f84e5a8ede78a458456cb4c82dfc42b022c9afb0647b316ae6a35772bfaaa660"
+    },
+    {
+      "file": "presentation-en-light-bottom.png",
+      "bytes": 245398,
+      "sha256": "5c7742de9ceed2e5ffb36ac27eb74eee0a2d9a29f4a85328b8a43ce8e88fd07a",
+      "originalBytes": 245398,
+      "originalSha256": "5c7742de9ceed2e5ffb36ac27eb74eee0a2d9a29f4a85328b8a43ce8e88fd07a"
+    },
+    {
+      "file": "presentation-en-light-top.png",
+      "bytes": 242878,
+      "sha256": "70fb47984bb633a685879ff4ae07fd28b09872f713d5a5ec324f197ea5bb3f5b",
+      "originalBytes": 242878,
+      "originalSha256": "70fb47984bb633a685879ff4ae07fd28b09872f713d5a5ec324f197ea5bb3f5b"
+    },
+    {
+      "file": "presentation-zh-TW-dark-bottom.png",
+      "bytes": 250777,
+      "sha256": "0c3737aef058cbd15b2fd8e1d7328fa8493496b1b3c0fc9be46ad6abb06f5832",
+      "originalBytes": 250777,
+      "originalSha256": "0c3737aef058cbd15b2fd8e1d7328fa8493496b1b3c0fc9be46ad6abb06f5832"
+    },
+    {
+      "file": "presentation-zh-TW-dark-top.png",
+      "bytes": 253509,
+      "sha256": "9a3187b8f837737c84a063eb53561d5151b1d3967a7492027807fd2d78447293",
+      "originalBytes": 253509,
+      "originalSha256": "9a3187b8f837737c84a063eb53561d5151b1d3967a7492027807fd2d78447293"
+    },
+    {
+      "file": "presentation-zh-TW-light-bottom.png",
+      "bytes": 248657,
+      "sha256": "7cab2a1da1eaab6505fa0024b0cd40b27996c12df80b3f5072c88cddf0f38af7",
+      "originalBytes": 248657,
+      "originalSha256": "7cab2a1da1eaab6505fa0024b0cd40b27996c12df80b3f5072c88cddf0f38af7"
+    },
+    {
+      "file": "presentation-zh-TW-light-top.png",
+      "bytes": 251917,
+      "sha256": "879009adfb61fc07ebe47e72c7e7ec25bf0c57a02819db78dc1aa32a02682cc5",
+      "originalBytes": 251917,
+      "originalSha256": "879009adfb61fc07ebe47e72c7e7ec25bf0c57a02819db78dc1aa32a02682cc5"
+    }
+  ]
+}
