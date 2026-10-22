@@ -5,6 +5,7 @@ plugin = Plugin()
 calls = 0
 ticks = 0
 producer = None
+stopped = False
 
 @plugin.command("acceptance.ui.legacy")
 async def legacy(ctx):
@@ -40,27 +41,47 @@ async def hold(ctx):
 @plugin.ready
 async def ready(ctx):
     global producer
+    def failed(code):
+        global stopped
+        if code == "PLUGIN_E_STALE_RESOURCE":
+            stopped = True
+        else:
+            raise RuntimeError(code)
     async def tick():
         global ticks
         listed = await ctx.ui.instances()
+        if stopped:
+            return
         if not listed["ok"]:
-            raise RuntimeError(listed["error"]["code"])
+            return failed(listed["error"]["code"])
         ticks += 1
         for binding in listed["value"]["instances"]:
             state = await ctx.ui.state(binding)
-            if state["ok"]:
-                await ctx.ui.patch(binding, state["value"]["revision"],
-                                   {"ticks": "tick:" + str(ticks)})
+            if stopped:
+                return
+            if not state["ok"]:
+                return failed(state["error"]["code"])
+            patched = await ctx.ui.patch(binding, state["value"]["revision"],
+                                         {"ticks": "tick:" + str(ticks)})
+            if stopped:
+                return
+            if not patched["ok"]:
+                return failed(patched["error"]["code"])
     async def loop():
-        while True:
+        while not stopped:
             started = asyncio.get_running_loop().time()
             await tick()
+            if stopped:
+                return
             await asyncio.sleep(max(0, 0.1 - (asyncio.get_running_loop().time() - started)))
     await tick()
-    producer = asyncio.create_task(loop())
+    if not stopped:
+        producer = asyncio.create_task(loop())
 
 @plugin.deactivate
 async def deactivate(*_args):
+    global stopped
+    stopped = True
     if producer is not None:
         producer.cancel()
         try:

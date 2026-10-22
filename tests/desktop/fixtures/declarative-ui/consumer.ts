@@ -66,14 +66,24 @@ runPlugin(
     },
     async ready(ctx) {
       // Serialize the producer. Slow UI never creates unbounded overlapping patch promises.
+      const failed = (code: string) => {
+        if (code === "PLUGIN_E_STALE_RESOURCE") stopped = true;
+        else throw new Error(code);
+      };
       const tick = async () => {
         const listed = await ctx.ui.instances();
-        if (!listed.ok) throw new Error(listed.error.code);
+        if (stopped) return;
+        if (!listed.ok) return failed(listed.error.code);
         ticks++;
         for (const binding of listed.value.instances) {
           const state = await ctx.ui.state(binding);
-          if (!state.ok) continue;
-          await ctx.ui.patch(binding, state.value.revision, { ticks: `tick:${ticks}` });
+          if (stopped) return;
+          if (!state.ok) return failed(state.error.code);
+          const patched = await ctx.ui.patch(binding, state.value.revision, {
+            ticks: `tick:${ticks}`,
+          });
+          if (stopped) return;
+          if (!patched.ok) return failed(patched.error.code);
         }
       };
       const loop = async () => {
@@ -82,6 +92,8 @@ runPlugin(
         try {
           await tick();
         } catch (error) {
+          if (stopped) return;
+          stopped = true;
           console.error(error instanceof Error ? error.message : String(error));
         }
         if (!stopped)
@@ -93,9 +105,10 @@ runPlugin(
           );
       };
       await tick();
-      timer = setTimeout(() => {
-        void loop();
-      }, 100);
+      if (!stopped)
+        timer = setTimeout(() => {
+          void loop();
+        }, 100);
     },
     deactivate() {
       stopped = true;

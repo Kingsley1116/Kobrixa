@@ -1,17 +1,38 @@
+import type * as FsPromises from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, realpath, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  open,
+  realpath,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  regularBytes,
   resolveBuiltinLaunch,
   validateBuiltinLeaf,
   parseBuiltinResourceIndex,
 } from "./builtin-launch.js";
 import type { BuiltinResourceIndex } from "@kobrixa/plugin-runtime";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
+const actualFs = await vi.importActual<typeof FsPromises>("node:fs/promises");
 const roots: string[] = [];
 afterEach(async () => {
+  vi.mocked(open).mockReset();
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 async function fixture(packaged = false) {
@@ -220,4 +241,156 @@ describe("installed launch (U14, B1-RF5)", () => {
       await expect(resolveBuiltinLaunch(h.input)).rejects.toMatchObject({ code: "PLUGIN_E_ENTRY" });
     }
   });
+});
+
+describe("payload read identity races", () => {
+  it.each(["ancestor", "root", "directory", "file"] as const)(
+    "rejects identical-byte %s replacement before open and closes the descriptor",
+    async (kind) => {
+      const h = await fixture();
+      const directory = path.join(h.leaf, "ui");
+      await mkdir(directory);
+      const target = path.join(directory, "panel.json");
+      await writeFile(target, "{}");
+      const replaced =
+        kind === "ancestor"
+          ? path.dirname(h.leaf)
+          : kind === "root"
+            ? h.leaf
+            : kind === "directory"
+              ? directory
+              : target;
+      let close: ReturnType<typeof vi.spyOn> | undefined;
+      let read: ReturnType<typeof vi.spyOn> | undefined;
+      vi.mocked(open).mockImplementationOnce(async (...args) => {
+        await rename(replaced, `${replaced}.old`);
+        await cp(`${replaced}.old`, replaced, { recursive: true });
+        const handle = await actualFs.open(...args);
+        close = vi.spyOn(handle, "close");
+        read = vi.spyOn(handle, "read");
+        return handle;
+      });
+      await expect(regularBytes(h.leaf, "ui/panel.json", 1024)).rejects.toMatchObject({
+        code: "PLUGIN_E_ENTRY",
+      });
+      expect(read).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["root", "directory", "file"] as const)(
+    "rejects %s replacement after read even though the open descriptor is unchanged",
+    async (kind) => {
+      const h = await fixture();
+      const directory = path.join(h.leaf, "ui");
+      await mkdir(directory);
+      const target = path.join(directory, "panel.json");
+      await writeFile(target, "{}");
+      const replaced = kind === "root" ? h.leaf : kind === "directory" ? directory : target;
+      let close: ReturnType<typeof vi.spyOn> | undefined;
+      vi.mocked(open).mockImplementationOnce(async (...args) => {
+        const handle = await actualFs.open(...args);
+        close = vi.spyOn(handle, "close");
+        const read = handle.read;
+        vi.spyOn(handle, "read").mockImplementationOnce((async (...readArgs: unknown[]) => {
+          const result = await Reflect.apply(read, handle, readArgs);
+          await rename(replaced, `${replaced}.old`);
+          await cp(`${replaced}.old`, replaced, { recursive: true });
+          return result;
+        }) as typeof handle.read);
+        return handle;
+      });
+      await expect(regularBytes(h.leaf, "ui/panel.json", 1024)).rejects.toMatchObject({
+        code: "PLUGIN_E_ENTRY",
+      });
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects an ancestor symlink introduced at open, even with identical payload bytes", async () => {
+    const h = await fixture();
+    const moved = path.join(h.root, "moved");
+    let close: ReturnType<typeof vi.spyOn> | undefined;
+    vi.mocked(open).mockImplementationOnce(async (...args) => {
+      await rename(h.leaf, moved);
+      await symlink(moved, h.leaf, "dir");
+      const handle = await actualFs.open(...args);
+      close = vi.spyOn(handle, "close");
+      return handle;
+    });
+    const error: unknown = await regularBytes(h.leaf, "main.cjs", 1024).catch(
+      (error: unknown) => error,
+    );
+    expect(error).toMatchObject({ code: "PLUGIN_E_ENTRY" });
+    expect(String(error)).not.toContain(h.root);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("opens nonblocking, rejects a substituted nonregular handle before read, and closes it", async () => {
+    const { constants } = await import("node:fs");
+    const h = await fixture();
+    const close = vi.fn(async () => {});
+    const read = vi.fn();
+    vi.mocked(open).mockImplementationOnce(async (_file, flags) => {
+      if (process.platform !== "win32")
+        expect(Number(flags) & constants.O_NONBLOCK).toBe(constants.O_NONBLOCK);
+      return { stat: async () => ({ isFile: () => false }), read, close } as unknown as Awaited<
+        ReturnType<typeof open>
+      >;
+    });
+    await expect(regularBytes(h.leaf, "main.cjs", 1024)).rejects.toMatchObject({
+      code: "PLUGIN_E_ENTRY",
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("closes a successfully read regular file", async () => {
+    const h = await fixture();
+    let close: ReturnType<typeof vi.spyOn> | undefined;
+    vi.mocked(open).mockImplementationOnce(async (...args) => {
+      const handle = await actualFs.open(...args);
+      close = vi.spyOn(handle, "close");
+      return handle;
+    });
+    expect(await regularBytes(h.leaf, "main.cjs", 1024)).toEqual(h.files.get("main.cjs"));
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+it.skipIf(process.platform === "win32")(
+  "rejects a real FIFO substituted at open without waiting for a writer",
+  async () => {
+    const { constants } = await import("node:fs");
+    const h = await fixture();
+    let close: ReturnType<typeof vi.spyOn> | undefined;
+    vi.mocked(open).mockImplementationOnce(async (file, flags, mode) => {
+      // Assert before opening, so a regression fails instead of wedging the test worker.
+      expect(Number(flags) & constants.O_NONBLOCK).toBe(constants.O_NONBLOCK);
+      await rm(path.join(h.leaf, "main.cjs"));
+      execFileSync("mkfifo", [path.join(h.leaf, "main.cjs")]);
+      const handle = await actualFs.open(file, flags, mode);
+      close = vi.spyOn(handle, "close");
+      return handle;
+    });
+    await expect(regularBytes(h.leaf, "main.cjs", 1024)).rejects.toMatchObject({
+      code: "PLUGIN_E_ENTRY",
+    });
+    expect(close).toHaveBeenCalledOnce();
+  },
+);
+
+it("rejects a payload root replaced between individually valid file reads", async () => {
+  const h = await fixture();
+  vi.mocked(open).mockImplementationOnce(async (...args) => {
+    const handle = await actualFs.open(...args);
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+      await close();
+      await rename(h.leaf, `${h.leaf}.old`);
+      await cp(`${h.leaf}.old`, h.leaf, { recursive: true });
+    });
+    return handle;
+  });
+  await expect(resolveBuiltinLaunch(h.input)).rejects.toMatchObject({ code: "PLUGIN_E_ENTRY" });
 });

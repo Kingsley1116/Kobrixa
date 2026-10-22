@@ -1,6 +1,11 @@
 {
   "kind": "panel",
-  "data": {},
+  "data": {
+    "ticks": {
+      "schema": { "type": "string", "maxLength": 64, "nullable": false },
+      "initial": "tick:0"
+    }
+  },
   "fields": {},
   "root": "root",
   "nodes": [

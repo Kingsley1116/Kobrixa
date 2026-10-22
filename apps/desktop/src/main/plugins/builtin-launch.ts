@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { z } from "zod";
 import {
   diagnosticHelpDeclSchema,
@@ -65,51 +65,92 @@ export function declaredJsonPaths(manifest: PluginManifest): string[] {
   }
   return [...paths].sort();
 }
-export async function regularBytes(root: string, relative: string, limit: number): Promise<Buffer> {
-  if (
-    relative !== "main.cjs" &&
-    relative !== "resource-index.json" &&
-    !diagnosticHelpDeclSchema.shape.path.safeParse(relative).success
-  )
-    fail();
-  const parts = relative.split("/");
-  let current = root;
-  for (let index = 0; index < parts.length; index++) {
-    current = path.join(current, parts[index]!);
-    const stat = await lstat(current);
+type PathIdentity = { path: string; stat: BigIntStats };
+const sameIdentity = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
+const sameFile = (a: BigIntStats, b: BigIntStats) =>
+  sameIdentity(a, b) && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+
+// Installed payloads must remain immutable through validation AND process launch.
+// Node pathname APIs cannot atomically defeat continuously adversarial rename/restore
+// cycles. These snapshots reject observed replacements; they are not openat-style
+// directory capabilities. Canonical paths avoid rejecting OS aliases such as /var.
+async function snapshotPath(absolute: string, file: boolean): Promise<PathIdentity[]> {
+  if (!path.isAbsolute(absolute)) fail();
+  const base = path.parse(absolute).root;
+  const names = [base];
+  let current = base;
+  for (const part of path.relative(base, absolute).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    names.push(current);
+  }
+  const entries: PathIdentity[] = [];
+  for (const name of names) {
+    const stat = await lstat(name, { bigint: true });
+    if (stat.isSymbolicLink() || (file && name === absolute ? !stat.isFile() : !stat.isDirectory()))
+      fail();
+    entries.push({ path: name, stat });
+  }
+  if ((await realpath(absolute)) !== absolute) fail();
+  return entries;
+}
+async function assertPath(entries: PathIdentity[]): Promise<void> {
+  for (const entry of entries) {
+    const stat = await lstat(entry.path, { bigint: true });
     if (
       stat.isSymbolicLink() ||
-      (index + 1 === parts.length ? !stat.isFile() : !stat.isDirectory())
+      !sameIdentity(entry.stat, stat) ||
+      (entry.stat.isFile() ? !stat.isFile() || !sameFile(entry.stat, stat) : !stat.isDirectory())
     )
       fail();
   }
-  const resolved = await realpath(current);
-  const inside = path.relative(root, resolved);
-  if (inside === ".." || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) fail();
-  const handle = await open(resolved, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  const last = entries.at(-1)!;
+  if ((await realpath(last.path)) !== last.path) fail();
+}
+export async function regularBytes(root: string, relative: string, limit: number): Promise<Buffer> {
   try {
-    const before = await handle.stat();
-    if (!before.isFile() || before.size > limit) fail();
-    // Bounded allocation; readFile could allocate an unbounded file grown after stat.
-    const bytes = Buffer.alloc(limit + 1);
-    let size = 0;
-    while (size <= limit) {
-      const { bytesRead } = await handle.read(bytes, size, bytes.length - size, size);
-      if (bytesRead === 0) break;
-      size += bytesRead;
-    }
-    const after = await handle.stat();
     if (
-      size > limit ||
-      size !== before.size ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ino !== after.ino
+      !path.isAbsolute(root) ||
+      (relative !== "main.cjs" &&
+        relative !== "resource-index.json" &&
+        !diagnosticHelpDeclSchema.shape.path.safeParse(relative).success)
     )
       fail();
-    return bytes.subarray(0, size);
-  } finally {
-    await handle.close();
+    const target = path.join(root, relative);
+    const entries = await snapshotPath(target, true);
+    const expected = entries.at(-1)!.stat;
+    // POSIX FIFOs must not block open before fstat can reject them. On Windows
+    // ordinary filesystem paths have no POSIX FIFO type; unsupported flags are 0.
+    const handle = await open(
+      target,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
+    try {
+      const before = await handle.stat({ bigint: true });
+      if (!before.isFile() || before.size > BigInt(limit) || !sameFile(expected, before)) fail();
+      await assertPath(entries);
+      // Bounded allocation even if a file grows after stat.
+      const bytes = Buffer.alloc(limit + 1);
+      let size = 0;
+      while (size <= limit) {
+        const { bytesRead } = await handle.read(bytes, size, bytes.length - size, size);
+        if (bytesRead === 0) break;
+        size += bytesRead;
+      }
+      const after = await handle.stat({ bigint: true });
+      if (
+        size > limit ||
+        BigInt(size) !== before.size ||
+        !after.isFile() ||
+        !sameFile(before, after)
+      )
+        fail();
+      await assertPath(entries);
+      return bytes.subarray(0, size);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return fail();
   }
 }
 export async function validateBuiltinLeaf(
@@ -123,9 +164,11 @@ export async function validateBuiltinLeaf(
 }> {
   try {
     if (!path.isAbsolute(packageRoot)) fail();
-    const leaf = await lstat(packageRoot);
+    const leaf = await lstat(packageRoot, { bigint: true });
     if (!leaf.isDirectory() || leaf.isSymbolicLink()) fail();
     const root = await realpath(packageRoot);
+    const rootIdentity = await snapshotPath(root, false);
+    if (!sameIdentity(leaf, rootIdentity.at(-1)!.stat)) fail();
     const index = parseBuiltinResourceIndex(
       JSON.parse(utf8(await regularBytes(root, "resource-index.json", 16 * 1024))),
     );
@@ -166,6 +209,14 @@ export async function validateBuiltinLeaf(
       if (file.path.endsWith(".json") && file.path !== "kobrixa-plugin.json")
         resources[file.path] = utf8(data);
     }
+    await assertPath(rootIdentity);
+    const finalLeaf = await lstat(packageRoot, { bigint: true });
+    if (
+      finalLeaf.isSymbolicLink() ||
+      !sameIdentity(leaf, finalLeaf) ||
+      (await realpath(packageRoot)) !== root
+    )
+      fail();
     return { root, manifest, index, resources };
   } catch {
     return fail();
@@ -196,6 +247,7 @@ export async function resolveBuiltinLaunch(input: {
         input.slug,
       )
     : path.join(input.buildRoot, "plugins", input.slug);
+  let validated: Awaited<ReturnType<typeof validateBuiltinLeaf>>;
   try {
     const parent = input.packaged
       ? path.join(path.dirname(input.appPath), "app.asar.unpacked")
@@ -203,6 +255,7 @@ export async function resolveBuiltinLaunch(input: {
     if (!path.isAbsolute(parent)) fail();
     const parentReal = await realpath(parent);
     const rootReal = await realpath(root);
+    const rootIdentity = await snapshotPath(rootReal, false);
     const relative = path.relative(parentReal, rootReal);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       fail();
@@ -212,10 +265,17 @@ export async function resolveBuiltinLaunch(input: {
       const entry = await lstat(current);
       if (!entry.isDirectory() || entry.isSymbolicLink()) fail();
     }
+    validated = await validateBuiltinLeaf(root, input.pluginId);
+    await assertPath(rootIdentity);
+    if (
+      validated.root !== rootReal ||
+      (await realpath(root)) !== rootReal ||
+      (await realpath(parent)) !== parentReal
+    )
+      fail();
   } catch {
     return fail();
   }
-  const validated = await validateBuiltinLeaf(root, input.pluginId);
   return {
     sourceKey: input.sourceKey,
     pluginId: input.pluginId,
