@@ -890,3 +890,110 @@ describe("R160 crash-loop accounting (U13, B1-RF5)", () => {
     expect(forceKill).toHaveBeenCalledTimes(1);
   });
 });
+
+import { randomUUID } from "node:crypto";
+describe("R160-1 startup failure cause survives the actual-exit fence", () => {
+  it.each([
+    ["initialize", false],
+    ["initialize", true],
+    ["bind", false],
+    ["bind", true],
+    ["initialized", false],
+    ["initialized", true],
+    ["ready", false],
+    ["ready", true],
+  ] as const)("counts each %s failure once (delayed exit: %s)", async (phase, delayed) => {
+    vi.useFakeTimers();
+    let exit!: () => void;
+    const launch = vi.fn(async () => {
+      const h = memoryPlugin((peer, control) => {
+        exit = () => control.exit(1);
+        ready(peer, control.exit);
+        if (phase === "initialize")
+          peer.handle("initialize", () => {
+            throw new Error("failed initialize");
+          });
+      });
+      return delayed ? { ...h.process, kill: vi.fn(), forceKill: vi.fn() } : h.process;
+    });
+    const hostEpoch = randomUUID();
+    const retired = vi.fn(async () => {});
+    const subject = new PluginSupervisor(plugin, launch, {
+      locale: "en",
+      onNotice: () => {},
+      exitTimeoutMs: 20,
+      hostEpoch,
+      resourceOwner: () => ({
+        sourceKey: "builtin:acme.hello",
+        pluginId: plugin.id,
+        generation: 1,
+        hostEpoch,
+        processEpoch: randomUUID(),
+      }),
+      bindChannel: () => {
+        if (phase === "bind") throw new Error("failed binding");
+        return {
+          initialized: async () => {
+            if (phase === "initialized") throw new Error("failed initialized");
+          },
+          ready: async () => {
+            if (phase === "ready") throw new Error("failed ready");
+          },
+          dispose: vi.fn(),
+        };
+      },
+      retireResources: retired,
+    });
+    for (let i = 0; i < 3; i++) {
+      const result = subject.executeCommand("acme.hello.greet").catch((error) => error);
+      if (delayed) {
+        await vi.advanceTimersByTimeAsync(21);
+        expect(await result).toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
+        expect(subject.state).toBe("stopping");
+        await expect(subject.executeCommand("acme.hello.greet")).rejects.toMatchObject({
+          code: "PLUGIN_E_DISABLED",
+        });
+        expect(launch).toHaveBeenCalledTimes(i + 1);
+        exit();
+      } else expect(await result).toBeInstanceOf(Error);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(subject.state).toBe(i === 2 ? "failed" : "idle");
+      expect(retired).toHaveBeenCalledTimes(i + 1);
+    }
+    await expect(subject.executeCommand("acme.hello.greet")).rejects.toMatchObject({
+      code: "PLUGIN_E_CRASH_LOOP",
+    });
+    expect(launch).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not count ordinary requested stops with late actual exits", async () => {
+    vi.useFakeTimers();
+    let exit!: () => void;
+    const launch = vi.fn(async () => {
+      const h = memoryPlugin((peer, control) => {
+        exit = () => control.exit();
+        ready(peer, control.exit);
+        peer.onNotification("exit", () => {});
+      });
+      return { ...h.process, kill: vi.fn(), forceKill: vi.fn() };
+    });
+    const subject = new PluginSupervisor(plugin, launch, {
+      locale: "en",
+      onNotice: () => {},
+      exitTimeoutMs: 20,
+    });
+    for (let i = 0; i < 4; i++) {
+      await subject.executeCommand("acme.hello.greet");
+      const stopped = expect(subject.stop()).rejects.toMatchObject({ code: "PLUGIN_E_TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(21);
+      await stopped;
+      expect(subject.state).toBe("stopping");
+      exit();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(subject.state).toBe("idle");
+    }
+    expect(launch).toHaveBeenCalledTimes(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

@@ -151,6 +151,8 @@ export class PluginSupervisor {
   }
   // Error continuations may run after stop() has already cleared #stopping.
   readonly #stoppedPeers = new WeakSet<RpcPeer>();
+  /** Failure cause survives the stopping fence until this peer's actual process exit. */
+  readonly #failedPeers = new WeakSet<RpcPeer>();
   readonly #options: SupervisorOptions & typeof DEFAULTS;
 
   constructor(
@@ -377,6 +379,9 @@ export class PluginSupervisor {
     if (this.#state === "running" && this.#peer) return Promise.resolve(this.#peer);
     this.#starting ??= this.#start()
       .catch(async (error: unknown) => {
+        // Binding can throw before the inner handshake try block. Record its cause before
+        // retirement callbacks or a teardown timeout can set the stopping admission fence.
+        if (this.#peer && !this.#stopping) this.#failedPeers.add(this.#peer);
         this.#activation?.abort();
         this.#initialized.reject(error);
         if (this.#resourceOwner) {
@@ -582,6 +587,7 @@ export class PluginSupervisor {
 
   #terminate(child: PluginProcess, problem: PluginProblem): void {
     if (this.#process !== child) return;
+    if (this.#peer && !this.#stopping) this.#failedPeers.add(this.#peer);
     this.#problem ??= problem;
     if (!this.#resourceOwner) {
       child.kill();
@@ -612,9 +618,10 @@ export class PluginSupervisor {
     this.#channelContext = undefined;
     this.#process = undefined;
     this.#peer = undefined;
-    if (this.#stopping) {
+    const requestedStop = this.#stopping && !this.#failedPeers.has(peer);
+    this.#stopping = false;
+    if (requestedStop) {
       this.#stoppedPeers.add(peer);
-      this.#stopping = false;
       peer.close(new RpcError(RPC_ERRORS.connectionClosed, `${this.plugin.id} was stopped.`));
       this.#setState("idle");
       return;

@@ -680,13 +680,8 @@ export class PluginManager {
       return Promise.resolve(
         failure("PLUGIN_E_BUILTIN_REQUIRED", "Required plugins cannot be disabled."),
       );
-    // Fence admission and start the original disposition before any storage or event callback.
-    this.#disabled.add(sourceKey);
-    const retired = this.#retire(this.#reconcile(), "disabled");
-    void retired.catch(() => undefined);
-    this.#publishStatic(this.#staticBuild);
-    this.#emitState();
-    return this.#enqueue(async () => {
+    // Reserve FIFO before synchronous retirement/state callbacks can request another toggle.
+    const change = this.#enqueue<PluginActionResult>(async () => {
       // A previously queued enable must not undo this later disable.
       this.#disabled.add(sourceKey);
       const additional = this.#retire(this.#reconcile(), "disabled");
@@ -701,6 +696,13 @@ export class PluginManager {
       await this.#apply("disabled");
       return { ok: true, state: this.state(), ...(persisted ? {} : { persisted: false as const }) };
     });
+    // Fence admission and start the original disposition before any storage or event callback.
+    this.#disabled.add(sourceKey);
+    const retired = this.#retire(this.#reconcile(), "disabled");
+    void retired.catch(() => undefined);
+    this.#publishStatic(this.#staticBuild);
+    this.#emitState();
+    return change;
   }
 
   /**

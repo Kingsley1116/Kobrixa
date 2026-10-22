@@ -2488,3 +2488,67 @@ it("R160 actual exit cannot untrack a disabled supervisor whose disposition is s
   expect(h.manager.active).toBe(false);
   expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(0);
 });
+
+it.each(["state", "host"] as const)(
+  "R160-2 reserves disable FIFO before a reentrant %s callback enables the source",
+  async (callback) => {
+    const source = optionalNodeSource();
+    const store = memoryStore();
+    const fixture = stage3Fixture();
+    const manager = await PluginManager.create({
+      sources: [source],
+      store,
+      safeMode: false,
+      launcher,
+      locale: "en",
+      stage3: fixture.stage3,
+      stage3Host: fixture.host,
+    });
+    fixture.assign(manager);
+    let enabling: Promise<unknown> | undefined;
+    let invoked = false;
+    const enable = () => {
+      if (invoked) return;
+      invoked = true;
+      expect(manager.state().plugins[0]?.status).toBe("disabled");
+      enabling = manager.setEnabled(source.launch.sourceKey, true);
+    };
+    let unsubscribe = () => {};
+    if (callback === "state")
+      unsubscribe = manager.onEvent((event) => {
+        if (event.type === "state" && event.state.plugins[0]?.status === "disabled") enable();
+      });
+    else {
+      const runtime = manager.stage3Runtime();
+      const signal = new AbortController().signal;
+      const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
+      await runtime.ready(context.owner, signal);
+      const retire = fixture.host.retireResources;
+      fixture.host.retireResources = (owner, reason) => {
+        enable();
+        return retire(owner, reason);
+      };
+    }
+    const disabling = manager.setEnabled(source.launch.sourceKey, false);
+    expect(manager.state().plugins[0]?.status).toBe("disabled");
+    expect(invoked).toBe(true);
+    await disabling;
+    await enabling;
+    expect(manager.state().plugins[0]?.status).toBe("enabled");
+    expect(store.saved.map((state) => [...state.disabled])).toEqual([
+      [source.launch.sourceKey],
+      [],
+    ]);
+    const reconstructed = await PluginManager.create({
+      sources: [source],
+      store,
+      safeMode: false,
+      launcher,
+      locale: "en",
+    });
+    expect(reconstructed.state().plugins[0]?.status).toBe("enabled");
+    unsubscribe();
+    await manager.shutdown();
+    await reconstructed.shutdown();
+  },
+);
