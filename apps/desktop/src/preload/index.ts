@@ -1,5 +1,5 @@
 import type { UiBridgeEvent } from "../shared/plugin-ui.js";
-let uiListenerCount = 0;
+let nextUiListener = 0;
 import type { LanguageStatusEvent } from "../shared/language-services.js";
 import type { MotorTestState } from "../shared/motor-test.js";
 import type { UpdateState } from "../shared/updates.js";
@@ -69,16 +69,18 @@ const api: KobrixaApi = {
       snapshot: (input) => ipcRenderer.invoke("plugins:ui:snapshot", input),
       reportFailure: (input) => ipcRenderer.invoke("plugins:ui:report-failure", input),
       onEvent: (listener) => {
+        const id = ++nextUiListener;
+        const channel = `plugins:ui:event:${id}`;
         const receive = (_event: Electron.IpcRendererEvent, value: UiBridgeEvent) =>
           listener(value);
-        ipcRenderer.on("plugins:ui:event", receive);
-        if (++uiListenerCount === 1) void ipcRenderer.invoke("plugins:ui:subscribe");
+        ipcRenderer.on(channel, receive);
+        void ipcRenderer.invoke("plugins:ui:subscribe", id).catch(() => {});
         let active = true;
         return () => {
           if (!active) return;
           active = false;
-          ipcRenderer.removeListener("plugins:ui:event", receive);
-          if (--uiListenerCount === 0) void ipcRenderer.invoke("plugins:ui:unsubscribe");
+          ipcRenderer.removeListener(channel, receive);
+          void ipcRenderer.invoke("plugins:ui:unsubscribe", id).catch(() => {});
         };
       },
     },

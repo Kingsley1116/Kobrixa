@@ -31,7 +31,7 @@ import { registerCollabIpc } from "./collab/ipc.js";
 import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
 import { registerPluginIpc, registerCoreRecoveryIpc } from "./plugins/ipc.js";
-import { registerUiIpc, trustedWorkbench } from "./plugins/ui-bridge.js";
+import { registerUiIpc, registerUiEventIpc, trustedWorkbench } from "./plugins/ui-bridge.js";
 import { attachNativeLifecycle, requireCleanClose } from "./plugins/shutdown-coordinator.js";
 import { installPluginQuitCleanup, createQuitRecovery } from "./plugins/quit.js";
 import {
@@ -390,7 +390,6 @@ const primary = startPrimary(
     let offUi: (() => void) | undefined;
     const detachUi = () => {
       offUi?.();
-      offUi = undefined;
     };
     installPluginQuitCleanup(
       app,
@@ -633,11 +632,15 @@ const primary = startPrimary(
             send("plugins:recovery:changed", null),
           );
           app.once("quit", offRecovery);
-          handle("plugins:ui:subscribe", () => {
-            detachUi();
-            offUi = ui.bridge.onEvent((event) => send("plugins:ui:event", event));
+          offUi = registerUiEventIpc({
+            handle,
+            bridge: ui.bridge,
+            trusted: (event) => {
+              const current = renderer();
+              return !!current && trustedWorkbench(event, current);
+            },
+            send,
           });
-          handle("plugins:ui:unsubscribe", detachUi);
         },
       ],
       () => requireCleanClose(ui.coordinator, "update"),

@@ -557,6 +557,59 @@ describe("BM-16 authoritative ledger accounting", () => {
 });
 
 import { createUiChannelBinding } from "./ui-bridge.js";
+import { registerUiEventIpc } from "./ui-bridge.js";
+it("preload event streams replay independently, reject foreign frames and detach within a bounded budget", () => {
+  type Handle = Parameters<typeof registerUiEventIpc>[0]["handle"];
+  const handlers = new Map<string, Parameters<Handle>[1]>();
+  const handle: Handle = (channel, action) => {
+    handlers.set(channel, action as Parameters<Handle>[1]);
+  };
+  const send = vi.fn();
+  const current = { sender: { id: 1 }, senderFrame: {} } as Electron.IpcMainInvokeEvent;
+  const foreign = { ...current, senderFrame: {} } as Electron.IpcMainInvokeEvent;
+  const replay: UiBridgeEvent[] = [
+    { type: "catalog", hostEpoch: "host", revision: 1, owners: [] },
+    { type: "state", binding: { ...binding, kind: "status" }, revision: 4 },
+  ];
+  const events = new UiBridgeEvents(() => replay);
+  const detach = registerUiEventIpc({
+    handle,
+    bridge: { onEvent: events.subscribe },
+    trusted: (event) =>
+      event.sender === current.sender && event.senderFrame === current.senderFrame,
+    send,
+  });
+  const invoke = (name: string, event: Electron.IpcMainInvokeEvent, id: unknown) =>
+    handlers.get(name)!(event, id);
+  expect(invoke("plugins:ui:subscribe", current, 1)).toBe(true);
+  expect(send.mock.calls).toEqual(replay.map((event) => ["plugins:ui:event:1", event]));
+  send.mockClear();
+  expect(invoke("plugins:ui:subscribe", current, 2)).toBe(true);
+  expect(send.mock.calls).toEqual(replay.map((event) => ["plugins:ui:event:2", event]));
+  expect(invoke("plugins:ui:unsubscribe", foreign, 1)).toBe(false);
+  expect(invoke("plugins:ui:subscribe", foreign, 3)).toBe(false);
+  expect(invoke("plugins:ui:subscribe", current, "3")).toBe(false);
+  send.mockClear();
+  events.publish(replay[1]!);
+  expect(send.mock.calls.map(([channel]) => channel)).toEqual([
+    "plugins:ui:event:1",
+    "plugins:ui:event:2",
+  ]);
+  expect(invoke("plugins:ui:unsubscribe", current, 1)).toBe(true);
+  send.mockClear();
+  events.publish(replay[1]!);
+  expect(send).toHaveBeenCalledExactlyOnceWith("plugins:ui:event:2", replay[1]);
+  for (let n = 3; n <= 33; n++) expect(invoke("plugins:ui:subscribe", current, n)).toBe(true);
+  expect(invoke("plugins:ui:subscribe", current, 34)).toBe(false);
+  detach();
+  detach();
+  send.mockClear();
+  events.publish(replay[1]!);
+  expect(send).not.toHaveBeenCalled();
+  expect(invoke("plugins:ui:subscribe", current, 34)).toBe(true);
+  detach();
+  events.dispose();
+});
 import { registerActivationDeadline, type DeviceChannelAttachment } from "@kobrixa/plugin-runtime";
 async function channelFixture() {
   const h = executionFixture();

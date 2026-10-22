@@ -153,12 +153,36 @@ it("subscribes to UI changes and removes precisely its handler", () => {
   const callback = vi.fn();
   const off = api.plugins.ui.onEvent(callback);
   const [channel, handler] = electron.on.mock.calls[0]!;
-  expect(channel).toBe("plugins:ui:event");
+  expect(channel).toBe("plugins:ui:event:1");
   const event = { type: "catalog", hostEpoch: "host", revision: 2, owners: [] };
   handler({}, event);
   expect(callback).toHaveBeenCalledExactlyOnceWith(event);
   off();
   expect(electron.removeListener).toHaveBeenCalledExactlyOnceWith(channel, handler);
+});
+it("gives each UI listener its own replay stream and independent teardown", () => {
+  const first = vi.fn(),
+    second = vi.fn();
+  const offFirst = api.plugins.ui.onEvent(first);
+  const offSecond = api.plugins.ui.onEvent(second);
+  expect(electron.invoke.mock.calls).toEqual([
+    ["plugins:ui:subscribe", 1],
+    ["plugins:ui:subscribe", 2],
+  ]);
+  const [channelFirst] = electron.on.mock.calls[0]!;
+  const [channelSecond, receiveSecond] = electron.on.mock.calls[1]!;
+  expect(channelFirst).not.toBe(channelSecond);
+  const replay = { type: "catalog", hostEpoch: "host", revision: 3, owners: [] };
+  receiveSecond({}, replay);
+  expect(first).not.toHaveBeenCalled();
+  expect(second).toHaveBeenCalledExactlyOnceWith(replay);
+  offFirst();
+  offFirst();
+  offSecond();
+  expect(electron.invoke.mock.calls.slice(2)).toEqual([
+    ["plugins:ui:unsubscribe", 1],
+    ["plugins:ui:unsubscribe", 2],
+  ]);
 });
 it("core act sends option identifiers, never a renderer-supplied CoreActionReference", async () => {
   await api.plugins.recovery.act({ itemId: "item", actionId: "option" });

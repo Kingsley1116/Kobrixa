@@ -621,6 +621,40 @@ export function registerUiIpc(input: {
 }
 
 const scheduledStateFlushes = new WeakSet<UiStateRegistry>();
+/** Each preload listener receives its own atomic catalog/status replay. */
+export function registerUiEventIpc(input: {
+  handle: IpcHandle;
+  bridge: Pick<PluginUiBridge, "onEvent">;
+  trusted(event: { sender: { id: number }; senderFrame: unknown }): boolean;
+  send(channel: string, event: UiBridgeEvent): void;
+}): () => void {
+  const listeners = new Map<number, () => void>();
+  const valid = (id: unknown): id is number =>
+    typeof id === "number" && Number.isSafeInteger(id) && id > 0;
+  // This is a local renderer observer bound, independent of plugin RPC streams.
+  const limit = UI_LIMITS_V1.hostPanels + UI_LIMITS_V1.hostStatus;
+  input.handle("plugins:ui:subscribe", (event, id: unknown) => {
+    if (!input.trusted(event) || !valid(id)) return false;
+    if (listeners.has(id)) return true;
+    if (listeners.size >= limit) return false;
+    const off = input.bridge.onEvent((value) => {
+      if (input.trusted(event)) input.send(`plugins:ui:event:${id}`, value);
+    });
+    listeners.set(id, off);
+    return true;
+  });
+  input.handle("plugins:ui:unsubscribe", (event, id: unknown) => {
+    if (!input.trusted(event) || !valid(id)) return false;
+    listeners.get(id)?.();
+    listeners.delete(id);
+    return true;
+  });
+  return () => {
+    for (const off of listeners.values()) off();
+    listeners.clear();
+  };
+}
+
 function flushStateAfterReply(states: UiStateRegistry): void {
   if (scheduledStateFlushes.has(states)) return;
   scheduledStateFlushes.add(states);
