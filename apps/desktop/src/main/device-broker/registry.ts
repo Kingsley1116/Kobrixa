@@ -165,7 +165,7 @@ import type {
   Stage3EventEnvelope,
 } from "@kobrixa/plugin-runtime";
 import type {
-  ResourceErrorDetail,
+  ResourceErrorDetailFor,
   Stage3PluginErrorCode,
   PluginErrorCodeV150,
   Counter,
@@ -184,7 +184,7 @@ type EventRow = {
   pending: Array<{ event: Stage3EventEnvelope; at: number; bytes: number }>;
 };
 const encodedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-const eventSuccess = <T>(value: T): BusinessResult<T, ResourceErrorDetail> => ({ ok: true, value });
+const eventSuccess = <T>(value: T): BusinessResult<T, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150> => ({ ok: true, value });
 export class EventLedger implements CommonEventLedgerPort {
   #rows = new Map<Handle, EventRow>();
   #timer: ReturnType<typeof setInterval> | null = null;
@@ -395,7 +395,7 @@ export class EventLedger implements CommonEventLedgerPort {
     read: () => BusinessResult<T, D, C>,
   ): BusinessResult<
     { sequence: Counter; snapshot: T },
-    D | ResourceErrorDetail,
+    D | ResourceErrorDetailFor<"subscription">,
     C | PluginErrorCodeV150
   > {
     const row = this.#row(owner, id);

@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import type {} from "@electron-forge/plugin-vite/forge-vite-env";
 
 export default defineConfig(({ forgeConfigSelf }) => {
   const worker =
