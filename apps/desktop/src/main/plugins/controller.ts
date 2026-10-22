@@ -1517,6 +1517,11 @@ export async function composeDesktopMain(
   let offSources: (() => void) | undefined;
   let refresh = Promise.resolve();
   let inventory = "";
+  // Authority epochs change synchronously; do not wait for another command,
+  // provider exchange, or renderer heartbeat to withdraw the old UI intent.
+  const offAuthority = input.foundationOptions.authority.subscribe((ref) =>
+    intent.authorityChanged(ref),
+  );
   const refreshCatalog = () => {
     refresh = refresh.catch(input.report).then(async () => {
       const sources = plugins!.uiCatalogSources();
@@ -1529,6 +1534,7 @@ export async function composeDesktopMain(
     return refresh;
   };
   const disposeUi = () => {
+    offAuthority();
     offSources?.();
     offState();
     offCatalog();

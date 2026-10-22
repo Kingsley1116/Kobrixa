@@ -11,6 +11,7 @@ type Session = {
   binding: UiBinding;
   owner: ResourceOwner;
   ownerSource: string;
+  contextRef: string;
   scope: string;
   alive: boolean;
   pulsed: boolean;
@@ -66,6 +67,7 @@ export class UiIntent {
       binding,
       owner: { ...input.owner },
       ownerSource: input.owner.sourceKey,
+      contextRef: input.contextRef,
       scope: this.device.bindMotionScope(input),
       alive: true,
       pulsed: false,
@@ -219,6 +221,10 @@ export class UiIntent {
   forget(binding: UiBinding): void {
     this.revoke(binding, "resource-retired");
     this.#tombstones.delete(key(binding));
+  }
+  authorityChanged(contextRef: string): void {
+    for (const session of [...this.#sessions.values()])
+      if (session.contextRef === contextRef) this.revoke(session.binding, "resource-retired");
   }
   dispose(): void {
     for (const session of [...this.#sessions.values()]) this.revoke(session.binding, "window-lost");

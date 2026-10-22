@@ -80,6 +80,20 @@ it("release before a delayed command response tombstones the input token synchro
   expect(h.intent.liveGesture(binding, "pressed", "gesture")).toBe(false);
   h.intent.dispose();
 });
+it("authority changes synchronously retire only the matching context and reject old pulses", () => {
+  const h = harness();
+  h.intent.pulse(binding, h.challenges[0]!, null, null);
+  h.intent.begin(binding, "pressed");
+  h.intent.authorityChanged("other-context");
+  expect(h.intent.liveGesture(binding, "pressed", "gesture")).toBe(true);
+  h.intent.authorityChanged("context");
+  expect(h.device.endGesture).toHaveBeenCalledWith("gesture", "cancelled");
+  expect(h.device.revokeScope).toHaveBeenCalledWith("scope", "resource-retired");
+  expect(h.intent.scope(binding)).toBeUndefined();
+  expect(h.intent.pulse(binding, h.challenges[0]!, "gesture", "pressed")).toBe(false);
+  expect(h.intent.timerCount()).toBe(0);
+  h.intent.dispose();
+});
 it("a cancel received before begin prevents the late begin", () => {
   const h = harness();
   h.intent.pulse(binding, h.challenges[0]!, null, null);

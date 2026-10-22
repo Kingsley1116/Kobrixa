@@ -2185,6 +2185,42 @@ async function compositionInput() {
   };
   return { input, factory, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
+it("composition retires UI intent on real authority changes and detaches on disposal", async () => {
+  const f = await compositionInput();
+  const authority = f.input.foundationOptions.authority as AuthorityContexts;
+  const document = authority.open(17);
+  const ref = authority.core(17, "recovery").authorityContext!.ref;
+  const report = {
+    document,
+    sequence: 1,
+    state: "local",
+    roomId: null,
+    connected: true,
+    synced: true,
+    role: null,
+    isHolder: true,
+  };
+  const composition = await composeDesktopMain(f.input);
+  try {
+    const revoked = vi.spyOn(desktopUi(composition).intent, "authorityChanged");
+    authority.report(17, report);
+    expect(revoked).toHaveBeenCalledExactlyOnceWith(ref);
+    await composition.dispose();
+    revoked.mockClear();
+    authority.report(17, {
+      ...report,
+      sequence: 2,
+      state: "room",
+      roomId: "room",
+      role: "viewer",
+      isHolder: false,
+    });
+    expect(revoked).not.toHaveBeenCalled();
+  } finally {
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
 it("BM-18 creates one foundation and forwards the exact host/runtime pair", async () => {
   const f = await compositionInput();
   const create = vi.spyOn(PluginManager, "create");
