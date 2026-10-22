@@ -1,0 +1,112 @@
+{
+  "formatVersion": 1,
+  "family": "settings-storage-v1",
+  "cases": [
+    {
+      "id": "settings-boolean",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Settings"
+        },
+        "fields": [
+          {
+            "key": "connection.enabled",
+            "label": {
+              "en": "Enabled"
+            },
+            "type": "boolean",
+            "default": true
+          }
+        ]
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "mixed-enum",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Settings"
+        },
+        "fields": [
+          {
+            "key": "connection.mode",
+            "label": {
+              "en": "Mode"
+            },
+            "type": "enum",
+            "default": 1,
+            "options": [
+              {
+                "value": 1,
+                "label": {
+                  "en": "Number"
+                }
+              },
+              {
+                "value": "1",
+                "label": {
+                  "en": "Text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "read",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": {
+        "schemaVersion": 1
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "empty-quota",
+      "schema": "storage/quota",
+      "phase": "params",
+      "input": {},
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}

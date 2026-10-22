@@ -1,0 +1,2156 @@
+{
+  "formatVersion": 1,
+  "family": "settings-storage-v1",
+  "cases": [
+    {
+      "id": "settings-keys-128",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Boundary"
+        },
+        "fields": [
+          {
+            "key": "k0",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k1",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k2",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k3",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k4",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k5",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k6",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k7",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k8",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k9",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k10",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k11",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k12",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k13",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k14",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k15",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k16",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k17",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k18",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k19",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k20",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k21",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k22",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k23",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k24",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k25",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k26",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k27",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k28",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k29",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k30",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k31",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k32",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k33",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k34",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k35",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k36",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k37",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k38",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k39",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k40",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k41",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k42",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k43",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k44",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k45",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k46",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k47",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k48",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k49",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k50",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k51",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k52",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k53",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k54",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k55",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k56",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k57",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k58",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k59",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k60",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k61",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k62",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k63",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k64",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k65",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k66",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k67",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k68",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k69",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k70",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k71",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k72",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k73",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k74",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k75",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k76",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k77",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k78",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k79",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k80",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k81",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k82",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k83",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k84",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k85",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k86",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k87",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k88",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k89",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k90",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k91",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k92",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k93",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k94",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k95",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k96",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k97",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k98",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k99",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k100",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k101",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k102",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k103",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k104",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k105",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k106",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k107",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k108",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k109",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k110",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k111",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k112",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k113",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k114",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k115",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k116",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k117",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k118",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k119",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k120",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k121",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k122",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k123",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k124",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k125",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k126",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k127",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          }
+        ]
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "settings-keys-129",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Boundary"
+        },
+        "fields": [
+          {
+            "key": "k0",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k1",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k2",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k3",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k4",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k5",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k6",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k7",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k8",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k9",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k10",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k11",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k12",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k13",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k14",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k15",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k16",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k17",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k18",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k19",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k20",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k21",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k22",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k23",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k24",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k25",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k26",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k27",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k28",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k29",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k30",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k31",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k32",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k33",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k34",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k35",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k36",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k37",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k38",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k39",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k40",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k41",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k42",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k43",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k44",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k45",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k46",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k47",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k48",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k49",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k50",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k51",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k52",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k53",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k54",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k55",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k56",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k57",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k58",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k59",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k60",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k61",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k62",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k63",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k64",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k65",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k66",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k67",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k68",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k69",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k70",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k71",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k72",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k73",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k74",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k75",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k76",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k77",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k78",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k79",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k80",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k81",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k82",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k83",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k84",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k85",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k86",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k87",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k88",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k89",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k90",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k91",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k92",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k93",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k94",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k95",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k96",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k97",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k98",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k99",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k100",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k101",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k102",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k103",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k104",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k105",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k106",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k107",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k108",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k109",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k110",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k111",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k112",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k113",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k114",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k115",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k116",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k117",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k118",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k119",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k120",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k121",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k122",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k123",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k124",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k125",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k126",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k127",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "key": "k128",
+            "label": {
+              "en": "K"
+            },
+            "type": "boolean",
+            "default": true
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "record-bytes-8388608",
+      "schema": "storage/beginWrite",
+      "phase": "params",
+      "input": {
+        "target": {
+          "mode": "create"
+        },
+        "kind": "test",
+        "schemaVersion": 1,
+        "label": "Boundary",
+        "mediaType": "application/octet-stream",
+        "byteLength": 8388608,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "valid": true,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "record-bytes-8388609",
+      "schema": "storage/beginWrite",
+      "phase": "params",
+      "input": {
+        "target": {
+          "mode": "create"
+        },
+        "kind": "test",
+        "schemaVersion": 1,
+        "label": "Boundary",
+        "mediaType": "application/octet-stream",
+        "byteLength": 8388609,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}

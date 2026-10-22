@@ -1,0 +1,86 @@
+{
+  "formatVersion": 1,
+  "family": "settings-storage-v1",
+  "cases": [
+    {
+      "id": "unknown-field",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": {
+        "schemaVersion": 1,
+        "namespace": "foreign"
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "bool-version",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": {
+        "schemaVersion": true
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "noncanonical-base64",
+      "schema": "chunk",
+      "phase": "params",
+      "input": "Zh==",
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dangerous-key",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": {
+          "en": "Settings"
+        },
+        "fields": [
+          {
+            "key": "x.constructor",
+            "label": {
+              "en": "X"
+            },
+            "type": "boolean",
+            "default": false
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
+}
