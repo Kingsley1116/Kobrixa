@@ -12,6 +12,7 @@ import {
   diagnosticError,
 } from "./plugin-persistence-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
+import { readFoundationRenderer } from "./plugin-persistence-renderer-build.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // These are dependency locations, not permission to edit another owner's source.
@@ -80,6 +81,13 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
     for (const field of ["rendererUrl", "preload", "filesystem"])
       if (typeof handoffs[field] !== "string" || !handoffs[field])
         blockers.push(`Missing artifact ${field}`);
+    if (typeof handoffs.rendererArtifact !== "string")
+      blockers.push("Missing retained renderer artifact receipt");
+    else {
+      const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
+      assert.equal(handoffs.rendererUrl, renderer.rendererUrl);
+      assert.equal(handoffs.preload, renderer.preload);
+    }
     // Final native mounting/collector review cannot be guessed against F declarations.
     if (handoffs.nativeMountsReviewed !== true)
       blockers.push("D170/V170: review and attach native settings/recovery mounts in T7 shell");
@@ -517,6 +525,7 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
 }
 export async function runFoundationEvidence({ referencesOnly = false } = {}) {
   const handoffs = await preflight();
+  const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
   if (!referencesOnly)
     throw new Error(
       "BLOCKED: thirteen observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
@@ -585,6 +594,7 @@ app.exit(code);
     Buffer.concat([
       await readFile(entry),
       await readFile(workerEntry),
+      Buffer.from(renderer.receiptSha256),
       await readFile(
         path.join(buildRoot, "plugins/acceptance-builtin-recording/resource-index.json"),
       ),
@@ -635,6 +645,7 @@ app.exit(code);
     artifact: entry,
     bundleSha256,
     artifactSha256,
+    renderer,
     blocked: [
       "full foundation matrix",
       "public JS/Python parity",

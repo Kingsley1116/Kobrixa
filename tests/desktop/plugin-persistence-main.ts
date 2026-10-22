@@ -2,7 +2,6 @@ import type {
   DeviceDrainGrant,
   ProfileWriterLock,
   Stage3RuntimePorts,
-  UiBridgeEvent,
   Stage3ChannelContext,
 } from "@kobrixa/plugin-runtime";
 import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
@@ -898,7 +897,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
   const { resolveBuiltinLaunch } =
     await import("../../apps/desktop/src/main/plugins/builtin-launch.js");
   const { readSource } = await import("@kobrixa/plugin-runtime");
-  const { registerUiIpc, diagnosticsFor: bridgeDiagnostics } =
+  const { registerUiIpc, registerUiEventIpc, diagnosticsFor: bridgeDiagnostics } =
     await import("../../apps/desktop/src/main/plugins/ui-bridge.js");
   const { diagnosticsFor: stateDiagnostics } =
     await import("../../packages/plugin-runtime/src/ui-state.js");
@@ -926,16 +925,24 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       });
       window = win;
       const authority = new AuthorityContexts(profile.hostEpoch);
-      const document = authority.open(win.webContents.id);
-      authority.report(win.webContents.id, {
-        document,
-        sequence: 1,
-        state: "local",
-        roomId: null,
-        connected: true,
-        synced: true,
-        role: null,
-        isHolder: true,
+      const openDocument = () => {
+        const document = authority.open(win.webContents.id);
+        authority.report(win.webContents.id, {
+          document,
+          sequence: 1,
+          state: "local",
+          roomId: null,
+          connected: true,
+          synced: true,
+          role: null,
+          isHolder: true,
+        });
+      };
+      openDocument();
+      // Each actual top-level navigation receives a new main-owned document scope.
+      // No renderer-supplied authority or stale initial about:blank scope is reused.
+      win.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+        if (mainFrame && !inPlace) openDocument();
       });
       const scope = () => {
         const p = authority.core(win.webContents.id, "recovery");
@@ -1120,18 +1127,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           });
         };
         registerUiIpc({ handle, bridge: ui.bridge, trusted });
-        let uiOff: (() => void) | undefined;
-        handle("plugins:ui:subscribe", () => {
-          uiOff?.();
-          uiOff = ui.bridge.onEvent((event: UiBridgeEvent) => {
-            if (!win.isDestroyed()) win.webContents.send("plugins:ui:event", event);
-          });
-        });
-        handle("plugins:ui:unsubscribe", () => {
-          uiOff?.();
-          uiOff = undefined;
-        });
-        off.push(() => uiOff?.());
+        off.push(
+          registerUiEventIpc({
+            handle,
+            bridge: ui.bridge,
+            trusted,
+            send: (channel, event) => {
+              if (!win.isDestroyed()) win.webContents.send(channel, event);
+            },
+          }),
+        );
         win.on("blur", () => ui.intent.dispose());
         win.on("hide", () => ui.intent.dispose());
         win.webContents.on("render-process-gone", () => {
