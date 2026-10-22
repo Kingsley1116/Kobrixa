@@ -1,3 +1,4 @@
+// Provider operations pass an immutable, per-operation bound connection.
 import type { Ev3Connection } from "./contracts.js";
 import type { DeviceInputModes, DeviceMonitorSnapshot, MonitorPortState } from "./monitor-types.js";
 import { DeviceOperationError, withTimeout } from "./errors.js";
@@ -336,7 +337,7 @@ export async function setInputMode(
   validatePort(port, expectedType);
   if (![29, 30, 32, 33].includes(expectedType) || !Number.isInteger(mode) || mode < 0 || mode > 7)
     throw new DeviceOperationError("device", "This sensor mode is not supported by the monitor.");
-  const deadline = Date.now() + 5000;
+  const deadline = performance.now() + 5000;
   const data = await exchange(connection, modeCommand(port, expectedType, mode), signal);
   const input = metadataAt(data, 2);
   if (data.getUint8(0) !== 1) {
@@ -347,11 +348,11 @@ export async function setInputMode(
   }
   // The command only requests the change. Read back the mode and readiness;
   // UART sensors can remain busy for over a second after switching modes.
-  while (Date.now() < deadline) {
+  while (performance.now() < deadline) {
     const snapshot = await readSnapshot(
       connection,
       signal,
-      Math.min(EXCHANGE_TIMEOUT, Math.max(1, deadline - Date.now())),
+      Math.min(EXCHANGE_TIMEOUT, Math.max(1, deadline - performance.now())),
     );
     const current = snapshot.inputs[port]!;
     if (current.type !== expectedType || current.state === "empty" || current.state === "error")
@@ -359,7 +360,7 @@ export async function setInputMode(
     if (current.mode === mode && current.state === "ready") return snapshot;
     if (snapshot.program.status !== "stopped")
       throw new DeviceOperationError("device", "The EV3 program started while switching modes.");
-    await delay(Math.min(100, Math.max(0, deadline - Date.now())), undefined, { signal });
+    await delay(Math.min(100, Math.max(0, deadline - performance.now())), undefined, { signal });
   }
   throw new DeviceOperationError(
     "device",

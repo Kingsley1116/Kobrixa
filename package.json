@@ -33,7 +33,7 @@
     "check:desktop": "pnpm --filter \"@kobrixa/desktop...\" --filter @kobrixa/plugin-sdk -r check && eslint apps/desktop packages frontends tools tests assets",
     "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing",
     "test:web": "vitest run --project web --project @kobrixa/ir && pnpm --filter @kobrixa/web test:worker",
-    "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk && pnpm test:static-languages",
+    "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk && pnpm test:static-languages && pnpm test:device-broker",
     "test:python-sdk": "node tools/run-python-tests.mjs",
     "test:ci-routing": "node --test tools/ci/*.test.mjs",
     "package:installers": "pnpm --filter @kobrixa/desktop make",
@@ -42,7 +42,9 @@
     "generate:static-language-core-ids": "node tools/generate-static-language-core-ids.mjs",
     "test:static-languages": "node tools/generate-static-language-core-ids.mjs --check && node --test tests/desktop/static-languages-*.test.mjs tests/desktop/smoke-harness.test.mjs",
     "test:static-languages:boundaries": "node tools/check-static-language-boundaries.mjs",
-    "test:static-languages:smoke": "node tests/desktop/static-languages-run.mjs"
+    "test:static-languages:smoke": "node tests/desktop/static-languages-run.mjs",
+    "test:device-broker": "node --test tests/desktop/device-broker-*.test.mjs",
+    "test:device-broker:smoke": "node tests/desktop/device-broker-run.mjs"
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",

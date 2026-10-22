@@ -1,108 +1,56 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DeviceMonitorSnapshot } from "@kobrixa/device";
+import { expect, it, vi } from "vitest";
 import { MonitorService } from "./monitor-service.js";
-
-const sample = (): DeviceMonitorSnapshot => ({
-  sampledAt: Date.now(),
-  battery: { percent: 70, voltage: 7.5 },
-  program: { status: "stopped", rawStatus: 64, result: 0 },
-  inputs: [],
-  outputs: [],
+import type { LegacyDevice } from "../device-broker/legacy-device.js";
+it("F07 separate owners share broker demand and hiding one owner preserves the other", async () => {
+  const remove = vi.fn(async () => {}),
+    watch = vi.fn(async () => remove);
+  const service = new MonitorService(
+    { watch, inputModes: vi.fn(), setInputMode: vi.fn() } as unknown as LegacyDevice,
+    () => {},
+  );
+  await service.watch("s", true, 1);
+  await service.watch("s", true, 2);
+  expect(watch).toHaveBeenCalledTimes(2);
+  await service.watch("s", false, 1);
+  expect(remove).toHaveBeenCalledOnce();
+  await service.watch("s", false, 2);
+  expect(remove).toHaveBeenCalledTimes(2);
+  await service.dispose();
+  expect(remove).toHaveBeenCalledTimes(2);
 });
-const services: MonitorService[] = [];
-function setup() {
-  const devices = {
-    monitor: vi.fn(async () => ({ status: "ok" as const, value: sample() })),
-    inputModes: vi.fn(),
-    setInputMode: vi.fn(),
-  };
+it("F07 close during subscription registration disposes a late subscription", async () => {
+  let resolve!: (dispose: () => Promise<void>) => void;
+  const remove = vi.fn(async () => {});
+  const service = new MonitorService(
+    {
+      watch: () =>
+        new Promise((yes) => {
+          resolve = yes;
+        }),
+    } as unknown as LegacyDevice,
+    () => {},
+  );
+  const opening = service.watch("s", true, 1);
+  const closing = service.dispose();
+  resolve(remove);
+  await opening;
+  await closing;
+  expect(remove).toHaveBeenCalledOnce();
+});
+it("T5fix a closed feed pauses Monitor and allows the same owner to watch again", async () => {
+  let closed: ((reason: string) => void) | undefined;
+  const watch = vi.fn(
+    async (_id: string, _interval: number, _receive: unknown, onClosed?: typeof closed) => {
+      closed = onClosed;
+      return async () => {};
+    },
+  );
   const publish = vi.fn();
-  const service = new MonitorService(devices, publish);
-  services.push(service);
-  return { devices, publish, service };
-}
-beforeEach(() => vi.useFakeTimers());
-afterEach(() => {
-  for (const service of services.splice(0)) void service.dispose();
-  vi.useRealTimers();
-});
-
-describe("shared main-process monitor", () => {
-  it("keeps one sampling clock when the panel closes during a recording", async () => {
-    const { service, devices } = setup();
-    await service.watch("ev3", true);
-    await vi.advanceTimersByTimeAsync(0);
-    await service.acquire("ev3");
-    const before = devices.monitor.mock.calls.length;
-    await service.watch("ev3", false);
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(devices.monitor).toHaveBeenCalledTimes(before + 3);
-    await service.watch("ev3", true);
-    await vi.advanceTimersByTimeAsync(0);
-    const visible = devices.monitor.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(devices.monitor).toHaveBeenCalledTimes(visible + 2);
-    await service.watch("ev3", false);
-    await service.release("ev3");
-    const stopped = devices.monitor.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(devices.monitor).toHaveBeenCalledTimes(stopped);
-  });
-  it("rejects mode changes during recording and never mutates the device", async () => {
-    const { service, devices } = setup();
-    await service.acquire("ev3");
-    expect((await service.setInputMode("ev3", 0, 29, 1)).status).toBe("error");
-    expect(devices.setInputMode).not.toHaveBeenCalled();
-    expect(service.latest("ev3")?.recording).toBe(true);
-    await service.release("ev3");
-    expect(service.latest("ev3")?.recording).toBe(false);
-  });
-  it("drains a slow read and ignores its late result after disconnect", async () => {
-    const { service, devices, publish } = setup();
-    let finish!: (value: { status: "ok"; value: DeviceMonitorSnapshot }) => void;
-    devices.monitor.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
-    await service.watch("old", true);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(devices.monitor).toHaveBeenCalledTimes(1);
-    const stopped = service.disconnect("old");
-    finish({ status: "ok", value: sample() });
-    await stopped;
-    expect(publish.mock.calls.some(([value]) => value.status === "live")).toBe(false);
-    expect(service.latest("old")).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(devices.monitor).toHaveBeenCalledTimes(1);
-  });
-  it("cannot start from a cached sample while sensor metadata is changing", async () => {
-    const { service, devices } = setup();
-    await service.watch("ev3", true);
-    await vi.advanceTimersByTimeAsync(0);
-    let finish!: (value: { status: "ok"; value: DeviceMonitorSnapshot }) => void;
-    devices.setInputMode.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
-    const changing = service.setInputMode("ev3", 0, 29, 1);
-    await vi.advanceTimersByTimeAsync(0);
-    await expect(service.acquire("ev3")).rejects.toThrow("mode operation");
-    expect(service.recordingSession).toBeUndefined();
-    finish({ status: "ok", value: sample() });
-    await changing;
-    await service.acquire("ev3");
-    expect(service.recordingSession).toBe("ev3");
-  });
-  it("does not accept a busy result as the fresh first recording sample", async () => {
-    const { service, devices } = setup();
-    devices.monitor.mockResolvedValueOnce({ status: "busy" } as never);
-    await expect(service.acquire("ev3")).rejects.toThrow("fresh");
-    expect(service.recordingSession).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(devices.monitor).toHaveBeenCalledTimes(1);
-  });
+  const service = new MonitorService({ watch } as unknown as LegacyDevice, publish);
+  await service.watch("s", true, 1);
+  closed?.("overflow");
+  expect(service.latest("s")?.status).toBe("paused");
+  await service.watch("s", true, 1);
+  expect(watch).toHaveBeenCalledTimes(2);
+  await service.dispose();
 });

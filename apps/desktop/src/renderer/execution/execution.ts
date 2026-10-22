@@ -107,6 +107,7 @@ export class ExecutionController {
   private unsubscribe: Array<() => void> = [];
   private workspaceId: string | undefined;
   private generation = 0;
+  private disconnectingSession: string | undefined;
   private logId = 0;
   private deviceLogs: OperationLog[] = [];
   private motorActivity:
@@ -150,6 +151,7 @@ export class ExecutionController {
           event.type === "state" &&
           event.state === "disconnected" &&
           event.sessionId === this.state.session?.id &&
+          event.sessionId !== this.disconnectingSession &&
           event.sessionId
         ) {
           this.connectionLost(event.message ?? "EV3 disconnected.", false);
@@ -237,7 +239,7 @@ export class ExecutionController {
     return this.editingLocked || Boolean(this.state.fileBusy || this.state.monitorBusy);
   }
   get editingLocked(): boolean {
-    return this.working || Boolean(this.pendingRun);
+    return this.working || Boolean(this.pendingRun || this.disconnectingSession);
   }
   editingLockedFor(id: string | undefined): boolean {
     return Boolean(id && this.editingLocked && this.operationWorkspaceId === id);
@@ -562,8 +564,12 @@ export class ExecutionController {
     );
   }
   async connect(target: DeviceDescriptor | string): Promise<void> {
-    if (this.working || this.state.session) return;
+    if (this.working || this.state.session || this.disconnectingSession) return;
     if (this.state.recovery) await this.disconnect();
+    // Failed cancellation restores recovery; pending cancellation must never
+    // authorize a replacement connection or clear its cleanup error.
+    if (this.working || this.state.session || this.state.recovery || this.disconnectingSession)
+      return;
     this.update({ connectionNotice: undefined });
     await this.perform(async (generation) => {
       this.phase("connecting");
@@ -593,23 +599,66 @@ export class ExecutionController {
     else this.publish();
   }
   async disconnect(): Promise<void> {
+    if (this.disconnectingSession) return;
     const recovery = this.state.recovery;
     if (recovery) {
-      // Clear synchronously so an in-flight restored event cannot be adopted.
-      this.update({ recovery: undefined, connectionNotice: undefined });
-      await this.api.device.disconnect(recovery.sessionId);
+      const generation = ++this.generation;
+      this.disconnectingSession = recovery.sessionId;
+      this.pendingRun = undefined;
+      // Suppress restored events while cancellation is pending, but retain the
+      // original recovery snapshot locally so failed cleanup can be retried.
+      this.update({ recovery: undefined, connectionNotice: undefined, error: undefined });
+      this.phase("disconnecting");
+      try {
+        await this.api.device.disconnect(recovery.sessionId);
+        if (generation === this.generation) this.update({ phase: "idle" });
+      } catch (error) {
+        if (generation === this.generation && !this.state.session)
+          this.update({
+            recovery,
+            phase: "error",
+            error: {
+              phase: "disconnecting",
+              detail: error instanceof Error ? error.message : String(error),
+            },
+          });
+      } finally {
+        if (this.disconnectingSession === recovery.sessionId) this.disconnectingSession = undefined;
+        this.publish();
+      }
       return;
     }
     const session = this.state.session;
-    if (this.locked || !session) return;
-    await this.perform(async (generation) => {
-      this.phase("disconnecting");
-      // Clear before the backend event so an intentional disconnect is not an error.
-      this.update({ session: undefined, deployed: undefined, connectionNotice: undefined });
+    if (!session || this.state.phase === "disconnecting") return;
+    const generation = ++this.generation;
+    this.disconnectingSession = session.id;
+    this.pendingRun = undefined;
+    this.update({ error: undefined });
+    this.phase("disconnecting");
+    try {
       await this.api.device.disconnect(session.id);
-      this.assertCurrent(generation);
+      if (generation !== this.generation && this.state.session?.id !== session.id) return;
+      if (this.state.session?.id === session.id)
+        this.update({
+          session: undefined,
+          deployed: undefined,
+          connectionNotice: undefined,
+          phase: "idle",
+        });
       this.log("disconnected");
-    });
+    } catch (error) {
+      if (this.state.session?.id === session.id)
+        this.update({
+          phase: "error",
+          error: {
+            phase: "disconnecting",
+            detail: error instanceof Error ? error.message : String(error),
+          },
+        });
+    } finally {
+      if (this.disconnectingSession === session.id) this.disconnectingSession = undefined;
+      this.publish();
+    }
   }
   private async deploy(version: BuildVersion, generation: number): Promise<void> {
     if (!version.path || version.deploy !== "ev3")

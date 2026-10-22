@@ -196,7 +196,7 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
             )}
           </div>
         )}
-        {plugin.source === "development" && (
+        {plugin.canToggle && (
           <div className="plugins-actions">
             {plugin.status !== "invalid" && (
               <button
@@ -216,15 +216,17 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
             >
               {t.reload}
             </button>
-            {origin === "linked" && plugin.status === "invalid" && (
-              <button
-                disabled={rowBusy || state.safeMode}
-                onClick={rowAction(() => window.kobrixa.plugins.relinkFolder(key))}
-              >
-                {t.relink}
-              </button>
-            )}
-            {origin === "linked" && (
+            {plugin.source === "development" &&
+              origin === "linked" &&
+              plugin.status === "invalid" && (
+                <button
+                  disabled={rowBusy || state.safeMode}
+                  onClick={rowAction(() => window.kobrixa.plugins.relinkFolder(key))}
+                >
+                  {t.relink}
+                </button>
+              )}
+            {plugin.source === "development" && origin === "linked" && (
               <button
                 disabled={rowBusy}
                 onClick={rowAction(() => window.kobrixa.plugins.unlink(key))}

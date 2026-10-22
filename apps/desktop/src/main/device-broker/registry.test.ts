@@ -307,3 +307,123 @@ it("reports host and source subscription quota limits", () => {
   expect(ledger.create(owner)).toMatchObject({ ok: false, error: { detail: { limit: 32 } } });
   ledger.dispose();
 });
+
+it.each([
+  ["devices.telemetry", "busy"],
+  ["devices.telemetry", "read-error"],
+  ["devices.recordingFrames", "busy"],
+  ["devices.recordingFrames", "read-error"],
+] as const)("%s overflow widens a narrower %s gap and preserves its reason", (kind, reason) => {
+  const sent: Stage3EventEnvelope[] = [];
+  const ledger = new EventLedger(
+    () => 0,
+    (event) => sent.push(event),
+    () => {},
+  );
+  const created = ledger.create(owner);
+  if (!created.ok) throw new Error("create");
+  const id = created.value.subscriptionId;
+  ledger.activate(owner, id);
+  const publish = (sequence: number, existing = false) => {
+    const frames = [
+      {
+        ...frame(),
+        sequence,
+        values: Array.from({ length: 38 }, () => ({ channelId: ID, value: 1 })),
+        ...(existing ? { gap: { fromSequence: 201, toSequence: 201, reason } } : {}),
+      },
+    ];
+    return ledger.publish(
+      owner,
+      id,
+      kind === "devices.telemetry"
+        ? {
+            kind,
+            data: {
+              sessionId: ID,
+              frames,
+              snapshot: {
+                sessionId: ID,
+                revision: 1,
+                status: "unavailable",
+                ageMs: null,
+                frame: null,
+              },
+            },
+          }
+        : { kind, data: { reservationId: ID, frames, gap: null } },
+      "telemetry",
+    );
+  };
+  try {
+    for (let sequence = 1; sequence <= 200; sequence++) publish(sequence);
+    expect(sent.length).toBeLessThan(200);
+    const lastDelivered = sent.at(-1)!;
+    if (
+      lastDelivered.kind !== "devices.telemetry" &&
+      lastDelivered.kind !== "devices.recordingFrames"
+    )
+      throw new Error("frames");
+    const firstDropped = lastDelivered.data.frames.at(-1)!.sequence + 1;
+    expect(firstDropped).toBeLessThan(201);
+    ledger.ack(owner, id, lastDelivered.sequence);
+    publish(201, true);
+    const next = sent.at(-1)!;
+    if (next.kind !== kind) throw new Error("wrong event");
+    if (next.kind !== "devices.telemetry" && next.kind !== "devices.recordingFrames")
+      throw new Error("frames");
+    expect(next.data.frames[0]!.gap).toEqual({
+      fromSequence: firstDropped,
+      toSequence: 201,
+      reason,
+    });
+  } finally {
+    ledger.dispose();
+  }
+});
+
+it("contains timer sweep send failures, logs no native text, and continues other owners", async () => {
+  vi.useFakeTimers();
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  let now = 0;
+  const healthy = { ...owner, sourceKey: "builtin:healthy" };
+  const send = vi.fn((event: Stage3EventEnvelope) => {
+    if (event.kind === "events.resyncRequired" && event.owner.sourceKey === owner.sourceKey)
+      throw new Error("private native transport detail");
+  });
+  const ledger = new EventLedger(
+    () => now,
+    send,
+    () => {},
+  );
+  try {
+    const ids = [owner, healthy].map((current) => {
+      const created = ledger.create(current);
+      if (!created.ok) throw new Error("create");
+      const id = created.value.subscriptionId;
+      ledger.activate(current, id);
+      ledger.publish(
+        current,
+        id,
+        { kind: "devices.catalog", data: { revision: 1, providers: [], sessions: [] } },
+        "control",
+      );
+      return id;
+    });
+    now = 10000;
+    await expect(vi.advanceTimersByTimeAsync(500)).resolves.toBe(vi);
+    expect(ledger.owns(owner, ids[0]!)).toBe(false);
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({
+      owner: healthy,
+      kind: "events.resyncRequired",
+    });
+    expect(logged).toHaveBeenCalledExactlyOnceWith("Device event sweep failed.");
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("private native");
+    ledger.ack(healthy, ids[1]!, send.mock.calls.at(-1)![0].sequence);
+    expect(ledger.diagnostics()).toEqual({ subscriptions: 0, queuedEvents: 0, queuedBytes: 0 });
+  } finally {
+    ledger.dispose();
+    logged.mockRestore();
+    vi.useRealTimers();
+  }
+});

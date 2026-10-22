@@ -29,6 +29,7 @@ async function plugin(name: string, value: unknown, entry = "main.py", prefix = 
 }
 const builtin = {
   kind: "builtin" as const,
+  policy: "required" as const,
   resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
@@ -72,6 +73,7 @@ describe("loadPlugins", () => {
       readSource(
         {
           kind: "builtin",
+          policy: "required",
           resources: {},
           manifest: {
             id: "test.language",
@@ -309,6 +311,7 @@ describe("loadPlugins", () => {
       readSource(
         {
           kind: "builtin",
+          policy: "required",
           resources: {},
           manifest: manifest({ runtime: { kind: "builtin" }, activationEvents: [], contributes }),
         },
@@ -413,7 +416,64 @@ describe("loadPlugins", () => {
   });
   it("throws on an invalid built-in manifest", async () => {
     await expect(
-      loadPlugins([{ kind: "builtin", resources: {}, manifest: { id: "x" } }], none),
+      loadPlugins(
+        [{ kind: "builtin", policy: "required", resources: {}, manifest: { id: "x" } }],
+        none,
+      ),
     ).rejects.toThrow(/built-in/i);
   });
+});
+
+it.each([[], null, "wrong", 1, { id: "kobrixa.device-ev3" }].map((value) => [value]))(
+  "F01 rejects every external own deviceProviders value before normal parsing: %j",
+  async (deviceProviders) => {
+    const source = await plugin("provider-impostor", {
+      ...manifest(),
+      runtime: { kind: "builtin" },
+      permissions: ["devices.provide"],
+      contributes: { deviceProviders, languageServices: [] },
+    });
+    const [loaded] = await loadPlugins([source], none);
+    expect(loaded).toMatchObject({ status: "invalid" });
+    expect(loaded!.problems.map((item) => item.code)).toEqual([
+      "PLUGIN_E_DEVICE_PROVIDER_REQUIRES_BUILTIN",
+    ]);
+  },
+);
+it("F20 applies disable and safe mode only to optional builtins", async () => {
+  const optional = {
+    ...builtin,
+    policy: "optional" as const,
+    manifest: {
+      id: "kobrixa.device-ev3",
+      version: "1.0.0",
+      apiVersion: "^1.5.0",
+      runtime: { kind: "builtin" },
+    },
+  };
+  const required = { ...builtin, policy: "required" as const };
+  const sources = [required, optional];
+  expect(
+    (await loadPlugins(sources, { disabled: new Set(), safeMode: true })).map(
+      (entry) => entry.status,
+    ),
+  ).toEqual(["enabled", "disabled"]);
+  expect(
+    (
+      await loadPlugins(sources, {
+        disabled: new Set(["builtin:kobrixa.device-ev3"]),
+        safeMode: false,
+      })
+    ).map((entry) => entry.status),
+  ).toEqual(["enabled", "disabled"]);
+  expect((await loadPlugins(sources, none)).map((entry) => entry.status)).toEqual([
+    "enabled",
+    "enabled",
+  ]);
+});
+it("F20 never grants required policy when host policy is absent", async () => {
+  const source = { ...builtin } as unknown as Parameters<typeof readSource>[0];
+  Reflect.deleteProperty(source, "policy");
+  const loaded = await readSource(source, { safeMode: false });
+  expect(loaded.problems.map((item) => item.code)).toContain("PLUGIN_E_MANIFEST");
 });

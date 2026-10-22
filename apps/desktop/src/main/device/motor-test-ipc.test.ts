@@ -10,7 +10,7 @@ import { UpdateOperationGate, type UpdateService } from "../updates/service.js";
 
 describe("motor test IPC", () => {
   it("validates requests and binds control to the trusted renderer", async () => {
-    const renderer = { id: 1, mainFrame: {} };
+    const renderer = { id: 1, mainFrame: {}, once: vi.fn() };
     const motors = {
       start: vi.fn(),
       stop: vi.fn(),
@@ -32,6 +32,17 @@ describe("motor test IPC", () => {
       { monitor: {} as never, lab: {} as never, motors: motors as never },
     );
     const event = { sender: renderer, senderFrame: renderer.mainFrame };
+    const context = handlers.get("collab:device-control-context")!(event) as { document: string };
+    await handlers.get("collab:set-device-control")!(event, {
+      document: context.document,
+      sequence: 1,
+      state: "local",
+      roomId: null,
+      connected: true,
+      synced: true,
+      role: null,
+      isHolder: true,
+    });
     const request = {
       sessionId: "00000000-0000-4000-8000-000000000001",
       testId: "00000000-0000-4000-8000-000000000002",

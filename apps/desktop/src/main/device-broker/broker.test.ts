@@ -918,7 +918,7 @@ it("conflicting and replaced provider generations cannot reuse a catalog allocat
   expect(next.identify({ ...tuple, sessionId: reconnected.value.session.sessionId })).not.toBe(id);
 });
 
-it("a connect settling after its deadline permits a later connection", async () => {
+it("F09 a connect settling after its deadline permits a later connection", async () => {
   vi.useFakeTimers();
   try {
     const h = setup(),
@@ -959,7 +959,7 @@ it("a connect settling after its deadline permits a later connection", async () 
   }
 });
 it.each(["provider", "lane"] as const)(
-  "finish bounds stalled %s cleanup and subsequent cancel",
+  "F09 finish bounds stalled %s cleanup and subsequent cancel",
   async (failure) => {
     vi.useFakeTimers();
     try {
@@ -1026,7 +1026,7 @@ it.each(["provider", "lane"] as const)(
   },
 );
 it.each(["throw", "outcome"] as const)(
-  "failed input mode %s preserves source revision and notifies subscribers",
+  "F09 failed input mode %s preserves source revision and notifies subscribers",
   async (failure) => {
     const h = setup(),
       p = pluginPrincipal();
@@ -1091,3 +1091,529 @@ it.each(["throw", "outcome"] as const)(
     await h.broker.resources.beginShutdown();
   },
 );
+
+it.each(["success", "failure", "late"] as const)(
+  "F09 cancel preserves settled provider evidence and bounds %s outcomes",
+  async (outcomeKind) => {
+    vi.useFakeTimers();
+    try {
+      const h = setup(),
+        principal = pluginPrincipal();
+      const connected = await h.broker.request(
+        principal,
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+        signal(),
+      );
+      if (!connected.ok) throw new Error("connect");
+      const outcome = {
+        value: outcomeKind === "failure" ? null : { kind: "mutation" as const, verified: true },
+        dispatch: "unknown" as const,
+        stopConfirmation: "unconfirmed" as const,
+        error:
+          outcomeKind === "failure"
+            ? { reason: "readback-failed" as const, message: "Original handle close failed" }
+            : null,
+      };
+      let release!: () => void;
+      h.provider.legacy = () =>
+        new Promise((resolve) => {
+          release = () => resolve(outcome);
+        });
+      const op = await h.broker.begin({
+        principal,
+        sessionId: connected.value.session.sessionId,
+        operationClass: "file-write",
+        signal: signal(),
+      });
+      const work = op.execute({ kind: "mkdir", remotePath: "test" });
+      const settled = work.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      const cancel = op.cancel();
+      if (outcomeKind === "late") {
+        h.setNow(15000);
+        await vi.advanceTimersByTimeAsync(15000);
+        await cancel;
+        expect(await settled).toMatchObject({
+          error: {
+            result: { error: { code: "PLUGIN_E_TIMEOUT", detail: { reason: "deadline" } } },
+          },
+        });
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(await settled).toMatchObject({
+          error: {
+            result: { error: { code: "PLUGIN_E_TIMEOUT", detail: { reason: "deadline" } } },
+          },
+        });
+      } else {
+        release();
+        await cancel;
+        if (outcomeKind === "success") expect(await settled).toEqual({ value: outcome });
+        else
+          expect(await settled).toMatchObject({
+            error: {
+              result: {
+                error: {
+                  message: outcome.error!.message,
+                  detail: {
+                    kind: "device",
+                    reason: "readback-failed",
+                    dispatch: "unknown",
+                    stopConfirmation: "unconfirmed",
+                  },
+                },
+              },
+            },
+          });
+      }
+      await op.cancel();
+      await op.finish();
+      await h.broker.resources.beginShutdown();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("T5fix retained operations permit further execute calls after a recoverable provider error", async () => {
+  const h = setup(),
+    principal = pluginPrincipal();
+  const connected = await h.broker.request(
+    principal,
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect");
+  const original = h.provider.legacy.bind(h.provider);
+  vi.spyOn(h.provider, "legacy").mockImplementation(async (key, request, ctx) =>
+    request.kind === "list"
+      ? {
+          value: null,
+          dispatch: "sent",
+          stopConfirmation: "not-required",
+          error: { reason: "provider-failure", message: "Missing directory" },
+        }
+      : original(key, request, ctx),
+  );
+  const operation = await h.broker.begin({
+    principal,
+    sessionId: connected.value.session.sessionId,
+    operationClass: "deployment",
+    signal: signal(),
+  });
+  try {
+    expect((await operation.execute({ kind: "list", remotePath: "/missing" })).error?.reason).toBe(
+      "provider-failure",
+    );
+    expect((await operation.execute({ kind: "mkdir", remotePath: "/missing" })).error).toBeNull();
+    expect((await operation.execute({ kind: "mkdir", remotePath: "/second" })).error).toBeNull();
+  } finally {
+    await operation.finish();
+    h.unregister();
+  }
+});
+import { LegacyFiles } from "./legacy-files.js";
+it("T5fix real broker execution remains exchange-bounded after confirmation expires", async () => {
+  vi.useFakeTimers();
+  const h = setup(),
+    principal = pluginPrincipal();
+  try {
+    const connected = await h.broker.request(
+      principal,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const files = new LegacyFiles(h.broker, () => principal, h.dependencies.now);
+    const result = files
+      .run(connected.value.session.sessionId, async (session, cancellation) => {
+        await session.confirm(async () => true);
+        await new Promise<void>((resolve) => setTimeout(resolve, 600001));
+        h.setNow(600001);
+        await session.createDirectory("/late", cancellation);
+      })
+      .then(
+        () => "ok",
+        () => "expired",
+      );
+    await vi.advanceTimersByTimeAsync(600002);
+    expect(await result).toBe("ok");
+  } finally {
+    h.unregister();
+    vi.useRealTimers();
+  }
+});
+import { observeCoreTelemetryClosed } from "./broker.js";
+import type { CorePrincipal } from "./broker-port.js";
+it.each(["ack-deadline", "session-loss", "caller"])(
+  "T5fix core telemetry reports %s closure once",
+  async (reason) => {
+    vi.useFakeTimers();
+    const h = setup();
+    const principal: CorePrincipal = {
+      kind: "core",
+      adapter: "monitor",
+      hostEpoch: ID,
+      workbenchInstance: ID,
+      authorityContext: { ref: ID, epoch: ID },
+    };
+    try {
+      const connected = await h.broker.request(
+        principal,
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+        signal(),
+      );
+      if (!connected.ok) throw new Error("connect");
+      const subscription = await h.broker.subscribeCoreTelemetry({
+        principal,
+        sessionId: connected.value.session.sessionId,
+        channelIds: [ID],
+        intervalMs: 500,
+        receive() {},
+      });
+      const closed = vi.fn();
+      observeCoreTelemetryClosed(subscription, closed);
+      subscription.activate();
+      await vi.advanceTimersByTimeAsync(0);
+      if (reason === "caller") await subscription.dispose();
+      else if (reason === "session-loss") h.provider.lose();
+      else h.setNow(10000);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(closed).toHaveBeenCalledTimes(reason === "caller" ? 0 : 1);
+      await subscription.dispose();
+      expect(closed).toHaveBeenCalledTimes(reason === "caller" ? 0 : 1);
+    } finally {
+      h.unregister();
+      vi.useRealTimers();
+    }
+  },
+);
+it("T5fix core reservations retain core identity and share recording exclusion with plugins", async () => {
+  const h = setup();
+  const principal: CorePrincipal = {
+    kind: "core",
+    adapter: "lab",
+    hostEpoch: ID,
+    workbenchInstance: ID,
+    authorityContext: { ref: ID, epoch: ID },
+  };
+  try {
+    const connected = await h.broker.request(
+      principal,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const params = {
+      sessionId: connected.value.session.sessionId,
+      channelIds: [ID],
+      expectedSourceRevision: 1,
+    };
+    const reserved = await h.broker.request(
+      principal,
+      "devices/recording/reserve",
+      params,
+      signal(),
+    );
+    if (!reserved.ok) throw new Error("reserve");
+    const ref = { reservationId: reserved.value.reservation.reservationId };
+    expect(
+      await h.broker.request(
+        { ...principal, adapter: "monitor" },
+        "devices/recording/query",
+        ref,
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+    expect(
+      await h.broker.request(
+        {
+          ...principal,
+          authorityContext: { ref: ID, epoch: "00000000-0000-4000-8000-000000000002" },
+        },
+        "devices/recording/read",
+        { ...ref, afterSequence: 0, limit: 1 },
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+    await h.broker.request(pluginPrincipal(), "devices/list", {}, signal());
+    expect(
+      await h.broker.request(pluginPrincipal(), "devices/recording/reserve", params, signal()),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+    expect(
+      await h.broker.request(pluginPrincipal(), "devices/recording/query", ref, signal()),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+    expect((await h.broker.request(principal, "devices/recording/release", ref, signal())).ok).toBe(
+      true,
+    );
+    expect(
+      (await h.broker.request(pluginPrincipal(), "devices/recording/reserve", params, signal())).ok,
+    ).toBe(true);
+  } finally {
+    h.unregister();
+  }
+});
+it("T5fix confirmation expiry still blocks exchanges during planning", async () => {
+  const h = setup(),
+    principal = pluginPrincipal();
+  const connected = await h.broker.request(
+    principal,
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect");
+  const sent = vi.fn(async () => {});
+  vi.spyOn(h.provider, "legacy").mockImplementation(async (_key, _request, ctx) => {
+    h.setNow(120000);
+    await ctx.exchange("read", sent);
+    return {
+      value: { kind: "entries", entries: [] },
+      dispatch: "sent",
+      error: null,
+      stopConfirmation: "not-required",
+    };
+  });
+  const operation = await h.broker.begin({
+    principal,
+    sessionId: connected.value.session.sessionId,
+    operationClass: "file-read",
+    signal: signal(),
+  });
+  try {
+    await expect(operation.execute({ kind: "list", remotePath: "/plan" })).rejects.toThrow();
+    expect(sent).not.toHaveBeenCalled();
+  } finally {
+    await operation.finish();
+    h.unregister();
+  }
+});
+
+import { admitLegacyExecution } from "./broker.js";
+it("T5fix2 legacy waits for an in-flight sampler exchange with finite provider deadlines", async () => {
+  const h = setup(),
+    principal: CorePrincipal = {
+      kind: "core",
+      adapter: "deployment",
+      hostEpoch: ID,
+      workbenchInstance: ID,
+      authorityContext: { ref: ID, epoch: ID },
+    };
+  const warnings: Error[] = [];
+  const listener = (warning: Error) => warnings.push(warning);
+  process.on("warning", listener);
+  try {
+    const connected = await h.broker.request(
+      principal,
+      "devices/connect",
+      { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+      signal(),
+    );
+    if (!connected.ok) throw new Error("connect");
+    const id = connected.value.session.sessionId;
+    const original = h.provider.read.bind(h.provider);
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    h.provider.read = async (session, ctx) => {
+      await ctx.exchange("read", async () => {
+        started();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      return original(session, ctx);
+    };
+    const catalog = await h.broker.request(
+      principal,
+      "devices/session",
+      { sessionId: id },
+      signal(),
+    );
+    if (!catalog.ok) throw new Error("catalog");
+    const demand = await h.broker.subscribeCoreTelemetry({
+      principal,
+      sessionId: id,
+      channelIds: catalog.value.sources.channels.map((c) => c.channelId),
+      intervalMs: 500,
+      receive: () => {},
+    });
+    demand.activate();
+    const reading = h.broker.request(
+      principal,
+      "devices/read",
+      {
+        sessionId: id,
+        channelIds: catalog.value.sources.channels.map((c) => c.channelId),
+        freshness: "fresh",
+      },
+      signal(),
+    );
+    await entered;
+    h.provider.legacy = async (_session, _request, ctx) => {
+      expect(Number.isFinite(ctx.deadlineMonotonicMs)).toBe(true);
+      expect(ctx.deadlineMonotonicMs).toBeGreaterThan(h.dependencies.now());
+      await ctx.exchange("read", async () => {});
+      return {
+        value: { kind: "entries", entries: [] },
+        dispatch: "not-sent",
+        error: null,
+        stopConfirmation: "not-required",
+      };
+    };
+    const op = await h.broker.begin({
+      principal,
+      sessionId: id,
+      operationClass: "file-read",
+      signal: signal(),
+    });
+    await expect(op.execute({ kind: "list", remotePath: "/" })).resolves.toMatchObject({
+      error: null,
+    });
+    admitLegacyExecution(op);
+    h.setNow(600001);
+    await expect(op.execute({ kind: "list", remotePath: "/later" })).resolves.toMatchObject({
+      error: null,
+    });
+    await op.finish();
+    const next = await h.broker.begin({
+      principal,
+      sessionId: id,
+      operationClass: "file-read",
+      signal: signal(),
+    });
+    await next.finish();
+    await reading;
+    await demand.dispose();
+    expect(warnings.filter((warning) => warning.name === "TimeoutOverflowWarning")).toEqual([]);
+  } finally {
+    process.off("warning", listener);
+    h.unregister();
+  }
+});
+
+it("send failure disposes every channel subscription while preserving another owner", async () => {
+  const h = setup();
+  const failed = pluginPrincipal();
+  const healthy = pluginPrincipal(2);
+  const nativeError = new Error("private native transport detail");
+  const failedSend = vi.fn(() => {
+    throw nativeError;
+  });
+  const healthySend = vi.fn();
+  const failedChannel = h.broker.attachChannel({
+    owner: failed.owner,
+    principal: () => failed,
+    send: failedSend,
+  });
+  const healthyChannel = h.broker.attachChannel({
+    owner: healthy.owner,
+    principal: () => healthy,
+    send: healthySend,
+  });
+  const removed = vi.fn();
+  const detachRemoved = h.broker.events.onRemoved(removed);
+  const subscribe = async (principal: typeof failed) => {
+    const result = await h.broker.request(
+      principal,
+      "devices/subscribe",
+      { topic: "catalog" },
+      signal(),
+    );
+    if (!result.ok) throw new Error("subscribe");
+    return result.value.subscriptionId;
+  };
+  const publish = (principal: typeof failed, id: string) =>
+    h.broker.events.publish(
+      principal.owner,
+      id,
+      { kind: "devices.catalog", data: { revision: 1, providers: [], sessions: [] } },
+      "control",
+    );
+  try {
+    failedChannel.negotiated("devices", 1);
+    healthyChannel.negotiated("devices", 1);
+    const first = await subscribe(failed);
+    const inactive = await subscribe(failed);
+    const other = await subscribe(healthy);
+    publish(failed, inactive);
+    failedChannel.activate(first);
+    healthyChannel.activate(other);
+    expect(() => publish(failed, first)).toThrow(nativeError);
+    expect(h.broker.events.diagnostics()).toEqual({
+      subscriptions: 1,
+      queuedEvents: 0,
+      queuedBytes: 0,
+    });
+    expect(removed.mock.calls.map(([id]) => id).sort()).toEqual([first, inactive].sort());
+    expect(() => failedChannel.negotiated("devices", 1)).toThrow();
+    failedChannel.activate(inactive);
+    expect(() => publish(failed, inactive)).toThrow();
+    expect(failedSend).toHaveBeenCalledTimes(1);
+    const denied = await h.broker.request(
+      failed,
+      "devices/subscribe",
+      { topic: "catalog" },
+      signal(),
+    );
+    expect(denied).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_UNAVAILABLE" } });
+    expect(JSON.stringify(denied)).not.toContain(nativeError.message);
+    publish(healthy, other);
+    expect(healthySend).toHaveBeenCalledTimes(1);
+    healthyChannel.dispose();
+    failedChannel.dispose();
+    expect(removed).toHaveBeenCalledTimes(3);
+    expect(h.broker.events.diagnostics()).toEqual({
+      subscriptions: 0,
+      queuedEvents: 0,
+      queuedBytes: 0,
+    });
+  } finally {
+    failedChannel.dispose();
+    healthyChannel.dispose();
+    detachRemoved();
+    await h.broker.resources.beginShutdown();
+  }
+});
+
+it("fences a failed sink until its original attachment is disposed", async () => {
+  const h = setup();
+  const principal = pluginPrincipal();
+  const input = {
+    owner: principal.owner,
+    principal: () => principal,
+    send() {
+      throw new Error("private transport failure");
+    },
+  };
+  const channel = h.broker.attachChannel(input);
+  try {
+    channel.negotiated("devices", 1);
+    const created = h.broker.events.create(principal.owner);
+    if (!created.ok) throw new Error("create");
+    channel.activate(created.value.subscriptionId);
+    expect(() =>
+      h.broker.events.publish(
+        principal.owner,
+        created.value.subscriptionId,
+        { kind: "devices.catalog", data: { revision: 1, providers: [], sessions: [] } },
+        "control",
+      ),
+    ).toThrow("private transport failure");
+    expect(() => h.broker.attachChannel(input)).toThrow("Resource is unavailable");
+    channel.dispose();
+    const replacement = h.broker.attachChannel(input);
+    channel.dispose();
+    expect(() => h.broker.attachChannel(input)).toThrow("Resource is unavailable");
+    replacement.dispose();
+  } finally {
+    channel.dispose();
+    await h.broker.resources.beginShutdown();
+  }
+});

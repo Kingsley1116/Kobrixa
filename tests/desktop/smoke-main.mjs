@@ -14,6 +14,7 @@ import { checkWorkspaceSearch, createSearchFixture } from "./workspace-search-sm
 import { checkDiagnostics, createDiagnosticsFixture } from "./diagnostics-smoke.mjs";
 import { app, BrowserWindow, ipcMain, nativeTheme } from "electron";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
@@ -219,6 +220,8 @@ function syncLanguageFiles(fixture) {
     }
 }
 const staticHarness = createStaticLanguagesHarness(await basicPlusSmokeCatalog());
+// General UI fixture only; actual host authority is covered by the device broker harness.
+const authorityDocuments = new WeakMap();
 ipcMain.handle("plugins:state", () => staticHarness.state());
 ipcMain.handle("plugins:static-languages", () => staticHarness.staticLanguages());
 ipcMain.handle("plugins:report-language-registration-failure", (_event, input) =>
@@ -536,6 +539,14 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "collabSetDeviceControl") {
     collabDeviceControl = args[0];
     return;
+  }
+  if (name === "collabDeviceControlContext") {
+    let document = authorityDocuments.get(_e.sender);
+    if (!document) {
+      document = randomUUID();
+      authorityDocuments.set(_e.sender, document);
+    }
+    return { document };
   }
   if (["collabLeave", "collabRemoveMirror"].includes(name)) return;
   if (name.startsWith("collab")) return { ok: false, error: "unavailable" };

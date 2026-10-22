@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { journalDocument } from "./journal.js";
+import { randomUUID } from "node:crypto";
 import {
   channelDefinitionSchema,
   deviceRequestSchemas,
@@ -21,6 +22,7 @@ import {
 } from "@kobrixa/plugin-protocol";
 import type {
   Principal,
+  JournalOwner,
   DeviceDisposition,
   SessionQuiescence,
   SafetyFaultEntry,
@@ -29,6 +31,7 @@ import type {
   Stage3Event,
 } from "@kobrixa/plugin-runtime";
 import type {
+  CoreTelemetrySubscription,
   DeviceBrokerOptions,
   DeviceBrokerPort,
   LegacyOperationPort,
@@ -39,6 +42,7 @@ import {
   createContexts,
   type ProviderCandidate,
   type ProviderConnection,
+  type ProviderCatalogPort,
   type BuiltinDeviceProvider,
   type ProviderOutcome,
   type LegacyProviderValue,
@@ -60,8 +64,92 @@ import { Sampler, CoreTelemetryLedger } from "./sampler.js";
 import { Reservations } from "./reservations.js";
 import type { createDeviceRecovery, RecoveryDriver } from "./recovery-port.js";
 import type { createDeviceResourceParticipant, ResourceDriver } from "./resource-participant.js";
+export type BrokerLifecycleEvent =
+  | { kind: "lost"; session: DeviceSessionSnapshot; message: string }
+  | {
+      kind: "recovery";
+      previousSessionId: string;
+      state: "waiting" | "connecting" | "restored" | "cancelled" | "unavailable" | "exhausted";
+      session?: DeviceSessionSnapshot;
+    };
+const lifecycleListeners = new WeakMap<
+  DeviceBrokerPort,
+  Set<(event: BrokerLifecycleEvent) => void>
+>();
+export function observeBrokerLifecycle(
+  broker: DeviceBrokerPort,
+  listener: (event: BrokerLifecycleEvent) => void,
+): () => void {
+  const listeners = lifecycleListeners.get(broker);
+  listeners?.add(listener);
+  return () => {
+    listeners?.delete(listener);
+  };
+}
+// Main-only observations leave the frozen provider/session ports unchanged.
+// Only the broker that created a port can register its live observation state.
+type SourceTuple = Parameters<ProviderCatalogPort["identify"]>[0];
+type SourceObservation = {
+  sessionId: string;
+  generation: number;
+  signature: string;
+  ids: Map<string, string>;
+};
+type CatalogBinding = {
+  generation: number | null;
+  retired: boolean;
+  ids: Map<string, string>;
+  observation: SourceObservation | null;
+};
+const catalogObservers = new WeakMap<
+  ProviderCatalogPort,
+  (sessionId: string, tuples: readonly SourceTuple[]) => void
+>();
+export function observeProviderSources(
+  port: ProviderCatalogPort,
+  sessionId: string,
+  tuples: readonly SourceTuple[],
+): void {
+  catalogObservers.get(port)?.(sessionId, tuples);
+}
+type ResumeState = "resumed" | "pending" | "blocked";
+const resumeObservers = new WeakMap<
+  DeviceBrokerPort["sessions"],
+  (receipt: SessionQuiescence) => ResumeState
+>();
+export function resumeQuiescedSession(
+  port: DeviceBrokerPort["sessions"],
+  receipt: SessionQuiescence,
+): ResumeState {
+  port.resume(receipt.sessionId);
+  // Non-broker ports keep their existing synchronous void completion contract.
+  return resumeObservers.get(port)?.(receipt) ?? "resumed";
+}
+const legacyAdmissions = new WeakMap<LegacyOperation, () => void>();
+/** Consume the host file plan's confirmation without adding a plugin wire method. */
+export function admitLegacyExecution(operation: LegacyOperation): void {
+  legacyAdmissions.get(operation)?.();
+}
+// Host-only closure observation keeps the frozen wire and telemetry port unchanged.
+const coreClosures = new WeakMap<
+  CoreTelemetrySubscription,
+  { ended: boolean; listeners: Set<() => void> }
+>();
+export function observeCoreTelemetryClosed(
+  subscription: CoreTelemetrySubscription,
+  listener: () => void,
+): () => void {
+  const state = coreClosures.get(subscription);
+  if (state?.ended) listener();
+  else state?.listeners.add(listener);
+  return () => {
+    state?.listeners.delete(listener);
+  };
+}
 type Options = DeviceBrokerOptions;
 type Session = {
+  recoveryDisposition?: Promise<DeviceDisposition>;
+  recoveryClosed?: boolean;
   snapshot: DeviceSessionSnapshot;
   sources: SourceCatalog;
   connection: ProviderConnection;
@@ -70,6 +158,12 @@ type Session = {
   lane: ExchangeLane;
   sampler: Sampler;
   quiescence: SessionQuiescence | null;
+  suspendOnly: boolean;
+  resumeEvidence?: {
+    receipt: SessionQuiescence;
+    disposition: DeviceDisposition;
+    recovery: Session["recoveryDisposition"];
+  };
   users: Set<string>;
   unregister: () => void;
 };
@@ -82,6 +176,27 @@ const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisp
     faultIds: [...new Set(all.flatMap((v) => v.faultIds))],
   };
 };
+// The first quiescence keeps its identity and original operation receipts. New
+// explicit recovery can add evidence, but never restarts those operations/clocks.
+async function settleRecovery(
+  current: Session,
+  original: Promise<DeviceDisposition>,
+  close = false,
+  observe?: (disposition: DeviceDisposition, recovery: Session["recoveryDisposition"]) => void,
+): Promise<DeviceDisposition> {
+  for (;;) {
+    const recovery = current.recoveryDisposition;
+    const disposition = await merge(recovery ? [original, recovery] : [original]);
+    if (recovery !== current.recoveryDisposition) continue;
+    // A clean teardown receipt must not be invalidated by a newly admitted Stop
+    // while its caller awaits storage or process exit. Existing recovery is done.
+    if (close && disposition.stopConfirmed && disposition.journalCommitted)
+      current.recoveryClosed = true;
+    // Record wake evidence in the same turn as the recovery-identity check.
+    observe?.(disposition, recovery);
+    return disposition;
+  }
+}
 const permissionFailure = (): never => {
   throw new BrokerFailure({
     ok: false,
@@ -116,6 +231,27 @@ export function createBroker(
 ): DeviceBrokerPort & LegacyOperationPort {
   const wallNow = () => Date.now(); // Broker has no injected wall clock; recovery determinism is pinned through RecoveryDriver.wallNow test doubles.
   input.profile.assertHeld();
+  const lifecycle = new Set<(event: BrokerLifecycleEvent) => void>();
+  const notifyLifecycle = (event: BrokerLifecycleEvent) => {
+    for (const listener of [...lifecycle]) {
+      try {
+        listener(structuredClone(event));
+      } catch {
+        /* Observers cannot block safety cleanup. */
+      }
+    }
+  };
+  const recoveryState = (
+    previousSessionId: string,
+    state: Extract<BrokerLifecycleEvent, { kind: "recovery" }>["state"],
+    restored?: DeviceSessionSnapshot,
+  ) =>
+    notifyLifecycle({
+      kind: "recovery",
+      previousSessionId,
+      state,
+      ...(restored ? { session: restored } : {}),
+    });
   const providers = new ProviderRegistry(),
     candidates = new OwnerLedger<Candidate>(64, 64, "candidate"),
     subscriptions = new Map<
@@ -128,6 +264,7 @@ export function createBroker(
       }
     >(),
     reservations = new Reservations(input.now),
+    coreReservations = new Reservations<Extract<JournalOwner, { kind: "core" }>>(input.now),
     retired = new Set<string>();
   let session: Session | null = null,
     connecting = false,
@@ -156,10 +293,11 @@ export function createBroker(
     }
   >();
 
-  const forgetUsb = (id: string) => {
+  const forgetUsb = (id: string, state: "cancelled" | "exhausted" | null = "cancelled") => {
     const row = lostUsb.get(id);
     if (row?.timer) clearTimeout(row.timer);
     lostUsb.delete(id);
+    if (row && state) recoveryState(id, state);
   };
   const usbLive = (row: NonNullable<ReturnType<typeof lostUsb.get>>) => {
     if (closing || !input.connectionPolicy().usbAutoReconnect) return false;
@@ -180,18 +318,21 @@ export function createBroker(
     const row = lostUsb.get(id);
     if (!row || row.timer || row.pending) return;
     if (!row.policy.usbAutoReconnect || !usbLive(row)) {
-      forgetUsb(id);
+      const initial = row.attempts === 0;
+      forgetUsb(id, initial ? null : "cancelled");
+      if (initial) recoveryState(id, "unavailable");
       return;
     }
     const policy = input.connectionPolicy();
     if (policy.usbRetryLimit !== "unlimited" && row.attempts >= policy.usbRetryLimit) {
-      forgetUsb(id);
+      forgetUsb(id, "exhausted");
       return;
     }
     const delay =
       policy.usbRetryInterval === "backoff"
         ? [1000, 2000, 5000][Math.min(row.attempts, 2)]!
         : policy.usbRetryInterval;
+    if (row.attempts === 0) recoveryState(id, "waiting");
     row.timer = setTimeout(() => {
       row.timer = null;
       if (!usbLive(row)) {
@@ -260,6 +401,24 @@ export function createBroker(
     }
     return current;
   };
+  const validCore = (principal: Extract<Principal, { kind: "core" }>, current: Session) => {
+    const ref = principal.authorityContext?.ref;
+    const context = ref ? input.authority.current(principal, ref) : null;
+    return (
+      !closing &&
+      session === current &&
+      !current.quiescence &&
+      principal.hostEpoch === input.profile.hostEpoch &&
+      !!context &&
+      context.state !== "invalid" &&
+      context.epoch === principal.authorityContext?.epoch &&
+      context.workbenchInstance === principal.workbenchInstance
+    );
+  };
+  const checkCore = (principal: Extract<Principal, { kind: "core" }>, current: Session) => {
+    assertPrincipal(principal);
+    if (!validCore(principal, current)) return stale("reservation");
+  };
   const gate = (
     principal: Principal,
     operationClass: OperationClass,
@@ -279,7 +438,8 @@ export function createBroker(
       ensureCapability(current, "finiteMotion.v1");
       if (current.generation !== admission.generation || current.connection.key !== admission.key)
         return stale();
-      if (reservations.active) return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      if (reservations.active || coreReservations.active)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       gate(admission.principal, "finite-motion", admission.sessionId, "continuation");
       input.authority.assertContinuation(admission.principal, admission.contextRef);
       if (admission.principal.kind !== "plugin")
@@ -292,6 +452,7 @@ export function createBroker(
       );
     },
   });
+  const intentOwners = new Map<string, ResourceOwner>();
   const intent = new IntentRegistry(input.now, (scope) => operations.stopScope(scope));
   const channels = new Map<
     string,
@@ -300,6 +461,7 @@ export function createBroker(
       principal: () => Principal;
       send: (event: Stage3EventEnvelope) => void;
       domains: Set<"devices" | "ui" | "settings">;
+      retire: () => void;
     }
   >();
   const events = new EventLedger(
@@ -322,7 +484,12 @@ export function createBroker(
             ? "devices"
             : null;
       if (domain && !channel.domains.has(domain)) return stale("subscription");
-      channel.send(event);
+      try {
+        channel.send(event);
+      } catch (error) {
+        channel.retire();
+        throw error;
+      }
     },
     (owner) => {
       intent.retire(owner);
@@ -340,6 +507,7 @@ export function createBroker(
     duration: number,
     id = randomUUID(),
     validate: () => void = () => {},
+    rearmMs?: number,
   ) =>
     createContexts({
       id,
@@ -347,6 +515,7 @@ export function createBroker(
       generation: current?.generation ?? 0,
       operationClass,
       deadline: input.now() + duration,
+      ...(rearmMs === undefined ? {} : { rearmMs }),
       now: input.now,
       lane: current?.lane ?? connectionLane,
       check: () => {
@@ -383,22 +552,111 @@ export function createBroker(
       progress: () => {},
       onStop: () => {},
     });
+  const publishSources = (current: Session, raw: SourceCatalog) => {
+    const sources = sourceCatalogSchema.parse(raw);
+    if (
+      session !== current ||
+      sources.sessionId !== current.snapshot.sessionId ||
+      sources.sourceRevision < current.sources.sourceRevision
+    )
+      return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
+    if (sources.sourceRevision !== current.sources.sourceRevision) {
+      // End pinned recordings before any frame with replacement source identities
+      // is published. Consumers fetch the complete retained catalog on control.
+      reservations.endSession(current.snapshot.sessionId, "source-changed", true);
+      coreReservations.endSession(current.snapshot.sessionId, "source-changed", true);
+      current.sources = sources;
+      current.snapshot.sourceRevision = sources.sourceRevision;
+      current.snapshot.revision++;
+      changed(true);
+    }
+  };
+  const makeSampler = (id: string, lane: ExchangeLane, get: () => Session, previous?: Sampler) => {
+    const sampler =
+      previous?.restart() ??
+      new Sampler({
+        sessionId: id,
+        now: input.now,
+        busy: () => lane.foreground !== null,
+        read: async () => {
+          const current = get(),
+            ctx = contexts(samplerPrincipal, current, "passive-read", 10000);
+          const frame = telemetryFrameSchema.parse(
+            value(await current.provider.read(current.connection.key, ctx.work)),
+          );
+          ctx.work.assertContinuation("read");
+          if (frame.sourceRevision !== current.sources.sourceRevision) {
+            const sources = value(await current.provider.sources(current.connection.key, ctx.work));
+            ctx.work.assertContinuation("read");
+            publishSources(current, sources);
+            // A second physical change during catalog reconciliation is not a usable
+            // sample. The next explicit read can sample the newly retained sources.
+            if (frame.sourceRevision !== current.sources.sourceRevision)
+              return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "source-changed");
+          }
+          return frame;
+        },
+      });
+    sampler.subscribe((frame) => {
+      reservations.append(frame);
+      coreReservations.append(frame);
+    });
+    return sampler;
+  };
   const finishSession = (
     current: Session,
     reason: "disconnected" | "suspended" | "core-disconnect",
+    recoveryFollows = false,
   ) => {
+    current.suspendOnly = reason === "suspended";
+    delete current.resumeEvidence;
     current.snapshot.state = reason === "disconnected" ? "disconnected" : "disconnecting";
     current.snapshot.revision++;
     current.sampler.dispose();
+    coreTelemetry.dispose();
+    for (const [id, row] of [...subscriptions])
+      if (row.params.topic === "telemetry" && row.params.sessionId === current.snapshot.sessionId)
+        events.unsubscribe(row.owner, id);
+    for (const owner of intentOwners.values()) intent.retire(owner);
+    intentOwners.clear();
+    if (reason === "disconnected")
+      notifyLifecycle({
+        kind: "lost",
+        session: current.snapshot,
+        message: "The EV3 connection was lost.",
+      });
+    if (reason === "disconnected" && current.snapshot.transport === "usb" && !recoveryFollows)
+      recoveryState(current.snapshot.sessionId, "unavailable");
     changed();
+    coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
+    // Passive I/O also has to cross its original boundary before a wake can
+    // admit a fresh sampler. A timed-out lane remains quarantined.
+    const deadline = input.now() + 15000;
+    promises.push(
+      Promise.all([current.lane.drain(deadline), current.sampler.settled(deadline)]).then(
+        () => ({ stopConfirmed: !current.lane.quarantined, journalCommitted: true, faultIds: [] }),
+        () => ({ stopConfirmed: false, journalCommitted: true, faultIds: [] }),
+      ),
+    );
     for (const operation of legacy.values())
       if (operation.session === current.snapshot.sessionId) {
         void operation.cancel();
         promises.push(operation.done);
       }
-    return { sessionId: current.snapshot.sessionId, ended, settled: merge(promises) };
+    const original = merge(promises);
+    const receipt: SessionQuiescence = {
+      sessionId: current.snapshot.sessionId,
+      ended,
+      get settled() {
+        return settleRecovery(current, original, false, (disposition, recovery) => {
+          if (current.quiescence === receipt)
+            current.resumeEvidence = { receipt, disposition, recovery };
+        });
+      },
+    };
+    return receipt;
   };
   const sessions: DeviceBrokerPort["sessions"] = {
     quiesce(id, cause) {
@@ -412,6 +670,7 @@ export function createBroker(
       )
         actionFailure();
       if (!current.quiescence) current.quiescence = finishSession(current, cause.reason);
+      if (cause.reason !== "suspended") current.suspendOnly = false;
       return current.quiescence;
     },
     async disconnect(id, action) {
@@ -422,7 +681,8 @@ export function createBroker(
           actionFailure();
         const quiescence = current.quiescence;
         if (!quiescence) return actionFailure();
-        const disposition = await quiescence.settled;
+        current.suspendOnly = false;
+        const disposition = await settleRecovery(current, quiescence.settled, true);
         if (!disposition.stopConfirmed || !disposition.journalCommitted)
           return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "readback-failed", "unknown");
         const core: Principal = {
@@ -449,10 +709,59 @@ export function createBroker(
       }
     },
     resume(id) {
-      if (session?.snapshot.sessionId !== id) return;
-      session.quiescence ??= finishSession(session, "suspended");
+      const current = session,
+        evidence = current?.resumeEvidence;
+      if (
+        !current ||
+        current.snapshot.sessionId !== id ||
+        closing ||
+        !current.suspendOnly ||
+        !evidence ||
+        evidence.receipt !== current.quiescence ||
+        evidence.recovery !== current.recoveryDisposition ||
+        !evidence.disposition.stopConfirmed ||
+        !evidence.disposition.journalCommitted ||
+        evidence.disposition.faultIds.length ||
+        current.lane.quarantined ||
+        current.lane.occupied ||
+        current.lane.foreground !== null
+      )
+        return;
+      const journal = input.journal.snapshot();
+      if (journal.journalHealth !== "ready" || journal.blockers.length) return;
+      try {
+        input.profile.assertHeld();
+        if (providers.get(current.provider.id).generation !== current.generation) return;
+        current.provider.describe(current.connection.key);
+      } catch {
+        return;
+      }
+      try {
+        current.sampler = makeSampler(id, current.lane, () => current, current.sampler);
+      } catch {
+        return;
+      }
+      current.quiescence = null;
+      current.suspendOnly = false;
+      delete current.resumeEvidence;
+      current.snapshot.state = "connected";
+      current.snapshot.revision++;
+      changed();
     },
   };
+  resumeObservers.set(sessions, (receipt) => {
+    const current = session;
+    if (!current || current.snapshot.sessionId !== receipt.sessionId) return "blocked";
+    if (!current.quiescence && current.snapshot.state === "connected") return "resumed";
+    if (
+      !closing &&
+      current.suspendOnly &&
+      current.quiescence === receipt &&
+      current.resumeEvidence?.recovery !== current.recoveryDisposition
+    )
+      return "pending";
+    return "blocked";
+  });
   const resourceDriver: ResourceDriver = {
     revokeOwner(owner, reason) {
       for (const [id, row] of lostUsb)
@@ -465,6 +774,7 @@ export function createBroker(
       events.disposeOwner(owner);
       channels.delete(resourceOwnerKey(owner));
       intent.retire(owner);
+      intentOwners.delete(resourceOwnerKey(owner));
       const ends = reservations.endOwner(
         owner,
         reason === "renderer-lost" ? "renderer-lost" : "retired",
@@ -487,7 +797,8 @@ export function createBroker(
       const current = session;
       if (!current || current.provider.id !== id || current.generation !== generation) return [];
       current.quiescence ??= finishSession(current, "disconnected");
-      return [current.quiescence.settled];
+      current.suspendOnly = false;
+      return [settleRecovery(current, current.quiescence.settled, true)];
     },
     revokeAll() {
       closing = true;
@@ -496,7 +807,8 @@ export function createBroker(
       events.dispose();
       if (!session) return [];
       session.quiescence ??= finishSession(session, "suspended");
-      return [session.quiescence.settled];
+      session.suspendOnly = false;
+      return [settleRecovery(session, session.quiescence.settled, true)];
     },
   };
   const resources = factories.participant(resourceDriver);
@@ -515,9 +827,22 @@ export function createBroker(
     async occupy(sessionId, work) {
       const current = session;
       if (!current || current.snapshot.sessionId !== sessionId) return stale();
-      if (reservations.active) return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      if (current.recoveryClosed)
+        return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
+      if (reservations.active || coreReservations.active)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
       current.lane.reserve(id);
+      // Session teardown must join recovery through final journal publication, not
+      // merely wait for the last transport exchange to leave the lane.
+      let settle!: (value: DeviceDisposition) => void;
+      const disposition = new Promise<DeviceDisposition>((resolve) => {
+        settle = resolve;
+      });
+      current.recoveryDisposition = current.recoveryDisposition
+        ? merge([current.recoveryDisposition, disposition])
+        : disposition;
+      let confirmed = false;
       const originalGeneration = current.generation,
         originalKey = current.connection.key;
       const ctx = createContexts({
@@ -546,16 +871,30 @@ export function createBroker(
           stop: () =>
             current.provider.stopAndReadback(originalKey, { kind: "current-device" }, ctx.cleanup),
         });
-        if (typeof result === "object" && result !== null && "ok" in result && result.ok === false)
-          current.lane.quarantined = true;
+        confirmed = !(
+          typeof result === "object" &&
+          result !== null &&
+          "ok" in result &&
+          result.ok === false
+        );
+        if (!confirmed) current.lane.quarantined = true;
         return result;
       } catch (error) {
         current.lane.quarantined = true;
         throw error;
       } finally {
-        await current.lane.drain(ctx.cleanup.deadlineMonotonicMs);
-        current.provider.releaseOperation(id);
-        current.lane.release(id);
+        try {
+          await current.lane.drain(ctx.cleanup.deadlineMonotonicMs);
+        } finally {
+          current.provider.releaseOperation(id);
+          current.lane.release(id);
+          const snapshot = input.journal.snapshot();
+          settle({
+            stopConfirmed: confirmed && !current.lane.quarantined,
+            journalCommitted: snapshot.journalHealth === "ready",
+            faultIds: snapshot.blockers,
+          });
+        }
       }
     },
   };
@@ -569,7 +908,7 @@ export function createBroker(
     return {
       ...structuredClone(current.snapshot),
       state: current.lane.quarantined ? "quarantined" : current.snapshot.state,
-      recording: reservations.active,
+      recording: reservations.active || coreReservations.active,
       foreground:
         foreground === null
           ? "none"
@@ -610,6 +949,38 @@ export function createBroker(
     if (method === "devices/motion/stop") {
       const p = parse(method);
       return { operation: operations.stop(principal, p.operationId, p.stopMode) };
+    }
+    if (
+      principal.kind === "core" &&
+      ["devices/recording/query", "devices/recording/read", "devices/recording/release"].includes(
+        method,
+      )
+    ) {
+      const p = parse(method as "devices/recording/read");
+      const snapshot = coreReservations.query(principal, p.reservationId);
+      if (
+        snapshot.state !== "ended" &&
+        (!session || session.snapshot.sessionId !== snapshot.sessionId)
+      )
+        return stale("reservation");
+      // A healthy ended reservation retains its bounded drain, but a retired window never does.
+      const ref = principal.authorityContext?.ref;
+      const context = ref ? input.authority.current(principal, ref) : null;
+      assertPrincipal(principal);
+      if (
+        principal.hostEpoch !== input.profile.hostEpoch ||
+        !context ||
+        context.state === "invalid" ||
+        context.epoch !== principal.authorityContext?.epoch ||
+        context.workbenchInstance !== principal.workbenchInstance
+      )
+        return stale("reservation");
+      permission(principal, "devices.read");
+      if (method === "devices/recording/read")
+        return coreReservations.read(principal, p.reservationId, p.afterSequence, p.limit);
+      if (method === "devices/recording/release")
+        coreReservations.end(p.reservationId, "released", true);
+      return { reservation: coreReservations.query(principal, p.reservationId) };
     }
     if (method === "devices/recording/query") {
       if (principal.kind !== "plugin") return stale("reservation");
@@ -720,7 +1091,9 @@ export function createBroker(
     }
     permission(
       principal,
-      method === "devices/connect" || method === "devices/disconnect"
+      method === "devices/connect" ||
+        method === "devices/disconnect" ||
+        method === "devices/discover"
         ? "devices.connect"
         : method === "devices/motion/prepare" ||
             method === "devices/motion/start" ||
@@ -818,20 +1191,7 @@ export function createBroker(
           recording: false,
           sourceRevision: 1,
         };
-        const sampler = new Sampler({
-          sessionId: id,
-          now: input.now,
-          busy: () => lane.foreground !== null,
-          read: async () =>
-            telemetryFrameSchema.parse(
-              value(
-                await current.provider.read(
-                  connection.key,
-                  contexts(samplerPrincipal, current, "passive-read", 10000).work,
-                ),
-              ),
-            ),
-        });
+        const sampler = makeSampler(id, lane, () => current);
         session?.unregister();
         const current: Session = {
           snapshot,
@@ -842,11 +1202,11 @@ export function createBroker(
           lane,
           sampler,
           quiescence: null,
+          suspendOnly: false,
           users: new Set([ownerKey(principal), ownerKey(samplerPrincipal)]),
           unregister: () => {},
         };
         session = current;
-        current.sampler.subscribe((frame) => reservations.append(frame));
         try {
           current.sources = sourceCatalogSchema.parse(
             value(
@@ -866,12 +1226,21 @@ export function createBroker(
         }
         current.unregister = current.provider.onDisconnect((key) => {
           if (key !== connection.key) return;
-          current.quiescence ??= finishSession(current, "disconnected");
+          current.suspendOnly = false;
+          if (current.snapshot.state === "disconnected") return;
+          if (current.quiescence)
+            notifyLifecycle({
+              kind: "lost",
+              session: { ...current.snapshot, state: "disconnected" },
+              message: "The EV3 connection was lost.",
+            });
+          else current.quiescence = finishSession(current, "disconnected", true);
+          const lossPolicy = input.connectionPolicy();
           if (
             current.snapshot.transport === "usb" &&
             current.connection.physical.basis === "serial" &&
             current.connection.physical.digest !== null &&
-            policy.usbAutoReconnect
+            lossPolicy.usbAutoReconnect
           ) {
             lostUsb.set(id, {
               principal,
@@ -879,12 +1248,14 @@ export function createBroker(
               generation,
               digest: current.connection.physical.digest,
               settled: current.quiescence.settled,
-              policy,
+              policy: lossPolicy,
               attempts: 0,
               timer: null,
               pending: false,
             });
             scheduleUsb(id);
+          } else if (current.snapshot.transport === "usb") {
+            recoveryState(id, "unavailable");
           }
           current.snapshot.state = "disconnected";
           revision++;
@@ -1072,7 +1443,7 @@ export function createBroker(
     const current = getSession(principal, params.sessionId);
     if (method === "devices/disconnect") {
       forgetUsb(current.snapshot.sessionId);
-      if (current.lane.foreground !== null || reservations.active)
+      if (current.lane.foreground !== null || reservations.active || coreReservations.active)
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
       const ctx = contexts(principal, current, "connection", 60000);
       const result = await current.provider.disconnect(current.connection.key, ctx.cleanup);
@@ -1098,6 +1469,8 @@ export function createBroker(
         p.freshness === "fresh" ? await current.sampler.fresh() : current.sampler.snapshot();
       getSession(principal, p.sessionId);
       permission(principal, "devices.read");
+      if (p.channelIds.some((id) => !current.sources.channels.some((c) => c.channelId === id)))
+        return stale();
       return {
         ...snapshot,
         frame: snapshot.frame
@@ -1110,10 +1483,10 @@ export function createBroker(
     }
     if (method === "devices/recording/reserve") {
       ensureCapability(current, "recordingReservation.v1");
-      if (principal.kind !== "plugin") return stale("reservation");
       const p = parse(method);
       const check = () => {
         getSession(principal, p.sessionId);
+        if (principal.kind === "core") checkCore(principal, current);
         ensureCapability(current, "recordingReservation.v1");
         permission(principal, "devices.read");
         gate(principal, "recording-reservation", p.sessionId, "admission");
@@ -1128,23 +1501,47 @@ export function createBroker(
       const channels = p.channelIds.map(
         (id) => current.sources.channels.find((c) => c.channelId === id) ?? stale("reservation"),
       );
-      const result = await reservations.reserve({
-        owner: principal.owner,
+      if (reservations.active || coreReservations.active)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      if (reservations.size + coreReservations.size >= 256) quota("reservation", 256);
+      const args = {
         sessionId: p.sessionId,
         providerGeneration: current.generation,
         channels,
         sourceRevision: p.expectedSourceRevision,
         check,
         fresh: () => current.sampler.fresh(),
-      });
+      };
+      const result =
+        principal.kind === "plugin"
+          ? await reservations.reserve({ ...args, owner: principal.owner })
+          : await coreReservations.reserve({
+              ...args,
+              owner: {
+                kind: "core",
+                adapter: principal.adapter,
+                hostEpoch: principal.hostEpoch,
+                workbenchInstance: principal.workbenchInstance,
+              },
+            });
+      const store = principal.kind === "plugin" ? reservations : coreReservations;
       const undemand = current.sampler.demand(result.reservation.reservationId, 500);
-      const unlisten = reservations.onEnded((event) => {
+      const unlisten = store.onEnded((event) => {
         if (event.reservationId === result.reservation.reservationId) {
           undemand();
           unlisten();
+          clearInterval(coreWatch);
           current.snapshot.recording = false;
         }
       });
+      const coreWatch =
+        principal.kind === "core"
+          ? setInterval(() => {
+              if (!validCore(principal, current))
+                coreReservations.end(result.reservation.reservationId, "renderer-lost", false);
+            }, 500)
+          : undefined;
+      coreWatch?.unref();
       current.snapshot.recording = true;
       return result;
     }
@@ -1158,7 +1555,7 @@ export function createBroker(
       );
       const p = parse(method);
       if (p.expectedSourceRevision !== current.sources.sourceRevision) return stale();
-      if (method === "devices/inputModes/set" && reservations.active)
+      if (method === "devices/inputModes/set" && (reservations.active || coreReservations.active))
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
       const id = randomUUID();
       current.lane.reserve(id);
@@ -1174,14 +1571,11 @@ export function createBroker(
           return value(await current.provider.inputModes(current.connection.key, p, ctx.work));
         const modeChange = parse("devices/inputModes/set");
         input.authority.assertContinuation(principal, modeChange.contextRef);
-        current.snapshot.sourceRevision++;
         const result = value(
           await current.provider.setInputMode(current.connection.key, modeChange, ctx.work),
         );
         ctx.work.assertContinuation("read");
-        current.sources = result.sources;
-        current.snapshot.sourceRevision = result.sources.sourceRevision;
-        changed(true);
+        publishSources(current, result.sources);
         return {
           ...result,
           snapshot: result.snapshot.frame
@@ -1189,10 +1583,9 @@ export function createBroker(
             : result.snapshot,
         };
       } catch (error) {
-        if (method === "devices/inputModes/set") {
-          current.snapshot.sourceRevision = current.sources.sourceRevision;
-          changed(true);
-        }
+        // A failed write may have changed the physical source. Preserve the last
+        // confirmed revision and prompt consumers to refresh, as before.
+        if (method === "devices/inputModes/set") changed(true);
         throw error;
       } finally {
         current.lane.release(id);
@@ -1211,53 +1604,61 @@ export function createBroker(
       entries.splice(index, 1);
     }
     entries.push(entry);
-    const body = { schemaVersion: 1 as const, revision: document.revision + 1, entries };
-    await bounded(
-      input.journal.commit({
-        ...body,
-        integrity: {
-          algorithm: "sha256",
-          digest: createHash("sha256").update(JSON.stringify(body)).digest("hex"),
-        },
-      }),
-      5000,
-    );
+    await bounded(input.journal.commit(journalDocument(document.revision + 1, entries)), 5000);
   };
-  const catalogBindings = new Map<
-    string,
-    { generation: number | null; retired: boolean; ids: Map<string, string> }
-  >();
+  const catalogBindings = new Map<string, CatalogBinding>();
   const providerCatalog: DeviceBrokerPort["providerCatalog"] = (providerId) => {
     if (providerId !== "kobrixa.device-ev3")
       return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "provider-disabled");
     if (catalogBindings.has(providerId))
       return deviceFailure("PLUGIN_E_PROVIDER_CONFLICT", "provider-conflict");
-    const binding = {
-      generation: null as number | null,
+    const binding: CatalogBinding = {
+      generation: null,
       retired: false,
-      ids: new Map<string, string>(),
+      ids: new Map(),
+      observation: null,
     };
     catalogBindings.set(providerId, binding);
-    return {
+    const currentSession = (id: string) => {
+      const current = session;
+      if (
+        binding.retired ||
+        binding.generation === null ||
+        !current ||
+        current.provider.id !== providerId ||
+        current.generation !== binding.generation ||
+        id !== current.snapshot.sessionId
+      )
+        return stale();
+      providers.get(providerId);
+      return current;
+    };
+    const tupleKey = (tuple: SourceTuple) => {
+      const fields = channelDefinitionSchema.shape;
+      for (const field of ["portId", "typeId", "modeId", "component", "unit"] as const)
+        if (!fields[field].safeParse(tuple[field]).success)
+          return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
+      validateDeviceWire("provider.channel", tuple);
+      return JSON.stringify([
+        tuple.sessionId,
+        tuple.portId,
+        tuple.typeId,
+        tuple.modeId,
+        tuple.component,
+        tuple.unit,
+      ]);
+    };
+    const port: ProviderCatalogPort = {
       connectionPolicy: () =>
         attemptPolicies.get(providerId) ?? Object.freeze({ ...input.connectionPolicy() }),
       identify(tuple) {
-        const current = session;
-        if (
-          binding.retired ||
-          binding.generation === null ||
-          !current ||
-          current.provider.id !== providerId ||
-          current.generation !== binding.generation ||
-          tuple.sessionId !== current.snapshot.sessionId
-        )
-          return stale();
-        const fields = channelDefinitionSchema.shape;
-        for (const field of ["portId", "typeId", "modeId", "component", "unit"] as const)
-          if (!fields[field].safeParse(tuple[field]).success)
-            return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
-        validateDeviceWire("provider.channel", tuple);
-        providers.get(providerId);
+        const current = currentSession(tuple.sessionId);
+        const identity = tupleKey(tuple);
+        if (binding.observation?.sessionId === tuple.sessionId) {
+          // Only the immediately observed generation is eligible. Returning to
+          // an earlier tuple cannot reach a historical ID, even before publish.
+          return binding.observation.ids.get(identity) ?? stale();
+        }
         const key = JSON.stringify([
           binding.generation,
           tuple.sessionId,
@@ -1276,9 +1677,39 @@ export function createBroker(
         return id;
       },
     };
+    catalogObservers.set(port, (sessionId, tuples) => {
+      currentSession(sessionId);
+      // The complete observation includes channels and actuators (38 + 4).
+      if (tuples.length > 42 || tuples.some((tuple) => tuple.sessionId !== sessionId))
+        return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "provider-contract");
+      const keys = tuples.map(tupleKey).sort();
+      const signature = JSON.stringify(keys);
+      const previous = binding.observation?.sessionId === sessionId ? binding.observation : null;
+      if (previous?.signature === signature) return;
+      const ids = new Map(keys.map((key) => [key, previous?.ids.get(key) ?? randomUUID()]));
+      binding.observation = {
+        sessionId,
+        generation: (previous?.generation ?? 0) + 1,
+        signature,
+        ids,
+      };
+      // No historical allocation can reappear after a disappearance/replacement.
+      binding.ids.clear();
+    });
+    return port;
   };
   const broker: DeviceBrokerPort & LegacyOperationPort = {
-    intent,
+    intent: {
+      bindMotionScope(binding) {
+        intentOwners.set(resourceOwnerKey(binding.owner), structuredClone(binding.owner));
+        return intent.bindMotionScope(binding);
+      },
+      pulsePanel: (scope, sequence) => intent.pulsePanel(scope, sequence),
+      revokeScope: (scope, reason) => intent.revokeScope(scope, reason),
+      beginGesture: (scope, sequence) => intent.beginGesture(scope, sequence),
+      pulseGesture: (gesture, sequence) => intent.pulseGesture(gesture, sequence),
+      endGesture: (gesture, reason) => intent.endGesture(gesture, reason),
+    },
     reservations,
     sessions,
     resources,
@@ -1286,6 +1717,7 @@ export function createBroker(
     events,
     providerCatalog,
     async reconnectForRecovery({ previousSessionId, signal }) {
+      let attemptedConnection = false;
       try {
         const previous = lostUsb.get(previousSessionId);
         if (!previous || previous.pending || signal.aborted || !usbLive(previous)) return stale();
@@ -1311,16 +1743,26 @@ export function createBroker(
               entry.sessionId === previousSessionId &&
               (entry.physical.basis !== "serial" || entry.physical.digest !== previous.digest),
           )
-        )
+        ) {
+          forgetUsb(previousSessionId, null);
+          recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
+        }
         const matches = found.filter(
           (candidate) =>
             candidate.descriptor.transport === "usb" &&
             candidate.physical.basis === "serial" &&
             candidate.physical.digest === previous.digest,
         );
-        if (matches.length !== 1)
+        if (matches.length === 0)
+          return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
+        if (matches.length > 1) {
+          forgetUsb(previousSessionId, null);
+          recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
+        }
+        attemptedConnection = true;
+        recoveryState(previousSessionId, "connecting");
         const candidateId = candidates.add(ownerKey(previous.principal), {
           candidate: matches[0]!,
           generation: previous.generation,
@@ -1333,14 +1775,18 @@ export function createBroker(
           signal,
         );
         if (!connected.ok) return connected;
-        forgetUsb(previousSessionId);
+        forgetUsb(previousSessionId, null);
+        recoveryState(previousSessionId, "restored", connected.value.session);
         return { ok: true, value: { sessionId: connected.value.session.sessionId } };
       } catch (error) {
         if (error instanceof BrokerFailure) return error.result;
         throw error;
       } finally {
         const previous = lostUsb.get(previousSessionId);
-        if (previous) previous.pending = false;
+        if (previous) {
+          previous.pending = false;
+          if (attemptedConnection && usbLive(previous)) recoveryState(previousSessionId, "waiting");
+        }
       }
     },
     async stopCurrentDevice({ sessionId, action }) {
@@ -1450,23 +1896,38 @@ export function createBroker(
         )
       )
         return stale();
-      const valid = () => {
-        if (
-          closing ||
-          session !== current ||
-          current.quiescence ||
-          principal.hostEpoch !== input.profile.hostEpoch
-        )
-          return false;
-        const ref = principal.authorityContext?.ref;
-        const context = ref ? input.authority.current(principal, ref) : null;
-        return (
-          !!context &&
-          context.state !== "invalid" &&
-          context.workbenchInstance === principal.workbenchInstance
-        );
-      };
-      return coreTelemetry.subscribe({
+      const valid = () => validCore(principal, current);
+      const closure = { ended: false, listeners: new Set<() => void>() };
+      let callerDisposed = false;
+      // The ledger releases its sampler demand on every termination, including owner
+      // invalidation, quota overflow and ACK timeout. Observe that existing teardown.
+      const sampler = new Proxy(current.sampler, {
+        get(target, property, receiver) {
+          if (property === "snapshot") return () => target.snapshot();
+          if (property === "subscribe")
+            return (listener: Parameters<Sampler["subscribe"]>[0]) => target.subscribe(listener);
+          if (property === "demand")
+            return (id: string, interval: 500 | 30000) => {
+              const remove = target.demand(id, interval);
+              return () => {
+                remove();
+                if (!callerDisposed && !closure.ended) {
+                  closure.ended = true;
+                  for (const listener of [...closure.listeners]) {
+                    try {
+                      listener();
+                    } catch {
+                      /* A consumer cannot interrupt ledger teardown. */
+                    }
+                  }
+                  closure.listeners.clear();
+                }
+              };
+            };
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const subscription = coreTelemetry.subscribe({
         owner: {
           kind: "core",
           adapter: principal.adapter,
@@ -1474,13 +1935,23 @@ export function createBroker(
           workbenchInstance: principal.workbenchInstance,
         },
         id: randomUUID(),
-        sampler: current.sampler,
+        sampler,
         channelIds,
         intervalMs,
         sources: () => current.sources,
         valid,
         receive,
       });
+      const result: CoreTelemetrySubscription = {
+        ...subscription,
+        dispose: async () => {
+          callerDisposed = true;
+          closure.listeners.clear();
+          await subscription.dispose();
+        },
+      };
+      coreClosures.set(result, closure);
+      return result;
     },
     attachChannel({ owner, principal, send }) {
       const key = resourceOwnerKey(owner),
@@ -1492,14 +1963,20 @@ export function createBroker(
         input.requirements(owner) === null
       )
         return stale("subscription");
+      let disposed = false;
       const channel = {
         owner: Object.freeze(structuredClone(owner)),
         principal,
         send,
         domains: new Set<"devices" | "ui" | "settings">(),
+        retire() {
+          if (disposed) return;
+          disposed = true;
+          events.disposeOwner(owner);
+          channel.domains.clear();
+        },
       };
       channels.set(key, channel);
-      let disposed = false;
       return {
         owner: channel.owner,
         negotiated(domain, version) {
@@ -1513,11 +1990,9 @@ export function createBroker(
           events.unsubscribe(owner, id);
         },
         dispose() {
-          if (disposed) return;
-          disposed = true;
-          events.disposeOwner(owner);
-          channel.domains.clear();
-          channels.delete(key);
+          channel.retire();
+          // A failed sink keeps its owner slot until the router releases the attachment.
+          if (channels.get(key) === channel) channels.delete(key);
         },
       };
     },
@@ -1572,6 +2047,7 @@ export function createBroker(
         if (binding) {
           binding.retired = true;
           binding.ids.clear();
+          binding.observation = null;
         }
         catalogBindings.delete(provider.id);
         const current = session;
@@ -1591,22 +2067,29 @@ export function createBroker(
         id = randomUUID();
       gate(principal, operationClass, sessionId, "admission");
       current.lane.reserve(id);
-      const ctx = contexts(principal, current, operationClass, 600000, id);
       const hardDeadline = input.now() + 600000;
       let confirmationDeadline = Math.min(hardDeadline, input.now() + 120000),
         closed = false,
+        executionAdmitted = false,
         launched = false;
+      const assertPlan = () => {
+        if (
+          closed ||
+          (!executionAdmitted &&
+            (input.now() >= hardDeadline || input.now() >= confirmationDeadline))
+        )
+          return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
+      };
+      // Confirmation clocks bound planning only. Every execution exchange still uses
+      // ExchangeLane's 5 s / 10 s budget and the same authority/cancellation checks.
+      const ctx = contexts(principal, current, operationClass, 600000, id, assertPlan, 600000);
       let risk: SafetyFaultEntry | null = null;
       let inFlight: Promise<ProviderOutcome<LegacyProviderValue>> | null = null;
       let resolve!: (value: DeviceDisposition) => void;
       const done = new Promise<DeviceDisposition>((r) => {
         resolve = r;
       });
-      const check = () => {
-        if (closed || input.now() >= hardDeadline || input.now() >= confirmationDeadline)
-          return deviceFailure("PLUGIN_E_TIMEOUT", "deadline");
-        ctx.work.assertContinuation("file-begin");
-      };
+      const check = () => ctx.work.assertContinuation("file-begin");
       const finish = async () => {
         if (closed) {
           await done;
@@ -1614,7 +2097,7 @@ export function createBroker(
         }
         if (launched) return;
         closed = true;
-        const cleanupDeadline = Math.min(hardDeadline, ctx.cleanup.deadlineMonotonicMs);
+        const cleanupDeadline = ctx.cleanup.deadlineMonotonicMs;
         try {
           if (inFlight)
             await bounded(
@@ -1701,6 +2184,7 @@ export function createBroker(
         operationId: id,
         async execute(request) {
           check();
+          if (request.kind !== "list") executionAdmitted = true;
           if (
             operationClass === "file-read" &&
             request.kind !== "list" &&
@@ -1746,9 +2230,31 @@ export function createBroker(
           inFlight = execution;
           let result: ProviderOutcome<LegacyProviderValue>;
           try {
-            result = await execution;
+            result = await Promise.race([
+              execution,
+              done.then(() => deviceFailure("PLUGIN_E_TIMEOUT", "deadline")),
+            ]);
           } finally {
             if (inFlight === execution) inFlight = null;
+          }
+          // Closing revokes continuation, not evidence from work already dispatched.
+          // finish() bounds the wait above when the provider never settles.
+          if (closed || ctx.work.cancellation.aborted) {
+            if (result.error)
+              throw new BrokerFailure({
+                ok: false,
+                error: {
+                  code: "PLUGIN_E_DEVICE_OPERATION",
+                  message: result.error.message,
+                  detail: {
+                    kind: "device",
+                    reason: result.error.reason,
+                    dispatch: result.dispatch,
+                    stopConfirmation: result.stopConfirmation,
+                  },
+                },
+              });
+            return result;
           }
           check();
           if (risk) {
@@ -1780,6 +2286,10 @@ export function createBroker(
         finish,
         cancel,
       };
+      legacyAdmissions.set(operation, () => {
+        check();
+        executionAdmitted = true;
+      });
       return operation;
     },
     async legacy(principal, sessionId, request, signal) {
@@ -1804,5 +2314,6 @@ export function createBroker(
       }
     },
   };
+  lifecycleListeners.set(broker, lifecycle);
   return broker;
 }

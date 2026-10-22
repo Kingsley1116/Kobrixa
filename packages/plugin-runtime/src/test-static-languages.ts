@@ -55,6 +55,7 @@ export function builtinToy(
   };
   return {
     kind: "builtin",
+    policy: "required",
     manifest,
     resources: {
       "language/tokenizer.json": tokenizerText,

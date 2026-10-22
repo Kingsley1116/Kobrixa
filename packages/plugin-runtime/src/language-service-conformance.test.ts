@@ -17,7 +17,7 @@ it.each(cases.filter((item) => item.registry))("registry: $name", async (item) =
     await writeFile(path.join(root, "main.js"), "");
     const read = await readSource(
       item.registry!.source === "builtin"
-        ? { kind: "builtin", resources: {}, manifest: item.value }
+        ? { kind: "builtin", policy: "required", resources: {}, manifest: item.value }
         : { kind: "development", directory: root },
       { safeMode: false },
     );

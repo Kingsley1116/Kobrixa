@@ -8,6 +8,8 @@ import type { MonitorResult } from "../../shared/api.js";
 import { identityCalibration } from "../../shared/sensor-calibration.js";
 import { monitorChannels, type SensorLabStartRequest } from "../../shared/sensor-lab.js";
 import { MonitorService } from "../device/monitor-service.js";
+import type { LegacyDevice, LegacyMonitorFeed } from "../device-broker/legacy-device.js";
+import type { SourceCatalog } from "@kobrixa/plugin-protocol";
 import { SensorLabService } from "./service.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -52,14 +54,131 @@ async function setup() {
       status: "ok" as const,
       value: { port: 0, type: 29, modes: [{ mode: 0, name: "COL-REFLECT" }] },
     })),
-    setInputMode: vi.fn(async () => ({ status: "ok" as const, value: snapshot(1) })),
+    setInputMode: vi.fn(async (..._args: [string, number, number, number]) => ({
+      status: "ok" as const,
+      value: snapshot(1),
+    })),
   };
-  const monitor = new MonitorService(devices, () => {});
+  type Receive = Parameters<LegacyMonitorFeed["subscribe"]>[0]["receive"];
+  const consumers = new Set<Receive>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pending: Promise<void> | undefined;
+  let recordingDemand = false;
+  let sequence = 0;
+  let sources: SourceCatalog = { sessionId, sourceRevision: 1, channels: [], actuators: [] };
+  const sample = (): Promise<void> => {
+    if (pending) return pending;
+    clearTimeout(timer);
+    timer = undefined;
+    const work = (async () => {
+      const result = await devices.monitor(sessionId);
+      if (result.status === "ok") {
+        const value = result.value;
+        sources = {
+          sessionId,
+          sourceRevision: 1,
+          actuators: [],
+          channels: value.inputs.flatMap((input) =>
+            input.values.map((_v, component) => ({
+              channelId: `input-${input.port}-${component}`,
+              kind: "input" as const,
+              portId: `input:${input.port}`,
+              typeId: `ev3:${input.type}`,
+              modeId: `mode:${input.mode}`,
+              component,
+              name: input.name,
+              modeName: input.modeName,
+              unit: input.unit,
+              decimals: input.decimals,
+              state: input.state,
+            })),
+          ),
+        };
+        for (const receive of [...consumers])
+          receive(
+            {
+              sessionId,
+              revision: ++sequence,
+              status: "fresh",
+              ageMs: 0,
+              frame: {
+                sequence,
+                sampledAt: value.sampledAt,
+                elapsedMs: 0,
+                sourceRevision: 1,
+                status: "ok",
+                program: value.program.status,
+                values: sources.channels.map((c) => ({
+                  channelId: c.channelId,
+                  value:
+                    value.inputs.find((input) => `input:${input.port}` === c.portId)!.values[
+                      c.component
+                    ] ?? null,
+                })),
+              },
+            },
+            sources,
+          );
+      } else {
+        for (const receive of [...consumers])
+          receive(
+            { sessionId, revision: ++sequence, status: "busy", ageMs: null, frame: null },
+            sources,
+          );
+      }
+    })();
+    pending = work.finally(() => {
+      pending = undefined;
+      if (consumers.size)
+        timer = setTimeout(() => {
+          timer = undefined;
+          void sample();
+        }, 500);
+    });
+    return pending;
+  };
+  const fakeDevice = {
+    inputModes: devices.inputModes,
+    setInputMode: (...args: [string, number, number, number]) =>
+      recordingDemand
+        ? Promise.resolve({
+            status: "error",
+            category: "device",
+            message: "Recording pins this mode.",
+          })
+        : devices.setInputMode(...args),
+    async watch(_id: string, _interval: number, receive: Receive) {
+      consumers.add(receive);
+      try {
+        await sample();
+      } catch (error) {
+        consumers.delete(receive);
+        throw error;
+      }
+      return async () => {
+        consumers.delete(receive);
+        if (!consumers.size) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        await pending;
+      };
+    },
+  } as unknown as LegacyDevice;
+  const monitor = new MonitorService(fakeDevice, () => {});
   const lab = new SensorLabService({
     directory,
     device: () => ({ id: "test", name: "EV3", transport: "usb" }),
-    acquire: (id) => monitor.acquire(id),
-    release: (id) => monitor.release(id),
+    acquire: async (id) => {
+      recordingDemand = true;
+      await monitor.watch(id, true, -1);
+      if (monitor.latest(id)?.status !== "live")
+        throw new Error("Wait for a fresh device reading before recording.");
+    },
+    release: async (id) => {
+      recordingDemand = false;
+      await monitor.watch(id, false, -1);
+    },
     latest: monitor.latest,
     publish: () => {},
     monotonic: () => Date.now(),
@@ -77,7 +196,7 @@ async function setup() {
     name: "Shared stream",
     channels: [{ source, calibration: identityCalibration(source.unit) }],
   };
-  return { monitor, lab, devices, request, sessionId };
+  return { monitor, lab, devices, request, sessionId, schedulerBusy: () => pending !== undefined };
 }
 
 describe("shared monitor and sensor lab integration", () => {
@@ -129,7 +248,7 @@ describe("shared monitor and sensor lab integration", () => {
         }),
     );
     await vi.advanceTimersByTimeAsync(500);
-    expect(h.monitor.busy).toBe(true);
+    expect(h.schedulerBusy()).toBe(true);
     let finished = false;
     const stopping = h.lab.stop().then((state) => {
       finished = true;
@@ -145,7 +264,7 @@ describe("shared monitor and sensor lab integration", () => {
       saved: true,
       recording: { frameCount: 1, reason: "manual" },
     });
-    expect(h.monitor.busy).toBe(false);
+    expect(h.schedulerBusy()).toBe(false);
   });
 
   it("auto-stops a changed source from inside the sampler callback without deadlock", async () => {

@@ -254,7 +254,7 @@ export class EventLedger implements CommonEventLedgerPort {
     try {
       this.send(event);
     } catch (error) {
-      this.unsubscribe(row.owner, event.subscriptionId);
+      if (!row.removed) this.unsubscribe(row.owner, event.subscriptionId);
       throw error;
     }
   }
@@ -274,7 +274,22 @@ export class EventLedger implements CommonEventLedgerPort {
           data: {
             ...event.data,
             frames: event.data.frames.map((frame, index) =>
-              index === 0 ? { ...frame, gap: row.telemetryGap! } : frame,
+              index === 0
+                ? {
+                    ...frame,
+                    gap: {
+                      fromSequence: Math.min(
+                        row.telemetryGap!.fromSequence,
+                        frame.gap?.fromSequence ?? row.telemetryGap!.fromSequence,
+                      ),
+                      toSequence: Math.max(
+                        row.telemetryGap!.toSequence,
+                        frame.gap?.toSequence ?? row.telemetryGap!.toSequence,
+                      ),
+                      reason: frame.gap?.reason ?? row.telemetryGap!.reason,
+                    },
+                  }
+                : frame,
             ),
           },
         };
@@ -284,7 +299,22 @@ export class EventLedger implements CommonEventLedgerPort {
           data: {
             ...event.data,
             frames: event.data.frames.map((frame, index) =>
-              index === 0 ? { ...frame, gap: row.telemetryGap! } : frame,
+              index === 0
+                ? {
+                    ...frame,
+                    gap: {
+                      fromSequence: Math.min(
+                        row.telemetryGap!.fromSequence,
+                        frame.gap?.fromSequence ?? row.telemetryGap!.fromSequence,
+                      ),
+                      toSequence: Math.max(
+                        row.telemetryGap!.toSequence,
+                        frame.gap?.toSequence ?? row.telemetryGap!.toSequence,
+                      ),
+                      reason: frame.gap?.reason ?? row.telemetryGap!.reason,
+                    },
+                  }
+                : frame,
             ),
           },
         };
@@ -415,11 +445,16 @@ export class EventLedger implements CommonEventLedgerPort {
   }
   sweep() {
     for (const [id, row] of this.#rows) {
-      if (row.removed) continue;
-      const expired = row.pending.some((item) => this.now() - item.at >= 10000);
-      if (!expired) continue;
-      if (row.terminal) this.unsubscribe(row.owner, id);
-      else this.#resync(row.owner, id, "ack-timeout");
+      try {
+        if (row.removed) continue;
+        const expired = row.pending.some((item) => this.now() - item.at >= 10000);
+        if (!expired) continue;
+        if (row.terminal) this.unsubscribe(row.owner, id);
+        else this.#resync(row.owner, id, "ack-timeout");
+      } catch {
+        // Timer failures stay host-side; never log native transport details.
+        console.error("Device event sweep failed.");
+      }
     }
   }
   diagnostics() {

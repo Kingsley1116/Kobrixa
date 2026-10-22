@@ -22,9 +22,9 @@ export const MANIFEST_FILE = "kobrixa-plugin.json";
 export const RESERVED_PLUGIN_IDS: ReadonlySet<string> = new Set(["kobrixa.core"]);
 /** Bound on reading one development folder, so a hung disk cannot block startup or recovery. */
 export const SOURCE_READ_TIMEOUT_MS = 5_000;
-export type PluginSource =
-  | { kind: "builtin"; manifest: unknown; resources: Readonly<Record<string, string>> }
-  | { kind: "development"; directory: string };
+import type { Stage3BuiltinSource, BuiltinPolicy } from "./builtin-launch.js";
+
+export type PluginSource = Stage3BuiltinSource | { kind: "development"; directory: string };
 export type DevelopmentSource = Extract<PluginSource, { kind: "development" }>;
 /** `builtin:<manifest id>` or `dev:` plus 16 hex digits; safe to accept from the renderer. */
 export const sourceKeySchema = z
@@ -44,6 +44,7 @@ export interface ReadPlugin {
   sourceKey: string;
   id: string;
   source: "builtin" | "development";
+  policy?: BuiltinPolicy;
   directory?: string;
   manifest?: PluginManifest;
   entry?: string;
@@ -165,6 +166,21 @@ function checkManifest(
     if (
       contributes &&
       typeof contributes === "object" &&
+      Object.hasOwn(contributes, "deviceProviders")
+    )
+      return {
+        id: fallbackId,
+        source,
+        problems: [
+          problem(
+            "PLUGIN_E_DEVICE_PROVIDER_REQUIRES_BUILTIN",
+            "Device providers can only be contributed by host-allowlisted built-in sources.",
+          ),
+        ],
+      };
+    if (
+      contributes &&
+      typeof contributes === "object" &&
       Object.hasOwn(contributes, "languageServices")
     )
       return {
@@ -244,6 +260,25 @@ export async function readSource(
 ): Promise<ReadPlugin> {
   const resourceBudget = new SourceReadBudget(options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS);
   if (source.kind === "builtin") {
+    if (source.policy !== "required" && source.policy !== "optional") {
+      const manifest = source.manifest;
+      const id =
+        manifest &&
+        typeof manifest === "object" &&
+        "id" in manifest &&
+        typeof manifest.id === "string"
+          ? manifest.id
+          : "invalid-builtin";
+      return {
+        id,
+        source: "builtin",
+        sourceKey: `builtin:${id}`,
+        resourceBudget,
+        problems: [
+          problem("PLUGIN_E_MANIFEST", "Built-in sources require an explicit host policy."),
+        ],
+      };
+    }
     const plugin = await resourceBudget.run(async () =>
       checkManifest(source.manifest, "builtin", "builtin"),
     );
@@ -251,7 +286,7 @@ export async function readSource(
       throw new Error(
         `Invalid built-in plugin manifest: ${plugin.problems.map((item) => item.message).join("; ")}`,
       );
-    return { ...plugin, sourceKey: `builtin:${plugin.id}`, resourceBudget };
+    return { ...plugin, policy: source.policy, sourceKey: `builtin:${plugin.id}`, resourceBudget };
   }
   const directory = path.resolve(source.directory);
   const placeholder = {
@@ -332,7 +367,7 @@ export function resolvePlugins(
     }
     if (plugin.source !== "builtin") seen.add(plugin.id);
     for (const id of commands) commandOwners.set(id, plugin.id);
-    if (plugin.source !== "development") continue;
+    if (plugin.source === "builtin" && plugin.policy !== "optional") continue;
     // Recovery: this decision happens before any contribution is registered or process launched.
     if (options.disabled.has(plugin.sourceKey))
       Object.assign(plugin, { status: "disabled", disabledBy: "user" });

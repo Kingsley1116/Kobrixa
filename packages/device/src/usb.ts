@@ -157,7 +157,8 @@ export class UsbTransport implements DeviceTransport {
     signal.throwIfAborted();
     try {
       const path = target.metadata?.path;
-      const handle = path ? new HID.HID(path) : new HID.HID(LEGO_VENDOR_ID, EV3_PRODUCT_ID);
+      if (!path) throw new DeviceOperationError("not-found", "Rediscover this USB device.");
+      const handle = new HID.HID(path);
       return new EV3DeviceSession(target, new HidConnection(handle));
     } catch (error) {
       throw normalizeDeviceError(error, "permission");

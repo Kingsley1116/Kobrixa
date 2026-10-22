@@ -18,7 +18,7 @@ it("provides detached empty catalogs and mandatory owner snapshot fields without
   expectTypeOf<PluginManager["reportLanguageRegistrationFailure"]>().toEqualTypeOf<
     (input: ReportLanguageRegistrationFailureInput) => ReportLanguageRegistrationFailureResult
   >();
-  const source: PluginSource = { kind: "builtin", manifest: {}, resources: {} };
+  const source: PluginSource = { kind: "builtin", policy: "required", manifest: {}, resources: {} };
   expect(source.resources).toEqual({});
   const problem: PluginProblem = {
     code: "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",

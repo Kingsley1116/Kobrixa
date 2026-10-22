@@ -1,5 +1,6 @@
 import path from "node:path";
-import { managedPath, parseDirectoryListing } from "./files.js";
+import { bindDeviceConnection, type DeviceIoBinding } from "./io-boundary.js";
+import { EV3_FILE_CHUNK_BYTES, managedPath, parseDirectoryListing } from "./files.js";
 import type {
   RemoteEntry,
   TransferProgress,
@@ -70,11 +71,25 @@ export class EV3DeviceSession implements DeviceSession {
   constructor(
     readonly descriptor: DeviceDescriptor,
     private readonly connection: Ev3Connection,
+    private readonly binding?: DeviceIoBinding,
+    observeDisconnect = true,
   ) {
-    this.unsubscribeConnection = connection.onDisconnect?.((error) => {
-      this.connected = false;
-      for (const listener of this.disconnectListeners) listener(error);
-    });
+    this.unsubscribeConnection = observeDisconnect
+      ? connection.onDisconnect?.((error) => {
+          this.connected = false;
+          for (const listener of this.disconnectListeners) listener(error);
+        })
+      : undefined;
+  }
+
+  bindIo(binding: DeviceIoBinding): EV3DeviceSession {
+    if (this.binding) throw new Error("Cannot rebind an operation session.");
+    return new EV3DeviceSession(
+      this.descriptor,
+      bindDeviceConnection(this.connection, binding),
+      binding,
+      false,
+    );
   }
 
   onDisconnect(listener: (error: Error) => void): () => void {
@@ -195,9 +210,9 @@ export class EV3DeviceSession implements DeviceSession {
       let transferred = 0;
       try {
         for await (const data of chunks) {
-          for (let offset = 0; offset < data.length; offset += 900) {
+          for (let offset = 0; offset < data.length; offset += EV3_FILE_CHUNK_BYTES) {
             signal.throwIfAborted();
-            const chunk = data.slice(offset, offset + 900);
+            const chunk = data.slice(offset, offset + EV3_FILE_CHUNK_BYTES);
             if (transferred + chunk.length > size || closed)
               throw new DeviceOperationError("transfer", "Source file changed during upload.");
             const reply = await this.systemReply(
@@ -268,7 +283,7 @@ export class EV3DeviceSession implements DeviceSession {
     progress?: TransferProgress,
     maximum = 0xffffffff,
   ): Promise<void> {
-    const readSize = [900 & 255, 900 >> 8];
+    const readSize = [EV3_FILE_CHUNK_BYTES & 255, EV3_FILE_CHUNK_BYTES >> 8];
     const first = await this.systemReply(
       begin,
       Uint8Array.from([...readSize, ...new TextEncoder().encode(remotePath), 0]),
@@ -325,10 +340,10 @@ export class EV3DeviceSession implements DeviceSession {
     await this.system(
       CLOSE_FILEHANDLE,
       Uint8Array.of(handle),
-      new AbortController().signal,
+      this.binding?.signal ?? new AbortController().signal,
       5000,
       [0, 1],
-    ).catch(() => {});
+    );
   }
   createDirectory(remotePath: string, signal: AbortSignal): Promise<void> {
     return this.exclusive(async () => {
@@ -457,6 +472,7 @@ export class EV3DeviceSession implements DeviceSession {
     timeout: number,
     acceptedStatuses: readonly number[] = [SYSTEM_REPLY_OK],
   ): Promise<{ data: Uint8Array; status: number }> {
+    signal = this.binding?.signal ?? signal;
     signal.throwIfAborted();
     const reply = await withTimeout(
       (bounded) =>
@@ -490,6 +506,7 @@ export class EV3DeviceSession implements DeviceSession {
   }
 
   private async direct(payload: Uint8Array, signal: AbortSignal): Promise<void> {
+    signal = this.binding?.signal ?? signal;
     const reply = await withTimeout(
       (bounded) => this.connection.exchange(payload, bounded, 5000),
       signal,

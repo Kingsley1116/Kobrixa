@@ -103,3 +103,4 @@ export interface Ev3Connection {
   transmit(payload: Uint8Array, signal: AbortSignal): Promise<void>;
   close(): Promise<void>;
 }
+export type { DeviceIoBoundary, DeviceIoStep, DeviceIoBinding } from "./io-boundary.js";

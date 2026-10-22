@@ -110,3 +110,34 @@ describe("continuous USB reader", () => {
     expect(lost).toHaveBeenCalledOnce();
   });
 });
+
+import { bindDeviceConnection as bindStage3 } from "./io-boundary.js";
+import { it as stage3It, expect as stage3Expect } from "vitest";
+stage3It(
+  "F21 bound connection never forwards an ordinary cancellation to the transport",
+  async () => {
+    const work = new AbortController(),
+      transport = new AbortController();
+    let received: AbortSignal | undefined;
+    const bound = bindStage3(
+      {
+        exchange: async (_bytes, signal) => {
+          received = signal;
+          return Uint8Array.of(2);
+        },
+        transmit: async () => {},
+        close: async () => {},
+      },
+      {
+        step: "ordinary",
+        signal: transport.signal,
+        boundary: { beforeExchange() {}, afterExchange() {}, timeoutMs: () => 5000 },
+        exchange: (_payload, invoke) => invoke(transport.signal, 5000),
+      },
+    );
+    work.abort();
+    await bound.exchange(Uint8Array.of(0), work.signal);
+    stage3Expect(received).toBe(transport.signal);
+    stage3Expect(received?.aborted).toBe(false);
+  },
+);
