@@ -1,0 +1,249 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { setTimeout as pause } from "node:timers/promises";
+import { build } from "esbuild";
+import { build as buildRenderer } from "vite";
+import { root } from "./declarative-ui-harness.mjs";
+import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
+
+const faults = [
+  "hide",
+  "authority-loss",
+  "cancel",
+  "renderer-freeze",
+  "renderer-crash",
+  "plugin-kill",
+];
+const cases = ["prepare", "start", "arm", "pulse"].flatMap((boundary) =>
+  ["before", "after"].flatMap((position) => faults.map((fault) => ({ boundary, position, fault }))),
+);
+const args = process.argv.slice(2);
+assert.equal(args.length, 1, "Pass --all or --case=boundary:position:fault");
+const selected =
+  args[0] === "--all"
+    ? cases
+    : cases.filter((item) => args[0] === `--case=${item.boundary}:${item.position}:${item.fault}`);
+assert.ok(selected.length > 0, "Unknown motion scenario");
+const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-motion-")));
+console.log(`Motion acceptance workspace: ${directory}`);
+const require = createRequire(path.join(root, "apps/desktop/package.json"));
+const alias = Object.fromEntries(
+  [
+    ["plugin-protocol", "plugin-protocol"],
+    ["plugin-runtime", "plugin-runtime"],
+    ["plugin-sdk", "plugin-sdk-js"],
+  ].map(([name, folder]) => [
+    `@kobrixa/${name}`,
+    path.join(root, `packages/${folder}/src/index.ts`),
+  ]),
+);
+const template = path.join(directory, "template");
+await mkdir(path.join(template, "source"), { recursive: true });
+await cp(
+  path.join(root, "apps/desktop/out/stage/node_modules"),
+  path.join(directory, "node_modules"),
+  { recursive: true },
+);
+await cp(
+  path.join(root, "apps/desktop/.vite/build/preload.cjs"),
+  path.join(template, "preload.cjs"),
+);
+await build({
+  entryPoints: [path.join(root, "tests/desktop/declarative-ui-motion-main.ts")],
+  outfile: path.join(directory, "main.cjs"),
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  alias,
+  external: ["electron", "node-hid", "usb"],
+  plugins: [rawResourcePlugin()],
+});
+await build({
+  entryPoints: [path.join(root, "tests/desktop/fixtures/declarative-ui/motion-consumer.ts")],
+  outfile: path.join(template, "source/main.cjs"),
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  alias,
+});
+await writeFile(
+  path.join(template, "source/kobrixa-plugin.json"),
+  JSON.stringify({
+    id: "acceptance.motion",
+    version: "0.1.0",
+    apiVersion: "^1.6.0",
+    displayName: { en: "Motion acceptance" },
+    runtime: { kind: "node", entry: "main.cjs" },
+    permissions: ["ui.panels", "devices.read", "devices.connect", "devices.control"],
+    contributes: {
+      commands: [
+        {
+          id: "acceptance.motion.hold",
+          title: { en: "Hold" },
+          invocation: "context-v1",
+          arguments: {},
+        },
+      ],
+      panels: [
+        {
+          id: "acceptance.motion.panel",
+          title: { en: "Motion acceptance" },
+          location: "right",
+          resource: { version: 1, path: "panel.json" },
+        },
+      ],
+    },
+  }),
+);
+await writeFile(
+  path.join(template, "source/panel.json"),
+  JSON.stringify({
+    kind: "panel",
+    data: {},
+    fields: {},
+    root: "root",
+    nodes: [
+      { id: "root", type: "group", layout: "stack", children: ["hold"] },
+      {
+        id: "hold",
+        type: "holdAction",
+        label: { en: "Hold" },
+        command: "acceptance.motion.hold",
+        arguments: {},
+      },
+    ],
+  }),
+);
+await buildRenderer({
+  root: path.join(root, "apps/desktop"),
+  configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+  base: "./",
+  // The entry is under tests/; resolve React from the desktop graph, not the
+  // separately installed root copy. The production pane must share its hooks.
+  resolve: { dedupe: ["react", "react-dom"] },
+  plugins: [
+    {
+      name: "real-motion-pane-entry",
+      transformIndexHtml: {
+        order: "pre",
+        handler: (html) =>
+          html.replace(
+            'src="/src/renderer/index.tsx"',
+            `src="/@fs/${path.join(root, "tests/desktop/declarative-ui-motion-renderer.tsx")}"`,
+          ),
+      },
+    },
+  ],
+  build: { outDir: path.join(template, "renderer"), emptyOutDir: true },
+});
+const artifact = {
+  commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+  dirty:
+    execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim().length >
+    0,
+  sha256: Object.fromEntries(
+    await Promise.all(
+      [
+        "main.cjs",
+        ...(await readdir(template, { recursive: true, withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name))),
+      ].map(async (name) => [
+        name,
+        createHash("sha256")
+          .update(await readFile(path.join(directory, name)))
+          .digest("hex"),
+      ]),
+    ),
+  ),
+};
+await writeFile(path.join(directory, "artifact-identity.json"), JSON.stringify(artifact, null, 2));
+const reports = [];
+for (const scenario of selected) {
+  const name = `${scenario.boundary}-${scenario.position}-${scenario.fault}`;
+  const folder = path.join(directory, name);
+  await cp(template, folder, { recursive: true });
+  await mkdir(path.join(folder, "profile"));
+  await writeFile(
+    path.join(folder, "source/motion.json"),
+    JSON.stringify({ mode: scenario.boundary === "arm" ? "relative-angle" : "jog" }),
+  );
+  const input = path.join(folder, "input.json"),
+    output = path.join(folder, "report.json");
+  await writeFile(input, JSON.stringify(scenario));
+  const child = spawn(
+    require("electron"),
+    [path.join(directory, "main.cjs"), `--motion-input=${input}`, `--motion-output=${output}`],
+    {
+      cwd: folder,
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    },
+  );
+  const logs = [];
+  for (const stream of [child.stdout, child.stderr])
+    stream.on("data", (data) => {
+      logs.push(data.toString());
+      process.stderr.write(data);
+    });
+  const terminate = () => {
+    if (child.pid)
+      try {
+        process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+  };
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    terminate();
+  }, 75_000);
+  let result;
+  try {
+    result = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+  } finally {
+    clearTimeout(timer);
+    await writeFile(path.join(folder, "electron.log"), logs.join(""));
+    if (!result || result.code !== 0 || timedOut) terminate();
+  }
+  assert.equal(timedOut, false, name);
+  assert.equal(result.code, 0, `${name}: ${JSON.stringify(result)}; see ${folder}`);
+  const report = JSON.parse(await readFile(output, "utf8"));
+  assert.equal(report.kind, "ui-motion-race");
+  assert.ok(report.pid > 0);
+  const alive = () => {
+    try {
+      process.kill(report.pid, 0);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      throw error;
+    }
+  };
+  const deadline = performance.now() + 5000;
+  while (alive() && performance.now() < deadline) await pause(25);
+  report.remainingPids = alive() ? [report.pid] : [];
+  report.artifact = artifact;
+  report.normalClose = true;
+  await writeFile(output, JSON.stringify(report, null, 2));
+  assert.deepEqual(report.remainingPids, []);
+  reports.push({ scenario, path: output });
+  console.log(`PASS native motion ${name}: ${output}`);
+}
+await writeFile(
+  path.join(directory, "matrix.json"),
+  JSON.stringify({ kind: "ui-motion-matrix", reports, artifact }, null, 2),
+);
+console.log(
+  `${reports.length}/${cases.length} native motion cases recorded; pressure and withheld stop/readback remain separate gates.`,
+);

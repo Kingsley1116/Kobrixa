@@ -39,6 +39,58 @@ import { createFakeDeviceProvider, pluginPrincipal } from "./fake-provider.js";
 import { createProviderCatalog, EventLedger } from "./registry.js";
 import { IntentRegistry } from "./intent.js";
 it.each(["before-exchange", "after-exchange"] as const)(
+  "staged fake exposes helper-arm %s and forbids continuation after cancellation",
+  async (point) => {
+    const h = operationHarness();
+    const fake = createFakeDeviceProvider({
+      catalog: createProviderCatalog(),
+      now: h.dependencies.now,
+      motionProfile: "staged",
+    });
+    h.admission.lane.reserve(ID);
+    const c = createContexts({
+      id: ID,
+      sessionId: ID,
+      generation: 1,
+      operationClass: "finite-motion",
+      deadline: 30000,
+      now: h.dependencies.now,
+      lane: h.admission.lane,
+      check: () => {},
+      progress: () => {},
+      onStop: () => {},
+    });
+    fake.control.block(point, "helper-arm");
+    const motion = fake.provider.executeFiniteMotion(
+      h.provider.session,
+      { mode: "relative-angle", actuatorId: ID, power: 20, direction: 1, brake: true, degrees: 90 },
+      c.work,
+    );
+    const rejected = expect(motion).rejects.toThrow();
+    await fake.control.reached(point, "helper-arm");
+    c.stop("cancelled", true);
+    fake.control.release(point, "helper-arm");
+    await rejected;
+    await fake.provider.stopAndReadback(
+      h.provider.session,
+      { kind: "operation", operationId: ID },
+      c.cleanup,
+    );
+    const sent = fake.control
+      .trace()
+      .filter((row) => row.dispatch === "sent")
+      .map((row) => row.step);
+    expect(sent).toEqual([
+      "preflight",
+      "helper-upload",
+      "helper-run",
+      ...(point === "after-exchange" ? ["helper-arm"] : []),
+      "stop",
+      "readback",
+    ]);
+  },
+);
+it.each(["before-exchange", "after-exchange"] as const)(
   "formal fake %s cancellation has single dispatch and original cleanup",
   async (point) => {
     const h = operationHarness(),
