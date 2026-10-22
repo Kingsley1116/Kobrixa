@@ -320,7 +320,10 @@ export function PanelTree({
         content = (
           <button
             {...common}
-            disabled={!state.actionEnabled(node.id)}
+            disabled={
+              !state.actionEnabled(node.id) &&
+              !(intent.isHolding(node.id) && state.nodeEnabled(node.id) && state.valid())
+            }
             onPointerDown={(event) => {
               if (
                 intent.begin(node.id, {
