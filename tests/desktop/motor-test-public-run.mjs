@@ -171,6 +171,56 @@ export const lifecycleMatrix = ["prepare", "start", "arm", "pulse"].flatMap((bou
     ].map((fault) => ({ boundary, position, fault })),
   ),
 );
+// Validate observed native sequencing separately so negative receipt samples stay Node-only.
+export function validateNativeInput(report, scenario) {
+  const mode = scenario.mode ?? (scenario.boundary === "arm" ? "relative-angle" : "jog");
+  if (mode !== "jog") {
+    const observed = report.native.filter((r) => r.type === "mode-observed");
+    assert.deepEqual(
+      observed.map((r) => r.detail),
+      ["jog", "jog", ...(mode === "timed" ? ["timed"] : ["timed", "relative-angle"])].map(
+        (value) => ({ value, focused: true }),
+      ),
+      "Native closed-select focus/value observations required",
+    );
+    for (let i = 1; i < observed.length; i++)
+      assert.ok(observed[i].at > observed[i - 1].at, "Mode observations must cross render turns");
+  }
+  if (scenario.fault === "close") {
+    const close = report.lifecycleReceipt?.close;
+    assert.ok(close?.binding?.panelInstance, "Original closed binding required");
+    const ipc = report.ipc.find(
+      (r) =>
+        r.channel === "plugins:ui:close" &&
+        r.at === close.ipcAt &&
+        r.at >= close.clickAt &&
+        r.args[0]?.binding?.panelInstance === close.binding.panelInstance,
+    );
+    assert.ok(ipc?.result?.ok && !ipc.error, "Actual successful close IPC required");
+    assert.ok(close.bindingGoneAt >= ipc.at, "Binding disappearance must follow close IPC");
+    assert.ok(
+      report.events.some(
+        (e) =>
+          e.kind === "revoke" &&
+          e.binding?.panelInstance === close.binding.panelInstance &&
+          e.time >= close.clickAt,
+      ),
+      "Close must revoke the original binding",
+    );
+    if (mode === "jog")
+      assert.ok(
+        report.inputReceipts.some(
+          (r) =>
+            r.isTrusted &&
+            r.node === "a-forward" &&
+            r.type === (scenario.key ? "keyup" : "pointerup") &&
+            r.at >= report.faultAt &&
+            r.at < close.clickAt,
+        ),
+        "Original hold released before fresh close click",
+      );
+  }
+}
 export function validateNative(report, identity, scenario) {
   assert.equal(report.kind, scenario.safeMode ? "motor-public-native-cold" : "motor-public-native");
   assert.deepEqual(report.artifact, identity, "Exact tested artifact required");
@@ -193,6 +243,7 @@ export function validateNative(report, identity, scenario) {
     return report;
   }
   assert.ok(report.wire?.length && report.native?.length);
+  validateNativeInput(report, scenario);
   assert.ok(Array.isArray(report.trace), "Actual provider trace required");
   if (report.trace.length === 0) {
     assert.equal(report.terminal?.dispatch, "not-sent");

@@ -3,7 +3,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { test } from "node:test";
-import { compose, motorArtifacts, root, until } from "./motor-test-public-run.mjs";
+import {
+  compose,
+  motorArtifacts,
+  root,
+  until,
+  validateNativeInput,
+  nativeCases,
+} from "./motor-test-public-run.mjs";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const featureRoot = "plugins/motor-test/src/";
@@ -225,4 +232,67 @@ test("negative transitive metadata, external and private RPC samples fail closed
     "devices/private/write",
   ])
     assert.throws(() => auditTrace([{ direction: "plugin-host", message: { method } }]));
+});
+
+test("native input contract retains all 77 cases and requires each select acknowledgement", () => {
+  assert.equal(nativeCases.length, 77);
+  const scenario = { boundary: "arm", fault: "hide" };
+  // Validator samples only; these are never emitted as native receipts.
+  const report = {
+    native: ["jog", "jog", "timed", "relative-angle"].map((value, at) => ({
+      at,
+      type: "mode-observed",
+      detail: { value, focused: true },
+    })),
+  };
+  validateNativeInput(report, scenario);
+  for (const mutate of [
+    (r) => r.native.splice(2, 1),
+    (r) => {
+      r.native[2].detail.focused = false;
+    },
+    (r) => {
+      r.native[2].at = r.native[1].at;
+    },
+  ]) {
+    const invalid = structuredClone(report);
+    mutate(invalid);
+    assert.throws(() => validateNativeInput(invalid, scenario));
+  }
+});
+
+test("native close contract rejects pointer release without original-binding close and revoke", () => {
+  const scenario = { boundary: "prepare", fault: "close" };
+  const binding = { panelInstance: "original-panel" };
+  const report = {
+    native: [],
+    faultAt: 10,
+    inputReceipts: [{ at: 11, type: "pointerup", node: "a-forward", isTrusted: true }],
+    lifecycleReceipt: { close: { binding, clickAt: 12, ipcAt: 13, bindingGoneAt: 14 } },
+    ipc: [{ at: 13, channel: "plugins:ui:close", args: [{ binding }], result: { ok: true } }],
+    events: [{ kind: "revoke", time: 13, binding }],
+  };
+  validateNativeInput(report, scenario);
+  for (const mutate of [
+    (r) => {
+      r.ipc = [];
+    },
+    (r) => {
+      r.ipc[0].args[0].binding.panelInstance = "other-panel";
+    },
+    (r) => {
+      r.events[0].kind = "stop-dispatch";
+    },
+    (r) => {
+      r.lifecycleReceipt.close.bindingGoneAt = 12;
+    },
+    (r) => {
+      r.inputReceipts[0].at = 15;
+    },
+  ]) {
+    // JSON serialization also separates shared sample binding objects.
+    const invalid = JSON.parse(JSON.stringify(report));
+    mutate(invalid);
+    assert.throws(() => validateNativeInput(invalid, scenario));
+  }
 });

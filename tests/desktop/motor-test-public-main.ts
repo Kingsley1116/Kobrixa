@@ -895,17 +895,38 @@ export function runNativeMotor() {
         window.focus();
         window.webContents.focus();
         const js = <T>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
-        const target = async (selector: string) =>
-          until(
-            async () =>
-              js<{ x: number; y: number } | null>(`(() => {
-        const e = document.querySelector(${JSON.stringify(selector)});
-        if (!e || e.disabled || e.closest('[hidden]')) return null;
-        e.scrollIntoView({block:'center'}); const r = e.getBoundingClientRect();
-        return r.width && r.height ? {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)} : null;
-      })()`),
-            `native target ${selector}`,
+        // Two render turns let native input and React changes reach layout/compositing.
+        const paint = () =>
+          js<void>(
+            "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
           );
+        const target = async (selector: string) => {
+          await until(
+            () =>
+              js<boolean>(`(() => {
+              const e = document.querySelector(${JSON.stringify(selector)});
+              if (!e || e.disabled || e.closest('[hidden]')) return false;
+              e.scrollIntoView({block:'center', behavior:'instant'});
+              return true;
+            })()`),
+            `native target available ${selector}`,
+          );
+          let previous: { x: number; y: number } | null = null;
+          return until(async () => {
+            await paint();
+            const bounds = await js<{ x: number; y: number } | null>(`(() => {
+              const e = document.querySelector(${JSON.stringify(selector)});
+              if (!e || e.disabled || e.closest('[hidden]')) return null;
+              const r = e.getBoundingClientRect();
+              const x = Math.round(r.x+r.width/2), y = Math.round(r.y+r.height/2);
+              const hit = document.elementFromPoint(x,y);
+              return r.width && r.height && (hit === e || e.contains(hit)) ? {x,y} : null;
+            })()`);
+            const stable = bounds && previous && bounds.x === previous.x && bounds.y === previous.y;
+            previous = bounds;
+            return stable ? bounds : null;
+          }, `native target stable ${selector}`);
+        };
         const mouse = (type: "mouseDown" | "mouseUp", bounds: { x: number; y: number }) => {
           native.push({ at: wall(), type, detail: bounds });
           window.webContents.sendInputEvent({ type, button: "left", clickCount: 1, ...bounds });
@@ -913,7 +934,9 @@ export function runNativeMotor() {
         const click = async (selector: string) => {
           const bounds = await target(selector);
           mouse("mouseDown", bounds);
+          await paint();
           mouse("mouseUp", bounds);
+          await paint();
         };
         const key = (type: "keyDown" | "keyUp", keyCode: string, repeat = false) => {
           native.push({ at: wall(), type, detail: { keyCode, repeat } });
@@ -948,21 +971,43 @@ export function runNativeMotor() {
         await click('[data-ui-node="select-current"] button');
         const mode = scenario.mode ?? (scenario.boundary === "arm" ? "relative-angle" : "jog");
         if (mode !== "jog") {
-          await click('[data-ui-node="a-mode"] select');
+          // Clicking the associated label focuses the closed select without a popup.
+          await click('[data-ui-node="a-mode"] label');
+          const observeMode = async (value: string) => {
+            const observation = await until(
+              () =>
+                js<{ value: string; focused: boolean } | null>(`(() => {
+                const e = document.querySelector('[data-ui-node="a-mode"] select');
+                return e && document.activeElement === e && e.value === ${JSON.stringify(value)}
+                  ? {value:e.value, focused:true} : null;
+              })()`),
+              `native mode focus/value ${value}`,
+            );
+            await paint();
+            assert.ok(
+              await js<boolean>(
+                `document.activeElement === document.querySelector('[data-ui-node="a-mode"] select') && document.activeElement.value === ${JSON.stringify(value)}`,
+              ),
+              "Mode focus/value survived render",
+            );
+            native.push({ at: wall(), type: "mode-observed", detail: observation });
+          };
+          await observeMode("jog");
           key("keyDown", "Home");
           key("keyUp", "Home");
-          for (let i = 0; i < (mode === "timed" ? 1 : 2); i++) {
+          await observeMode("jog");
+          for (const value of mode === "timed" ? ["timed"] : ["timed", "relative-angle"]) {
             key("keyDown", "Down");
             key("keyUp", "Down");
+            await observeMode(value);
           }
-          key("keyDown", "Return");
-          key("keyUp", "Return");
           await until(
             () =>
-              js<boolean>(
-                `document.querySelector('[data-ui-node="a-mode"] select')?.value === ${JSON.stringify(mode)}`,
-              ),
-            "native mode selection",
+              js<boolean>(`(() => {
+            const e = document.querySelector('[data-ui-node="${mode === "timed" ? "a-seconds" : "a-degrees"}"] input');
+            return Boolean(e && !e.disabled && e.getClientRects().length);
+          })()`),
+            "mode dependent field rendered",
           );
         }
         const parity: Record<string, unknown> = {};
@@ -1266,9 +1311,48 @@ export function runNativeMotor() {
           case "hide":
             window.hide();
             break;
-          case "close":
+          case "close": {
+            const binding = ui.states.instances(owner).find((b) => b.kind === "panel")!;
+            assert.ok(binding, "Original panel binding before close");
+            // Release capture before a fresh close click; the blocked operation/reply stays held.
+            if (scenario.key) key("keyUp", scenario.key);
+            else if (mode === "jog") mouse("mouseUp", bounds);
+            await paint();
+            if (mode === "jog")
+              await until(
+                () =>
+                  inputReceipts.some(
+                    (r) =>
+                      r.at >= faultAt &&
+                      r.isTrusted &&
+                      r.node === "a-forward" &&
+                      r.type === (scenario.key ? "keyup" : "pointerup"),
+                  ),
+                "original hold release delivered",
+              );
+            const clickAt = wall();
             await click('[data-close-contribution="true"]');
+            const receipt = await until(
+              () =>
+                ipc.find(
+                  (r) =>
+                    r.at >= clickAt &&
+                    r.channel === "plugins:ui:close" &&
+                    (r.args[0] as { binding?: { panelInstance?: string } })?.binding
+                      ?.panelInstance === binding.panelInstance,
+                ),
+              "actual close IPC for original binding",
+            );
+            assert.equal(receipt.error, undefined);
+            assert.ok((receipt.result as { ok?: boolean })?.ok, "Close IPC succeeded");
+            await until(
+              () =>
+                !ui.states.instances(owner!).some((b) => b.panelInstance === binding.panelInstance),
+              "original panel binding disappeared after close IPC",
+            );
+            lifecycleReceipt.close = { binding, clickAt, ipcAt: receipt.at, bindingGoneAt: wall() };
             break;
+          }
           case "blur": {
             const other = new BrowserWindow({
               width: 200,
@@ -1649,6 +1733,9 @@ export function runNativeMotor() {
             logs,
             events,
             native,
+            inputReceipts,
+            operationId,
+            owner,
             trace: control?.trace(),
             pid,
             failures,
