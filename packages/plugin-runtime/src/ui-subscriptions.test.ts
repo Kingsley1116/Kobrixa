@@ -1,4 +1,4 @@
-import { RpcPeer, createMemoryChannelPair } from "@kobrixa/plugin-protocol";
+import { RpcPeer, createMemoryChannelPair, eventEnvelopeSchema } from "@kobrixa/plugin-protocol";
 import type { Stage3ChannelContext } from "./ui-lifecycle.js";
 function initializedChannel(): Stage3ChannelContext {
   const [channel] = createMemoryChannelPair();
@@ -15,7 +15,7 @@ import { UiStateRegistry } from "./ui-state.js";
 import { resourceFailure, type ResourceOwner, type UiEvent } from "@kobrixa/plugin-protocol";
 const h = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const owner: ResourceOwner = {
-  sourceKey: "source",
+  sourceKey: "builtin:test.ui",
   pluginId: "test.ui",
   generation: 1,
   hostEpoch: h(1),
@@ -65,6 +65,14 @@ function sharedLedgerFixture() {
         return resourceFailure("queue", 8);
       if (delivery === "telemetry" && record.bytes + bytes > 262144)
         return resourceFailure("queue", 262144);
+      eventEnvelopeSchema.parse({
+        version: 1,
+        subscriptionId: id,
+        owner: caller,
+        sequence: record.sequence + 1,
+        delivery,
+        ...event,
+      });
       record.sequence++;
       if (delivery === "control") record.control++;
       else record.bytes += bytes;
@@ -179,7 +187,7 @@ it("U08 control overflow revokes intent before cancelling and does not consume d
   for (let n = 0; n < 8; n++) subscriptions.environment(owner, n % 2 ? "en" : "zh-TW", "dark");
   expect(ledger.sent).toHaveLength(7);
   expect(ledger.sent.every((event) => event.delivery === "control")).toBe(true);
-  expect(revocations).toEqual(["source"]);
+  expect(revocations).toEqual([owner.sourceKey]);
   expect(ledger.live.size).toBe(0);
   subscriptions.dispose();
 });
@@ -222,5 +230,46 @@ it("U04/U08 closes only the revoked binding after preserving its terminal contro
   if (!bound.ok) throw new Error("subscription failed");
   ledger.ack(owner, bound.value.subscriptionId, 1);
   expect(ledger.live.size).toBe(1);
+  subscriptions.dispose();
+});
+
+it("U08 state invalidation uses a valid telemetry envelope and keeps terminal control separate", async () => {
+  const { ledger, state, subscriptions } = setup();
+  const opened = await state.open({
+    owner: { sourceKey: owner.sourceKey, pluginId: owner.pluginId, uiResourceGeneration: 1 },
+    id: "test.ui.panel",
+    scope: { hostEpoch: owner.hostEpoch, workbenchInstance: h(3) },
+    resource: {
+      kind: "panel",
+      data: {
+        count: {
+          schema: { type: "number", min: 0, max: 10, integer: true, nullable: false },
+          initial: 0,
+        },
+      },
+      fields: {},
+      root: "root",
+      nodes: [
+        { id: "root", type: "group", layout: "stack", children: ["text"] },
+        { id: "text", type: "help", value: { text: { en: "Ready" } } },
+      ],
+    },
+    activateInitialized: async () => initializedChannel(),
+  });
+  if (!opened.ok) throw new Error("open failed");
+  const binding = opened.value.binding;
+  const result = subscriptions.subscribe(owner, { binding, topics: ["state"] });
+  if (!result.ok) throw new Error("subscribe failed");
+  expect(state.patch(owner, { binding, baseRevision: 0, set: { count: 1 } }).ok).toBe(true);
+  state.flush();
+  expect(ledger.sent).toMatchObject([
+    { delivery: "telemetry", event: { kind: "ui.state", data: { revision: 1 } } },
+  ]);
+  expect(subscriptions.snapshot(owner, result.value.subscriptionId)).toMatchObject({
+    ok: true,
+    value: { sequence: 1 },
+  });
+  state.close(owner, binding);
+  expect(ledger.sent.at(-1)).toMatchObject({ delivery: "control", event: { kind: "ui.revoked" } });
   subscriptions.dispose();
 });

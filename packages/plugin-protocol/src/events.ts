@@ -105,7 +105,7 @@ export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
   event("ui.visibility", "control", uiEventDataSchemas["ui.visibility"]),
   event("ui.environment", "control", uiEventDataSchemas["ui.environment"]),
   event("ui.form", "control", uiEventDataSchemas["ui.form"]),
-  event("ui.state", "control", uiEventDataSchemas["ui.state"]),
+  event("ui.state", "telemetry", uiEventDataSchemas["ui.state"]),
   event("ui.revoked", "control", uiEventDataSchemas["ui.revoked"]),
 ]);
 export type DeviceEvent = z.output<typeof eventEnvelopeSchema>;
