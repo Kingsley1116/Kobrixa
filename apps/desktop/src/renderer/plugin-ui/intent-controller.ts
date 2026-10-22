@@ -2,7 +2,7 @@ import type { PluginUiBridge } from "@kobrixa/plugin-runtime";
 import type { UiStateStore } from "./state-store.js";
 import { send } from "./catalog-store.js";
 type Input = { trusted: boolean; kind: "pointer" | "key"; id: string; primary: boolean; repeat: boolean };
-type Held = { nodeId: string; input: Input; token: string; gesture: string | null };
+type Held = { nodeId: string; input: Input; token: string; gesture: string | null; form: ReturnType<UiStateStore["form"]> | null };
 export class UiIntentController {
   private held: Held | undefined;
   private visible = true;
@@ -18,21 +18,32 @@ export class UiIntentController {
   }
   begin(nodeId: string, input: Input): boolean {
     if (this.dead || this.held || !this.visible || !this.focused || !input.trusted || !input.primary || input.repeat
-      || (input.kind === "key" && input.id !== " " && input.id !== "Enter") || !this.state.nodeEnabled(nodeId) || !this.state.valid()) return false;
-    if (!this.state.nextAction()) return false;
-    const held: Held = { nodeId, input, token: crypto.randomUUID(), gesture: null }; this.held = held;
-    try { void this.bridge.hold({ ...this.state.form(), nodeId, phase: "begin", inputToken: held.token }).then((result) => {
+      || (input.kind === "key" && input.id !== " " && input.id !== "Enter") || !this.state.actionEnabled(nodeId)) return false;
+    const held: Held = { nodeId, input, token: crypto.randomUUID(), gesture: null, form: null }; this.held = held;
+    const start = () => {
       if (this.held !== held || this.dead) return;
-      if (!result.ok) { this.cancel(); return; }
-      held.gesture = result.value.gesture;
-    }, () => { if (this.held === held) this.cancel(); }); }
-    catch { if (this.held === held) this.cancel(); return false; }
+      if (!this.state.actionEnabled(nodeId) || !this.state.nextAction()) { this.cancel(); return; }
+      held.form = this.state.form();
+      try { void this.state.actionReply(this.bridge.hold({ ...held.form, nodeId, phase: "begin", inputToken: held.token })).then((result) => {
+        this.state.actionFinished();
+        if (this.held !== held || this.dead) return;
+        if (!result.ok) { this.cancel(); return; }
+        held.gesture = result.value.gesture;
+      }, () => { this.state.actionFinished(); if (this.held === held) this.cancel(); }); }
+      catch { this.state.actionFinished(); if (this.held === held) this.cancel(); }
+    };
+    if (this.state.needsReconcile()) {
+      this.state.actionPreparing();
+      void this.state.reconcileAction().then((ok) => { this.state.actionFinished(); if (ok) start(); else if (this.held === held) this.cancel(); });
+    }
+    else start();
     return true;
   }
   release(kind: Input["kind"], id: string, forced: boolean): void {
     const held = this.held; if (!held || held.input.kind !== kind || held.input.id !== id) return;
     this.held = undefined; this.state.intentRevoked(); // synchronously before any IPC promise settles
-    send(() => this.bridge.hold({ ...this.state.form(), nodeId: held.nodeId, phase: forced ? "cancel" : "end", inputToken: held.token }));
+    if (!held.form) return;
+    send(() => this.bridge.hold({ ...held.form!, nodeId: held.nodeId, phase: forced ? "cancel" : "end", inputToken: held.token }));
   }
   cancel(): void { if (this.held) this.release(this.held.input.kind, this.held.input.id, true); }
   focus(focused: boolean): void { this.focused = focused; if (!focused) this.cancel(); }
@@ -54,7 +65,7 @@ export class UiIntentController {
   }
   hide(reason: Parameters<PluginUiBridge["visibility"]>[0]["reason"]): Promise<void> { return this.visibility(false, reason); }
   async visibility(visible: boolean, reason: Parameters<PluginUiBridge["visibility"]>[0]["reason"]): Promise<void> {
-    this.visible = visible;
+    this.visible = visible; this.state.setVisible(visible);
     if (!visible) { this.cancel(); this.queued = undefined; this.state.queueChallenge(undefined); if (this.timer !== undefined) this.state.clearInputTimer(this.timer); this.timer = undefined; }
     try { const result = await this.bridge.visibility({ binding: this.state.form().binding, visible, reason }); if (!result.ok) this.cancel(); }
     catch { this.cancel(); }

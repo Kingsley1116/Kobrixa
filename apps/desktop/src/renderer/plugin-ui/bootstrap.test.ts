@@ -151,7 +151,7 @@ it("C-G1 restores independent port fields and invalid raw into a fresh binding w
   await session.open(entry);
   const fresh = session.record(entry)!;
   expect(fresh.state).not.toBe(former.state); expect(fresh.intent).not.toBe(former.intent);
-  expect(fresh.state.getSnapshot()).toMatchObject({ draft: { speed: 23, portb: null, port: "B" }, raw: { speed: "23", portb: "-" }, errors: {}, problem: null, busy: false, localRevision: 8 });
+  expect(fresh.state.getSnapshot()).toMatchObject({ draft: { speed: 23, portb: null, port: "B" }, raw: { speed: "23", portb: "-" }, errors: {}, problem: null, busy: false, localRevision: 1 });
   expect(fresh.state.form().binding).toEqual(freshBinding);
   expect(fresh.state.getSnapshot().snapshot.form).toEqual(initial.form);
   expect(fresh.state.valid()).toBe(false); await fresh.state.invoke("go");
@@ -160,7 +160,7 @@ it("C-G1 restores independent port fields and invalid raw into a fresh binding w
   f.emit({ type: "state", binding, revision: 10 });
   expect(fresh.state.getSnapshot().draft.speed).toBe(23); expect(f.bridge.snapshot).toHaveBeenCalledTimes(1);
   fresh.state.edit("portb", 42, "42"); await fresh.state.invoke("go");
-  expect(f.bridge.invoke).toHaveBeenCalledWith({ binding: freshBinding, nodeId: "go", formRevision: 10,
+  expect(f.bridge.invoke).toHaveBeenCalledWith({ binding: freshBinding, nodeId: "go", formRevision: 8,
     form: { speed: 23, enabled: false, portb: 42, port: "B" } });
   expect(resource.fields.speed!.initial).toBe(0); session.dispose();
 });
@@ -241,4 +241,37 @@ it.each(["closed", "generation-retired", "process-gone", "safe-mode"] as const)(
   session.record(entry)!.state.edit("speed", 15);
   f.emit({ type: "revoked", binding, reason }); expect(session.record(entry)).toBeUndefined();
   await session.open(entry); expect(session.record(entry)!.state.getSnapshot().draft.speed).toBe(0); session.dispose();
+});
+
+import { UiStateRegistry } from "../../../../../packages/plugin-runtime/src/ui-state.js";
+import { RpcPeer, createMemoryChannelPair } from "@kobrixa/plugin-protocol";
+it("C-G1 actual registry retirement after last panel close reaches renderer and purges raw without catalog withdrawal", async () => {
+  const f = fixture(); const states = new UiStateRegistry({ current: () => true });
+  const owner = { sourceKey: entry.sourceKey, pluginId: entry.pluginId, generation: binding.generation,
+    hostEpoch: binding.hostEpoch, processEpoch: binding.processEpoch };
+  const [wire] = createMemoryChannelPair(); const peer = new RpcPeer(wire);
+  const off = states.onEvent((_owner, event) => {
+    // Same existing UiEvent -> UiBridgeEvent projection as desktop controller.
+    if (event.kind === "ui.revoked") f.emit({ type: "revoked", ...event.data });
+  });
+  f.bridge.open.mockImplementation(() => states.open({ owner: entry, id: entry.id, resource: panel,
+    scope: { hostEpoch: binding.hostEpoch, workbenchInstance: handle(70) },
+    activateInitialized: async () => ({ owner, peer, requirements: [], principal: () => ({ kind: "plugin", owner, authorityContext: null }) }) }));
+  f.bridge.close.mockImplementation(async ({ binding }) => states.close(owner, binding));
+  f.bridge.visibility.mockImplementation(async ({ binding, visible }) => states.visibility(owner, binding, visible));
+  const session = new RendererSession(f.bridge);
+  try {
+    await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+    session.record(entry)!.state.edit("speed", null, "-"); session.close(entry);
+    expect(states.instances(owner)).toEqual([]);
+    states.retireExecution({ ...owner, processEpoch: handle(71) }, "process-gone");
+    await session.open(entry); expect(session.record(entry)!.state.getSnapshot().raw.speed).toBe("-"); session.close(entry);
+    const revoked: string[] = []; const stop = states.onEvent((_owner, event) => { if (event.kind === "ui.revoked") revoked.push(event.data.reason); });
+    states.retireExecution(owner, "process-gone"); stop();
+    expect(revoked).toEqual(["process-gone"]); expect(states.instances(owner)).toEqual([]);
+    // Keep identical execution identity: this proves eager purge, not restore's epoch guard.
+    await session.open(entry);
+    expect(session.record(entry)!.state.getSnapshot()).toMatchObject({ draft: { speed: 0 }, raw: {} });
+    expect(f.bridge.catalog).toHaveBeenCalledTimes(1);
+  } finally { session.dispose(); off(); peer.close(); }
 });

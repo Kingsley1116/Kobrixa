@@ -73,8 +73,10 @@ it("AM-22 observes revoke before release IPC and clears queued input on disposal
   intent.challenge(handle(9));
   const counters = diagnostics.snapshot();
   expect(Object.isFrozen(counters)).toBe(true);
-  expect(counters.timers).toBe(1); expect(counters.queuedBytes).toBeGreaterThan(0);
+  expect(counters.timers).toBe(2); // pending begin deadline plus queued input
+  expect(counters.queuedBytes).toBeGreaterThan(0);
   intent.dispose(); state.retire();
   expect(Object.values(diagnostics.snapshot()).every((value) => value === 0)).toBe(true);
-  expect(counters.timers).toBe(1); expect(vi.getTimerCount()).toBe(0);
+  expect(counters.timers).toBe(2); // captured counters stay immutable
+  expect(vi.getTimerCount()).toBe(0);
 });

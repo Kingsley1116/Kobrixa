@@ -170,7 +170,7 @@ export class RendererSession {
     }
     const record = [...this.records.values()].find((item) => bindingKey(item.state.form().binding) === bindingKey(event.binding));
     if (event.type === "revoked") {
-      const retired = ["generation-retired", "resource-replaced", "renderer-gone", "process-gone", "safe-mode", "shutdown"].includes(event.reason);
+      const retired = ["generation-retired", "resource-replaced", "renderer-gone", "process-gone", "safe-mode", "shutdown", "overflow"].includes(event.reason);
       if (retired) {
         // Registry retirement is distinct from its actual voluntary-close notification.
         // Also purge closed panels and cancel pending opens when no live record remains.

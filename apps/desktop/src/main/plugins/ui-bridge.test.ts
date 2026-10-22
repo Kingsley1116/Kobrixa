@@ -1154,3 +1154,30 @@ it("bridge diagnostics count live requests and disposal aborts their authority w
   finish({ ok: true, value: { output: {}, fieldErrors: [] } });
   expect((await pending).ok).toBe(false);
 });
+
+it("hold cleanup stops first and delivers the original accepted form while begin is pending", async () => {
+  const value = resolved(); if (value.resource.kind !== "panel") throw new Error("panel");
+  value.resource.nodes[2] = { id: "run", type: "holdAction", label: { en: "Hold" }, command: "acme.ui.run", arguments: { speed: { ref: { scope: "form", key: "speed" } } } };
+  const events = new UiBridgeEvents(() => []); const order: string[] = [];
+  let challenge = "";
+  const intent = new UiIntent({ bindMotionScope: () => "scope", pulsePanel() {}, beginGesture: () => "gesture", pulseGesture() {},
+    endGesture() { order.push("stop"); }, revokeScope() {} }, () => 0, (event) => { if (event.type === "pulse") challenge = event.challenge; });
+  let finish!: (value: Awaited<ReturnType<UiExecutionAdapter["invoke"]>>) => void;
+  const invoke = vi.fn<UiExecutionAdapter["invoke"]>((_owner, invocation) => {
+    if (invocation.context.trigger.kind === "hold" && invocation.context.trigger.phase === "begin") return new Promise(resolve => { finish = resolve; });
+    order.push("cleanup"); return Promise.resolve({ ok: true, value: { output: {}, fieldErrors: [] } });
+  });
+  const bridge = createPluginUiBridge({ catalog: { catalog: async () => ({ ok: true, value: { hostEpoch: owner.hostEpoch, revision: 0, entries: [], nextCursor: null } }), resource: async () => { throw new Error("unused"); }, onEvent: () => () => {}, retire() {} },
+    execution: { resolve: () => value, acceptForm: (_binding, revision, form) => { value.state.formRevision = revision; value.state.form = form; return true; },
+      invoke, core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }), open: async () => ({ ok: true, value: value.state }), close: async () => ({ ok: true, value: { closed: true } }), visibility: async () => ({ ok: true, value: { accepted: true } }), snapshot: async () => ({ ok: true, value: value.state }), reportFailure: async () => ({ ok: true, value: { accepted: true } }), dispose() {} },
+    intent, events, actions: new UserPersistenceActions(() => 0, () => true), scope: () => ({ hostEpoch: owner.hostEpoch, workbenchInstance: "window" }) });
+  try {
+    intent.bind(binding, { owner, contextRef: "context", panelInstance: binding.panelInstance, uiResourceGeneration: 1, workbenchInstance: "window" });
+    expect(intent.pulse(binding, challenge, null, null)).toBe(true);
+    const begin = bridge.hold({ binding, nodeId: "run", formRevision: 5, form: { speed: 30 }, phase: "begin", inputToken: "token" });
+    await bridge.hold({ binding, nodeId: "run", formRevision: 99, form: { speed: null }, phase: "cancel", inputToken: "token" });
+    expect(order).toEqual(["stop", "cleanup"]);
+    expect(invoke.mock.calls[1]![1].context).toMatchObject({ form: { revision: 5, values: { speed: 30 } }, trigger: { kind: "hold", phase: "cancel" } });
+    finish({ ok: true, value: { output: {}, fieldErrors: [] } }); expect(await begin).toMatchObject({ ok: true, value: { gesture: null } });
+  } finally { disposePluginUiBridge(bridge); intent.dispose(); }
+});

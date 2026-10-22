@@ -187,3 +187,55 @@ it.each([{ isComposing: true }, { keyCode: 229 }])("ignores hold Enter during IM
   expect(begin).not.toHaveBeenCalled();
   await act(async () => root.unmount()); intent.dispose(); state.retire();
 });
+
+import { deferred } from "./contract.test.js";
+import { createPluginUiBridge, UiBridgeEvents, disposePluginUiBridge, type UiExecutionAdapter } from "../../main/plugins/ui-bridge.js";
+import { UiIntent } from "../../main/plugins/ui-intent.js";
+import { UserPersistenceActions } from "../../main/plugins/user-persistence-actions.js";
+it.each(["stop", "disconnect", "openRecovery"] as const)("C-G2 rendered %s bypasses invalid/disabled feature and ordinary pending with separate dedupe", async (action) => {
+  const f = fixture(); const resource = structuredClone(panel);
+  const rootNode = resource.nodes[0]!; if (rootNode.type !== "group") throw new Error("root");
+  rootNode.children.push("safety", "navigate");
+  const disabledWhen = { op: "eq" as const, left: { scope: "form" as const, key: "enabled" }, right: true };
+  resource.nodes.push({ id: "safety", type: "action", label: { en: action }, variant: "danger", enabledWhen: disabledWhen,
+    action: action === "stop" ? { kind: "core", action, operation: { scope: "data", key: "operation" } }
+      : action === "disconnect" ? { kind: "core", action, session: { scope: "data", key: "session" } } : { kind: "core", action } },
+  { id: "navigate", type: "action", label: { en: "Open" }, variant: "normal", enabledWhen: disabledWhen, action: { kind: "core", action: "openPanel", panelId: entry.id } });
+  const ordinary = deferred<Awaited<ReturnType<typeof f.bridge.invoke>>>();
+  const safety = deferred<Awaited<ReturnType<typeof f.bridge.invoke>>>();
+  const hostState = snapshot(); const core = vi.fn<UiExecutionAdapter["core"]>(() => safety.promise);
+  const events = new UiBridgeEvents(() => []);
+  const hostIntent = new UiIntent({ bindMotionScope: () => "scope", pulsePanel() {}, beginGesture: () => "gesture", pulseGesture() {}, endGesture() {}, revokeScope() {} }, () => 0, events.publish);
+  const actual = createPluginUiBridge({ catalog: { catalog: f.bridge.catalog, resource: f.bridge.resource, onEvent: () => () => {}, retire() {} },
+    execution: { resolve: () => ({ owner: { sourceKey: entry.sourceKey, pluginId: entry.pluginId, generation: binding.generation, hostEpoch: binding.hostEpoch, processEpoch: binding.processEpoch },
+      state: hostState, resource, commands: new Map(validationContext.commands.map(command => [command.id, command])), contextRef: null, workbenchInstance: "window" }),
+      acceptForm: (_binding, revision, form) => { hostState.formRevision = revision; hostState.form = form; return true; },
+      invoke: () => ordinary.promise, core, open: f.bridge.open, close: f.bridge.close, visibility: f.bridge.visibility, snapshot: f.bridge.snapshot, reportFailure: f.bridge.reportFailure, dispose() {} },
+    events, intent: hostIntent, actions: new UserPersistenceActions(() => 0, () => true), scope: () => ({ hostEpoch: binding.hostEpoch, workbenchInstance: "window" }) });
+  f.bridge.invoke.mockImplementation(actual.invoke);
+  const state = new UiStateStore(f.bridge, resource, snapshot()); const intent = new UiIntentController(f.bridge, state);
+  const div = document.createElement("div"); document.body.append(div); const root = createRoot(div);
+  let work!: Promise<void>;
+  try {
+    await act(async () => root.render(createElement(PanelTree, { state, intent, locale: "en", labels })));
+    await act(async () => { work = state.invoke("go"); state.edit("speed", null, "-"); });
+    expect(state.getSnapshot().busy).toBe(true);
+    const button = (id: string) => div.querySelector<HTMLButtonElement>(`[data-ui-node="${id}"] button`)!;
+    expect(button("safety").disabled).toBe(false);
+    expect(button("go").disabled).toBe(true); expect(button("hold").disabled).toBe(true); expect(button("navigate").disabled).toBe(true);
+    const revision = state.form().formRevision;
+    await act(async () => { button("safety").click(); button("safety").click(); });
+    expect(f.bridge.invoke.mock.calls.map(([input]) => input.nodeId)).toEqual(["go", "safety"]);
+    expect(core).toHaveBeenCalledTimes(1); expect(hostState.formRevision).toBe(1);
+    expect(state.form().formRevision).toBe(revision); expect(state.getSnapshot().busy).toBe(true);
+    await act(async () => { safety.resolve({ ok: true, value: { output: {}, fieldErrors: [] } }); });
+    expect(state.getSnapshot().busy).toBe(true); expect(button("safety").disabled).toBe(false);
+    await act(async () => intent.visibility(false, "sidebar"));
+    expect(button("safety").disabled).toBe(true); await state.invoke("safety");
+    await act(async () => { intent.visibility(true, "sidebar"); resource.nodes.find(node => node.id === "safety")!.visibleWhen = disabledWhen; state.edit("enabled", false); });
+    await state.invoke("safety"); expect(div.querySelector('[data-ui-node="safety"]')!.hasAttribute("hidden")).toBe(true);
+    await act(async () => state.retire()); await state.invoke("safety");
+    expect(f.bridge.invoke).toHaveBeenCalledTimes(2);
+    ordinary.resolve({ ok: true, value: { output: {}, fieldErrors: [] } }); await work;
+  } finally { await act(async () => root.unmount()); intent.dispose(); state.retire(); disposePluginUiBridge(actual); hostIntent.dispose(); }
+});

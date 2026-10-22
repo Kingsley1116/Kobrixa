@@ -85,8 +85,8 @@ export function PanelTree({ state, intent, locale, labels }: { state: UiStateSto
               if (!delta) return; event.preventDefault(); const next = (index + delta + node.options.length) % node.options.length;
               state.edit(node.field, node.options[next]!.value); event.currentTarget.closest("fieldset")?.querySelectorAll<HTMLInputElement>("input")[next]?.focus(); }} />{text(option.label)}</label>)}</fieldset>; break;
       case "boolean": content = <label><input {...common} type="checkbox" checked={view.draft[node.field] === true} onChange={(event) => state.edit(node.field, event.target.checked)} />{text(node.label)}</label>; break;
-      case "action": content = <button id={domId} disabled={disabled || view.busy || !state.valid()} data-variant={node.variant} onClick={() => void state.invoke(node.id)}>{text(node.label)}</button>; break;
-      case "holdAction": content = <button {...common} disabled={disabled || !state.valid()}
+      case "action": content = <button id={domId} disabled={!state.actionEnabled(node.id)} data-variant={node.variant} onClick={() => void state.invoke(node.id)}>{text(node.label)}</button>; break;
+      case "holdAction": content = <button {...common} disabled={!state.actionEnabled(node.id)}
         onPointerDown={(event) => { if (intent.begin(node.id, { trusted: event.nativeEvent.isTrusted, kind: "pointer", id: String(event.pointerId), primary: event.isPrimary && event.button === 0, repeat: false })) event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerUp={(event) => intent.release("pointer", String(event.pointerId), false)} onPointerCancel={() => intent.cancel()} onLostPointerCapture={() => intent.cancel()}
         onContextMenu={(event) => { event.preventDefault(); intent.cancel(); }} onBlur={() => intent.cancel()}

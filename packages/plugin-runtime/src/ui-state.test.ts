@@ -166,3 +166,29 @@ it("replays only live status revisions in the main-derived workbench scope", asy
   registry.close(owner, result.value.binding);
   expect(currentStatusBindings(registry, scope)).toEqual([]);
 });
+
+it("closed notification receipts are bounded, owner scoped, and retired exactly once without live bindings", async () => {
+  const registry = new UiStateRegistry({ current: () => true }); const events: string[] = [];
+  registry.onEvent((_owner, event) => { if (event.kind === "ui.revoked") events.push(event.data.reason); });
+  // Distinct windows create receipts; repeat close in a window replaces its receipt.
+  for (let n = 0; n < 257; n++) {
+    const state = await open(registry, "test.ui.panel", h(n + 100));
+    expect(registry.close(owner, state.binding).ok).toBe(true);
+  }
+  expect(events.filter(reason => reason === "overflow")).toHaveLength(1);
+  events.length = 0;
+  registry.retireExecution({ ...owner, processEpoch: h(99) }, "process-gone"); expect(events).toEqual([]);
+  registry.retireResource({ ...uiOwner, uiResourceGeneration: 2 }, "resource-replaced"); expect(events).toEqual([]);
+  registry.retireExecution(owner, "process-gone"); expect(events).toHaveLength(256);
+  expect(events.every(reason => reason === "process-gone")).toBe(true);
+  events.length = 0; registry.retireExecution(owner, "process-gone"); expect(events).toEqual([]);
+  expect(registry.instances(owner)).toEqual([]);
+});
+it("resource retirement notifies closed panels and leaves unrelated resource owners available", async () => {
+  const registry = new UiStateRegistry({ current: () => true }); const state = await open(registry);
+  registry.close(owner, state.binding); const events: string[] = [];
+  registry.onEvent((_owner, event) => { if (event.kind === "ui.revoked") events.push(event.data.reason); });
+  registry.retireResource(uiOwner, "resource-replaced"); expect(events).toEqual(["resource-replaced"]);
+  registry.retireExecution(owner, "process-gone"); expect(events).toHaveLength(1);
+  expect((await open(registry)).formRevision).toBe(0);
+});

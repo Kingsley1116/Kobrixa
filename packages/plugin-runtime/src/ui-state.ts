@@ -15,6 +15,8 @@ type Reservation = { owner: UiOwner; id: string; scope: CoreWindowScope; kind: R
 const identity = (owner: UiOwner, id: string, scope: CoreWindowScope) => JSON.stringify([scope.hostEpoch, scope.workbenchInstance, owner.sourceKey, id]);
 export class UiStateRegistry {
   readonly #live = new Map<string, Live>();
+  // Closed notification receipts contain no draft/resource and use the host completed-operation count bound.
+  readonly #closed = new Map<string, { owner: ResourceOwner; uiOwner: UiOwner; binding: UiBinding }>();
   readonly #opening = new Map<string, Reservation>();
   readonly #listeners = new Set<(owner: ResourceOwner, event: UiEvent) => void>();
   readonly #now: () => number;
@@ -189,9 +191,21 @@ export class UiStateRegistry {
   }
   close(owner: ResourceOwner, binding: UiBinding): Result<{ closed: true }> {
     const live = this.#find(owner, binding); if (!live) return resourceFailure("stale");
+    const key = JSON.stringify([live.owner.sourceKey, live.owner.pluginId, live.owner.generation,
+      live.owner.hostEpoch, live.owner.processEpoch, live.scope.workbenchInstance]);
+    this.#closed.delete(key);
+    this.#closed.set(key, { owner: live.owner, uiOwner: live.uiOwner, binding: live.state.binding });
+    if (this.#closed.size > L.hostCompletedInvocations) {
+      const [id, receipt] = this.#closed.entries().next().value!; this.#closed.delete(id);
+      this.#emit(receipt.owner, { kind: "ui.revoked", data: { binding: receipt.binding, reason: "overflow" } });
+    }
     this.#remove(live, "closed"); return { ok: true, value: { closed: true } };
   }
   retireResource(owner: UiOwner, reason: UiRevokeReason): void {
+    for (const [key, receipt] of this.#closed) if (receipt.uiOwner.sourceKey === owner.sourceKey &&
+      receipt.uiOwner.pluginId === owner.pluginId && receipt.uiOwner.uiResourceGeneration === owner.uiResourceGeneration) {
+      this.#closed.delete(key); this.#emit(receipt.owner, { kind: "ui.revoked", data: { binding: receipt.binding, reason } });
+    }
     for (const opening of [...this.#opening.values()]) if (opening.owner.sourceKey === owner.sourceKey &&
       opening.owner.pluginId === owner.pluginId && opening.owner.uiResourceGeneration === owner.uiResourceGeneration) opening.cancel();
     for (const live of [...this.#live.values()]) if (live.uiOwner.sourceKey === owner.sourceKey &&
@@ -199,6 +213,9 @@ export class UiStateRegistry {
   }
   retireExecution(owner: ResourceOwner, reason: UiRevokeReason): void {
     this.cancelInitialBindings(owner);
+    for (const [key, receipt] of this.#closed) if (sameResourceOwner(owner, receipt.owner)) {
+      this.#closed.delete(key); this.#emit(receipt.owner, { kind: "ui.revoked", data: { binding: receipt.binding, reason } });
+    }
     for (const live of [...this.#live.values()]) if (sameResourceOwner(owner, live.owner)) this.#remove(live, reason);
   }
 }
