@@ -1,6 +1,7 @@
 import type { PluginUiBridge, FoundationDiagnostics, FoundationCounters, FoundationDiagnosticEvent } from "@kobrixa/plugin-runtime";
 import type { Condition, PanelResourceV1, UiStateSnapshot, UiScalar, ValueSpec, UiNodeV1, Text, ResourceOwner } from "@kobrixa/plugin-protocol";
 import { catalogDiagnostics } from "./catalog-store.js";
+import { copyDraft, type DraftPayload } from "./draft-cache.js";
 export const bindingKey = (binding: UiStateSnapshot["binding"]): string => JSON.stringify([
   binding.hostEpoch, binding.processEpoch, binding.generation, binding.uiResourceGeneration,
   binding.contributionId, binding.panelInstance, binding.kind,
@@ -82,7 +83,7 @@ export class UiStateStore {
   private serial = 0;
   onEdit: () => void = () => {};
   onAccepted: (nodeId: string) => void = () => {};
-  constructor(private bridge: Pick<PluginUiBridge, "snapshot" | "invoke">, readonly resource: PanelResourceV1, initial: UiStateSnapshot) {
+  constructor(private bridge: Pick<PluginUiBridge, "snapshot" | "invoke">, readonly resource: PanelResourceV1, initial: UiStateSnapshot, restored?: DraftPayload) {
     stateDiagnostics.set(this, Object.freeze({
       snapshot: () => Object.freeze({ ...zeroCounters(), timers: this.deadlines.size + this.inputTimers.size,
         queuedEvents: this.retained.size + (this.inputQueue ? 1 : 0), queuedBytes: [...this.retained.values()].reduce((a, b) => a + b, 0) + (this.inputQueue ? new TextEncoder().encode(JSON.stringify(this.inputQueue)).length : 0) }),
@@ -92,6 +93,12 @@ export class UiStateStore {
     }));
     this.target = initial.revision;
     this.view = { snapshot: initial, draft: { ...initial.form }, raw: {}, errors: {}, active: true, busy: false, problem: null, localRevision: initial.formRevision };
+    if (restored && initial.formRevision < Number.MAX_SAFE_INTEGER) {
+      const copy = copyDraft(resource, restored);
+      for (const key of Object.keys(resource.fields)) if (Object.hasOwn(copy.draft, key)) this.view.draft[key] = copy.draft[key]!;
+      this.view.raw = copy.raw;
+      this.view.localRevision++; // Fresh binding baseline plus a local restoration, never an old revision.
+    }
   }
   getSnapshot = (): StateView => this.view;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };

@@ -127,3 +127,118 @@ it.each(["before-fetch", "after-fetch"] as const)("AM-17 current status replay %
     session.dispose(); expect(f.listeners.size).toBe(0);
   }
 });
+
+it("C-G1 restores independent port fields and invalid raw into a fresh binding without intent", async () => {
+  const f = fixture(); const resource = structuredClone(panel);
+  resource.fields.portb = structuredClone(resource.fields.speed!);
+  resource.fields.port = { schema: { type: "enum", values: ["A", "B"], nullable: false }, initial: "A", required: true };
+  resource.nodes.push({ id: "portb", type: "number", field: "portb", label: { en: "Port B" }, step: 0.1 },
+    { id: "port", type: "choice", field: "port", label: { en: "Port" }, presentation: "select", options: [{ value: "A", label: { en: "A" } }, { value: "B", label: { en: "B" } }] });
+  const root = resource.nodes[0]!; if (root.type === "group") root.children.push("portb", "port");
+  f.bridge.resource.mockResolvedValue({ ok: true, value: { owner: entry, id: entry.id, version: 1, validationContext, rawBytes: 2000, resource } });
+  const initial = { ...snapshot(), form: { speed: 0, enabled: false, portb: 0, port: "A" } };
+  f.bridge.open.mockResolvedValue({ ok: true, value: initial });
+  const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  const former = session.record(entry)!;
+  former.state.edit("speed", 23, "23"); former.state.edit("portb", null, "-"); former.state.edit("port", "B");
+  const oldPatch = deferred<Awaited<ReturnType<typeof f.bridge.snapshot>>>(); f.bridge.snapshot.mockReturnValueOnce(oldPatch.promise);
+  const patch = former.state.invalidate(9);
+  session.close(entry);
+  // Main's actual `closed` event is an instance notification, not execution retirement.
+  f.emit({ type: "revoked", binding, reason: "closed" });
+  const freshBinding = { ...binding, panelInstance: handle(20) };
+  f.bridge.open.mockResolvedValue({ ok: true, value: { ...initial, binding: freshBinding, formRevision: 7 } });
+  await session.open(entry);
+  const fresh = session.record(entry)!;
+  expect(fresh.state).not.toBe(former.state); expect(fresh.intent).not.toBe(former.intent);
+  expect(fresh.state.getSnapshot()).toMatchObject({ draft: { speed: 23, portb: null, port: "B" }, raw: { speed: "23", portb: "-" }, errors: {}, problem: null, busy: false, localRevision: 8 });
+  expect(fresh.state.form().binding).toEqual(freshBinding);
+  expect(fresh.state.getSnapshot().snapshot.form).toEqual(initial.form);
+  expect(fresh.state.valid()).toBe(false); await fresh.state.invoke("go");
+  expect(f.bridge.invoke).not.toHaveBeenCalled(); expect(f.bridge.hold).not.toHaveBeenCalled(); expect(f.bridge.pulse).not.toHaveBeenCalled();
+  oldPatch.resolve({ ok: true, value: { ...snapshot(9), form: { speed: 99 } } }); await patch;
+  f.emit({ type: "state", binding, revision: 10 });
+  expect(fresh.state.getSnapshot().draft.speed).toBe(23); expect(f.bridge.snapshot).toHaveBeenCalledTimes(1);
+  fresh.state.edit("portb", 42, "42"); await fresh.state.invoke("go");
+  expect(f.bridge.invoke).toHaveBeenCalledWith({ binding: freshBinding, nodeId: "go", formRevision: 10,
+    form: { speed: 23, enabled: false, portb: 42, port: "B" } });
+  expect(resource.fields.speed!.initial).toBe(0); session.dispose();
+});
+
+it.each(["generation", "processEpoch"] as const)("C-G1 fresh execution %s cannot inherit a closed draft", async (changed) => {
+  const f = fixture(); const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  session.record(entry)!.state.edit("speed", 15); session.close(entry);
+  const next = { ...binding, panelInstance: handle(20), [changed]: changed === "generation" ? 2 : handle(21) };
+  f.bridge.open.mockResolvedValue({ ok: true, value: { ...snapshot(), binding: next } }); await session.open(entry);
+  expect(session.record(entry)!.state.getSnapshot().draft.speed).toBe(0); session.dispose();
+});
+
+it.each(["generation-retired", "resource-replaced", "renderer-gone", "process-gone", "safe-mode", "shutdown"] as const)("C-G1 %s purges closed drafts and rejects a delayed old open", async (reason) => {
+  const f = fixture(); const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  session.record(entry)!.state.edit("speed", 15); session.close(entry);
+  const late = deferred<Awaited<ReturnType<typeof f.bridge.open>>>(); f.bridge.open.mockReturnValueOnce(late.promise);
+  const pending = session.open(entry); await vi.waitFor(() => expect(f.bridge.open).toHaveBeenCalledTimes(2));
+  f.emit({ type: "revoked", binding, reason });
+  late.resolve({ ok: true, value: snapshot() }); await pending; expect(session.record(entry)).toBeUndefined();
+  await session.open(entry); expect(session.record(entry)!.state.getSnapshot().draft.speed).toBe(0); session.dispose();
+});
+
+it.each(["resourceDigest", "uiResourceGeneration", "sourceKey", "hostEpoch", "withdrawal"] as const)("C-G1 catalog %s drops drafts", async (changed) => {
+  const f = fixture(); const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  session.record(entry)!.state.edit("speed", 15); session.close(entry);
+  const nextEntry = { ...entry, ...(changed === "resourceDigest" ? { resourceDigest: "b".repeat(64) } : changed === "uiResourceGeneration" ? { uiResourceGeneration: 2 } : changed === "sourceKey" ? { sourceKey: "builtin:other" } : {}) };
+  const epoch = changed === "hostEpoch" ? handle(30) : binding.hostEpoch;
+  f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: epoch, revision: 2, entries: changed === "withdrawal" ? [] : [nextEntry], nextCursor: null } });
+  f.emit({ type: "catalog", hostEpoch: epoch, revision: 2, owners: changed === "withdrawal" ? [] : [nextEntry] }); await session.catalog.refresh();
+  if (changed === "withdrawal") {
+    f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: epoch, revision: 3, entries: [entry], nextCursor: null } });
+    f.emit({ type: "catalog", hostEpoch: epoch, revision: 3, owners: [entry] }); await session.catalog.refresh();
+  }
+  f.bridge.resource.mockResolvedValue({ ok: true, value: { owner: nextEntry, id: nextEntry.id, version: 1, validationContext, rawBytes: 1000, resource: panel } });
+  f.bridge.open.mockResolvedValue({ ok: true, value: { ...snapshot(), binding: { ...binding, hostEpoch: epoch, uiResourceGeneration: nextEntry.uiResourceGeneration, panelInstance: handle(20) } } });
+  await session.open(nextEntry); expect(session.record(nextEntry)!.state.getSnapshot().draft.speed).toBe(0); session.dispose();
+});
+
+it("C-G1 quarantine and renderer disposal drop closed drafts", async () => {
+  const f = fixture(); const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  session.record(entry)!.state.edit("speed", 15); session.close(entry); session.quarantine(entry, "renderer");
+  // A resource retry re-admits the contribution; quarantined memory must already be gone.
+  f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: handle(1), revision: 2, entries: [], nextCursor: null } });
+  f.emit({ type: "catalog", hostEpoch: handle(1), revision: 2, owners: [] }); await session.catalog.refresh();
+  f.bridge.catalog.mockResolvedValue({ ok: true, value: { hostEpoch: handle(1), revision: 3, entries: [entry], nextCursor: null } });
+  f.emit({ type: "catalog", hostEpoch: handle(1), revision: 3, owners: [entry] }); await session.catalog.refresh();
+  await session.open(entry); expect(session.record(entry)!.state.getSnapshot().draft.speed).toBe(0);
+  session.record(entry)!.state.edit("speed", 25); session.close(entry); session.dispose();
+  const next = new RendererSession(f.bridge); await next.start(); next.showPane(true, "sidebar"); await next.open(entry);
+  expect(next.record(entry)!.state.getSnapshot().draft.speed).toBe(0); next.dispose();
+});
+
+it("C-G1 close discards held input, queued pulses and command state while retaining only fields", async () => {
+  vi.useFakeTimers();
+  const f = fixture(); const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  const old = session.record(entry)!; old.state.edit("speed", 25, "25");
+  expect(old.intent.begin("hold", { trusted: true, kind: "pointer", id: "1", primary: true, repeat: false })).toBe(true);
+  await Promise.resolve(); old.intent.challenge(handle(40));
+  const response = deferred<Awaited<ReturnType<typeof f.bridge.invoke>>>(); f.bridge.invoke.mockReturnValueOnce(response.promise);
+  const command = old.state.invoke("go");
+  session.close(entry); await command;
+  expect(f.bridge.hold).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "cancel" }));
+  f.bridge.hold.mockClear(); f.bridge.invoke.mockClear(); f.bridge.pulse.mockClear();
+  const freshBinding = { ...binding, panelInstance: handle(20) };
+  f.bridge.open.mockResolvedValue({ ok: true, value: { ...snapshot(), binding: freshBinding } }); await session.open(entry);
+  const fresh = session.record(entry)!;
+  response.resolve({ ok: true, value: { output: {}, fieldErrors: [{ field: "speed", message: { en: "Old error" } }] } });
+  await vi.runOnlyPendingTimersAsync();
+  expect(fresh.state.getSnapshot()).toMatchObject({ draft: { speed: 25 }, raw: { speed: "25" }, busy: false, errors: {}, problem: null, localRevision: 1 });
+  expect(f.bridge.hold).not.toHaveBeenCalled(); expect(f.bridge.invoke).not.toHaveBeenCalled(); expect(f.bridge.pulse).not.toHaveBeenCalled();
+  fresh.intent.challenge(handle(41)); await vi.runOnlyPendingTimersAsync();
+  expect(f.bridge.pulse).toHaveBeenCalledWith({ binding: freshBinding, challenge: handle(41), gesture: null, inputToken: null });
+  session.dispose(); expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["closed", "generation-retired", "process-gone", "safe-mode"] as const)("C-G1 unrequested live %s notification never saves a draft", async (reason) => {
+  const f = fixture(); const session = new RendererSession(f.bridge); await session.start(); session.showPane(true, "sidebar"); await session.open(entry);
+  session.record(entry)!.state.edit("speed", 15);
+  f.emit({ type: "revoked", binding, reason }); expect(session.record(entry)).toBeUndefined();
+  await session.open(entry); expect(session.record(entry)!.state.getSnapshot().draft.speed).toBe(0); session.dispose();
+});

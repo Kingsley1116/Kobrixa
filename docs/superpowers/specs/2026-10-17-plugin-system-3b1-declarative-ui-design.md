@@ -333,6 +333,8 @@ resource 讀取／重試採現有 [`readPackagedJson`](../../../packages/plugin-
 
 `uiResourceGeneration` 是每 source 的 counter；任一 UI resource／宣告／隔離結果變更即增加，保守撤該 source 舊 bindings，避免僅靠 owner 清單漏掉同 source 被移除的一個 panel。catalog revision 另為 host-global counter；同 epoch 整數耗盡必須重建 host epoch，不 wrap 到 0。status 先可展示已驗證 initial resource；process ready 後才取得 execution binding，process crash 時撤動態 state 並明示 unavailable，不保留假的 recording 狀態。
 
+C-G1：generic renderer 在同 workbench 以 host-private memory best-effort 保留自願關閉 panel 的 field draft（含選取與未提交 invalid raw），不使用 storage、不新增 wire／SDK API。identity 為 sourceKey／pluginId／id＋hostEpoch／uiResourceGeneration／resourceDigest，並要求新 binding 的 execution generation／processEpoch 相同；close 通知只表示該 instance 關閉，不能當成 owner retirement。只沿 admitted fields 複製 scalar／raw，不合併任意屬性；payload 皆為 clone。最多 16 contributions，serialized draft＋raw 每筆 ≤32,768 bytes、總計 ≤524,288 bytes，deterministic LRU；oversize 整筆不保留、不截斷，raw 每欄仍 ≤4,000 code points，不 coercion invalid raw。每次 reopen 新建 state store／intent／binding，僅還原 draft／raw，formRevision 從新 snapshot 與本地 restoration／edits 推導；不繼承 snapshot／revision／gesture／operation／authority／command／error，不觸發 invoke、edit telemetry 或 private setForm，也不改 resource initial。invalid start 仍被 UI validation 阻擋，實際新 action 由 main 重驗。source／host／resource digest 或 generation 變更、execution retirement／process replacement、quarantine、safe-mode withdrawal 與 renderer disposal 清除 affected drafts；無 live record 的 retirement 亦清除，延遲舊 open／patch 不得復活。hide／tab 在 live binding 內的既有行為不變；ui/patch 仍只改 data。
+
 ### 6.2 Feature 公開 UI 方法
 
 新增下列 plugin → host requests；owner 一律由 process channel 決定，request 不接受 sourceKey。`Result` 沿用 3A；成功 value 一律 object。
@@ -507,7 +509,7 @@ core 使用 3A 的 `DeviceRecoveryPort.snapshot/subscribe/stopCurrent/reconcile/
 - close tools 隱藏 pane；關閉個別 tab 銷毀 instance。兩者都觸發 matrix 的 motor stop，Lab 的 background reservation 保留。切換到 collaboration／legacy EV3、收合 sidebar、顯示 settings overlay 導致 window／panel 不可操作時，均須撤 motor intent，不能只用 `toolTab === "monitor"` 判斷。
 - footer 加通用 status area，最多 16 items；窄畫面使用可鍵盤操作的 overflow 清單，core safety／save-error 固定顯示且不被 overflow 藏掉。v1 status 純展示；Lab v2 open／stop 將由 3D 明確擴充。
 
-保存的 layout 只含 sourceKey／panelId／selected tab／寬度，沒有 binding、gesture、operation 或 pending command。restore 先過 safe-mode／catalog barrier，只還原 eligible 的 view；process 可因 visible panel 按需啟動，**不得自動連線、start、record 或重放 command**。不還原 motor draft 為執行意圖；per-port 暫存 draft 可由 3C 在同 process 以公開 action data 維持，跨 app 不持久化。
+保存的 layout 只含 sourceKey／panelId／selected tab／寬度，沒有 binding、gesture、operation 或 pending command。restore 先過 safe-mode／catalog barrier，只還原 eligible 的 view；process 可因 visible panel 按需啟動，**不得自動連線、start、record 或重放 command**。不還原 motor draft 為執行意圖；per-port 未提交 draft／invalid raw 由 §6 的 generic renderer volatile cache 保留，公開 action data 只含 accepted action 快照，不能保存未提交 raw；跨 app 不持久化。
 
 ### 10.2 Accessibility、theme、i18n
 

@@ -78,3 +78,15 @@ it("bounds raw input at 4,000 code points without publishing an oversized edit",
   expect(state.getSnapshot()).toBe(previous);
   state.retire();
 });
+
+it("C-G1 restoration is a cloned local draft with fresh revision and no edit or action notification", () => {
+  const f = fixture(); const source = { draft: { speed: null as number | null, enabled: true, foreign: 7 }, raw: { speed: "-" } };
+  const initial = { ...snapshot(4), formRevision: 11 };
+  const store = new UiStateStore(f.bridge, panel, initial, source);
+  const edit = vi.fn(); store.onEdit = edit;
+  source.raw.speed = "5"; source.draft.speed = 5;
+  expect(store.getSnapshot()).toMatchObject({ draft: { speed: null, enabled: true }, raw: { speed: "-" }, localRevision: 12, errors: {}, problem: null, busy: false });
+  expect(store.getSnapshot().snapshot).toBe(initial); expect(initial.form.speed).toBe(0);
+  expect(store.valid()).toBe(false); expect(edit).not.toHaveBeenCalled(); expect(f.bridge.invoke).not.toHaveBeenCalled();
+  store.edit("speed", 5, "5"); expect(edit).toHaveBeenCalledTimes(1); expect(store.form().formRevision).toBe(13); store.retire();
+});

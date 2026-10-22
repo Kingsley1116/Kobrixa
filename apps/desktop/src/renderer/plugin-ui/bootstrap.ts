@@ -4,6 +4,7 @@ import { validateUiResource, type UiValidationContext } from "@kobrixa/plugin-pr
 import { contributionKey, send, UiCatalogStore } from "./catalog-store.js";
 import { bindingKey, UiStateStore } from "./state-store.js";
 import { UiIntentController } from "./intent-controller.js";
+import { DraftCache } from "./draft-cache.js";
 export type PanelRecord = { entry: UiCatalogEntry; resource: PanelResourceV1 | StatusResourceV1; state: UiStateStore; intent: UiIntentController };
 type VisibilityReason = Parameters<PluginUiBridge["visibility"]>[0]["reason"];
 const kinds = new Set(["group", "text", "help", "textInput", "number", "range", "choice", "boolean", "action", "holdAction", "status", "alert", "progress", "keyValue"]);
@@ -33,6 +34,7 @@ export function assertRenderable(resource: PanelResourceV1 | StatusResourceV1, v
 export class RendererSession {
   readonly catalog: UiCatalogStore;
   private records = new Map<string, PanelRecord>();
+  private drafts = new DraftCache();
   private opening = new Map<string, Promise<void>>();
   private failures = new Set<string>();
   private unavailableStatus = new Set<string>();
@@ -53,6 +55,11 @@ export class RendererSession {
     this.catalog = new UiCatalogStore(bridge, (event) => this.event(event));
     this.offCatalog = this.catalog.subscribe(() => {
       const catalog = this.catalog.getSnapshot();
+      if (catalog.phase === "ready") {
+        this.drafts.reconcile(catalog.entries, catalog.epoch);
+        for (const record of [...this.records.values()]) if (!this.catalog.current(record.entry)
+          || !catalog.entries.some((entry) => contributionKey(entry) === contributionKey(record.entry) && entry.availability === "available")) this.remove(record.entry);
+      }
       if (catalog.phase === "ready") for (const [key, event] of this.statusEvents) {
         if (!catalog.entries.some((item) => item.kind === "status" && item.id === event.binding.contributionId
           && item.uiResourceGeneration === event.binding.uiResourceGeneration)) this.statusEvents.delete(key);
@@ -108,7 +115,7 @@ export class RendererSession {
         const result = await this.bridge.open({ sourceKey: entry.sourceKey, id: entry.id, uiResourceGeneration: entry.uiResourceGeneration });
         if (!result.ok) { this.failures.add(this.failureKey(entry)); this.publish(); return; }
         if (this.dead || !this.pane || serial !== this.serial || !this.catalog.current(entry) || result.value.binding.contributionId !== entry.id || result.value.binding.kind !== "panel" || result.value.binding.uiResourceGeneration !== entry.uiResourceGeneration || result.value.binding.hostEpoch !== this.catalog.getSnapshot().epoch) { send(() => this.bridge.close({ binding: result.value.binding })); return; }
-        const state = new UiStateStore(this.bridge, resource as PanelResourceV1, result.value);
+        const state = new UiStateStore(this.bridge, resource as PanelResourceV1, result.value, this.drafts.restore(entry, result.value.binding));
         state.setDiagnosticOwner({ sourceKey: entry.sourceKey, pluginId: entry.pluginId, generation: result.value.binding.generation, hostEpoch: result.value.binding.hostEpoch, processEpoch: result.value.binding.processEpoch });
         const intent = new UiIntentController(this.bridge, state);
         state.onAccepted = (nodeId) => {
@@ -128,14 +135,20 @@ export class RendererSession {
     })().finally(() => { this.opening.delete(key); });
     this.opening.set(key, work); return work;
   }
-  close(entry: UiCatalogEntry): void {
+  close(entry: UiCatalogEntry): void { this.remove(entry, true); }
+  private remove(entry: UiCatalogEntry, voluntary = false): void {
     this.serial++; const key = contributionKey(entry); const record = this.records.get(key); if (!record) return;
+    if (voluntary && !this.dead && this.catalog.current(record.entry) && record.entry.availability === "available"
+      && record.resource.kind === "panel" && record.state.getSnapshot().active && !this.failed(record.entry)) {
+      const view = record.state.getSnapshot();
+      this.drafts.retain(record.entry, view.snapshot.binding, record.resource, view);
+    } else this.drafts.drop(record.entry);
     record.intent.dispose(); record.state.retire(); this.records.delete(key); this.publish();
     send(() => this.bridge.close({ binding: record.state.form().binding }));
   }
   quarantine(entry: UiCatalogEntry, reason: "validation" | "renderer"): void {
     const key = this.failureKey(entry); if (this.failures.has(key)) return;
-    this.failures.add(key); this.close(entry); this.publish();
+    this.drafts.drop(entry); this.failures.add(key); this.remove(entry); this.publish();
     send(() => this.bridge.reportFailure({ sourceKey: entry.sourceKey, id: entry.id, uiResourceGeneration: entry.uiResourceGeneration,
       catalogRevision: Math.max(0, this.catalog.getSnapshot().revision), reason }));
   }
@@ -143,9 +156,10 @@ export class RendererSession {
     if (this.dead) return;
     if (event.type === "catalog") {
       this.serial++;
+      this.drafts.withdrawOwners(event.hostEpoch, event.owners);
       for (const record of [...this.records.values()]) {
         if (record.state.form().binding.hostEpoch !== event.hostEpoch || !event.owners.some((owner) => owner.sourceKey === record.entry.sourceKey
-          && owner.pluginId === record.entry.pluginId && owner.uiResourceGeneration === record.entry.uiResourceGeneration)) this.close(record.entry);
+          && owner.pluginId === record.entry.pluginId && owner.uiResourceGeneration === record.entry.uiResourceGeneration)) this.remove(record.entry);
       }
       const keep = new Set(this.catalog.getSnapshot().entries.map((entry) => this.failureKey(entry)));
       for (const key of this.failures) if (!keep.has(key)) this.failures.delete(key);
@@ -156,11 +170,16 @@ export class RendererSession {
     }
     const record = [...this.records.values()].find((item) => bindingKey(item.state.form().binding) === bindingKey(event.binding));
     if (event.type === "revoked") {
+      const retired = ["generation-retired", "resource-replaced", "renderer-gone", "process-gone", "safe-mode", "shutdown"].includes(event.reason);
+      if (retired) {
+        // Registry retirement is distinct from its actual voluntary-close notification.
+        // Also purge closed panels and cancel pending opens when no live record remains.
+        this.serial++; this.drafts.retireExecution(event.binding);
+      }
       if (record) {
-        const retired = ["closed", "generation-retired", "resource-replaced", "renderer-gone", "process-gone", "safe-mode", "shutdown"].includes(event.reason);
-        if (retired) {
+        if (retired || event.reason === "closed") {
           if (record.entry.kind === "status") this.unavailableStatus.add(contributionKey(record.entry));
-          this.close(record.entry);
+          this.remove(record.entry);
         } else record.intent.cancel(); // release/hide/expiry withdraw intent, retaining the UI draft
       }
       this.statusEvents.delete(bindingKey(event.binding)); return;
@@ -200,7 +219,8 @@ export class RendererSession {
   }
   dispose(): void {
     if (this.dead) return; this.dead = true; this.serial++;
-    for (const record of [...this.records.values()]) this.close(record.entry);
+    for (const record of [...this.records.values()]) this.remove(record.entry);
+    this.drafts.clear();
     this.offCatalog(); this.catalog.dispose(); this.listeners.clear(); this.failures.clear(); this.statusPending.clear(); this.statusEvents.clear(); this.unavailableStatus.clear();
   }
 }
