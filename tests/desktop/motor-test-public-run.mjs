@@ -158,6 +158,56 @@ export async function until(check, label, timeout = 5000) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+// Timers may wake fractionally early. The observed monotonic duration, rather
+// than the requested timeout, is the acceptance boundary.
+export async function waitElapsed(ms, now = () => performance.now(), sleep = pause) {
+  const started = now();
+  let elapsed;
+  while ((elapsed = now() - started) < ms) await sleep(Math.ceil(ms - elapsed));
+  return elapsed;
+}
+export function validateCancellation(row, wire) {
+  assert.equal(row.message.id, undefined, "Cancellation must be a notification");
+  assert.deepEqual(Object.keys(row.message.params ?? {}), ["id"]);
+  const request = wire.find(
+    (r) =>
+      r.direction === "plugin-host" &&
+      r.message.id === row.message.params.id &&
+      r.message.method !== "$/cancelRequest",
+  );
+  assert.ok(request && request.at <= row.at, "Cancellation requires an observed original request");
+}
+export function validateProviderTrace(report, scenario) {
+  const connections = report.trace.filter((r) => ["connect", "disconnect"].includes(r.step));
+  assert.ok(
+    report.trace
+      .filter((r) => !["connect", "disconnect"].includes(r.step))
+      .every((r) => r.operationId === report.operationId),
+    "Motor provider trace must belong to original operation",
+  );
+  if (scenario.fault !== "disconnect") return assert.deepEqual(connections, []);
+  assert.equal(report.lifecycleReceipt?.error, undefined);
+  const reconnected = report.lifecycleReceipt?.reconnected;
+  assert.equal(reconnected?.ok, true);
+  assert.notEqual(reconnected.value.session.sessionId, report.terminal.sessionId);
+  assert.equal(reconnected.value.session.state, "connected");
+  const ids = [];
+  let previous = report.trace.findLast((r) => r.step === "readback" && r.dispatch === "sent");
+  assert.ok(previous && previous.operationId === report.operationId);
+  for (const step of ["disconnect", "connect"]) {
+    const rows = connections.filter((r) => r.step === step);
+    assert.deepEqual(
+      rows.map((r) => r.dispatch),
+      ["not-sent", "sent"],
+    );
+    assert.ok(rows[0].operationId && rows[0].operationId !== report.operationId);
+    assert.equal(rows[0].operationId, rows[1].operationId);
+    assert.ok(rows[0].time >= previous.time && rows[1].time >= rows[0].time);
+    ids.push(rows[0].operationId);
+    previous = rows[1];
+  }
+  assert.notEqual(ids[0], ids[1]);
+}
 export const lifecycleMatrix = ["prepare", "start", "arm", "pulse"].flatMap((boundary) =>
   ["before", "after"].flatMap((position) =>
     [
@@ -269,6 +319,32 @@ export function validateNativeInput(report, scenario) {
       );
   }
 }
+export function validateCoreStop(report) {
+  const admission = report.lifecycleReceipt?.coreStop;
+  const invocation = report.lifecycleReceipt?.coreStopInvocation;
+  assert.equal(admission?.admitted?.operationId, report.operationId);
+  assert.equal(admission.admitted.sessionId, report.terminal.sessionId);
+  assert.equal(admission.admitted.stopRequested, true);
+  assert.ok(admission.admittedAt >= report.faultAt);
+  assert.equal(invocation?.channel, "plugins:ui:invoke");
+  assert.ok(invocation.at >= report.faultAt);
+  assert.equal(invocation.args[0]?.nodeId, "stop");
+  assert.deepEqual(invocation.args[0]?.form, {});
+  assert.equal(invocation.error, undefined);
+  assert.equal(invocation.result?.ok, true);
+  assert.deepEqual(invocation.result.value.fieldErrors, []);
+  assert.ok(report.ipc.some((r) => JSON.stringify(r) === JSON.stringify(invocation)));
+  assert.ok(
+    report.inputReceipts.some(
+      (r) =>
+        r.isTrusted &&
+        r.node === "stop" &&
+        r.type === "pointerdown" &&
+        r.at >= report.faultAt &&
+        r.at <= invocation.at,
+    ),
+  );
+}
 export function validateNative(report, identity, scenario) {
   assert.equal(report.kind, scenario.safeMode ? "motor-public-native-cold" : "motor-public-native");
   assert.deepEqual(report.artifact, identity, "Exact tested artifact required");
@@ -332,8 +408,10 @@ export function validateNative(report, identity, scenario) {
     "ui/snapshot",
     "ui/patch",
   ]);
-  for (const row of report.wire.filter((r) => r.direction === "plugin-host" && r.message.method))
-    assert.ok(allowed.has(row.message.method), `Forbidden motor RPC ${row.message.method}`);
+  for (const row of report.wire.filter((r) => r.direction === "plugin-host" && r.message.method)) {
+    if (row.message.method === "$/cancelRequest") validateCancellation(row, report.wire);
+    else assert.ok(allowed.has(row.message.method), `Forbidden motor RPC ${row.message.method}`);
+  }
   const prepares = report.wire.filter(
     (r) => r.direction === "plugin-host" && r.message.method === "devices/motion/prepare",
   );
@@ -396,7 +474,8 @@ export function validateNative(report, identity, scenario) {
     if (scenario.fault !== "source-loss")
       assert.ok(report.trace.some((r) => r.step === "stop" && r.dispatch === "sent"));
     assert.equal(report.lifecycleReceipt?.error, undefined);
-  } else assert.ok(report.events.some((e) => e.kind === "revoke" || e.kind === "stop-dispatch"));
+  } else if (scenario.fault === "stop") validateCoreStop(report);
+  else assert.ok(report.events.some((e) => e.kind === "revoke" || e.kind === "stop-dispatch"));
   assert.ok(report.native.some((e) => e.type === "mouseDown"));
   assert.ok(
     report.inputReceipts?.some((e) => e.type === "pointerdown" && e.isTrusted && e.node),
@@ -413,10 +492,7 @@ export function validateNative(report, identity, scenario) {
       ),
       "Actual repeat event delivery required",
     );
-  assert.ok(
-    report.trace.every((r) => r.operationId === report.operationId),
-    "Provider trace must belong to original operation",
-  );
+  validateProviderTrace(report, scenario);
   assert.ok(
     report.hostQueries?.length &&
       report.hostQueries.every((r) => r.operationId === report.operationId),
@@ -748,9 +824,7 @@ async function runNative(args) {
         terminate();
         report.forcedTeardownAt = performance.timeOrigin + performance.now();
       }
-      const closedAt = performance.now();
-      await pause(5000);
-      report.orphanCheckMs = performance.now() - closedAt;
+      report.orphanCheckMs = await waitElapsed(5000);
       report.remainingPids = [
         ...(report.childPids ?? []),
         report.pid,
@@ -776,8 +850,7 @@ async function runNative(args) {
       const observed = [child.pid, ...logs.join("").matchAll(/MOTOR_PID:(\d+)/g)]
         .map((value) => (typeof value === "number" ? value : Number(value[1])))
         .filter((pid) => Number.isInteger(pid) && pid > 0);
-      const cleanupStarted = performance.now();
-      await pause(5000);
+      const cleanupElapsed = await waitElapsed(5000);
       const remainingPids = [...new Set(observed)].filter(alive);
       await writeFile(
         path.join(folder, "cleanup.json"),
@@ -785,7 +858,7 @@ async function runNative(args) {
           {
             observedPids: [...new Set(observed)],
             remainingPids,
-            orphanCheckMs: performance.now() - cleanupStarted,
+            orphanCheckMs: cleanupElapsed,
           },
           null,
           2,

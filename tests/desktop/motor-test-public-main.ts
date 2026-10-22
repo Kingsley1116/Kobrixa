@@ -927,6 +927,11 @@ export function runNativeMotor() {
           );
           let previous: { x: number; y: number } | null = null;
           return until(async () => {
+            // A pending feature reply can repair focus after the first scroll.
+            // Re-establish visibility, then still require stable hit-tested bounds.
+            await js(
+              `document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'center', behavior:'instant'})`,
+            );
             await paint();
             const bounds = await js<{ x: number; y: number } | null>(`(() => {
               const e = document.querySelector(${JSON.stringify(selector)});
@@ -1034,20 +1039,35 @@ export function runNativeMotor() {
           js<string>(`document.querySelector(${JSON.stringify(field(node))})?.value`);
         const edit = async (node: string, value: string) => {
           await click(field(node));
+          await until(
+            () =>
+              js<boolean>(
+                `document.activeElement === document.querySelector(${JSON.stringify(field(node))})`,
+              ),
+            `native focus ${node}`,
+          );
+          key("keyDown", "Home");
+          key("keyUp", "Home");
           window.webContents.sendInputEvent({
             type: "keyDown",
-            keyCode: "A",
-            modifiers: [process.platform === "darwin" ? "meta" : "control"],
+            keyCode: "End",
+            modifiers: ["shift"],
           });
           window.webContents.sendInputEvent({
             type: "keyUp",
-            keyCode: "A",
-            modifiers: [process.platform === "darwin" ? "meta" : "control"],
+            keyCode: "End",
+            modifiers: ["shift"],
           });
-          await paint();
+          await until(
+            () =>
+              js<boolean>(
+                `(() => { const e = document.querySelector(${JSON.stringify(field(node))}); return e && document.activeElement === e && e.selectionStart === 0 && e.selectionEnd === e.value.length; })()`,
+              ),
+            `native selection ${node}`,
+          );
           key("keyDown", "Backspace");
           key("keyUp", "Backspace");
-          await paint();
+          await until(async () => (await readField(node)) === "", `native cleared field ${node}`);
           native.push({ at: wall(), type: "insertText", detail: { node, value } });
           await window.webContents.insertText(value);
           await until(async () => (await readField(node)) === value, `native field ${node}`);
@@ -1101,6 +1121,15 @@ export function runNativeMotor() {
             bRaw,
             note: "B raw observed after reopen; never restores motion",
           };
+          assert.equal(
+            wire.filter(
+              (r) => r.direction === "plugin-host" && r.message.method === "devices/motion/prepare",
+            ).length,
+            0,
+          );
+          // Reopening restores volatile fields, never connection/operation authority.
+          // A fresh explicit selection is required before the following lifecycle trial.
+          await click('[data-ui-node="select-current"] button');
         }
         if (scenario.parity === "layout") {
           await click('[data-harness="layout"]');
@@ -1456,7 +1485,13 @@ export function runNativeMotor() {
                 .faults.some((f) => f.operationId === operationId),
             "source loss durable fault",
           );
-        else if (heldLifecyclePulse) {
+        else if (scenario.fault === "stop") {
+          const admitted = await until(async () => {
+            const current = await queryOriginal();
+            return current.stopRequested && current;
+          }, "original core Stop admission");
+          lifecycleReceipt.coreStop = { admitted, admittedAt: wall() };
+        } else if (heldLifecyclePulse) {
           // Admission is synchronous; hardware acknowledgement must wait for the
           // original transport exchange. Never wait for that acknowledgement while
           // holding the very exchange that ExchangeLane must drain first.
@@ -1529,7 +1564,7 @@ export function runNativeMotor() {
                 ? "stop-dispatch"
                 : "revoke"),
           );
-        assert.ok(cancellation || hostLifecycle);
+        assert.ok(cancellation || hostLifecycle || scenario.fault === "stop");
         const revokedAt = cancellation ? cancellation.time : faultAt,
           traceAtRevoke = control.trace().length;
         if (scenario.stress === "lost-start") {
@@ -1691,6 +1726,21 @@ export function runNativeMotor() {
           1,
           "Lifecycle restore must never replay motion",
         );
+        if (scenario.fault === "stop") {
+          const receipt = await until(
+            () =>
+              ipc.find(
+                (r) =>
+                  r.at >= faultAt &&
+                  r.channel === "plugins:ui:invoke" &&
+                  (r.args[0] as { nodeId?: string })?.nodeId === "stop",
+              ),
+            "actual core Stop IPC completion",
+          );
+          assert.equal(receipt.error, undefined);
+          assert.ok((receipt.result as { ok?: boolean })?.ok);
+          lifecycleReceipt.coreStopInvocation = receipt;
+        }
         const recoverySnapshot = composition.foundation.broker.recovery.snapshot();
         let expectedBlockedClose: { name: string; message: string; device: unknown } | undefined;
         if (

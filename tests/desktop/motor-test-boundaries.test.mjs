@@ -11,6 +11,10 @@ import {
   validateNativeInput,
   validateLifecycleBarrier,
   nativeCases,
+  validateProviderTrace,
+  validateCoreStop,
+  validateCancellation,
+  waitElapsed,
 } from "./motor-test-public-run.mjs";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -479,5 +483,132 @@ test("lifecycle receipt rejects wrong original identity, timeout, and cleanup-on
     const invalid = JSON.parse(JSON.stringify(report));
     mutate(invalid);
     assert.throws(() => validateLifecycleBarrier(invalid, scenario));
+  }
+});
+
+// Validator samples only; never emitted as execution receipts.
+test("orphan observation waits through an early timer wake without rounding the evidence", async () => {
+  let time = 0;
+  const waits = [];
+  const elapsed = await waitElapsed(
+    5000,
+    () => time,
+    async (ms) => {
+      waits.push(ms);
+      time += waits.length === 1 ? 4999.5 : ms;
+    },
+  );
+  assert.deepEqual(waits, [5000, 1]);
+  assert.equal(elapsed, 5000.5);
+});
+test("transport cancellation is only valid for an observed request", () => {
+  const request = {
+    at: 1,
+    direction: "plugin-host",
+    message: { id: 3, method: "devices/motion/start" },
+  };
+  const cancel = {
+    at: 2,
+    direction: "plugin-host",
+    message: { method: "$/cancelRequest", params: { id: 3 } },
+  };
+  validateCancellation(cancel, [request, cancel]);
+  for (const invalid of [
+    { ...cancel, at: 0 },
+    { ...cancel, message: { ...cancel.message, id: 5 } },
+    { ...cancel, message: { ...cancel.message, params: { id: 8 } } },
+    { ...cancel, message: { ...cancel.message, params: { id: 3, other: true } } },
+  ])
+    assert.throws(() => validateCancellation(invalid, [request, invalid]));
+});
+test("disconnect trace retains original motor identity and ordered separate connection operations", () => {
+  const report = {
+    operationId: "motion",
+    terminal: { sessionId: "old" },
+    lifecycleReceipt: {
+      reconnected: { ok: true, value: { session: { sessionId: "new", state: "connected" } } },
+    },
+    trace: [
+      { step: "stop", dispatch: "sent", operationId: "motion", time: 1 },
+      { step: "readback", dispatch: "sent", operationId: "motion", time: 2 },
+      { step: "disconnect", dispatch: "not-sent", operationId: "disconnect", time: 3 },
+      { step: "disconnect", dispatch: "sent", operationId: "disconnect", time: 4 },
+      { step: "connect", dispatch: "not-sent", operationId: "connect", time: 5 },
+      { step: "connect", dispatch: "sent", operationId: "connect", time: 6 },
+    ],
+  };
+  validateProviderTrace(report, { fault: "disconnect" });
+  assert.throws(() => validateProviderTrace(report, { fault: "hide" }));
+  for (const mutate of [
+    (r) => {
+      r.trace[0].operationId = "foreign";
+    },
+    (r) => {
+      r.trace[4].time = 1;
+    },
+    (r) => {
+      r.trace.push({ ...r.trace[5] });
+    },
+    (r) => {
+      r.trace[3].operationId = "other";
+    },
+    (r) => {
+      r.lifecycleReceipt.reconnected.value.session.sessionId = "old";
+    },
+    (r) => {
+      r.lifecycleReceipt.error = "failed";
+    },
+  ]) {
+    const invalid = structuredClone(report);
+    mutate(invalid);
+    assert.throws(() => validateProviderTrace(invalid, { fault: "disconnect" }));
+  }
+});
+
+test("core Stop requires original admission and actual trusted native IPC", () => {
+  const invocation = {
+    at: 12,
+    channel: "plugins:ui:invoke",
+    args: [{ nodeId: "stop", form: {} }],
+    result: { ok: true, value: { fieldErrors: [] } },
+  };
+  const report = {
+    operationId: "motion",
+    terminal: { sessionId: "session" },
+    faultAt: 10,
+    lifecycleReceipt: {
+      coreStop: {
+        admitted: { operationId: "motion", sessionId: "session", stopRequested: true },
+        admittedAt: 13,
+      },
+      coreStopInvocation: invocation,
+    },
+    ipc: [invocation],
+    inputReceipts: [{ isTrusted: true, node: "stop", type: "pointerdown", at: 11 }],
+  };
+  validateCoreStop(report);
+  for (const mutate of [
+    (r) => {
+      r.lifecycleReceipt.coreStop.admitted.operationId = "other";
+    },
+    (r) => {
+      r.lifecycleReceipt.coreStop.admitted.stopRequested = false;
+    },
+    (r) => {
+      r.ipc = [];
+    },
+    (r) => {
+      r.inputReceipts[0].isTrusted = false;
+    },
+    (r) => {
+      r.lifecycleReceipt.coreStopInvocation.result.ok = false;
+    },
+    (r) => {
+      r.lifecycleReceipt.coreStopInvocation.args[0].form = { power: 20 };
+    },
+  ]) {
+    const invalid = JSON.parse(JSON.stringify(report));
+    mutate(invalid);
+    assert.throws(() => validateCoreStop(invalid));
   }
 });
