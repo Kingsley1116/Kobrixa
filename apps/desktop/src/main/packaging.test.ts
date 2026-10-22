@@ -82,3 +82,22 @@ describe("bundled dependency notices", () => {
     await expect(collectBundledNotices(buildPath, nodeModules)).rejects.toThrow("No source maps");
   });
 });
+
+import { BUILTIN_PAYLOAD_UNPACK, DELIVERED_BUILTIN_PROCESS_BUILDS } from "../../packaging.js";
+import { builtinPluginConfig } from "../../vite.plugin.config.js";
+it("keeps native unpack and feature payload unpack in the same packaging rule", () => {
+  expect(BUILTIN_PAYLOAD_UNPACK).toBe("{**/*.node,**/.vite/build/plugins/**}");
+  expect(DELIVERED_BUILTIN_PROCESS_BUILDS).toEqual([]);
+});
+it("does not externalize SDK or protocol or share chunks between process leaves", () => {
+  const result = builtinPluginConfig({
+    slug: "acceptance-builtin",
+    pluginId: "acceptance.ui",
+    sourceRoot: "/fixture",
+  });
+  expect(result.build?.rollupOptions?.external).toEqual([]);
+  expect(result.build?.rollupOptions?.output).toMatchObject({
+    format: "cjs",
+    inlineDynamicImports: true,
+  });
+});

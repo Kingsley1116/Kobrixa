@@ -1,4 +1,10 @@
-import { copyNativeDependencies } from "./packaging.js";
+import {
+  copyNativeDependencies,
+  BUILTIN_PAYLOAD_UNPACK,
+  DELIVERED_BUILTIN_PROCESS_BUILDS,
+  validateBuiltinPayloads,
+} from "./packaging.js";
+const fixtureBuild = process.env.KOBRIXA_PLUGIN_FIXTURE_BUILD === "1";
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { readFileSync } from "node:fs";
@@ -33,7 +39,7 @@ const config: ForgeConfig = {
     },
     ...macSigningConfig(),
     icon: platformIcon,
-    asar: { unpack: "**/*.node" },
+    asar: { unpack: BUILTIN_PAYLOAD_UNPACK },
     ignore: (file) =>
       Boolean(file) &&
       ![
@@ -47,12 +53,28 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [],
   hooks: {
-    packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform, arch) =>
-      copyNativeDependencies(buildPath, platform, arch),
+    packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform, arch) => {
+      await validateBuiltinPayloads(buildPath, fixtureBuild);
+      await copyNativeDependencies(buildPath, platform, arch);
+    },
   },
   plugins: [
     new VitePlugin({
       build: [
+        ...DELIVERED_BUILTIN_PROCESS_BUILDS.map(({ entry, config, target }) => ({
+          entry,
+          config,
+          target,
+        })),
+        ...(fixtureBuild
+          ? [
+              {
+                entry: "../../tests/desktop/fixtures/builtin-process/src/main.ts",
+                config: "vite.plugin-fixture.config.ts",
+                target: "main" as const,
+              },
+            ]
+          : []),
         { entry: "src/main/index.ts", config: "vite.main.config.ts", target: "main" },
         {
           entry: "src/main/workspace/build-worker.ts",

@@ -105,3 +105,24 @@ export async function copyNativeDependencies(
     `Kobrixa runtime dependency notices\n\nElectron and Chromium notices are distributed as LICENSE.electron.txt and LICENSES.chromium.html next to the application executable (in Kobrixa.app/Contents/Resources on macOS). Additional HIDAPI licenses are included under node_modules/node-hid/hidapi.\n\n${licenses.join("\n\n--------------------\n\n")}\n`,
   );
 }
+
+export const BUILTIN_PAYLOAD_UNPACK = "{**/*.node,**/.vite/build/plugins/**}";
+export const DELIVERED_BUILTIN_PROCESS_BUILDS: readonly {
+  entry: string;
+  config: string;
+  target: "main";
+  slug: string;
+  pluginId: string;
+}[] = Object.freeze([]);
+export async function validateBuiltinPayloads(buildPath: string, fixture: boolean): Promise<void> {
+  const { validateBuiltinLeaf } = await import("./src/main/plugins/builtin-launch.js");
+  const leaves = [
+    ...DELIVERED_BUILTIN_PROCESS_BUILDS,
+    ...(fixture ? [{ slug: "acceptance-builtin", pluginId: "acceptance.ui" }] : []),
+  ];
+  for (const leaf of leaves)
+    await validateBuiltinLeaf(
+      path.join(buildPath, ".vite/build/plugins", leaf.slug),
+      leaf.pluginId,
+    );
+}
