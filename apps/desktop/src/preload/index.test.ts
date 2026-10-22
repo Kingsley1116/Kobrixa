@@ -210,3 +210,141 @@ it("preserves main-admitted resource metadata without renderer inference", async
   expect(await api.plugins.ui.resource(input)).toBe(admitted);
   expect(electron.invoke).toHaveBeenCalledExactlyOnceWith("plugins:ui:resource", input);
 });
+
+it("forwards recovery identifiers only and shares one event subscription", async () => {
+  const itemId = "00000000-0000-4000-8000-000000000001",
+    optionId = "00000000-0000-4000-8000-000000000002";
+  await api.plugins.persistenceRecovery.snapshot({ itemId });
+  await api.plugins.persistenceRecovery.act({ itemId, optionId });
+  expect(electron.invoke).toHaveBeenCalledWith("plugins:persistence-recovery:snapshot", { itemId });
+  expect(electron.invoke).toHaveBeenCalledWith("plugins:persistence-recovery:act", {
+    itemId,
+    optionId,
+  });
+  const offOpen = api.plugins.persistenceRecovery.onOpen(vi.fn());
+  const offChanged = api.plugins.persistenceRecovery.onChanged(vi.fn());
+  expect(
+    electron.invoke.mock.calls.filter(
+      ([name]) => name === "plugins:persistence-recovery:subscribe",
+    ),
+  ).toHaveLength(1);
+  offOpen();
+  expect(
+    electron.invoke.mock.calls.filter(
+      ([name]) => name === "plugins:persistence-recovery:unsubscribe",
+    ),
+  ).toHaveLength(0);
+  offChanged();
+  offChanged();
+  expect(
+    electron.invoke.mock.calls.filter(
+      ([name]) => name === "plugins:persistence-recovery:unsubscribe",
+    ),
+  ).toHaveLength(1);
+  expect(api.plugins.persistenceRecovery).not.toHaveProperty("mint");
+  expect(api.plugins.persistenceRecovery).not.toHaveProperty("chooseDestination");
+});
+it("legacy preferences forwards each durable result unchanged and rejects malformed evidence locally", async () => {
+  const scope = {
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    workbenchInstance: "00000000-0000-4000-8000-000000000002",
+  };
+  const snapshot = {
+    nonce: "00000000-0000-4000-8000-000000000003",
+    scope,
+    entries: [{ key: "fixture.value", raw: null }],
+  };
+  await api.plugins.legacyPreferences.challenge("test.preferences");
+  expect(electron.invoke).toHaveBeenCalledWith(
+    "persistence:legacy-preferences-challenge",
+    "test.preferences",
+  );
+  for (const state of ["accepted", "pending", "reconciled"] as const) {
+    const result = { state };
+    electron.invoke.mockResolvedValueOnce(result);
+    expect(await api.plugins.legacyPreferences.submit(snapshot)).toBe(result);
+  }
+  const count = electron.invoke.mock.calls.length;
+  await expect(
+    api.plugins.legacyPreferences.submit({ ...snapshot, extra: true } as typeof snapshot),
+  ).rejects.toThrow();
+  await expect(api.plugins.legacyPreferences.challenge("/private/path")).rejects.toThrow();
+  expect(electron.invoke).toHaveBeenCalledTimes(count);
+});
+it("settings preload validates bindings and exact params, preserves receipts/errors, and removes the original watch once", async () => {
+  const binding = {
+    owner: {
+      sourceKey: "builtin:test.settings",
+      pluginId: "test.settings",
+      uiResourceGeneration: 1,
+    },
+    scope: {
+      hostEpoch: "00000000-0000-4000-8000-000000000001",
+      workbenchInstance: "00000000-0000-4000-8000-000000000002",
+    },
+    resourceDigest: "a".repeat(64),
+  };
+  const params = {
+    schemaVersion: 1,
+    expectedRevision: null,
+    changes: [{ key: "device.choice", value: "1" }],
+  };
+  const receipt = { ok: true, value: { receipt: { commitId: "kept" } } };
+  electron.invoke.mockResolvedValueOnce(receipt);
+  expect(await api.plugins.settings.update(binding, params)).toBe(receipt);
+  const error = {
+    ok: false,
+    error: {
+      code: "PLUGIN_E_SETTINGS_CONFLICT",
+      message: "Conflict",
+      detail: { kind: "persistence", reason: "revision-mismatch" },
+    },
+  };
+  electron.invoke.mockResolvedValueOnce(error);
+  expect(await api.plugins.settings.update(binding, params)).toBe(error);
+  const count = electron.invoke.mock.calls.length;
+  await expect(
+    api.plugins.settings.open({
+      sourceKey: binding.owner.sourceKey,
+      resourceDigest: binding.resourceDigest,
+      scope: binding.scope,
+    } as Parameters<typeof api.plugins.settings.open>[0]),
+  ).rejects.toThrow();
+  await expect(
+    api.plugins.settings.update(binding, { ...params, owner: binding.owner } as typeof params),
+  ).rejects.toThrow();
+  expect(electron.invoke).toHaveBeenCalledTimes(count);
+  const changed = vi.fn();
+  const off = api.plugins.settings.watch(binding, changed);
+  const receive = electron.on.mock.calls.find(([name]) => name === "plugins:settings:changed")![1];
+  await Promise.resolve();
+  expect(changed).toHaveBeenCalledOnce();
+  receive({}, { binding: { ...binding, resourceDigest: "b".repeat(64) }, watch: 1 });
+  expect(changed).toHaveBeenCalledOnce();
+  receive({}, { binding, watch: 1 });
+  expect(changed).toHaveBeenCalledTimes(2);
+  off();
+  off();
+  receive({}, { binding, watch: 1 });
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(
+    electron.invoke.mock.calls.filter(([name]) => name === "plugins:settings:unwatch"),
+  ).toEqual([["plugins:settings:unwatch", { binding, watch: 1 }]]);
+  expect(electron.removeListener).toHaveBeenCalledExactlyOnceWith(
+    "plugins:settings:changed",
+    receive,
+  );
+});
+it("recovery preload rejects namespace or token fields before IPC", async () => {
+  const selection = {
+    itemId: "00000000-0000-4000-8000-000000000001",
+    optionId: "00000000-0000-4000-8000-000000000002",
+  };
+  await expect(
+    api.plugins.persistenceRecovery.act({
+      ...selection,
+      actionToken: selection.optionId,
+    } as typeof selection),
+  ).rejects.toThrow();
+  expect(electron.invoke).not.toHaveBeenCalled();
+});

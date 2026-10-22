@@ -11,11 +11,12 @@ import {
   shell,
   powerMonitor,
   dialog,
+  ipcMain,
   type MessageBoxOptions,
 } from "electron";
 import { BuildService } from "./workspace/build.js";
 import { DeviceService } from "./device/device.js";
-import { registerIpc } from "./ipc.js";
+import { registerIpc, registerPersistenceWindow170, type IpcHandle } from "./ipc.js";
 import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
 import { CloseHandshake } from "./window/close.js";
@@ -285,7 +286,7 @@ const primary = startPrimary(
     const reportCleanupError = (error: unknown) => {
       console.error("Device cleanup blocked.", error);
     };
-    const composition = await composeDesktopMain({
+    const pendingComposition = composeDesktopMain({
       createFoundation: createDesktopFoundation,
       foundationOptions: {
         profile,
@@ -342,6 +343,19 @@ const primary = startPrimary(
       },
       report: reportCleanupError,
     });
+    installPluginQuitCleanup(
+      app,
+      async () => {
+        const composition = await pendingComposition;
+        await composition.dispose();
+        await monitor.dispose();
+      },
+      (error) => {
+        quitting = false;
+        void quitRecovery.blocked(error).catch(reportCleanupError);
+      },
+    );
+    const composition = await pendingComposition;
     const { broker } = composition.foundation;
     const plugins = composition.plugins;
     controller.current = plugins;
@@ -388,21 +402,14 @@ const primary = startPrimary(
     const offProcessRecovery = plugins.onEvent((event) => {
       if (event.type === "state") recovery.changed();
     });
+    let persistenceHandle: IpcHandle | undefined;
+    let offPersistenceWindow: (() => void) | undefined;
     let offUi: (() => void) | undefined;
     const detachUi = () => {
       offUi?.();
+      offPersistenceWindow?.();
+      offPersistenceWindow = undefined;
     };
-    installPluginQuitCleanup(
-      app,
-      async () => {
-        await composition.dispose();
-        await monitor.dispose();
-      },
-      (error) => {
-        quitting = false;
-        void quitRecovery.blocked(error).catch(reportCleanupError);
-      },
-    );
     app.on("quit", () => {
       detachUi();
       offDeviceRecovery();
@@ -642,6 +649,7 @@ const primary = startPrimary(
             new CollabProjects(collab, workspaces, app.getPath("userData")),
           ),
         (handle) => {
+          persistenceHandle = handle;
           registerPluginIpc(handle, plugins, (event) => send("plugins:event", event));
           registerUiIpc({
             handle,
@@ -685,11 +693,33 @@ const primary = startPrimary(
     updates.onInstallationFailed(() => {
       void installation.failed().catch(reportCleanupError);
     });
+    const attachPersistenceWindow = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const facets = plugins.persistence170;
+        if (!facets || !persistenceHandle) throw new Error("P170 persistence not attached");
+        offPersistenceWindow?.();
+        // Native windows are recreated while global services stay alive. Replace only
+        // these dedicated handlers and bind them to this original document and frame.
+        const handle: IpcHandle = (channel, action) => {
+          ipcMain.removeHandler(channel);
+          persistenceHandle!(channel, action);
+        };
+        offPersistenceWindow = registerPersistenceWindow170({
+          handle,
+          facets,
+          coreRecovery: recovery,
+          renderer,
+        });
+      }
+    };
     let opening: Promise<void> | undefined;
     const openWindow = () => {
       if (opening) return opening;
       const work = (async () => {
-        await workbench.openWindow(() => createWindow(flushDeviceWork), reportCleanupError);
+        await workbench.openWindow(() => {
+          createWindow(flushDeviceWork);
+          attachPersistenceWindow();
+        }, reportCleanupError);
         primary?.windowReady();
         if (mainWindow) {
           const window = mainWindow,

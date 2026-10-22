@@ -104,6 +104,9 @@ export type PluginsViewEvent =
   { type: "state"; state: PluginsView } | { type: "notice"; notice: StoredNotice };
 export type PluginEvent = PluginsViewEvent;
 export interface PluginsApi {
+  settings: SettingsApi170;
+  legacyPreferences: LegacyPreferencesApi;
+  persistenceRecovery: PersistenceRecoveryBridge;
   ui: PluginUiBridge;
   recovery: CoreRecoveryPort;
   state(): Promise<PluginsView>;
@@ -130,3 +133,9 @@ export interface PluginsApi {
 
 export type { CoreActionReference, CoreWindowScope } from "./plugin-ui.js";
 export type { DrainReport } from "./plugin-persistence.js";
+
+import type {
+  SettingsApi170,
+  LegacyPreferencesApi,
+  PersistenceRecoveryBridge,
+} from "./plugin-persistence.js";

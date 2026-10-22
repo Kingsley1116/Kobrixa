@@ -57,6 +57,24 @@ const api: KobrixaApi = {
     },
   },
   plugins: {
+    settings: createSettingsPreload170(),
+    persistenceRecovery: createPersistenceRecoveryPreload170(),
+    legacyPreferences: {
+      challenge: (descriptorId) => {
+        if (
+          typeof descriptorId !== "string" ||
+          descriptorId.length > 128 ||
+          !/^[a-z][a-z0-9-]*(?:[.:][a-z0-9-]+)+$/.test(descriptorId)
+        )
+          return Promise.reject(new Error("Invalid preference descriptor"));
+        return ipcRenderer.invoke("persistence:legacy-preferences-challenge", descriptorId);
+      },
+      submit: (snapshot) => {
+        if (!isLegacyPreferencesSnapshot(snapshot))
+          return Promise.reject(new Error("Invalid preference snapshot"));
+        return ipcRenderer.invoke("persistence:legacy-preferences-submit", snapshot);
+      },
+    },
     ui: {
       catalog: (input) => ipcRenderer.invoke("plugins:ui:catalog", input),
       resource: (input) => ipcRenderer.invoke("plugins:ui:resource", input),
@@ -268,3 +286,128 @@ if (process.platform === "win32") {
 }
 
 contextBridge.exposeInMainWorld("kobrixa", api);
+
+function createSettingsPreload170(): PluginsApi["settings"] {
+  let nextWatch = 0;
+  return {
+    open: async (input) =>
+      ipcRenderer.invoke(
+        "plugins:settings:open",
+        z.strictObject({ sourceKey: source170, resourceDigest: digest170 }).parse(input),
+      ),
+    read: async (binding) => ipcRenderer.invoke("plugins:settings:read", binding170.parse(binding)),
+    update: async (binding, params) =>
+      ipcRenderer.invoke(
+        "plugins:settings:update",
+        binding170.parse(binding),
+        settingsRequestSchemas["settings/update"].params.parse(params),
+      ),
+    reset: async (binding, params) =>
+      ipcRenderer.invoke(
+        "plugins:settings:reset",
+        binding170.parse(binding),
+        settingsRequestSchemas["settings/reset"].params.parse(params),
+      ),
+    watch(value, changed) {
+      const binding = binding170.parse(value);
+      const watch = ++nextWatch;
+      let active = true;
+      const receive = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        const event = z
+          .strictObject({ binding: binding170, watch: z.number().int().positive() })
+          .safeParse(value);
+        if (
+          active &&
+          event.success &&
+          event.data.watch === watch &&
+          JSON.stringify(event.data.binding) === JSON.stringify(binding)
+        )
+          changed();
+      };
+      ipcRenderer.on("plugins:settings:changed", receive);
+      void ipcRenderer.invoke("plugins:settings:watch", { binding, watch }).then(
+        () => {
+          if (active) changed();
+        },
+        () => {
+          if (active) changed();
+        },
+      );
+      return () => {
+        if (!active) return;
+        active = false;
+        ipcRenderer.removeListener("plugins:settings:changed", receive);
+        void ipcRenderer.invoke("plugins:settings:unwatch", { binding, watch }).catch(() => {});
+      };
+    },
+    dispose(binding) {
+      void ipcRenderer
+        .invoke("plugins:settings:dispose", binding170.parse(binding))
+        .catch(() => {});
+    },
+  };
+}
+// Add inside the existing plugins object in each preload:
+// settings: createSettingsPreload170(),
+
+function createPersistenceRecoveryPreload170(): PersistenceRecoveryBridge {
+  let listeners = 0;
+  function listen<T>(channel: string, callback: (value: T) => void): () => void {
+    let active = true;
+    const receive = (_event: Electron.IpcRendererEvent, value: T) => {
+      if (active) callback(value);
+    };
+    ipcRenderer.on(channel, receive);
+    if (listeners++ === 0)
+      void ipcRenderer.invoke("plugins:persistence-recovery:subscribe").catch(() => {});
+    return () => {
+      if (!active) return;
+      active = false;
+      ipcRenderer.removeListener(channel, receive);
+      if (--listeners === 0)
+        void ipcRenderer.invoke("plugins:persistence-recovery:unsubscribe").catch(() => {});
+    };
+  }
+  return {
+    snapshot: async (input) =>
+      ipcRenderer.invoke(
+        "plugins:persistence-recovery:snapshot",
+        recoverySelection170.parse(input),
+      ),
+    act: async (input) =>
+      ipcRenderer.invoke("plugins:persistence-recovery:act", recoveryAction170.parse(input)),
+    onOpen: (listener) =>
+      listen("plugins:persistence-recovery:open", (value) => {
+        const parsed = recoverySelection170.safeParse(value);
+        if (parsed.success) listener(parsed.data);
+      }),
+    onChanged: (listener) => listen("plugins:persistence-recovery:changed", listener),
+  };
+}
+// Inside the plugins object in both preloads:
+// persistenceRecovery: createPersistenceRecoveryPreload170(),
+
+import type { PluginsApi } from "../shared/plugins.js";
+import {
+  isLegacyPreferencesSnapshot,
+  type PersistenceRecoveryBridge,
+} from "../shared/plugin-persistence.js";
+
+import { z } from "zod";
+import { settingsRequestSchemas, handleSchema, namespacedIdSchema } from "@kobrixa/plugin-protocol";
+const source170 = z
+  .string()
+  .max(160)
+  .regex(/^(?:builtin:[a-z0-9.-]+|dev:[0-9a-f]{16})$/);
+const digest170 = z.string().regex(/^[a-f0-9]{64}$/);
+const binding170 = z.strictObject({
+  owner: z.strictObject({
+    sourceKey: source170,
+    pluginId: namespacedIdSchema,
+    uiResourceGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }),
+  scope: z.strictObject({ hostEpoch: handleSchema, workbenchInstance: handleSchema }),
+  resourceDigest: digest170,
+});
+const recoverySelection170 = z.strictObject({ itemId: handleSchema });
+const recoveryAction170 = recoverySelection170.extend({ optionId: handleSchema });

@@ -6,7 +6,7 @@ it("starts all desktop services under the primary callback", async () => {
   expect(gate).toBeGreaterThan(0);
   for (const construction of [
     "new WorkspaceService(",
-    "await composeDesktopMain(",
+    "composeDesktopMain(",
     "new DeviceService(",
     "new MonitorService(",
     "new SensorLabService(",
@@ -196,4 +196,14 @@ it("suspend/wake routes each session through quiesce/reconcile without retiring 
   power.emit("resume");
   expect(resume.mock.calls).toEqual([["s1"], ["s2"]]);
   expect(retire).not.toHaveBeenCalled();
+});
+
+it("installs the quit guard before awaiting desktop worker construction", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  const guard = source.indexOf("installPluginQuitCleanup(");
+  const admitted = source.indexOf("const { broker } = composition.foundation;");
+  expect(guard).toBeGreaterThan(source.indexOf("const pendingComposition = composeDesktopMain("));
+  expect(admitted).toBeGreaterThan(guard);
+  expect(source.slice(guard, admitted)).toContain("const composition = await pendingComposition;");
+  expect(source.slice(guard, admitted)).toContain("await composition.dispose()");
 });

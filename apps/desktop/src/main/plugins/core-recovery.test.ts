@@ -323,3 +323,189 @@ describe("D160 recovery projection", () => {
     expect(h.execute).not.toHaveBeenCalled();
   });
 });
+
+import { createPersistenceRecoveryBridge170 } from "./core-recovery.js";
+import type { PersistenceHost } from "./persistence/host-port.js";
+function unusedRecoveryPort170<T extends object>(name: string): T {
+  return new Proxy(Object.create(null) as T, {
+    get(_target, key) {
+      throw new Error(`Unexpected ${name}.${String(key)}`);
+    },
+  });
+}
+function detailFixture170() {
+  const scope = {
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    workbenchInstance: "00000000-0000-4000-8000-000000000002",
+  };
+  let live = true;
+  let revision = 1;
+  const changed = new Set<() => void>();
+  const report = {
+    state: "checkpoint-only" as const,
+    blocker: false,
+    pendingSettings: false,
+    records: [],
+    errors: [],
+  };
+  const snapshot = (): PersistenceRecoverySnapshot => ({
+    revision,
+    items: [
+      {
+        id: "00000000-0000-4000-8000-000000000003",
+        sourceKey: "builtin:test.storage",
+        pluginId: "test.storage",
+        recordId: null,
+        committedRevision: null,
+        state: "retryable",
+        payload: "complete-staging",
+        actions: [{ id: "00000000-0000-4000-8000-000000000004", kind: "export" }],
+      },
+    ],
+  });
+  const host: PersistenceHost = {
+    settings: unusedRecoveryPort170("settings"),
+    request: async () => ({ ok: false, error: { code: "PLUGIN_E_DISABLED", message: "Disabled" } }),
+    participant: {
+      endReservation: () => null,
+      freeze: () => {
+        throw new Error("No freeze");
+      },
+      drain: async () => report,
+      ownerLost: async () => report,
+      recoverySnapshot: snapshot,
+      retry: vi.fn(async () => report),
+      discard: vi.fn(async () => report),
+    },
+    recovery: {
+      snapshot,
+      subscribe: (listener) => {
+        changed.add(listener);
+        return () => changed.delete(listener);
+      },
+      export: vi.fn(async () => ({
+        ok: true as const,
+        value: { disposition: "committed" as const },
+      })),
+    },
+    dispose: async () => {},
+  };
+  const actions = createCoreActionLedger({ now: () => 0, current: () => live });
+  const mint = vi.spyOn(actions, "mint");
+  const detail = createPersistenceRecoveryBridge170({
+    host,
+    actions,
+    scope: () => scope,
+    currentScope: () => live,
+  });
+  return {
+    scope,
+    host,
+    detail,
+    mint,
+    actions,
+    replace: () => {
+      live = false;
+    },
+    change: () => {
+      ++revision;
+      for (const listener of changed) listener();
+    },
+  };
+}
+it("manage preserves the core result and opens only the original window without minting", async () => {
+  const f = detailFixture170();
+  const opened = vi.fn();
+  f.detail.bridge.onOpen(opened);
+  const core = new CoreRecovery({
+    scope: () => f.scope,
+    entries: () => [],
+    actions: f.actions,
+    now: () => 0,
+    openDetail: () => {
+      throw new Error("Unexpected device detail");
+    },
+  });
+  const detach = core.attachPersistence170(f.detail);
+  const entry = f.detail.entries()[0]!;
+  const result = await core.act({ itemId: entry.item.id, actionId: entry.item.actions[0]!.id });
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      hostEpoch: f.scope.hostEpoch,
+      items: [{ kind: "storage", actions: [{ kind: "manage" }] }],
+      nextCursor: null,
+    },
+  });
+  expect(opened).toHaveBeenCalledExactlyOnceWith({ itemId: entry.item.id });
+  expect(f.mint).not.toHaveBeenCalled();
+  f.replace();
+  expect(() => f.detail.openDetail({ itemId: entry.item.id }, f.scope)).toThrow();
+  expect(opened).toHaveBeenCalledOnce();
+  detach();
+  f.detail.dispose();
+});
+it("looks up scoped options before minting and rejects replay and stale revisions", async () => {
+  const f = detailFixture170();
+  let entry = f.detail.entries()[0]!;
+  let snapshot = await f.detail.bridge.snapshot({ itemId: entry.item.id });
+  if (!snapshot.ok) throw new Error("snapshot");
+  const option = snapshot.value.items[0]!.actions[0]!.id;
+  expect(await f.detail.bridge.act({ itemId: entry.item.id, optionId: option })).toMatchObject({
+    ok: true,
+  });
+  expect(f.mint).toHaveBeenCalledTimes(1);
+  expect(f.host.recovery.export).toHaveBeenCalledTimes(1);
+  expect(await f.detail.bridge.act({ itemId: entry.item.id, optionId: option })).toMatchObject({
+    ok: false,
+  });
+  f.change();
+  expect(await f.detail.bridge.act({ itemId: entry.item.id, optionId: option })).toMatchObject({
+    ok: false,
+  });
+  entry = f.detail.entries()[0]!;
+  snapshot = await f.detail.bridge.snapshot({ itemId: entry.item.id });
+  if (!snapshot.ok) throw new Error("snapshot");
+  f.replace();
+  expect(
+    await f.detail.bridge.act({
+      itemId: entry.item.id,
+      optionId: snapshot.value.items[0]!.actions[0]!.id,
+    }),
+  ).toMatchObject({ ok: false });
+  expect(f.mint).toHaveBeenCalledTimes(1);
+  f.detail.dispose();
+});
+
+import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+it.each(["failed", "unknown"] as const)(
+  "recovery detail consumes a %s export selection once and disposes subscriptions once",
+  async (kind) => {
+    const f = detailFixture170();
+    const off = vi.fn();
+    f.detail.dispose();
+    vi.spyOn(f.host.recovery, "subscribe").mockReturnValue(off);
+    vi.mocked(f.host.recovery.export).mockImplementation(async () => {
+      if (kind === "failed") throw new Error("Native export failed");
+      return { ok: true, value: { disposition: "unknown" } };
+    });
+    const detail = createPersistenceRecoveryBridge170({
+      host: f.host,
+      actions: f.actions,
+      scope: () => f.scope,
+      currentScope: () => true,
+    });
+    const itemId = detail.entries()[0]!.item.id;
+    const snapshot = await detail.bridge.snapshot({ itemId });
+    if (!snapshot.ok) throw new Error("Expected detail");
+    const optionId = snapshot.value.items[0]!.actions[0]!.id;
+    await detail.bridge.act({ itemId, optionId });
+    expect(await detail.bridge.act({ itemId, optionId })).toMatchObject({ ok: false });
+    expect(f.host.recovery.export).toHaveBeenCalledOnce();
+    expect(f.mint).toHaveBeenCalledOnce();
+    detail.dispose();
+    detail.dispose();
+    expect(off).toHaveBeenCalledOnce();
+    expect(detail.entries()).toEqual([]);
+  },
+);

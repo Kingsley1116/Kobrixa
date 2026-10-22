@@ -538,3 +538,122 @@ export interface DesktopDeviceIpc {
   disconnect(sessionId: string, principal: Principal): Promise<void>;
   beforeClose(): Promise<void>;
 }
+
+export function registerLegacyPreferencesIpc170(
+  handle: IpcHandle,
+  imports: LegacyImportHostPort,
+  scopeFor: (event: IpcMainInvokeEvent) => CoreWindowScope,
+): () => void {
+  let disposed = false;
+  const bridge = (event: IpcMainInvokeEvent) => {
+    if (disposed) throw new Error("Stale preferences window");
+    return legacyPreferencesFor170(scopeFor(event), imports);
+  };
+  handle("persistence:legacy-preferences-challenge", (event, descriptorId: string) =>
+    bridge(event).challenge(descriptorId),
+  );
+  handle("persistence:legacy-preferences-submit", (event, snapshot: LegacyPreferencesSnapshot) =>
+    bridge(event).submit(snapshot),
+  );
+  return () => {
+    disposed = true;
+  };
+}
+
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+export function registerPersistenceWindow170(input: {
+  handle: IpcHandle;
+  facets: NonNullable<PluginController["persistence170"]>;
+  coreRecovery: CoreRecovery;
+  renderer: () => Electron.WebContents | undefined;
+}): () => void {
+  const original = input.renderer();
+  if (!original) throw new Error("No workbench renderer");
+  const originalScope = structuredClone(input.facets.scope());
+  const scope = () => {
+    const current = input.renderer();
+    const now = input.facets.scope();
+    if (
+      current !== original ||
+      original.isDestroyed() ||
+      now.hostEpoch !== originalScope.hostEpoch ||
+      now.workbenchInstance !== originalScope.workbenchInstance
+    )
+      throw new Error("Stale persistence window");
+    return originalScope;
+  };
+  const handle: IpcHandle = <T extends unknown[], R>(
+    channel: string,
+    action: (event: IpcMainInvokeEvent, ...args: T) => R,
+  ) =>
+    input.handle(channel, (event, ...args: T) => {
+      scope();
+      if (event.sender !== original || event.senderFrame !== original.mainFrame)
+        throw new Error("Rejected IPC from an untrusted sender.");
+      return action(event, ...args);
+    });
+  const publish = (expected: CoreWindowScope, channel: string, value: unknown) => {
+    const current = input.renderer();
+    let now: CoreWindowScope;
+    try {
+      now = scope();
+    } catch {
+      return;
+    }
+    if (
+      current !== original ||
+      original.isDestroyed() ||
+      expected.hostEpoch !== now.hostEpoch ||
+      expected.workbenchInstance !== now.workbenchInstance
+    )
+      return;
+    original.send(channel, value);
+  };
+  const offLegacy = registerLegacyPreferencesIpc170(handle, input.facets.imports, () => scope());
+  const offCore = input.coreRecovery.attachPersistence170(input.facets.detail);
+  const offSettings = registerSettingsIpc170({
+    handle,
+    service: input.facets.settings,
+    scope,
+    publish,
+  });
+  const offRecovery = registerPersistenceRecoveryIpc170({
+    handle,
+    bridge: input.facets.detail.bridge,
+    scope,
+    publish,
+  });
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    offLegacy();
+    offSettings();
+    offRecovery();
+    offCore();
+    input.facets.imports.retirePreferences(originalScope);
+    original.removeListener("destroyed", dispose);
+    original.removeListener("render-process-gone", dispose);
+    original.removeListener("did-start-navigation", navigation);
+  };
+  const navigation = (
+    _event: Electron.Event,
+    _url: string,
+    _inPlace: boolean,
+    mainFrame: boolean,
+  ) => {
+    if (mainFrame) dispose();
+  };
+  original.once("destroyed", dispose);
+  original.once("render-process-gone", dispose);
+  original.on("did-start-navigation", navigation);
+  return dispose;
+}
+
+import { legacyPreferencesFor170 } from "./plugins/controller.js";
+import type {
+  LegacyImportHostPort,
+  LegacyPreferencesSnapshot,
+} from "./plugins/persistence/import-sources.js";
+import type { CoreRecovery } from "./plugins/core-recovery.js";
+import { registerSettingsIpc170, registerPersistenceRecoveryIpc170 } from "./plugins/ipc.js";

@@ -314,3 +314,393 @@ it("uses the real trusted-sender wrapper for catalog and registration-report cha
     registrationFailure(),
   );
 });
+
+import {
+  bindSettingsBridge,
+  registerSettingsIpc170,
+  registerPersistenceRecoveryIpc170,
+} from "./ipc.js";
+import type { BoundSettingsService, SettingsFormBinding } from "@kobrixa/plugin-runtime";
+import type { PluginsApi } from "../../shared/plugins.js";
+function settingsBridgeFixture170() {
+  let scope = {
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    workbenchInstance: "00000000-0000-4000-8000-000000000002",
+  };
+  const binding: SettingsFormBinding = {
+    owner: {
+      sourceKey: "builtin:test.settings",
+      pluginId: "test.settings",
+      uiResourceGeneration: 1,
+    },
+    scope: { ...scope },
+    resourceDigest: "a".repeat(64),
+  };
+  const snapshot = {
+    schemaVersion: 1,
+    revision: null,
+    values: [{ key: "device.choice", value: 1 }],
+  };
+  const resource = {
+    schemaVersion: 1,
+    title: { en: "Settings" },
+    fields: [
+      {
+        key: "device.choice",
+        label: { en: "Choice" },
+        type: "enum" as const,
+        default: 1,
+        options: [
+          { value: 1, label: { en: "Number" } },
+          { value: "1", label: { en: "String" } },
+        ],
+      },
+    ],
+  };
+  let notify = () => {};
+  const off = vi.fn();
+  const service: BoundSettingsService = {
+    open: vi.fn(async () => ({ binding, resource, snapshot })),
+    read: vi.fn(async () => ({ ok: true as const, value: snapshot })),
+    update: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: "PLUGIN_E_SETTINGS_CONFLICT" as const, message: "Conflict" },
+    })),
+    reset: vi.fn(async () => ({
+      ok: false as const,
+      error: { code: "PLUGIN_E_SETTINGS_CONFLICT" as const, message: "Conflict" },
+    })),
+    watch: vi.fn((_binding, listener) => {
+      notify = listener;
+      return off;
+    }),
+    dispose: vi.fn(),
+  };
+  const api = bindSettingsBridge(service, () => scope);
+  return {
+    binding,
+    service,
+    api,
+    off,
+    notify: () => notify(),
+    open: () =>
+      api.open({ sourceKey: binding.owner.sourceKey, resourceDigest: binding.resourceDigest }),
+    replaceWindow: () => {
+      scope = { ...scope, workbenchInstance: "00000000-0000-4000-8000-000000000003" };
+    },
+  };
+}
+it("opens data-only settings once and retains scalar types and dotted keys", async () => {
+  const f = settingsBridgeFixture170();
+  const opened = await f.open();
+  expect(opened.resource.fields[0]).toMatchObject({
+    key: "device.choice",
+    options: [{ value: 1 }, { value: "1" }],
+  });
+  expect(f.service.open).toHaveBeenCalledExactlyOnceWith({
+    sourceKey: f.binding.owner.sourceKey,
+    resourceDigest: f.binding.resourceDigest,
+    scope: f.binding.scope,
+  });
+  await expect(
+    f.api.update(f.binding, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "device.choice", value: "1" }],
+    }),
+  ).resolves.toMatchObject({ ok: false, error: { code: "PLUGIN_E_SETTINGS_CONFLICT" } });
+  expect(f.service.update).toHaveBeenCalledWith(f.binding, {
+    schemaVersion: 1,
+    expectedRevision: null,
+    changes: [{ key: "device.choice", value: "1" }],
+  });
+  f.api.dispose(f.binding);
+});
+it("rejects every changed binding field and stops watches on window change", async () => {
+  const f = settingsBridgeFixture170();
+  await f.open();
+  const changed = vi.fn();
+  f.api.watch(f.binding, changed);
+  const variants: SettingsFormBinding[] = [
+    { ...f.binding, resourceDigest: "b".repeat(64) },
+    { ...f.binding, owner: { ...f.binding.owner, sourceKey: "builtin:other" } },
+    { ...f.binding, owner: { ...f.binding.owner, pluginId: "test.other" } },
+    { ...f.binding, owner: { ...f.binding.owner, uiResourceGeneration: 2 } },
+    {
+      ...f.binding,
+      scope: { ...f.binding.scope, hostEpoch: "00000000-0000-4000-8000-000000000004" },
+    },
+    {
+      ...f.binding,
+      scope: { ...f.binding.scope, workbenchInstance: "00000000-0000-4000-8000-000000000004" },
+    },
+  ];
+  for (const binding of variants) {
+    await expect(f.api.read(binding)).rejects.toThrow("Stale");
+    await expect(
+      f.api.update(binding, { schemaVersion: 1, expectedRevision: null, changes: [] }),
+    ).rejects.toThrow("Stale");
+    await expect(
+      f.api.reset(binding, { schemaVersion: 1, expectedRevision: null, keys: [] }),
+    ).rejects.toThrow("Stale");
+    expect(() => f.api.watch(binding, changed)).toThrow("Stale");
+    expect(() => f.api.dispose(binding)).toThrow("Stale");
+  }
+  f.notify();
+  expect(changed).toHaveBeenCalledOnce();
+  f.replaceWindow();
+  f.notify();
+  expect(changed).toHaveBeenCalledOnce();
+  expect(f.off).toHaveBeenCalledOnce();
+  expect(f.service.dispose).toHaveBeenCalledOnce();
+});
+it("disposes a late open from the old generation without replacing the new form", async () => {
+  const f = settingsBridgeFixture170();
+  let release!: (value: Awaited<ReturnType<BoundSettingsService["open"]>>) => void;
+  const original = await f.service.open({
+    sourceKey: f.binding.owner.sourceKey,
+    resourceDigest: f.binding.resourceDigest,
+    scope: f.binding.scope,
+  });
+  vi.mocked(f.service.open).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const old = f.open();
+  const rejected = expect(old).rejects.toThrow("Stale");
+  await Promise.resolve();
+  const newer = f.open();
+  release({ ...original, binding: { ...original.binding, resourceDigest: "b".repeat(64) } });
+  await rejected;
+  const current = await newer;
+  await expect(f.api.read(current.binding)).resolves.toMatchObject({ ok: true });
+  expect(f.service.dispose).toHaveBeenCalledOnce();
+  f.api.dispose(current.binding);
+});
+it("disposes a late open after navigation and ignores a late read", async () => {
+  const f = settingsBridgeFixture170();
+  await f.open();
+  let release!: (value: Awaited<ReturnType<BoundSettingsService["read"]>>) => void;
+  vi.mocked(f.service.read).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const read = f.api.read(f.binding);
+  const rejected = expect(read).rejects.toThrow("Stale");
+  f.replaceWindow();
+  release({ ok: true, value: { schemaVersion: 1, revision: null, values: [] } });
+  await rejected;
+  expect(f.service.dispose).toHaveBeenCalledOnce();
+});
+
+function ipcHandlers170() {
+  const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const handle: IpcHandle = <T extends unknown[], R>(
+    name: string,
+    action: (event: IpcMainInvokeEvent, ...args: T) => R,
+  ) => {
+    handlers.set(name, (event, ...args) => action(event, ...(args as T)));
+  };
+  const invoke = async (name: string, ...args: unknown[]) => {
+    const action = handlers.get(name);
+    if (!action) throw new Error("Missing dedicated handler");
+    return action({} as IpcMainInvokeEvent, ...args);
+  };
+  return { handle, invoke, handlers };
+}
+it("dedicated settings IPC validates inputs and an old unwatch cannot cancel the replacement", async () => {
+  const f = settingsBridgeFixture170(),
+    ipc = ipcHandlers170(),
+    publish = vi.fn();
+  const dispose = registerSettingsIpc170({
+    handle: ipc.handle,
+    service: f.service,
+    scope: () => f.binding.scope,
+    publish,
+  });
+  try {
+    await ipc.invoke("plugins:settings:open", {
+      sourceKey: f.binding.owner.sourceKey,
+      resourceDigest: f.binding.resourceDigest,
+    });
+    await ipc.invoke("plugins:settings:watch", { binding: f.binding, watch: 1 });
+    await ipc.invoke("plugins:settings:watch", { binding: f.binding, watch: 2 });
+    await ipc.invoke("plugins:settings:unwatch", { binding: f.binding, watch: 1 });
+    f.notify();
+    expect(publish).toHaveBeenCalledWith(f.binding.scope, "plugins:settings:changed", {
+      binding: f.binding,
+      watch: 2,
+    });
+    expect(f.off).toHaveBeenCalledTimes(1);
+    await expect(
+      ipc.invoke("plugins:settings:update", f.binding, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [],
+        scope: f.binding.scope,
+      }),
+    ).rejects.toThrow();
+    expect(f.service.update).not.toHaveBeenCalled();
+    expect([...ipc.handlers.keys()].sort()).toEqual([
+      "plugins:settings:dispose",
+      "plugins:settings:open",
+      "plugins:settings:read",
+      "plugins:settings:reset",
+      "plugins:settings:unwatch",
+      "plugins:settings:update",
+      "plugins:settings:watch",
+    ]);
+    await ipc.invoke("plugins:settings:dispose", f.binding);
+    expect(f.service.dispose).toHaveBeenCalledOnce();
+  } finally {
+    dispose();
+  }
+});
+
+it("recovery IPC rejects replaced windows and removes both subscriptions exactly once", async () => {
+  const ipc = ipcHandlers170();
+  let scope = {
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    workbenchInstance: "00000000-0000-4000-8000-000000000002",
+  };
+  const offOpen = vi.fn(),
+    offChanged = vi.fn();
+  let open: (value: { itemId: string }) => void = () => {};
+  const bridge: PluginsApi["persistenceRecovery"] = {
+    snapshot: vi.fn(async () => ({ ok: true as const, value: { revision: 0, items: [] } })),
+    act: vi.fn(async () => ({ ok: true as const, value: { revision: 0, items: [] } })),
+    onOpen: (listener) => {
+      open = listener;
+      return offOpen;
+    },
+    onChanged: () => offChanged,
+  };
+  const publish = vi.fn();
+  const dispose = registerPersistenceRecoveryIpc170({
+    handle: ipc.handle,
+    bridge,
+    scope: () => scope,
+    publish,
+  });
+  await ipc.invoke("plugins:persistence-recovery:subscribe");
+  const itemId = "00000000-0000-4000-8000-000000000003";
+  open({ itemId });
+  expect(publish).toHaveBeenCalledOnce();
+  scope = { ...scope, workbenchInstance: "00000000-0000-4000-8000-000000000004" };
+  open({ itemId });
+  expect(publish).toHaveBeenCalledOnce();
+  await expect(ipc.invoke("plugins:persistence-recovery:snapshot", { itemId })).rejects.toThrow(
+    "Stale",
+  );
+  expect(bridge.snapshot).not.toHaveBeenCalled();
+  dispose();
+  dispose();
+  expect(offOpen).toHaveBeenCalledOnce();
+  expect(offChanged).toHaveBeenCalledOnce();
+});
+
+import type { IpcMainInvokeEvent } from "electron";
+it("settings IPC disposes an in-flight open after retirement even when scope lookup now throws", async () => {
+  const f = settingsBridgeFixture170(),
+    ipc = ipcHandlers170();
+  const opened = await f.service.open({
+    sourceKey: f.binding.owner.sourceKey,
+    resourceDigest: f.binding.resourceDigest,
+    scope: f.binding.scope,
+  });
+  let finish!: (value: typeof opened) => void,
+    live = true;
+  vi.mocked(f.service.open).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const dispose = registerSettingsIpc170({
+    handle: ipc.handle,
+    service: f.service,
+    scope: () => {
+      if (!live) throw new Error("No workbench");
+      return f.binding.scope;
+    },
+    publish: vi.fn(),
+  });
+  const opening = ipc.invoke("plugins:settings:open", {
+    sourceKey: f.binding.owner.sourceKey,
+    resourceDigest: f.binding.resourceDigest,
+  });
+  const rejected = expect(opening).rejects.toThrow();
+  await Promise.resolve();
+  await Promise.resolve();
+  live = false;
+  dispose();
+  finish(opened);
+  await rejected;
+  expect(f.service.dispose).toHaveBeenCalledExactlyOnceWith(opened.binding);
+});
+it("a forged settings watch cannot remove the original subscription", async () => {
+  const f = settingsBridgeFixture170(),
+    ipc = ipcHandlers170();
+  const publish = vi.fn();
+  const dispose = registerSettingsIpc170({
+    handle: ipc.handle,
+    service: f.service,
+    scope: () => f.binding.scope,
+    publish,
+  });
+  try {
+    await ipc.invoke("plugins:settings:open", {
+      sourceKey: f.binding.owner.sourceKey,
+      resourceDigest: f.binding.resourceDigest,
+    });
+    await ipc.invoke("plugins:settings:watch", { binding: f.binding, watch: 1 });
+    await expect(
+      ipc.invoke("plugins:settings:watch", {
+        binding: { ...f.binding, resourceDigest: "b".repeat(64) },
+        watch: 2,
+      }),
+    ).rejects.toThrow("Stale");
+    f.notify();
+    expect(publish).toHaveBeenCalledWith(f.binding.scope, "plugins:settings:changed", {
+      binding: f.binding,
+      watch: 1,
+    });
+    expect(f.off).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
+});
+it("invalid settings open leaves the issued form and its watch intact", async () => {
+  const f = settingsBridgeFixture170(),
+    ipc = ipcHandlers170(),
+    publish = vi.fn();
+  const dispose = registerSettingsIpc170({
+    handle: ipc.handle,
+    service: f.service,
+    scope: () => f.binding.scope,
+    publish,
+  });
+  try {
+    await ipc.invoke("plugins:settings:open", {
+      sourceKey: f.binding.owner.sourceKey,
+      resourceDigest: f.binding.resourceDigest,
+    });
+    await ipc.invoke("plugins:settings:watch", { binding: f.binding, watch: 1 });
+    await expect(
+      ipc.invoke("plugins:settings:open", {
+        sourceKey: f.binding.owner.sourceKey,
+        resourceDigest: f.binding.resourceDigest,
+        scope: f.binding.scope,
+      }),
+    ).rejects.toThrow();
+    f.notify();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(f.off).not.toHaveBeenCalled();
+  } finally {
+    dispose();
+  }
+});

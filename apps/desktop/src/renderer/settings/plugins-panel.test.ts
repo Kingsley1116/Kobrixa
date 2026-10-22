@@ -68,6 +68,42 @@ const snapshot: PluginsView = {
 };
 const unsubscribe = vi.fn();
 const api = {
+  settings: {
+    open: vi.fn<PluginsApi["settings"]["open"]>(async () => {
+      throw new Error("No selected settings fixture");
+    }),
+    read: vi.fn<PluginsApi["settings"]["read"]>(async () => {
+      throw new Error("No selected settings fixture");
+    }),
+    update: vi.fn<PluginsApi["settings"]["update"]>(async () => {
+      throw new Error("No selected settings fixture");
+    }),
+    reset: vi.fn<PluginsApi["settings"]["reset"]>(async () => {
+      throw new Error("No selected settings fixture");
+    }),
+    watch: vi.fn<PluginsApi["settings"]["watch"]>(() => {
+      throw new Error("No selected settings fixture");
+    }),
+    dispose: vi.fn<PluginsApi["settings"]["dispose"]>(),
+  },
+  legacyPreferences: {
+    challenge: vi.fn<PluginsApi["legacyPreferences"]["challenge"]>(async () => {
+      throw new Error("No legacy fixture");
+    }),
+    submit: vi.fn<PluginsApi["legacyPreferences"]["submit"]>(async () => {
+      throw new Error("No legacy fixture");
+    }),
+  },
+  persistenceRecovery: {
+    snapshot: vi.fn<PluginsApi["persistenceRecovery"]["snapshot"]>(async () => {
+      throw new Error("No persistence recovery fixture");
+    }),
+    act: vi.fn<PluginsApi["persistenceRecovery"]["act"]>(async () => {
+      throw new Error("No persistence recovery fixture");
+    }),
+    onOpen: vi.fn<PluginsApi["persistenceRecovery"]["onOpen"]>(() => () => {}),
+    onChanged: vi.fn<PluginsApi["persistenceRecovery"]["onChanged"]>(() => () => {}),
+  },
   ui: {
     catalog: vi.fn<PluginsApi["ui"]["catalog"]>(),
     resource: vi.fn<PluginsApi["ui"]["resource"]>(),
