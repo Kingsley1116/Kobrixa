@@ -5,8 +5,59 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyPaths, detectChanges, requiredChecksPassed } from "./changes.mjs";
+import { parse as parseYaml } from "yaml";
 
 const both = { web: true, desktop: true };
+
+test("declarative UI fixtures and guides route to their existing CI owners", () => {
+  for (const file of [
+    "tests/desktop/declarative-ui-main.ts",
+    "tests/desktop/declarative-ui-motion-main.ts",
+    "tests/desktop/declarative-ui-load-report.mjs",
+    "tests/desktop/builtin-process-installed.mjs",
+    "tests/desktop/fixtures/declarative-ui/consumer.py",
+  ])
+    assert.deepEqual(classifyPaths([file]), { desktop: true, web: false });
+  for (const file of ["docs/en/plugin-declarative-ui.md", "docs/zh-TW/plugin-declarative-ui.md"])
+    assert.deepEqual(classifyPaths([file]), { desktop: false, web: true });
+});
+test("P160 scripts include actual transport, browser and maximum-load runners", () => {
+  const { scripts } = JSON.parse(
+    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(
+    scripts["test:declarative-ui"],
+    "node --test tests/desktop/declarative-ui-*.test.mjs tests/desktop/builtin-process-*.test.mjs",
+  );
+  for (const name of ["test", "test:ci", "test:desktop"])
+    assert.ok(scripts[name].includes("pnpm test:declarative-ui"), name);
+  const smoke = scripts["test:declarative-ui:smoke"];
+  assert.ok(smoke.includes("declarative-ui-run.mjs --transport-only"));
+  assert.ok(smoke.includes("declarative-ui-browser-run.mjs"));
+  assert.ok(smoke.includes("declarative-ui-motion-run.mjs --load"));
+  assert.ok(
+    !smoke.includes("--plain-glyphs"),
+    "diagnostic glyph mode cannot replace ordinary product acceptance",
+  );
+  assert.ok(scripts["test:desktop:packaged"].includes("packaged-smoke.mjs"));
+  assert.ok(scripts["test:desktop:packaged"].includes("builtin-process-installed.mjs"));
+  assert.ok(scripts["test:plugins:smoke"].includes("run-plugins-smoke.mjs"));
+  assert.ok(scripts["test:static-languages:smoke"].includes("static-languages-run.mjs"));
+});
+test("P160 native smoke runs after build on every desktop platform", () => {
+  const workflow = parseYaml(
+    readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8"),
+  );
+  const steps = workflow.jobs.platform.steps;
+  const build = steps.findIndex((step) => step.run === "pnpm build:desktop");
+  const smoke = steps.findIndex((step) => step.name === "Declarative UI bridge and SDK acceptance");
+  const packaged = steps.findIndex((step) => step.name === "Smoke test the packaged application");
+  assert.ok(build >= 0 && smoke > build && packaged > smoke);
+  assert.equal(steps[smoke].shell, "bash");
+  assert.ok(!steps[smoke].if);
+  assert.match(steps[smoke].run, /xvfb-run -a pnpm test:declarative-ui:smoke/);
+  assert.match(steps[smoke].run, /pnpm_config_verify_deps_before_run=false/);
+});
 const base = "a".repeat(40),
   head = "b".repeat(40);
 
