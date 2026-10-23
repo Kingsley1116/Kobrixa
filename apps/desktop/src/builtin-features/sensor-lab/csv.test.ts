@@ -24,6 +24,7 @@ function publicSource(id = "a") {
     { providerId: "test:provider", sessionId: "session", sourceRevision: 3 },
   );
 }
+const origin = { providerId: "test:provider", sessionId: "session", sessionElapsedMs: 0 };
 function recording() {
   const sources = [publicSource("a"), publicSource("b")];
   return {
@@ -33,6 +34,7 @@ function recording() {
     startedAt: 0,
     durationMs: 10,
     frameCount: 1,
+    recordingOrigin: origin,
     channels: sources.map((source) => ({ source, calibration: identityCalibration("cm") })),
     frames: [
       publicFrame(
@@ -50,6 +52,7 @@ function recording() {
           ],
         },
         0,
+        origin,
       ),
     ],
   };
@@ -103,4 +106,19 @@ it("protects textual metadata uniformly and includes frame sequence/gap provenan
   expect(() =>
     recordingCsv({ ...r, frames: [{ ...r.frames[0]!, sampledAt: 8.64e15 + 1 }] }),
   ).toThrow(/date/);
+});
+
+it("exports recording time separately from original public session time and origin", () => {
+  const record = recording();
+  record.recordingOrigin = { ...record.recordingOrigin, sessionElapsedMs: 1_800_001 };
+  record.frames[0] = { ...record.frames[0]!, sessionElapsedMs: 1_800_011 };
+  const lines = recordingCsv(record).slice(1).trimEnd().split("\r\n");
+  const headers = lines[0]!.split(",");
+  const rows = lines.slice(1).map((line) => line.split(","));
+  for (const row of rows) {
+    expect(row[headers.indexOf("elapsed_ms")]).toBe("10");
+    expect(row[headers.indexOf("session_elapsed_ms")]).toBe("1800011");
+    expect(row[headers.indexOf("recording_origin_session_elapsed_ms")]).toBe("1800001");
+    expect(row[headers.indexOf("host_received_at")]).toBe("1970-01-01T00:00:00.010Z");
+  }
 });

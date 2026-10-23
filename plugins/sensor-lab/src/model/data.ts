@@ -51,7 +51,10 @@ export interface CalibratedChannel {
 }
 export interface Frame {
   sampledAt: number;
+  /** Recording-relative monotonic time, including for legacy imports. */
   elapsedMs: number;
+  /** Original public TelemetryFrame.elapsedMs; absent on legacy frames. */
+  sessionElapsedMs?: number;
   values: Array<number | null>;
   status: "ok" | "busy" | "error" | "gap";
   segment: number;
@@ -85,10 +88,18 @@ export interface Recording {
   endedAt?: number;
   durationMs: number;
   frameCount: number;
+  /** Required for public recordings, even before their first frame. */
+  recordingOrigin?: RecordingMonotonicOrigin;
   reason?: StopReason;
   provenance?: { origin: "legacy-ev3"; schemaVersion: 1; device: LegacyDevice };
   channels: CalibratedChannel[];
   frames: Frame[];
+}
+/** Recording start expressed in the public session's monotonic time domain. */
+export interface RecordingMonotonicOrigin {
+  providerId: string;
+  sessionId: string;
+  sessionElapsedMs: number;
 }
 export interface CalibrationProfile {
   schemaVersion: 2;
@@ -245,6 +256,7 @@ export function publicFrame(
   sources: readonly SourceSnapshot[],
   frame: TelemetryFrame,
   segment: number,
+  recordingOrigin: RecordingMonotonicOrigin,
 ): Frame {
   requireModel(sources.length > 0 && sources.length <= LIMITS.channels, "sources", "limit");
   requireModel(
@@ -255,6 +267,8 @@ export function publicFrame(
     "revision",
   );
   const first = sources[0] as Extract<SourceSnapshot, { origin: "public" }>;
+  validateRecordingOrigin(recordingOrigin, first.provenance);
+  finite(frame.elapsedMs, 0, Number.MAX_VALUE, "sessionElapsedMs");
   requireModel(
     sources.every(
       (s) =>
@@ -276,7 +290,8 @@ export function publicFrame(
   );
   const result: Frame = {
     sampledAt: frame.sampledAt,
-    elapsedMs: frame.elapsedMs,
+    elapsedMs: frame.elapsedMs - recordingOrigin.sessionElapsedMs,
+    sessionElapsedMs: frame.elapsedMs,
     values: ids.map((id) => values.get(id)!),
     status: frame.status,
     segment,
@@ -287,6 +302,18 @@ export function publicFrame(
   };
   validateFrames([result], sources.length, LIMITS.durationMs, false);
   return immutableSnapshot(result);
+}
+function validateRecordingOrigin(
+  origin: RecordingMonotonicOrigin | undefined,
+  provenance: Provenance,
+): asserts origin is RecordingMonotonicOrigin {
+  requireModel(origin !== undefined, "recordingOrigin", "required");
+  finite(origin.sessionElapsedMs, 0, Number.MAX_VALUE, "recordingOrigin.sessionElapsedMs");
+  requireModel(
+    origin.providerId === provenance.providerId && origin.sessionId === provenance.sessionId,
+    "recordingOrigin",
+    "session",
+  );
 }
 export function validateFrames(
   frames: readonly Frame[],
@@ -299,11 +326,13 @@ export function validateFrames(
     object(
       f,
       ["sampledAt", "elapsedMs", "values", "status", "segment"],
-      legacy ? [] : ["sequence", "sourceRevision", "gap", "program"],
+      legacy ? [] : ["sessionElapsedMs", "sequence", "sourceRevision", "gap", "program"],
       `frames.${i}`,
     );
     finite(f.sampledAt, 0, Number.MAX_VALUE, "sampledAt");
     finite(f.elapsedMs, 0, duration, "elapsedMs");
+    if (f.sessionElapsedMs !== undefined)
+      finite(f.sessionElapsedMs, 0, Number.MAX_VALUE, "sessionElapsedMs");
     integer(f.segment, 0, Number.MAX_SAFE_INTEGER, "segment");
     requireModel(
       (legacy ? ["ok", "busy", "error"] : ["ok", "busy", "error", "gap"]).includes(f.status),
@@ -376,6 +405,8 @@ export function snapshotRecording(record: Recording): Recording {
   );
   if (publicSources.length) {
     const first = publicSources[0]!;
+    const origin = record.recordingOrigin;
+    validateRecordingOrigin(origin, first.provenance);
     requireModel(
       publicSources.every(
         (s) =>
@@ -387,6 +418,12 @@ export function snapshotRecording(record: Recording): Recording {
       "provenance",
     );
     for (const frame of record.frames) {
+      finite(frame.sessionElapsedMs, 0, Number.MAX_VALUE, "sessionElapsedMs");
+      requireModel(
+        frame.elapsedMs === frame.sessionElapsedMs - origin.sessionElapsedMs,
+        "elapsedMs",
+        "recording-origin",
+      );
       requireModel(
         frame.sourceRevision === first.provenance.sourceRevision &&
           frame.sequence !== undefined &&

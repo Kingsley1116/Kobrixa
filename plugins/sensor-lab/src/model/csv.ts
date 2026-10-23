@@ -70,6 +70,8 @@ export function recordingCsv(record: Recording): string {
       "device_address",
       "device_serial_number",
       "device_metadata",
+      "session_elapsed_ms",
+      "recording_origin_session_elapsed_ms",
     ],
   ];
   for (const frame of record.frames) {
@@ -135,6 +137,8 @@ export function recordingCsv(record: Recording): string {
         device?.address,
         device?.serialNumber,
         device?.metadata ? JSON.stringify(device.metadata) : undefined,
+        pub ? frame.sessionElapsedMs : undefined,
+        pub ? record.recordingOrigin?.sessionElapsedMs : undefined,
       ]);
     });
   }
