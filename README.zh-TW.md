@@ -175,7 +175,7 @@ docs/                      產品與工程文件（en、zh-TW）
 - [設備與平台支援](docs/zh-TW/device-support.md)
 - [Sensor Lab](docs/zh-TW/sensor-lab.md) · [馬達測試](docs/zh-TW/motor-test.md)
 - [雲端協作](docs/zh-TW/collaboration.md)
-- [插件範例（開發預覽）](plugins/samples/README.md#繁體中文)
+- [插件系統](docs/zh-TW/plugin-system.md) · [插件範例（開發預覽）](plugins/samples/README.md#繁體中文)
 - [範例](examples/README.zh-TW.md)與[學習路徑](examples/LEARNING-PATH.md)
 
 **專案與工程**

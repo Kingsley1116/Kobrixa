@@ -105,6 +105,8 @@ src/
 
 ## 插件（開發預覽）
 
+撰寫插件、manifest、貢獻種類與 API 版本請先看[插件系統總覽](plugin-system.md)；本節說明宿主內部機制。
+
 開發預覽支援可信任的本機 JS／TS、Python 與純靜態 JSON 插件。第三方插件只在開發者模式載入；開發者模式預設關閉，需在「設定 → 插件」經過原生確認對話框才能開啟。面板透過原生資料夾選擇視窗連結插件資料夾、選擇 Python 直譯器、列出內建與開發插件及其載入錯誤、訊息與日誌，並提供執行與取消貢獻命令，以及重新載入、啟用、停用、解除連結開發插件的操作。詳見[可執行範例](../../plugins/samples/README.md)與 [Python SDK](../../sdks/python/README.md)。
 
 公開 API 分成三層：JSON-RPC 2.0、Zod 定義與已提交的 JSON Schema，以及語言 SDK：

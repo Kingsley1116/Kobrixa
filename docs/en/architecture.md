@@ -105,6 +105,8 @@ Host main process                        Guest main process
 
 ## Plugins (development preview)
 
+Start with the [plugin system overview](plugin-system.md) for authoring, the manifest, contributions and API versions. This section describes host internals.
+
 The development preview supports trusted local JS/TS, Python, and static-only JSON plugins. Third-party plugins load only in developer mode, which is off by default and turned on in Settings → Plugins after a native confirmation dialog. The panel links plugin folders through a native folder picker, chooses the Python interpreter, lists built-in and development plugins with their load errors, messages and logs, runs and cancels contributed commands, and reloads, enables, disables or unlinks development plugins. See the [runnable samples](../../plugins/samples/README.md) and [Python SDK](../../sdks/python/README.md).
 
 The public API has three layers: JSON-RPC 2.0, Zod definitions and committed JSON Schema, and language SDKs:
