@@ -91,32 +91,187 @@ test("U14/B1-RF5: missing/corrupt/foreign/traversing payloads fail closed", asyn
   }
 });
 
+// Receipt validation is a pure audit. Only the controller can supply actual
+// installed evidence; unit data below is never written as an installed receipt.
+export function assertProductReceipt(report) {
+  assert.equal(report.kind, "installed-builtin-product");
+  assert.equal(report.status, "passed");
+  assert.equal(report.error, undefined);
+  assert.equal(report.finalizationError, undefined);
+  assert.equal(report.syntheticHost, false);
+  assert.equal(report.artifact.syntheticHost, false);
+  assert.match(report.artifact.commit, /^[0-9a-f]{40}$/);
+  assert.equal(typeof report.artifact.dirty, "boolean");
+  for (const key of ["appAsarSha256", "originalExecutableSha256", "payloadIndexSha256"])
+    assert.match(report.artifact[key], /^[0-9a-f]{64}$/);
+  assert.ok(Object.keys(report.artifact.shippedFiles).length >= 3);
+  for (const hash of Object.values(report.artifact.shippedFiles))
+    assert.match(hash, /^[0-9a-f]{64}$/);
+  assert.equal(report.artifact.package.name, "@kobrixa/desktop");
+  assert.equal(report.artifact.package.main, ".vite/build/main.cjs");
+  assert.equal(report.artifact.manifest.id, "kobrixa.motor-test");
+  assert.equal(report.artifact.releasePayloadIndex.pluginId, "kobrixa.motor-test");
+  assert.deepEqual(
+    report.artifact.releasePayloadIndex.files.map((item) => item.path),
+    ["kobrixa-plugin.json", "main.cjs", "panel.json", "status.json"],
+  );
+  for (const field of [
+    "noPathNode",
+    "noNodePath",
+    "arbitraryCwd",
+    "originalAppAsarIntact",
+    "copiedAppAsarIntact",
+    "originalExecutableIntact",
+    "originalPayloadIntact",
+  ])
+    assert.equal(report[field], true, field);
+  assert.deepEqual(
+    report.runs.map((run) => run.name),
+    ["healthy", "restart", "missing", "tampered"],
+  );
+  for (const run of report.runs) {
+    assert.equal(run.error, undefined);
+    assert.equal(run.cleanupErrors, undefined);
+    assert.equal(run.originalForkObserved, true);
+    assert.equal(run.probeRestored, true);
+    assert.equal(run.gracefulQuit, true);
+    assert.equal(run.forcedCleanup, false);
+    assert.deepEqual(run.exit, { code: 0, signal: null });
+    assert.ok(Number.isSafeInteger(run.pid) && run.pid > 0);
+    assert.ok(run.observedPids.includes(run.pid));
+    assert.deepEqual(run.remainingPids, []);
+    assert.ok(["Kobrixa", "@kobrixa/desktop"].includes(run.identity.name));
+    assert.equal(run.identity.version, report.artifact.package.version);
+    assert.equal(run.identity.packaged, true);
+    assert.equal(run.identity.removedEnvironment, true);
+    assert.ok(run.identity.appPath.endsWith("app.asar"));
+    assert.ok(report.entry.startsWith(`${run.identity.appPath}.unpacked/`));
+    assert.equal(run.identity.userData, run.profile);
+    for (const id of ["kobrixa.basic-plus", "kobrixa.ev3"]) {
+      const plugin = run.beforeQuit.plugins.find((item) => item.id === id);
+      assert.equal(plugin?.required, true);
+      assert.equal(plugin.status, "enabled");
+    }
+    for (const fork of run.forks.filter(
+      (item) => item.serviceName === "Kobrixa plugin kobrixa.motor-test",
+    )) {
+      assert.equal(fork.entry, report.entry);
+      assert.equal(fork.cwd, path.dirname(report.entry));
+    }
+    const motors = run.forks.filter((item) => item.entry === report.entry);
+    assert.equal(motors.length, run.name === "healthy" ? 2 : run.name === "restart" ? 1 : 0);
+    for (const fork of motors) {
+      assert.ok(Number.isSafeInteger(fork.pid) && fork.pid > 0);
+      assert.equal(fork.exited, true);
+      assert.equal(typeof fork.exitCode, "number");
+    }
+    if (report.isolated) {
+      assert.equal(report.sourceRootDenial, "verified-in-all-four-product-processes");
+      assert.match(report.isolationProfile, /\(deny network\*\)/);
+      assert.match(report.isolationProfile, /allow network-inbound/);
+      for (const denied of report.deniedRoots)
+        assert.ok(
+          report.isolationProfile.includes(`(deny file-read* (subpath ${JSON.stringify(denied)}))`),
+        );
+      assert.ok(report.deniedRoots.includes(report.artifact.sourceRoot));
+      for (const field of ["checkout", "worktree", "dependency", "network"])
+        assert.ok(["EPERM", "EACCES"].includes(run.isolation[field]), field);
+    }
+  }
+  const [healthy, restart, missing, tampered] = report.runs;
+  assert.equal(healthy.freshProcessIdentity, true);
+  const motors = healthy.forks.filter((item) => item.entry === report.entry);
+  assert.notEqual(motors[0].pid, motors[1].pid);
+  for (const run of [healthy, restart]) {
+    const lazy = run.lazyState.plugins.find((item) => item.id === "kobrixa.motor-test");
+    assert.equal(lazy.status, "enabled");
+    assert.equal(lazy.running, false);
+    assert.equal(run.snapshots.length, run.name === "healthy" ? 2 : 1);
+    for (const snapshot of run.snapshots) {
+      assert.equal(snapshot.binding.kind, "panel");
+      assert.equal(snapshot.binding.contributionId, "kobrixa.motor-test.panel");
+      assert.equal(snapshot.data["can-start"], false);
+      assert.equal(snapshot.data.available, false);
+      assert.match(snapshot.data.summary, /Unavailable|無法使用/);
+    }
+    assertRenderedEvidence(run);
+  }
+  assert.notEqual(
+    healthy.snapshots[0].binding.processEpoch,
+    healthy.snapshots[1].binding.processEpoch,
+  );
+  const persisted = restart.persistedDisable.plugins.find(
+    (item) => item.id === "kobrixa.motor-test",
+  );
+  assert.equal(persisted.status, "disabled");
+  assert.equal(persisted.disabledBy, "user");
+  assert.equal(persisted.running, false);
+  assert.equal(healthy.profile, restart.profile);
+  for (const run of [missing, tampered]) {
+    assert.equal(run.phase, "resolve-before-launch");
+    assert.equal(run.launched, false);
+    assert.equal(run.rejected, true);
+    const motor = run.state.plugins.find((item) => item.id === "kobrixa.motor-test");
+    assert.equal(motor.status, "invalid");
+    assert.equal(motor.running, false);
+    assert.ok(motor.problems.some((item) => item.code === "PLUGIN_E_ENTRY"));
+    assert.equal(run.catalog.ok, true);
+    assert.ok(!run.catalog.value.entries.some((item) => item.pluginId === "kobrixa.motor-test"));
+  }
+}
+
+function assertRenderedEvidence(run) {
+  assert.equal(run.rendered.length, run.name === "healthy" ? 2 : 1);
+  for (const dom of run.rendered) {
+    assert.match(dom.summary, /Unavailable|無法使用/);
+    assert.ok(dom.actions.length > 0 && dom.actions.every((item) => item.disabled));
+  }
+}
+
+test("U14: rendered evidence requires every healthy and restarted panel observation", () => {
+  const observation = { summary: "Unavailable", actions: [{ disabled: true }] };
+  for (const [name, count] of [
+    ["healthy", 2],
+    ["restart", 1],
+  ]) {
+    const run = {
+      name,
+      rendered: Array.from({ length: count }, () => structuredClone(observation)),
+    };
+    assertRenderedEvidence(run);
+    for (let length = 0; length < count; length++)
+      assert.throws(() =>
+        assertRenderedEvidence({ ...run, rendered: run.rendered.slice(0, length) }),
+      );
+    assert.throws(() =>
+      assertRenderedEvidence({ ...run, rendered: [...run.rendered, observation] }),
+    );
+  }
+});
+
+test("U14: synthetic or partial receipts cannot pass product acceptance", () => {
+  for (const report of [
+    {},
+    { kind: "installed-builtin", syntheticHost: true },
+    { kind: "installed-builtin-product", status: "failed", syntheticHost: false },
+    { kind: "installed-builtin-product", status: "passed", syntheticHost: true },
+    {
+      kind: "installed-builtin-product",
+      status: "passed",
+      syntheticHost: false,
+      artifact: { syntheticHost: true },
+    },
+  ])
+    assert.throws(() => assertProductReceipt(report));
+});
+
 test(
-  "U14: installed receipt contains actual isolated process evidence",
+  "U14/T6: controller receipt contains real installed product evidence",
   {
     skip: process.env.KOBRIXA_BUILTIN_REPORT
       ? false
-      : "controller-installed run required; audit-only is not installed evidence",
+      : "controller-installed product run required; pure Node audit is not installed evidence",
   },
-  async () => {
-    const report = JSON.parse(await readFile(process.env.KOBRIXA_BUILTIN_REPORT, "utf8"));
-    assert.equal(report.kind, "installed-builtin");
-    assert.equal(report.packaged, true);
-    assert.equal(report.noPathNode, true);
-    assert.equal(report.noNodePath, true);
-    assert.equal(report.arbitraryCwd, true);
-    assert.equal(report.missingRejected, true);
-    assert.equal(report.corruptRejected, true);
-    assert.equal(report.productionFixtureRegistered, false);
-    assert.equal(report.resolvedFromInstalledRoot, true);
-    assert.equal(report.results[0].exited, true);
-    assert.deepEqual(report.remainingPids, []);
-    if (report.isolationProfile) {
-      assert.match(report.isolationProfile, /\(deny network\*\)/);
-      for (const run of [report, report.missing, report.corrupt]) {
-        for (const field of ["source", "dependency", "network"])
-          assert.ok(["EPERM", "EACCES"].includes(run.isolation[field]), field);
-      }
-    }
-  },
+  async () =>
+    assertProductReceipt(JSON.parse(await readFile(process.env.KOBRIXA_BUILTIN_REPORT, "utf8"))),
 );
