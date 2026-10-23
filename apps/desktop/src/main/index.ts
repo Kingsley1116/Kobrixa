@@ -29,7 +29,7 @@ import { resolveCollabServerUrl } from "./collab/server-url.js";
 import { createCollabService } from "./collab/runtime.js";
 import { CollabProjects } from "./collab/projects.js";
 import { registerCollabIpc } from "./collab/ipc.js";
-import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
+import { assembleBuiltinPluginSources } from "./plugins/builtin.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
 import { registerPluginIpc, registerCoreRecoveryIpc } from "./plugins/ipc.js";
 import { registerUiIpc, registerUiEventIpc, trustedWorkbench } from "./plugins/ui-bridge.js";
@@ -325,7 +325,11 @@ const primary = startPrimary(
       },
       plugins: {
         userData: app.getPath("userData"),
-        builtins: BUILTIN_PLUGIN_SOURCES,
+        builtins: await assembleBuiltinPluginSources({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          buildRoot: __dirname,
+        }),
         commandLine: pluginSettings,
         dialogs: electronPluginDialogs(() => mainWindow, pluginLanguage),
         locale: pluginLanguage,

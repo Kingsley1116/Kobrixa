@@ -117,11 +117,25 @@ describe("bundled dependency notices", () => {
   });
 });
 
-import { BUILTIN_PAYLOAD_UNPACK, DELIVERED_BUILTIN_PROCESS_BUILDS } from "../../packaging.js";
+import {
+  builtinProcessBuilds,
+  BUILTIN_PAYLOAD_UNPACK,
+  DELIVERED_BUILTIN_PROCESS_BUILDS,
+} from "../../packaging.js";
 import { builtinPluginConfig } from "../../vite.plugin.config.js";
 it("keeps native unpack and feature payload unpack in the same packaging rule", () => {
   expect(BUILTIN_PAYLOAD_UNPACK).toBe("{**/*.node,**/.vite/build/plugins/**}");
-  expect(DELIVERED_BUILTIN_PROCESS_BUILDS).toEqual([]);
+  expect(DELIVERED_BUILTIN_PROCESS_BUILDS).toEqual([
+    {
+      entry: "../../plugins/motor-test/src/main.ts",
+      config: "vite.plugin-motor.config.ts",
+      target: "main",
+      slug: "motor-test",
+      pluginId: "kobrixa.motor-test",
+    },
+  ]);
+  expect(builtinProcessBuilds(false)).toEqual(DELIVERED_BUILTIN_PROCESS_BUILDS);
+  expect(() => builtinProcessBuilds(true)).toThrow("conflicts with the delivered motor payload");
 });
 it("does not externalize SDK or protocol or share chunks between process leaves", () => {
   const result = builtinPluginConfig({
@@ -133,5 +147,54 @@ it("does not externalize SDK or protocol or share chunks between process leaves"
   expect(result.build?.rollupOptions?.output).toMatchObject({
     format: "cjs",
     inlineDynamicImports: true,
+  });
+});
+
+import { build } from "vite";
+import { fileURLToPath } from "node:url";
+import motorConfig from "../../vite.plugin-motor.config.js";
+import { validateBuiltinLeaf } from "./plugins/builtin-launch.js";
+import { assembleBuiltinPluginSources } from "./plugins/builtin.js";
+it("builds the actual registered motor entry into an isolated validated product leaf", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-motor-build-"));
+  roots.push(root);
+  const output = path.join(root, "plugins/motor-test");
+  await build({
+    ...motorConfig,
+    configFile: false,
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    logLevel: "silent",
+    build: { ...motorConfig.build, outDir: output },
+  });
+  const payload = await validateBuiltinLeaf(output, "kobrixa.motor-test");
+  expect(payload.index.files.map((file) => file.path)).toEqual([
+    "kobrixa-plugin.json",
+    "main.cjs",
+    "panel.json",
+    "status.json",
+  ]);
+  const code = await readFile(path.join(output, "main.cjs"), "utf8");
+  expect(code).not.toMatch(/\brequire\(["']@kobrixa\//);
+  const map = JSON.parse(await readFile(path.join(output, "main.cjs.map"), "utf8")) as {
+    sources: string[];
+  };
+  expect(map.sources.some((source) => source.includes("plugins/motor-test/src/main.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("packages/plugin-sdk-js/src/index.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("apps/desktop/src/"))).toBe(false);
+  const sources = await assembleBuiltinPluginSources({
+    packaged: false,
+    appPath: "/unused",
+    buildRoot: root,
+  });
+  expect(sources[3]).toMatchObject({
+    kind: "builtin",
+    policy: "optional",
+    manifest: payload.manifest,
+    resources: payload.resources,
+    launch: { packageRoot: payload.root },
   });
 });

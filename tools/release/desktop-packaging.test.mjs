@@ -15,14 +15,14 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
   t.after(() => rm(root, { recursive: true, force: true }));
   const output = path.join(root, "build");
   await buildBuiltinPayloads(false, output);
-  await assert.rejects(readFile(path.join(output, "plugins/motor-test/main.cjs")), {
-    code: "ENOENT",
-  });
-  await buildBuiltinPayloads(true, output);
+  await assert.rejects(
+    buildBuiltinPayloads(true, output),
+    /conflicts with the delivered motor payload/,
+  );
   const stage = path.join(root, "stage");
   await mkdir(path.join(stage, ".vite"), { recursive: true });
   await cp(output, path.join(stage, ".vite/build"), { recursive: true });
-  await validateBuiltinPayloads(stage, true);
+  await validateBuiltinPayloads(stage, false);
   const leaf = path.join(stage, ".vite/build/plugins/motor-test");
   const index = JSON.parse(await readFile(path.join(leaf, "resource-index.json"), "utf8"));
   assert.equal(index.pluginId, "kobrixa.motor-test");
@@ -40,7 +40,7 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
   }
   assert.equal(statFile(archive, "node_modules/native/addon.node").unpacked, true);
   await writeFile(path.join(leaf, "main.cjs"), "corrupt");
-  await assert.rejects(validateBuiltinPayloads(stage, true), { code: "PLUGIN_E_ENTRY" });
+  await assert.rejects(validateBuiltinPayloads(stage, false), { code: "PLUGIN_E_ENTRY" });
   await rm(leaf, { recursive: true });
-  await assert.rejects(validateBuiltinPayloads(stage, true), { code: "PLUGIN_E_ENTRY" });
+  await assert.rejects(validateBuiltinPayloads(stage, false), { code: "PLUGIN_E_ENTRY" });
 });

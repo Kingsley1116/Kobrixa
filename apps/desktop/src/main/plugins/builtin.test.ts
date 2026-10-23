@@ -546,3 +546,270 @@ it("K160 preserves required compiler sources and never fabricates future feature
     BUILTIN_PLUGIN_SOURCES.filter((source) => source.kind === "builtin" && source.launch),
   ).toEqual([]);
 });
+
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { contextCommandDeclarationSchema, validateUiResource } from "@kobrixa/plugin-protocol";
+import { assembleBuiltinPluginSources } from "./builtin.js";
+import { emitResourceIndex } from "../../../plugin-resource-index.js";
+
+async function motorPayload(packaged: boolean) {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-product-motor-")));
+  const input = {
+    packaged,
+    appPath: path.join(root, "app.asar"),
+    buildRoot: path.join(root, "build"),
+  };
+  const leaf = packaged
+    ? path.join(root, "app.asar.unpacked/.vite/build/plugins/motor-test")
+    : path.join(input.buildRoot, "plugins/motor-test");
+  await mkdir(leaf, { recursive: true });
+  // This unit executable is never launched. Release packaging tests build the real entry.
+  await writeFile(path.join(leaf, "main.cjs"), "'use strict';\n");
+  await emitResourceIndex(
+    new URL("plugins/motor-test", repository).pathname,
+    leaf,
+    "kobrixa.motor-test",
+  );
+  return { root, input, leaf };
+}
+
+it.each([false, true])(
+  "assembles the shipped motor manifest and validated resources, packaged=%s",
+  async (packaged) => {
+    const h = await motorPayload(packaged);
+    try {
+      const sources = await assembleBuiltinPluginSources(h.input);
+      expect(sources.slice(0, 3)).toEqual(BUILTIN_PLUGIN_SOURCES);
+      expect(BUILTIN_PLUGIN_SOURCES).toHaveLength(3);
+      const source = sources[3]!;
+      if (source.kind !== "builtin") throw new Error("Expected shipped motor");
+      expect(source.launch).toMatchObject({
+        packageRoot: h.leaf,
+        sourceKey: "builtin:kobrixa.motor-test",
+      });
+      const manifest = pluginManifestSchema.parse(source.manifest);
+      expect(manifest).toEqual(
+        JSON.parse(await readRepository("plugins/motor-test/kobrixa-plugin.json")),
+      );
+      expect(manifest.activationEvents).toEqual(["onPanel:kobrixa.motor-test.panel"]);
+      expect(manifest.permissions).not.toContain("devices.connect");
+      expect(Object.keys(source.resources).sort()).toEqual(["panel.json", "status.json"]);
+      for (const name of Object.keys(source.resources)) {
+        expect(source.resources[name]).toBe(await readRepository(`plugins/motor-test/${name}`));
+        expect(
+          validateUiResource(
+            JSON.parse(source.resources[name]!),
+            {
+              pluginId: manifest.id,
+              commands: manifest.contributes!.commands!.map((command) =>
+                contextCommandDeclarationSchema.parse(command),
+              ),
+              panels: manifest.contributes!.panels!,
+            },
+            Buffer.byteLength(source.resources[name]!),
+          ).ok,
+        ).toBe(true);
+      }
+      const launcher = vi.fn();
+      let persisted = { disabled: new Set<string>(), legacyDisabledIds: new Set<string>() };
+      const create = (safeMode = false) =>
+        PluginManager.create({
+          sources,
+          launcher,
+          safeMode,
+          locale: "en",
+          store: {
+            load: async () => persisted,
+            save: async (state) => {
+              persisted = {
+                disabled: new Set(state.disabled),
+                legacyDisabledIds: new Set(state.legacyDisabledIds),
+              };
+            },
+          },
+        });
+      const manager = await create();
+      const motor = () => manager.state().plugins.find((row) => row.id === manifest.id)!;
+      const provider = () =>
+        manager.state().plugins.find((row) => row.id === "kobrixa.device-ev3")!;
+      try {
+        expect(motor()).toMatchObject({
+          status: "enabled",
+          running: false,
+          required: false,
+          canToggle: true,
+          problems: [],
+        });
+        await manager.setEnabled(provider().sourceKey, false);
+        expect(motor().status).toBe("enabled");
+        await manager.setEnabled(motor().sourceKey, false);
+        await manager.setEnabled(provider().sourceKey, true);
+        expect(motor().status).toBe("disabled");
+        expect(provider().status).toBe("enabled");
+        expect(launcher).not.toHaveBeenCalled();
+      } finally {
+        await manager.shutdown();
+      }
+      const restored = await create();
+      try {
+        expect(restored.state().plugins.find((row) => row.id === manifest.id)).toMatchObject({
+          status: "disabled",
+          disabledBy: "user",
+        });
+      } finally {
+        await restored.shutdown();
+      }
+      persisted = { disabled: new Set(), legacyDisabledIds: new Set() };
+      const safe = await create(true);
+      try {
+        expect(
+          safe
+            .state()
+            .plugins.filter((row) => !row.required)
+            .map((row) => row.status),
+        ).toEqual(["disabled", "disabled"]);
+        expect(
+          safe
+            .state()
+            .plugins.filter((row) => row.required)
+            .every((row) => row.status === "enabled"),
+        ).toBe(true);
+        expect(launcher).not.toHaveBeenCalled();
+      } finally {
+        await safe.shutdown();
+      }
+    } finally {
+      await rm(h.root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["missing", "tampered"])(
+  "keeps a %s optional payload visibly invalid while compilers remain available",
+  async (failure) => {
+    const h = await motorPayload(false);
+    try {
+      if (failure === "missing") await rm(h.leaf, { recursive: true });
+      else await writeFile(path.join(h.leaf, "panel.json"), "{}");
+      const sources = await assembleBuiltinPluginSources(h.input);
+      expect(sources[3]).toMatchObject({ resources: {}, payloadUnavailable: true });
+      expect(sources[3]!.kind === "builtin" && sources[3]!.launch).toBeUndefined();
+      const launcher = vi.fn();
+      const manager = await PluginManager.create({
+        sources,
+        launcher,
+        safeMode: false,
+        locale: "en",
+        store: {
+          load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+          save: async () => {},
+        },
+      });
+      try {
+        expect(
+          manager.state().plugins.find((row) => row.id === "kobrixa.motor-test"),
+        ).toMatchObject({
+          sourceKey: "builtin:kobrixa.motor-test",
+          status: "invalid",
+          running: false,
+          required: false,
+          displayName: { en: "Motor test — shipped payload unavailable or invalid" },
+          commands: [],
+          problems: [
+            {
+              code: "PLUGIN_E_ENTRY",
+              message: "Shipped plugin payload is unavailable or invalid.",
+            },
+          ],
+        });
+        expect(await manager.executeCommand("kobrixa.motor-test.start")).toMatchObject({
+          ok: false,
+        });
+        // Repair is deliberately restart-only: reload rereads the captured failure.
+        await mkdir(h.leaf, { recursive: true });
+        await writeFile(path.join(h.leaf, "main.cjs"), "'use strict';\n");
+        await emitResourceIndex(
+          new URL("plugins/motor-test", repository).pathname,
+          h.leaf,
+          "kobrixa.motor-test",
+        );
+        await manager.reloadSource("builtin:kobrixa.motor-test");
+        expect(
+          manager.state().plugins.find((row) => row.id === "kobrixa.motor-test"),
+        ).toMatchObject({
+          status: "invalid",
+          problems: [
+            {
+              code: "PLUGIN_E_ENTRY",
+              message: "Shipped plugin payload is unavailable or invalid.",
+            },
+          ],
+        });
+        const restarted = await loadPlugins(await assembleBuiltinPluginSources(h.input), {
+          disabled: new Set(),
+          safeMode: false,
+        });
+        expect(restarted.find((row) => row.id === "kobrixa.motor-test")?.status).toBe("enabled");
+        expect(
+          resolveCompilerProviders(
+            await loadPlugins(sources, { disabled: new Set(), safeMode: false }),
+            "bp",
+            "ev3-native",
+          ).ok,
+        ).toBe(true);
+        expect(launcher).not.toHaveBeenCalled();
+      } finally {
+        await manager.shutdown();
+      }
+    } finally {
+      await rm(h.root, { recursive: true, force: true });
+    }
+  },
+);
+
+it("host payload failure strips stale shipped permissions and contributions and never activates", async () => {
+  const h = await motorPayload(false);
+  try {
+    const sources = await assembleBuiltinPluginSources(h.input);
+    const stale = sources[3]!;
+    if (stale.kind !== "builtin") throw new Error("Expected shipped motor");
+    const failed = { ...stale, payloadUnavailable: true as const };
+    const loaded = await loadPlugins([failed], { disabled: new Set(), safeMode: false });
+    expect(loaded[0]).toMatchObject({ status: "invalid", problems: [{ code: "PLUGIN_E_ENTRY" }] });
+    expect(loaded[0]?.entry).toBeUndefined();
+    expect(loaded[0]?.directory).toBeUndefined();
+    expect(loaded[0]?.manifest?.permissions).toBeUndefined();
+    expect(loaded[0]?.manifest?.contributes).toBeUndefined();
+    expect(loaded[0]?.manifest?.activationEvents).toBeUndefined();
+    expect(loaded[0]?.manifest?.requires).toBeUndefined();
+    const launcher = vi.fn();
+    const manager = await PluginManager.create({
+      sources: [...sources.slice(0, 3), failed],
+      launcher,
+      safeMode: false,
+      locale: "en",
+      store: {
+        load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+        save: async () => {},
+      },
+    });
+    try {
+      expect(await manager.executeCommand("kobrixa.motor-test.start")).toMatchObject({ ok: false });
+      await manager.setEnabled("builtin:kobrixa.motor-test", true);
+      await manager.reloadSource("builtin:kobrixa.motor-test");
+      expect(manager.state().plugins.find((row) => row.id === "kobrixa.motor-test")).toMatchObject({
+        status: "invalid",
+        running: false,
+        commands: [],
+      });
+      expect(manager.uiCatalogSources()).toEqual([]);
+      expect(launcher).not.toHaveBeenCalled();
+    } finally {
+      await manager.shutdown();
+    }
+  } finally {
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

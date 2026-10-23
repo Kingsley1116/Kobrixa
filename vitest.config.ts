@@ -8,6 +8,7 @@ export default defineConfig({
       "apps/web/vitest.config.ts",
       "apps/collab/vitest.config.ts",
       "apps/desktop/vitest.config.ts",
+      "plugins/motor-test/vitest.config.ts",
     ],
   },
 });
