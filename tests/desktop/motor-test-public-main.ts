@@ -99,6 +99,76 @@ export function requireSustainedPause(events: PauseReceipt[], through: number) {
   );
 }
 
+// Match only the activation observed in the original native-input receipt window.
+export function matchingFreezeActivation(
+  inputs: InputReceipt[],
+  ipc: IpcReceipt[],
+  binding: object,
+  after: number,
+  through: number,
+  mode: string,
+  key?: string,
+) {
+  const hold = mode === "jog";
+  return ipc.find((r) => {
+    const input = r.args[0] as (HoldInput & { form?: Record<string, unknown> }) | undefined;
+    const result = r.result as
+      { ok?: boolean; value?: { gesture?: string; fieldErrors?: unknown[] } } | undefined;
+    return (
+      r.received > after &&
+      r.received <= through &&
+      !r.error &&
+      result?.ok === true &&
+      isDeepStrictEqual(input?.binding, binding) &&
+      input?.nodeId === (hold ? "a-forward" : "a-start") &&
+      input.form?.["a-mode"] === mode &&
+      r.channel === (hold ? "plugins:ui:hold" : "plugins:ui:invoke") &&
+      (hold
+        ? input.phase === "begin" && Boolean(input.inputToken && result.value?.gesture)
+        : isDeepStrictEqual(result.value?.fieldErrors, [])) &&
+      inputs.some(
+        (e) =>
+          e.received > after &&
+          e.received < r.received &&
+          e.isTrusted &&
+          e.node === input.nodeId &&
+          e.type === (hold ? (key ? "keydown" : "pointerdown") : "pointerup") &&
+          (!key || (e.key === (key === "Space" ? " " : key) && !e.repeat)),
+      )
+    );
+  });
+}
+export async function requireDeliberateResume(
+  events: PauseReceipt[],
+  requested: number,
+  resume: () => Promise<unknown>,
+  wait: (predicate: () => boolean, label: string) => Promise<unknown>,
+) {
+  try {
+    await resume();
+    await wait(() => {
+      const following = events.slice(requested + 1);
+      const ack = following.findIndex((e) => e.event === "Debugger.resumed");
+      const detach = following.findIndex((e) => e.event === "detach");
+      assert.ok(
+        detach < 0 || (ack >= 0 && detach > ack),
+        "debugger detached awaiting deliberate resume",
+      );
+      return ack >= 0;
+    }, "Debugger.resumed after deliberate driver release");
+  } catch (error) {
+    throw new Error(
+      `Invalid renderer-freeze injection: deliberate resume failed: ${String(error)}`,
+      { cause: error },
+    );
+  }
+}
+export function classifyNativeFailure(error: unknown, freezeInvalid?: string) {
+  return String(error).includes("Invalid renderer-freeze injection") || freezeInvalid
+    ? "invalid-fault-injection"
+    : "safety-or-driver-assertion";
+}
+
 export async function composeMotor(input: {
   manifest: PluginManifest;
   panel: PanelResourceV1;
@@ -1257,6 +1327,7 @@ export function runNativeMotor() {
         const bounds = await target(
           `[data-ui-node="${mode === "jog" ? "a-forward" : "a-start"}"] button`,
         );
+        const activationAfter = receiptSequence;
         if (scenario.key) {
           // Cycle real keyboard focus; reading activeElement does not dispatch input.
           for (let i = 0; i < 100; i++) {
@@ -1344,6 +1415,28 @@ export function runNativeMotor() {
         const beforeStop = heldLifecyclePulse ? await queryOriginal() : undefined;
         if (beforeStop) assert.equal(beforeStop.stopRequested, false);
         const originalPanel = ui.states.instances(owner).find((b) => b.kind === "panel");
+        if (scenario.fault === "renderer-freeze") {
+          assert.ok(originalPanel, "Original freeze panel required");
+          const original = await until(
+            () =>
+              matchingFreezeActivation(
+                inputReceipts,
+                ipc,
+                originalPanel,
+                activationAfter,
+                receiptSequence,
+                mode,
+                scenario.key,
+              ),
+            "successful original freeze activation",
+          );
+          lifecycleReceipt.freezeActivation = {
+            binding: originalPanel,
+            after: activationAfter,
+            through: receiptSequence,
+            original,
+          };
+        }
         const faultReceiptSequence = receiptSequence;
         const faultAt = wall();
         native.push({ at: faultAt, type: scenario.fault });
@@ -1766,15 +1859,23 @@ export function runNativeMotor() {
         if (scenario.fault === "renderer-freeze") {
           assert.equal(freezeInvalid, undefined, freezeInvalid ?? "Renderer pause remains valid");
           freezeReleaseRequested = true;
+          const requested = debuggerEvents.length;
           debuggerEvents.push({ at: wall(), event: "driver-resume-requested" });
-          await window.webContents.debugger.sendCommand("Debugger.resume");
-          await until(
-            () =>
-              debuggerEvents
-                .slice(freezeVerifiedThrough!)
-                .some((r) => r.event === "Debugger.resumed"),
-            "Debugger.resumed after deliberate driver release",
-          );
+          try {
+            await requireDeliberateResume(
+              debuggerEvents,
+              requested,
+              () =>
+                bounded(
+                  window.webContents.debugger.sendCommand("Debugger.resume"),
+                  "deliberate Debugger.resume",
+                ),
+              until,
+            );
+          } catch (error) {
+            freezeInvalid = String(error);
+            throw error;
+          }
           window.webContents.debugger.detach();
         }
         let terminal: MotionSnapshot | undefined;
@@ -2040,10 +2141,7 @@ export function runNativeMotor() {
     .catch(async (error: unknown) => {
       clearTimeout(deadline);
       console.error(error);
-      const failureKind =
-        String(error).includes("Invalid renderer-freeze injection") || freezeInvalid
-          ? "invalid-fault-injection"
-          : "safety-or-driver-assertion";
+      const failureKind = classifyNativeFailure(error, freezeInvalid);
       if (control && blocked) {
         control.release(blocked.point, blocked.step);
         blocked = undefined;

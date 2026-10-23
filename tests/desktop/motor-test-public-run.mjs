@@ -116,6 +116,9 @@ async function loadDriver() {
 const driver = await loadDriver();
 export const matchingHoldEnd = driver.matchingHoldEnd;
 export const requireSustainedPause = driver.requireSustainedPause;
+export const matchingFreezeActivation = driver.matchingFreezeActivation;
+export const requireDeliberateResume = driver.requireDeliberateResume;
+export const classifyNativeFailure = driver.classifyNativeFailure;
 export async function compose() {
   const artifacts = await motorArtifacts();
   const composition = await driver.composeMotor({
@@ -339,7 +342,7 @@ export function validateNativeInput(report, scenario) {
     }
   }
 }
-export function validateFreezeInjection(report) {
+export function validateFreezeInjection(report, scenario = report.scenario) {
   const events = report.debuggerEvents ?? [];
   const through = report.freezeVerifiedThrough;
   assert.ok(
@@ -356,21 +359,33 @@ export function validateFreezeInjection(report) {
     "Invalid renderer-freeze injection: expiry preceded acknowledged pause",
   );
   assert.ok(report.events.some((e) => isDeepStrictEqual(e, expiry.detail)));
-  const original = report.ipc.find(
-    (r) =>
-      r.channel === "plugins:ui:hold" &&
-      r.args[0]?.phase === "begin" &&
-      r.result?.ok &&
-      r.result.value?.gesture,
+  const activation = report.lifecycleReceipt?.freezeActivation;
+  assert.ok(activation?.binding, "Original freeze activation binding required");
+  const mode = scenario.mode ?? (scenario.boundary === "arm" ? "relative-angle" : "jog");
+  const original = matchingFreezeActivation(
+    report.inputReceipts,
+    report.ipc,
+    activation.binding,
+    activation.after,
+    activation.through,
+    mode,
+    scenario.key,
   );
-  assert.ok(original?.args[0]?.inputToken);
+  assert.ok(original, "Successful exact original native activation required");
+  assert.deepEqual(original, activation.original);
+  assert.ok(original.at <= report.faultAt, "Activation must precede fault");
   assert.deepEqual(expiry.detail.binding, original.args[0].binding);
   assert.ok(events.slice(through + 1).some((e) => e.event === "driver-resume-requested"));
   const requested = events.findIndex((e) => e.event === "driver-resume-requested");
   assert.ok(requested > through);
   assert.ok(
     events.slice(requested + 1).some((e) => e.event === "Debugger.resumed"),
-    "Actual deliberate resume acknowledgement required",
+    "Invalid renderer-freeze injection: actual deliberate resume acknowledgement required",
+  );
+  const ack = events.findIndex((e, i) => i > requested && e.event === "Debugger.resumed");
+  assert.ok(
+    !events.slice(requested + 1, ack).some((e) => e.event === "detach"),
+    "Invalid renderer-freeze injection: detached awaiting deliberate resume",
   );
   assert.ok(
     !events
@@ -484,7 +499,7 @@ export function validateNative(report, identity, scenario) {
   assert.ok(report.wire?.length && report.native?.length);
   validateNativeInput(report, scenario);
   validateLifecycleBarrier(report, scenario);
-  if (scenario.fault === "renderer-freeze") validateFreezeInjection(report);
+  if (scenario.fault === "renderer-freeze") validateFreezeInjection(report, scenario);
   assert.ok(Array.isArray(report.trace), "Actual provider trace required");
   if (report.trace.length === 0) {
     assert.equal(report.terminal?.dispatch, "not-sent");

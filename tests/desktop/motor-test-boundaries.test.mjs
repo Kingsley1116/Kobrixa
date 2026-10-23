@@ -18,6 +18,9 @@ import {
   matchingHoldEnd,
   requireSustainedPause,
   validateFreezeInjection,
+  matchingFreezeActivation,
+  requireDeliberateResume,
+  classifyNativeFailure,
 } from "./motor-test-public-run.mjs";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -406,13 +409,28 @@ test("freeze requires actual sustained paused acknowledgement and original-bindi
   const binding = { panelInstance: "original", processEpoch: "process" };
   const revoke = { kind: "revoke", time: 350, binding };
   const report = {
+    scenario: { boundary: "pulse" },
+    faultAt: 10,
+    inputReceipts: [
+      { at: 0, received: 1, type: "pointerdown", isTrusted: true, node: "a-forward" },
+    ],
     revokedAt: 350,
     events: [revoke],
     freezeVerifiedThrough: 2,
     ipc: [
       {
+        at: 1,
+        received: 2,
         channel: "plugins:ui:hold",
-        args: [{ binding, phase: "begin", inputToken: "token" }],
+        args: [
+          {
+            binding,
+            nodeId: "a-forward",
+            form: { "a-mode": "jog" },
+            phase: "begin",
+            inputToken: "token",
+          },
+        ],
         result: { ok: true, value: { gesture: "gesture" } },
       },
     ],
@@ -424,6 +442,9 @@ test("freeze requires actual sustained paused acknowledgement and original-bindi
       { at: 353, event: "Debugger.resumed" },
       { at: 354, event: "detach" },
     ],
+  };
+  report.lifecycleReceipt = {
+    freezeActivation: { binding, after: 0, through: 2, original: structuredClone(report.ipc[0]) },
   };
   requireSustainedPause(report.debuggerEvents, 2);
   validateFreezeInjection(report);
@@ -458,6 +479,9 @@ test("freeze requires actual sustained paused acknowledgement and original-bindi
       r.debuggerEvents[1].at = 351;
     },
     (r) => {
+      r.debuggerEvents.splice(4, 0, { at: 352.5, event: "detach" });
+    },
+    (r) => {
       r.debuggerEvents.splice(3, 0, { at: 351, event: "Debugger.resumed" });
     },
   ]) {
@@ -480,6 +504,195 @@ test("freeze requires actual sustained paused acknowledgement and original-bindi
       ),
     /Invalid renderer-freeze injection/,
   );
+});
+
+// These are predicate samples only; they are never emitted as native receipts.
+for (const mode of ["relative-angle", "jog"]) {
+  test(`freeze exact original activation: ${mode}`, () => {
+    const hold = mode === "jog";
+    const binding = { panelInstance: "original", processEpoch: "process", generation: 3 };
+    const input = {
+      at: 1,
+      received: 11,
+      type: hold ? "pointerdown" : "pointerup",
+      isTrusted: true,
+      node: hold ? "a-forward" : "a-start",
+    };
+    const original = {
+      at: 2,
+      received: 12,
+      channel: hold ? "plugins:ui:hold" : "plugins:ui:invoke",
+      args: [
+        {
+          binding,
+          nodeId: input.node,
+          form: { "a-mode": mode },
+          ...(hold ? { phase: "begin", inputToken: "original-token" } : {}),
+        },
+      ],
+      result: { ok: true, value: hold ? { gesture: "original-gesture" } : { fieldErrors: [] } },
+    };
+    const revoke = { kind: "revoke", time: 350, binding };
+    const report = {
+      scenario: { boundary: hold ? "pulse" : "arm" },
+      faultAt: 3,
+      revokedAt: 350,
+      inputReceipts: [input],
+      ipc: [original],
+      events: [revoke],
+      freezeVerifiedThrough: 1,
+      lifecycleReceipt: {
+        freezeActivation: { binding, after: 10, through: 12, original: structuredClone(original) },
+      },
+      debuggerEvents: [
+        { at: 4, event: "Debugger.paused" },
+        { at: 351, event: "expiry-observed", detail: revoke },
+        { at: 352, event: "driver-resume-requested" },
+        { at: 353, event: "Debugger.resumed" },
+      ],
+    };
+    assert.deepEqual(
+      matchingFreezeActivation([input], [original], binding, 10, 12, mode),
+      original,
+    );
+    for (const position of ["before", "after"])
+      validateFreezeInjection(report, { ...report.scenario, position });
+    for (const mutate of [
+      (r) => {
+        r.ipc[0].args[0].binding.generation++;
+      },
+      (r) => {
+        r.ipc[0].args[0].nodeId = "other-action";
+      },
+      (r) => {
+        r.ipc[0].args[0].form["a-mode"] = "timed";
+      },
+      (r) => {
+        r.ipc[0].channel = hold ? "plugins:ui:invoke" : "plugins:ui:hold";
+      },
+      (r) => {
+        r.ipc[0].result.ok = false;
+      },
+      (r) => {
+        r.ipc[0].error = "failed";
+      },
+      (r) => {
+        r.ipc[0].received = 10;
+      },
+      (r) => {
+        r.ipc[0].received = 13;
+      },
+      (r) => {
+        r.ipc[0].at = 5;
+      },
+      (r) => {
+        r.inputReceipts[0].isTrusted = false;
+      },
+      (r) => {
+        r.inputReceipts[0].node = "other-action";
+      },
+      (r) => {
+        r.inputReceipts[0].type = "pointercancel";
+      },
+      (r) => {
+        r.inputReceipts[0].received = 9;
+      },
+      (r) => {
+        r.inputReceipts[0].received = 13;
+      },
+      ...(hold
+        ? [
+            (r) => {
+              delete r.ipc[0].args[0].inputToken;
+            },
+            (r) => {
+              r.ipc[0].args[0].inputToken = "other-token";
+            },
+            (r) => {
+              r.ipc[0].args[0].phase = "end";
+            },
+            (r) => {
+              delete r.ipc[0].result.value.gesture;
+            },
+            (r) => {
+              r.ipc[0].result.value.gesture = "other-gesture";
+            },
+          ]
+        : [
+            (r) => {
+              r.ipc[0].result.value.fieldErrors = [{ field: "a-power" }];
+            },
+          ]),
+    ]) {
+      const invalid = structuredClone(report);
+      mutate(invalid);
+      assert.throws(() => validateFreezeInjection(invalid));
+    }
+    if (hold) {
+      const keyboard = { ...input, type: "keydown", key: " ", repeat: false };
+      assert.ok(matchingFreezeActivation([keyboard], [original], binding, 10, 12, mode, "Space"));
+      for (const changed of [{ key: "Enter" }, { repeat: true }, { type: "keyup" }])
+        assert.equal(
+          matchingFreezeActivation(
+            [{ ...keyboard, ...changed }],
+            [original],
+            binding,
+            10,
+            12,
+            mode,
+            "Space",
+          ),
+          undefined,
+        );
+    }
+  });
+}
+
+test("freeze resume failures classify before cleanup and preserve safety failures", async () => {
+  const timeout = new Error("Timed out: Debugger.resumed after deliberate driver release");
+  for (const failure of ["timeout", "detach", "detach-then-ack", "command"]) {
+    const events = [{ at: 0, event: "driver-resume-requested" }];
+    await assert.rejects(
+      requireDeliberateResume(
+        events,
+        0,
+        async () => {
+          if (failure === "command") throw new Error("resume command failed");
+        },
+        async (predicate) => {
+          if (["detach", "detach-then-ack"].includes(failure))
+            events.push({ at: 1, event: "detach" });
+          if (failure === "detach-then-ack") events.push({ at: 2, event: "Debugger.resumed" });
+          if (!predicate()) throw timeout;
+        },
+      ),
+      (error) => {
+        assert.equal(classifyNativeFailure(error), "invalid-fault-injection");
+        assert.match(String(error), /Invalid renderer-freeze injection: deliberate resume failed/);
+        if (failure === "timeout") assert.equal(error.cause, timeout);
+        return true;
+      },
+    );
+  }
+  const events = [{ at: 0, event: "driver-resume-requested" }];
+  await requireDeliberateResume(
+    events,
+    0,
+    async () => {
+      events.push({ at: 1, event: "Debugger.resumed" }, { at: 2, event: "detach" });
+    },
+    async (predicate) => assert.equal(predicate(), true),
+  );
+  const safety = new Error("No late consequential write");
+  const classification = classifyNativeFailure(safety);
+  events.push({ at: 3, event: "cleanup-resume-failed" });
+  assert.equal(classification, "safety-or-driver-assertion");
+  assert.equal(classifyNativeFailure(safety), classification);
+  assert.equal(
+    classifyNativeFailure(safety, "Invalid renderer-freeze injection: detached"),
+    "invalid-fault-injection",
+  );
+  assert.equal(safety.message, "No late consequential write");
 });
 
 // Real broker and fake transport: all lifecycle routes must admit stop while the
