@@ -405,13 +405,15 @@ const primary = startPrimary(
     let persistenceHandle: IpcHandle | undefined;
     let offPersistenceWindow: (() => void) | undefined;
     let offUi: (() => void) | undefined;
+    // The persistence window outlives reloads: it retires and reattaches each
+    // document itself, so only quit or a replacement window disposes it.
     const detachUi = () => {
       offUi?.();
-      offPersistenceWindow?.();
-      offPersistenceWindow = undefined;
     };
     app.on("quit", () => {
       detachUi();
+      offPersistenceWindow?.();
+      offPersistenceWindow = undefined;
       offDeviceRecovery();
       offProcessRecovery();
       plugins.finishSession();
