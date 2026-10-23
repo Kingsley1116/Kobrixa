@@ -91,8 +91,7 @@ export async function motorArtifacts() {
   };
 }
 let hostModule;
-export async function compose() {
-  const artifacts = await motorArtifacts();
+async function loadDriver() {
   if (!hostModule) {
     const host = await build({
       entryPoints: [path.join(root, "tests/desktop/motor-test-public-main.ts")],
@@ -112,7 +111,14 @@ export async function compose() {
     );
     hostModule = module.exports;
   }
-  const composition = await hostModule.composeMotor({
+  return hostModule;
+}
+const driver = await loadDriver();
+export const matchingHoldEnd = driver.matchingHoldEnd;
+export const requireSustainedPause = driver.requireSustainedPause;
+export async function compose() {
+  const artifacts = await motorArtifacts();
+  const composition = await driver.composeMotor({
     manifest: artifacts.manifest,
     panel: artifacts.panel,
     status: artifacts.status,
@@ -306,19 +312,72 @@ export function validateNativeInput(report, scenario) {
       ),
       "Close must revoke the original binding",
     );
-    if (mode === "jog")
+    if (mode === "jog") {
+      const original = close.originalHold;
       assert.ok(
-        report.inputReceipts.some(
-          (r) =>
-            r.isTrusted &&
-            r.node === "a-forward" &&
-            r.type === (scenario.key ? "keyup" : "pointerup") &&
-            r.at >= report.faultAt &&
-            r.at < close.clickAt,
-        ),
-        "Original hold released before fresh close click",
+        report.ipc.some((r) => isDeepStrictEqual(r, original)),
+        "Observed original hold required",
       );
+      assert.equal(original.channel, "plugins:ui:hold");
+      assert.equal(original.args[0]?.phase, "begin");
+      assert.equal(original.result?.ok, true);
+      assert.ok(original.result?.value?.gesture && original.args[0]?.inputToken);
+      assert.deepEqual(original.args[0].binding, close.binding);
+      assert.equal(original.args[0].nodeId, "a-forward");
+      assert.ok(original.received <= close.faultReceiptSequence);
+      const matched = matchingHoldEnd(
+        report.inputReceipts,
+        report.ipc,
+        close.faultReceiptSequence,
+        original.args[0],
+        scenario.key,
+      );
+      assert.ok(matched, "New trusted release and original-token hold-end IPC required");
+      assert.deepEqual(matched, close.holdRelease);
+      assert.ok(matched.end.received <= close.clickReceiptSequence);
+      assert.ok(matched.end.received < ipc.received, "Hold-end must precede close IPC");
+    }
   }
+}
+export function validateFreezeInjection(report) {
+  const events = report.debuggerEvents ?? [];
+  const through = report.freezeVerifiedThrough;
+  assert.ok(
+    Number.isSafeInteger(through) && through > 0 && through < events.length,
+    "Invalid renderer-freeze injection: missing sustained pause interval",
+  );
+  requireSustainedPause(events, through);
+  const expiry = events[through];
+  assert.equal(expiry.event, "expiry-observed");
+  assert.equal(expiry.detail?.kind, "revoke");
+  assert.equal(expiry.detail.time, report.revokedAt);
+  assert.ok(
+    expiry.detail.time >= events.find((e) => e.event === "Debugger.paused").at,
+    "Invalid renderer-freeze injection: expiry preceded acknowledged pause",
+  );
+  assert.ok(report.events.some((e) => isDeepStrictEqual(e, expiry.detail)));
+  const original = report.ipc.find(
+    (r) =>
+      r.channel === "plugins:ui:hold" &&
+      r.args[0]?.phase === "begin" &&
+      r.result?.ok &&
+      r.result.value?.gesture,
+  );
+  assert.ok(original?.args[0]?.inputToken);
+  assert.deepEqual(expiry.detail.binding, original.args[0].binding);
+  assert.ok(events.slice(through + 1).some((e) => e.event === "driver-resume-requested"));
+  const requested = events.findIndex((e) => e.event === "driver-resume-requested");
+  assert.ok(requested > through);
+  assert.ok(
+    events.slice(requested + 1).some((e) => e.event === "Debugger.resumed"),
+    "Actual deliberate resume acknowledgement required",
+  );
+  assert.ok(
+    !events
+      .slice(through + 1, requested)
+      .some((e) => ["Debugger.resumed", "detach"].includes(e.event)),
+    "Invalid renderer-freeze injection: resumed before driver release",
+  );
 }
 export function validateCoreStop(report) {
   const admission = report.lifecycleReceipt?.coreStop;
@@ -425,6 +484,7 @@ export function validateNative(report, identity, scenario) {
   assert.ok(report.wire?.length && report.native?.length);
   validateNativeInput(report, scenario);
   validateLifecycleBarrier(report, scenario);
+  if (scenario.fault === "renderer-freeze") validateFreezeInjection(report);
   assert.ok(Array.isArray(report.trace), "Actual provider trace required");
   if (report.trace.length === 0) {
     assert.equal(report.terminal?.dispatch, "not-sent");

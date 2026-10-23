@@ -15,6 +15,9 @@ import {
   validateNative,
   validateCancellation,
   waitElapsed,
+  matchingHoldEnd,
+  requireSustainedPause,
+  validateFreezeInjection,
 } from "./motor-test-public-run.mjs";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -269,12 +272,55 @@ test("native input contract retains all 77 cases and requires each select acknow
 test("native close contract rejects pointer release without original-binding close and revoke", () => {
   const scenario = { boundary: "prepare", fault: "close" };
   const binding = { panelInstance: "original-panel" };
+  const begin = {
+    at: 8,
+    received: 1,
+    channel: "plugins:ui:hold",
+    args: [{ binding, nodeId: "a-forward", phase: "begin", inputToken: "original-token" }],
+    result: { ok: true, value: { gesture: "original-gesture" } },
+  };
+  // Renderer clock is slightly before the main marker, as in YN6goJ.
+  const release = {
+    at: 9.994873046875,
+    received: 3,
+    type: "pointerup",
+    node: "a-forward",
+    isTrusted: true,
+  };
+  const end = {
+    at: 10.1,
+    received: 4,
+    channel: "plugins:ui:hold",
+    args: [{ ...begin.args[0], phase: "end" }],
+    result: { ok: true },
+  };
   const report = {
     native: [],
     faultAt: 10,
-    inputReceipts: [{ at: 11, type: "pointerup", node: "a-forward", isTrusted: true }],
-    lifecycleReceipt: { close: { binding, clickAt: 12, ipcAt: 13, bindingGoneAt: 14 } },
-    ipc: [{ at: 13, channel: "plugins:ui:close", args: [{ binding }], result: { ok: true } }],
+    inputReceipts: [release],
+    lifecycleReceipt: {
+      close: {
+        binding,
+        clickAt: 12,
+        ipcAt: 13,
+        bindingGoneAt: 14,
+        originalHold: begin,
+        holdRelease: { release, end },
+        faultReceiptSequence: 2,
+        clickReceiptSequence: 4,
+      },
+    },
+    ipc: [
+      begin,
+      end,
+      {
+        at: 13,
+        received: 5,
+        channel: "plugins:ui:close",
+        args: [{ binding }],
+        result: { ok: true },
+      },
+    ],
     events: [{ kind: "revoke", time: 13, binding }],
   };
   validateNativeInput(report, scenario);
@@ -283,7 +329,7 @@ test("native close contract rejects pointer release without original-binding clo
       r.ipc = [];
     },
     (r) => {
-      r.ipc[0].args[0].binding.panelInstance = "other-panel";
+      r.ipc[2].args[0].binding.panelInstance = "other-panel";
     },
     (r) => {
       r.events[0].kind = "stop-dispatch";
@@ -292,7 +338,7 @@ test("native close contract rejects pointer release without original-binding clo
       r.lifecycleReceipt.close.bindingGoneAt = 12;
     },
     (r) => {
-      r.inputReceipts[0].at = 15;
+      r.inputReceipts[0].received = 2;
     },
   ]) {
     // JSON serialization also separates shared sample binding objects.
@@ -300,6 +346,140 @@ test("native close contract rejects pointer release without original-binding clo
     mutate(invalid);
     assert.throws(() => validateNativeInput(invalid, scenario));
   }
+});
+
+test("close release matching rejects stale, wrong-token/binding and nonmatching hold-end", () => {
+  const binding = { panelInstance: "original", processEpoch: "process" };
+  const original = { binding, inputToken: "original-token", nodeId: "a-forward", phase: "begin" };
+  const release = {
+    at: 9.994873046875,
+    received: 3,
+    type: "pointerup",
+    node: "a-forward",
+    isTrusted: true,
+  };
+  const end = {
+    at: 10.1,
+    received: 4,
+    channel: "plugins:ui:hold",
+    args: [{ ...original, phase: "end" }],
+    result: { ok: true },
+  };
+  assert.deepEqual(matchingHoldEnd([release], [end], 2, original), { release, end });
+  for (const mutate of [
+    (r) => {
+      r.release.received = 2;
+    },
+    (r) => {
+      r.release.isTrusted = false;
+    },
+    (r) => {
+      r.end.received = 2;
+    },
+    (r) => {
+      r.end.args[0].inputToken = "stale-token";
+    },
+    (r) => {
+      r.end.args[0].binding.processEpoch = "other-process";
+    },
+    (r) => {
+      r.end.args[0].nodeId = "b-forward";
+    },
+    (r) => {
+      r.end.args[0].phase = "cancel";
+    },
+    (r) => {
+      r.end.result.ok = false;
+    },
+  ]) {
+    const sample = structuredClone({ release, end });
+    mutate(sample);
+    assert.equal(matchingHoldEnd([sample.release], [sample.end], 2, original), undefined);
+  }
+  assert.equal(
+    matchingHoldEnd([{ ...release, type: "keyup", key: "Enter" }], [end], 2, original, "Space"),
+    undefined,
+  );
+});
+
+test("freeze requires actual sustained paused acknowledgement and original-binding expiry", () => {
+  const binding = { panelInstance: "original", processEpoch: "process" };
+  const revoke = { kind: "revoke", time: 350, binding };
+  const report = {
+    revokedAt: 350,
+    events: [revoke],
+    freezeVerifiedThrough: 2,
+    ipc: [
+      {
+        channel: "plugins:ui:hold",
+        args: [{ binding, phase: "begin", inputToken: "token" }],
+        result: { ok: true, value: { gesture: "gesture" } },
+      },
+    ],
+    debuggerEvents: [
+      { at: 0, event: "pause-command-returned" },
+      { at: 1, event: "Debugger.paused" },
+      { at: 351, event: "expiry-observed", detail: revoke },
+      { at: 352, event: "driver-resume-requested" },
+      { at: 353, event: "Debugger.resumed" },
+      { at: 354, event: "detach" },
+    ],
+  };
+  requireSustainedPause(report.debuggerEvents, 2);
+  validateFreezeInjection(report);
+  for (const mutate of [
+    (r) => {
+      r.debuggerEvents[1].event = "pause-command-returned";
+    },
+    (r) => {
+      r.debuggerEvents.splice(2, 0, { at: 2, event: "Debugger.resumed" });
+      r.freezeVerifiedThrough++;
+    },
+    (r) => {
+      r.debuggerEvents.splice(2, 0, { at: 2, event: "detach" });
+      r.freezeVerifiedThrough++;
+    },
+    (r) => {
+      r.debuggerEvents.splice(
+        2,
+        0,
+        { at: 2, event: "Debugger.resumed" },
+        { at: 3, event: "Debugger.paused" },
+      );
+      r.freezeVerifiedThrough += 2;
+    },
+    (r) => {
+      r.debuggerEvents[2].detail = { ...revoke, binding: { ...binding, panelInstance: "other" } };
+    },
+    (r) => {
+      r.debuggerEvents[4].event = "command-returned";
+    },
+    (r) => {
+      r.debuggerEvents[1].at = 351;
+    },
+    (r) => {
+      r.debuggerEvents.splice(3, 0, { at: 351, event: "Debugger.resumed" });
+    },
+  ]) {
+    const invalid = structuredClone(report);
+    mutate(invalid);
+    assert.throws(() => validateFreezeInjection(invalid));
+  }
+  assert.throws(
+    () => requireSustainedPause([{ event: "pause-command-returned", at: 0 }], 1),
+    /Invalid renderer-freeze injection/,
+  );
+  assert.throws(
+    () =>
+      requireSustainedPause(
+        [
+          { event: "Debugger.paused", at: 0 },
+          { event: "Debugger.resumed", at: 1 },
+        ],
+        2,
+      ),
+    /Invalid renderer-freeze injection/,
+  );
 });
 
 // Real broker and fake transport: all lifecycle routes must admit stop while the

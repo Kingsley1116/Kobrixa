@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { MessageChannel } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   RpcPeer,
   pluginManifestSchema,
@@ -28,6 +29,75 @@ import {
   createFakeDeviceProvider,
   ID,
 } from "../../apps/desktop/src/main/device-broker/fake-provider.js";
+
+// Main-process receipt order is authoritative; renderer timestamps stay diagnostic.
+type InputReceipt = {
+  at: number;
+  received: number;
+  type: string;
+  isTrusted: boolean;
+  node?: string;
+  key?: string;
+  repeat?: boolean;
+};
+type IpcReceipt = {
+  at: number;
+  received: number;
+  channel: string;
+  args: unknown[];
+  result?: unknown;
+  error?: string;
+};
+type HoldInput = { binding: object; inputToken: string; nodeId: string; phase: string };
+export function matchingHoldEnd(
+  inputs: InputReceipt[],
+  ipc: IpcReceipt[],
+  after: number,
+  original: HoldInput,
+  key?: string,
+) {
+  const release = inputs.find(
+    (r) =>
+      r.received > after &&
+      r.isTrusted &&
+      r.node === original.nodeId &&
+      r.type === (key ? "keyup" : "pointerup") &&
+      (!key || r.key === (key === "Space" ? " " : key)),
+  );
+  if (!release) return;
+  const end = ipc.find((r) => {
+    const input = r.args[0] as HoldInput | undefined;
+    return (
+      r.received > release.received &&
+      r.channel === "plugins:ui:hold" &&
+      input?.phase === "end" &&
+      input.inputToken === original.inputToken &&
+      input.nodeId === original.nodeId &&
+      isDeepStrictEqual(input.binding, original.binding) &&
+      !r.error &&
+      (r.result as { ok?: boolean } | undefined)?.ok
+    );
+  });
+  return end ? { release, end } : undefined;
+}
+export type PauseReceipt = {
+  at: number;
+  event: string;
+  detail?: unknown;
+};
+export function requireSustainedPause(events: PauseReceipt[], through: number) {
+  const paused = events.findIndex((r) => r.event === "Debugger.paused");
+  assert.ok(
+    paused >= 0 && paused < through,
+    "Invalid renderer-freeze injection: no Debugger.paused acknowledgement",
+  );
+  assert.ok(
+    !events
+      .slice(paused + 1, through)
+      .some((r) => ["Debugger.resumed", "detach"].includes(r.event)),
+    "Invalid renderer-freeze injection: renderer resumed or debugger detached",
+  );
+}
 
 export async function composeMotor(input: {
   manifest: PluginManifest;
@@ -488,25 +558,17 @@ export function runNativeMotor() {
     events: FoundationDiagnosticEvent[] = [];
   const native: Array<{ at: number; type: string; detail?: unknown }> = [];
   const failures: string[] = [];
-  const inputReceipts: Array<{
-    at: number;
-    type: string;
-    isTrusted: boolean;
-    node?: string;
-    key?: string;
-    repeat?: boolean;
-  }> = [];
+  let receiptSequence = 0;
+  const inputReceipts: InputReceipt[] = [];
+  const debuggerEvents: PauseReceipt[] = [];
+  let freezeInvalid: string | undefined;
+  let freezeReleaseRequested = false;
+  let freezeVerifiedThrough: number | undefined;
   const presentationSamples: Array<{ at: number; snapshots: unknown[] }> = [];
   let observePresentation = () => {};
   const expectedCleanupReports: string[] = [];
   let allowBlockedCleanup = false;
-  const ipc: Array<{
-    at: number;
-    channel: string;
-    args: unknown[];
-    result?: unknown;
-    error?: string;
-  }> = [];
+  const ipc: IpcReceipt[] = [];
   const deliveries: Array<{
     at: number;
     id: unknown;
@@ -751,7 +813,12 @@ export function runNativeMotor() {
         const handle: IpcHandle = (name, action) =>
           ipcMain.handle(name, (...args: Parameters<typeof action>) => {
             assert.ok(trusted(args[0]), "Untrusted native sender");
-            const row = { at: wall(), channel: name, args: args.slice(1) };
+            const row = {
+              at: wall(),
+              received: ++receiptSequence,
+              channel: name,
+              args: args.slice(1),
+            };
             const result = action(...args);
             void Promise.resolve(result).then(
               (value) => {
@@ -826,7 +893,10 @@ export function runNativeMotor() {
           logs.push(`renderer:${detail.message}`);
           const prefix = "NATIVE_INPUT:";
           if (detail.message.startsWith(prefix))
-            inputReceipts.push(JSON.parse(detail.message.slice(prefix.length)));
+            inputReceipts.push({
+              ...JSON.parse(detail.message.slice(prefix.length)),
+              received: ++receiptSequence,
+            });
         });
         let closed = false;
         let refusedClose: CleanupBlocked | undefined;
@@ -1273,6 +1343,8 @@ export function runNativeMotor() {
         };
         const beforeStop = heldLifecyclePulse ? await queryOriginal() : undefined;
         if (beforeStop) assert.equal(beforeStop.stopRequested, false);
+        const originalPanel = ui.states.instances(owner).find((b) => b.kind === "panel");
+        const faultReceiptSequence = receiptSequence;
         const faultAt = wall();
         native.push({ at: faultAt, type: scenario.fault });
         const traceAtFault = control.trace().length;
@@ -1383,22 +1455,39 @@ export function runNativeMotor() {
           case "close": {
             const binding = ui.states.instances(owner).find((b) => b.kind === "panel")!;
             assert.ok(binding, "Original panel binding before close");
-            // Release capture before a fresh close click; the blocked operation/reply stays held.
+            const begin = [...ipc].reverse().find((r) => {
+              const input = r.args[0] as HoldInput | undefined;
+              return (
+                r.channel === "plugins:ui:hold" &&
+                input?.phase === "begin" &&
+                input.nodeId === "a-forward" &&
+                isDeepStrictEqual(input.binding, binding) &&
+                !r.error &&
+                (r.result as { ok?: boolean } | undefined)?.ok
+              );
+            });
+            let holdRelease: ReturnType<typeof matchingHoldEnd>;
+            const original = begin?.args[0] as HoldInput | undefined;
+            if (mode === "jog") {
+              assert.ok(original?.inputToken, "Original hold input identity required");
+              assert.ok((begin!.result as { value?: { gesture?: string } }).value?.gesture);
+            }
+            // Keep the original exchange/reply held through release and close.
             if (scenario.key) key("keyUp", scenario.key);
             else if (mode === "jog") mouse("mouseUp", bounds);
-            await paint();
             if (mode === "jog")
-              await until(
+              holdRelease = await until(
                 () =>
-                  inputReceipts.some(
-                    (r) =>
-                      r.at >= faultAt &&
-                      r.isTrusted &&
-                      r.node === "a-forward" &&
-                      r.type === (scenario.key ? "keyup" : "pointerup"),
+                  matchingHoldEnd(
+                    inputReceipts,
+                    ipc,
+                    faultReceiptSequence,
+                    original!,
+                    scenario.key,
                   ),
-                "original hold release delivered",
+                "new trusted release and original-token hold-end IPC",
               );
+            const clickReceiptSequence = receiptSequence;
             const clickAt = wall();
             await click('[data-close-contribution="true"]');
             const receipt = await until(
@@ -1419,7 +1508,14 @@ export function runNativeMotor() {
                 !ui.states.instances(owner!).some((b) => b.panelInstance === binding.panelInstance),
               "original panel binding disappeared after close IPC",
             );
-            lifecycleReceipt.close = { binding, clickAt, ipcAt: receipt.at, bindingGoneAt: wall() };
+            lifecycleReceipt.close = {
+              binding,
+              clickAt,
+              clickReceiptSequence,
+              ipcAt: receipt.at,
+              bindingGoneAt: wall(),
+              ...(mode === "jog" ? { originalHold: begin, holdRelease, faultReceiptSequence } : {}),
+            };
             break;
           }
           case "blur": {
@@ -1449,11 +1545,55 @@ export function runNativeMotor() {
           case "renderer-crash":
             window.webContents.forcefullyCrashRenderer();
             break;
-          case "renderer-freeze":
-            window.webContents.debugger.attach("1.3");
-            await window.webContents.debugger.sendCommand("Debugger.enable");
-            await window.webContents.debugger.sendCommand("Debugger.pause");
+          case "renderer-freeze": {
+            const debug = window.webContents.debugger;
+            debug.on("message", (_event, method, params) => {
+              if (!["Debugger.paused", "Debugger.resumed"].includes(method)) return;
+              debuggerEvents.push({ at: wall(), event: method, detail: params });
+              if (method === "Debugger.resumed" && !freezeReleaseRequested)
+                freezeInvalid = "Invalid renderer-freeze injection: unexpected Debugger.resumed";
+            });
+            debug.on("detach", (_event, reason) => {
+              debuggerEvents.push({ at: wall(), event: "detach", detail: reason });
+              if (!freezeReleaseRequested)
+                freezeInvalid = "Invalid renderer-freeze injection: debugger detached";
+            });
+            try {
+              debug.attach("1.3");
+              await bounded(
+                debug.sendCommand("Debugger.enable"),
+                "Invalid renderer-freeze injection: Debugger.enable",
+              );
+              await bounded(
+                debug.sendCommand("Debugger.pause"),
+                "Invalid renderer-freeze injection: Debugger.pause",
+              );
+              debuggerEvents.push({ at: wall(), event: "pause-command-returned" });
+              // pause schedules a break at the next actual JS statement. Do not
+              // await this execution while paused; it resolves only after resume.
+              void debug
+                .sendCommand("Runtime.evaluate", {
+                  expression: "(() => { return performance.now(); })()",
+                })
+                .catch((error: unknown) => {
+                  if (freezeVerifiedThrough === undefined)
+                    freezeInvalid = `Invalid renderer-freeze injection: execution trigger failed: ${String(error)}`;
+                });
+              await until(() => {
+                assert.equal(
+                  freezeInvalid,
+                  undefined,
+                  freezeInvalid ?? "Renderer pause remains valid",
+                );
+                return debuggerEvents.some((r) => r.event === "Debugger.paused");
+              }, "Invalid renderer-freeze injection: Debugger.paused acknowledgement");
+              requireSustainedPause(debuggerEvents, debuggerEvents.length);
+            } catch (error) {
+              freezeInvalid = `Invalid renderer-freeze injection: ${String(error)}`;
+              throw new Error(freezeInvalid);
+            }
             break;
+          }
           case "plugin-kill":
             process.kill(pid, "SIGKILL");
             break;
@@ -1539,20 +1679,28 @@ export function runNativeMotor() {
             "host lifecycle stop dispatch",
           );
         else {
-          await until(
-            () =>
-              events
-                .slice(eventBefore)
-                .filter((e) => e.time >= faultAt)
-                .some(
-                  (e) =>
-                    e.kind ===
+          await until(() => {
+            if (scenario.fault === "renderer-freeze") {
+              assert.equal(
+                freezeInvalid,
+                undefined,
+                freezeInvalid ?? "Renderer pause remains valid",
+              );
+              requireSustainedPause(debuggerEvents, debuggerEvents.length);
+            }
+            return events
+              .slice(eventBefore)
+              .filter((e) => e.time >= faultAt)
+              .some(
+                (e) =>
+                  e.kind ===
                     (["release", "cancel", "stop", "second-launch"].includes(scenario.fault)
                       ? "stop-dispatch"
-                      : "revoke"),
-                ),
-            "observed host cancellation/revocation",
-          );
+                      : "revoke") &&
+                  (scenario.fault !== "renderer-freeze" ||
+                    e.binding?.panelInstance === originalPanel?.panelInstance),
+              );
+          }, "observed host cancellation/revocation");
         }
         const cancellation = events
           .slice(eventBefore)
@@ -1560,9 +1708,11 @@ export function runNativeMotor() {
           .find(
             (e) =>
               e.kind ===
-              (["release", "cancel", "stop", "second-launch"].includes(scenario.fault)
-                ? "stop-dispatch"
-                : "revoke"),
+                (["release", "cancel", "stop", "second-launch"].includes(scenario.fault)
+                  ? "stop-dispatch"
+                  : "revoke") &&
+              (scenario.fault !== "renderer-freeze" ||
+                e.binding?.panelInstance === originalPanel?.panelInstance),
           );
         assert.ok(cancellation || hostLifecycle || scenario.fault === "stop");
         const revokedAt = cancellation ? cancellation.time : faultAt,
@@ -1584,6 +1734,17 @@ export function runNativeMotor() {
             8000,
           );
         }
+        if (scenario.fault === "renderer-freeze") {
+          assert.equal(freezeInvalid, undefined, freezeInvalid ?? "Renderer pause remains valid");
+          requireSustainedPause(debuggerEvents, debuggerEvents.length);
+          assert.ok(
+            cancellation &&
+              cancellation.time >= debuggerEvents.find((r) => r.event === "Debugger.paused")!.at,
+            "Invalid renderer-freeze injection: original binding expired before acknowledged pause",
+          );
+          freezeVerifiedThrough = debuggerEvents.length;
+          debuggerEvents.push({ at: wall(), event: "expiry-observed", detail: cancellation });
+        }
         releaseReply?.();
         if (heldLifecyclePulse) {
           const receipt = lifecycleReceipt.stopBarrier as {
@@ -1603,7 +1764,17 @@ export function runNativeMotor() {
           blocked = undefined;
         }
         if (scenario.fault === "renderer-freeze") {
+          assert.equal(freezeInvalid, undefined, freezeInvalid ?? "Renderer pause remains valid");
+          freezeReleaseRequested = true;
+          debuggerEvents.push({ at: wall(), event: "driver-resume-requested" });
           await window.webContents.debugger.sendCommand("Debugger.resume");
+          await until(
+            () =>
+              debuggerEvents
+                .slice(freezeVerifiedThrough!)
+                .some((r) => r.event === "Debugger.resumed"),
+            "Debugger.resumed after deliberate driver release",
+          );
           window.webContents.debugger.detach();
         }
         let terminal: MotionSnapshot | undefined;
@@ -1807,6 +1978,8 @@ export function runNativeMotor() {
               composition: "composeDesktopMain/createDesktopFoundation",
               scenario,
               faultAt,
+              debuggerEvents,
+              freezeVerifiedThrough,
               revokedAt,
               stoppedAt,
               operationId,
@@ -1867,13 +2040,27 @@ export function runNativeMotor() {
     .catch(async (error: unknown) => {
       clearTimeout(deadline);
       console.error(error);
+      const failureKind =
+        String(error).includes("Invalid renderer-freeze injection") || freezeInvalid
+          ? "invalid-fault-injection"
+          : "safety-or-driver-assertion";
       if (control && blocked) {
         control.release(blocked.point, blocked.step);
         blocked = undefined;
       }
       releaseReply?.();
       if (win && !win.isDestroyed() && win.webContents.debugger.isAttached()) {
-        await win.webContents.debugger.sendCommand("Debugger.resume").catch(() => {});
+        freezeReleaseRequested = true;
+        debuggerEvents.push({ at: wall(), event: "cleanup-resume-requested" });
+        await win.webContents.debugger
+          .sendCommand("Debugger.resume")
+          .catch((resumeError: unknown) => {
+            debuggerEvents.push({
+              at: wall(),
+              event: "cleanup-resume-failed",
+              detail: String(resumeError),
+            });
+          });
         win.webContents.debugger.detach();
       }
       await writeFile(
@@ -1881,6 +2068,10 @@ export function runNativeMotor() {
         JSON.stringify(
           {
             error: String(error),
+            failureKind,
+            debuggerEvents,
+            freezeInvalid,
+            freezeVerifiedThrough,
             stack: error instanceof Error ? error.stack : null,
             scenario,
             wire,
