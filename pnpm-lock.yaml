@@ -22,6 +22,9 @@ importers:
       '@eslint/js':
         specifier: ^9.34.0
         version: 9.39.5
+      '@kobrixa/device':
+        specifier: workspace:*
+        version: link:packages/device
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
