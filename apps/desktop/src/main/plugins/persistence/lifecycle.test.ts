@@ -1,3 +1,4 @@
+import { storedRecoverySchema } from "./namespace.js";
 import { expect, it, vi } from "vitest";
 import type { RecordMeta, RecordWrite, ResourceOwner } from "@kobrixa/plugin-protocol";
 import type { ReservationEnded } from "@kobrixa/plugin-runtime";
@@ -578,3 +579,56 @@ it("T5fix a cached drain expires sealed eligibility without renewing its origina
   expect(expired.records[0]?.payload).toBe("checkpoint-only");
   expect(expired.records[0]).not.toHaveProperty("expiresAt");
 });
+
+it.each([true, false])(
+  "fractional retention reports validate for registered=%s and expire at the original payload deadline",
+  async (registered) => {
+    const f = fixture();
+    let now = 0.25;
+    f.deps.now = () => (now += 0.125);
+    f.deps.wall = () => 100000 + Math.floor(now);
+    if (registered)
+      expect(
+        (await f.life.register(owner, { id: record.id, expectedRevision: record.revision })).ok,
+      ).toBe(true);
+    else f.deps.pendingWrites = () => [{ write: reservation, id: record.id, state: "sealed" }];
+    const fence = vi.fn<LifecycleDependencies["fence"]>(() => []);
+    f.deps.fence = fence;
+    const expiry = 30000.375;
+    f.deps.payload = () => ({ kind: "complete-staging", expiresMonotonicMs: expiry });
+    f.deps.evidence.flush = async () => ({
+      state: "failed",
+      accepted: [],
+      incomplete: [record.id],
+      unknown: [],
+    });
+    const recover = vi.fn<LifecycleDependencies["recover"]>(async (_owner, report) => {
+      storedRecoverySchema.shape.report.parse(report);
+      return report;
+    });
+    f.deps.recover = recover;
+    const retained = await f.life.participant.ownerLost(owner);
+    storedRecoverySchema.shape.report.parse(retained);
+    expect(retained).toMatchObject({
+      state: "retryable",
+      records: [{ payload: "complete-staging" }],
+    });
+    expect(retained.records[0]!.expiresAt).toBeLessThanOrEqual(130000);
+    expect(fence.mock.calls[0]![1] % 1).not.toBe(0);
+    // Refresh reads the original monotonic payload deadline rather than the rounded wall projection.
+    now = expiry - 0.125;
+    f.deps.now = () => now;
+    await f.life.refreshRecovery(owner, now + 10000);
+    expect(recover.mock.calls.at(-1)![1]).toMatchObject({
+      records: [{ payload: "complete-staging" }],
+    });
+    now = expiry;
+    await f.life.refreshRecovery(owner, now + 10000);
+    const expired = recover.mock.calls.at(-1)![1];
+    expect(expired).toMatchObject({
+      state: "checkpoint-only",
+      records: [{ payload: "checkpoint-only" }],
+    });
+    expect(expired.records[0]).not.toHaveProperty("expiresAt");
+  },
+);

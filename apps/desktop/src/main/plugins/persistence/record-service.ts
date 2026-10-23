@@ -1,3 +1,4 @@
+import { wallExpiry as projectWallExpiry } from "./wall-expiry.js";
 import type { SealedPayloadPin } from "./engine-port.js";
 import { randomUUID } from "node:crypto";
 import { RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
@@ -87,7 +88,7 @@ export function createRecordService(deps: RecordDependencies): RecordServiceHost
   const targetKey = (owner: ResourceOwner, id: string) => JSON.stringify([owner.sourceKey, id]);
   const expiry = (value: { created: number; progress: number }) =>
     Math.min(value.created + 120000, value.progress + 30000);
-  const wallExpiry = (deadline: number) => Math.max(0, deps.wall() + deadline - deps.now());
+  const wallExpiry = (deadline: number) => projectWallExpiry(deps, deadline);
   const terminal = (write: Write) =>
     ["committed", "aborted", "expired", "failed"].includes(write.state);
   function sweep() {

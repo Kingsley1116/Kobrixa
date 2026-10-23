@@ -1,3 +1,4 @@
+import { wallExpiry as projectWallExpiry } from "./wall-expiry.js";
 import { randomUUID } from "node:crypto";
 import type { ResourceOwner, Handle, PersistenceResult } from "@kobrixa/plugin-protocol";
 import type { PersistenceBackend, StoredRecovery, PublicationTicket } from "./engine-port.js";
@@ -131,7 +132,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
       report: entry.report,
       ticket: entry.evidence?.ticket ?? previous?.ticket ?? null,
       sealedPin: entry.evidence ? entry.evidence.sealedPin : (previous?.sealedPin ?? null),
-      expiresAt: Number.isFinite(entry.expires) ? deps.wall() + entry.expires - deps.now() : null,
+      expiresAt: Number.isFinite(entry.expires) ? projectWallExpiry(deps, entry.expires) : null,
     });
     changed();
   }
@@ -233,7 +234,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
         entry.report.recovery = entry.id;
         for (const record of entry.report.records)
           if (record.expiresAt !== undefined)
-            record.expiresAt = Math.min(record.expiresAt, deps.wall() + entry.expires - deps.now());
+            record.expiresAt = Math.min(record.expiresAt, projectWallExpiry(deps, entry.expires));
         if (entry.report.state === "retryable") entry.report.retryAction = entry.actionIds.retry;
         entries.set(entry.id, entry);
         revision++;
@@ -265,7 +266,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
             state: entry.report.state,
             payload,
             ...(entry.report.state === "retryable" && Number.isFinite(entry.expires)
-              ? { expiresAt: deps.wall() + entry.expires - deps.now() }
+              ? { expiresAt: projectWallExpiry(deps, entry.expires) }
               : {}),
             actions: [
               ...(entry.report.state === "retryable"
@@ -301,7 +302,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
               if (record.expiresAt !== undefined)
                 record.expiresAt = Math.min(
                   record.expiresAt,
-                  deps.wall() + entry.expires - deps.now(),
+                  projectWallExpiry(deps, entry.expires),
                 );
             expire(entry);
             revision++;

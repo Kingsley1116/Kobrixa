@@ -1,3 +1,4 @@
+import { wallExpiry as projectWallExpiry } from "./wall-expiry.js";
 import type { FinalWriteGrant } from "./engine-port.js";
 import { checkpointRecoveryId } from "./engine-port.js";
 import { randomUUID } from "node:crypto";
@@ -399,7 +400,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
         committedRevision: evidence?.revision ?? null,
         final,
         payload: complete ? "complete-staging" : evidence ? "checkpoint-only" : "none",
-        ...(complete ? { expiresAt: deps.wall() + held.expiresMonotonicMs! - deps.now() } : {}),
+        ...(complete ? { expiresAt: projectWallExpiry(deps, held.expiresMonotonicMs!) } : {}),
       });
     }
     if (value.retired)
@@ -420,7 +421,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
           committedRevision: evidence?.revision ?? null,
           final: false,
           payload: complete ? "complete-staging" : evidence ? "checkpoint-only" : "none",
-          ...(complete ? { expiresAt: deps.wall() + held.expiresMonotonicMs! - deps.now() } : {}),
+          ...(complete ? { expiresAt: projectWallExpiry(deps, held.expiresMonotonicMs!) } : {}),
         });
       }
     const pendingSettings = value.retired && deps.pendingSettings(value.owner);
