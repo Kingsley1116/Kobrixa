@@ -399,7 +399,10 @@ export async function superviseCase(
   if (!originalError)
     try {
       assert.equal(candidate.pid, child.pid);
-      assert.equal(candidate.status, "closed-reference");
+      assert.equal(
+        candidate.status,
+        config.case === "registration-end" ? "closed-case" : "closed-reference",
+      );
       receipt = {
         ...candidate,
         status: "passed",
@@ -547,13 +550,19 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
     reportFailure: (failure) => console.error(JSON.stringify(failure)),
   });
 }
-export async function runFoundationEvidence({ referencesOnly = false } = {}) {
+export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
+  assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
+  if (referencesOnly) return ["retirement", "healthy-release"];
+  if (caseId === "registration-end") return [caseId];
+  if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
+  throw new Error(
+    "BLOCKED: twelve observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+  );
+}
+export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
+  const selectedCases = selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
-  if (!referencesOnly)
-    throw new Error(
-      "BLOCKED: thirteen observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
-    );
   const output = process.env.PERSISTENCE_EVIDENCE;
   assert.ok(
     output && path.isAbsolute(output),
@@ -656,7 +665,7 @@ app.exit(code);
   );
   await access(electron);
   const reports = [];
-  for (const id of ["retirement", "healthy-release"]) {
+  for (const id of selectedCases) {
     const profile = await mkdtemp(path.join(directory, `${id}-`)),
       report = path.join(directory, `${id}.candidate.json`),
       configFile = path.join(directory, `${id}.json`);
@@ -687,11 +696,12 @@ app.exit(code);
     });
     reports.push(receipt);
   }
-  verifyFoundationReports(reports, ["retirement", "healthy-release"]);
+  verifyFoundationReports(reports, selectedCases);
   const result = {
     format: 1,
     level: "real-process",
-    status: "reference-only",
+    status: referencesOnly ? "reference-only" : "scoped-case",
+    cases: selectedCases,
     reports,
     artifact: entry,
     bundleSha256,
@@ -712,7 +722,11 @@ app.exit(code);
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.includes("--preflight")) await preflight();
-    else await runFoundationEvidence({ referencesOnly: process.argv.includes("--references") });
+    else
+      await runFoundationEvidence({
+        referencesOnly: process.argv.includes("--references"),
+        caseId: process.argv.find((arg) => arg.startsWith("--case="))?.slice(7),
+      });
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

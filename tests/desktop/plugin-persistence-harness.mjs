@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 export const FAULT_POINTS = Object.freeze([
@@ -404,7 +405,106 @@ const integer = (n, label) => {
   finite(n, label);
   assert.ok(Number.isSafeInteger(n), label);
 };
+export function assertRegistrationEndEvidence(evidence) {
+  const observed = evidence.registration;
+  assert.ok(observed, "missing registration observation");
+  const {
+    firstOffer,
+    offers,
+    requests,
+    submissions,
+    registrationTicket,
+    finalTickets,
+    trace,
+    endTrace,
+    finalRecord,
+    payloadSha256,
+  } = observed;
+  for (const key of [
+    "firstOffer",
+    "offers",
+    "requests",
+    "submissions",
+    "registrationTicket",
+    "finalTickets",
+    "trace",
+    "endTrace",
+    "finalRecord",
+    "payloadSha256",
+  ])
+    assert.ok(Object.hasOwn(observed, key), `missing registration observation ${key}`);
+  assert.equal(firstOffer.checkpoints.length, 1);
+  assert.equal(firstOffer.writes.length, 0);
+  const checkpoint = firstOffer.checkpoints[0];
+  assert.equal(registrationTicket.target.kind, "recovery");
+  assert.equal(registrationTicket.target.key, checkpoint.checkpoint);
+  assert.ok(
+    trace.some((row) => row.point === "before-publish" && row.ticket === registrationTicket.id),
+    "missing paused registration ticket",
+  );
+  assert.ok(
+    endTrace.some((row) => row.point === "before-publish" && row.ticket === registrationTicket.id),
+    "missing pause at reservation end",
+  );
+  assert.ok(
+    !endTrace.some((row) => row.point === "after-publish" && row.ticket === registrationTicket.id),
+    "registration published before reservation end",
+  );
+  const registrationPublication = trace.filter(
+    (row) => row.point === "after-publish" && row.ticket === registrationTicket.id,
+  );
+  assert.equal(registrationPublication.length, 1, "missing durable registration publication");
+  assert.equal(offers.length, 1);
+  assert.equal(requests.length, 1);
+  assert.equal(submissions.length, 1);
+  assert.equal(requests[0].checkpoints.length, 1);
+  assert.deepEqual(requests[0].checkpoints[0], checkpoint);
+  assert.equal(requests[0].reason, "reservation-ended");
+  assert.equal(requests[0].token, firstOffer.token);
+  assert.equal(requests[0].writes.length, 0, "checkpoint is not a pending staged write");
+  assert.equal(submissions[0].ok, true);
+  assert.equal(submissions[0].value.status, "submitted");
+  assert.equal(submissions[0].value.writes.length, 1);
+  assert.equal(finalTickets.length, 1);
+  const ticket = finalTickets[0];
+  assert.equal(ticket.target.kind, "record");
+  assert.equal(ticket.target.id, checkpoint.record.id);
+  assert.equal(ticket.target.expectedRevision, checkpoint.record.revision);
+  assert.equal(ticket.metadata.record.checkpoint, "final");
+  assert.equal(finalRecord.id, checkpoint.record.id);
+  assert.equal(finalRecord.revision, ticket.metadata.record.revision);
+  assert.equal(finalRecord.checkpoint, "final");
+  assert.equal(payloadSha256, finalRecord.sha256);
+  assert.equal(
+    payloadSha256,
+    createHash("sha256").update(`Synthetic final checkpoint ${finalRecord.id}\n`).digest("hex"),
+  );
+  const publications = trace.filter(
+    (row) => row.point === "after-publish" && row.ticket === ticket.id,
+  );
+  assert.equal(publications.length, 1, "one actual final publication");
+  const checks = evidence.checks;
+  assert.equal(
+    checks.finalTargets,
+    new Set(requests.flatMap((request) => request.checkpoints.map((entry) => entry.record.id)))
+      .size,
+  );
+  assert.equal(checks.finalTargets, 1);
+  assert.equal(checks.finalPublications, new Set(publications.map((row) => row.ticket)).size);
+  assert.equal(checks.finalPublications, 1);
+  assert.equal(
+    checks.pendingRegistrationIncluded,
+    requests[0].checkpoints.filter((entry) => entry.checkpoint === checkpoint.checkpoint).length ===
+      1,
+  );
+  assert.equal(checks.pendingRegistrationIncluded, true);
+  finite(checks.firstDeadline, "original end deadline");
+  assert.equal(checks.firstDeadline, firstOffer.deadlineMonotonicMs);
+  assert.equal(checks.lastDeadline, offers.at(-1).deadlineMonotonicMs);
+  assert.equal(checks.lastDeadline, checks.firstDeadline);
+}
 export function verifyRunReceipt(r, expected = {}) {
+  if (r.case === "registration-end") assertRegistrationEndEvidence(r.evidence);
   assert.equal(r.level, "real-process");
   assert.equal(r.status, "passed");
   for (const field of ["runId", "case", "profileId"])
@@ -626,7 +726,7 @@ export async function runReferenceEntry(createFixture, config, io) {
       JSON.stringify({
         format: 1,
         level: "real-process",
-        status: "closed-reference",
+        status: config.case === "registration-end" ? "closed-case" : "closed-reference",
         runId: config.runId,
         case: config.case,
         commit: config.commit,

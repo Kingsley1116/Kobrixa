@@ -33,6 +33,18 @@ export type CaseEvidence = {
     deadline?: number;
   }>;
   samples: Record<string, number[]>;
+  registration?: {
+    firstOffer: DrainOffer;
+    offers: DrainOffer[];
+    requests: DrainRequest[];
+    submissions: Array<{ ok: boolean; value?: { status: string; writes: string[] } }>;
+    registrationTicket: PublicationTicket;
+    finalTickets: PublicationTicket[];
+    trace: ReturnType<PersistenceFaultControl["trace"]>;
+    endTrace: ReturnType<PersistenceFaultControl["trace"]>;
+    finalRecord: RecordMeta;
+    payloadSha256: string;
+  };
 };
 
 export interface FoundationFixture {
@@ -345,6 +357,8 @@ export const FOUNDATION_CHECKS: Readonly<
 };
 
 import assert from "node:assert/strict";
+// @ts-expect-error The test-local Node harness has no TypeScript declaration.
+import { assertRegistrationEndEvidence } from "./plugin-persistence-harness.mjs";
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
   const required = FOUNDATION_CHECKS[id];
   assert.ok(required, `Unknown foundation case ${id}`);
@@ -398,6 +412,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
     assert.equal(freeze.deadline, evidence.checks.firstDeadline);
     assert.equal(drain.deadline, freeze.deadline);
   }
+  if (id === "registration-end") assertRegistrationEndEvidence(evidence);
   if (id === "healthy-release") {
     for (const key of ["retireCalls", "freezeCalls", "processExits"])
       assert.equal(evidence.checks[key], 0, key);
@@ -427,10 +442,15 @@ function assertRealComposition(fixture: FoundationFixture): void {
 
 import { randomBytes, createHash } from "node:crypto";
 import type { PluginProcess, ProcessExit } from "@kobrixa/plugin-runtime";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import type { ResourceOwner, DrainRequest, RecordMeta } from "@kobrixa/plugin-protocol";
 import type { Principal, DrainOffer } from "@kobrixa/plugin-runtime";
 import type { DeviceBrokerPort } from "../../apps/desktop/src/main/device-broker/broker-port.js";
 import type { PersistenceFaultControl } from "../../apps/desktop/src/main/plugins/persistence/worker.js";
+
+import type {
+  PersistenceBackend,
+  PublicationTicket,
+} from "../../apps/desktop/src/main/plugins/persistence/engine-port.js";
 
 import type { PluginController } from "../../apps/desktop/src/main/plugins/controller.js";
 
@@ -445,6 +465,7 @@ type LifecycleCaseInput = {
   stage3: Stage3RuntimePorts;
   plugins: Pick<PluginController, "setEnabled">;
   fault: PersistenceFaultControl;
+  backend: PersistenceBackend;
   recording: LiveConsumer;
   settings: LiveConsumer;
 };
@@ -703,6 +724,250 @@ export async function produceRetirement(input: LifecycleCaseInput): Promise<Case
   }
 }
 
+export async function produceRegistrationEnd(input: LifecycleCaseInput): Promise<CaseEvidence> {
+  const participant = input.host.participant;
+  assert.equal(input.stage3.persistence, participant);
+  const principal = pluginPrincipal(input.recording),
+    owner = principal.owner;
+  const signal = new AbortController().signal;
+  const reservation = await reserveLiveRecording(input);
+  const bytes = Buffer.from("Synthetic registration seed\n");
+  const write = accepted(
+    await input.host.request(
+      principal,
+      "storage/beginWrite",
+      {
+        target: { mode: "create" },
+        kind: "test.registration-end",
+        schemaVersion: 1,
+        label: "Registration race",
+        mediaType: "application/octet-stream",
+        byteLength: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      signal,
+    ),
+  );
+  accepted(
+    await input.host.request(
+      principal,
+      "storage/writeChunk",
+      {
+        write: write.write,
+        offset: 0,
+        data: bytes.toString("base64"),
+      },
+      signal,
+    ),
+  );
+  accepted(
+    await input.host.request(principal, "storage/sealWrite", { write: write.write }, signal),
+  );
+  const seed = accepted(
+    await input.host.request(principal, "storage/commitWrite", { write: write.write }, signal),
+  );
+  const endReservation = participant.endReservation,
+    drain = participant.drain;
+  const engine = input.backend.engine,
+    reserve = engine.reserve,
+    reserveFinal = engine.reserveFinal;
+  assert.ok(reserveFinal, "Missing actual final admission port");
+  const tickets: PublicationTicket[] = [],
+    finalTickets: PublicationTicket[] = [];
+  const offers: DrainOffer[] = [],
+    requests: DrainRequest[] = [];
+  const submissions: NonNullable<CaseEvidence["registration"]>["submissions"] = [];
+  const ended = latch<DrainOffer>(),
+    completed = latch<void>();
+  let firstOffer: DrainOffer | undefined;
+  let endTrace: ReturnType<PersistenceFaultControl["trace"]> | undefined;
+  let registration: Promise<Awaited<ReturnType<typeof input.host.request>>> | undefined;
+  let draining: Promise<unknown> | undefined;
+  let armed = false;
+  engine.reserve = function (ticket, size) {
+    if (sameExecution(ticket.owner, owner)) tickets.push(structuredClone(ticket));
+    return reserve.call(this, ticket, size);
+  };
+  engine.reserveFinal = function (ticket, size, grant) {
+    if (sameExecution(ticket.owner, owner)) finalTickets.push(structuredClone(ticket));
+    return reserveFinal.call(this, ticket, size, grant);
+  };
+  participant.endReservation = function (event, deadline) {
+    const offer = endReservation.call(this, event, deadline);
+    if (offer && sameExecution(offer.owner, owner)) {
+      assert.ok(armed, "Reservation must end while registration is paused");
+      endTrace = input.fault.trace().slice(traceStart);
+      firstOffer ??= structuredClone(offer);
+      ended.resolve(offer);
+    }
+    return offer;
+  };
+  participant.drain = function (offer, dispatch) {
+    if (!sameExecution(offer.owner, owner)) return drain.call(this, offer, dispatch);
+    assert.ok(dispatch, "Missing original public SDK drain dispatcher");
+    offers.push(structuredClone(offer));
+    const result = drain.call(this, offer, (target, request, ...rest) => {
+      assert.ok(sameExecution(target, owner), "Drain dispatcher changed the original owner");
+      requests.push(structuredClone(request));
+      return dispatch(target, request, ...rest).then((result) => {
+        submissions.push(structuredClone(result));
+        return result;
+      });
+    });
+    draining = result.then((report) => {
+      assert.equal(report.state, "saved");
+      assert.equal(report.blocker, false);
+      completed.resolve();
+    });
+    // Attach immediately; await the same rejection below without an unhandled promise.
+    void draining.catch(() => completed.resolve());
+    return result;
+  };
+  const traceStart = input.fault.trace().length;
+  try {
+    const reached = input.fault.reached("before-publish");
+    input.fault.arm("before-publish", "pause");
+    armed = true;
+    registration = input.host.request(
+      principal,
+      "storage/registerCheckpoint",
+      {
+        id: seed.record.id,
+        expectedRevision: seed.record.revision,
+        reservation: reservation.reservationId,
+      },
+      signal,
+    );
+    void registration.catch(() => {});
+    await within(reached, "checkpoint registration publication");
+    const paused = input.fault
+      .trace()
+      .slice(traceStart)
+      .find((row) => row.point === "before-publish");
+    const registrationTicket = tickets.find((ticket) => ticket.id === paused?.ticket);
+    assert.ok(registrationTicket, "Missing actual registration publication ticket");
+    assert.equal(registrationTicket.target.kind, "recovery");
+    accepted(
+      await input.broker.request(
+        principal,
+        "devices/recording/release",
+        {
+          reservationId: reservation.reservationId,
+        },
+        signal,
+      ),
+    );
+    await within(ended.promise, "original participant reservation end");
+    assert.ok(firstOffer);
+    assert.ok(endTrace);
+    // The entry is still waiting on durable registration; release only after end was observed.
+    input.fault.release("before-publish");
+    armed = false;
+    const registered = await within(registration, "registration completion");
+    assert.equal(registered.ok, false);
+    if (!registered.ok) assert.equal(registered.error.code, "PLUGIN_E_STALE_RESOURCE");
+    await within(completed.promise, "public SDK final drain");
+    await draining;
+    const finalRecord = accepted(
+      await input.host.request(principal, "storage/stat", { id: seed.record.id }, signal),
+    ).record;
+    assert.equal(finalRecord.checkpoint, "final");
+    const read = accepted(
+      await input.host.request(
+        principal,
+        "storage/openRead",
+        {
+          id: finalRecord.id,
+          expectedRevision: finalRecord.revision,
+          schemaVersion: 1,
+        },
+        signal,
+      ),
+    );
+    let payloadSha256: string;
+    try {
+      const chunk = accepted(
+        await input.host.request(
+          principal,
+          "storage/readChunk",
+          {
+            read: read.read,
+            offset: 0,
+            maxBytes: 262144,
+          },
+          signal,
+        ),
+      );
+      assert.equal(chunk.eof, true);
+      payloadSha256 = createHash("sha256").update(Buffer.from(chunk.data, "base64")).digest("hex");
+    } finally {
+      accepted(
+        await input.host.request(principal, "storage/closeRead", { read: read.read }, signal),
+      );
+    }
+    // Worker result and fault telemetry use separate real ports; wait for the matching trace.
+    while (
+      !input.fault
+        .trace()
+        .slice(traceStart)
+        .some(
+          (row) =>
+            row.point === "after-publish" &&
+            finalTickets.some((ticket) => ticket.id === row.ticket),
+        )
+    )
+      await within(input.fault.reached("after-publish"), "final target publication trace");
+    const trace = input.fault.trace().slice(traceStart);
+    const targets = requests.flatMap((request) =>
+      request.checkpoints.map((checkpoint) => checkpoint.record.id),
+    );
+    const publications = trace.filter(
+      (row) =>
+        row.point === "after-publish" && finalTickets.some((ticket) => ticket.id === row.ticket),
+    );
+    const evidence: CaseEvidence = {
+      checks: {
+        finalTargets: new Set(targets).size,
+        finalPublications: new Set(publications.map((row) => row.ticket)).size,
+        pendingRegistrationIncluded:
+          firstOffer.checkpoints.some((checkpoint) => checkpoint.record.id === seed.record.id) &&
+          targets.filter((id) => id === seed.record.id).length === 1,
+        firstDeadline: firstOffer.deadlineMonotonicMs,
+        lastDeadline: offers.at(-1)!.deadlineMonotonicMs,
+      },
+      events: [],
+      samples: {},
+      registration: {
+        firstOffer,
+        offers,
+        requests,
+        submissions,
+        registrationTicket,
+        finalTickets,
+        trace,
+        endTrace,
+        finalRecord,
+        payloadSha256,
+      },
+    };
+    assertFoundationEvidence("registration-end", evidence);
+    return evidence;
+  } finally {
+    if (armed) input.fault.release("before-publish");
+    try {
+      await within(
+        Promise.allSettled([registration, draining].filter((value) => value !== undefined)),
+        "registration-end cleanup",
+      );
+    } finally {
+      engine.reserve = reserve;
+      engine.reserveFinal = reserveFinal;
+      participant.endReservation = endReservation;
+      participant.drain = drain;
+    }
+  }
+}
+
 export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<CaseEvidence> {
   if (input.stage3.persistence !== input.host.participant)
     throw new Error("Detached persistence participant");
@@ -868,9 +1133,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     assert.ok(path.isAbsolute(config[key]), key);
   assert.match(config.commit, /^[0-9a-f]{40}$/);
   assert.match(config.artifactSha256, /^[0-9a-f]{64}$/);
-  if (!["retirement", "healthy-release"].includes(config.case))
+  if (!["retirement", "healthy-release", "registration-end"].includes(config.case))
     throw new Error(
-      `BLOCKED: ${config.case} requires its observation-table producer; authoring scope is the reference pair`,
+      `BLOCKED: ${config.case} requires its observation-table producer; no implemented producer for this selector`,
     );
   // No native import or service allocation occurs at module import time.
   // Requiring Electron only inside the invoked factory preserves inert imports
@@ -910,8 +1175,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
   const { validateBuiltinLeaf } =
     await import("../../apps/desktop/src/main/plugins/builtin-launch.js");
   const { readSource } = await import("@kobrixa/plugin-runtime");
-  const { registerUiIpc, registerUiEventIpc, diagnosticsFor: bridgeDiagnostics } =
-    await import("../../apps/desktop/src/main/plugins/ui-bridge.js");
+  const {
+    registerUiIpc,
+    registerUiEventIpc,
+    diagnosticsFor: bridgeDiagnostics,
+  } = await import("../../apps/desktop/src/main/plugins/ui-bridge.js");
   const { diagnosticsFor: stateDiagnostics } =
     await import("../../packages/plugin-runtime/src/ui-state.js");
   const { diagnosticsFor: runtimeDiagnostics } =
@@ -1268,6 +1536,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           stage3: live.stage3,
           plugins: live.plugins,
           fault,
+          backend: handles.backend,
           recording: select("recording"),
           settings: select("settings"),
         };
@@ -1277,15 +1546,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           return observed.promise;
         });
         const unavailable = (id: FoundationCase) => async (): Promise<CaseEvidence> => {
-          throw new Error(
-            `BLOCKED: ${id} observation-table producer is outside this approved reference authoring phase`,
-          );
+          throw new Error(`BLOCKED: ${id} observation-table producer is not implemented`);
         };
         const producers: Record<FoundationCase, () => Promise<CaseEvidence>> = {
           retirement: () => produceRetirement(input),
           "healthy-release": () => produceHealthyRelease(input),
           contention: unavailable("contention"),
-          "registration-end": unavailable("registration-end"),
+          "registration-end": () => produceRegistrationEnd(input),
           "disconnect-retry": unavailable("disconnect-retry"),
           "suspend-wake": unavailable("suspend-wake"),
           "renderer-loss": unavailable("renderer-loss"),
@@ -1352,7 +1619,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             filesystem: config.filesystem,
             node: process.versions.node,
             electron: process.versions.electron ?? "",
-            memoryMethod: "not-measured-reference-only",
+            memoryMethod:
+              config.case === "registration-end"
+                ? "not-measured-scoped-case"
+                : "not-measured-reference-only",
             warmCold: "cold",
           },
           async runCase(id) {

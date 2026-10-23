@@ -214,7 +214,11 @@ test("verifier negatives: diagnostic owners cannot duplicate counters or omit mo
   );
 });
 
-import { preflight, runFoundationEvidence } from "./plugin-persistence-run.mjs";
+import {
+  preflight,
+  runFoundationEvidence,
+  selectFoundationCases,
+} from "./plugin-persistence-run.mjs";
 test("BM-20 reference cases execute through createFoundationFixture", async () => {
   const result = await runFoundationEvidence({ referencesOnly: true });
   verifyFoundationReports(result.reports, ["retirement", "healthy-release"]);
@@ -254,6 +258,11 @@ test("verifier negatives: every declared foundation observation is required", ()
         processExits: 0,
         unrelatedSettingsCommitted: true,
       });
+    if (id === "registration-end") {
+      const oracle = registrationOracle();
+      Object.assign(evidence.checks, oracle.checks);
+      evidence.registration = oracle.registration;
+    }
     assertFoundationEvidence(id, evidence);
     for (const key of required.checks) {
       const altered = structuredClone(evidence);
@@ -864,4 +873,139 @@ test("T7fix2: entry reader prefers the final diagnostic and never hides an unrea
     (value) => value === error,
   );
   assert.equal(await readEntryFailure("candidate.json", async () => undefined), undefined);
+});
+
+// Pure verifier oracle; never written as a native receipt or supplied to a producer.
+function registrationOracle() {
+  const id = "target",
+    handle = "checkpoint",
+    token = "drain";
+  const sha256 = createHash("sha256").update(`Synthetic final checkpoint ${id}\n`).digest("hex");
+  const record = { id, revision: "seed", kind: "test.registration-end" };
+  const checkpoint = { checkpoint: handle, record };
+  const firstOffer = { token, deadlineMonotonicMs: 100, checkpoints: [checkpoint], writes: [] };
+  const registrationTicket = {
+    id: "registration-ticket",
+    target: { kind: "recovery", key: handle },
+  };
+  const finalRecord = { ...record, revision: "final", checkpoint: "final", sha256 };
+  const ticket = {
+    id: "final-ticket",
+    target: { kind: "record", id, expectedRevision: record.revision },
+    metadata: { record: finalRecord },
+  };
+  const endTrace = [{ point: "before-publish", ticket: registrationTicket.id }];
+  return {
+    checks: {
+      finalTargets: 1,
+      finalPublications: 1,
+      pendingRegistrationIncluded: true,
+      firstDeadline: 100,
+      lastDeadline: 100,
+    },
+    events: [],
+    samples: {},
+    registration: {
+      firstOffer,
+      offers: [firstOffer],
+      requests: [{ token, reason: "reservation-ended", checkpoints: [checkpoint], writes: [] }],
+      submissions: [{ ok: true, value: { status: "submitted", writes: ["sdk-write"] } }],
+      registrationTicket,
+      finalTickets: [ticket],
+      endTrace,
+      trace: [
+        ...endTrace,
+        { point: "after-publish", ticket: registrationTicket.id },
+        { point: "after-publish", ticket: ticket.id },
+      ],
+      finalRecord,
+      payloadSha256: sha256,
+    },
+  };
+}
+import { createHash } from "node:crypto";
+test("registration-end rejects missing and mismatched actual observations", () => {
+  const oracle = registrationOracle();
+  assertFoundationEvidence("registration-end", oracle);
+  for (const key of Object.keys(oracle.registration)) {
+    const changed = structuredClone(oracle);
+    delete changed.registration[key];
+    assert.throws(() => assertFoundationEvidence("registration-end", changed));
+  }
+  for (const mutate of [
+    (o) => o.registration.requests[0].checkpoints.push(o.registration.requests[0].checkpoints[0]),
+    (o) => o.registration.requests[0].writes.push({ id: "target", write: "fabricated-checkpoint" }),
+    (o) => o.registration.trace.push(o.registration.trace.at(-1)),
+    (o) => o.registration.endTrace.push({ point: "after-publish", ticket: "registration-ticket" }),
+    (o) => (o.registration.finalTickets[0].target.id = "other-target"),
+    (o) => (o.registration.submissions = []),
+    (o) => (o.registration.payloadSha256 = "0".repeat(64)),
+    (o) => o.registration.offers[0].deadlineMonotonicMs++,
+  ]) {
+    const changed = structuredClone(oracle);
+    mutate(changed);
+    assert.throws(() => assertFoundationEvidence("registration-end", changed));
+  }
+});
+test("registration-end selector is bounded and full matrix remains fail-closed", () => {
+  assert.deepEqual(selectFoundationCases({ caseId: "registration-end" }), ["registration-end"]);
+  assert.deepEqual(selectFoundationCases({ referencesOnly: true }), [
+    "retirement",
+    "healthy-release",
+  ]);
+  assert.throws(() => selectFoundationCases(), /twelve observation-table producers/);
+  assert.throws(() => selectFoundationCases({ caseId: "contention" }), /unsupported case/);
+  assert.throws(
+    () => selectFoundationCases({ referencesOnly: true, caseId: "registration-end" }),
+    /mutually exclusive/,
+  );
+});
+
+test("registration-end source provenance retains original ports and SDK callback", async () => {
+  const source = await readFile(new URL("./plugin-persistence-main.ts", import.meta.url), "utf8");
+  const consumer = await readFile(
+    new URL("./fixtures/plugin-persistence/consumer.ts", import.meta.url),
+    "utf8",
+  );
+  const file = ts.createSourceFile("producer.ts", source, ts.ScriptTarget.Latest, true);
+  const producer = file.statements.find(
+    (node) => ts.isFunctionDeclaration(node) && node.name?.text === "produceRegistrationEnd",
+  );
+  assert.ok(producer, "missing live producer");
+  const body = producer.getText(file).replace(/\s+/g, " ");
+  const required = [
+    'input.host.request(\n        principal,\n        "storage/registerCheckpoint"',
+    'input.fault.arm("before-publish", "pause")',
+    'input.fault.release("before-publish")',
+    "endReservation.call(this, event, deadline)",
+    "drain.call(this, offer,",
+    "reserve.call(this, ticket, size)",
+    "reserveFinal.call(this, ticket, size, grant)",
+    "dispatch(target, request, ...rest)",
+    "input.fault.trace()",
+    '"devices/recording/release"',
+    '"storage/readChunk"',
+    "participant.endReservation = endReservation",
+    "participant.drain = drain",
+    "engine.reserve = reserve",
+    "engine.reserveFinal = reserveFinal",
+  ];
+  const observations = required.map((text) => text.replace(/\s+/g, " "));
+  const verify = (text) => {
+    for (const observation of observations)
+      assert.ok(text.includes(observation), `missing source provenance: ${observation}`);
+    assert.ok(text.includes("finally"));
+  };
+  verify(body);
+  for (const observation of observations)
+    assert.throws(
+      () => verify(body.replaceAll(observation, "removed-observation")),
+      /missing source provenance/,
+    );
+  assert.ok(source.includes('"registration-end": () => produceRegistrationEnd(input)'));
+  assert.ok(consumer.includes('from "@kobrixa/plugin-sdk"'));
+  for (const operation of ["beginWrite", "writeChunk", "sealWrite", "commitWrite", "flush"])
+    assert.ok(consumer.includes(`storage.${operation}(`), `missing SDK operation ${operation}`);
+  assert.ok(consumer.includes('phase: "final"'));
+  assert.ok(consumer.includes("drainToken: request.token"));
 });

@@ -114,9 +114,36 @@ void runPlugin(
       });
     },
     async drain({ request, storage }) {
-      assert.equal(request.checkpoints.length, 0);
+      const writes: string[] = [];
+      for (const { checkpoint, record } of request.checkpoints) {
+        assert.equal(record.kind, "test.registration-end");
+        const bytes = Buffer.from(`Synthetic final checkpoint ${record.id}\n`);
+        const write = value(
+          await storage.beginWrite({
+            target: { mode: "replace", id: record.id, expectedRevision: record.revision },
+            kind: record.kind,
+            schemaVersion: record.schemaVersion,
+            label: record.label,
+            mediaType: record.mediaType,
+            byteLength: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            checkpoint: { handle: checkpoint, phase: "final" },
+            drainToken: request.token,
+          }),
+        );
+        value(
+          await storage.writeChunk({
+            write: write.write,
+            offset: 0,
+            data: bytes.toString("base64"),
+          }),
+        );
+        value(await storage.sealWrite({ write: write.write }));
+        value(await storage.commitWrite({ write: write.write, drainToken: request.token }));
+        writes.push(write.write);
+      }
       value(await storage.flush({}));
-      return { ok: true, value: { status: "submitted", writes: [] } };
+      return { ok: true, value: { status: "submitted", writes } };
     },
   }),
 ).catch(() => {
