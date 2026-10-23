@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { PluginToolsPane } from "../../apps/desktop/src/renderer/plugin-ui/panel-host.js";
 import { PluginStatusHost } from "../../apps/desktop/src/renderer/plugin-ui/status-host.js";
 import { CorePersistenceRecovery } from "../../apps/desktop/src/renderer/plugin-ui/core-persistence-detail.js";
+import {
+  CoreRecoveryView,
+  type CoreRecoveryStore,
+} from "../../apps/desktop/src/renderer/plugin-ui/core-recovery.js";
 import {
   SettingsControls,
   SettingsControlsView,
@@ -35,6 +39,7 @@ function retain(instance: object, lookup: (value: object) => FoundationDiagnosti
 }
 retain(owner.host, hostDiagnostics);
 retain(owner.session.catalog, stateDiagnostics);
+const observeRecoveryStore = (store: CoreRecoveryStore) => retain(store, hostDiagnostics);
 function discover() {
   for (const entry of owner.session.catalog.getSnapshot().entries) {
     const record = owner.session.record(entry);
@@ -110,6 +115,10 @@ function Settings({ sourceKey, locale }: { sourceKey: string; locale: "en" | "zh
 }
 function Shell() {
   const { values } = useSettings();
+  const recoveryRequest = useSyncExternalStore(
+    owner.session.subscribe,
+    owner.session.getRecoveryRequest,
+  );
   const [source, setSource] = useState<string | null>(null);
   const labels = pluginUiCopy[values.locale];
   return (
@@ -138,6 +147,13 @@ function Shell() {
         />
         <PluginStatusHost session={owner.session} locale={values.locale} labels={labels} />
       </main>
+      <CoreRecoveryView
+        port={owner.recovery}
+        locale={values.locale}
+        labels={labels}
+        request={recoveryRequest}
+        observeStore={observeRecoveryStore}
+      />
       <CorePersistenceRecovery port={window.kobrixa.plugins.persistenceRecovery} labels={labels} />
     </>
   );
