@@ -769,14 +769,13 @@ export async function produceRegistrationEnd(input: LifecycleCaseInput): Promise
   const endReservation = participant.endReservation,
     drain = participant.drain;
   const engine = input.backend.engine,
-    reserve = engine.reserve,
-    reserveFinal = engine.reserveFinal;
-  assert.ok(reserveFinal, "Missing actual final admission port");
+    reserve = engine.reserve;
   const tickets: PublicationTicket[] = [],
     finalTickets: PublicationTicket[] = [];
   const offers: DrainOffer[] = [],
     requests: DrainRequest[] = [];
   const submissions: NonNullable<CaseEvidence["registration"]>["submissions"] = [];
+  const dispatchErrors: string[] = [];
   const ended = latch<DrainOffer>(),
     completed = latch<void>();
   let firstOffer: DrainOffer | undefined;
@@ -787,10 +786,6 @@ export async function produceRegistrationEnd(input: LifecycleCaseInput): Promise
   engine.reserve = function (ticket, size) {
     if (sameExecution(ticket.owner, owner)) tickets.push(structuredClone(ticket));
     return reserve.call(this, ticket, size);
-  };
-  engine.reserveFinal = function (ticket, size, grant) {
-    if (sameExecution(ticket.owner, owner)) finalTickets.push(structuredClone(ticket));
-    return reserveFinal.call(this, ticket, size, grant);
   };
   participant.endReservation = function (event, deadline) {
     const offer = endReservation.call(this, event, deadline);
@@ -809,13 +804,30 @@ export async function produceRegistrationEnd(input: LifecycleCaseInput): Promise
     const result = drain.call(this, offer, (target, request, ...rest) => {
       assert.ok(sameExecution(target, owner), "Drain dispatcher changed the original owner");
       requests.push(structuredClone(request));
-      return dispatch(target, request, ...rest).then((result) => {
-        submissions.push(structuredClone(result));
-        return result;
-      });
+      return dispatch(target, request, ...rest).then(
+        (result) => {
+          submissions.push(structuredClone(result));
+          return result;
+        },
+        (error: unknown) => {
+          dispatchErrors.push(error instanceof Error ? `${error.stack}` : String(error));
+          throw error;
+        },
+      );
     });
     draining = result.then((report) => {
-      assert.equal(report.state, "saved");
+      assert.equal(
+        report.state,
+        "saved",
+        JSON.stringify({
+          report,
+          requests,
+          submissions,
+          dispatchErrors,
+          finalTickets,
+          trace: input.fault.trace().slice(traceStart),
+        }),
+      );
       assert.equal(report.blocker, false);
       completed.resolve();
     });
@@ -868,6 +880,23 @@ export async function produceRegistrationEnd(input: LifecycleCaseInput): Promise
     if (!registered.ok) assert.equal(registered.error.code, "PLUGIN_E_STALE_RESOURCE");
     await within(completed.promise, "public SDK final drain");
     await draining;
+    // The host copies engine methods when composing its record service. Read
+    // the backend's actual admission snapshot instead of wrapping that copy.
+    const barrier = input.backend.evidence.capture(
+      { kind: "target", owner, recordId: seed.record.id },
+      firstOffer.deadlineMonotonicMs,
+    );
+    finalTickets.push(
+      ...input.backend.evidence
+        .tickets(barrier)
+        .filter(
+          (ticket) =>
+            sameExecution(ticket.owner, owner) &&
+            ticket.metadata.kind === "record" &&
+            ticket.metadata.record.checkpoint === "final",
+        ),
+    );
+    assert.equal((await input.backend.evidence.flush(barrier)).state, "saved");
     const finalRecord = accepted(
       await input.host.request(principal, "storage/stat", { id: seed.record.id }, signal),
     ).record;
@@ -961,7 +990,6 @@ export async function produceRegistrationEnd(input: LifecycleCaseInput): Promise
       );
     } finally {
       engine.reserve = reserve;
-      engine.reserveFinal = reserveFinal;
       participant.endReservation = endReservation;
       participant.drain = drain;
     }

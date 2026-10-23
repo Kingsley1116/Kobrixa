@@ -972,7 +972,8 @@ test("registration-end source provenance retains original ports and SDK callback
     (node) => ts.isFunctionDeclaration(node) && node.name?.text === "produceRegistrationEnd",
   );
   assert.ok(producer, "missing live producer");
-  const body = producer.getText(file).replace(/\s+/g, " ");
+  const normalize = (text) => text.replace(/\s+/g, " ").replace(/\s*\.\s*/g, ".");
+  const body = normalize(producer.getText(file));
   const required = [
     'input.host.request(\n        principal,\n        "storage/registerCheckpoint"',
     'input.fault.arm("before-publish", "pause")',
@@ -980,7 +981,9 @@ test("registration-end source provenance retains original ports and SDK callback
     "endReservation.call(this, event, deadline)",
     "drain.call(this, offer,",
     "reserve.call(this, ticket, size)",
-    "reserveFinal.call(this, ticket, size, grant)",
+    "input.backend.evidence.capture(",
+    "input.backend.evidence.tickets(barrier)",
+    "input.backend.evidence.flush(barrier)",
     "dispatch(target, request, ...rest)",
     "input.fault.trace()",
     '"devices/recording/release"',
@@ -988,9 +991,8 @@ test("registration-end source provenance retains original ports and SDK callback
     "participant.endReservation = endReservation",
     "participant.drain = drain",
     "engine.reserve = reserve",
-    "engine.reserveFinal = reserveFinal",
   ];
-  const observations = required.map((text) => text.replace(/\s+/g, " "));
+  const observations = required.map(normalize);
   const verify = (text) => {
     for (const observation of observations)
       assert.ok(text.includes(observation), `missing source provenance: ${observation}`);
