@@ -2649,7 +2649,7 @@ import {
 } from "./persistence/host-port.js";
 import { openStoreRoot } from "./persistence/filesystem.js";
 import { startPersistenceWorker, type PersistenceFaultControl } from "./persistence/worker.js";
-import { persistenceWorkerPath } from "../../../packaging.js";
+import { persistenceWorkerPath } from "./persistence/worker-path.js";
 import {
   createLegacyWriterBarrier,
   type LegacyWriterPort,
