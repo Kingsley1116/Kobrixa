@@ -822,6 +822,9 @@ export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<
 // Test-local artifact metadata; no executable adapters, host factories or evidence inputs.
 // Controller materializes this JSON and configures userData before calling the factory.
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import type * as ElectronModule from "electron";
 import path from "node:path";
 import os from "node:os";
 import type {
@@ -834,6 +837,7 @@ import type {
   FoundationCounters,
   FoundationDiagnostics,
   Stage3BuiltinSource,
+  BuiltinLaunchDescriptor,
 } from "@kobrixa/plugin-runtime";
 import type { FakeProviderControl } from "../../apps/desktop/src/main/device-broker/fake-provider.js";
 
@@ -847,7 +851,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     ?.slice("--persistence-config=".length);
   if (!configPath || !path.isAbsolute(configPath))
     throw new Error("BLOCKED: missing controller artifact configuration");
-  const config = JSON.parse(await readFile(configPath, "utf8"));
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
   for (const key of [
     "profile",
     "buildRoot",
@@ -869,7 +873,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       `BLOCKED: ${config.case} requires its observation-table producer; authoring scope is the reference pair`,
     );
   // No native import or service allocation occurs at module import time.
-  const { app, BrowserWindow, ipcMain } = await import("electron");
+  // Requiring Electron only inside the invoked factory preserves inert imports
+  // and avoids an asynchronous ESM load racing app readiness/primary locking.
+  const { app, BrowserWindow, ipcMain } = createRequire(configPath)(
+    "electron",
+  ) as typeof ElectronModule;
   assert.equal(app.isReady(), false, "Profile and primary lock must precede Electron readiness");
   assert.equal(
     app.getPath("userData"),
@@ -889,12 +897,17 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("../../apps/desktop/src/main/device-broker/fake-provider.js");
   const { createCoreActionLedger, CoreRecovery } =
     await import("../../apps/desktop/src/main/plugins/core-recovery.js");
-  const { composeDesktopMain, desktopUi, desktopLifecycle, desktopFoundationTestHandles } =
-    await import("../../apps/desktop/src/main/plugins/controller.js");
+  const {
+    composeDesktopMain,
+    desktopUi,
+    desktopLifecycle,
+    desktopFoundationTestHandles,
+    desktopDeviceAccess,
+  } = await import("../../apps/desktop/src/main/plugins/controller.js");
   const { registerCoreRecoveryIpc } = await import("../../apps/desktop/src/main/plugins/ipc.js");
   const { registerPersistenceWindow170 } = await import("../../apps/desktop/src/main/ipc.js");
   const { BUILTIN_PLUGIN_SOURCES } = await import("../../apps/desktop/src/main/plugins/builtin.js");
-  const { resolveBuiltinLaunch } =
+  const { validateBuiltinLeaf } =
     await import("../../apps/desktop/src/main/plugins/builtin-launch.js");
   const { readSource } = await import("@kobrixa/plugin-runtime");
   const { registerUiIpc, registerUiEventIpc, diagnosticsFor: bridgeDiagnostics } =
@@ -942,7 +955,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       // Each actual top-level navigation receives a new main-owned document scope.
       // No renderer-supplied authority or stale initial about:blank scope is reused.
       win.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
-        if (mainFrame && !inPlace) openDocument();
+        if (mainFrame && !inPlace) {
+          authority.invalidate(win.webContents.id);
+          openDocument();
+        }
       });
       const scope = () => {
         const p = authority.core(win.webContents.id, "recovery");
@@ -964,7 +980,6 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         fake: FakeProviderControl | undefined,
         fault: PersistenceFaultControl | undefined;
       let restoreReservation = () => {};
-      let currentOwner: (owner: ResourceOwner) => boolean = () => false;
       const ipcNames: string[] = [],
         off: Array<() => void> = [],
         failures: unknown[] = [];
@@ -1003,19 +1018,27 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       try {
         await journal.load();
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
-        const admitted: Awaited<ReturnType<typeof readSource>>[] = [];
         for (const role of ["recording", "settings"]) {
           const pluginId = `acceptance.ui-${role}`,
             sourceKey = `builtin:${pluginId}`,
             slug = `acceptance-builtin-${role}`;
-          const launch = await resolveBuiltinLaunch({
+          // Explicit test-only sources use the real payload validator and launcher.
+          // They are not product registrations: never extend the shipped allowlist
+          // or substitute for the motor/lab identities to run this reference fixture.
+          const payload = await validateBuiltinLeaf(
+            path.join(config.buildRoot, "plugins", slug),
+            pluginId,
+          );
+          const launch: BuiltinLaunchDescriptor = {
             sourceKey,
             pluginId,
-            slug,
-            packaged: app.isPackaged,
-            appPath: app.getAppPath(),
-            buildRoot: config.buildRoot,
-          });
+            policy: "optional" as const,
+            runtime: "node" as const,
+            packageRoot: payload.root,
+            entry: "main.cjs",
+            manifest: "kobrixa-plugin.json",
+            resourceIndex: "resource-index.json",
+          };
           const manifest = JSON.parse(
             await readFile(path.join(launch.packageRoot, launch.manifest), "utf8"),
           );
@@ -1044,8 +1067,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           };
           const validated = await readSource(source, { safeMode: false });
           assert.ok(validated.manifest, `Invalid builtin ${sourceKey}`);
+          assert.deepEqual(validated.problems, [], `Invalid builtin ${sourceKey}`);
           assert.equal(validated.sourceKey, sourceKey);
-          admitted.push(validated);
           builtins.push(source);
         }
         const compositionInput: DesktopMainCompositionInput = {
@@ -1058,15 +1081,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             now,
             hasPermission: (principal, permission) =>
               principal.kind === "plugin" &&
-              currentOwner(principal.owner) &&
-              !!admitted
-                .find((s) => s.sourceKey === principal.owner.sourceKey)
-                ?.manifest?.permissions?.includes(permission),
-            requirements: (owner) => {
-              if (!currentOwner(owner)) return null;
-              const manifest = admitted.find((s) => s.sourceKey === owner.sourceKey)?.manifest;
-              return manifest ? (manifest.requires?.devices ?? []) : null;
-            },
+              !!composition &&
+              desktopDeviceAccess(composition.plugins).hasPermission(principal.owner, permission),
+            requirements: (owner) =>
+              composition ? desktopDeviceAccess(composition.plugins).requirements(owner) : null,
             connectionPolicy: () => ({
               wifiConnectTimeoutMs: 10000,
               wifiHandshakeTimeoutMs: 5000,
@@ -1108,7 +1126,6 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const live = composition,
           handles = desktopFoundationTestHandles(live),
           ui = desktopUi(live);
-        currentOwner = (owner) => handles.runtime.current(owner);
         assert.ok(fake, "Missing actual provider callback");
         assert.ok(fault, "Missing actual worker control");
         assert.equal(handles.recovery, "ready");
@@ -1212,7 +1229,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         for (const role of ["recording", "settings"]) {
           const sourceKey = `builtin:acceptance.ui-${role}`;
           const activated = await live.plugins.execute(`acceptance.ui-${role}.legacy`);
-          assert.equal(activated.ok, true, "Explicit controller activation failed");
+          assert.equal(
+            activated.ok,
+            true,
+            `Explicit controller activation failed: ${JSON.stringify({
+              result: activated,
+              source: live.plugins.state().plugins.find((plugin) => plugin.sourceKey === sourceKey),
+            })}`,
+          );
           const context = await handles.runtime.activateInitialized(
             sourceKey,
             new AbortController().signal,

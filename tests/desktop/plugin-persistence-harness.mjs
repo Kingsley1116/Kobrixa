@@ -572,11 +572,17 @@ export function verifyRestartDetails(trials) {
 }
 
 // Test-only entry finalization shared by the generated Electron entry and pure flow tests.
-export function diagnosticError(error) {
+export function diagnosticError(error, depth = 0) {
   return {
     name: error?.name ?? "Error",
     message: error?.message ?? String(error),
     ...(typeof error?.stack === "string" ? { stack: error.stack } : {}),
+    ...(depth < 4 && error?.cause !== undefined
+      ? { cause: diagnosticError(error.cause, depth + 1) }
+      : {}),
+    ...(depth < 4 && Array.isArray(error?.errors)
+      ? { errors: error.errors.slice(0, 16).map((child) => diagnosticError(child, depth + 1)) }
+      : {}),
   };
 }
 export async function runReferenceEntry(createFixture, config, io) {

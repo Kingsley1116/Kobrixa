@@ -1,6 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readEvidence, verifyMatrix, verifyInterop } from "./plugin-persistence-harness.mjs";
+import {
+  diagnosticError,
+  readEvidence,
+  verifyMatrix,
+  verifyInterop,
+} from "./plugin-persistence-harness.mjs";
+
+test("entry diagnostics retain bounded causes and aggregate construction failures", () => {
+  const cause = new Error("missing settings payload");
+  const error = new AggregateError(
+    [new Error("activation failed"), new Error("settings unavailable", { cause })],
+    "construction failed",
+  );
+  const result = diagnosticError(error);
+  assert.equal(result.message, "construction failed");
+  assert.equal(result.errors[0].message, "activation failed");
+  assert.equal(result.errors[1].cause.message, "missing settings payload");
+  cause.cause = cause;
+  assert.doesNotThrow(() => JSON.stringify(diagnosticError(cause)));
+  assert.equal(diagnosticError(new AggregateError(Array(40).fill(error))).errors.length, 16);
+});
 
 test("B2 §10: every negative row has real reopened state evidence", async () => {
   const report = await readEvidence();

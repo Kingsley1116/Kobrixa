@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
-import { access, readFile, writeFile, mkdir, mkdtemp, cp, readdir } from "node:fs/promises";
+import {
+  access,
+  readFile,
+  writeFile,
+  mkdir,
+  mkdtemp,
+  cp,
+  readdir,
+  realpath,
+} from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { builtinModules, createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -105,13 +114,19 @@ async function materialize(buildRoot, build) {
     bundle: true,
     platform: "node",
     format: "cjs",
-    packages: "external",
-    banner: {
-      js: `module.paths.push(${JSON.stringify(path.join(root, "node_modules"))},${JSON.stringify(path.join(root, "apps/desktop/node_modules"))});`,
+    define: {
+      // Config URLs describe checkout sources, not the temporary CJS bundle.
+      "import.meta.url": JSON.stringify(
+        pathToFileURL(path.join(root, "apps/desktop/vite.plugin.config.ts")).href,
+      ),
     },
   });
   const { builtinPluginConfig } = desktopRequire(configBundle);
   const template = path.join(root, "tests/desktop/fixtures/builtin-process");
+  const templateId = JSON.parse(
+    await readFile(path.join(template, "kobrixa-plugin.json"), "utf8"),
+  ).id;
+  assert.ok(typeof templateId === "string" && templateId.length > 0);
   const fixture = path.join(root, "tests/desktop/fixtures/plugin-persistence");
   for (const role of ["recording", "settings"]) {
     const id = `acceptance.ui-${role}`,
@@ -123,7 +138,7 @@ async function materialize(buildRoot, build) {
         const file = path.join(directory, entry.name);
         if (entry.isDirectory()) await rewrite(file);
         else if (/\.(json|ts)$/.test(entry.name))
-          await writeFile(file, (await readFile(file, "utf8")).replaceAll("acceptance.ui", id));
+          await writeFile(file, (await readFile(file, "utf8")).replaceAll(templateId, id));
       }
     };
     await rewrite(sourceRoot);
@@ -160,7 +175,16 @@ async function materialize(buildRoot, build) {
     await viteBuild({
       ...config,
       configFile: false,
-      build: { ...config.build, outDir: path.join(buildRoot, "plugins", slug) },
+      resolve: { ...config.resolve, conditions: ["node"] },
+      build: {
+        ...config.build,
+        lib: { entry: path.join(sourceRoot, "src/main.ts"), formats: ["cjs"] },
+        rollupOptions: {
+          ...config.build.rollupOptions,
+          external: builtinModules.flatMap((name) => [name, `node:${name}`]),
+        },
+        outDir: path.join(buildRoot, "plugins", slug),
+      },
     });
   }
 }
@@ -536,7 +560,7 @@ export async function runFoundationEvidence({ referencesOnly = false } = {}) {
     "PERSISTENCE_EVIDENCE must be an absolute retained report path",
   );
   const { build } = await import("esbuild");
-  const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-persistence-"));
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-persistence-")));
   const buildRoot = path.join(directory, "build");
   await mkdir(buildRoot);
   // Failed artifacts/profiles are retained for diagnosis; no profile deletion while a process is alive.
@@ -554,8 +578,25 @@ export async function runFoundationEvidence({ referencesOnly = false } = {}) {
       platform: "node",
       format: "cjs",
       alias,
-      external: ["electron"],
-      plugins: [rawResourcePlugin()],
+      external: ["electron", "node-hid", "usb"],
+      plugins: [
+        rawResourcePlugin(),
+        {
+          name: "preserve-packaging-source-url",
+          setup(builder) {
+            builder.onLoad(
+              { filter: /[/\\]apps[/\\]desktop[/\\]packaging\.ts$/ },
+              async ({ path: file }) => ({
+                contents: (await readFile(file, "utf8")).replaceAll(
+                  "import.meta.url",
+                  JSON.stringify(pathToFileURL(file).href),
+                ),
+                loader: "ts",
+              }),
+            );
+          },
+        },
+      ],
     });
   const syntheticRoot = path.join(directory, "synthetic");
   await mkdir(syntheticRoot);
@@ -571,10 +612,11 @@ export async function runFoundationEvidence({ referencesOnly = false } = {}) {
   await writeFile(
     source,
     `import {app} from 'electron';
-import {readFile,writeFile} from 'node:fs/promises';
+import {writeFile} from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
 import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-main.ts"))};
 import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
-const config=JSON.parse(await readFile(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
+const config=JSON.parse(readFileSync(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
 app.setPath('userData',config.profile);
 const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
  reportFailure:failure=>console.error(JSON.stringify(failure))});
@@ -603,7 +645,16 @@ app.exit(code);
       ),
     ]),
   );
-  const electron = createRequire(path.join(root, "apps/desktop/package.json"))("electron");
+  // Never invoke Electron's path getter: it may auto-download an absent binary.
+  const electronPackage = path.dirname(
+    createRequire(path.join(root, "apps/desktop/package.json")).resolve("electron/package.json"),
+  );
+  const electron = path.join(
+    electronPackage,
+    "dist",
+    (await readFile(path.join(electronPackage, "path.txt"), "utf8")).trim(),
+  );
+  await access(electron);
   const reports = [];
   for (const id of ["retirement", "healthy-release"]) {
     const profile = await mkdtemp(path.join(directory, `${id}-`)),
