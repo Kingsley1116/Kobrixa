@@ -2080,6 +2080,9 @@ export function runNativeMotor() {
         }
         const recoverySnapshot = composition.foundation.broker.recovery.snapshot();
         let expectedBlockedClose: { name: string; message: string; device: unknown } | undefined;
+        let providerCleanup:
+          | { startedAt: number; finishedAt: number; traceStart: number; traceEnd: number }
+          | undefined;
         if (
           scenario.stress === "withheld-readback" ||
           (scenario.fault === "source-loss" && terminal.stopConfirmation === "unconfirmed")
@@ -2117,7 +2120,15 @@ export function runNativeMotor() {
           }
         } else {
           activeStage = "composition cleanup";
+          const startedAt = wall(),
+            traceStart = control.trace().length - traceBefore;
           await bounded(composition.dispose(), "real composition cleanup", 25_000);
+          providerCleanup = {
+            startedAt,
+            finishedAt: wall(),
+            traceStart,
+            traceEnd: control.trace().length - traceBefore,
+          };
         }
         activeStage = "renderer retirement";
         await bounded(retirement ?? Promise.resolve(), "renderer retirement completion");
@@ -2177,6 +2188,7 @@ export function runNativeMotor() {
               pid,
               childPids: [...childPids],
               expectedBlockedClose,
+              providerCleanup,
               expectedCleanupReports,
               versions: process.versions,
             },

@@ -1536,6 +1536,13 @@ test("core Stop binds native IPC, queried snapshots and sent hardware evidence",
       },
     ],
   };
+  // This pure specimen predates provider retirement; no connection remained at cleanup.
+  report.providerCleanup = {
+    startedAt: report.stoppedAt + 1,
+    finishedAt: report.stoppedAt + 2,
+    traceStart: report.trace.length,
+    traceEnd: report.trace.length,
+  };
   validateNative(report, report.artifact, report.scenario);
   for (const mutate of [
     (r) => {
@@ -1837,5 +1844,60 @@ test("blur evidence distinguishes injection markers from native focus loss and b
     const invalid = structuredClone(report);
     mutate(invalid);
     assert.throws(() => validateBlurEvidence(invalid));
+  }
+});
+
+test("awaited cleanup permits one new disconnect identity without hiding reconnect or motor writes", () => {
+  const report = {
+    operationId: "motion",
+    stoppedAt: 3,
+    providerCleanup: { startedAt: 4, finishedAt: 7, traceStart: 2, traceEnd: 4 },
+    trace: [
+      { step: "stop", dispatch: "sent", operationId: "motion", time: 1 },
+      { step: "readback", dispatch: "sent", operationId: "motion", time: 2 },
+      { step: "disconnect", dispatch: "not-sent", operationId: "retirement", time: 5 },
+      { step: "disconnect", dispatch: "sent", operationId: "retirement", time: 6 },
+    ],
+  };
+  validateProviderTrace(report, { fault: "source-loss" });
+  for (const mutate of [
+    (r) => {
+      delete r.providerCleanup;
+    },
+    (r) => {
+      r.providerCleanup.startedAt = 2;
+    },
+    (r) => {
+      r.providerCleanup.finishedAt = 5;
+    },
+    (r) => {
+      r.providerCleanup.traceStart = 1;
+    },
+    (r) => {
+      r.providerCleanup.traceEnd = 3;
+    },
+    (r) => {
+      r.trace[2].step = "connect";
+    },
+    (r) => {
+      r.trace[3].step = "motion-pulse";
+    },
+    (r) => {
+      r.trace[3].operationId = "motion";
+    },
+    (r) => {
+      r.trace[2].operationId = r.trace[3].operationId = "motion";
+    },
+    (r) => {
+      r.trace.push({ ...r.trace[3] });
+      r.providerCleanup.traceEnd++;
+    },
+    (r) => {
+      r.expectedBlockedClose = { name: "CleanupBlocked" };
+    },
+  ]) {
+    const invalid = structuredClone(report);
+    mutate(invalid);
+    assert.throws(() => validateProviderTrace(invalid, { fault: "source-loss" }));
   }
 });

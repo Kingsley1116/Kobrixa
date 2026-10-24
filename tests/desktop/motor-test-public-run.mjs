@@ -189,7 +189,37 @@ export function validateCancellation(row, wire) {
   assert.ok(request && request.at <= row.at, "Cancellation requires an observed original request");
 }
 export function validateProviderTrace(report, scenario) {
-  const connections = report.trace.filter((r) => ["connect", "disconnect"].includes(r.step));
+  const cleanup = report.providerCleanup;
+  let workload = report.trace;
+  if (cleanup) {
+    assert.equal(report.expectedBlockedClose, undefined);
+    assert.ok(Number.isFinite(cleanup.startedAt) && Number.isFinite(cleanup.finishedAt));
+    assert.ok(cleanup.startedAt >= report.stoppedAt && cleanup.finishedAt >= cleanup.startedAt);
+    assert.ok(Number.isInteger(cleanup.traceStart) && Number.isInteger(cleanup.traceEnd));
+    assert.ok(cleanup.traceStart >= 0 && cleanup.traceStart <= cleanup.traceEnd);
+    assert.equal(cleanup.traceEnd, report.trace.length, "No provider work after awaited cleanup");
+    const retired = report.trace.slice(cleanup.traceStart, cleanup.traceEnd);
+    for (const row of retired) {
+      assert.equal(row.step, "disconnect", "Retirement cannot reconnect or move motors");
+      assert.ok(row.time >= cleanup.startedAt && row.time <= cleanup.finishedAt);
+    }
+    if (retired.length) {
+      assert.deepEqual(
+        retired.map((row) => row.dispatch),
+        ["not-sent", "sent"],
+      );
+      assert.ok(retired[0].operationId && retired[0].operationId !== report.operationId);
+      assert.equal(retired[0].operationId, retired[1].operationId);
+      assert.ok(
+        !report.trace
+          .slice(0, cleanup.traceStart)
+          .some((row) => row.operationId === retired[0].operationId),
+      );
+      assert.ok(retired[1].time >= retired[0].time);
+    }
+    workload = report.trace.slice(0, cleanup.traceStart);
+  }
+  const connections = workload.filter((r) => ["connect", "disconnect"].includes(r.step));
   assert.ok(
     report.trace
       .filter((r) => !["connect", "disconnect"].includes(r.step))
@@ -685,6 +715,8 @@ export function validateNative(report, identity, scenario) {
       ),
       "Actual repeat event delivery required",
     );
+  if (!report.expectedBlockedClose)
+    assert.ok(report.providerCleanup, "Awaited provider cleanup receipt required");
   validateProviderTrace(report, scenario);
   assert.ok(
     report.hostQueries?.length &&
