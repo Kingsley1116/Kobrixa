@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { CaseEvidence, LifecycleCaseInput } from "./plugin-persistence-main.js";
 import type { ContentionCheckpoint } from "./plugin-persistence-contention.js";
 import type { LifecycleCoordinator } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
@@ -16,7 +16,16 @@ import type {
   ReservationEnded,
   Stage3ChannelContext,
 } from "@kobrixa/plugin-runtime";
-import type { ReservationSnapshot, DrainRequest } from "@kobrixa/plugin-protocol";
+import type {
+  PublicationTicket,
+  PersistenceBarrier,
+} from "../../apps/desktop/src/main/plugins/persistence/engine-port.js";
+import type {
+  RecordMeta,
+  StorageRequestMap,
+  ReservationSnapshot,
+  DrainRequest,
+} from "@kobrixa/plugin-protocol";
 
 /** All handles belong to the ONE composeDesktopMain instance. No replacement lifecycle/provider. */
 export type SuspendCaseInput = LifecycleCaseInput & {
@@ -36,7 +45,7 @@ function replaysMotion(row: ReturnType<FakeProviderControl["trace"]>[number], op
     ["preflight", "helper-upload", "helper-run", "helper-arm", "motion-pulse"].includes(row.step)
   );
 }
-type Trace = { phase: string; kind: string; method: string; params: unknown };
+type Trace = { phase: string; kind: string; method: string; params: unknown; callId?: string };
 export type SuspendObservation = {
   trace: Trace[];
   providerBefore: ReturnType<FakeProviderControl["trace"]>;
@@ -50,7 +59,20 @@ export type SuspendObservation = {
   ended: ReservationEnded;
   reservationAfter: ReservationSnapshot;
   offerBefore: DrainOffer;
-  offerAfter: DrainOffer;
+  checkpoint: ContentionCheckpoint;
+  finalRecord: RecordMeta;
+  originalReservation: ReservationSnapshot;
+  probeCalls: { start: string; gesture: string };
+  grantProbe: {
+    owner: Stage3ChannelContext["owner"];
+    params: StorageRequestMap["storage/beginWrite"]["params"];
+    result: StorageRequestMap["storage/beginWrite"]["result"];
+    started: number;
+    ended: number;
+    before: { barrier: PersistenceBarrier; tickets: readonly PublicationTicket[] };
+    after: { barrier: PersistenceBarrier; tickets: readonly PublicationTicket[] };
+    recordAfter: RecordMeta;
+  };
   requests: DrainRequest[];
   dispatchedAt: number[];
   drainStartedAt: number;
@@ -101,13 +123,120 @@ export function assertSuspendObservation(o: SuspendObservation): void {
     o.gestureAgeAtProbe >= 0 && o.gestureAgeAtProbe < 350,
     "Gesture expired before the revocation probe",
   );
-  assert.deepEqual(o.offerAfter, o.offerBefore, "Drain token/deadline renewed");
+  const binding = o.checkpoint.document.binding;
+  assert.ok(binding);
+  for (const key of ["sourceKey", "pluginId", "hostEpoch", "processEpoch"] as const)
+    assert.ok(o.originalOwner[key]);
+  assert.ok(Number.isSafeInteger(o.originalOwner.generation));
+  assert.deepEqual(binding.owner, o.originalOwner);
+  assert.deepEqual(o.offerBefore.owner, o.originalOwner);
+  assert.ok(binding.sessionId && binding.reservationId);
+  assert.ok(Number.isSafeInteger(binding.providerGeneration));
+  for (const key of ["sessionId", "reservationId", "providerGeneration"] as const)
+    assert.equal(o.ended[key], binding[key]);
+  for (const row of [o.originalReservation, o.reservationAfter]) {
+    assert.equal(row.sessionId, binding.sessionId);
+    assert.equal(row.reservationId, binding.reservationId);
+  }
+  assert.equal(o.originalReservation.state, "active");
+  assert.ok(o.checkpoint.checkpoint);
+  assert.equal(o.checkpoint.document.checkpoint, o.checkpoint.checkpoint);
+  assert.deepEqual(o.checkpoint.document.record, o.checkpoint.record);
+  const original = o.checkpoint.record,
+    final = o.finalRecord;
+  assert.ok(original.id && original.revision && final.revision);
+  assert.notEqual(final.revision, original.revision);
+  for (const key of ["id", "kind", "schemaVersion", "label", "mediaType", "createdAt"] as const) {
+    assert.notEqual(original[key], undefined);
+    assert.equal(final[key], original[key]);
+  }
+  const originalBytes = Buffer.from(o.checkpoint.payloadBase64, "base64");
+  assert.equal(original.byteLength, originalBytes.length);
+  assert.equal(original.sha256, createHash("sha256").update(originalBytes).digest("hex"));
+  // The admitted SDK fixture's final payload is deterministic; retain the actual stat too.
+  const finalBytes = Buffer.from(`Synthetic final checkpoint ${original.id}\n`);
+  assert.equal(final.byteLength, finalBytes.length);
+  assert.equal(final.sha256, createHash("sha256").update(finalBytes).digest("hex"));
+  assert.equal(final.checkpoint, "final");
+  assert.equal(final.interrupted, false);
+  assert.ok(Number.isFinite(final.updatedAt) && final.updatedAt >= original.updatedAt);
+  const probe = o.grantProbe;
+  assert.deepEqual(probe.owner, o.originalOwner);
+  assert.deepEqual(probe.params, {
+    target: { mode: "replace", id: final.id, expectedRevision: final.revision },
+    ...Object.fromEntries(
+      ["kind", "schemaVersion", "label", "mediaType", "byteLength", "sha256"].map((key) => [
+        key,
+        final[key as keyof RecordMeta],
+      ]),
+    ),
+    checkpoint: { handle: o.checkpoint.checkpoint, phase: "final" },
+    drainToken: o.offerBefore.token,
+  });
+  assert.equal(probe.result.ok, false, "Original grant reused");
+  if (!probe.result.ok) {
+    assert.equal(probe.result.error.code, "PLUGIN_E_STALE_RESOURCE");
+    assert.deepEqual(probe.result.error.detail, {
+      kind: "resource",
+      reason: "stale",
+      resource: "storage-write",
+    });
+  }
+  assert.ok(
+    Number.isFinite(probe.started) &&
+      probe.started >= o.windows.find((w) => w.phase === "recording")!.started,
+  );
+  assert.ok(probe.ended >= probe.started && probe.ended < o.offerBefore.deadlineMonotonicMs);
+  for (const snapshot of [probe.before, probe.after]) {
+    assert.deepEqual(snapshot.barrier.scope, { kind: "namespace", owner: o.originalOwner });
+    assert.equal(snapshot.barrier.deadlineMonotonicMs, o.offerBefore.deadlineMonotonicMs);
+    assert.ok(Number.isSafeInteger(snapshot.barrier.through));
+  }
+  assert.equal(
+    probe.after.barrier.through,
+    probe.before.barrier.through,
+    "Engine admission during stale grant probe",
+  );
+  assert.deepEqual(probe.after.tickets, probe.before.tickets, "New probe ticket");
+  assert.deepEqual(probe.recordAfter, final, "Probe changed final record");
+  assert.ok(
+    o.probeCalls.start && o.probeCalls.gesture && o.probeCalls.start !== o.probeCalls.gesture,
+  );
+  for (const [name, method] of [
+    ["start", "devices/motion/start"],
+    ["gesture", "devices/motion/prepare"],
+  ] as const) {
+    const calls = o.trace.filter((r) => r.callId === o.probeCalls[name]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.phase, "motion-wake");
+    assert.equal(calls[0]!.kind, "request");
+    assert.equal(calls[0]!.method, method);
+  }
   assert.ok(o.offerBefore.token);
   assert.equal(o.ended.reason, "suspended");
   assert.equal(o.reservationAfter.reservationId, o.ended.reservationId);
   assert.equal(o.reservationAfter.state, "ended");
   assert.deepEqual(o.ended.owner, o.originalOwner);
   assert.ok(o.ended.drain);
+  assert.deepEqual(o.ended.drain.owner, o.originalOwner);
+  assert.equal(o.ended.drain.reservationId, binding.reservationId);
+  assert.ok(Number.isSafeInteger(o.ended.lastSequence));
+  assert.equal(o.ended.drain.lastSequence, o.ended.lastSequence);
+  assert.ok(probe.ended < o.ended.drain.expiresMonotonicMs);
+  assert.equal(o.offerBefore.reason, "reservation-ended");
+  assert.equal(o.requests[0]!.reason, o.offerBefore.reason);
+  assert.deepEqual(o.requests[0]!.checkpoints, o.offerBefore.checkpoints);
+  assert.deepEqual(o.requests[0]!.writes, o.offerBefore.writes);
+  assert.equal(o.requests[0]!.checkpoints.length, 1);
+  assert.deepEqual(o.requests[0]!.checkpoints[0], {
+    checkpoint: o.checkpoint.checkpoint,
+    record: original,
+    reservationEnd: {
+      reservationId: binding.reservationId,
+      reason: "suspended",
+      lastSequence: o.ended.lastSequence,
+    },
+  });
   assert.ok(o.offerBefore.deadlineMonotonicMs <= o.ended.endedMonotonicMs + 10000);
   assert.ok(o.offerBefore.deadlineMonotonicMs <= o.ended.drain.expiresMonotonicMs);
   assert.equal(o.requests.length, 1, "Missing or repeated original SDK drain");
@@ -133,10 +262,18 @@ export function assertSuspendObservation(o: SuspendObservation): void {
   assert.equal(o.report.pendingSettings, false);
   assert.equal(o.report.errors.length, 0);
   assert.equal(o.finalCheckpoint, "final");
-  assert.ok(o.report.records.length > 0);
+  assert.equal(o.report.records.length, 1);
+  assert.equal(o.report.records[0]!.id, final.id);
+  assert.equal(o.report.records[0]!.committedRevision, final.revision);
   assert.ok(o.report.records.every((r) => r.final && r.committedRevision != null));
   assert.ok(
-    o.trace.some((r) => r.phase === "setup" && r.kind === "peer" && r.method === "command/invoke"),
+    o.trace.some(
+      (r) =>
+        r.phase === "setup" &&
+        r.kind === "peer" &&
+        r.method === "command/execute" &&
+        (r.params as { command?: string })?.command === "acceptance.ui-recording.legacy",
+    ),
     "Missing baseline peer command",
   );
   for (const phase of ["motion", "recording"]) {
@@ -205,7 +342,9 @@ export function assertSuspendObservation(o: SuspendObservation): void {
     o.trace.filter(
       (r) =>
         r.phase.endsWith("-wake") &&
+        !Object.values(o.probeCalls).includes(r.callId ?? "") &&
         (r.method === "command/invoke" ||
+          r.method === "command/execute" ||
           r.method === "devices/recording/reserve" ||
           r.method === "devices/motion/prepare" ||
           r.method === "devices/motion/start" ||
@@ -266,11 +405,26 @@ export async function produceSuspendWake(
   let failure: unknown;
   let drainStartedAt: number | undefined;
   const pending: Promise<unknown>[] = [];
+  const explicitCalls = new WeakMap<object, string>();
+  const probeCalls: SuspendObservation["probeCalls"] = {
+    start: randomUUID(),
+    gesture: randomUUID(),
+  };
+  const startProbeParams = { operationId: "" };
+  explicitCalls.set(startProbeParams, probeCalls.start);
   try {
     restore.push(input.recording.child.onExit((exit) => exits.push(exit)));
     const request = broker.request;
     broker.request = function (this: typeof broker, ...args) {
-      trace.push({ phase, kind: "request", method: args[1], params: structuredClone(args[2]) });
+      const callId = explicitCalls.get(args[2]);
+      explicitCalls.delete(args[2]); // Consume before forwarding, including synchronous re-entry.
+      trace.push({
+        phase,
+        kind: "request",
+        method: args[1],
+        params: structuredClone(args[2]),
+        ...(callId ? { callId } : {}),
+      });
       return request.apply(this, args);
     } as typeof request;
     restore.push(() => {
@@ -490,32 +644,29 @@ export async function produceSuspendWake(
     phase = "motion-wake";
     const motionWakeStarted = input.now();
     await bounded(input.lifecycle.resume(sessionId));
-    phase = "old-token-probe";
+    startProbeParams.operationId = operationId;
     const oldStart = await bounded(
-      broker.request(principal, "devices/motion/start", { operationId }, signal),
+      broker.request(principal, "devices/motion/start", startProbeParams, signal),
     );
     const gestureAgeAtProbe = input.now() - lastPulse;
     assert.ok(
       gestureAgeAtProbe < 350,
       "Gesture expiry obscures suspend revocation; native observation missing",
     );
+    const gestureProbeParams = {
+      ...params,
+      gestureRef: gesture,
+      motion: {
+        actuatorId: actuator.actuatorId,
+        mode: "jog" as const,
+        power: 1,
+        direction: 1 as const,
+        brake: true,
+      },
+    };
+    explicitCalls.set(gestureProbeParams, probeCalls.gesture);
     const oldGesture = await bounded(
-      broker.request(
-        principal,
-        "devices/motion/prepare",
-        {
-          ...params,
-          gestureRef: gesture,
-          motion: {
-            actuatorId: actuator.actuatorId,
-            mode: "jog",
-            power: 1,
-            direction: 1,
-            brake: true,
-          },
-        },
-        signal,
-      ),
+      broker.request(principal, "devices/motion/prepare", gestureProbeParams, signal),
     );
     // If a regression admits a probe, retain its operation for explicit cleanup.
     if (oldGesture.ok) {
@@ -576,7 +727,58 @@ export async function produceSuspendWake(
       "Original checkpoint missing from SDK drain",
     );
     await observeWake("recording");
-    phase = "post-wake-probe";
+    const snapshotAdmissions = () => {
+      const barrier = input.backend.evidence.capture(
+        { kind: "namespace", owner },
+        offerBefore!.deadlineMonotonicMs,
+      );
+      return {
+        barrier: structuredClone(barrier),
+        tickets: structuredClone(input.backend.evidence.tickets(barrier)),
+      };
+    };
+    const grantParams: StorageRequestMap["storage/beginWrite"]["params"] = {
+      target: { mode: "replace", id: final.id, expectedRevision: final.revision },
+      kind: final.kind,
+      schemaVersion: final.schemaVersion,
+      label: final.label,
+      mediaType: final.mediaType,
+      byteLength: final.byteLength,
+      sha256: final.sha256,
+      checkpoint: { handle: checkpoint.checkpoint, phase: "final" },
+      drainToken: offerBefore.token,
+    };
+    const before = snapshotAdmissions();
+    const started = input.now();
+    const grantResult = await bounded(
+      input.host.request(principal, "storage/beginWrite", grantParams, signal),
+    );
+    const probeEnded = input.now();
+    const after = snapshotAdmissions();
+    const recordAfter = accepted(
+      await bounded(input.host.request(principal, "storage/stat", { id: final.id }, signal)),
+    ).record;
+    const grantProbe = {
+      owner: structuredClone(owner),
+      params: grantParams,
+      result: grantResult,
+      started,
+      ended: probeEnded,
+      before,
+      after,
+      recordAfter,
+    };
+    if (grantResult.ok)
+      accepted(
+        await bounded(
+          input.host.request(
+            principal,
+            "storage/abortWrite",
+            { write: grantResult.value.write },
+            signal,
+          ),
+        ),
+      );
     const reservationAfter = accepted(
       await bounded(
         broker.request(
@@ -587,6 +789,7 @@ export async function produceSuspendWake(
         ),
       ),
     ).reservation;
+    windows.find((row) => row.phase === "recording")!.ended = input.now();
     assert.equal(context.cancellation.aborted, true, "Old work cancellation was renewed");
     assert.throws(
       () => context!.assertContinuation("motion-pulse"),
@@ -608,7 +811,11 @@ export async function produceSuspendWake(
       ended,
       reservationAfter,
       offerBefore,
-      offerAfter: structuredClone(offer),
+      checkpoint,
+      finalRecord: final,
+      originalReservation: active,
+      probeCalls,
+      grantProbe,
       requests,
       dispatchedAt,
       drainStartedAt,
@@ -623,7 +830,9 @@ export async function produceSuspendWake(
       settlements,
     };
     assertSuspendObservation(observation);
-    const wake = trace.filter((row) => row.phase.endsWith("-wake"));
+    const wake = trace.filter(
+      (row) => row.phase.endsWith("-wake") && !Object.values(probeCalls).includes(row.callId ?? ""),
+    );
     result = {
       checks: {
         quiesceReason: trace.find((row) => row.kind === "quiesce")!.method,
@@ -638,13 +847,14 @@ export async function produceSuspendWake(
             .slice(providerBefore.length)
             .filter((row) => replaysMotion(row, operationId!)).length,
         replayedRecording: wake.filter((row) => row.method === "devices/recording/reserve").length,
-        replayedCommand: wake.filter((row) => row.method === "command/invoke").length,
+        replayedCommand: wake.filter((row) =>
+          ["command/invoke", "command/execute"].includes(row.method),
+        ).length,
         renewedOldToken: [
           oldStart.ok,
           oldGesture.ok,
           observation.deadlineAfter !== deadlineBefore,
-          offer.token !== offerBefore.token,
-          offer.deadlineMonotonicMs !== offerBefore.deadlineMonotonicMs,
+          grantProbe.result.ok,
         ].filter(Boolean).length,
       },
       events: [],

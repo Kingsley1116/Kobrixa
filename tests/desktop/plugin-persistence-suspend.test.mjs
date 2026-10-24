@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { assertSuspendObservation, produceSuspendWake } from "./plugin-persistence-suspend.ts";
 
@@ -11,10 +12,62 @@ function observation() {
     hostEpoch: "host",
     processEpoch: "process",
   };
-  const offer = { owner, token: "original", deadlineMonotonicMs: 10001 };
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const record = {
+    id: "record",
+    revision: "original-revision",
+    kind: "test.registration-end",
+    schemaVersion: 1,
+    label: "record",
+    mediaType: "application/octet-stream",
+    byteLength: 4,
+    sha256: hash("seed"),
+    createdAt: 1,
+    updatedAt: 1,
+    checkpoint: "none",
+    interrupted: false,
+  };
+  const finalBytes = Buffer.from(`Synthetic final checkpoint ${record.id}\n`);
+  const finalRecord = {
+    ...record,
+    revision: "revision",
+    checkpoint: "final",
+    byteLength: finalBytes.length,
+    sha256: hash(finalBytes),
+  };
+  const binding = {
+    owner,
+    reservationId: "reservation",
+    sessionId: "session",
+    providerGeneration: 1,
+  };
+  const checkpoints = [
+    {
+      checkpoint: "checkpoint",
+      record,
+      reservationEnd: { reservationId: "reservation", reason: "suspended", lastSequence: 1 },
+    },
+  ];
+  const offer = {
+    owner,
+    token: "original",
+    deadlineMonotonicMs: 10001,
+    reason: "reservation-ended",
+    checkpoints,
+    writes: [],
+  };
+  const admission = {
+    barrier: { scope: { kind: "namespace", owner }, through: 3, deadlineMonotonicMs: 10001 },
+    tickets: [],
+  };
   const trace = [
     { phase: "setup", kind: "provider-motion", method: "executeFiniteMotion" },
-    { phase: "setup", kind: "peer", method: "command/invoke" },
+    {
+      phase: "setup",
+      kind: "peer",
+      method: "command/execute",
+      params: { command: "acceptance.ui-recording.legacy" },
+    },
     { phase: "setup", kind: "request", method: "devices/motion/start" },
     { phase: "recording-setup", kind: "request", method: "devices/recording/reserve" },
     ...["motion", "recording"].flatMap((phase) => [
@@ -25,8 +78,51 @@ function observation() {
     ]),
   ];
   const providerBefore = [{ operationId: "motion", step: "motion-pulse", dispatch: "sent" }];
+  trace.push(
+    ...["start", "prepare"].map((method, i) => ({
+      phase: "motion-wake",
+      kind: "request",
+      method: `devices/motion/${method}`,
+      callId: i ? "gesture-probe" : "start-probe",
+    })),
+  );
   return {
     trace,
+    checkpoint: {
+      checkpoint: "checkpoint",
+      record,
+      document: { checkpoint: "checkpoint", record, binding },
+      payloadBase64: Buffer.from("seed").toString("base64"),
+    },
+    finalRecord,
+    originalReservation: { reservationId: "reservation", sessionId: "session", state: "active" },
+    probeCalls: { start: "start-probe", gesture: "gesture-probe" },
+    grantProbe: {
+      owner,
+      params: {
+        target: { mode: "replace", id: record.id, expectedRevision: finalRecord.revision },
+        kind: record.kind,
+        schemaVersion: record.schemaVersion,
+        label: record.label,
+        mediaType: record.mediaType,
+        byteLength: finalRecord.byteLength,
+        sha256: finalRecord.sha256,
+        checkpoint: { handle: "checkpoint", phase: "final" },
+        drainToken: offer.token,
+      },
+      result: {
+        ok: false,
+        error: {
+          code: "PLUGIN_E_STALE_RESOURCE",
+          detail: { kind: "resource", reason: "stale", resource: "storage-write" },
+        },
+      },
+      started: 430,
+      ended: 431,
+      before: structuredClone(admission),
+      after: structuredClone(admission),
+      recordAfter: structuredClone(finalRecord),
+    },
     originalOwner: owner,
     currentOwner: { ...owner },
     retire: [],
@@ -39,20 +135,22 @@ function observation() {
     oldGesture: { ok: false },
     gestureAgeAtProbe: 20,
     offerBefore: offer,
-    offerAfter: structuredClone(offer),
-    reservationAfter: { reservationId: "reservation", state: "ended" },
+    reservationAfter: { reservationId: "reservation", sessionId: "session", state: "ended" },
     ended: {
-      owner,
+      ...binding,
+      lastSequence: 1,
       reason: "suspended",
       reservationId: "reservation",
       endedMonotonicMs: 1,
-      drain: { expiresMonotonicMs: 10001 },
+      drain: { owner, reservationId: "reservation", lastSequence: 1, expiresMonotonicMs: 10001 },
     },
     requests: [
       {
         token: "original",
+        reason: "reservation-ended",
+        writes: [],
         remainingMs: 9999,
-        checkpoints: [{ reservationEnd: { reservationId: "reservation", reason: "suspended" } }],
+        checkpoints: structuredClone(checkpoints),
       },
     ],
     dispatchedAt: [2],
@@ -62,7 +160,7 @@ function observation() {
       blocker: false,
       pendingSettings: false,
       errors: [],
-      records: [{ final: true, committedRevision: "revision" }],
+      records: [{ id: "record", final: true, committedRevision: "revision" }],
     },
     finalCheckpoint: "final",
     providerBefore,
@@ -114,8 +212,8 @@ test("suspend validator rejects forged lifecycle, replay, renewal and survival o
     (o) => (o.oldGesture.ok = true),
     (o) => (o.gestureAgeAtProbe = 350),
     (o) => o.trace.push({ phase: "recording-wake", kind: "drain", method: "drain" }),
-    (o) => (o.offerAfter.token = "replacement"),
-    (o) => o.offerAfter.deadlineMonotonicMs++,
+    (o) => (o.grantProbe.params.drainToken = "replacement"),
+    (o) => (o.grantProbe.ended = o.offerBefore.deadlineMonotonicMs),
     (o) => (o.ended.reason = "released"),
     (o) => o.ended.drain.expiresMonotonicMs--,
     (o) => (o.requests[0].token = "invented"),
@@ -140,9 +238,12 @@ test("suspend validator rejects forged lifecycle, replay, renewal and survival o
     (o) =>
       o.providerAfter.push({ operationId: "new-replay", step: "motion-pulse", dispatch: "sent" }),
     (o) => o.providerAfter.push({ operationId: "motion", step: "motion-pulse", dispatch: "sent" }),
-    ...["command/invoke", "devices/motion/start", "devices/recording/reserve"].map(
-      (method) => (o) => o.trace.push({ phase: "recording-wake", kind: "request", method }),
-    ),
+    ...[
+      "command/invoke",
+      "command/execute",
+      "devices/motion/start",
+      "devices/recording/reserve",
+    ].map((method) => (o) => o.trace.push({ phase: "recording-wake", kind: "request", method })),
   ]) {
     const forged = observation();
     mutate(forged);
@@ -275,4 +376,72 @@ test("missing real composition seams cannot emit zero evidence", async () => {
   const { input } = setupFailure("command");
   delete input.lifecycle;
   await assert.rejects(produceSuspendWake(input), /Missing real composition suspend seams/);
+});
+
+test("original grant probe rejects masking errors, admissions, mutations and unrelated evidence", () => {
+  for (const mutate of [
+    (o) => (o.grantProbe.result = { ok: true, value: {} }),
+    (o) => (o.grantProbe.result.error.code = "PLUGIN_E_STORAGE_CONFLICT"),
+    (o) => (o.grantProbe.result.error.detail.resource = "rpc"),
+    (o) => (o.grantProbe.params.target.expectedRevision = o.checkpoint.record.revision),
+    (o) => o.grantProbe.after.barrier.through++,
+    (o) => o.grantProbe.after.tickets.push({ id: "admitted" }),
+    (o) => (o.grantProbe.recordAfter.revision = "changed"),
+    (o) => (o.report.records[0].id = "unrelated"),
+    (o) => (o.report.records[0].committedRevision = "unrelated"),
+    (o) => (o.checkpoint.document.binding.sessionId = "unrelated"),
+    (o) => o.checkpoint.document.binding.providerGeneration++,
+    (o) => (o.ended.drain = { ...o.ended.drain, owner: { ...o.originalOwner, generation: 9 } }),
+    (o) => (o.ended.drain.reservationId = "unrelated"),
+    (o) => o.ended.drain.lastSequence++,
+    (o) => (o.finalRecord.sha256 = "forged"),
+    (o) => (o.finalRecord.id = "unrelated"),
+    (o) => (o.trace.find((r) => r.kind === "peer").params.command = "renamed"),
+  ]) {
+    const o = observation();
+    mutate(o);
+    assert.throws(() => assertSuspendObservation(o));
+  }
+  for (const path of [
+    "checkpoint.document.binding.owner",
+    "checkpoint.document.binding.providerGeneration",
+    "checkpoint.document.binding.sessionId",
+    "ended.drain.owner",
+    "ended.drain.reservationId",
+    "ended.drain.lastSequence",
+    "finalRecord.id",
+    "finalRecord.revision",
+    "finalRecord.sha256",
+    "finalRecord.label",
+    "grantProbe.params.checkpoint",
+    "grantProbe.result.error.detail",
+  ]) {
+    const o = observation(),
+      keys = path.split("."),
+      key = keys.pop();
+    const parent = keys.reduce((v, k) => v[k], o);
+    delete parent[key];
+    assert.throws(() => assertSuspendObservation(o), path);
+  }
+});
+
+test("wake traffic during awaited probes and synchronous resume cannot borrow probe exemption", () => {
+  for (const method of [
+    "command/execute",
+    "command/invoke",
+    "devices/recording/reserve",
+    "devices/motion/prepare",
+    "devices/motion/start",
+  ]) {
+    for (const location of ["resume", "probe"]) {
+      const o = observation();
+      const index = o.trace.findIndex((r) =>
+        location === "resume" ? r.kind === "resume" : r.callId === o.probeCalls.start,
+      );
+      o.trace.splice(index + 1, 0, { phase: "motion-wake", kind: "request", method });
+      assert.throws(() => assertSuspendObservation(o), `${location}: ${method}`);
+      o.trace[index + 1].callId = o.probeCalls.start;
+      assert.throws(() => assertSuspendObservation(o), "duplicate probe identity");
+    }
+  }
 });
