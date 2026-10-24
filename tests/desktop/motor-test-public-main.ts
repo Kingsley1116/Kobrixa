@@ -37,9 +37,26 @@ type InputReceipt = {
   type: string;
   isTrusted: boolean;
   node?: string;
+  close?: boolean;
+  targetId?: number;
   key?: string;
   repeat?: boolean;
 };
+// Reacquire a moving target for release, but never substitute a replacement DOM node.
+export async function nativeClick(
+  locate: () => Promise<{ x: number; y: number; targetId: number }>,
+  mouse: (type: "mouseDown" | "mouseUp", point: { x: number; y: number }) => void,
+  paint: () => Promise<void>,
+) {
+  const down = await locate();
+  mouse("mouseDown", down);
+  await paint();
+  const up = await locate();
+  assert.equal(up.targetId, down.targetId, "Native click target replaced during gesture");
+  mouse("mouseUp", up);
+  await paint();
+  return down.targetId;
+}
 type IpcReceipt = {
   at: number;
   received: number;
@@ -511,6 +528,7 @@ export async function composeMotor(input: {
   };
 }
 
+import { writeFileSync } from "node:fs";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -645,6 +663,7 @@ export function runNativeMotor() {
     disposition: "held" | "released" | "process-exited";
   }> = [];
   let win: BrowserWindow | undefined;
+  let blurWindow: BrowserWindow | undefined;
   let main: DesktopMainComposition | undefined;
   let control: FakeProviderControl | undefined;
   let loseProvider: (() => void) | undefined;
@@ -654,6 +673,7 @@ export function runNativeMotor() {
   let releaseReply: (() => void) | undefined;
   let replyReached = false;
   let blocked: { point: "before-exchange" | "after-exchange"; step: ProviderStep } | undefined;
+  let activeStage = "startup";
   let operationId: string | undefined;
   let scenario: NativeMotorScenario;
 
@@ -943,9 +963,21 @@ export function runNativeMotor() {
           pause: async () => {},
         });
         let retirement: Promise<void> | undefined;
+        window.on("focus", () => native.push({ at: wall(), type: "focus" }));
+        window.webContents.on("focus", () => native.push({ at: wall(), type: "contents-focus" }));
+        window.webContents.on("blur", () => native.push({ at: wall(), type: "contents-blur" }));
         window.on("blur", () => {
-          native.push({ at: wall(), type: "blur" });
+          const before = diagnostics.snapshot();
+          native.push({ at: wall(), type: "blur", detail: { focused: window.isFocused() } });
           ui.intent.dispose();
+          native.push({
+            at: wall(),
+            type: "blur-intent-disposed",
+            detail: {
+              before,
+              after: diagnostics.snapshot(),
+            },
+          });
         });
         window.on("hide", () => {
           native.push({ at: wall(), type: "hide" });
@@ -1048,6 +1080,8 @@ export function runNativeMotor() {
         window.show();
         window.focus();
         window.webContents.focus();
+        await until(() => window.isFocused(), "initial native window focus");
+        native.push({ at: wall(), type: "initial-focus-observed" });
         const js = <T>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
         // Two render turns let native input and React changes reach layout/compositing.
         const paint = () =>
@@ -1065,7 +1099,7 @@ export function runNativeMotor() {
             })()`),
             `native target available ${selector}`,
           );
-          let previous: { x: number; y: number } | null = null;
+          let previous: { x: number; y: number; targetId: number } | null = null;
           return until(async () => {
             // A pending feature reply can repair focus after the first scroll.
             // Re-establish visibility, then still require stable hit-tested bounds.
@@ -1073,29 +1107,36 @@ export function runNativeMotor() {
               `document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'center', behavior:'instant'})`,
             );
             await paint();
-            const bounds = await js<{ x: number; y: number } | null>(`(() => {
+            const bounds = await js<{ x: number; y: number; targetId: number } | null>(`(() => {
               const e = document.querySelector(${JSON.stringify(selector)});
               if (!e || e.disabled || e.closest('[hidden]')) return null;
               const r = e.getBoundingClientRect();
               const x = Math.round(r.x+r.width/2), y = Math.round(r.y+r.height/2);
               const hit = document.elementFromPoint(x,y);
-              return r.width && r.height && (hit === e || e.contains(hit)) ? {x,y} : null;
+              return r.width && r.height && (hit === e || e.contains(hit)) ? {x,y,targetId:window.motorNativeTargetId(e)} : null;
             })()`);
-            const stable = bounds && previous && bounds.x === previous.x && bounds.y === previous.y;
+            const stable =
+              bounds &&
+              previous &&
+              bounds.x === previous.x &&
+              bounds.y === previous.y &&
+              bounds.targetId === previous.targetId;
             previous = bounds;
             return stable ? bounds : null;
           }, `native target stable ${selector}`);
         };
         const mouse = (type: "mouseDown" | "mouseUp", bounds: { x: number; y: number }) => {
           native.push({ at: wall(), type, detail: bounds });
-          window.webContents.sendInputEvent({ type, button: "left", clickCount: 1, ...bounds });
+          window.webContents.sendInputEvent({
+            type,
+            button: "left",
+            clickCount: 1,
+            x: bounds.x,
+            y: bounds.y,
+          });
         };
         const click = async (selector: string) => {
-          const bounds = await target(selector);
-          mouse("mouseDown", bounds);
-          await paint();
-          mouse("mouseUp", bounds);
-          await paint();
+          return nativeClick(() => target(selector), mouse, paint);
         };
         const key = (type: "keyDown" | "keyUp", keyCode: string, repeat = false) => {
           native.push({ at: wall(), type, detail: { keyCode, repeat } });
@@ -1415,6 +1456,10 @@ export function runNativeMotor() {
         const beforeStop = heldLifecyclePulse ? await queryOriginal() : undefined;
         if (beforeStop) assert.equal(beforeStop.stopRequested, false);
         const originalPanel = ui.states.instances(owner).find((b) => b.kind === "panel");
+        if (scenario.fault === "blur") {
+          assert.ok(originalPanel, "Original blur panel required");
+          lifecycleReceipt.blur = { binding: originalPanel, owner: originalOwner };
+        }
         if (scenario.fault === "renderer-freeze") {
           assert.ok(originalPanel, "Original freeze panel required");
           const original = await until(
@@ -1437,9 +1482,10 @@ export function runNativeMotor() {
             original,
           };
         }
+        activeStage = "fault injection";
         const faultReceiptSequence = receiptSequence;
         const faultAt = wall();
-        native.push({ at: faultAt, type: scenario.fault });
+        native.push({ at: faultAt, type: "fault-injection", detail: { fault: scenario.fault } });
         const traceAtFault = control.trace().length;
         switch (scenario.fault) {
           case "complete":
@@ -1582,7 +1628,7 @@ export function runNativeMotor() {
               );
             const clickReceiptSequence = receiptSequence;
             const clickAt = wall();
-            await click('[data-close-contribution="true"]');
+            const targetId = await click('[data-close-contribution="true"]');
             const receipt = await until(
               () =>
                 ipc.find(
@@ -1605,6 +1651,7 @@ export function runNativeMotor() {
               binding,
               clickAt,
               clickReceiptSequence,
+              targetId,
               ipcAt: receipt.at,
               bindingGoneAt: wall(),
               ...(mode === "jog" ? { originalHold: begin, holdRelease, faultReceiptSequence } : {}),
@@ -1612,15 +1659,25 @@ export function runNativeMotor() {
             break;
           }
           case "blur": {
+            const focused = window.isFocused();
+            native.push({ at: wall(), type: "blur-injection-start", detail: { focused } });
+            assert.ok(focused, "Blur injection requires focused original window");
             const other = new BrowserWindow({
               width: 200,
               height: 150,
               show: true,
               webPreferences: { sandbox: true },
             });
+            blurWindow = other;
             other.focus();
-            await until(() => !window.isFocused(), "native window blur");
-            other.destroy();
+            await until(
+              () =>
+                !window.isFocused() &&
+                other.isFocused() &&
+                native.some((r) => r.type === "blur-intent-disposed" && r.at >= faultAt),
+              "native focus transfer and blur binder completion",
+            );
+            // Keep the focus sink alive through cancellation and stop verification.
             break;
           }
           case "authority-loss":
@@ -1703,6 +1760,7 @@ export function runNativeMotor() {
             await click('[data-ui-node="stop"] button');
             break;
         }
+        activeStage = "cancellation observation";
         const hostLifecycle = [
           "motor-disable",
           "provider-disable",
@@ -1790,8 +1848,9 @@ export function runNativeMotor() {
                     (["release", "cancel", "stop", "second-launch"].includes(scenario.fault)
                       ? "stop-dispatch"
                       : "revoke") &&
-                  (scenario.fault !== "renderer-freeze" ||
-                    e.binding?.panelInstance === originalPanel?.panelInstance),
+                  (!["renderer-freeze", "blur"].includes(scenario.fault) ||
+                    (isDeepStrictEqual(e.binding, originalPanel) &&
+                      isDeepStrictEqual(e.owner, originalOwner))),
               );
           }, "observed host cancellation/revocation");
         }
@@ -1804,8 +1863,9 @@ export function runNativeMotor() {
                 (["release", "cancel", "stop", "second-launch"].includes(scenario.fault)
                   ? "stop-dispatch"
                   : "revoke") &&
-              (scenario.fault !== "renderer-freeze" ||
-                e.binding?.panelInstance === originalPanel?.panelInstance),
+              (!["renderer-freeze", "blur"].includes(scenario.fault) ||
+                (isDeepStrictEqual(e.binding, originalPanel) &&
+                  isDeepStrictEqual(e.owner, originalOwner))),
           );
         assert.ok(cancellation || hostLifecycle || scenario.fault === "stop");
         const revokedAt = cancellation ? cancellation.time : faultAt,
@@ -1878,6 +1938,7 @@ export function runNativeMotor() {
           }
           window.webContents.debugger.detach();
         }
+        activeStage = "terminal query";
         let terminal: MotionSnapshot | undefined;
         await until(
           async () => {
@@ -2050,8 +2111,13 @@ export function runNativeMotor() {
               "Late readback cannot rewrite durable uncertainty",
             );
           }
-        } else await bounded(composition.dispose(), "real composition cleanup", 25_000);
-        await retirement;
+        } else {
+          activeStage = "composition cleanup";
+          await bounded(composition.dispose(), "real composition cleanup", 25_000);
+        }
+        activeStage = "renderer retirement";
+        await bounded(retirement ?? Promise.resolve(), "renderer retirement completion");
+        blurWindow?.destroy();
         trace = control.trace().slice(traceBefore);
         assert.deepEqual(
           trace
@@ -2134,6 +2200,33 @@ export function runNativeMotor() {
   }
   const deadline = setTimeout(() => {
     console.error("Motor native deadline");
+    // Preserve observations even when the driver is stuck in an unresolved await.
+    writeFileSync(
+      `${output}.failure.json`,
+      JSON.stringify(
+        {
+          error: "Motor native deadline",
+          failureKind: "safety-or-driver-assertion",
+          scenario,
+          activeStage,
+          wire,
+          deliveries,
+          ipc,
+          logs,
+          events,
+          native,
+          inputReceipts,
+          operationId,
+          owner,
+          trace: control?.trace(),
+          pid,
+          failures,
+          debuggerEvents,
+        },
+        null,
+        2,
+      ),
+    );
     app.exit(2);
   }, 85_000);
   void run()
@@ -2167,6 +2260,7 @@ export function runNativeMotor() {
           {
             error: String(error),
             failureKind,
+            activeStage,
             debuggerEvents,
             freezeInvalid,
             freezeVerifiedThrough,
@@ -2203,6 +2297,7 @@ export function runNativeMotor() {
       } catch (cleanup) {
         console.error(cleanup);
       }
+      blurWindow?.destroy();
       app.exit(1);
     });
 }

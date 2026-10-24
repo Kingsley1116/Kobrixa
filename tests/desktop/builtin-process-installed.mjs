@@ -243,9 +243,16 @@ async function launchProduct(config, receipt, check) {
     const paused = main.event("Debugger.paused");
     paused.catch(() => {});
     await main.send("Runtime.runIfWaitingForDebugger");
-    await paused;
-    // This is synchronous while paused before the real entry executes.
-    assert.equal(await main.js(installProbe), true);
+    const pauseState = await paused;
+    // A paused entry cannot drain Runtime.evaluate's promise queue. Evaluate
+    // synchronously on the actual paused frame before resuming product code.
+    const installed = await main.send("Debugger.evaluateOnCallFrame", {
+      callFrameId: pauseState.callFrames[0].callFrameId,
+      expression: installProbe,
+      returnByValue: true,
+    });
+    if (installed.exceptionDetails) throw Error(JSON.stringify(installed.exceptionDetails));
+    assert.equal(installed.result.value, true);
     receipt.originalForkObserved = true;
     await main.send("Debugger.resume");
     const browserUrl = await alive(
@@ -327,7 +334,7 @@ async function launchProduct(config, receipt, check) {
   } finally {
     const cleanupErrors = [];
     // Restore even after an assertion failure, while the main probe is reachable.
-    if (!receipt.probeRestored && main) {
+    if (!receipt.probeRestored && main && receipt.originalForkObserved) {
       try {
         receipt.forks = await main.js("__installedProbe.records");
         receipt.probeRestored = await main.js("__installedProbe.restore()");

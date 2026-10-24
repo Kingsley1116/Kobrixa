@@ -38,13 +38,23 @@ const labels: UiLabels = {
     manage: "Manage",
   },
 };
+// Stable DOM identity is observational only; the driver still sends native input.
+const targetIds = new WeakMap<Element, number>();
+let targetSequence = 0;
+function nativeTargetId(element: Element) {
+  let id = targetIds.get(element);
+  if (!id) targetIds.set(element, (id = ++targetSequence));
+  return id;
+}
+Object.assign(window, { motorNativeTargetId: nativeTargetId });
 // Observe trusted browser events without synthesizing events or invoking feature code.
 for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "keyup", "input"]) {
   window.addEventListener(
     type,
     (event) => {
-      const target =
-        event.target instanceof Element ? event.target.closest("[data-ui-node]") : null;
+      const element = event.target instanceof Element ? event.target : null;
+      const target = element?.closest("[data-ui-node]");
+      const control = element?.closest("button, input, select, label");
       console.log(
         "NATIVE_INPUT:" +
           JSON.stringify({
@@ -52,6 +62,8 @@ for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "key
             type: event.type,
             isTrusted: event.isTrusted,
             node: target?.getAttribute("data-ui-node"),
+            close: !!element?.closest('[data-close-contribution="true"]'),
+            targetId: control ? nativeTargetId(control) : null,
             key: event instanceof KeyboardEvent ? event.key : null,
             repeat: event instanceof KeyboardEvent ? event.repeat : null,
           }),

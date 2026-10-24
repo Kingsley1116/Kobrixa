@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { test } from "node:test";
 import {
   compose,
+  nativeClick,
+  validateBlurEvidence,
   motorArtifacts,
   root,
   until,
@@ -300,11 +302,16 @@ test("native close contract rejects pointer release without original-binding clo
   const report = {
     native: [],
     faultAt: 10,
-    inputReceipts: [release],
+    inputReceipts: [
+      release,
+      { received: 5, type: "pointerdown", isTrusted: true, close: true, targetId: 17 },
+      { received: 6, type: "pointerup", isTrusted: true, close: true, targetId: 17 },
+    ],
     lifecycleReceipt: {
       close: {
         binding,
         clickAt: 12,
+        targetId: 17,
         ipcAt: 13,
         bindingGoneAt: 14,
         originalHold: begin,
@@ -318,7 +325,7 @@ test("native close contract rejects pointer release without original-binding clo
       end,
       {
         at: 13,
-        received: 5,
+        received: 7,
         channel: "plugins:ui:close",
         args: [{ binding }],
         result: { ok: true },
@@ -328,6 +335,18 @@ test("native close contract rejects pointer release without original-binding clo
   };
   validateNativeInput(report, scenario);
   for (const mutate of [
+    (r) => {
+      r.inputReceipts[1].close = false;
+    },
+    (r) => {
+      r.inputReceipts[2].targetId = 18;
+    },
+    (r) => {
+      r.inputReceipts[2].isTrusted = false;
+    },
+    (r) => {
+      r.inputReceipts[2].received = 8;
+    },
     (r) => {
       r.ipc = [];
     },
@@ -1680,4 +1699,121 @@ test("core Stop binds native IPC, queried snapshots and sent hardware evidence",
       mutate(invalid);
       assert.throws(() => validateNative(invalid, report.artifact, report.scenario));
     });
+});
+
+test("native click follows moving bounds of the same DOM target with native release", async () => {
+  const points = [
+    { x: 41, y: 685, targetId: 17 },
+    { x: 41, y: 620, targetId: 17 },
+  ];
+  const events = [];
+  const id = await nativeClick(
+    async () => points.shift(),
+    (type, point) => events.push({ type, ...point }),
+    async () => events.push("paint"),
+  );
+  assert.equal(id, 17);
+  assert.deepEqual(events, [
+    { type: "mouseDown", x: 41, y: 685, targetId: 17 },
+    "paint",
+    { type: "mouseUp", x: 41, y: 620, targetId: 17 },
+    "paint",
+  ]);
+});
+
+test("native click refuses replacement or unavailable targets without replay", async () => {
+  for (const replacement of [true, false]) {
+    let calls = 0;
+    const events = [];
+    await assert.rejects(
+      nativeClick(
+        async () => {
+          if (++calls === 2 && !replacement) throw new Error("target not hit-testable");
+          return { x: 1, y: 2, targetId: calls };
+        },
+        (type) => events.push(type),
+        async () => {},
+      ),
+      replacement ? /target replaced/ : /not hit-testable/,
+    );
+    assert.deepEqual(events, ["mouseDown"]);
+    assert.equal(calls, 2);
+  }
+});
+
+test("blur evidence distinguishes injection markers from native focus loss and binder outcomes", () => {
+  const owner = {
+    sourceKey: "builtin:kobrixa.motor-test",
+    pluginId: "kobrixa.motor-test",
+    generation: 0,
+    hostEpoch: "host",
+    processEpoch: "process",
+  };
+  const binding = {
+    panelInstance: "original",
+    kind: "panel",
+    contributionId: "kobrixa.motor-test.panel",
+    uiResourceGeneration: 1,
+    generation: 0,
+    hostEpoch: "host",
+    processEpoch: "process",
+  };
+  const report = {
+    owner,
+    lifecycleReceipt: { blur: { binding, owner } },
+    native: [
+      { at: 1, type: "initial-focus-observed" },
+      { at: 2, type: "fault-injection", detail: { fault: "blur" } },
+      { at: 3, type: "blur-injection-start", detail: { focused: true } },
+      { at: 4, type: "blur", detail: { focused: false } },
+      {
+        at: 6,
+        type: "blur-intent-disposed",
+        detail: { before: { timers: 2 }, after: { timers: 0 } },
+      },
+    ],
+    events: [
+      { time: 5, kind: "revoke", binding: structuredClone(binding), owner: structuredClone(owner) },
+    ],
+  };
+  validateBlurEvidence(report);
+  for (const mutate of [
+    (r) => {
+      delete r.events[0].binding;
+    },
+    (r) => {
+      r.events[0].binding.panelInstance = "foreign";
+    },
+    (r) => {
+      delete r.events[0].owner;
+    },
+    (r) => {
+      r.events[0].owner.processEpoch = "foreign";
+    },
+    (r) => {
+      delete r.lifecycleReceipt.blur;
+    },
+    (r) => {
+      r.native.splice(0, 1);
+    },
+    (r) => {
+      r.native.splice(3, 1);
+    },
+    (r) => {
+      r.native[3].detail.focused = true;
+    },
+    (r) => {
+      r.native[4].detail.before.timers = 0;
+    },
+    (r) => {
+      r.native[4].detail.after.timers = 2;
+    },
+    (r) => {
+      r.events = [];
+    },
+  ]) {
+    const invalid = structuredClone(report);
+    mutate(invalid);
+    assert.throws(() => validateBlurEvidence(invalid));
+  }
 });

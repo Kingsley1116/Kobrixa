@@ -114,6 +114,7 @@ async function loadDriver() {
   return hostModule;
 }
 const driver = await loadDriver();
+export const nativeClick = driver.nativeClick;
 export const matchingHoldEnd = driver.matchingHoldEnd;
 export const requireSustainedPause = driver.requireSustainedPause;
 export const matchingFreezeActivation = driver.matchingFreezeActivation;
@@ -282,7 +283,39 @@ export function validateLifecycleBarrier(report, scenario) {
     );
 }
 // Validate observed native sequencing separately so negative receipt samples stay Node-only.
+export function validateBlurEvidence(report) {
+  const native = report.native;
+  const original = report.lifecycleReceipt?.blur;
+  assert.ok(original?.binding && original.owner, "Original blur binding and owner required");
+  assert.deepEqual(original.owner, report.owner);
+  for (const field of ["generation", "hostEpoch", "processEpoch"])
+    assert.equal(original.binding[field], original.owner[field]);
+  const injection = native.find((r) => r.type === "blur-injection-start");
+  const focus = native.find((r) => r.type === "initial-focus-observed");
+  const blur = native.find((r) => r.type === "blur" && r.at >= injection?.at);
+  const disposed = native.find((r) => r.type === "blur-intent-disposed" && r.at >= blur?.at);
+  assert.ok(
+    focus && injection && focus.at < injection.at && blur && disposed,
+    "Observed native focus, blur and intent disposal required",
+  );
+  assert.equal(injection.detail?.focused, true);
+  assert.equal(blur.detail?.focused, false);
+  assert.ok(disposed.detail?.before?.timers > 0, "Original intent existed at native blur");
+  assert.equal(disposed.detail?.after?.timers, 0, "Native blur disposed intent timers");
+  assert.ok(
+    report.events.some(
+      (e) =>
+        e.kind === "revoke" &&
+        e.time >= blur.at &&
+        e.time <= disposed.at &&
+        isDeepStrictEqual(e.binding, original.binding) &&
+        isDeepStrictEqual(e.owner, original.owner),
+    ),
+    "Native blur must produce host revocation",
+  );
+}
 export function validateNativeInput(report, scenario) {
+  if (scenario.fault === "blur") validateBlurEvidence(report);
   const mode = scenario.mode ?? (scenario.boundary === "arm" ? "relative-angle" : "jog");
   if (mode !== "jog") {
     const observed = report.native.filter((r) => r.type === "mode-observed");
@@ -305,6 +338,26 @@ export function validateNativeInput(report, scenario) {
         r.args[0]?.binding?.panelInstance === close.binding.panelInstance,
     );
     assert.ok(ipc?.result?.ok && !ipc.error, "Actual successful close IPC required");
+    const down = report.inputReceipts.find(
+      (r) =>
+        r.received > close.clickReceiptSequence &&
+        r.type === "pointerdown" &&
+        r.isTrusted &&
+        r.close &&
+        r.targetId === close.targetId,
+    );
+    const up = report.inputReceipts.find(
+      (r) =>
+        r.received > (down?.received ?? Infinity) &&
+        r.type === "pointerup" &&
+        r.isTrusted &&
+        r.close &&
+        r.targetId === close.targetId,
+    );
+    assert.ok(
+      Number.isSafeInteger(close.targetId) && down && up && up.received < ipc.received,
+      "Trusted close down/up on the same DOM target before close IPC required",
+    );
     assert.ok(close.bindingGoneAt >= ipc.at, "Binding disappearance must follow close IPC");
     assert.ok(
       report.events.some(
