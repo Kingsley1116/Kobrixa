@@ -36,7 +36,9 @@ export interface DesktopFoundationOptions {
 }
 export type DesktopFoundation = {
   broker: DeviceBrokerPort & LegacyOperationPort;
-  attachProvider(manager: Pick<PluginManager, "state" | "onEvent">): void;
+  attachProvider(
+    manager: Pick<PluginManager, "state" | "onEvent" | "builtinSourceEligibility">,
+  ): void;
   dispose(): Promise<void>;
 };
 

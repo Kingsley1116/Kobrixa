@@ -59,6 +59,18 @@ import {
   type SupervisorOptions,
 } from "./supervisor.js";
 
+/** Host-only provider admission; never derived from process health or exposed over RPC. */
+export interface BuiltinSourceEligibility {
+  readonly sourceKey: string;
+  readonly pluginId: string;
+  /** Source execution/declaration generation, independent of process epochs and static retries. */
+  readonly generation: number;
+  readonly eligible: boolean;
+  /** Retain an existing provider for safety cleanup; never admit one on this basis. */
+  readonly cleanupPending: boolean;
+  readonly providerIds: readonly string[];
+}
+
 export interface PluginPersistedState {
   /** Source keys of development plugins the user disabled. */
   disabled: ReadonlySet<string>;
@@ -170,6 +182,7 @@ function executionKey(read: ReadPlugin): string {
     manifest?.contributes?.frontends,
     manifest?.contributes?.backends,
     manifest?.contributes?.languageServices,
+    manifest?.contributes?.deviceProviders,
   ]);
 }
 
@@ -190,6 +203,60 @@ function convertLegacy(
 }
 
 export class PluginManager {
+  readonly #builtinCleanup = new Set<{ keys: readonly string[]; recover?: () => Promise<void> }>();
+
+  #builtinCleanupPending(key: string): boolean {
+    return [...this.#builtinCleanup].some((hold) => hold.keys.includes(key));
+  }
+
+  // An intersecting retry recovers the entire failed operation, including its other sources.
+  // Only that operation releases its hold; independent active holds remain untouched.
+  async #recoverBuiltinSources(keys: readonly string[]): Promise<void> {
+    for (const hold of [...this.#builtinCleanup]) {
+      if (!hold.recover || !hold.keys.some((key) => keys.includes(key))) continue;
+      await hold.recover();
+      this.#builtinCleanup.delete(hold);
+    }
+  }
+
+  builtinSourceEligibility(): readonly BuiltinSourceEligibility[] {
+    return this.#entries.flatMap(({ source, plugin, generation }) => {
+      if (source.kind !== "builtin") return [];
+      return [
+        {
+          sourceKey: plugin.sourceKey,
+          pluginId: plugin.id,
+          generation,
+          eligible:
+            !this.#shutdown &&
+            !this.#builtinCleanupPending(plugin.sourceKey) &&
+            plugin.status === "enabled" &&
+            source.policy === "optional" &&
+            !this.#safeMode,
+          cleanupPending: this.#builtinCleanupPending(plugin.sourceKey),
+          providerIds: (plugin.manifest?.contributes?.deviceProviders ?? []).map(({ id }) => id),
+        },
+      ];
+    });
+  }
+
+  // Each operation owns its barrier and the exact cleanup needed to recover a rejection.
+  // A late process exit alone cannot prove that resource retirement or storage settled.
+  #holdBuiltinSources(keys = this.#entries.map(({ read }) => read.sourceKey)) {
+    const hold: { keys: readonly string[]; recover?: () => Promise<void> } = { keys };
+    this.#builtinCleanup.add(hold);
+    return Object.assign(() => this.#builtinCleanup.delete(hold), {
+      settle: async (work: Promise<unknown>, recover: () => Promise<void>) => {
+        try {
+          await work;
+        } catch (error) {
+          hold.recover = recover;
+          throw error;
+        }
+      },
+    });
+  }
+
   readonly #stage3Channels = new Map<ResourceOwner, Stage3ChannelContext>();
   readonly #toggleEpoch = new Map<string, number>();
   readonly #stage3Cleanup = new Map<ResourceOwner, { exited: boolean; settled: boolean }>();
@@ -680,11 +747,13 @@ export class PluginManager {
       return Promise.resolve(
         failure("PLUGIN_E_BUILTIN_REQUIRED", "Required plugins cannot be disabled."),
       );
+    const releaseProvider = this.#holdBuiltinSources([sourceKey]);
     // Reserve FIFO before synchronous retirement/state callbacks can request another toggle.
     const change = this.#enqueue<PluginActionResult>(async () => {
       // A previously queued enable must not undo this later disable.
       this.#disabled.add(sourceKey);
-      const additional = this.#retire(this.#reconcile(), "disabled");
+      const additionalSupervisors = this.#reconcile();
+      const additional = this.#retire(additionalSupervisors, "disabled");
       let persisted = true;
       try {
         await this.#save(new Set(this.#disabled));
@@ -692,13 +761,19 @@ export class PluginManager {
         persisted = false;
         this.#stateProblem = { code: "PLUGIN_E_STATE_SAVE", message: messageOf(error) };
       }
-      await Promise.all([retired, additional]);
+      await releaseProvider.settle(Promise.all([retired, additional]), () =>
+        this.#retire([...retiredSupervisors, ...additionalSupervisors], "disabled"),
+      );
+      releaseProvider();
+      await this.#recoverBuiltinSources([sourceKey]);
+      this.#emitState();
       await this.#apply("disabled");
       return { ok: true, state: this.state(), ...(persisted ? {} : { persisted: false as const }) };
     });
     // Fence admission and start the original disposition before any storage or event callback.
     this.#disabled.add(sourceKey);
-    const retired = this.#retire(this.#reconcile(), "disabled");
+    const retiredSupervisors = this.#reconcile();
+    const retired = this.#retire(retiredSupervisors, "disabled");
     void retired.catch(() => undefined);
     this.#publishStatic(this.#staticBuild);
     this.#emitState();
@@ -867,33 +942,46 @@ export class PluginManager {
         "Restore plugins first, or restart without --safe-mode.",
       );
     const entry = this.#entryOf(sourceKey)!;
-    const original = this.#supervisors.get(sourceKey);
-    // Synchronous fencing precedes static/catalog/state publication.
-    const resources = original?.settleResources("reload");
-    void resources?.catch(() => undefined);
-    // Withdraw before waiting for a process or filesystem. Failed reloads cannot keep old rules.
-    if (entry.source.kind === "builtin" && entry.source.policy === "optional") {
-      entry.plugin = { ...entry.plugin, status: "disabled" };
+    // Recovery may release failed cleanup obligations, but cannot release this active reload.
+    // Keep admission fenced through generation advancement and the complete metadata apply.
+    const releaseAdmission = this.#holdBuiltinSources([sourceKey]);
+    try {
+      const original = this.#supervisors.get(sourceKey);
+      // Synchronous fencing precedes static/catalog/state publication.
+      const resources = original?.settleResources("reload");
+      void resources?.catch(() => undefined);
+      // Withdraw before waiting for a process or filesystem. Failed reloads cannot keep old rules.
+      if (entry.source.kind === "builtin" && entry.source.policy === "optional") {
+        entry.plugin = { ...entry.plugin, status: "disabled" };
+        this.#emitState();
+      }
+      this.#revokeStaticSource(sourceKey);
+      this.#clearRegistrationFailures(sourceKey);
+      // Prevent #apply's initial reconciliation from recreating old commands before metadata returns.
+      entry.read = { ...entry.read, unread: true };
+      const supervisor = this.#supervisors.get(sourceKey);
+      if (supervisor) {
+        const releaseProvider = this.#holdBuiltinSources([sourceKey]);
+        this.#supervisors.delete(sourceKey);
+        for (const [command, owner] of this.#commands)
+          if (owner === sourceKey) this.#commands.delete(command);
+        this.#emitState();
+        await releaseProvider.settle(this.#retire([supervisor], "cancelled"), () =>
+          this.#retire([supervisor], "cancelled"),
+        );
+        releaseProvider();
+      }
+      await this.#recoverBuiltinSources([sourceKey]);
+      entry.generation += 1;
+      entry.staticGeneration = this.#nextStaticGeneration(sourceKey);
+      const closed = this.#closed();
+      if (closed) return closed;
+      await this.#apply("cancelled");
+      return this.#closed() ?? { ok: true, state: this.state() };
+    } finally {
+      releaseAdmission();
       this.#emitState();
     }
-    this.#revokeStaticSource(sourceKey);
-    this.#clearRegistrationFailures(sourceKey);
-    // Prevent #apply's initial reconciliation from recreating old commands before metadata returns.
-    entry.read = { ...entry.read, unread: true };
-    const supervisor = this.#supervisors.get(sourceKey);
-    if (supervisor) {
-      this.#supervisors.delete(sourceKey);
-      for (const [command, owner] of this.#commands)
-        if (owner === sourceKey) this.#commands.delete(command);
-      this.#emitState();
-      await this.#retire([supervisor], "cancelled");
-    }
-    entry.generation += 1;
-    entry.staticGeneration = this.#nextStaticGeneration(sourceKey);
-    const closed = this.#closed();
-    if (closed) return closed;
-    await this.#apply("cancelled");
-    return this.#closed() ?? { ok: true, state: this.state() };
   }
 
   async #leaveSafeMode(): Promise<PluginActionResult> {
@@ -955,6 +1043,7 @@ export class PluginManager {
   shutdown(deadlineMs: number = PLUGIN_SHUTDOWN_DEADLINE_MS): Promise<void> {
     this.#staticOperation += 1;
     this.#shutdown ??= (async () => {
+      const releaseProviders = this.#holdBuiltinSources();
       const supervisors = [...new Set([...this.#supervisors.values(), ...this.#retiring])];
       // Device beginShutdown and every owner retirement start in the same turn.
       const deviceShutdown = this.options.stage3?.device.beginShutdown();
@@ -967,10 +1056,32 @@ export class PluginManager {
       const teardowns = Promise.allSettled(
         supervisors.map((supervisor) => supervisor.stop("shutdown")),
       );
-      this.#supervisorsStopped = teardowns.then((results) => {
-        teardownResults = results;
-      });
-      const stopped = this.#supervisorsStopped.then(() => true);
+      this.#supervisorsStopped = releaseProviders
+        .settle(
+          teardowns.then((results) => {
+            teardownResults = results;
+            const failed = [...dispositions, ...results].find(
+              (result) => result.status === "rejected",
+            );
+            if (failed?.status === "rejected") throw failed.reason;
+          }),
+          async () => {
+            await this.options.stage3?.device.beginShutdown();
+            await Promise.all(
+              supervisors.map((supervisor) => supervisor.settleResources("shutdown")),
+            );
+            await this.#retire(supervisors, "shutdown");
+          },
+        )
+        .then(() => {
+          releaseProviders();
+          this.#emitState();
+        });
+      void this.#supervisorsStopped.catch(() => undefined);
+      const stopped = this.#supervisorsStopped.then(
+        () => true,
+        () => true,
+      );
       const waitForStop = async (ms: number) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -1005,6 +1116,7 @@ export class PluginManager {
     if (!this.#shutdown) return;
     await this.#shutdown.catch(() => undefined);
     await this.#supervisorsStopped?.catch(() => undefined);
+    await this.#recoverBuiltinSources(this.#entries.map(({ read }) => read.sourceKey));
     this.#supervisorsStopped = undefined;
     this.#shutdown = undefined;
     // A change interrupted by the shutdown may have left an enabled plugin without a supervisor.
@@ -1034,11 +1146,13 @@ export class PluginManager {
     this.#collectStage3();
     const operation = ++this.#staticOperation;
     const current = () => !this.#shutdown && operation === this.#staticOperation;
+    const releaseProviders = this.#holdBuiltinSources();
     const retired = this.#reconcile();
     const retirement = this.#retire(retired, reason);
     this.#publishStatic(this.#staticBuild);
     this.#emitState();
-    await retirement;
+    await releaseProviders.settle(retirement, () => this.#retire(retired, reason));
+    releaseProviders();
     if (!current()) {
       if (!this.#shutdown) await this.#apply(reason);
       return;
@@ -1054,6 +1168,7 @@ export class PluginManager {
         if (!this.#shutdown) await this.#apply(reason);
         return;
       }
+      const releaseProviders = this.#holdBuiltinSources();
       const replaced: PluginSupervisor[] = [];
       entries.forEach((entry, i) => {
         const read = reads[i]!;
@@ -1094,7 +1209,8 @@ export class PluginManager {
       const replacementRetirement = this.#retire(replaced, reason);
       this.#publishStatic(this.#staticBuild);
       this.#emitState();
-      await replacementRetirement;
+      await releaseProviders.settle(replacementRetirement, () => this.#retire(replaced, reason));
+      releaseProviders();
     }
     if (!current()) {
       if (!this.#shutdown) await this.#apply(reason);

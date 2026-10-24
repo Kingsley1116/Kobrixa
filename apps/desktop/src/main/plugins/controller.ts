@@ -881,7 +881,7 @@ export interface StartPluginsOptions {
   stage3Host?: PluginManagerOptions["stage3Host"];
   onStage3Runtime?: (
     runtime: UiRuntimeAttachment,
-    providers: Pick<PluginManager, "state" | "onEvent">,
+    providers: Pick<PluginManager, "state" | "onEvent" | "builtinSourceEligibility">,
   ) => void;
   userData: string;
   builtins: readonly PluginSource[];

@@ -48,25 +48,33 @@ export const BUILTIN_DEVICE_PROVIDER_FACTORIES: Readonly<
 
 /** The caller owns the broker catalog allocator and the single profile lifetime. */
 export function attachBuiltinDeviceProvider(
-  manager: Pick<PluginManager, "state" | "onEvent">,
+  manager: Pick<PluginManager, "onEvent" | "builtinSourceEligibility">,
   broker: DeviceBrokerPort,
   catalog: ProviderCatalogPort,
   factory: (
     catalog: ProviderCatalogPort,
   ) => BuiltinDeviceProvider = BUILTIN_DEVICE_PROVIDER_FACTORIES["builtin:kobrixa.device-ev3"],
 ): () => void {
+  if (!manager.builtinSourceEligibility)
+    throw new Error("Builtin provider requires host source eligibility");
+  const eligibility = manager.builtinSourceEligibility.bind(manager);
   let unregister: (() => void) | undefined;
   let initialCatalog: ProviderCatalogPort | undefined = catalog;
+  let generation: number | undefined;
   const reconcile = () => {
-    const enabled = manager
-      .state()
-      .plugins.some(
-        (source) =>
-          source.sourceKey === "builtin:kobrixa.device-ev3" &&
-          source.status === "enabled" &&
-          !source.required &&
-          source.canToggle,
-      );
+    const source = eligibility().find(
+      (source) =>
+        source.sourceKey === "builtin:kobrixa.device-ev3" &&
+        source.pluginId === "kobrixa.device-ev3",
+    );
+    if (source?.cleanupPending) return;
+    const enabled = source?.eligible && source.providerIds.includes("kobrixa.device-ev3");
+    if (unregister && (!enabled || generation !== source?.generation)) {
+      const remove = unregister;
+      unregister = undefined;
+      generation = undefined;
+      remove();
+    }
     if (enabled && !unregister) {
       const currentCatalog = initialCatalog ?? broker.providerCatalog("kobrixa.device-ev3");
       initialCatalog = undefined;
@@ -74,17 +82,32 @@ export function attachBuiltinDeviceProvider(
       if (provider.id !== "kobrixa.device-ev3")
         throw new Error("EV3 allowlist factory returned the wrong provider");
       unregister = broker.registerProvider(provider);
-    } else if (!enabled && unregister) {
-      const remove = unregister;
-      unregister = undefined;
-      remove();
+      generation = source.generation;
+    }
+  };
+  // Broker publication may synchronously cause another manager event.
+  let reconciling = false;
+  let pending = false;
+  const sync = () => {
+    if (reconciling) {
+      pending = true;
+      return;
+    }
+    reconciling = true;
+    try {
+      do {
+        pending = false;
+        reconcile();
+      } while (pending);
+    } finally {
+      reconciling = false;
     }
   };
   const off = manager.onEvent((event) => {
-    if (event.type === "state") reconcile();
+    if (event.type === "state") sync();
   });
   try {
-    reconcile();
+    sync();
   } catch (error) {
     off();
     throw error;
