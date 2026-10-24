@@ -67,7 +67,7 @@ export class UiIntentController {
             (result) => {
               this.state.actionFinished();
               if (this.held !== held || this.dead) return;
-              if (!result.ok) {
+              if (!result.ok || !result.value.gesture) {
                 this.cancel();
                 return;
               }
@@ -144,6 +144,10 @@ export class UiIntentController {
         return;
       if (this.held && (!this.state.valid() || !this.state.nodeEnabled(this.held.nodeId)))
         this.cancel();
+      // Until begin is acknowledged we cannot send the host's exact token/gesture pair.
+      // Drop this challenge; only a fresh challenge may pulse after acknowledgement.
+      // Host expiry and synchronous release/cancel remain in force while waiting.
+      if (this.held && !this.held.gesture) return;
       try {
         void this.bridge
           .pulse({

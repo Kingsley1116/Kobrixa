@@ -157,7 +157,15 @@ export const DELIVERED_BUILTIN_PROCESS_BUILDS: readonly {
   target: "main";
   slug: string;
   pluginId: string;
-}[] = Object.freeze([]);
+}[] = Object.freeze([
+  {
+    entry: "../../plugins/motor-test/src/main.ts",
+    config: "vite.plugin-motor.config.ts",
+    target: "main",
+    slug: "motor-test",
+    pluginId: "kobrixa.motor-test",
+  },
+]);
 export function builtinProcessBuilds(fixture: boolean) {
   // The installed acceptance fixture uses an already allowed identity without
   // registering a product. Never broaden the production launch allowlist for a test,

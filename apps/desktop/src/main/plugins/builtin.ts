@@ -1,3 +1,4 @@
+import { resolveBuiltinLaunch, validateBuiltinLeaf } from "./builtin-launch.js";
 import type { PluginSource, PluginManager } from "@kobrixa/plugin-runtime";
 import type { BuiltinDeviceProvider, ProviderCatalogPort } from "../device-broker/provider.js";
 import type {
@@ -45,6 +46,45 @@ export const BUILTIN_PLUGIN_SOURCES: readonly PluginSource[] = [
     },
   },
 ];
+
+/** Product-only assembly; explicit native fixtures keep using the static base list. */
+export async function assembleBuiltinPluginSources(input: {
+  packaged: boolean;
+  appPath: string;
+  buildRoot: string;
+}): Promise<readonly PluginSource[]> {
+  try {
+    const launch = await resolveBuiltinLaunch({
+      ...input,
+      slug: "motor-test",
+      pluginId: "kobrixa.motor-test",
+      sourceKey: "builtin:kobrixa.motor-test",
+    });
+    const { manifest, resources } = await validateBuiltinLeaf(launch.packageRoot, launch.pluginId);
+    return [
+      ...BUILTIN_PLUGIN_SOURCES,
+      { kind: "builtin", policy: "optional", manifest, resources, launch },
+    ];
+  } catch {
+    // Host-only pre-read failure; no error text or physical paths cross this boundary.
+    return [
+      ...BUILTIN_PLUGIN_SOURCES,
+      {
+        kind: "builtin",
+        policy: "optional",
+        payloadUnavailable: true,
+        resources: {},
+        manifest: {
+          id: "kobrixa.motor-test",
+          displayName: {
+            en: "Motor test — shipped payload unavailable or invalid",
+            "zh-TW": "馬達測試 — 隨附套件遺失或無效",
+          },
+        },
+      },
+    ];
+  }
+}
 
 export const BUILTIN_DEVICE_PROVIDER_FACTORIES: Readonly<
   Record<"builtin:kobrixa.device-ev3", (catalog: ProviderCatalogPort) => BuiltinDeviceProvider>

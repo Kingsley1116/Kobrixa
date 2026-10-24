@@ -386,3 +386,44 @@ export async function checkMotorTests({ js, until, pause, win, temporary, monito
     win.setBounds(bounds);
   }
 }
+
+// T4 replacement entry, intentionally not wired into run-smoke until T6.
+// The legacy fixture/assertions above remain intact as the migration parity ledger.
+// In particular the old timed-pane-continuation assertion must be replaced by the
+// observed hide-stop cases below, not silently removed. Do not use createMotorFixture
+// for public evidence. C-G1/P160 and installed payload acceptance remain separate.
+export async function checkPublicMotorTests({ reports, artifact }) {
+  const { validateNative, nativeCases, motorArtifacts, caseName } =
+    await import("./motor-test-public-run.mjs");
+  const { nativeBuildSha256, ...sourceIdentity } = artifact;
+  assert.deepEqual(
+    sourceIdentity,
+    (await motorArtifacts()).identity,
+    "Exact actual motor and harness sources required",
+  );
+  assert.ok(
+    nativeBuildSha256 && Object.keys(nativeBuildSha256).length >= 6,
+    "Native main, preload, actual entry and renderer digests required",
+  );
+  assert.equal(
+    reports.length,
+    nativeCases.length,
+    "Every native case must have exactly one receipt",
+  );
+  const names = reports.map((report) => caseName(report.scenario));
+  assert.equal(
+    new Set(names).size,
+    nativeCases.length,
+    "Duplicate native receipts cannot replace missing cases",
+  );
+  for (const scenario of nativeCases) {
+    const report = reports.find((item) => caseName(item.scenario) === caseName(scenario));
+    assert.ok(report, `Unexecuted native motor case: ${caseName(scenario)}`);
+    validateNative(report, artifact, scenario);
+  }
+  return {
+    validated: reports.length,
+    scope:
+      "Actual motor test composition; T6 production activation, installed and physical gates remain separate",
+  };
+}

@@ -268,6 +268,41 @@ export async function readSource(
 ): Promise<ReadPlugin> {
   const resourceBudget = new SourceReadBudget(options.timeoutMs ?? SOURCE_READ_TIMEOUT_MS);
   if (source.kind === "builtin") {
+    if (
+      source.payloadUnavailable === true &&
+      (source.policy === "required" || source.policy === "optional")
+    ) {
+      const message = "Shipped plugin payload is unavailable or invalid.";
+      if (source.policy === "required")
+        throw Object.assign(new Error(message), { code: "PLUGIN_E_ENTRY" });
+      // Only identity/display metadata survives. Do not parse or retain a stale
+      // executable manifest, descriptor, permissions, activation or contributions.
+      const metadata = z
+        .object({
+          id: pluginManifestSchema.shape.id,
+          displayName: pluginManifestSchema.shape.displayName,
+        })
+        .safeParse(source.manifest);
+      const id = metadata.success ? metadata.data.id : "builtin";
+      return {
+        sourceKey: `builtin:${id}`,
+        id,
+        source: "builtin",
+        policy: source.policy,
+        // Management summaries use manifest metadata. This inert diagnostic shell
+        // is always invalid and has no entry, directory or executable declarations.
+        manifest: {
+          id,
+          version: "0.0.0",
+          apiVersion: PLUGIN_API_VERSION,
+          runtime: { kind: "builtin" },
+          ...(metadata.success && metadata.data.displayName
+            ? { displayName: metadata.data.displayName }
+            : {}),
+        },
+        problems: [problem("PLUGIN_E_ENTRY", message)],
+      };
+    }
     const launch = source.launch;
     const allowNode = source.policy === "optional" && launch !== undefined;
     const plugin = await resourceBudget.run(async () =>

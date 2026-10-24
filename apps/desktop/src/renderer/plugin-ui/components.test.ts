@@ -613,3 +613,93 @@ it("keeps keyboard hold focus while the original begin acknowledgement is pendin
     div.remove();
   }
 });
+
+it.each(["release", "toolbar", "window-blur"] as const)(
+  "pointer hold after a focused action preserves focus and honors %s while begin is pending",
+  async (ending) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const pending = deferred<Awaited<ReturnType<typeof f.bridge.hold>>>();
+    f.bridge.hold.mockReturnValueOnce(pending.promise);
+    const state = new UiStateStore(f.bridge, panel, snapshot());
+    const intent = new UiIntentController(f.bridge, state);
+    const div = document.createElement("div");
+    const toolbar = document.createElement("button");
+    document.body.append(div, toolbar);
+    const root = createRoot(div);
+    try {
+      await act(async () =>
+        root.render(createElement(PanelTree, { state, intent, locale: "en", labels })),
+      );
+      const action = div.querySelector<HTMLButtonElement>('[data-ui-node="go"] button')!;
+      const hold = div.querySelector<HTMLButtonElement>('[data-ui-node="hold"] button')!;
+      action.focus();
+      await act(async () => {
+        // Model pointer focus and controller admission; jsdom cannot prove trusted input.
+        hold.focus();
+        intent.begin("hold", {
+          trusted: true,
+          kind: "pointer",
+          id: "1",
+          primary: true,
+          repeat: false,
+        });
+      });
+      expect(action.disabled).toBe(true);
+      expect(hold.disabled).toBe(false);
+      expect(document.activeElement).toBe(hold);
+      await act(async () => {
+        intent.challenge(crypto.randomUUID());
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(f.bridge.pulse).not.toHaveBeenCalled();
+      expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual(["begin"]);
+      await act(async () => {
+        if (ending === "release") intent.release("pointer", "1", false);
+        else if (ending === "toolbar") toolbar.focus();
+        else window.dispatchEvent(new Event("blur"));
+      });
+      expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual([
+        "begin",
+        ending === "release" ? "end" : "cancel",
+      ]);
+      await act(async () => pending.resolve({ ok: true, value: { gesture: crypto.randomUUID() } }));
+      expect(intent.isHolding("hold")).toBe(false);
+      if (ending === "toolbar") expect(document.activeElement).toBe(toolbar);
+    } finally {
+      await act(async () => root.unmount());
+      intent.dispose();
+      state.retire();
+    }
+  },
+);
+
+it.each(["visibleWhen", "enabledWhen"] as const)(
+  "repairs focus when the current target becomes unavailable via %s",
+  async (conditionKey) => {
+    const f = fixture();
+    const resource = structuredClone(panel);
+    resource.nodes[1]![conditionKey] = {
+      op: "eq",
+      left: { scope: "form", key: "enabled" },
+      right: false,
+    };
+    const state = new UiStateStore(f.bridge, resource, snapshot());
+    const intent = new UiIntentController(f.bridge, state);
+    const div = document.createElement("div");
+    document.body.append(div);
+    const root = createRoot(div);
+    try {
+      await act(async () =>
+        root.render(createElement(PanelTree, { state, intent, locale: "en", labels })),
+      );
+      div.querySelector<HTMLInputElement>('[data-ui-node="speed"] input')!.focus();
+      await act(async () => state.edit("enabled", true));
+      expect(document.activeElement).toBe(div.querySelector('[data-ui-group="root"]'));
+    } finally {
+      await act(async () => root.unmount());
+      intent.dispose();
+      state.retire();
+    }
+  },
+);
