@@ -1408,6 +1408,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               })();
               const form = await observeForm();
               assert.equal(form.input.value, "", "Contention needs a fresh empty draft");
+              return form;
+            },
+            async edit() {
+              win.show();
+              win.focus();
+              win.webContents.focus();
+              const form = await observeForm();
+              assert.equal(form.input.value, "", "Contention needs an unedited baseline");
               await nativeClick(`[id=${JSON.stringify(form.input.id)}]`);
               assert.equal(await browser("document.activeElement?.id"), form.input.id);
               await win.webContents.insertText(text);
@@ -1515,6 +1523,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               form: contentionForm,
               winner: {
                 prepare: prepareWinner,
+                edit: () => winnerControls!.form.edit(),
                 submit: () => winnerControls!.form.submit(),
                 observe: () => winnerControls!.form.observe(),
               },

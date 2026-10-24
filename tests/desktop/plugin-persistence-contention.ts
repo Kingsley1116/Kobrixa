@@ -130,6 +130,7 @@ type Input = LifecycleCaseInput & {
   winner: Input["form"];
   form: {
     prepare(): Promise<ContentionForm>;
+    edit(): Promise<ContentionForm>;
     submit(): Promise<void>;
     observe(): Promise<ContentionForm>;
   };
@@ -294,8 +295,8 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
           assert.equal(result.error.code, "PLUGIN_E_DEVICE_BUSY", JSON.stringify(result.error));
       }
     });
-    const winnerBefore = await input.winner.prepare();
-    const beforeForm = await input.form.prepare();
+    let winnerBefore = await input.winner.prepare();
+    let beforeForm = await input.form.prepare();
     assert.notEqual(
       winnerBefore.binding.scope.workbenchInstance,
       beforeForm.binding.scope.workbenchInstance,
@@ -512,6 +513,9 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
       const reached = input.fault.reached("before-publish");
       input.fault.arm("before-publish", "pause");
       first = winning.promise;
+      // Native focus transfers commit edited fields on blur. Keep both mounts
+      // clean until the original publication pause has been armed.
+      winnerBefore = await input.winner.edit();
       await input.winner.submit();
       void first.then(
         () => {
@@ -548,6 +552,7 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
       if (expectedTicket.target.kind === "settings")
         assert.equal(expectedTicket.target.expectedRevision, initial.revision);
       assert.deepEqual(expectedTicket.owner, owners[1]);
+      beforeForm = await input.form.edit();
       await input.form.submit();
       const submitted = await bounded(entered.promise);
       assert.equal(
