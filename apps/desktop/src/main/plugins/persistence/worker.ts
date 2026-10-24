@@ -132,7 +132,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   const channel=input.testControl?new MessageChannel():null;
   const worker=new Worker(input.workerEntry,{workerData:channel?{faultPort:channel.port2}:{},transferList:channel?[channel.port2]:[]});
   let exited=false,exitCode:number|undefined;worker.once("exit",code=>{exited=true;exitCode=code;channel?.port1.close();});
-  const queue=new WorkQueue(input.now),ledger=new Map<string,{ticket:PublicationTicket;gate:PublicationGate;sequence:number;slot:number;settledAt:number|null}>(),freeSlots=Array.from({length:1024},(_,i)=>1023-i);
+  const queue=new WorkQueue(input.now),ledger=new Map<string,{ticket:PublicationTicket;gate:PublicationGate;sequence:number;slot:number;settledAt:number|null;unadmittedClean:boolean}>(),freeSlots=Array.from({length:1024},(_,i)=>1023-i);
   const inUse=new Int32Array(held,gateBytes,1024);
   function releaseSlot(id:string){const e=ledger.get(id);if(!e)return;ledger.delete(id);Atomics.store(inUse,e.slot,0);freeSlots.push(e.slot);}
   function pruneLedger(){for(const [id,e] of ledger)if(e.settledAt!==null && e.settledAt+120000<=input.now())releaseSlot(id);}
@@ -147,6 +147,14 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     const parsed=PersistenceWorkerResponse.safeParse(raw);if(!parsed.success)return;
     const r=parsed.data,p=pending.get(r.id);if(!p)return;pending.delete(r.id);
     for(const marker of r.settled??[]) {const settled=ledger.get(marker.id);if(settled)settled.settledAt??=input.now();}
+    // Only the reserve response can prove this attempt never became a write.
+    // An error alone (lost response / failed cleanup) is not proof; a later abort
+    // of admitted work must keep its lifecycle obligation. The store emits this
+    // marker on reserve rejection only after no Entry or failed reserve remains.
+    if(!r.ok && (p.operation==="engine.reserve" || p.operation==="engine.reserveFinal")) {
+      const e=p.ticketId?ledger.get(p.ticketId):undefined;
+      if(e && r.settled?.some(m=>m.id===p.ticketId && m.disposition==="aborted"))e.unadmittedClean=true;
+    }
     if(!r.ok){p.reject(storageFault(r.error.message,p.operation)??new Error(r.error.message));return;}
     const e=p.ticketId?ledger.get(p.ticketId):undefined;
     if(e && ((r.value as {disposition?:string}|null)?.disposition==="unknown" || r.value==="unknown"))e.settledAt=null;
@@ -201,7 +209,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     args["engine.reserve"].parse([t,size]);
     const slot=freeSlots.pop();if(slot===undefined)throw new Error("gate-slot-limit");
     Atomics.store(inUse,slot,1);const gate=new PublicationGate(Math.min(t.deadlineMonotonicMs,grant?.deadlineMonotonicMs??Infinity),held,gateOffset(slot),true);
-    const accepted=++sequence;ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:accepted,slot,settledAt:null});
+    const accepted=++sequence;ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:accepted,slot,settledAt:null,unadmittedClean:false});
     let posted=false;
     try{await send(grant?"engine.reserveFinal":"engine.reserve",grant?[t,size,grant]:[t,size],{slot,sequence:accepted},()=>{posted=true;});}
     catch(e){if(!posted)releaseSlot(t.id);throw e;}
@@ -219,7 +227,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
     input.profile.assertHeld();pruneLedger();pruneBarriers();if(barriers.size>=1024)throw new Error("barrier-limit");
     const barrier=Object.freeze({id:randomUUID(),scope:structuredClone(scope),through:sequence,deadlineMonotonicMs:deadline});
     barriers.set(barrier.id,{barrier,expires:retain?input.now()+120000:deadline,
-      tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket)).map(e=>e.ticket)});
+      tickets:[...ledger.values()].filter(e=>e.sequence<=barrier.through && matches(scope,e.ticket) && (!retain || !e.unadmittedClean)).map(e=>e.ticket)});
     return barrier;
   }
   const backend:PersistenceBackend={engine,
