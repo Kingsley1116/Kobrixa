@@ -30,6 +30,7 @@ import {
 } from "./index.js";
 import type { DrainReport } from "./persistence-participant.js";
 import { memoryPlugin } from "./test-process.js";
+import * as staticCatalog from "./static-language-catalog.js";
 
 let root: string;
 beforeEach(async () => {
@@ -3149,3 +3150,360 @@ it("R170 failed old disposition and late loss cannot retire a restarted supervis
   await h.manager.shutdown();
   expect(runtimeDiagnostics(h.runtime).snapshot().owners).toBe(1);
 });
+
+it.each(["disable", "reload"] as const)(
+  "host source cleanup remains pending until %s retirement settles",
+  async (action) => {
+    const h = await phased160();
+    h.initialize.resolve();
+    h.initialBinding.resolve();
+    h.readyGate.resolve();
+    const context = await h.runtime.activateInitialized(
+      h.source.launch.sourceKey,
+      new AbortController().signal,
+    );
+    await h.runtime.ready(context.owner, new AbortController().signal);
+    const cleanup = gate160();
+    vi.mocked(h.fixture.host.retireResources).mockImplementation(() => cleanup.promise);
+    const original = h.manager.builtinSourceEligibility()[0]!;
+    const change =
+      action === "disable"
+        ? h.manager.setEnabled(original.sourceKey, false)
+        : h.manager.reloadSource(original.sourceKey);
+    await vi.waitFor(() => expect(h.fixture.host.retireResources).toHaveBeenCalledOnce());
+    expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+      eligible: false,
+      cleanupPending: true,
+      generation: original.generation,
+    });
+    expect(h.runtime.current(context.owner)).toBe(false);
+    cleanup.resolve();
+    expect(await change).toMatchObject({ ok: true });
+    expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+      eligible: action === "reload",
+      cleanupPending: false,
+    });
+    if (action === "reload")
+      expect(h.manager.builtinSourceEligibility()[0]!.generation).toBeGreaterThan(
+        original.generation,
+      );
+    await h.manager.shutdown();
+  },
+);
+
+it("host source snapshots isolate callers, reject development claims and fail closed on invalid policy states", async () => {
+  const provider = {
+    kind: "builtin" as const,
+    policy: "optional" as const,
+    resources: {},
+    manifest: {
+      id: "kobrixa.device-ev3",
+      version: "1.0.0",
+      apiVersion: "^1.5.0",
+      runtime: { kind: "builtin" },
+      contributes: {
+        deviceProviders: [{ id: "kobrixa.device-ev3", capabilities: ["connection.v1"] }],
+      },
+    },
+  };
+  const dev = await devPlugin("claim");
+  const file = path.join(dev.directory, "kobrixa-plugin.json");
+  const manifest = JSON.parse(await readFile(file, "utf8"));
+  manifest.contributes.deviceProviders = provider.manifest.contributes.deviceProviders;
+  await writeFile(file, JSON.stringify(manifest));
+  const manager = await create([provider, dev]);
+  try {
+    expect(manager.state().plugins.find((row) => row.source === "development")?.status).toBe(
+      "invalid",
+    );
+    const snapshot = manager.builtinSourceEligibility();
+    expect(snapshot).toHaveLength(1);
+    (snapshot[0]!.providerIds as string[]).push("forged.provider");
+    expect(manager.builtinSourceEligibility()[0]!.providerIds).toEqual(["kobrixa.device-ev3"]);
+    provider.manifest.apiVersion = "^999.0.0";
+    await manager.reloadSource("builtin:kobrixa.device-ev3");
+    expect(manager.builtinSourceEligibility()[0]?.eligible).toBe(false);
+  } finally {
+    await manager.shutdown();
+  }
+});
+
+it("host provider cleanup waits for a failed disable save and does not permit an unsaved enable", async () => {
+  const source = optionalNodeSource();
+  const store = memoryStore();
+  const manager = await create([source], store);
+  const save = gate160();
+  store.save = async () => {
+    await save.promise;
+    throw new Error("disk full");
+  };
+  const disabling = manager.setEnabled(source.launch.sourceKey, false);
+  expect(manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: true,
+  });
+  save.resolve();
+  expect(await disabling).toMatchObject({ ok: true, persisted: false });
+  expect(manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: false,
+  });
+  expect(await manager.setEnabled(source.launch.sourceKey, true)).toMatchObject({
+    ok: false,
+    code: "PLUGIN_E_STATE_SAVE",
+  });
+  expect(manager.builtinSourceEligibility()[0]?.eligible).toBe(false);
+  await manager.shutdown();
+});
+
+it("host source retains cleanup evidence when owner retirement rejects", async () => {
+  const h = await phased160();
+  h.initialize.resolve();
+  h.initialBinding.resolve();
+  h.readyGate.resolve();
+  const signal = new AbortController().signal;
+  const context = await h.runtime.activateInitialized(h.source.launch.sourceKey, signal);
+  await h.runtime.ready(context.owner, signal);
+  vi.mocked(h.fixture.host.retireResources).mockRejectedValue(new Error("save blocked"));
+  await expect(h.manager.setEnabled(h.source.launch.sourceKey, false)).rejects.toThrow(
+    "save blocked",
+  );
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: true,
+  });
+  // Re-enabling cannot turn unresolved safety cleanup into a new provider generation.
+  await h.manager.setEnabled(h.source.launch.sourceKey, true);
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: true,
+  });
+  await h.manager.shutdown().catch(() => undefined);
+});
+
+async function timedOutBuiltin() {
+  const source = optionalNodeSource();
+  let exit!: () => void;
+  const child = memoryPlugin((peer, control) => {
+    exit = control.exit;
+    peer.handle("initialize", () => ({ apiVersion: "1.0.0", sdk: { name: "t", version: "1" } }));
+    peer.handle("command/execute", () => null);
+    peer.handle("shutdown", () => new Promise(() => {}));
+  });
+  const store = memoryStore();
+  const manager = await PluginManager.create({
+    sources: [source],
+    store,
+    safeMode: false,
+    locale: "en",
+    launcher: async () => ({ ...child.process, kill() {}, forceKill() {} }),
+    supervisor: { stopTimeoutMs: 5, exitTimeoutMs: 10 },
+  });
+  expect(await manager.executeCommand("kobrixa.fixture.run")).toEqual({ ok: true });
+  return { manager, store, exit, key: source.launch.sourceKey };
+}
+
+it("recovers the original timed-out disable only after late exit and successful retry", async () => {
+  const h = await timedOutBuiltin();
+  await expect(h.manager.setEnabled(h.key, false)).rejects.toThrow("exit is not confirmed");
+  expect(h.manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(true);
+  // Retrying before confirmed exit fails safely, without leaking another active hold.
+  await expect(h.manager.setEnabled(h.key, false)).rejects.toThrow("exit is not confirmed");
+  // A successful unrelated apply must not discard the failed operation's hold.
+  await h.manager.setEnabled(h.key, true);
+  expect(h.manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(true);
+  h.exit();
+  await Promise.resolve();
+  expect(h.manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(true);
+  expect(await h.manager.setEnabled(h.key, false)).toMatchObject({ ok: true });
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: false,
+  });
+  expect(await h.manager.setEnabled(h.key, true)).toMatchObject({ ok: true });
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: true,
+    cleanupPending: false,
+  });
+  await h.manager.shutdown();
+});
+
+it("failed shutdown retains its hold until late exit and explicit resume", async () => {
+  const h = await timedOutBuiltin();
+  await expect(h.manager.shutdown()).rejects.toThrow("exit is not confirmed");
+  await expect(h.manager.resume()).rejects.toThrow("exit is not confirmed");
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: true,
+  });
+  h.exit();
+  await Promise.resolve();
+  expect(h.manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(true);
+  await h.manager.resume();
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: true,
+    cleanupPending: false,
+  });
+  await h.manager.shutdown();
+});
+
+it("recovering a failed shutdown cannot clear an overlapping disable save hold", async () => {
+  const h = await timedOutBuiltin();
+  const save = gate160();
+  h.store.save = async () => save.promise;
+  const disabling = h.manager.setEnabled(h.key, false);
+  await expect(h.manager.shutdown()).rejects.toThrow("exit is not confirmed");
+  h.exit();
+  await Promise.resolve();
+  const resumed = h.manager.resume();
+  // Resume recovers shutdown, then queues behind the still-pending save.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(h.manager.builtinSourceEligibility()[0]).toMatchObject({
+    eligible: false,
+    cleanupPending: true,
+  });
+  const failedDisable = expect(disabling).rejects.toThrow("exit is not confirmed");
+  save.resolve();
+  await failedDisable;
+  await resumed;
+  expect(h.manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(true);
+  expect(await h.manager.setEnabled(h.key, false)).toMatchObject({ ok: true });
+  expect(h.manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(false);
+  await h.manager.setEnabled(h.key, true);
+  expect(h.manager.builtinSourceEligibility()[0]?.eligible).toBe(true);
+  await h.manager.shutdown();
+});
+
+it("an intersecting retry recovers all replacement retirements while preserving an independent active hold", async () => {
+  const first = optionalNodeSource();
+  const second = optionalNodeSource();
+  second.manifest.id = "kobrixa.other";
+  second.manifest.contributes.commands[0]!.id = "kobrixa.other.run";
+  second.launch.pluginId = second.manifest.id;
+  second.launch.sourceKey = "builtin:kobrixa.other";
+  const exits: Array<() => void> = [];
+  const store = memoryStore();
+  const manager = await PluginManager.create({
+    sources: [first, second],
+    store,
+    safeMode: false,
+    locale: "en",
+    launcher: async () => {
+      const child = memoryPlugin((peer, { exit }) => {
+        exits.push(exit);
+        peer.handle("initialize", () => ({
+          apiVersion: "1.0.0",
+          sdk: { name: "t", version: "1" },
+        }));
+        peer.handle("command/execute", () => null);
+        peer.handle("shutdown", () => new Promise(() => {}));
+      });
+      return { ...child.process, kill() {}, forceKill() {} };
+    },
+    supervisor: { stopTimeoutMs: 5, exitTimeoutMs: 10 },
+  });
+  const save = gate160();
+  try {
+    expect(await manager.executeCommand("kobrixa.fixture.run")).toEqual({ ok: true });
+    expect(await manager.executeCommand("kobrixa.other.run")).toEqual({ ok: true });
+    for (const source of [first, second])
+      source.manifest.contributes.commands[0]!.title.en = "Changed executable metadata";
+    await expect(manager.setEnabled(first.launch.sourceKey, true)).rejects.toThrow(
+      "exit is not confirmed",
+    );
+    expect(
+      manager.builtinSourceEligibility().every((row) => row.cleanupPending && !row.eligible),
+    ).toBe(true);
+    exits[0]!();
+    // The requested source exited, but the original operation also owes the other retirement.
+    await expect(manager.setEnabled(first.launch.sourceKey, false)).rejects.toThrow(
+      "exit is not confirmed",
+    );
+    expect(manager.builtinSourceEligibility().every((row) => row.cleanupPending)).toBe(true);
+    exits[1]!();
+    await Promise.resolve();
+    expect(manager.builtinSourceEligibility().every((row) => row.cleanupPending)).toBe(true);
+    const saving = gate160();
+    let saves = 0;
+    store.save = async () => {
+      if (++saves === 2) {
+        saving.resolve();
+        await save.promise;
+      }
+    };
+    const retry = manager.setEnabled(first.launch.sourceKey, false);
+    const independent = manager.setEnabled(second.launch.sourceKey, false);
+    expect(await retry).toMatchObject({ ok: true });
+    await saving.promise;
+    expect(manager.builtinSourceEligibility()).toMatchObject([
+      { cleanupPending: false, eligible: false },
+      { cleanupPending: true, eligible: false },
+    ]);
+    save.resolve();
+    expect(await independent).toMatchObject({ ok: true });
+    expect(manager.builtinSourceEligibility().every((row) => !row.cleanupPending)).toBe(true);
+    expect(await manager.setEnabled(first.launch.sourceKey, true)).toMatchObject({ ok: true });
+    expect(await manager.reloadSource(first.launch.sourceKey)).toMatchObject({ ok: true });
+    expect(manager.builtinSourceEligibility()[0]).toMatchObject({
+      cleanupPending: false,
+      eligible: true,
+    });
+    await manager.shutdown();
+    expect(
+      manager.builtinSourceEligibility().every((row) => !row.cleanupPending && !row.eligible),
+    ).toBe(true);
+  } finally {
+    save.resolve();
+    exits.forEach((exit) => exit());
+    await manager.shutdown();
+  }
+});
+
+it.each(["success", "failure", "shutdown"] as const)(
+  "reload keeps admission fenced until metadata apply settles through %s without leaking its hold",
+  async (outcome) => {
+    const source = optionalNodeSource();
+    const manager = await create([source]);
+    const before = manager.builtinSourceEligibility()[0]!.generation;
+    const entered = gate160();
+    const settle = gate160();
+    const build = staticCatalog.buildStaticLanguageCatalog;
+    const apply = vi
+      .spyOn(staticCatalog, "buildStaticLanguageCatalog")
+      .mockImplementationOnce(async (...args) => {
+        entered.resolve();
+        await settle.promise;
+        if (outcome === "failure") throw new Error("catalog apply failed");
+        return build(...args);
+      });
+    try {
+      const reloading = manager.reloadSource(source.launch.sourceKey);
+      const result =
+        outcome === "failure"
+          ? expect(reloading).rejects.toThrow("catalog apply failed")
+          : reloading;
+      await entered.promise;
+      expect(manager.builtinSourceEligibility()[0]).toMatchObject({
+        generation: before + 1,
+        eligible: false,
+        cleanupPending: true,
+      });
+      if (outcome === "shutdown") await manager.shutdown();
+      settle.resolve();
+      const settled = await result;
+      if (outcome === "shutdown")
+        expect(settled).toMatchObject({ ok: false, code: "PLUGIN_E_SHUTTING_DOWN" });
+      expect(manager.builtinSourceEligibility()[0]?.cleanupPending).toBe(false);
+      if (outcome === "shutdown") await manager.resume();
+      expect(await manager.reloadSource(source.launch.sourceKey)).toMatchObject({ ok: true });
+      expect(manager.builtinSourceEligibility()[0]).toMatchObject({
+        eligible: true,
+        cleanupPending: false,
+      });
+    } finally {
+      settle.resolve();
+      apply.mockRestore();
+      await manager.shutdown();
+    }
+  },
+);

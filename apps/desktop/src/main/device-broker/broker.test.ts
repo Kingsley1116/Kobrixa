@@ -434,7 +434,7 @@ it("provider catalog freezes policy during connect and validates full tuples", a
       usbRetryLimit: 3,
     }),
   });
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const catalog = h.broker.providerCatalog(h.provider.id);
   const { provider } = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
   expect(() =>
@@ -478,7 +478,7 @@ it("provider catalog freezes policy during connect and validates full tuples", a
 });
 it("connection cancellation blocks a delayed exchange dispatch", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const catalog = h.broker.providerCatalog(h.provider.id),
     fake = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
   h.broker.registerProvider(fake.provider);
@@ -599,7 +599,7 @@ it("gate loss during a file chunk prevents the next chunk but preserves exactly 
             },
           },
   });
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const fake = createFakeDeviceProvider({
     catalog: h.broker.providerCatalog(h.provider.id),
     now: h.dependencies.now,
@@ -744,7 +744,7 @@ it.each(["duplicate", "changed"])("USB recovery rejects %s serial evidence", asy
 
 it("retained legacy cancellation owns the lane until file-close settles", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const fake = createFakeDeviceProvider({
     catalog: h.broker.providerCatalog(h.provider.id),
     now: h.dependencies.now,
@@ -791,7 +791,7 @@ it("retained legacy cancellation owns the lane until file-close settles", async 
 
 it("mode changes allocate a new catalog revision and stamp the snapshot in the session sequence", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const catalog = h.broker.providerCatalog(h.provider.id),
     fake = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
   h.broker.registerProvider(fake.provider);
@@ -967,7 +967,7 @@ it("each connect exchange is clamped to the one captured attempt deadline", asyn
 });
 it("conflicting and replaced provider generations cannot reuse a catalog allocator", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const old = h.broker.providerCatalog(h.provider.id),
     fake = createFakeDeviceProvider({ catalog: old, now: h.dependencies.now });
   const remove = h.broker.registerProvider(fake.provider);
@@ -989,8 +989,8 @@ it("conflicting and replaced provider generations cannot reuse a catalog allocat
   const id = old.identify(tuple);
   const conflict = h.broker.registerProvider(h.provider);
   expect(() => old.identify(tuple)).toThrow();
-  conflict();
-  remove();
+  await conflict.retirement!.retire();
+  await remove.retirement!.retire();
   const next = h.broker.providerCatalog(h.provider.id),
     replacement = createFakeDeviceProvider({ catalog: next, now: h.dependencies.now });
   h.broker.registerProvider(replacement.provider);
