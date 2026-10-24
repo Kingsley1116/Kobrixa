@@ -1,0 +1,168 @@
+{
+  "runs": [
+    {
+      "run": "1kHukb",
+      "case": "source-loss",
+      "producerCommit": "49abdf6f934a0eaffa19aedb89d36c27b3d8e902"
+    },
+    {
+      "run": "Sfi9sL",
+      "case": "provider-disable",
+      "producerCommit": "9e77ad86406d300e18c920a3dfcb5e414abe12b4"
+    },
+    {
+      "run": "lwBco3",
+      "case": "disconnect",
+      "producerCommit": "9e77ad86406d300e18c920a3dfcb5e414abe12b4"
+    }
+  ],
+  "files": [
+    {
+      "file": "source-loss-matrix.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-1kHukb/matrix.json",
+      "uncompressedBytes": 2604,
+      "uncompressedSha256": "a38561815d85229d1d1d7405cc344c6566ff5ee8ff11cc15c4f7d0d608f9de23",
+      "sha256": "15236e21c9b61f2afb059483462ea937f69684b7d878c8769b928d170a80babf"
+    },
+    {
+      "file": "source-loss-report.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-1kHukb/pulse-after-source-loss/report.json",
+      "uncompressedBytes": 327171,
+      "uncompressedSha256": "f132e8ed8c2420ad1cb14d0ed4385c2223a41286562500af1503aefe1d06b20b",
+      "sha256": "d153d71188271469e0df14668fb5ae551aed857f178de73fb96f495a0f926e7f"
+    },
+    {
+      "file": "source-loss-electron.log.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-1kHukb/pulse-after-source-loss/electron.log",
+      "uncompressedBytes": 124,
+      "uncompressedSha256": "bb985f3ca17a41e2ff2f065fa90797533fb84e64d2ed13c2002994625e53a28b",
+      "sha256": "4fe666612c0f1eec9216135885c251e4071c877c4268de79980d402fd9635b66"
+    },
+    {
+      "file": "source-loss-artifact-identity.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-1kHukb/artifact-identity.json",
+      "uncompressedBytes": 2069,
+      "uncompressedSha256": "2e306bd53b813931995a4f764b2b8a5c2f5aa194e9fc9cf220f6b5d7e1d9c7cd",
+      "sha256": "49ed52a8eb1da22bf41f9b04ed7bc5a952e8956624b68c0140be1f10f94d6863"
+    },
+    {
+      "file": "source-loss-main-metafile.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-1kHukb/main-metafile.json",
+      "uncompressedBytes": 230975,
+      "uncompressedSha256": "cb366a6c77918d8ed5582f5708d254150f060955a1fa9bf535692ea3ce6644d4",
+      "sha256": "4591fd77e1191a8885aa8eaf58a36fee7645ba33e29d47fa17c87aa5cc7883aa"
+    },
+    {
+      "file": "source-loss-renderer-modules.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-1kHukb/renderer-modules.json",
+      "uncompressedBytes": 20878,
+      "uncompressedSha256": "9f8d515b0568b268bbb87514455949c2ee2352231014e33327fa4df482ce8747",
+      "sha256": "029acaf8af63f8aab21ebcd9a6bc68a9aeb1b5012e8d63c9c9311aa012cf40a5"
+    },
+    {
+      "file": "source-loss-native.log.gz",
+      "source": "/private/tmp/stage3-motor-integration-native5.log",
+      "uncompressedBytes": 1193,
+      "uncompressedSha256": "bbe57843e8fd7a9a97173e0f5d37a73f61579f3f0092411448c8edbc36a85c4a",
+      "sha256": "4c2c77226a45d6b4745432eaa5764865a97f417367641cc5c989e3e3c6b1570d"
+    },
+    {
+      "file": "provider-disable-matrix.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-Sfi9sL/matrix.json",
+      "uncompressedBytes": 2619,
+      "uncompressedSha256": "d2ccadbcbcd962175fd1b59c97392929204ab274029b9849c49d75d3c85c5235",
+      "sha256": "6ff28994bb40a4d1170a20b2b8e38e30334be6aa7c0372acb144d40c38a268e1"
+    },
+    {
+      "file": "provider-disable-report.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-Sfi9sL/pulse-after-provider-disable/report.json",
+      "uncompressedBytes": 315436,
+      "uncompressedSha256": "8a52b420512c6abbc38b760d33ebae16a66db43602f907827ba1756d84fe0595",
+      "sha256": "2f669005d20384c05999914411f0befe5d4b5dba4a4f53e7a2d8d2cccd66c365"
+    },
+    {
+      "file": "provider-disable-electron.log.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-Sfi9sL/pulse-after-provider-disable/electron.log",
+      "uncompressedBytes": 129,
+      "uncompressedSha256": "1e2fbbb9dd03babecc222dfbcd7c343eecd05bccfac639b44b4b2b73ef19f61b",
+      "sha256": "3c358e130053ab86d2662c8ca05e2f31e16fc00a0e82cb0df8ef69976377b27a"
+    },
+    {
+      "file": "provider-disable-artifact-identity.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-Sfi9sL/artifact-identity.json",
+      "uncompressedBytes": 2069,
+      "uncompressedSha256": "9753e2802856c4fe50ff0504a337bebf8e94418245951cdd4ae595bded5796d1",
+      "sha256": "9b34a2d2dab033bb90118f7fc42f6393a62b56ad7b573b87d0d219db16318ecd"
+    },
+    {
+      "file": "provider-disable-main-metafile.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-Sfi9sL/main-metafile.json",
+      "uncompressedBytes": 230975,
+      "uncompressedSha256": "9dd8af96d197bdd37652e138573cf747bfa46d2507b2355fa7427f6decbdc125",
+      "sha256": "e8972e87e5f31e60f9ecb0b08e6747561fa8aad96f315ff7ec400c3f69ac7d15"
+    },
+    {
+      "file": "provider-disable-renderer-modules.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-Sfi9sL/renderer-modules.json",
+      "uncompressedBytes": 20878,
+      "uncompressedSha256": "7bfe467df9a045dd74baff3e9911f2ca8f6826887018d713e5d730be0821b6f2",
+      "sha256": "34bff47b95655d1f08efdbb3233f10cca6a28397280081cdf0b0e5f111f2174f"
+    },
+    {
+      "file": "provider-disable-native.log.gz",
+      "source": "/private/tmp/stage3-motor-integration-provider-disable2.log",
+      "uncompressedBytes": 1208,
+      "uncompressedSha256": "6047d66830afcfadce488e460f95156a3b3bdff5fafcc92bd34cbac6cbcb6c9f",
+      "sha256": "bf32c92a8d2a481eb97f311692f67c6101b329a296de728a1296f779063a04db"
+    },
+    {
+      "file": "disconnect-matrix.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-lwBco3/matrix.json",
+      "uncompressedBytes": 2601,
+      "uncompressedSha256": "360579ba598c7c17c48f74ae6cfe9cf5e8006df98e84cd091188d8e1536f09af",
+      "sha256": "d2e2ae45cb0b610854959f92510e7ef956b2bc7373e6b7e552021c351a5b98b5"
+    },
+    {
+      "file": "disconnect-report.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-lwBco3/pulse-after-disconnect/report.json",
+      "uncompressedBytes": 346362,
+      "uncompressedSha256": "92ed8191afa575d2ea64b990b4e86793118883d2d12c7a5675ce8e36ace47921",
+      "sha256": "df80ab31f609d01b18a9df96902253357e80073cd904445f0f8379cbcf8c3234"
+    },
+    {
+      "file": "disconnect-electron.log.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-lwBco3/pulse-after-disconnect/electron.log",
+      "uncompressedBytes": 123,
+      "uncompressedSha256": "7b1385e18b4e7ee2d0b6a67bd19cff496f6ac992b3b896f3a8f90661f4aeb6f1",
+      "sha256": "e8f01c8b12bb9348d5b2fc4b204f19ce4455b095bfce523dced8d5964b369651"
+    },
+    {
+      "file": "disconnect-artifact-identity.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-lwBco3/artifact-identity.json",
+      "uncompressedBytes": 2069,
+      "uncompressedSha256": "9753e2802856c4fe50ff0504a337bebf8e94418245951cdd4ae595bded5796d1",
+      "sha256": "9b34a2d2dab033bb90118f7fc42f6393a62b56ad7b573b87d0d219db16318ecd"
+    },
+    {
+      "file": "disconnect-main-metafile.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-lwBco3/main-metafile.json",
+      "uncompressedBytes": 230975,
+      "uncompressedSha256": "55dd933c5cf62258e4d1fe5a80ebfdff3f5b75631e73cef8549091f47ead305c",
+      "sha256": "982c33199dce7d2fc3fbf028164c9efe7dfb266e2829743d1c2ce89253ecb169"
+    },
+    {
+      "file": "disconnect-renderer-modules.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-motor-native-lwBco3/renderer-modules.json",
+      "uncompressedBytes": 20878,
+      "uncompressedSha256": "8fb198f1302259164dfbbce155952a786c0985028673ffc6807f8ce1f970e064",
+      "sha256": "b1f1abb271e5de3ed765194cfb74e33a891e5add4c6102ecddfe3c9626d91f4e"
+    },
+    {
+      "file": "disconnect-native.log.gz",
+      "source": "/private/tmp/stage3-motor-integration-disconnect.log",
+      "uncompressedBytes": 1190,
+      "uncompressedSha256": "28a582c169ac493df596d5cb91d651caf139865165c90f0b71b3492e0ff4817b",
+      "sha256": "eb7aa6f05dd5dfde04e67ed5dfd08876c28284aba7200b38b3b3fa62873d580f"
+    }
+  ]
+}
