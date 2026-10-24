@@ -445,7 +445,10 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
     await poll(
       () => queryMotion(prepared.operationId),
       (operation) => {
-        assert.ok(activeMotion(operation), "Motion ended before contention probes");
+        assert.ok(
+          activeMotion(operation),
+          `Motion ended before contention probes: ${JSON.stringify(operation)}`,
+        );
         return operation.phase === "running";
       },
     );

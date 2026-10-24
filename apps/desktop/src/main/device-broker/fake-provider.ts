@@ -327,6 +327,7 @@ export class FakeProvider implements BuiltinDeviceProvider {
     this.call("motion");
     if (this.maximum && motion.mode === "timed") {
       await ctx.exchange("motion-pulse", async () => {});
+      ctx.publishProgress({ stage: "moving", elapsedMs: 0, angle: null, displacement: null });
       // Device runtime is not transport time: keep the existing pulse budget.
       // Resolve on cancellation so the broker retains dispatch evidence and runs cleanup.
       const completed = await new Promise<boolean>((resolve) => {
