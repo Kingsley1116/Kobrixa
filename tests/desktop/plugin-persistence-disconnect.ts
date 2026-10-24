@@ -166,10 +166,14 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
   );
   assert.equal(o.ended.length, 2);
   assert.equal(o.sdkDrains.length, o.requests.length);
-  assert.deepEqual(
-    o.sdkDrains.map((row) => row.request),
-    o.requests.map((row) => row.request),
-  );
+  for (const [index, dispatched] of o.sdkDrains.entries()) {
+    const { remainingMs: actual, ...wire } = dispatched.request;
+    const { remainingMs: offered, ...original } = o.requests[index]!.request;
+    assert.deepEqual(wire, original);
+    // The real supervisor subtracts dispatch time and floors its wire budget.
+    // It may shorten the offer but must never renew it or change its contents.
+    assert.ok(Number.isFinite(actual) && actual > 0 && actual <= offered);
+  }
   assert.equal(o.finalAdmissions.length, 2);
   assert.equal(new Set(o.finalAdmissions.map((row) => row.ticket.id)).size, 2);
   for (const admission of o.finalAdmissions) {

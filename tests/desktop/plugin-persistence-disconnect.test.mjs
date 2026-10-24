@@ -681,3 +681,14 @@ for (const [name, mutate] of [
     mutate(e.disconnect);
     assert.throws(() => assertDisconnectEvidence(e));
   });
+
+test("SDK dispatch may shorten a fractional budget but cannot renew or erase it", () => {
+  const observation = specimen();
+  observation.requests[0].request.remainingMs = 98.75;
+  observation.sdkDrains[0].request.remainingMs = 97;
+  assert.doesNotThrow(() => assertDisconnectObservation(observation));
+  for (const remainingMs of [99, 0, -1, NaN, Infinity]) {
+    observation.sdkDrains[0].request.remainingMs = remainingMs;
+    assert.throws(() => assertDisconnectObservation(observation));
+  }
+});
