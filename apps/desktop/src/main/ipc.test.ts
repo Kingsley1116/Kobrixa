@@ -715,7 +715,8 @@ async function foundationIpc(legacyMetadata = false) {
         if (blocked) {
           await expect(composition.dispose()).rejects.toThrow("disposition");
           expect(shutdown).not.toHaveBeenCalled();
-          await controller.shutdown(); // Dispose the in-memory test process only.
+          // Process teardown cannot turn unresolved provider evidence into success.
+          await expect(controller.shutdown()).rejects.toThrow("disposition");
           coordinator.dispose();
         } else await composition.dispose();
       } finally {
@@ -1392,7 +1393,7 @@ it("D150 Disconnect also waits for a concurrent current-stop's final journal pub
   }
 });
 
-it.each(["shutdown", "disconnect", "provider"] as const)(
+it.each(["shutdown", "disconnect", "provider", "reload"] as const)(
   "D150 later recovery after blocked Disconnect keeps %s pending through its final journal",
   async (teardown) => {
     const f = await foundationIpc();
@@ -1426,9 +1427,11 @@ it.each(["shutdown", "disconnect", "provider"] as const)(
       pending = Promise.resolve(
         teardown === "shutdown"
           ? f.composition.dispose()
-          : teardown === "provider"
-            ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration)
-            : f.call("device:disconnect", f.sessionId),
+          : teardown === "reload"
+            ? f.controller.reload("builtin:kobrixa.device-ev3")
+            : teardown === "provider"
+              ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration)
+              : f.call("device:disconnect", f.sessionId),
       ).finally(() => {
         settled = true;
       });
@@ -1454,7 +1457,10 @@ it.each(["shutdown", "disconnect", "provider"] as const)(
       ).toHaveLength(1);
       if (teardown === "shutdown") expect(f.shutdown).toHaveBeenCalledOnce();
       else if (teardown === "disconnect") expect(physical).toHaveBeenCalledOnce();
-      else
+      else if (teardown === "reload") {
+        await expect(pending).resolves.toMatchObject({ ok: true });
+        expect(f.catalogs).toHaveLength(2);
+      } else
         await expect(pending).resolves.toMatchObject({
           stopConfirmed: true,
           journalCommitted: true,

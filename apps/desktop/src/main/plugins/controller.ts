@@ -99,6 +99,10 @@ export type PluginManagerPort = Pick<
   | "resolveLanguageService"
 >;
 export interface PluginControllerDependencies {
+  providerSettlement?: {
+    settle(): Promise<void>;
+    retry(): Promise<void>;
+  };
   manager: PluginManagerPort;
   settings: Pick<PluginSettingsStore, "settings" | "update">;
   dialogs: PluginDialogs;
@@ -135,6 +139,7 @@ type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey
  */
 export class PluginController {
   #revision = 0;
+  #providerFailed = false;
   #helpCatalog: PluginHelpCatalogView | undefined;
   #staticRiskRecorded = false;
   #staticSaveProblem: PluginProblem | undefined;
@@ -382,7 +387,7 @@ export class PluginController {
       outsideSafeMode: optionalBuiltin,
     });
     if (refused) return refused;
-    return this.#result(await this.deps.manager.setEnabled(sourceKey, enabled));
+    return this.#providerAction(sourceKey, () => this.deps.manager.setEnabled(sourceKey, enabled));
   }
 
   async setDeveloperMode(enabled: boolean): Promise<PluginsResult> {
@@ -497,7 +502,38 @@ export class PluginController {
     const refused = this.#refuse({ developer: !optionalBuiltin, outsideSafeMode: true });
     if (refused) return refused;
     this.#pendingReload.delete(sourceKey);
-    return this.#result(await this.deps.manager.reloadSource(sourceKey));
+    return this.#providerAction(sourceKey, () => this.deps.manager.reloadSource(sourceKey));
+  }
+
+  async #providerAction(
+    sourceKey: string,
+    action: () => Promise<PluginActionResult>,
+  ): Promise<PluginsResult> {
+    const retry = this.#providerFailed;
+    if (sourceKey !== "builtin:kobrixa.device-ev3") return this.#result(await action());
+    try {
+      const result = await action();
+      // The manager must release its own cleanup/admission holds first.
+      await this.#settleProvider(retry);
+      return this.#result(result);
+    } catch (error) {
+      return failure(
+        error instanceof PluginError ? error.code : "PLUGIN_E_DEVICE_OPERATION",
+        messageOf(error),
+      );
+    }
+  }
+
+  async #settleProvider(retry = false): Promise<void> {
+    try {
+      const settlement = this.deps.providerSettlement;
+      if (retry) await settlement?.retry();
+      else await settlement?.settle();
+      this.#providerFailed = false;
+    } catch (error) {
+      this.#providerFailed = true;
+      throw error;
+    }
   }
 
   async pythonCandidates(): Promise<PythonChoice[]> {
@@ -576,7 +612,9 @@ export class PluginController {
       const refused = this.#refuse({});
       if (refused) return refused;
       if (!this.deps.session.safeMode) {
-        const left = await this.deps.manager.leaveSafeMode();
+        const left = await this.#providerAction("builtin:kobrixa.device-ev3", () =>
+          this.deps.manager.leaveSafeMode(),
+        );
         if (!left.ok) return left;
       }
       this.#changed();
@@ -646,7 +684,11 @@ export class PluginController {
 
   shutdown(deadlineMs?: number): Promise<void> {
     this.#closing = true;
-    return this.deps.manager.shutdown(deadlineMs);
+    return this.#enqueue(async () => {
+      const retry = this.#providerFailed;
+      await this.deps.manager.shutdown(deadlineMs);
+      await this.#settleProvider(retry);
+    });
   }
 
   get acceptingUi(): boolean {
@@ -659,6 +701,7 @@ export class PluginController {
   async resume(): Promise<void> {
     await this.#enqueue(async () => {
       await this.deps.manager.resume();
+      await this.#settleProvider(this.#providerFailed);
       this.#closing = false;
       this.#preparingUpdate = false;
       this.#changed();
@@ -877,6 +920,7 @@ export class PluginController {
 }
 
 export interface StartPluginsOptions {
+  providerSettlement?: PluginControllerDependencies["providerSettlement"];
   stage3?: PluginManagerOptions["stage3"];
   stage3Host?: PluginManagerOptions["stage3Host"];
   onStage3Runtime?: (
@@ -1050,6 +1094,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   }
   const commandLinePython = options.commandLine.python;
   const controller = new PluginController({
+    ...(options.providerSettlement ? { providerSettlement: options.providerSettlement } : {}),
     manager,
     settings,
     dialogs: options.dialogs,
@@ -1569,6 +1614,10 @@ export async function composeDesktopMain(
       ...input.plugins,
       stage3,
       stage3Host,
+      providerSettlement: {
+        settle: () => foundation.settleProvider(),
+        retry: () => foundation.retryProvider(),
+      },
       onStage3Runtime(attachment, providers) {
         if (runtimeAttachment) throw new Error("Runtime already attached.");
         runtimeAttachment = attachment;

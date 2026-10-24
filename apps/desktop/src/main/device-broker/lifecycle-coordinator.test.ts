@@ -573,13 +573,16 @@ async function providerComposition(safeMode = false, disabled = false, wrongId =
     },
   });
   const register = foundation.broker.registerProvider.bind(foundation.broker);
-  const removals: Array<ReturnType<typeof vi.fn<() => void>>> = [];
+  const removals: Array<ReturnType<typeof vi.fn<() => Promise<void>>>> = [];
   const registration = vi
     .spyOn(foundation.broker, "registerProvider")
     .mockImplementation((provider) => {
-      const remove = vi.fn(register(provider));
+      const registration = register(provider);
+      const remove = vi.fn(registration.retirement!.retire);
       removals.push(remove);
-      return remove;
+      return Object.assign(registration, {
+        retirement: { ...registration.retirement!, retire: remove },
+      });
     });
   const manager = await PluginManager.create({
     sources: BUILTIN_PLUGIN_SOURCES,
@@ -643,7 +646,7 @@ it("BM-03 override obeys one registration per enable and fresh allocators after 
     expect(f.registration).toHaveBeenCalledTimes(2);
     expect(f.catalogs[1]).not.toBe(f.catalogs[0]);
     await f.manager.reloadSource("builtin:kobrixa.device-ev3");
-    expect(f.registration).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(f.registration).toHaveBeenCalledTimes(3));
     expect(new Set(f.catalogs).size).toBe(3);
     expect(f.controls.every((control) => control.trace().length === 0)).toBe(true);
   } finally {

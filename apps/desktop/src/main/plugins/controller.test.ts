@@ -2941,3 +2941,116 @@ it("BM-18 D160 import has no provider, process or profile side effects", async (
     factory.mockClear();
   }
 });
+
+it("controller reload joins provider disposal, serializes toggles, and shutdown joins the replacement", async () => {
+  const f = await compositionInput();
+  let release!: () => void;
+  let entered!: () => void;
+  let enteredPromise = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let cleanup = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  f.factory.mockImplementation((options) =>
+    createDesktopFoundation({
+      ...options,
+      providerFactory: (catalog) => {
+        count++;
+        const provider = createFakeDeviceProvider({ catalog, now: options.now }).provider;
+        const dispose = provider.dispose.bind(provider);
+        provider.dispose = async (context) => {
+          entered();
+          await cleanup;
+          await dispose(context);
+        };
+        return provider;
+      },
+    }),
+  );
+  const composition = await composeDesktopMain(f.input);
+  const key = "builtin:kobrixa.device-ev3";
+  try {
+    let completed = false;
+    const reload = composition.plugins.reload(key).then((result) => {
+      completed = true;
+      return result;
+    });
+    await enteredPromise;
+    const disable = composition.plugins.setEnabled(key, false);
+    const enable = composition.plugins.setEnabled(key, true);
+    expect(completed).toBe(false);
+    expect(count).toBe(1);
+    release();
+    expect(await reload).toMatchObject({ ok: true });
+    expect(await disable).toMatchObject({ ok: true });
+    expect(await enable).toMatchObject({ ok: true });
+    expect(count).toBe(3);
+    enteredPromise = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    completed = false;
+    const shutdown = composition.plugins.shutdown().then(() => {
+      completed = true;
+    });
+    await enteredPromise;
+    expect(completed).toBe(false);
+    release();
+    await shutdown;
+    expect(count).toBe(3);
+  } finally {
+    release();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("controller reports retained provider failure and explicit reload retries actual cleanup", async () => {
+  const f = await compositionInput();
+  let blocked = true;
+  let count = 0;
+  const attempts = vi.fn();
+  f.factory.mockImplementation((options) =>
+    createDesktopFoundation({
+      ...options,
+      providerFactory: (catalog) => {
+        count++;
+        const provider = createFakeDeviceProvider({ catalog, now: options.now }).provider;
+        const dispose = provider.dispose.bind(provider);
+        provider.dispose = async (context) => {
+          attempts();
+          if (blocked) throw new Error("provider cleanup rejected");
+          await dispose(context);
+        };
+        return provider;
+      },
+    }),
+  );
+  const composition = await composeDesktopMain(f.input);
+  const key = "builtin:kobrixa.device-ev3";
+  try {
+    expect(await composition.plugins.reload(key)).toMatchObject({
+      ok: false,
+      message: "provider cleanup rejected",
+    });
+    expect(count).toBe(1);
+    expect(attempts).toHaveBeenCalledTimes(1);
+    expect(await composition.plugins.setEnabled(key, false)).toMatchObject({ ok: false });
+    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(count).toBe(1);
+    blocked = false;
+    expect(await composition.plugins.reload(key)).toMatchObject({ ok: true });
+    expect(attempts).toHaveBeenCalledTimes(3);
+    expect(count).toBe(1); // Reload preserves the explicit disabled choice.
+    expect(await composition.plugins.setEnabled(key, true)).toMatchObject({ ok: true });
+    expect(count).toBe(2);
+  } finally {
+    blocked = false;
+    await composition.dispose();
+    await f.cleanup();
+  }
+});

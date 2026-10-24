@@ -377,23 +377,30 @@ async function providerHarness(
     ...options,
   });
   const catalogs: ProviderCatalogPort[] = [];
+  const providers: ReturnType<typeof createFakeDeviceProvider>[] = [];
   const factory = vi.fn((catalog: ProviderCatalogPort) => {
     catalogs.push(catalog);
-    return createFakeDeviceProvider({ catalog, now: h.dependencies.now }).provider;
+    const fake = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
+    providers.push(fake);
+    return fake.provider;
   });
   const allocate = vi.spyOn(broker, "providerCatalog");
   const removals: ReturnType<typeof vi.fn>[] = [];
   const registerProvider = broker.registerProvider.bind(broker);
   const register = vi.spyOn(broker, "registerProvider").mockImplementation((provider) => {
-    const remove = vi.fn(registerProvider(provider));
+    const registration = registerProvider(provider);
+    const remove = vi.fn(registration.retirement!.retire);
     removals.push(remove);
-    return remove;
+    return Object.assign(registration, {
+      retirement: { ...registration.retirement!, retire: remove },
+    });
   });
   const initial = broker.providerCatalog("kobrixa.device-ev3");
   const detach = attachBuiltinDeviceProvider(manager, broker, initial, factory);
   return {
     broker,
     manager,
+    providers,
     catalogs,
     factory,
     allocate,
@@ -403,7 +410,7 @@ async function providerHarness(
     initial,
     async close() {
       await broker.resources.beginShutdown();
-      detach();
+      await detach();
       await manager.shutdown();
     },
   };
@@ -498,6 +505,7 @@ it("F01 F20 disable-enable and reload use fresh real-broker catalog generations"
     expect(await h.manager.setEnabled("builtin:kobrixa.device-ev3", true)).toMatchObject({
       ok: true,
     });
+    await h.detach.settled();
     expect(h.factory).toHaveBeenCalledTimes(2);
     const second = await connect();
     expect(second).not.toBe(first);
@@ -506,6 +514,7 @@ it("F01 F20 disable-enable and reload use fresh real-broker catalog generations"
     expect(() => h.catalogs[1]!.identify(tuple(first))).toThrow();
     expect(h.catalogs[1]!.identify(tuple(second))).not.toBe(oldId);
     expect(await h.manager.reloadSource("builtin:kobrixa.device-ev3")).toMatchObject({ ok: true });
+    await h.detach.settled();
     expect(h.factory).toHaveBeenCalledTimes(3);
     expect(h.allocate).toHaveBeenCalledTimes(3);
     expect(new Set(h.catalogs).size).toBe(3);
@@ -605,6 +614,7 @@ it("host eligibility keeps one provider across the real supervisor's idle, start
     expect(h.allocate).toHaveBeenCalledOnce();
     expect(h.removals[0]).not.toHaveBeenCalled();
     await h.manager.reloadSource(key);
+    await h.detach.settled();
     expect(h.factory).toHaveBeenCalledTimes(2);
     expect(h.catalogs[1]).not.toBe(h.catalogs[0]);
     // Metadata replacement discovered by a normal reconciliation must also renew once.
@@ -613,10 +623,12 @@ it("host eligibility keeps one provider across the real supervisor's idle, start
       permissions: ["ui.notifications"],
     };
     await h.manager.setEnabled(key, true);
+    await h.detach.settled();
     expect(h.factory).toHaveBeenCalledTimes(3);
     expect(h.register).toHaveBeenCalledTimes(3);
     await h.manager.setEnabled(key, false);
     await h.manager.setEnabled(key, true);
+    await h.detach.settled();
     expect(h.factory).toHaveBeenCalledTimes(4);
     expect(new Set(h.catalogs).size).toBe(4);
     expect(h.removals.slice(0, 3).every((remove) => remove.mock.calls.length === 1)).toBe(true);
@@ -786,6 +798,7 @@ it.each(["disable", "shutdown"] as const)(
       expect(await h.manager.setEnabled(key, false)).toMatchObject({ ok: true });
       expect(h.removals[0]).toHaveBeenCalledOnce();
       expect(await h.manager.setEnabled(key, true)).toMatchObject({ ok: true });
+      await h.detach.settled();
       expect(h.factory).toHaveBeenCalledTimes(2);
       expect(h.register).toHaveBeenCalledTimes(2);
       expect(h.catalogs[1]).not.toBe(h.catalogs[0]);
@@ -878,8 +891,10 @@ it.each(["disable", "reload", "reload-interleaved"] as const)(
       expect(admitted.length).toBeGreaterThan(0);
       expect(new Set(admitted)).toEqual(new Set([row().generation]));
       expect(row().generation).toBe(originalGeneration + (retry === "disable" ? 1 : 2));
+      await h.detach.settled();
       expect(h.factory).toHaveBeenCalledTimes(2);
       expect(await h.manager.reloadSource(key)).toMatchObject({ ok: true });
+      await h.detach.settled();
       expect(h.factory).toHaveBeenCalledTimes(3);
       expect(new Set(h.catalogs).size).toBe(3);
       await h.manager.shutdown();
@@ -896,3 +911,160 @@ it.each(["disable", "reload", "reload-interleaved"] as const)(
     }
   },
 );
+
+async function connectBridge(h: Awaited<ReturnType<typeof providerHarness>>) {
+  const connected = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    {
+      target: { kind: "wifi-address", providerId: "kobrixa.device-ev3", address: "127.0.0.1" },
+    },
+    new AbortController().signal,
+  );
+  if (!connected.ok) throw new Error(connected.error.message);
+  return connected.value.session.sessionId;
+}
+
+it.each([false, true])(
+  "awaited bridge coalesces toggles/reloads; detach=%s prevents replacement",
+  async (detach) => {
+    const h = await providerHarness();
+    const release = gate();
+    const entered = gate();
+    const old = h.providers[0]!.provider;
+    const disconnect = old.disconnect.bind(old);
+    old.disconnect = async (key, ctx) => {
+      entered.resolve();
+      await release.promise;
+      return disconnect(key, ctx);
+    };
+    try {
+      const sessionId = await connectBridge(h);
+      const key = "builtin:kobrixa.device-ev3";
+      const disable = h.manager.setEnabled(key, false);
+      // The manager hold fences the healthy consumer immediately without retiring it.
+      expect(
+        await h.broker.request(
+          pluginPrincipal(),
+          "devices/read",
+          { sessionId, channelIds: [ID], freshness: "cached" },
+          new AbortController().signal,
+        ),
+      ).toMatchObject({ ok: false });
+      await disable;
+      await entered.promise;
+      for (let i = 0; i < 3; i++) {
+        await h.manager.setEnabled(key, true);
+        await h.manager.reloadSource(key);
+        await h.manager.setEnabled(key, false);
+      }
+      await h.manager.setEnabled(key, true);
+      expect(h.factory).toHaveBeenCalledOnce();
+      expect(() => h.broker.registerProvider(old)).toThrow("retirement is pending");
+      let done = false;
+      const settled = (detach ? h.detach() : h.detach.settled()).then(() => {
+        done = true;
+      });
+      await Promise.resolve();
+      expect(done).toBe(false);
+      expect(
+        await h.broker.request(
+          pluginPrincipal(),
+          "devices/discover",
+          { providerId: old.id },
+          new AbortController().signal,
+        ),
+      ).toMatchObject({ ok: false });
+      release.resolve();
+      await settled;
+      expect(h.factory).toHaveBeenCalledTimes(detach ? 1 : 2);
+      expect(h.register.mock.results.filter((result) => result.type === "return")).toHaveLength(
+        detach ? 1 : 2,
+      );
+      expect(h.removals[0]).toHaveBeenCalledOnce();
+      if (!detach) expect(await connectBridge(h)).not.toBe(sessionId);
+    } finally {
+      release.resolve();
+      await h.close();
+    }
+  },
+);
+
+it("bridge retains disposal rejection and retries the old registration before admitting the desired generation", async () => {
+  const h = await providerHarness();
+  const original = h.providers[0]!.provider.dispose.bind(h.providers[0]!.provider);
+  const failure = new Error("native dispose failed");
+  let fail = true;
+  h.providers[0]!.provider.dispose = async (ctx) => {
+    if (fail) throw failure;
+    await original(ctx);
+  };
+  try {
+    await connectBridge(h);
+    await h.manager.reloadSource("builtin:kobrixa.device-ev3");
+    await expect(h.detach.settled()).rejects.toBe(failure);
+    expect(h.factory).toHaveBeenCalledOnce();
+    await expect(h.detach.retry()).rejects.toBe(failure);
+    expect(h.factory).toHaveBeenCalledOnce();
+    fail = false;
+    // Desired-state publications cannot implicitly erase a failed retirement.
+    await h.manager.setEnabled("builtin:kobrixa.device-ev3", false);
+    await h.manager.setEnabled("builtin:kobrixa.device-ev3", true);
+    await expect(h.detach.settled()).rejects.toBe(failure);
+    expect(h.factory).toHaveBeenCalledOnce();
+    await h.detach.retry();
+    expect(h.factory).toHaveBeenCalledTimes(2);
+    expect(await connectBridge(h)).toBeTypeOf("string");
+  } finally {
+    fail = false;
+    await h.close();
+  }
+});
+
+it("initial factory exceptions remain synchronous and remove the manager listener", async () => {
+  const h = await providerHarness(false, true);
+  await h.detach();
+  const listeners = new Set<Parameters<PluginManager["onEvent"]>[0]>();
+  const error = new Error("factory initialization failed");
+  const manager = {
+    builtinSourceEligibility: () =>
+      h.manager.builtinSourceEligibility().map((row) => ({ ...row, eligible: true })),
+    onEvent(listener: Parameters<PluginManager["onEvent"]>[0]) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  try {
+    expect(() =>
+      attachBuiltinDeviceProvider(manager, h.broker, h.initial, () => {
+        throw error;
+      }),
+    ).toThrow(error);
+    expect(listeners.size).toBe(0);
+    expect(h.register).not.toHaveBeenCalled();
+  } finally {
+    await h.close();
+  }
+});
+
+it("a replacement factory failure retains its allocator for explicit retry", async () => {
+  const h = await providerHarness();
+  const failure = new Error("replacement factory failed");
+  try {
+    h.factory.mockImplementationOnce(() => {
+      throw failure;
+    });
+    await h.manager.reloadSource("builtin:kobrixa.device-ev3");
+    await expect(h.detach.settled()).rejects.toBe(failure);
+    expect(h.register).toHaveBeenCalledOnce();
+    expect(h.allocate).toHaveBeenCalledTimes(2);
+    await h.detach.retry();
+    expect(h.register).toHaveBeenCalledTimes(2);
+    expect(h.allocate).toHaveBeenCalledTimes(2);
+    expect(await connectBridge(h)).toBeTypeOf("string");
+  } finally {
+    await h.close();
+  }
+});
