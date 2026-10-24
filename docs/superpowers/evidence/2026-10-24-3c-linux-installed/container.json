@@ -1,0 +1,39 @@
+{
+  "imageId": "sha256:4502ba394873f037fc045717021d3e0f7dc78bf4db500331b6182d8f90bc1125",
+  "image": "kobrixa-stage3-linux:dbccbc2",
+  "user": "node",
+  "networkMode": "none",
+  "securityOpt": [
+    "seccomp=unconfined"
+  ],
+  "privileged": false,
+  "capAdd": null,
+  "mounts": [
+    {
+      "source": "/private/tmp/kobrixa-stage3-linux-evidence",
+      "destination": "/evidence",
+      "readWrite": true
+    }
+  ],
+  "state": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-10-24T12:25:34.100615253Z",
+    "FinishedAt": "2026-10-24T12:25:47.162574176Z"
+  },
+  "command": [
+    "xvfb-run",
+    "-a",
+    "node",
+    "tests/desktop/builtin-process-installed.mjs",
+    "--isolated"
+  ],
+  "sourceBundleSha256": "e4cfd335928b24b72448c091bdd8c9e081dfcfeaf8b6bae3493b456048667d2d"
+}
