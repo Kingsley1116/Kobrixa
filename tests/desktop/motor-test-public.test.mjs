@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Worker } from "node:worker_threads";
 import {
   compose,
+  buildNative,
   until,
   lifecycleMatrix,
   validateNative,
@@ -339,3 +344,55 @@ test("native CLI selects every authored case exactly once and rejects unknown ca
     assert.ok(nativeCases.some((s) => s.fault === fault));
   assert.ok(nativeCases.some((s) => s.safeMode));
 });
+
+// Node worker execution checks the actual emitted artifact without launching Electron.
+test(
+  "integrated native motor artifact boots and closes its production persistence worker",
+  { timeout: 15000 },
+  async (t) => {
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), "motor-worker-build-")));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const { identity } = await buildNative(directory);
+    assert.match(identity.nativeBuildSha256["persistence-worker.cjs"], /^[a-f0-9]{64}$/);
+    const root = path.join(directory, "store");
+    await mkdir(path.join(root, "namespaces"), { recursive: true, mode: 0o700 });
+    const held = new SharedArrayBuffer(16 + 1024 * 16 + 1024 * 4);
+    Atomics.store(new Int32Array(held), 0, 1);
+    const worker = new Worker(path.join(directory, "persistence-worker.cjs"), { workerData: {} });
+    t.after(async () => {
+      await worker.terminate();
+      Atomics.store(new Int32Array(held), 0, 0);
+    });
+    await new Promise((resolve, reject) => {
+      let ready = false;
+      worker.once("error", reject);
+      worker.once("message", (message) => {
+        try {
+          assert.equal(message.version, 1);
+          assert.equal(message.kind, "ready");
+          assert.equal(message.recovery, "ready");
+          ready = true;
+          worker.postMessage({ version: 1, kind: "close" });
+        } catch (error) {
+          reject(error);
+        }
+      });
+      worker.once("exit", (code) => {
+        try {
+          assert.equal(code, 0);
+          assert.equal(ready, true);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+      worker.postMessage({
+        version: 1,
+        kind: "boot",
+        hostEpoch: "10000000-0000-4000-8000-000000000001",
+        root,
+        held,
+      });
+    });
+  },
+);

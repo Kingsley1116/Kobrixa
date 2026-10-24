@@ -890,9 +890,12 @@ export async function buildNative(directory) {
   // the main bundle, matching persistenceWorkerPath's development resolution.
   await build({
     ...common,
-    entryPoints: [path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts")],
+    stdin: {
+      contents: `import {runPersistenceWorker} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts"))}; runPersistenceWorker({mappers:new Map()});`,
+      resolveDir: root,
+      loader: "ts",
+    },
     outfile: path.join(directory, "persistence-worker.cjs"),
-    footer: { js: "exports.runPersistenceWorker({mappers:new Map()});" },
   });
   // Build the existing production preload from this checkout when no built artifact exists.
   await build({
