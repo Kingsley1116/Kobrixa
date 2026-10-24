@@ -68,6 +68,7 @@ it("retains extrema on either side of bucket boundaries and reports partial redu
   );
   expect(result.omittedPoints).toBe(result.fullPointCount - result.pointCount);
   expect(() => reduceSeries(points, 801)).toThrow(/budget/);
+  // Legacy sensor-lab-panel.tsx nearestChartValue uses <=: later INPUT wins ties.
   expect(
     cursorReading(
       [
@@ -76,6 +77,35 @@ it("retains extrema on either side of bucket boundaries and reports partial redu
       ],
       3,
     )?.time,
-  ).toBe(2);
+  ).toBe(4);
   expect(cursorReading(points, NaN)).toBeUndefined();
+});
+
+it("returns immutable original cursor points without skipping null/error readings", () => {
+  const points = [
+    { time: 0, value: 7 },
+    { time: 100, value: null, status: "error", segment: 2, gap: true },
+  ];
+  const before = structuredClone(points);
+  const reading = cursorReading(points, 90);
+  expect(reading).toEqual(points[1]);
+  expect(reading).not.toBe(points[1]);
+  expect(Object.isFrozen(reading)).toBe(true);
+  expect(points).toEqual(before);
+  points[1]!.status = "ok";
+  expect(reading?.status).toBe("error");
+});
+
+it("rejects invalid cursor times and ignores nonfinite sample times", () => {
+  const points = [
+    { time: NaN, value: 1 },
+    { time: Infinity, value: 2 },
+    { time: -Infinity, value: 3 },
+  ];
+  expect(cursorReading([], 0)).toBeUndefined();
+  expect(cursorReading(points, 0)).toBeUndefined();
+  expect(cursorReading([...points, { time: 0, value: 4 }], 0)?.value).toBe(4);
+  for (const time of [NaN, Infinity, -Infinity])
+    expect(cursorReading([{ time: 0, value: 4 }], time)).toBeUndefined();
+  expect(cursorReading([{ time: -Number.MAX_VALUE, value: 4 }], Number.MAX_VALUE)).toBeUndefined();
 });

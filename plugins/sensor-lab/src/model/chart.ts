@@ -175,15 +175,15 @@ export function reduceCharts(charts: readonly (readonly (readonly Point[])[])[])
   requireModel(pointCount <= LIMITS.totalPoints, "display", "limit");
   return { charts: result, pointCount };
 }
-/** Nearest original sample, including missing/error readings; ties retain input order. */
+/** Nearest original sample within 1500ms inclusive; later input wins ties, including null/error. */
 export function cursorReading(points: readonly Point[], time: number): Point | undefined {
   if (!Number.isFinite(time)) return undefined;
   let nearest: Point | undefined;
   for (const point of points)
     if (
       Number.isFinite(point.time) &&
-      (!nearest || Math.abs(point.time - time) < Math.abs(nearest.time - time))
+      (!nearest || Math.abs(point.time - time) <= Math.abs(nearest.time - time))
     )
       nearest = point;
-  return nearest ? immutableSnapshot(nearest) : undefined;
+  return nearest && Math.abs(nearest.time - time) <= 1500 ? immutableSnapshot(nearest) : undefined;
 }
