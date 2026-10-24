@@ -563,8 +563,8 @@ export async function produceDisconnectRetry(
   const dispatched = new Promise<void>((resolve) => {
     firstRequest = resolve;
   });
-  const record = (kind: string) => {
-    events.push({ kind, time: input.now(), turn });
+  const record = (kind: string, time = input.now()) => {
+    events.push({ kind, time, turn });
     if (!queued) {
       queued = true;
       queueMicrotask(() => {
@@ -875,8 +875,9 @@ export async function produceDisconnectRetry(
     });
     const disconnect = input.provider.disconnect;
     input.provider.disconnect = function (...args) {
-      disconnects.push(input.now());
-      record("disconnect");
+      const at = input.now();
+      disconnects.push(at);
+      record("disconnect", at);
       return disconnect.apply(this, args);
     };
     resources.push(() => {
