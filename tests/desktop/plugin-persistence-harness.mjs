@@ -565,6 +565,8 @@ export function assertDisconnectEvidence(evidence) {
     assert.ok(
       o.flushes.some(
         (row) =>
+          final.at <= row.at &&
+          row.at <= o.events.find((event) => event.kind === "save-confirmed").time &&
           row.at <= o.disconnects[0] &&
           row.result.state === "saved" &&
           row.result.accepted.includes(final.ticket.id),

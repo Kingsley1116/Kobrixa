@@ -34,7 +34,7 @@ test("ordinary test commands retain the pure oracle gate independently of native
   );
   assert.equal(
     scripts["test:persistence:oracles"],
-    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs",
+    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs tests/desktop/plugin-persistence-disconnect.test.mjs",
   );
   for (const name of ["test", "test:desktop", "test:ci"])
     assert.ok(scripts[name].includes("pnpm test:persistence:oracles"), name);

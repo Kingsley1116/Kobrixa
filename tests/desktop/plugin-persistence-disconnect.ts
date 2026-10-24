@@ -171,6 +171,7 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
     o.requests.map((row) => row.request),
   );
   assert.equal(o.finalAdmissions.length, 2);
+  assert.equal(new Set(o.finalAdmissions.map((row) => row.ticket.id)).size, 2);
   for (const admission of o.finalAdmissions) {
     const staged = o.staged.find((row) => row.write === admission.ticket.id)!;
     assert.ok(staged);
@@ -187,8 +188,29 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
     }
     assert.deepEqual(admission.ticket.owner, o.ownerBefore);
     assert.equal(admission.ticket.metadata.kind, "record");
-    if (admission.ticket.metadata.kind === "record")
-      assert.equal(admission.ticket.metadata.record.checkpoint, "final");
+    assert.equal(admission.ticket.target.kind, "record");
+    if (admission.ticket.target.kind === "record") {
+      assert.equal(admission.ticket.target.id, staged.id);
+      assert.equal(
+        admission.ticket.target.expectedRevision,
+        (admission.params.target as { expectedRevision: string }).expectedRevision,
+      );
+    }
+    if (admission.ticket.metadata.kind === "record") {
+      const record = admission.ticket.metadata.record;
+      assert.equal(record.id, staged.id);
+      assert.equal(record.checkpoint, "final");
+      for (const key of [
+        "kind",
+        "schemaVersion",
+        "label",
+        "mediaType",
+        "byteLength",
+        "sha256",
+      ] as const)
+        assert.equal(record[key], admission.params[key]);
+    }
+    assert.ok(admission.at <= staged.at && staged.at < offer.deadlineMonotonicMs);
     assert.ok(admission.at < o.retry.at);
   }
   assert.equal(new Set(o.ended.map((r) => r.reservationId)).size, 2);
@@ -210,6 +232,14 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
     const end = o.ended[i]!,
       cp = o.checkpoints[i]!;
     assert.deepEqual(end.owner, o.ownerBefore);
+    assert.ok(end.drain, "Missing original device grant");
+    assert.deepEqual(end.drain.owner, end.owner);
+    assert.equal(end.drain.reservationId, end.reservationId);
+    assert.ok(Number.isFinite(end.drain.expiresMonotonicMs));
+    assert.ok(
+      o.offers[i]!.deadlineMonotonicMs <= end.drain.expiresMonotonicMs,
+      "Offer extended original device grant",
+    );
     assert.deepEqual(o.offers[i]!.owner, o.ownerBefore);
     assert.deepEqual(cp.document.binding?.owner, o.ownerBefore);
     assert.equal(cp.document.record.id, cp.record.id);
@@ -312,6 +342,9 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
   assert.equal(o.failed.report.blocker, true);
   assert.equal(o.failed.report.state, "retryable");
   assert.ok(o.snapshot.items.some((r) => r.id === o.failed.id && r.state === "retryable"));
+  const failedAdmission = o.finalAdmissions.find((row) => row.ticket.id === o.failed.ticket!.id);
+  assert.ok(failedAdmission, "Recovery has no original admission");
+  assert.deepEqual(o.failed.ticket, failedAdmission.ticket, "Recovery changed admitted ticket");
   assert.equal(o.recovered.id, o.failed.id);
   assert.deepEqual(o.recovered.ticket, o.failed.ticket);
   assert.equal(o.recovered.sealedPin, null, "Saved recovery retained its staging pin");
@@ -341,6 +374,21 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
   const finals = o.publications.filter(
     (r) => r.ticket.metadata.kind === "record" && r.ticket.metadata.record.checkpoint === "final",
   );
+  for (const publication of o.publications) {
+    const admission = o.finalAdmissions.find((row) => row.ticket.id === publication.ticket.id);
+    assert.ok(admission, "Publication has no original admission");
+    assert.deepEqual(publication.ticket, admission.ticket, "Publication changed admitted ticket");
+    assert.ok(publication.at >= admission.at);
+    if (publication.result.disposition === "committed") {
+      assert.ok(publication.result.receipt);
+      assert.ok(publication.ticket.metadata.kind === "record");
+      assert.equal(
+        publication.result.receipt.revision,
+        publication.ticket.metadata.record.revision,
+        "Publication receipt differs from admitted metadata",
+      );
+    }
+  }
   const committed = finals.filter((r) => r.result.disposition === "committed");
   assert.equal(
     new Set(
@@ -380,7 +428,17 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
     );
     assert.ok(
       o.flushes.some(
-        (f) => f.result.state === "saved" && f.result.accepted.includes(publication.ticket.id),
+        (f) =>
+          f.result.state === "saved" &&
+          f.result.accepted.includes(publication.ticket.id) &&
+          f.at >= publication.at &&
+          f.at <= o.events.find((row) => row.kind === "save-confirmed")!.time &&
+          f.at <= o.disconnects[0]! &&
+          f.tickets.some((ticket) => {
+            if (ticket.id !== publication.ticket.id) return false;
+            assert.deepEqual(ticket, publication.ticket, "Flush changed admitted ticket");
+            return true;
+          }),
       ),
       "Final ticket lacks successful flush",
     );

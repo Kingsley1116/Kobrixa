@@ -129,7 +129,14 @@ void runPlugin(
           });
           if (committed.ok) writes.push(held[0]!.write);
           // One injected I/O failure must not suppress another target's final.
-          else assert.equal(committed.error.code, "PLUGIN_E_STORAGE_IO");
+          else {
+            assert.equal(committed.error.code, "PLUGIN_E_STORAGE_IO");
+            // A worker exception after dispatch is conservatively uncertain.
+            // Query the original write through the SDK before host recovery
+            // classifies its retained bytes; do not re-submit publication.
+            const status = value(await storage.writeStatus({ write: held[0]!.write }));
+            assert.equal(status.state, "sealed");
+          }
           continue;
         }
         const bytes = Buffer.from(`Synthetic final checkpoint ${record.id}\n`);
@@ -157,7 +164,12 @@ void runPlugin(
         value(await storage.commitWrite({ write: write.write, drainToken: request.token }));
         writes.push(write.write);
       }
-      value(await storage.flush({}));
+      const flushed = await storage.flush({});
+      if (!flushed.ok && request.writes.length) {
+        // Another original final may still be held or retryable. The host's
+        // aggregate drain report, rather than this callback, decides saved.
+        assert.equal(flushed.error.code, "PLUGIN_E_STORAGE_CONFLICT");
+      } else value(flushed);
       return { ok: true, value: { status: "submitted", writes } };
     },
   }),

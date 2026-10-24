@@ -57,11 +57,22 @@ function specimen() {
     deadlineMonotonicMs: 100,
     checkpoints: request.checkpoints,
   }));
+  const payload = {
+    kind: "test.registration-end",
+    schemaVersion: 1,
+    label: "Final recording",
+    mediaType: "application/octet-stream",
+    byteLength: 64,
+    sha256: "a".repeat(64),
+  };
   const ticket = (id) => ({
     id,
     owner,
-    target: { kind: "record", id },
-    metadata: { kind: "record", record: { id, checkpoint: "final", revision: `${id}-revision` } },
+    target: { kind: "record", id, expectedRevision: `${id}-revision` },
+    metadata: {
+      kind: "record",
+      record: { ...payload, id, checkpoint: "final", revision: `${id}-revision` },
+    },
   });
   const report = {
     state: "saved",
@@ -91,6 +102,7 @@ function specimen() {
     retryDrain: { offer: structuredClone(offers[0]), at: 6, report, callbacks: 0 },
     grantProbes: names.map((id, i) => ({
       params: {
+        ...payload,
         target: { mode: "replace", id, expectedRevision: `${id}-revision` },
         checkpoint: { handle: checkpoints[i].checkpoint, phase: "final" },
         drainToken: "grant",
@@ -118,7 +130,7 @@ function specimen() {
       ...reservation,
       owner,
       reason: i === 0 ? "disconnected" : "released",
-      drain: { expiresMonotonicMs: 100 },
+      drain: { owner, reservationId: reservation.reservationId, expiresMonotonicMs: 100 },
     })),
     offers,
     requests,
@@ -130,6 +142,7 @@ function specimen() {
       ticket: ticket(id),
       at: 1,
       params: {
+        ...payload,
         drainToken: "grant",
         target: { mode: "replace", id, expectedRevision: `${id}-revision` },
         checkpoint: { handle: checkpoints[i].checkpoint, phase: "final" },
@@ -180,7 +193,7 @@ function specimen() {
         accepted: true,
       })),
     ],
-    flushes: [{ at: 7, result: { state: "saved", accepted: names } }],
+    flushes: [{ at: 7, tickets: names.map(ticket), result: { state: "saved", accepted: names } }],
     disconnects: [8],
     events: [
       ["quiesce", 1],
@@ -449,5 +462,222 @@ for (const [name, mutate] of [
   test(`outside checker rejects ${name}`, () => {
     const e = evidence();
     mutate(e);
+    assert.throws(() => assertDisconnectEvidence(e));
+  });
+
+// Concrete counterexamples from the B2 review: mutate correlated evidence together.
+for (const [name, mutate] of [
+  [
+    "both retained tickets have a foreign owner",
+    (o) => {
+      for (const recovery of [o.failed, o.recovered])
+        recovery.ticket.owner = { ...o.ownerBefore, sourceKey: "foreign" };
+    },
+  ],
+  [
+    "both retained tickets have a foreign record",
+    (o) => {
+      for (const recovery of [o.failed, o.recovered]) {
+        recovery.ticket.target.id = "foreign";
+        recovery.ticket.metadata.record.id = "foreign";
+      }
+    },
+  ],
+  [
+    "receipt and report agree on a revision absent from metadata",
+    (o) => {
+      o.publications[2].result.receipt.revision = "foreign";
+      o.retryDrain.report.records[0].committedRevision = "foreign";
+    },
+  ],
+  [
+    "actual grant expires before retained offer",
+    (o) => {
+      o.ended[0].drain.expiresMonotonicMs = 4;
+    },
+  ],
+  [
+    "publication completes after disconnect",
+    (o) => {
+      o.publications[2].at = 9;
+    },
+  ],
+  [
+    "flush completes before publication",
+    (o) => {
+      o.flushes[0].at = 5;
+    },
+  ],
+  [
+    "publication ticket metadata differs from admission",
+    (o) => {
+      o.publications[2].ticket.metadata.record.label = "foreign";
+    },
+  ],
+  [
+    "flush captures a different ticket with the same ID",
+    (o) => {
+      o.flushes[0].tickets[0].target.id = "foreign";
+    },
+  ],
+  [
+    "save event precedes successful flush",
+    (o) => {
+      o.events.find((row) => row.kind === "save-confirmed").time = 6;
+    },
+  ],
+]) {
+  test(`outside checker rejects review mutant: ${name}`, () => {
+    const e = evidence();
+    mutate(e.disconnect);
+    assert.throws(() => assertDisconnectEvidence(e));
+  });
+}
+
+// Execute the original fixture callback with SDK registration intercepted. These
+// are callback contract tests, not a live SDK/record-service or native receipt.
+const fixtureBundle = await build({
+  stdin: {
+    contents: `import "./tests/desktop/fixtures/plugin-persistence/consumer.ts";
+      export { captured as default } from "@kobrixa/plugin-sdk";`,
+    resolveDir: process.cwd(),
+  },
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+  plugins: [
+    {
+      name: "capture-fixture-registration",
+      setup(build) {
+        build.onResolve({ filter: /^@kobrixa\/plugin-sdk$/ }, () => ({
+          path: "sdk",
+          namespace: "fixture-test",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "fixture-test" }, () => ({
+          contents: `export let captured;
+          export const definePlugin = (plugin) => plugin;
+          export async function runPlugin(plugin) { captured = plugin; }`,
+        }));
+      },
+    },
+  ],
+});
+const { default: fixture } = await import(
+  `data:text/javascript;base64,${Buffer.from(fixtureBundle.outputFiles[0].text).toString("base64")}`
+);
+function fixtureDrain({
+  status = "sealed",
+  commitError = "PLUGIN_E_STORAGE_IO",
+  flushError = "PLUGIN_E_STORAGE_CONFLICT",
+  held = true,
+} = {}) {
+  const calls = [];
+  const ok = (value) => ({ ok: true, value });
+  const error = (code) => ({ ok: false, error: { code } });
+  const request = {
+    token: "original-grant",
+    checkpoints: held
+      ? ["prior", "current"].map((id) => ({
+          checkpoint: `${id}-checkpoint`,
+          record: { id, kind: "test.registration-end" },
+        }))
+      : [],
+    writes: held
+      ? ["prior", "current"].map((id) => ({
+          id,
+          write: `${id}-held-write`,
+          state: "sealed",
+        }))
+      : [],
+  };
+  const storage = {
+    async commitWrite(params) {
+      calls.push(["commitWrite", params]);
+      return params.write === "prior-held-write" ? error(commitError) : ok({});
+    },
+    async writeStatus(params) {
+      calls.push(["writeStatus", params]);
+      return ok({ state: status });
+    },
+    async flush(params) {
+      calls.push(["flush", params]);
+      return flushError ? error(flushError) : ok({});
+    },
+  };
+  return { calls, run: () => fixture.drain({ request, storage }) };
+}
+test("fixture reconciles the original failed held write before committing the other final and flushing", async () => {
+  const f = fixtureDrain();
+  assert.deepEqual(await f.run(), {
+    ok: true,
+    value: { status: "submitted", writes: ["current-held-write"] },
+  });
+  assert.deepEqual(f.calls, [
+    ["commitWrite", { write: "prior-held-write", drainToken: "original-grant" }],
+    ["writeStatus", { write: "prior-held-write" }],
+    ["commitWrite", { write: "current-held-write", drainToken: "original-grant" }],
+    ["flush", {}],
+  ]);
+});
+for (const status of ["unknown", "committed"])
+  test(`fixture rejects reconciliation to ${status} instead of sealed`, async () => {
+    const f = fixtureDrain({ status });
+    await assert.rejects(f.run());
+    assert.deepEqual(
+      f.calls.map(([method]) => method),
+      ["commitWrite", "writeStatus"],
+    );
+  });
+test("fixture rejects an unexpected commit error before reconciliation", async () => {
+  const f = fixtureDrain({ commitError: "PLUGIN_E_STORAGE_CONFLICT" });
+  await assert.rejects(f.run());
+  assert.deepEqual(
+    f.calls.map(([method]) => method),
+    ["commitWrite"],
+  );
+});
+test("fixture rejects flush I/O failure even with held writes", async () => {
+  await assert.rejects(fixtureDrain({ flushError: "PLUGIN_E_STORAGE_IO" }).run());
+});
+test("fixture requires successful flush when no held writes exist", async () => {
+  await assert.rejects(fixtureDrain({ held: false }).run());
+  assert.deepEqual(await fixtureDrain({ held: false, flushError: null }).run(), {
+    ok: true,
+    value: { status: "submitted", writes: [] },
+  });
+});
+
+test("ordinary oracle gate explicitly includes the disconnect regression file", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { scripts } = JSON.parse(
+    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  );
+  assert.ok(
+    scripts["test:persistence:oracles"]
+      .split(/\s+/)
+      .includes("tests/desktop/plugin-persistence-disconnect.test.mjs"),
+  );
+  for (const name of ["test", "test:desktop", "test:ci"])
+    assert.ok(scripts[name].includes("pnpm test:persistence:oracles"), name);
+});
+for (const [name, mutate] of [
+  ["admission payload differs from ticket", (o) => o.finalAdmissions[0].params.byteLength++],
+  [
+    "admission revision differs from ticket",
+    (o) => {
+      o.finalAdmissions[0].params.target.expectedRevision = "foreign";
+    },
+  ],
+  [
+    "original grant belongs to another reservation",
+    (o) => {
+      o.ended[0].drain.reservationId = "foreign";
+    },
+  ],
+])
+  test(`outside checker rejects ${name}`, () => {
+    const e = evidence();
+    mutate(e.disconnect);
     assert.throws(() => assertDisconnectEvidence(e));
   });
