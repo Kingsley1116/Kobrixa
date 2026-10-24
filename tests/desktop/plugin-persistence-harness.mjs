@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { assertFoundationOutcome } from "./plugin-persistence-outcomes.mjs";
+import { assertDisconnectObservation } from "./plugin-persistence-disconnect.ts";
 import { assertSuspendObservation } from "./plugin-persistence-suspend.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -505,8 +506,115 @@ export function assertRegistrationEndEvidence(evidence) {
   assert.equal(checks.lastDeadline, offers.at(-1).deadlineMonotonicMs);
   assert.equal(checks.lastDeadline, checks.firstDeadline);
 }
+// Outside-controller binding of every summary to retained original observations.
+// Internal consistency is necessary; only the controller's process receipt is native evidence.
+export function assertDisconnectEvidence(evidence) {
+  const o = evidence.disconnect;
+  assert.ok(o, "Missing disconnect observations");
+  assertDisconnectObservation(o);
+  assert.deepEqual(evidence.events, o.events);
+  const [prior, current] = o.reservations;
+  assert.notEqual(prior.sessionId, current.sessionId);
+  assert.equal(o.ended[0].reason, "disconnected");
+  const calls = o.coordinatorCalls.filter((row) => row.kind === "disconnect");
+  for (const call of calls) {
+    assert.equal(call.args[0], current.sessionId);
+    const action = call.args[1];
+    const mint = o.actions.find(
+      (row) => row.kind === "mint" && row.action.actionToken === action.actionToken,
+    );
+    assert.deepEqual(mint?.action, action);
+    assert.deepEqual(mint?.target, { kind: "device-disconnect", sessionId: current.sessionId });
+    assert.ok(
+      o.actions.some(
+        (row) =>
+          row.kind === "claim" &&
+          row.accepted &&
+          row.action.actionToken === action.actionToken &&
+          row.target.kind === "device-disconnect" &&
+          row.target.sessionId === current.sessionId,
+      ),
+    );
+  }
+  const targets = new Set(o.requests.flatMap(({ request }) => request.writes.map((w) => w.id)));
+  const priorWrite = o.staged.find((row) => row.reservationId === prior.reservationId);
+  const finals = o.publications.filter(
+    (row) =>
+      row.ticket.metadata.kind === "record" &&
+      row.ticket.metadata.record.checkpoint === "final" &&
+      row.result.disposition === "committed",
+  );
+  for (const final of finals) {
+    assert.deepEqual(final.ticket.owner, o.ownerBefore);
+    assert.ok(
+      o.staged.some((row) => row.id === final.ticket.target.id && row.write === final.ticket.id),
+    );
+    assert.equal(
+      o.fault.filter((row) => row.point === "after-publish" && row.ticket === final.ticket.id)
+        .length,
+      1,
+    );
+    assert.ok(
+      o.retryDrain.report.records.some(
+        (row) =>
+          row.id === final.ticket.target.id &&
+          row.final &&
+          row.committedRevision === final.result.receipt.revision,
+      ),
+    );
+    assert.ok(
+      o.flushes.some(
+        (row) =>
+          row.at <= o.disconnects[0] &&
+          row.result.state === "saved" &&
+          row.result.accepted.includes(final.ticket.id),
+      ),
+    );
+  }
+  const journalAt = o.events.find((row) => row.kind === "journal-confirmed").time;
+  assert.ok(
+    o.journalCommits.some(
+      (row) =>
+        row.at <= journalAt &&
+        row.document.entries.some(
+          (entry) =>
+            entry.sessionId === current.sessionId &&
+            entry.operationId === o.motion.operationId &&
+            entry.state === "resolved" &&
+            entry.stopConfirmation === "confirmed",
+        ),
+    ),
+  );
+  for (const step of ["stop", "readback"])
+    assert.ok(
+      o.providerTrace.some(
+        (row) =>
+          row.step === step && row.operationId === o.motion.operationId && row.dispatch === "sent",
+      ),
+    );
+  const saveAt = o.events.find((row) => row.kind === "save-confirmed").time;
+  assert.deepEqual(evidence.checks, {
+    disconnectsBeforeSaved: o.disconnects.filter((at) => at < saveAt).length,
+    failedSaveBlocker:
+      o.snapshot.items.find((row) => row.id === o.failed.id)?.state === "retryable" &&
+      o.failed.report.blocker,
+    retriesWithFreshAction: o.actions.filter(
+      (row) => row.kind === "claim" && row.target.kind === "persistence-retry" && row.accepted,
+    ).length,
+    finalTargets: targets.size,
+    finalPublications: new Set(finals.map((row) => row.ticket.id)).size,
+    priorSessionIncluded:
+      prior.sessionId !== current.sessionId &&
+      o.requests.some(({ request }) =>
+        request.writes.some((w) => w.id === priorWrite.id && w.write === priorWrite.write),
+      ),
+    firstDeadline: o.offers[0].deadlineMonotonicMs,
+    lastDeadline: o.retryDrain.offer.deadlineMonotonicMs,
+  });
+}
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "disconnect-retry") assertDisconnectEvidence(r.evidence);
   if (r.case === "contention") assertContentionEvidence(r.evidence);
   if (r.case === "suspend-wake") {
     assert.ok(r.evidence.suspend, "Missing suspend observations");

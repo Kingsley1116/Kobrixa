@@ -502,6 +502,8 @@ import type { Handle, DispatchOutcome } from "@kobrixa/plugin-protocol";
 import type { ProviderCatalogPort, ProviderStep } from "./provider.js";
 export type FakeProviderPoint = "before-exchange" | "after-exchange" | "before-stop-readback";
 export interface FakeProviderControl {
+  /** Acceptance-only loss through the provider's real onDisconnect notification. */
+  lose(): void;
   block(point: FakeProviderPoint, step: ProviderStep): void;
   reached(point: FakeProviderPoint, step: ProviderStep): Promise<void>;
   release(point: FakeProviderPoint, step: ProviderStep): void;
@@ -538,6 +540,9 @@ export function createFakeDeviceProvider(input: {
   };
   const key = (point: FakeProviderPoint, step: ProviderStep) => `${point}:${step}`;
   const control: FakeProviderControl = {
+    lose() {
+      provider.lose();
+    },
     block(point, step) {
       const id = key(point, step);
       if (barriers.has(id)) throw new Error("Barrier already blocked");

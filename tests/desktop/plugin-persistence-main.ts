@@ -922,9 +922,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
   assert.match(config.commit, /^[0-9a-f]{40}$/);
   assert.match(config.artifactSha256, /^[0-9a-f]{64}$/);
   if (
-    !["retirement", "healthy-release", "registration-end", "contention", "suspend-wake"].includes(
-      config.case,
-    )
+    ![
+      "retirement",
+      "healthy-release",
+      "registration-end",
+      "contention",
+      "suspend-wake",
+      "disconnect-retry",
+    ].includes(config.case)
   )
     throw new Error(
       `BLOCKED: ${config.case} requires its observation-table producer; no implemented producer for this selector`,
@@ -958,6 +963,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     composeDesktopMain,
     desktopUi,
     desktopLifecycle,
+    trustedDeviceActions,
     desktopFoundationTestHandles,
     desktopDeviceAccess,
   } = await import("../../apps/desktop/src/main/plugins/controller.js");
@@ -981,6 +987,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("../../apps/desktop/src/main/plugins/persistence/worker.js");
   const { produceContention, registerContentionCheckpoint } =
     await import("./plugin-persistence-contention.js");
+  const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
   const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
@@ -1080,7 +1087,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               // The minimal fixture completes motion immediately. Contention
               // must retain an actual timed operation until Stop interrupts it.
               ...(config.case === "contention" ? { profile: "maximum" as const } : {}),
-              ...(config.case === "suspend-wake" ? { motionProfile: "staged" as const } : {}),
+              ...(["suspend-wake", "disconnect-retry"].includes(config.case)
+                ? { motionProfile: "staged" as const }
+                : {}),
             });
             fake = created.control;
             provider = created.provider;
@@ -1543,7 +1552,48 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 registerContentionCheckpoint(input, reservation, whilePaused),
             }),
           "registration-end": () => produceRegistrationEnd(input),
-          "disconnect-retry": unavailable("disconnect-retry"),
+          "disconnect-retry": () =>
+            produceDisconnectRetry({
+              ...input,
+              lifecycle: desktopLifecycle(live),
+              actions: coreActions,
+              channel: handles
+                .channels()
+                .find((row) => row.context.owner.sourceKey === "builtin:acceptance.ui-recording")!
+                .context,
+              provider: admittedProvider,
+              providerControl,
+              journal,
+              scope,
+              reserveRecording: () => reserveLiveRecording(input),
+              checkpoint: (reservation) =>
+                registerContentionCheckpoint(input, reservation, async () => {}),
+              disconnect: (sessionId) =>
+                trustedDeviceActions(
+                  live.foundation.broker,
+                  desktopLifecycle(live),
+                  coreActions,
+                ).trustedCoreDisconnect(sessionId, authority.core(win.webContents.id, "recovery")),
+              retry: async (id) => {
+                // Original composition's trusted recovery bridge owns option lookup,
+                // fresh ledger mint/claim and actual participant retry dispatch.
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const item = snapshot.value.items.find((row) => row.id === id);
+                  const option = item?.actions.find((row) => row.kind === "retry");
+                  if (!option) continue;
+                  const result = await detail.bridge.act({
+                    itemId: entry.item.id,
+                    optionId: option.id,
+                  });
+                  assert.ok(result.ok, JSON.stringify(result));
+                  return;
+                }
+                throw new Error("Original recovery bridge has no Retry option for failed final");
+              },
+            }),
           "suspend-wake": () =>
             produceSuspendWake({
               ...input,
@@ -1634,7 +1684,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             filesystem: config.filesystem,
             node: process.versions.node,
             electron: process.versions.electron ?? "",
-            memoryMethod: ["registration-end", "contention", "suspend-wake"].includes(config.case)
+            memoryMethod: [
+              "registration-end",
+              "contention",
+              "suspend-wake",
+              "disconnect-retry",
+            ].includes(config.case)
               ? "not-measured-scoped-case"
               : "not-measured-reference-only",
             warmCold: "cold",

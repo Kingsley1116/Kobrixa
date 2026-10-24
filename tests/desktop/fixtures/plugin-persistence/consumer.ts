@@ -117,6 +117,21 @@ void runPlugin(
       const writes: string[] = [];
       for (const { checkpoint, record } of request.checkpoints) {
         assert.equal(record.kind, "test.registration-end");
+        const held = request.writes.filter((write) => write.id === record.id);
+        if (held.length) {
+          // The disconnect case staged the actual final payload before dispatch.
+          // Commit exactly that host-held write through the public SDK.
+          assert.equal(held.length, 1);
+          assert.equal(held[0]!.state, "sealed");
+          const committed = await storage.commitWrite({
+            write: held[0]!.write,
+            drainToken: request.token,
+          });
+          if (committed.ok) writes.push(held[0]!.write);
+          // One injected I/O failure must not suppress another target's final.
+          else assert.equal(committed.error.code, "PLUGIN_E_STORAGE_IO");
+          continue;
+        }
         const bytes = Buffer.from(`Synthetic final checkpoint ${record.id}\n`);
         const write = value(
           await storage.beginWrite({

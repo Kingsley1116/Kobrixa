@@ -533,3 +533,20 @@ it("maximum timed motion remains active at 20ms and Stop interrupts it before or
     vi.useRealTimers();
   }
 });
+
+it("loss control delivers the original provider session and leaves reconnection explicit", async () => {
+  const fake = createFakeDeviceProvider({ catalog: createProviderCatalog(), now: () => 0 });
+  const ctx = fixtureContext();
+  const candidate = (await fake.provider.discover(ctx.work)).value![0]!;
+  const connection = (await fake.provider.connect(candidate.key, ctx.work)).value!;
+  const lost = vi.fn();
+  const off = fake.provider.onDisconnect(lost);
+  fake.control.lose();
+  expect(lost).toHaveBeenCalledExactlyOnceWith(connection.key, "connection-lost");
+  expect(fake.control.trace().filter((row) => row.step === "connect")).toHaveLength(2);
+  await fake.provider.connect(candidate.key, ctx.work);
+  expect(fake.control.trace().filter((row) => row.step === "connect")).toHaveLength(4);
+  off();
+  fake.control.lose();
+  expect(lost).toHaveBeenCalledOnce();
+});

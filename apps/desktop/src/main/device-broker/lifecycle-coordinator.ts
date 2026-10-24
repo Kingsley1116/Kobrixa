@@ -436,10 +436,24 @@ export class LifecycleCoordinator {
     )
       throw new CleanupBlocked(device, storage);
   }
-  async #sessionReports(sessionId: Handle): Promise<DrainReport[]> {
-    return Promise.all(
-      [...this.#ends.values()]
+  async #sessionReports(sessionId: Handle, includeEarlier = false): Promise<DrainReport[]> {
+    const ends = [...this.#ends.values()];
+    // Persistence groups final saves by exact execution owner. Reconnecting a
+    // healthy consumer changes the device session, not that owner or its pending
+    // final. Disconnect must join those saves without waiting on other hosts,
+    // generations or consumers. Suspend/pendingSession retain their session scope.
+    const owners = new Set(
+      ends
         .filter((work) => work.event.sessionId === sessionId)
+        .map((work) => ownerKey(work.event.owner)),
+    );
+    return Promise.all(
+      ends
+        .filter(
+          (work) =>
+            work.event.sessionId === sessionId ||
+            (includeEarlier && owners.has(ownerKey(work.event.owner))),
+        )
         .map(async (work) => {
           const original = await work.promise;
           return work.report ?? original;
@@ -466,7 +480,7 @@ export class LifecycleCoordinator {
     for (const event of quiescence.ended) this.#ended(event);
     const [device, storage] = await Promise.all([
       this.#bounded(quiescence.settled, t0 + 20_000, "Disconnect stop/journal deadline expired."),
-      this.#sessionReports(sessionId),
+      this.#sessionReports(sessionId, true),
       this.input.legacyFlush("close"),
     ]);
     this.#assert(device, storage);
