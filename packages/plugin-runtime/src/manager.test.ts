@@ -1988,67 +1988,106 @@ it.each(["initialize", "initial-binding", "ready"] as const)(
   },
 );
 
-it("R160 keeps original peer evidence through disposition and real exit, with observational diagnostics", async () => {
-  const source = optionalNodeSource();
-  const fixture = stage3Fixture();
-  const disposition = gate160();
-  const retired = gate160();
-  const exiting = gate160();
-  let actualExit!: () => void;
-  const launch = vi.fn(
-    async () =>
-      memoryPlugin((peer, control) => {
-        actualExit = () => control.exit();
-        peer.handle("initialize", () => ({
-          apiVersion: "1.6.0",
-          sdk: { name: "R160", version: "1" },
-        }));
-        peer.handle("shutdown", () => null);
-        peer.onNotification("exit", () => exiting.resolve());
-      }).process,
-  );
-  const manager = await PluginManager.create({
-    sources: [source],
-    store: memoryStore(),
-    safeMode: false,
-    launcher: launch,
-    locale: "en",
-    stage3: fixture.stage3,
-    stage3Host: fixture.host,
-  });
-  fixture.assign(manager);
-  vi.mocked(fixture.host.retireResources).mockImplementation(async () => {
-    retired.resolve();
-    await disposition.promise;
-  });
-  const runtime = manager.stage3Runtime();
-  const signal = new AbortController().signal;
-  const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
-  await runtime.ready(context.owner, signal);
-  const diagnostics = runtimeDiagnostics(runtime);
-  const stopping = manager.setEnabled(source.launch.sourceKey, false);
-  await retired.promise;
-  expect(runtime.current(context.owner)).toBe(false);
-  expect(context.peer.closed).toBe(false);
-  expect(diagnostics.snapshot().owners).toBe(1);
-  expect(diagnostics.snapshot().owners).toBe(1);
-  // The retained peer is found by all five fields; no source-only fallback is allowed.
-  await expect(
-    runtime.dispatchDrain({ ...context.owner, processEpoch: "foreign" }, {} as never, signal),
-  ).rejects.toThrow("Original drain channel");
-  await expect(runtime.dispatchDrain(context.owner, drain170(), signal)).rejects.toMatchObject({
-    code: RPC_ERRORS.methodNotFound,
-  });
-  disposition.resolve();
-  await exiting.promise;
-  expect(diagnostics.snapshot().owners).toBe(1);
-  expect(context.peer.closed).toBe(false);
-  actualExit();
-  await stopping;
-  expect(context.peer.closed).toBe(true);
-  expect(diagnostics.snapshot().owners).toBe(0);
-  await manager.shutdown();
-});
+it.each(["absent", "saved", "retryable", "checkpoint-only", "uncertain"] as const)(
+  "R160 keeps original peer through disposition and real exit with %s recovery, and observational diagnostics",
+  async (recoveryState) => {
+    const source = optionalNodeSource();
+    const fixture = stage3Fixture();
+    const disposition = gate160();
+    const retired = gate160();
+    const exiting = gate160();
+    let actualExit!: () => void;
+    const launch = vi.fn(
+      async () =>
+        memoryPlugin((peer, control) => {
+          actualExit = () => control.exit();
+          peer.handle("initialize", () => ({
+            apiVersion: "1.6.0",
+            sdk: { name: "R160", version: "1" },
+          }));
+          peer.handle("shutdown", () => null);
+          peer.onNotification("exit", () => exiting.resolve());
+        }).process,
+    );
+    const manager = await PluginManager.create({
+      sources: [source],
+      store: memoryStore(),
+      safeMode: false,
+      launcher: launch,
+      locale: "en",
+      stage3: fixture.stage3,
+      stage3Host: fixture.host,
+    });
+    fixture.assign(manager);
+    vi.mocked(fixture.host.retireResources).mockImplementation(async () => {
+      retired.resolve();
+      await disposition.promise;
+    });
+    const runtime = manager.stage3Runtime();
+    const signal = new AbortController().signal;
+    const context = await runtime.activateInitialized(source.launch.sourceKey, signal);
+    await runtime.ready(context.owner, signal);
+    const diagnostics = runtimeDiagnostics(runtime);
+    const recovery: ReturnType<typeof fixture.stage3.persistence.recoverySnapshot> = {
+      revision: 1,
+      items:
+        recoveryState === "absent"
+          ? []
+          : [
+              {
+                id: "recovery-receipt",
+                sourceKey: context.owner.sourceKey,
+                pluginId: context.owner.pluginId,
+                recordId: "record",
+                committedRevision: "revision",
+                state: recoveryState,
+                payload: "checkpoint-only",
+                actions: [
+                  { id: "export-receipt", kind: "export" },
+                  { id: "discard-receipt", kind: "discard" },
+                ],
+              },
+            ],
+    };
+    const recoverySnapshot = vi
+      .spyOn(fixture.stage3.persistence, "recoverySnapshot")
+      .mockImplementation(() => structuredClone(recovery));
+    const stopping = manager.setEnabled(source.launch.sourceKey, false);
+    await retired.promise;
+    expect(runtime.current(context.owner)).toBe(false);
+    expect(context.peer.closed).toBe(false);
+    expect(diagnostics.snapshot().owners).toBe(1);
+    expect(diagnostics.snapshot().owners).toBe(1);
+    // The retained peer is found by all five fields; no source-only fallback is allowed.
+    await expect(
+      runtime.dispatchDrain({ ...context.owner, processEpoch: "foreign" }, {} as never, signal),
+    ).rejects.toThrow("Original drain channel");
+    await expect(runtime.dispatchDrain(context.owner, drain170(), signal)).rejects.toMatchObject({
+      code: RPC_ERRORS.methodNotFound,
+    });
+    disposition.resolve();
+    await exiting.promise;
+    expect(diagnostics.snapshot().owners).toBe(1);
+    expect(context.peer.closed).toBe(false);
+    actualExit();
+    await stopping;
+    expect(context.peer.closed).toBe(true);
+    const unresolved = recoveryState !== "absent" && recoveryState !== "saved";
+    const before = structuredClone(recovery);
+    recoverySnapshot.mockClear();
+    expect(diagnostics.snapshot().owners).toBe(unresolved ? 1 : 0);
+    expect(diagnostics.snapshot().owners).toBe(unresolved ? 1 : 0);
+    expect(recoverySnapshot).not.toHaveBeenCalled();
+    expect(recovery).toEqual(before);
+    // Retry can leave a durable saved receipt. Reading diagnostics must not collect it.
+    for (const item of recovery.items) item.state = "saved";
+    expect(diagnostics.snapshot().owners).toBe(unresolved ? 1 : 0);
+    expect(recoverySnapshot).not.toHaveBeenCalled();
+    await manager.shutdown();
+    expect(diagnostics.snapshot().owners).toBe(0);
+    expect(recovery.items).toEqual(before.items.map((item) => ({ ...item, state: "saved" })));
+  },
+);
 
 it("R160 inventory is lazy metadata; management context commands use only the original host-built envelope", async () => {
   const source = optionalNodeSource();

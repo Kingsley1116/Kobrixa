@@ -304,7 +304,8 @@ export class PluginManager {
   }
 
   // Called only by lifecycle transitions, never by diagnostics. Recovery has no owner-level
-  // release notification, so conservatively retain source evidence until the next transition.
+  // release notification, so retain unresolved source evidence until the next transition.
+  // Saved durable receipts remain in recovery, but no longer require the dead channel.
   #collectStage3(): void {
     const recovery = this.options.stage3?.persistence.recoverySnapshot().items ?? [];
     for (const [owner, row] of this.#stage3Cleanup) {
@@ -312,7 +313,10 @@ export class PluginManager {
         !row.exited ||
         !row.settled ||
         recovery.some(
-          (item) => item.sourceKey === owner.sourceKey && item.pluginId === owner.pluginId,
+          (item) =>
+            item.sourceKey === owner.sourceKey &&
+            item.pluginId === owner.pluginId &&
+            item.state !== "saved",
         )
       )
         continue;
@@ -1023,6 +1027,8 @@ export class PluginManager {
         for (const supervisor of supervisors) supervisor.forceKill();
         await waitForStop(deadlineMs - forceAt);
       }
+      // Retry may have settled recovery for an owner that exited before shutdown.
+      this.#collectStage3();
       const failed = [...dispositions, ...teardownResults].find(
         (result) => result.status === "rejected",
       );
