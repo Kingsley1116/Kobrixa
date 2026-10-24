@@ -115,8 +115,12 @@ export const FOUNDATION_CHECKS = caseChecks as Readonly<
 import assert from "node:assert/strict";
 // @ts-expect-error The test-local Node harness has no TypeScript declaration.
 import * as evidenceHarness from "./plugin-persistence-harness.mjs";
-const { assertRegistrationEndEvidence, assertContentionEvidence, assertUnknownEvidence } =
-  evidenceHarness;
+const {
+  assertRegistrationEndEvidence,
+  assertContentionEvidence,
+  assertUnknownEvidence,
+  assertActionReplayEvidence,
+} = evidenceHarness;
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
   const required = FOUNDATION_CHECKS[id];
   assert.ok(required, `Unknown foundation case ${id}`);
@@ -173,6 +177,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
   if (id === "registration-end") assertRegistrationEndEvidence(evidence);
   if (id === "contention") assertContentionEvidence(evidence);
   if (id === "unknown-publication") assertUnknownEvidence(evidence);
+  if (id === "action-replay") assertActionReplayEvidence(evidence);
   if (id === "healthy-release") {
     for (const key of ["retireCalls", "freezeCalls", "processExits"])
       assert.equal(evidence.checks[key], 0, key);
@@ -932,6 +937,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "suspend-wake",
       "disconnect-retry",
       "unknown-publication",
+      "action-replay",
     ].includes(config.case)
   )
     throw new Error(
@@ -969,6 +975,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     trustedDeviceActions,
     desktopFoundationTestHandles,
     desktopDeviceAccess,
+    createWindowRetirementHandler,
   } = await import("../../apps/desktop/src/main/plugins/controller.js");
   const { registerCoreRecoveryIpc, registerSettingsIpc170 } =
     await import("../../apps/desktop/src/main/plugins/ipc.js");
@@ -993,6 +1000,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
   const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
   const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
   const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
+  const { produceActionReplay, nativeActionControl } =
+    await import("./plugin-persistence-action-replay.js");
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
@@ -1064,6 +1073,18 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             current.workbenchInstance === candidate.workbenchInstance
           );
         });
+      const nativeActions = nativeActionControl(now);
+      let expectedRendererLoss = false;
+      let rendererExit:
+        | {
+            pid: number;
+            at: number;
+            reason: string;
+            exitCode: number;
+            osExit: { at: number; code: string };
+          }
+        | undefined;
+      let rendererRetirement: Promise<void> | undefined;
       const coreActions = createCoreActionLedger({ now, current: currentScope });
       const journalProfile = profile,
         journal = createJournal(createJournalFilesystem(userData), journalProfile);
@@ -1217,6 +1238,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           report,
         };
         composition = await composeDesktopMain(compositionInput, {
+          ...(config.case === "action-replay" ? { nativeActions } : {}),
           worker: {
             entry: config.workerEntry,
             control(control: PersistenceFaultControl) {
@@ -1279,7 +1301,27 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         );
         win.on("blur", () => ui.intent.dispose());
         win.on("hide", () => ui.intent.dispose());
-        win.webContents.on("render-process-gone", () => {
+        const retireActionRenderer = createWindowRetirementHandler({
+          composition: live,
+          scope,
+          coreActions,
+          invalidate: () => authority.invalidate(win.webContents.id),
+          flush: async () => {},
+          pause: async () => {},
+        });
+        win.webContents.on("render-process-gone", (_event, details) => {
+          if (expectedRendererLoss) {
+            assert.ok(rendererExit);
+            rendererExit = {
+              ...rendererExit,
+              at: now(),
+              reason: details.reason,
+              exitCode: details.exitCode,
+            };
+            rendererRetirement = retireActionRenderer(false);
+            void rendererRetirement.catch(report);
+            return;
+          }
           report(new Error("Reference renderer exited before final diagnostics"));
           coreActions.retire(scope());
           ui.actions.revokeWindow(scope());
@@ -1657,7 +1699,110 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               },
             }),
           "all-optional-off": unavailable("all-optional-off"),
-          "action-replay": unavailable("action-replay"),
+          "action-replay": () =>
+            produceActionReplay({
+              ...input,
+              profilePath: userData,
+              scope,
+              ui: ui.bridge,
+              actions: coreActions,
+              featureActions: ui.actions,
+              native: nativeActions,
+              command: async (step) => {
+                const result = await live.plugins.execute(`acceptance.ui-recording.action-${step}`);
+                assert.equal(result.ok, true, JSON.stringify(result));
+              },
+              prepareCore: async () => {
+                const reservation = await reserveLiveRecording(input);
+                await registerContentionCheckpoint(input, reservation, async () => {});
+                let drainResolve!: () => void;
+                let drainReject!: (error: unknown) => void;
+                const drained = new Promise<void>((resolve, reject) => {
+                  drainResolve = resolve;
+                  drainReject = reject;
+                });
+                void drained.catch(() => {});
+                const originalDrain = input.host.participant.drain;
+                input.host.participant.drain = function (...args) {
+                  const result = originalDrain.apply(this, args);
+                  void result.then((report) => {
+                    if (report.state === "saved") drainResolve();
+                    else drainReject(new Error(`Core export seed drain: ${report.state}`));
+                  }, drainReject);
+                  return result;
+                };
+                try {
+                  accepted(
+                    await input.broker.request(
+                      input.recording.principal(),
+                      "devices/recording/release",
+                      { reservationId: reservation.reservationId },
+                      new AbortController().signal,
+                    ),
+                  );
+                  await within(drained, "Core export seed drain");
+                } finally {
+                  input.host.participant.drain = originalDrain;
+                }
+              },
+              coreExport: async () => {
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const option = snapshot.value.items
+                    .flatMap((item) => item.actions)
+                    .find((action) => action.kind === "export");
+                  if (option) {
+                    const result = await detail.bridge.act({
+                      itemId: entry.item.id,
+                      optionId: option.id,
+                    });
+                    assert.equal(result.ok, true, JSON.stringify(result));
+                    return result;
+                  }
+                }
+                throw new Error("Actual recovery bridge offered no export");
+              },
+              destroyRenderer: async () => {
+                assert.equal(expectedRendererLoss, false);
+                expectedRendererLoss = true;
+                rendererExit = {
+                  pid: win.webContents.getOSProcessId(),
+                  at: 0,
+                  reason: "pending",
+                  exitCode: 0,
+                  osExit: { at: 0, code: "pending" },
+                };
+                assert.ok(rendererExit.pid > 0);
+                const gone = new Promise<void>((resolve) =>
+                  win.webContents.once("render-process-gone", () => resolve()),
+                );
+                win.webContents.forcefullyCrashRenderer();
+                await within(gone, "Actual renderer exit");
+                assert.ok(rendererRetirement);
+                await rendererRetirement;
+                await within(
+                  (async () => {
+                    for (;;) {
+                      try {
+                        process.kill(rendererExit!.pid, 0);
+                      } catch (error) {
+                        assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+                        rendererExit!.osExit = {
+                          at: now(),
+                          code: (error as NodeJS.ErrnoException).code!,
+                        };
+                        return;
+                      }
+                      await new Promise((resolve) => setTimeout(resolve, 10));
+                    }
+                  })(),
+                  "Renderer OS exit",
+                );
+                return rendererExit;
+              },
+            }),
           "import-restart": unavailable("import-restart"),
           "storage-ui-pressure": unavailable("storage-ui-pressure"),
           compatibility: unavailable("compatibility"),
@@ -1671,11 +1816,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           (closing ??= (async () => {
             await live.dispose();
             await within(Promise.all(consumerExits), "original consumer exits during close");
-            await browser("window.declarativeAcceptance.disposeFoundationRenderer()");
-            const finalBrowser = await browser(
-              "window.declarativeAcceptance.foundationDiagnostics()",
-            );
-            assertZeroCounters(finalBrowser.snapshot);
+            if (!rendererExit) {
+              await browser("window.declarativeAcceptance.disposeFoundationRenderer()");
+              const finalBrowser = await browser(
+                "window.declarativeAcceptance.foundationDiagnostics()",
+              );
+              assertZeroCounters(finalBrowser.snapshot);
+            } else {
+              assert.notEqual(rendererExit.reason, "pending");
+              assert.ok(rendererExit.at > 0 && rendererExit.pid > 0);
+            }
             if (winnerControls) {
               const final = await winnerControls.browser(
                 "window.declarativeAcceptance.disposeFoundationRenderer()",
@@ -1702,7 +1852,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             for (const unsubscribe of off.splice(0)) unsubscribe();
             for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
             restoreReservation();
-            win.webContents.debugger.detach();
+            if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
             destroying = true;
             win.destroy();
             if (second && !second.isDestroyed()) second.destroy();
@@ -1743,6 +1893,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               "suspend-wake",
               "disconnect-retry",
               "unknown-publication",
+              "action-replay",
             ].includes(config.case)
               ? "not-measured-scoped-case"
               : "not-measured-reference-only",

@@ -11,6 +11,22 @@ void runPlugin(
     activate(ctx) {
       // Explicit T7 commands use this process's original public SDK channel.
       // Keep the original write handle across the lost-confirmation boundary.
+      let actionJob: string | undefined;
+      const actionBytes = Buffer.from("T7 action export value sentinel\n");
+      if (ctx.pluginId.startsWith("acceptance.ui-"))
+        for (const step of ["chunk", "commit"] as const)
+          ctx.commands.register(`${ctx.pluginId}.action-${step}`, async () => {
+            assert.ok(actionJob);
+            if (step === "chunk")
+              value(
+                await ctx.actions.exportChunk({
+                  export: actionJob,
+                  offset: 0,
+                  data: actionBytes.toString("base64"),
+                }),
+              );
+            else await ctx.actions.exportCommit({ export: actionJob });
+          });
       let unknownWrite: string | undefined;
       let unknownStep = 0;
       const unknownBytes = (next: boolean) =>
@@ -91,10 +107,31 @@ void runPlugin(
           },
           mode: { type: "enum" as const, values: ["coast", "brake"], nullable: false as const },
         };
-        ctx.commands.registerContext(`${ctx.pluginId}.activate`, args, async (invocation) => ({
-          output: { speed: invocation.arguments.speed!, mode: invocation.arguments.mode! },
-          fieldErrors: [],
-        }));
+        ctx.commands.registerContext(`${ctx.pluginId}.activate`, args, async (invocation) => {
+          if (invocation.arguments.speed === -90 || invocation.arguments.speed === -91) {
+            const actionRef = invocation.context.actionRef;
+            assert.ok(actionRef, "Actual trusted UI dispatch must mint the action");
+            if (invocation.arguments.speed === -91) {
+              actionJob = value(
+                await ctx.actions.exportBegin({
+                  actionRef,
+                  suggestedName: "action.txt",
+                  mediaType: "text/plain",
+                  byteLength: actionBytes.length,
+                  sha256: createHash("sha256").update(actionBytes).digest("hex"),
+                }),
+              ).export;
+            }
+            return {
+              output: { "action-ref": actionRef, ...(actionJob ? { export: actionJob } : {}) },
+              fieldErrors: [],
+            };
+          }
+          return {
+            output: { speed: invocation.arguments.speed!, mode: invocation.arguments.mode! },
+            fieldErrors: [],
+          };
+        });
         ctx.commands.registerContext(`${ctx.pluginId}.hold`, args, async (invocation) => ({
           output: {
             speed: invocation.arguments.speed!,

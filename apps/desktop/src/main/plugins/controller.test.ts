@@ -3382,13 +3382,25 @@ it.each([false, true])("settings/watch uses afterReply; cancelled=%s", async (ca
 it("P170 constructs one worker and host before admission, keeps the original listener, and disposes once", async () => {
   const f = await compositionInput();
   const profile = f.input.foundationOptions.profile;
+  const nativeActions = {
+    choose: vi.fn(async () => "/host-only/selected.txt" as string | null),
+    copy: vi.fn(),
+  };
+  const destination = Object.freeze({}) as ExportDestination170;
+  const register = vi.fn(async () => destination),
+    release = vi.fn(async () => {});
+  const ledger = createCoreActionLedger({
+    now: f.input.foundationOptions.now,
+    current: f.input.currentScope,
+  });
+  f.input.foundationOptions.coreActions = ledger;
   const backend: PersistenceBackend170 = {
     engine: unusedPort170("engine"),
     reads: unusedPort170("reads"),
     evidence: unusedPort170("evidence"),
     imports: unusedPort170("imports"),
     output: unusedPort170("output"),
-    destinations: unusedPort170("destinations"),
+    destinations: { register, release },
     sources: unusedPort170("sources"),
     dispose: vi.fn(async () => {
       profile.assertHeld();
@@ -3451,7 +3463,7 @@ it("P170 constructs one worker and host before admission, keeps the original lis
     return foundation;
   });
   try {
-    const composition = await composeDesktopMain(f.input);
+    const composition = await composeDesktopMain(f.input, { nativeActions });
     expect(worker).toHaveBeenCalledExactlyOnceWith({
       profile,
       root,
@@ -3459,6 +3471,62 @@ it("P170 constructs one worker and host before admission, keeps the original lis
       now: f.input.foundationOptions.now,
     });
     expect(createHost).toHaveBeenCalledOnce();
+    // Direct composition seam test: only I/O is substituted. The original core
+    // ledger must authorize the SAME adapter passed into the production host.
+    const attached = createHost.mock.calls[0]![0];
+    const target = { kind: "persistence-export" as const, recovery: randomUUID() };
+    const action = ledger.mint(f.input.scope(), target);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(nativeActions.choose).not.toHaveBeenCalled();
+    expect(attached.coreActions.claim(action, target)).toBe(true);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBe(destination);
+    expect(nativeActions.choose).toHaveBeenCalledExactlyOnceWith("file.txt");
+    expect(register).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        action: action.actionToken,
+        scope: action.scope,
+        nativePath: "/host-only/selected.txt",
+      }),
+    );
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    await expect(attached.actionAdapter.copyText(action.actionToken, "denied")).rejects.toThrow(
+      "Stale clipboard",
+    );
+    expect(nativeActions.copy).not.toHaveBeenCalled();
+    attached.coreActions.complete(action);
+    const cancelled = ledger.mint(f.input.scope(), target);
+    expect(attached.coreActions.claim(cancelled, target)).toBe(true);
+    nativeActions.choose.mockResolvedValueOnce(null);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        cancelled.actionToken,
+        "cancel.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(register).toHaveBeenCalledTimes(1);
+    attached.coreActions.complete(cancelled);
+    const { dialog, clipboard } = await import("electron");
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
     expect(listenerCount).toBe(1);
     expect(composition.stage3.persistence).toBe(participant);
     expect(composition.stage3.device).toBe(composition.foundation.broker.resources);

@@ -160,6 +160,11 @@ export async function materializeFoundationFixtures(buildRoot, build, contention
         id: `${id}.unknown-${step}`,
         title: { en: `Unknown publication ${step}`, "zh-TW": `未知發布 ${step}` },
       });
+    for (const step of ["chunk", "commit"])
+      manifest.contributes.commands.push({
+        id: `${id}.action-${step}`,
+        title: { en: `Action ${step}` },
+      });
     if (role === "recording" || contention) {
       manifest.permissions = [
         ...new Set([
@@ -575,6 +580,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "suspend-wake",
       "disconnect-retry",
       "unknown-publication",
+      "action-replay",
     ].includes(caseId)
   )
     return [caseId];
