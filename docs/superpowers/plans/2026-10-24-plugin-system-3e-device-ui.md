@@ -1,6 +1,6 @@
 # Stage 3E：EV3 設備 UI 實作計畫草案
 
-日期：2026-10-24；`feat/plugin-3e`／`a31da12`；[設計](../specs/2026-10-24-plugin-system-3e-device-ui-design.md)。本次僅產出設計與計畫，以下皆為後續工作，不是已執行結果。
+日期：2026-10-24；`feat/plugin-3e`／`a31da12`；[設計](../specs/2026-10-24-plugin-system-3e-device-ui-design.md)。公開 UI 契約仍為草案；E0 舊行為基準已有部分執行結果，見文末 receipt。其餘任務尚未完成。
 
 ## 1. 依賴、owner 與封閉路徑規則
 
@@ -32,7 +32,7 @@ H-P 的 recovery／v2／SDK/schema 變更屬原契約 owner 的 D1 批次，不�
 
 將 design §3 每列編為 P01–P12，建立 legacy 輸入／可觀察結果 oracle，包含 execution pending-run、USB recovery、monitor modes/age、六 prefs；記來源 commit 與 core 例外 caller。只讀既有模型，不重建 B2/C/D 已審基礎。
 
-退出：每項指定 feature/core/contract owner；source graph 能指出 retained callers，無「移走整個 device namespace」的刪除項。當前只完成文件盤點，不聲稱 fixture 存在。
+退出：每項指定 feature/core/contract owner；source graph 能指出 retained callers，無「移走整個 device namespace」的刪除項。初始盤點後已新增部分 legacy fixtures；實際範圍與未驗項見文末 receipt，未宣告完整新舊 parity。
 
 ### E1：跨 owner 門檻（W0；依賴 D1）
 
@@ -133,3 +133,11 @@ source-free installed：離線、無 checkout/外部 Node、實際產品 entry�
 | S3-16 | E8 與各 feature owner | 文件/例外/caller 對照 | 未完人工項明列 | 待填雙語文件與 ledger diff；remote-files 等保留、stage2 分帳 |
 
 順序為 E0→E1→E2/E3（paths 序列）→E4→E5→E6→E7→E8；D1 blocker 未解可停在 fixtures，不削減完成目標。最後只在所有必要 I/A/M 有真實證據時提出 closeout；本計畫不宣告 Stage 3 完成，也不授權整合分支或 main 合併。
+
+## 5. E0 部分執行 receipt（2026-10-24）
+
+來源基準 `590fd93`；測試提交 `3b05b86`。新增 [P01–P12 fixtures](../../../apps/desktop/src/builtin-features/device-ev3/parity-fixtures.ts) 與 [legacy 行為測試](../../../apps/desktop/src/builtin-features/device-ev3/parity.test.ts)，直接執行本分支的 ExecutionController、MonitorController、BatteryStatus、DevicePreferencesStore 與 SettingsStore。傳輸邊界受控，預期結果使用獨立 literal，未以新功能實作自比。
+
+獨立複查 PASS；同一 scoped Vitest 命令由實作者與審查者執行，均為 **35 passed / 12 skipped**。12 個 skip 是各 parity 列明列的後續驗證，未算成功。Controller ESLint 通過；未執行完整 desktop typecheck、native 或 installed 測試。使用 sibling 現有 Vitest/Zod 套件及暫存 config，所有 legacy product imports 指向本工作樹；沒有安裝依賴。
+
+覆蓋 pending-run 取消、重連晚回覆、monitor modes/session/busy/unknown 與 timestamp 保留、六偏好 defaults/options、保存失敗後重試及 Wi-Fi 正規化。尚缺 DOM discovery/render、實際 2.5 秒 freshness UI、main broker/coordinator、公開 transport/v2、import/CAS、installed/hardware。此 receipt 不凍結 D1/E1、不宣告新的 device feature 已交付或 Stage 3 完成。
