@@ -15,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, networkInterfaces } from "node:os";
 import { createServer } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -156,7 +156,17 @@ function requiredCompilers(state) {
 }
 
 async function launchProduct(config, receipt, check) {
-  const { directory, executable, cwd, env, profile, isolationProfile, isolated, probes } = config;
+  const {
+    directory,
+    executable,
+    cwd,
+    env,
+    profile,
+    isolationProfile,
+    isolated,
+    probes,
+    deniedRoots,
+  } = config;
   const clients = [];
   const known = new Set();
   let child,
@@ -180,9 +190,22 @@ async function launchProduct(config, receipt, check) {
   };
   try {
     child = spawn(
-      isolated ? "/usr/bin/sandbox-exec" : executable,
+      isolated
+        ? process.platform === "darwin"
+          ? "/usr/bin/sandbox-exec"
+          : "/usr/bin/python3"
+        : executable,
       [
-        ...(isolated ? ["-f", isolationProfile, executable] : []),
+        ...(isolated
+          ? process.platform === "darwin"
+            ? ["-f", isolationProfile, executable]
+            : [
+                fileURLToPath(new URL("./builtin-installed-landlock.py", import.meta.url)),
+                ...deniedRoots,
+                "--",
+                executable,
+              ]
+          : []),
         "--inspect-brk=127.0.0.1:0",
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0",
@@ -291,6 +314,21 @@ async function launchProduct(config, receipt, check) {
     assert.equal(receipt.identity.cwd, cwd);
     assert.equal(receipt.identity.path, env.PATH);
     assert.equal(receipt.identity.removedEnvironment, true);
+    receipt.chromiumSandbox = await main.js(`(() => ({
+      disabledByArgument: process.argv.includes('--no-sandbox') || process.argv.includes('--disable-setuid-sandbox'),
+      windows: __installedProbe.electron.BrowserWindow.getAllWindows().map(window => {
+        const preferences = window.webContents.getLastWebPreferences();
+        return { sandbox: preferences.sandbox, nodeIntegration: preferences.nodeIntegration, contextIsolation: preferences.contextIsolation };
+      })
+    }))()`);
+    assert.equal(receipt.chromiumSandbox.disabledByArgument, false);
+    assert.ok(receipt.chromiumSandbox.windows.length > 0);
+    for (const preferences of receipt.chromiumSandbox.windows)
+      assert.deepEqual(preferences, {
+        sandbox: true,
+        nodeIntegration: false,
+        contextIsolation: true,
+      });
     assert.equal(
       (await renderer.js("window.kobrixa.device.getPreferences()")).usbAutoReconnect,
       false,
@@ -542,9 +580,18 @@ export async function main() {
     "OS process-tree evidence currently supports macOS/Linux only; Windows remains unrun",
   );
   assert.ok(
-    !isolated || process.platform === "darwin",
-    "OS-enforced isolation is implemented for macOS only",
+    !isolated || process.platform === "darwin" || ["arm64", "x64"].includes(process.arch),
+    "Linux isolation requires arm64 or x64 with Landlock ABI >= 4",
   );
+  const externalAddresses = Object.values(networkInterfaces())
+    .flat()
+    .filter((entry) => entry && !entry.internal);
+  if (isolated && process.platform === "linux")
+    assert.equal(
+      externalAddresses.length,
+      0,
+      "Linux isolated proof requires a networkless namespace in addition to Landlock TCP denial",
+    );
   const directory = await realpath(
     await mkdtemp(path.join(tmpdir(), "kobrixa-installed-product-")),
   );
@@ -557,6 +604,7 @@ export async function main() {
     runs: [],
     isolated,
     sourceRootDenial: "unrun",
+    ...(isolated && process.platform === "linux" ? { externalAddresses } : {}),
     limitations: [
       "Physical EV3 USB/Wi-Fi and motion parity UNRUN",
       "Clean-machine installation, other platforms, locale/theme/layout/keyboard acceptance UNRUN",
@@ -678,7 +726,14 @@ export async function main() {
       });
       probes.port = server.address().port;
       report.isolationProfile = `(version 1)\n(allow default)\n(deny network*)\n(allow network-inbound (local ip "localhost:*"))\n(allow network-bind (local ip "localhost:*"))\n${deniedRoots.map((denied) => `(deny file-read* (subpath ${JSON.stringify(denied)}))`).join("\n")}\n`;
-      await writeFile(isolationProfile, report.isolationProfile);
+      if (process.platform === "darwin") await writeFile(isolationProfile, report.isolationProfile);
+      else {
+        report.isolationProfile =
+          "Landlock ABI >= 4: deny source subtree filesystem access and all outbound TCP; inherited across exec/children";
+        report.isolationLauncherSha256 = sha256(
+          await readFile(new URL("./builtin-installed-landlock.py", import.meta.url)),
+        );
+      }
     }
     report.deniedRoots = deniedRoots;
     report.probeFiles = probes.files;
@@ -713,7 +768,18 @@ export async function main() {
       report.runs.push(receipt);
       try {
         await launchProduct(
-          { directory, executable, archive, cwd, env, profile, isolationProfile, isolated, probes },
+          {
+            directory,
+            executable,
+            archive,
+            cwd,
+            env,
+            profile,
+            isolationProfile,
+            isolated,
+            probes,
+            deniedRoots,
+          },
           receipt,
           (client) => check(client, receipt),
         );

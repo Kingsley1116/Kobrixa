@@ -167,12 +167,29 @@ export function assertProductReceipt(report) {
     }
     if (report.isolated) {
       assert.equal(report.sourceRootDenial, "verified-in-all-four-product-processes");
-      assert.match(report.isolationProfile, /\(deny network\*\)/);
-      assert.match(report.isolationProfile, /allow network-inbound/);
-      for (const denied of report.deniedRoots)
-        assert.ok(
-          report.isolationProfile.includes(`(deny file-read* (subpath ${JSON.stringify(denied)}))`),
-        );
+      if (report.artifact.platform === "darwin") {
+        assert.match(report.isolationProfile, /\(deny network\*\)/);
+        assert.match(report.isolationProfile, /allow network-inbound/);
+        for (const denied of report.deniedRoots)
+          assert.ok(
+            report.isolationProfile.includes(
+              `(deny file-read* (subpath ${JSON.stringify(denied)}))`,
+            ),
+          );
+      } else {
+        assert.equal(report.artifact.platform, "linux");
+        assert.deepEqual(report.externalAddresses, []);
+        assert.match(report.isolationProfile, /Landlock ABI >= 4/);
+        assert.match(report.isolationLauncherSha256, /^[a-f0-9]{64}$/);
+        assert.equal(run.chromiumSandbox.disabledByArgument, false);
+        assert.ok(run.chromiumSandbox.windows.length > 0);
+        for (const preferences of run.chromiumSandbox.windows)
+          assert.deepEqual(preferences, {
+            sandbox: true,
+            nodeIntegration: false,
+            contextIsolation: true,
+          });
+      }
       assert.ok(report.deniedRoots.includes(report.artifact.sourceRoot));
       for (const field of ["checkout", "worktree", "dependency", "network"])
         assert.ok(["EPERM", "EACCES"].includes(run.isolation[field]), field);
