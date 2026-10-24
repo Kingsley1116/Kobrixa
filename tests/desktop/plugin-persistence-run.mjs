@@ -193,6 +193,11 @@ export async function materializeFoundationFixtures(
         id: `${id}.action-${step}`,
         title: { en: `Action ${step}` },
       });
+    if (actionReplay && role === "recording")
+      manifest.contributes.commands.push({
+        id: `${id}.action-checkpoint-only`,
+        title: { en: "Prepare checkpoint recovery" },
+      });
     if (role === "recording" || contention) {
       manifest.permissions = [
         ...new Set([
