@@ -16,6 +16,11 @@ import {
   validateCalibration,
 } from "../../../../../plugins/sensor-lab/src/model/calibration.js";
 
+import {
+  calibrationCode as legacyCalibrationCode,
+  calibrate as legacyCalibrate,
+} from "../../shared/sensor-calibration.js";
+
 const source: SensorChannel = {
   id: "test",
   kind: "input",
@@ -38,7 +43,7 @@ const twoPoint = (patch: Partial<SensorCalibration> = {}): SensorCalibration => 
   ...patch,
 });
 
-async function execute(code: string, scenario: Record<string, unknown>) {
+async function execute(code: string, scenario: Record<string, unknown>, status = "ended") {
   const front = await new BasicPlusFrontend().compile(
     {
       root: "/lab",
@@ -61,10 +66,33 @@ async function execute(code: string, scenario: Record<string, unknown>) {
   const back = await new EV3Backend().compile(front.ir!, new AbortController().signal);
   expect(back.diagnostics).toEqual([]);
   const vm = new VM(decode(back.rbf!), scenario);
+  // The shared VM does not trace metadata/readiness or mode-selection operations.
+  // Observe their input operands without replacing any instruction semantics.
+  const operations: { op: string; args: unknown[] }[] = [];
+  const instruction = vm.execute.bind(vm);
+  vm.execute = (i: { name: string; args: unknown[] }) => {
+    const inputs: Record<string, number> = {
+      "INPUT_DEVICE.GET_TYPEMODE": 3,
+      "INPUT_DEVICE.GET_FORMAT": 3,
+      "INPUT_DEVICE.READY_RAW": 6,
+      INPUT_READEXT: 6,
+      INPUT_TEST: 2,
+      INPUT_READY: 2,
+      OUTPUT_GET_COUNT: 2,
+    };
+    if (i.name.startsWith("INPUT_") || i.name.startsWith("OUTPUT_"))
+      operations.push({
+        op: i.name,
+        args: i.args.slice(0, inputs[i.name] ?? i.args.length).map((arg) => vm.read(arg)),
+      });
+    return instruction(i);
+  };
   const run = vm.run();
-  expect(run.status, run.error).toBe("ended");
+  expect(run.status, run.error).toBe(status);
   return {
     vm,
+    run,
+    operations,
     texts: run.trace
       .filter((entry: { op: string }) => entry.op === "UI_DRAW.TEXT")
       .map((entry: { args: unknown[] }) => String(entry.args[3])) as string[],
@@ -207,4 +235,215 @@ it("reports opaque public sources as unavailable and rejects invalid numeric sou
       "en",
     ),
   ).toEqual({ available: false, reason: "invalidSource" });
+});
+
+// Independent OLD/NEW entry points receive the very same frozen inputs. Literal
+// expectations are deliberately not computed by either implementation.
+const differentialCases = [
+  {
+    name: "reversed nonzero channel",
+    value: 12.5,
+    c: twoPoint({ sourceA: 20, sourceB: 10, zeroOffset: 5 }),
+    expected: 70,
+    text: "70 cm",
+  },
+  { name: "zero endpoint", value: 10, c: twoPoint(), expected: 0, text: "0 cm" },
+  { name: "extrapolation", value: 70, c: twoPoint(), expected: 150, text: "150 cm" },
+  {
+    name: "float32 rounding",
+    value: 5,
+    c: twoPoint({ sourceA: 0, sourceB: 3 }),
+    expected: 166.6666717529297,
+    text: "166.667 cm",
+  },
+  {
+    name: "small coefficients",
+    value: 0.0000002,
+    c: twoPoint({ sourceA: 0, sourceB: 0.000001, targetB: 1 }),
+    expected: 0.20000000298023224,
+    text: "0.2 cm",
+  },
+  {
+    name: "large coefficients",
+    value: 1e10,
+    c: twoPoint({ sourceA: -1e10, sourceB: 1e10, targetB: 1 }),
+    expected: 1,
+    text: "1 cm",
+  },
+  {
+    name: "overflow",
+    value: 3e38,
+    c: twoPoint(),
+    expected: null,
+    text: "Calibration result unavailable",
+  },
+  {
+    name: "missing SI",
+    value: NaN,
+    c: twoPoint(),
+    expected: null,
+    text: "Sensor reading unavailable",
+  },
+  {
+    name: "infinite SI",
+    value: Infinity,
+    c: twoPoint(),
+    expected: null,
+    // Sensor.ReadSIValue lowers non-finite SI to NaN before calibration.
+    text: "Sensor reading unavailable",
+  },
+].map((item) => Object.freeze({ ...item, c: Object.freeze(item.c) }));
+
+const differentialSource = Object.freeze({ ...source, port: 3, mode: 2, channel: 2 });
+
+describe.each(["en", "zh-TW"] as const)("actual legacy/new codegen parity (%s)", (locale) => {
+  async function compare(
+    channel: SensorChannel,
+    c: SensorCalibration,
+    scenario: Record<string, unknown>,
+    assertion = "",
+    status = "ended",
+  ) {
+    const old = await execute(
+      legacyCalibrationCode(channel, c, locale) + assertion,
+      scenario,
+      status,
+    );
+    const next = await execute(calibrationCode(channel, c, locale) + assertion, scenario, status);
+    // No trace normalization: preserve order, operands, output, and error text.
+    expect(next.run.trace).toEqual(old.run.trace);
+    expect(next.run.status).toBe(old.run.status);
+    expect(next.run.error).toBe(old.run.error);
+    expect(next.operations).toEqual(old.operations);
+    expect(next.vm.modes).toEqual(old.vm.modes);
+    expect(next.vm.siReads).toBe(old.vm.siReads);
+    expect(next.texts).toEqual(old.texts);
+    return next;
+  }
+
+  it.each(differentialCases)("$name", async ({ value, c, expected, text }) => {
+    expect(legacyCalibrate(value, c)).toBe(expected);
+    expect(calibrate(value, c)).toBe(expected);
+    const scenario = Object.freeze({ sensorType: 30, siValues: Object.freeze([999, -999, value]) });
+    // Check the full float32 value inside BOTH compiled programs, before relying
+    // on LCD formatting. The oracle is a literal fixture, not the new calibrator.
+    const assertion =
+      expected === null
+        ? ""
+        : `Assert.Equal(labCalibrated, ${expected} / 1, "Parity numeric mismatch")\n`;
+    const result = await compare(differentialSource, c, scenario, assertion);
+    expect(result.texts).toEqual([text]);
+    expect(result.vm.siReads).toBe(1);
+    expect(result.vm.modes).toEqual({ 3: 2 });
+    const metadata = { op: "INPUT_DEVICE.GET_TYPEMODE", args: [5, 0, 3] };
+    const ready = { op: "INPUT_TEST", args: [0, 3] };
+    expect(result.operations).toEqual([
+      metadata,
+      { op: "INPUT_DEVICE.READY_RAW", args: [28, 0, 3, 0, 2, 1] },
+      { op: "INPUT_READY", args: [0, 3] },
+      metadata,
+      metadata,
+      ready,
+      metadata,
+      { op: "INPUT_DEVICE.GET_FORMAT", args: [2, 0, 3] },
+      { op: "INPUT_READEXT", args: [0, 3, 0, -1, 19, 8] },
+      metadata,
+      ready,
+      metadata,
+      metadata,
+    ]);
+    expect(
+      result.run.trace.filter((entry: { op: string }) => entry.op === "INPUT_READEXT"),
+    ).toEqual([
+      { op: "INPUT_READEXT", layer: 0, port: 3, mode: -1, format: 19, values: scenario.siValues },
+    ]);
+    expect(result.operations.some((entry) => entry.op.startsWith("OUTPUT_"))).toBe(false);
+  });
+
+  it("preserves motor count and never issues reset or sensor operations", async () => {
+    const channel = Object.freeze({
+      ...source,
+      kind: "output" as const,
+      type: 7,
+      port: 2,
+      channel: 0,
+    });
+    const c = Object.freeze({ ...identityCalibration("deg"), zeroOffset: -10.25 });
+    expect(legacyCalibrate(-123, c)).toBe(-112.75);
+    expect(calibrate(-123, c)).toBe(-112.75);
+    const result = await compare(channel, c, Object.freeze({ motorCount: -123 }));
+    expect(result.texts).toEqual(["-112.75 deg"]);
+    expect(result.operations).toEqual([{ op: "OUTPUT_GET_COUNT", args: [0, 2] }]);
+    expect(result.vm.modes).toEqual({});
+    expect(result.vm.siReads).toBe(0);
+  });
+
+  it("rejects a type mismatch before changing mode or reading", async () => {
+    const result = await compare(
+      differentialSource,
+      differentialCases[0]!.c,
+      Object.freeze({ sensorType: 29 }),
+    );
+    expect(result.texts).toEqual(["Sensor type changed"]);
+    expect(result.operations).toEqual([{ op: "INPUT_DEVICE.GET_TYPEMODE", args: [5, 0, 3] }]);
+    expect(result.vm.modes).toEqual({});
+    expect(result.vm.siReads).toBe(0);
+  });
+
+  it("preserves an absent SI component without fabricating zero", async () => {
+    const result = await compare(
+      differentialSource,
+      differentialCases[0]!.c,
+      Object.freeze({ sensorType: 30, sensorDatasets: 3, siValues: Object.freeze([999]) }),
+    );
+    expect(result.texts).toEqual(["Sensor reading unavailable"]);
+    expect(result.vm.siReads).toBe(1);
+  });
+
+  it("keeps invalid legacy sources throwing while the new wrapper reports availability", () => {
+    const channel = Object.freeze({ ...differentialSource, port: 9 });
+    const c = differentialCases[0]!.c;
+    expect(() => legacyCalibrationCode(channel, c, locale)).toThrow(
+      new RangeError("invalidSource"),
+    );
+    expect(() => calibrationCode(channel, c, locale)).toThrow(new RangeError("invalidSource"));
+    expect(generateCalibrationCode({ origin: "legacy-ev3", channel }, c, locale)).toEqual({
+      available: false,
+      reason: "invalidSource",
+    });
+  });
+
+  it("preserves real VM errors", async () => {
+    const result = await compare(
+      differentialSource,
+      differentialCases[0]!.c,
+      Object.freeze({ sensorType: 30, siSamples: Object.freeze([]) }),
+      "",
+      "error",
+    );
+    expect(result.run.error).toBe("SI sensor scenario exhausted");
+    expect(result.texts).toEqual([]);
+  });
+
+  it.each([null, undefined, NaN, Infinity])("preserves missing model value %s", (value) => {
+    expect(legacyCalibrate(value, differentialCases[0]!.c)).toBeNull();
+    expect(calibrate(value, differentialCases[0]!.c)).toBeNull();
+  });
+
+  it.each([
+    { c: twoPoint({ sourceA: 1, sourceB: 1 + 1e-10 }), error: "sameSource" },
+    { c: twoPoint({ targetA: Infinity }), error: "nonFinite" },
+    { c: twoPoint({ zeroOffset: 1e40 }), error: "float32Range" },
+    { c: twoPoint({ unit: "cm\n" }), error: "invalidUnit" },
+  ])("preserves generation errors: $error", ({ c, error }) => {
+    Object.freeze(c);
+    expect(() => legacyCalibrationCode(differentialSource, c, locale)).toThrow(
+      new RangeError(error),
+    );
+    expect(() => calibrationCode(differentialSource, c, locale)).toThrow(new RangeError(error));
+    // Intentional new API deviation: availability result instead of throwing.
+    expect(
+      generateCalibrationCode({ origin: "legacy-ev3", channel: differentialSource }, c, locale),
+    ).toEqual({ available: false, reason: error });
+  });
 });
