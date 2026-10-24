@@ -1682,7 +1682,20 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               );
               assertZeroCounters(final.snapshot);
             }
-            for (const snapshot of snapshots()) assertZeroCounters(snapshot);
+            const finalSnapshots = snapshots();
+            if (finalSnapshots.some((snapshot) => snapshot.owners !== 0)) {
+              const { writeFile } = await import("node:fs/promises");
+              await writeFile(
+                path.join(userData, "foundation-close-observation.json"),
+                JSON.stringify({
+                  snapshots: finalSnapshots,
+                  recovery: handles.host.participant.recoverySnapshot(),
+                  failures,
+                }),
+                { flag: "wx" },
+              );
+            }
+            for (const snapshot of finalSnapshots) assertZeroCounters(snapshot);
             assert.equal(persistenceWorkerCount(handles.backend), 0);
             assert.equal(listeners, 0);
             assert.deepEqual(failures, [], "Cleanup/lifecycle failures");
