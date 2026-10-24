@@ -6,7 +6,7 @@ The outside runner passed original-ticket reconciliation without a second public
 
 The cleanup fix excludes a reservation from future drain obligations only when its original failed admission positively returned the exact ticket as settled aborted. Ordinary queries and already captured barriers retain their history. Uncertain, lost-response, partially cleaned and admitted-aborted work remains an obligation. This fixed a phantom recovery item that previously pinned two exited owners; it does not automatically discard recovery.
 
-The gzip files preserve original bytes. `inventory.json` binds compressed and uncompressed hashes. The frozen renderer and handoff revisions are the recorded sI7bH2 inputs; later B1 work is not included. Earlier failed runs SCHFzr, yD3PLS, 5WfPai and Ra0GlD remain failures and have not been relabeled. The prior producer/tombstone review passed; the new drain-classification fix has a separate scoped review pending at evidence retention time.
+The gzip files preserve original bytes. `inventory.json` binds compressed and uncompressed hashes. The frozen renderer and handoff revisions are the recorded sI7bH2 inputs; later B1 work is not included. Earlier failed runs SCHFzr, yD3PLS, 5WfPai and Ra0GlD remain failures and have not been relabeled. The prior producer/tombstone review passed; the separate scoped review of `983af24..b8b3b1f` also passed, independently verifying the exact commit/bundle/artifact-bound outside receipt and four bounded pure tests. It did not rerun Electron.
 
 Command: `PERSISTENCE_HANDOFFS=... PERSISTENCE_EVIDENCE=... node tests/desktop/plugin-persistence-run.mjs --case=unknown-publication`.
 
