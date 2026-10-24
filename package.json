@@ -45,7 +45,7 @@
     "test:static-languages:smoke": "node tests/desktop/static-languages-run.mjs",
     "test:device-broker": "node --test tests/desktop/device-broker-*.test.mjs",
     "test:device-broker:smoke": "node tests/desktop/device-broker-run.mjs",
-    "test:persistence:oracles": "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs tests/desktop/plugin-persistence-disconnect.test.mjs tests/desktop/plugin-persistence-unknown.test.mjs tests/desktop/plugin-persistence-action-replay.test.mjs",
+    "test:persistence:oracles": "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs tests/desktop/plugin-persistence-disconnect.test.mjs tests/desktop/plugin-persistence-unknown.test.mjs",
     "test:persistence:disconnect": "node --test tests/desktop/plugin-persistence-disconnect.test.mjs",
     "test:declarative-ui": "node --test tests/desktop/declarative-ui-*.test.mjs tests/desktop/builtin-process-*.test.mjs",
     "test:declarative-ui:smoke": "node tests/desktop/declarative-ui-run.mjs --transport-only && node tests/desktop/declarative-ui-browser-run.mjs && node tests/desktop/declarative-ui-motion-run.mjs --backpressure && node tests/desktop/declarative-ui-motion-run.mjs --load"

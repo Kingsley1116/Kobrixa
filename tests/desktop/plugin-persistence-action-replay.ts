@@ -120,6 +120,20 @@ async function bounded<T>(work: Promise<T>): Promise<T> {
     clearTimeout(timer);
   }
 }
+// An export that fails before choosing must report its cause, not a dialog timeout.
+export async function waitForActionDialog(
+  native: NativeActionControl,
+  exporting: Promise<unknown>,
+) {
+  await bounded(
+    Promise.race([
+      native.opened(),
+      exporting.then(() => {
+        throw new Error("Core export completed before opening a chooser");
+      }),
+    ]),
+  );
+}
 export type ActionCaseInput = LifecycleCaseInput & {
   profilePath: string;
   scope(): CoreWindowScope;
@@ -130,6 +144,7 @@ export type ActionCaseInput = LifecycleCaseInput & {
   command(step: string): Promise<void>;
   prepareCore(): Promise<void>;
   coreExport(): Promise<unknown>;
+  finishCore(): Promise<void>;
   destroyRenderer(): Promise<ActionObservation["renderer"]>;
 };
 export async function produceActionReplay(
@@ -483,13 +498,14 @@ export async function produceActionReplay(
     });
     await capture("core", async () => {
       const exporting = input.coreExport();
-      void exporting.catch(() => {});
-      await bounded(native.opened());
+      await waitForActionDialog(native, exporting);
       await deviceSnapshot();
       native.select(target);
       await bounded(exporting);
       await deviceSnapshot();
     });
+    setPhase("core-cleanup");
+    await bounded(input.finishCore());
     await capture("late", async () => {
       const started = await begin();
       jobs.push(started.export);
@@ -572,7 +588,9 @@ const writes = (o: ActionObservation, phase: string) =>
     ["begin", "append", "commit"].includes(row.method),
   );
 const unchanged = (o: ActionObservation, phase: string) =>
-  same(o.files[phase]?.before, o.files[phase]?.after);
+  !!o.files[phase]?.before &&
+  !!o.files[phase]?.after &&
+  same(o.files[phase].before, o.files[phase].after);
 const errors = (o: ActionObservation) =>
   o.rows
     .filter(
@@ -637,16 +655,17 @@ export function assertActionObservation(o: ActionObservation): void {
     .filter((row) => ["feature", "core"].includes(row.kind) && row.method === "mint")
     .map((row) => (row.kind === "core" ? row.result.value.actionToken : row.result.value));
   assert.equal(new Set(mintedTokens).size, mintedTokens.length, "Action token reused across mints");
-  assert.ok(o.owner.generation > 0);
+  assert.ok(o.owner.generation >= 0);
   assert.equal(o.otherOwner.sourceKey, "builtin:acceptance.ui-settings");
   assert.equal(o.otherOwner.pluginId, "acceptance.ui-settings");
   assert.equal(o.otherOwner.hostEpoch, o.owner.hostEpoch);
   assert.notEqual(o.otherOwner.processEpoch, o.owner.processEpoch);
-  assert.ok(o.otherOwner.generation > 0);
+  assert.ok(o.otherOwner.generation >= 0);
   assert.ok(
     o.rows.every((row) =>
       [
         "core-prepare",
+        "core-cleanup",
         "forged",
         "wrong-source",
         "wrong-generation",
@@ -673,6 +692,21 @@ export function assertActionObservation(o: ActionObservation): void {
       "Unsettled/invalid observation time",
     );
     assert.ok(row.args && row.result);
+  }
+  for (const phase of [
+    "forged",
+    "wrong-source",
+    "wrong-generation",
+    "expired",
+    "replay",
+    "cancel",
+    "identity",
+    "replacement",
+    "registered-cancel",
+    "core",
+    "late",
+  ]) {
+    assert.ok(o.files?.[phase]?.before && o.files[phase]?.after, `Missing ${phase} file pair`);
   }
   for (const pair of Object.values(o.files))
     for (const f of [pair.before, pair.after]) {
@@ -708,12 +742,16 @@ export function assertActionObservation(o: ActionObservation): void {
       assert.deepEqual(call.args.principal.owner, expected);
     }
     const action = calls[0]!.args.params.actionRef;
+    assert.match(action, /^[0-9a-f-]{36}$/);
     if (phase !== "wrong-generation") {
       const claims = selectedRows(o, phase, "feature", "claim");
       assert.equal(claims.length, 2, "Denied request never reached the actual feature ledger");
-      for (const claim of claims) {
+      for (const [index, claim] of claims.entries()) {
         assert.equal(claim.result.value.ok, false);
-        assert.equal(claim.args.values[0].actionRef, action);
+        assert.deepEqual(claim.args.values, [
+          { owner: calls[index]!.args.principal.owner, actionRef: action },
+          calls[index]!.method === "ui/copyText" ? "ui.clipboard" : "storage.export",
+        ]);
       }
     }
     const mint = o.rows.find(
@@ -821,6 +859,11 @@ export function assertActionObservation(o: ActionObservation): void {
     const registrations = selectedRows(o, phase, "destination", "register"),
       releases = selectedRows(o, phase, "destination", "release");
     assert.equal(registrations.length, 1);
+    if (phase !== "core") {
+      const claim = selectedRows(o, phase, "feature", "claim")[0]!;
+      assert.equal(registrations[0]!.args.action, claim.result.value.value.action);
+      assert.ok(registrations[0]!.start >= claim.end);
+    }
     assert.equal(releases.length, 1);
     assert.equal(registrations[0]!.args.nativePath, o.files.cancel!.before.path);
     assert.deepEqual(registrations[0]!.args.scope, o.scope);

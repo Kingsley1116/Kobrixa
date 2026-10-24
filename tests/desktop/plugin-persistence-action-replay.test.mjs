@@ -5,6 +5,7 @@ import {
   assertActionObservation,
   actionSummary,
   nativeActionControl,
+  waitForActionDialog,
 } from "./plugin-persistence-action-replay.ts";
 import { assertActionReplayEvidence, verifyRunReceipt } from "./plugin-persistence-harness.mjs";
 import { selectFoundationCases } from "./plugin-persistence-run.mjs";
@@ -554,4 +555,69 @@ test("host native selection seam observes cancellation and pending late selectio
   );
   assert.deepEqual(control.writes, []);
   assert.throws(() => control.select(null), /No actual adapter dialog/);
+});
+
+for (const phase of ["forged", "wrong-source", "expired", "replay"])
+  for (const index of [0, 1])
+    for (const field of ["owner", "purpose", "actionRef"])
+      test(`denied claim tamper: ${phase} ${index} ${field}`, () => {
+        const o = specimen();
+        const claim = o.rows.filter(
+          (r) => r.phase === phase && r.kind === "feature" && r.method === "claim",
+        )[index];
+        if (field === "owner")
+          claim.args.values[0].owner = phase === "wrong-source" ? o.owner : o.otherOwner;
+        else if (field === "purpose") claim.args.values[1] = "wrong-purpose";
+        else claim.args.values[0].actionRef = id(999);
+        assert.throws(() => assertActionObservation(o));
+      });
+for (const phase of ["identity", "registered-cancel"])
+  test(`destination action tamper: ${phase}`, () => {
+    const o = specimen();
+    find(o, phase, "destination", "register").args.action = id(999);
+    assert.throws(() => assertActionObservation(o));
+  });
+for (const phase of [
+  "forged",
+  "wrong-source",
+  "wrong-generation",
+  "expired",
+  "replay",
+  "cancel",
+  "identity",
+  "replacement",
+  "registered-cancel",
+  "core",
+  "late",
+])
+  for (const part of ["pair", "before", "after"])
+    test(`missing file evidence: ${phase} ${part}`, () => {
+      const o = specimen();
+      if (part === "pair") delete o.files[phase];
+      else delete o.files[phase][part];
+      assert.throws(() => assertActionObservation(o), /Missing .* file pair/);
+    });
+test("core export failure is surfaced before a chooser opens", async () => {
+  const native = nativeActionControl(() => 1);
+  await assert.rejects(
+    waitForActionDialog(native, Promise.reject(new Error("No recovery export"))),
+    /No recovery export/,
+  );
+  await assert.rejects(waitForActionDialog(native, Promise.resolve()), /completed before opening/);
+  const choosing = native.choose("recovery.bin");
+  await waitForActionDialog(native, choosing);
+  native.select(null);
+  await choosing;
+});
+test("actual initial generation zero remains a valid owner", () => {
+  const o = specimen();
+  // Rewrite all correlated owners/bindings, preserving the wrong-generation probe.
+  const replace = (v) => {
+    if (!v || typeof v !== "object") return;
+    if (typeof v.generation === "number") v.generation--;
+    for (const child of Object.values(v)) replace(child);
+  };
+  const copy = JSON.parse(JSON.stringify(o));
+  replace(copy);
+  assertActionObservation(copy);
 });

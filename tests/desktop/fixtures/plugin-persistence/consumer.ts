@@ -6,11 +6,16 @@ const value = <T>(result: { ok: true; value: T } | { ok: false; error: unknown }
   if (!result.ok) throw new Error("fixture business failure");
   return result.value;
 };
+let actionCheckpointOnly = false;
 void runPlugin(
   definePlugin({
     activate(ctx) {
       // Explicit T7 commands use this process's original public SDK channel.
       // Keep the original write handle across the lost-confirmation boundary.
+      if (ctx.pluginId === "acceptance.ui-recording")
+        ctx.commands.register(`${ctx.pluginId}.action-checkpoint-only`, async () => {
+          actionCheckpointOnly = true;
+        });
       let actionJob: string | undefined;
       const actionBytes = Buffer.from("T7 action export value sentinel\n");
       if (ctx.pluginId.startsWith("acceptance.ui-"))
@@ -220,6 +225,11 @@ void runPlugin(
       });
     },
     async drain({ request, storage }) {
+      if (actionCheckpointOnly) {
+        actionCheckpointOnly = false;
+        // Preserve the actual committed checkpoint for a core recovery export.
+        return { ok: true, value: { status: "checkpoint-only", writes: [] } };
+      }
       const writes: string[] = [];
       for (const { checkpoint, record } of request.checkpoints) {
         assert.equal(record.kind, "test.registration-end");

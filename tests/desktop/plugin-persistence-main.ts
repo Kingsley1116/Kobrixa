@@ -1714,7 +1714,15 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               },
               prepareCore: async () => {
                 const reservation = await reserveLiveRecording(input);
-                await registerContentionCheckpoint(input, reservation, async () => {});
+                const checkpoint = await registerContentionCheckpoint(
+                  input,
+                  reservation,
+                  async () => {},
+                );
+                const seeded = await live.plugins.execute(
+                  "acceptance.ui-recording.action-checkpoint-only",
+                );
+                assert.equal(seeded.ok, true, JSON.stringify(seeded));
                 let drainResolve!: () => void;
                 let drainReject!: (error: unknown) => void;
                 const drained = new Promise<void>((resolve, reject) => {
@@ -1726,7 +1734,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 input.host.participant.drain = function (...args) {
                   const result = originalDrain.apply(this, args);
                   void result.then((report) => {
-                    if (report.state === "saved") drainResolve();
+                    if (report.state === "checkpoint-only" && report.recovery) drainResolve();
                     else drainReject(new Error(`Core export seed drain: ${report.state}`));
                   }, drainReject);
                   return result;
@@ -1741,6 +1749,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     ),
                   );
                   await within(drained, "Core export seed drain");
+                  const retained = input.host.recovery.snapshot().items;
+                  assert.equal(retained.length, 1, "Expected only the seeded recovery");
+                  assert.equal(retained[0]!.recordId, checkpoint.record.id);
+                  assert.equal(retained[0]!.committedRevision, checkpoint.record.revision);
+                  assert.equal(retained[0]!.payload, "checkpoint-only");
+                  assert.ok(retained[0]!.actions.some((action) => action.kind === "export"));
                 } finally {
                   input.host.participant.drain = originalDrain;
                 }
@@ -1763,6 +1777,22 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                   }
                 }
                 throw new Error("Actual recovery bridge offered no export");
+              },
+              finishCore: async () => {
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = accepted(
+                    await detail.bridge.snapshot({ itemId: entry.item.id }),
+                  );
+                  const discard = snapshot.items
+                    .flatMap((item) => item.actions)
+                    .find((action) => action.kind === "discard");
+                  assert.ok(discard, "Seed recovery must offer explicit discard");
+                  accepted(
+                    await detail.bridge.act({ itemId: entry.item.id, optionId: discard.id }),
+                  );
+                }
+                assert.equal(input.host.recovery.snapshot().items.length, 0);
               },
               destroyRenderer: async () => {
                 assert.equal(expectedRendererLoss, false);
