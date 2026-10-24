@@ -110,3 +110,10 @@ B1 C-G1 owner 的預期 amendment set（獨立 gate，非 T1–T6 默許修改�
 - [ ] start-held-hide、query 原 operation、stop／uncertainty、生命週期矩陣與獨立開關通過；無 motion replay／自動 connect／enable。
 - [ ] replacement parity 先通過再移除舊 feature adapters；host/provider safety 與 legacy Lab persistence 保護仍在。
 - [ ] 每個測試分清 mock／browser／native／installed／physical；MANUAL 未跑明列，B1／3C 均未冒稱完整 Stage 3。
+
+## 2026-10-24 自動證據進度
+
+- `4c86f0a` 的實際 public/native 77 個情境通過；[macOS native 與 installed 原始證據](../evidence/2026-10-24-3c-native-installed/README.md) 已保留。macOS installed 四情境通過，但該次未限制原始碼讀取。
+- `dbccbc2` 的乾淨 Linux arm64 產品建置與四個 installed 情境通過；[Linux 隔離證據](../evidence/2026-10-24-3c-linux-installed/README.md) 記錄每個主程序的來源／依賴讀取拒絕、TCP 拒絕、無外部網路介面及 Chromium sandbox。這補齊該平台的 source-access-denial 證據，沒有改寫舊 macOS 結果。
+- `634248b` 修復 Linux ARM64 打包輸出路徑；`dbccbc2` 增加 Linux 隔離驗證。人工硬體／跨平台與介面驗收仍未執行。
+- reviewed P160/U12 與 B2/X-T1 的整合關卡、legacy 移除及移除後重新封裝仍待完成；以上局部證據不代表 T6 或 Stage 3 全部完成。
