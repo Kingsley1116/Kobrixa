@@ -21,6 +21,11 @@ test("outside receipt validator applies outcomes before accepting process cleanu
     () => verifyRunReceipt({ case: "contention", evidence: outcomeOracleFixture("contention") }),
     /Missing contention observations/,
   );
+  assert.throws(
+    () =>
+      verifyRunReceipt({ case: "suspend-wake", evidence: outcomeOracleFixture("suspend-wake") }),
+    /Missing suspend observations/,
+  );
 });
 
 test("ordinary test commands retain the pure oracle gate independently of native acceptance", async () => {
@@ -29,7 +34,7 @@ test("ordinary test commands retain the pure oracle gate independently of native
   );
   assert.equal(
     scripts["test:persistence:oracles"],
-    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs",
+    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs",
   );
   for (const name of ["test", "test:desktop", "test:ci"])
     assert.ok(scripts[name].includes("pnpm test:persistence:oracles"), name);

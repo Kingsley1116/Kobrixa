@@ -563,10 +563,10 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
   if (referencesOnly) return ["retirement", "healthy-release"];
-  if (["registration-end", "contention"].includes(caseId)) return [caseId];
+  if (["registration-end", "contention", "suspend-wake"].includes(caseId)) return [caseId];
   if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
   throw new Error(
-    "BLOCKED: eleven observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+    "BLOCKED: ten observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
 export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
@@ -583,7 +583,11 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
   const buildRoot = path.join(directory, "build");
   await mkdir(buildRoot);
   // Failed artifacts/profiles are retained for diagnosis; no profile deletion while a process is alive.
-  await materializeFoundationFixtures(buildRoot, build, selectedCases.includes("contention"));
+  await materializeFoundationFixtures(
+    buildRoot,
+    build,
+    selectedCases.some((id) => id === "contention" || id === "suspend-wake"),
+  );
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
     "@kobrixa/plugin-runtime": path.join(root, "packages/plugin-runtime/src/index.ts"),

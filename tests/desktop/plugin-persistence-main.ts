@@ -892,6 +892,7 @@ import type {
   BuiltinLaunchDescriptor,
 } from "@kobrixa/plugin-runtime";
 import type { FakeProviderControl } from "../../apps/desktop/src/main/device-broker/fake-provider.js";
+import type { BuiltinDeviceProvider } from "../../apps/desktop/src/main/device-broker/provider.js";
 
 let factoryAttempted = false;
 export async function createFoundationFixture(): Promise<FoundationFixture> {
@@ -976,6 +977,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("../../apps/desktop/src/main/plugins/persistence/worker.js");
   const { produceContention, registerContentionCheckpoint } =
     await import("./plugin-persistence-contention.js");
+  const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
@@ -1053,6 +1055,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       let composition: DesktopMainComposition | undefined;
       let listeners = 0,
         fake: FakeProviderControl | undefined,
+        provider: BuiltinDeviceProvider | undefined,
         fault: PersistenceFaultControl | undefined;
       let restoreReservation = () => {};
       const ipcNames: string[] = [],
@@ -1073,8 +1076,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               // The minimal fixture completes motion immediately. Contention
               // must retain an actual timed operation until Stop interrupts it.
               ...(config.case === "contention" ? { profile: "maximum" as const } : {}),
+              ...(config.case === "suspend-wake" ? { motionProfile: "staged" as const } : {}),
             });
             fake = created.control;
+            provider = created.provider;
             return created.provider;
           },
         });
@@ -1208,6 +1213,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           handles = desktopFoundationTestHandles(live),
           ui = desktopUi(live);
         assert.ok(fake, "Missing actual provider callback");
+        assert.ok(provider, "Missing actual provider instance");
+        const admittedProvider = provider,
+          providerControl = fake;
         assert.ok(fault, "Missing actual worker control");
         assert.equal(handles.recovery, "ready");
         assert.equal(live.stage3.persistence, handles.host.participant);
@@ -1532,7 +1540,25 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             }),
           "registration-end": () => produceRegistrationEnd(input),
           "disconnect-retry": unavailable("disconnect-retry"),
-          "suspend-wake": unavailable("suspend-wake"),
+          "suspend-wake": () =>
+            produceSuspendWake({
+              ...input,
+              lifecycle: desktopLifecycle(live),
+              channel: handles
+                .channels()
+                .find((row) => row.context.owner.sourceKey === "builtin:acceptance.ui-recording")!
+                .context,
+              provider: admittedProvider,
+              providerControl,
+              scope,
+              reserveRecording: () => reserveLiveRecording(input),
+              checkpoint: (reservation) =>
+                registerContentionCheckpoint(input, reservation, async () => {}),
+              command: async () => {
+                const result = await live.plugins.execute("acceptance.ui-recording.legacy");
+                assert.equal(result.ok, true, JSON.stringify(result));
+              },
+            }),
           "renderer-loss": unavailable("renderer-loss"),
           "sealed-ttl": unavailable("sealed-ttl"),
           "unknown-publication": unavailable("unknown-publication"),

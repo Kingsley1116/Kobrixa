@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { assertFoundationOutcome } from "./plugin-persistence-outcomes.mjs";
+import { assertSuspendObservation } from "./plugin-persistence-suspend.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
@@ -507,6 +508,10 @@ export function assertRegistrationEndEvidence(evidence) {
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
   if (r.case === "contention") assertContentionEvidence(r.evidence);
+  if (r.case === "suspend-wake") {
+    assert.ok(r.evidence.suspend, "Missing suspend observations");
+    assertSuspendObservation(r.evidence.suspend);
+  }
   if (r.case === "registration-end") assertRegistrationEndEvidence(r.evidence);
   assert.equal(r.level, "real-process");
   assert.equal(r.status, "passed");
