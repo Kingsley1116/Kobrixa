@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 import type { PublicationTicket } from "./engine-port.js";
 import { AtomicStore } from "./atomic-store.js";
@@ -271,6 +271,8 @@ it('retains committed and aborted tombstones for captured evidence after entry p
     const c={...ticket(new Uint8Array()),deadlineMonotonicMs:240001};await env.store.reserve(c,0);
     const barrier={id:randomUUID(),scope:{kind:'namespace' as const,owner},through:2,deadlineMonotonicMs:240000};
     expect(await env.store.flushEvidence(barrier,[a,b])).toEqual({state:'failed',accepted:[a.id,b.id],incomplete:[b.id],unknown:[]});
+    expect(await env.store.abort(b)).toBe('aborted');
+    await expect(env.store.abort(a)).rejects.toThrow('stale');
     await env.store.abort(c);
   }finally{await env.close();}
 });
@@ -613,4 +615,41 @@ it("T6 budget: unknown commit reconciles once and restart restores the same aggr
     await expect(reopened.reserve(current, 1)).rejects.toThrow("size-limit");
     expect(await reopened.auxiliary(current.owner, "import", "small")).toEqual(Uint8Array.from(importBudgetBytes(1024)));
   } finally { fail = false; await reopened?.dispose(); await env.close(); }
+});
+
+it("aborts only unexpired exact admission tombstones without touching disk or quota",async()=>{
+  const env=await setup();try {
+    const t=ticket(new Uint8Array([1]));
+    await expect(env.store.reserve(t,8388609)).rejects.toThrow("size-limit");
+    const quota=env.store.quota.snapshot(owner.sourceKey);
+    const open=vi.spyOn(env.fs,"open"),unlink=vi.spyOn(env.fs,"unlink"),remove=vi.spyOn(env.fs,"removeEmpty");
+    const invalid=[{...t,id:randomUUID()},{...t,deadlineMonotonicMs:120001},
+      {...t,target:{...t.target,id:randomUUID()}},
+      ...[{sourceKey:"builtin:other"},{pluginId:"other"},{generation:2},{hostEpoch:randomUUID()},{processEpoch:randomUUID()}]
+        .map(change=>({...t,owner:{...owner,...change}}))];
+    for(const forged of invalid)await expect(env.store.abort(forged)).rejects.toThrow("stale");
+    expect(await env.store.abort(t)).toBe("aborted");
+    env.advance(119999);expect(await env.store.abort(structuredClone(t))).toBe("aborted");
+    env.fs.profile.assertHeld=()=>{throw new Error("not-primary");};
+    await expect(env.store.abort(t)).rejects.toThrow("not-primary");env.fs.profile.assertHeld=()=>{};
+    env.advance(1);await expect(env.store.abort(t)).rejects.toThrow("stale");
+    for(const forged of invalid)await expect(env.store.abort(forged)).rejects.toThrow("stale");
+    const foreign={...ticket(new Uint8Array()),owner:{...owner,hostEpoch:randomUUID()}};
+    await expect(env.store.reserve(foreign,0)).rejects.toThrow("stale");
+    await expect(env.store.abort(foreign)).rejects.toThrow("stale");
+    expect(env.store.quota.snapshot(owner.sourceKey)).toEqual(quota);
+    expect(open).not.toHaveBeenCalled();expect(unlink).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+    open.mockRestore();unlink.mockRestore();remove.mockRestore();
+  }finally{env.fs.profile.assertHeld=()=>{};await env.close();}
+});
+it.each(['receiving','committed','unknown'] as const)('an old admission tombstone cannot override a %s entry',async state=>{
+  const env=await setup(async point=>{if(state==='unknown' && point==='after-publish')throw new Error('lost-reply');});
+  const bytes=new Uint8Array([1]),t=ticket(bytes);
+  try {
+    await expect(env.store.reserve(t,8388609)).rejects.toThrow('size-limit');
+    await stage(env.store,t,bytes);
+    if(state!=='receiving')expect((await env.store.publish(t)).disposition).toBe(state);
+    expect(await env.store.abort(t)).toBe(state==='receiving'?'aborted':'committed');
+    expect(env.store.quota.snapshot(owner.sourceKey).reservedBytes).toBe(0);
+  }finally{await env.close();}
 });

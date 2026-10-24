@@ -443,3 +443,37 @@ it("settings saved by the service reopen through the real worker with CAS, reset
     await second.backend.dispose();
   }
 });
+
+it("preserves denied admission errors and cleanup through the real worker after unknown publication",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,
+      register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal;
+  const t=make(owner,bytes);
+  try {
+    await stage(env.backend,t,bytes);env.control.arm("after-publish","fail");
+    expect(await env.backend.engine.publish(t)).toEqual({disposition:"unknown"});
+    const quota=await env.backend.evidence.quota(owner),denied=make(owner,bytes);
+    await expect(env.backend.engine.reserve(denied,bytes.length)).rejects.toThrow("publish-uncertain");
+    await expect(env.backend.engine.abort({...denied,owner:{...owner,processEpoch:randomUUID()}})).rejects.toThrow("stale");
+    const input={target:{mode:"create" as const},kind:"test",schemaVersion:1,label:"Denied",mediaType:"application/octet-stream" as const,
+      byteLength:bytes.length,sha256:hash(bytes)};
+    for(let i=0;i<3;i++) {
+      expect(await service.request(principal,"storage/beginWrite",input,signal)).toMatchObject({ok:false,error:{detail:{reason:"publish-uncertain"}}});
+      expect(service.admittedWrites(owner)).toEqual([]);
+    }
+    expect(await env.backend.engine.abort(denied)).toBe("aborted");
+    expect(await env.backend.engine.abort(denied)).toBe("aborted");
+    expect(await env.backend.evidence.quota(owner)).toEqual(quota);
+    expect(env.control.trace().filter(e=>e.point==="open-temp")).toHaveLength(1);
+    expect((await env.backend.engine.reconcile(t)).disposition).toBe("committed");
+    expect(await env.backend.engine.abort(t)).toBe("committed");
+    const begun=await service.request(principal,"storage/beginWrite",input,signal);
+    expect(begun.ok).toBe(true);
+    for(const write of service.admittedWrites(owner))expect(await env.backend.engine.abort(write.ticket)).toBe("aborted");
+  }finally{
+    await env.backend.engine.reconcile(t);await service.close();await env.backend.dispose();
+  }
+});
