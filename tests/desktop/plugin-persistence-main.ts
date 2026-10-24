@@ -921,7 +921,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     assert.ok(path.isAbsolute(config[key]), key);
   assert.match(config.commit, /^[0-9a-f]{40}$/);
   assert.match(config.artifactSha256, /^[0-9a-f]{64}$/);
-  if (!["retirement", "healthy-release", "registration-end", "contention"].includes(config.case))
+  if (
+    !["retirement", "healthy-release", "registration-end", "contention", "suspend-wake"].includes(
+      config.case,
+    )
+  )
     throw new Error(
       `BLOCKED: ${config.case} requires its observation-table producer; no implemented producer for this selector`,
     );
@@ -1630,10 +1634,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             filesystem: config.filesystem,
             node: process.versions.node,
             electron: process.versions.electron ?? "",
-            memoryMethod:
-              config.case === "registration-end" || config.case === "contention"
-                ? "not-measured-scoped-case"
-                : "not-measured-reference-only",
+            memoryMethod: ["registration-end", "contention", "suspend-wake"].includes(config.case)
+              ? "not-measured-scoped-case"
+              : "not-measured-reference-only",
             warmCold: "cold",
           },
           async runCase(id) {
