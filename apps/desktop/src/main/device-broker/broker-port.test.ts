@@ -626,6 +626,54 @@ async function expectRetirementBlocked(h: RealSetup) {
   expect(h.provider.calls).not.toContain("dispose");
   expect(() => h.broker.registerProvider(h.provider)).toThrow("retirement is pending");
 }
+it.each([false, true])(
+  "contract2 clear retains exact recovery evidence through completed retirement (prior attempt: %s)",
+  async (priorAttempt) => {
+    const h = await realSetup();
+    const fault = (await failCurrentStop(h))!;
+    if (priorAttempt) await expectRetirementBlocked(h);
+    expect((await recoverFault(h, fault.id).run()).ok).toBe(true);
+    const clear = () => {
+      const target = { kind: "device-clear" as const, entryIds: [fault.id] };
+      return h.broker.recovery.clearResolved({
+        entryIds: target.entryIds,
+        action: h.actions.mint(h.scope, target),
+      });
+    };
+    const committed = parseJournal(h.files.get("faults.json")!);
+    const expectRetained = async () => {
+      expect(await clear()).toMatchObject({
+        ok: false,
+        error: {
+          code: "PLUGIN_E_STALE_RESOURCE",
+          detail: { kind: "resource", reason: "stale", resource: "journal" },
+        },
+      });
+      expect(parseJournal(h.files.get("faults.json")!)).toEqual(committed);
+      expect(h.broker.recovery.snapshot().faults).toEqual(committed.entries);
+    };
+    await expectRetained();
+    const entered = retirementGate(),
+      release = retirementGate();
+    const dispose = h.provider.dispose.bind(h.provider);
+    vi.spyOn(h.provider, "dispose").mockImplementation(async (ctx) => {
+      entered.resolve();
+      await release.promise;
+      await dispose(ctx);
+    });
+    const retiring = h.unregister.retirement!.retire();
+    await entered.promise;
+    // A successful safety disposition alone does not complete retirement.
+    await expectRetained();
+    release.resolve();
+    await retiring;
+    expect((await clear()).ok).toBe(true);
+    expect(parseJournal(h.files.get("faults.json")!).entries).toEqual([]);
+    await h.unregister.retirement!.retire();
+    expect(h.provider.calls.filter((call) => call === "disconnect")).toHaveLength(1);
+    expect(h.provider.calls.filter((call) => call === "dispose")).toHaveLength(1);
+  },
+);
 it.each(["stop", "journal"] as const)(
   "contract2 real journal: %s failure needs new physical proof and committed resolution before one retirement",
   async (kind) => {

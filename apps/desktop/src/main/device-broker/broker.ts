@@ -925,8 +925,11 @@ export function createBroker(
     },
   };
   const resources = factories.participant(resourceDriver);
+  const retainedRecoveryEvidence = new Map<number, Set<string>>();
   const recoveryDriver: RecoveryDriver = {
     wallNow: () => wallNow(),
+    canClearResolved: (ids) =>
+      ![...retainedRecoveryEvidence.values()].some((entries) => ids.some((id) => entries.has(id))),
     describe(sessionId) {
       const current = session;
       return current && current.snapshot.sessionId === sessionId
@@ -985,6 +988,13 @@ export function createBroker(
       const id = randomUUID();
       if (binding) current.lane.reserveRecovery(id);
       else current.lane.reserve(id);
+      if (binding) {
+        // Pin before resolution publication: journal subscribers may immediately
+        // request a clear, before the final proof has been installed.
+        const retained = retainedRecoveryEvidence.get(current.generation) ?? new Set<string>();
+        retained.add(binding.fault.id);
+        retainedRecoveryEvidence.set(current.generation, retained);
+      }
       // Session teardown must join recovery through final journal publication, not
       // merely wait for the last transport exchange to leave the lane.
       let settle!: (value: DeviceDisposition) => void;
@@ -2422,6 +2432,7 @@ export function createBroker(
           remove();
           if (catalogBindings.get(provider.id) === binding) catalogBindings.delete(provider.id);
           removed = true;
+          retainedRecoveryEvidence.delete(registration.generation);
           heldProviders.delete(registration.generation);
           revision++;
           changed();

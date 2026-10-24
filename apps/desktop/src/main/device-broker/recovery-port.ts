@@ -34,6 +34,8 @@ export function samePhysical(a: PhysicalIdentity, b: PhysicalIdentity): boolean 
 }
 export interface RecoveryDriver {
   wallNow(): number; // Unix epoch milliseconds, independent of monotonic deadlines.
+  /** Retain exact journal evidence until its provider retirement completes. */
+  canClearResolved?(entryIds: readonly string[]): boolean;
   describe(
     sessionId: Handle,
   ): { sessionId: Handle; providerGeneration: Counter; physical: PhysicalIdentity } | null;
@@ -244,6 +246,7 @@ export function createDeviceRecovery(input: {
           )
         )
           return stale();
+        if (driver.canClearResolved?.(value.entryIds) === false) return stale();
         try {
           await journal.commit(
             journalDocument(
