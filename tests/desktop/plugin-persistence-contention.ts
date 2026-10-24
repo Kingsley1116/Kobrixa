@@ -198,6 +198,16 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
   let evidence: CaseEvidence | undefined;
   const cleanupErrors: unknown[] = [];
   try {
+    // Listing is the broker's real session admission for each execution owner.
+    // Knowing another owner's session ID does not grant access to that session.
+    for (const principal of principals) {
+      const inventory = value(await input.broker.request(principal, "devices/list", {}, signal));
+      assert.ok(
+        inventory.sessions.some(
+          (row) => row.sessionId === reservation.sessionId && row.state === "connected",
+        ),
+      );
+    }
     const session = value(
       await input.broker.request(
         principals[0]!,
@@ -280,7 +290,8 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
           after,
         });
         assert.equal(result.ok, false, "Motion admitted during recording");
-        if (!result.ok) assert.equal(result.error.code, "PLUGIN_E_DEVICE_BUSY");
+        if (!result.ok)
+          assert.equal(result.error.code, "PLUGIN_E_DEVICE_BUSY", JSON.stringify(result.error));
       }
     });
     const winnerBefore = await input.winner.prepare();
@@ -453,7 +464,8 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
       const after = await queryMotion(prepared.operationId);
       recordingProbes.push({ owner: owners[index]!, result, before, after });
       assert.equal(result.ok, false, "Recording admitted during motion");
-      if (!result.ok) assert.equal(result.error.code, "PLUGIN_E_DEVICE_BUSY");
+      if (!result.ok)
+        assert.equal(result.error.code, "PLUGIN_E_DEVICE_BUSY", JSON.stringify(result.error));
     }
     const updates: ContentionObservation["updates"] = [];
     const entered = deferred<UpdateParams>(),
@@ -674,19 +686,43 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
         cleanupErrors.push(error);
       }
     }
-    for (const held of reservations) {
-      try {
-        value(
-          await input.broker.request(
-            principals[held.index]!,
-            "devices/recording/release",
-            { reservationId: held.id },
-            signal,
-          ),
-        );
-      } catch (error) {
-        cleanupErrors.push(error);
+    const participant = input.host.participant;
+    const drain = participant.drain;
+    const cleanupDrains: Promise<DrainReport>[] = [];
+    participant.drain = function (...args) {
+      const pending = drain.apply(this, args);
+      cleanupDrains.push(pending);
+      void pending.catch(() => {});
+      return pending;
+    };
+    try {
+      for (const held of reservations) {
+        try {
+          value(
+            await input.broker.request(
+              principals[held.index]!,
+              "devices/recording/release",
+              { reservationId: held.id },
+              signal,
+            ),
+          );
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
       }
+      // Release schedules the original SDK drain in a microtask. Settle it before
+      // fixture.close retires the execution and freezes its storage authority.
+      for (const pending of cleanupDrains) {
+        try {
+          const report = await bounded(pending);
+          assert.equal(report.state, "saved");
+          assert.equal(report.blocker, false);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+    } finally {
+      participant.drain = drain;
     }
   }
   if (cleanupErrors.length)

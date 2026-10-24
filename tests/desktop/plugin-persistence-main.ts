@@ -1438,12 +1438,18 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const { browser, form: contentionForm } = windowControls(win, "Losing draft");
         await browser("window.declarativeAcceptance.foundationDiagnostics()");
         let winnerControls: ReturnType<typeof windowControls> | undefined;
-        if (second) {
-          await second.loadURL(config.rendererUrl);
-          second.webContents.debugger.attach("1.3");
-          winnerControls = windowControls(second, "Winning write");
-          await winnerControls.browser("window.declarativeAcceptance.foundationDiagnostics()");
-        }
+        const prepareWinner = async () => {
+          assert.ok(second);
+          if (!winnerControls) {
+            const url = new URL(config.rendererUrl);
+            url.searchParams.set("view", "settings-only");
+            await second.loadURL(url.href);
+            second.webContents.debugger.attach("1.3");
+            winnerControls = windowControls(second, "Winning write");
+            await winnerControls.browser("window.declarativeAcceptance.foundationDiagnostics()");
+          }
+          return winnerControls.form.prepare();
+        };
         for (const role of ["recording", "settings"]) {
           const sourceKey = `builtin:acceptance.ui-${role}`;
           const activated = await live.plugins.execute(`acceptance.ui-${role}.legacy`);
@@ -1507,7 +1513,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               scope,
               reserveRecording: () => reserveLiveRecording(input),
               form: contentionForm,
-              winner: winnerControls!.form,
+              winner: {
+                prepare: prepareWinner,
+                submit: () => winnerControls!.form.submit(),
+                observe: () => winnerControls!.form.observe(),
+              },
               checkpoint: (reservation, whilePaused) =>
                 registerContentionCheckpoint(input, reservation, whilePaused),
             }),

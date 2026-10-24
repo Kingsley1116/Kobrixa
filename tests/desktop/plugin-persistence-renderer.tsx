@@ -137,6 +137,7 @@ function Settings({ sourceKey, locale }: { sourceKey: string; locale: "en" | "zh
     </section>
   );
 }
+const settingsOnly = new URL(location.href).searchParams.get("view") === "settings-only";
 function Shell() {
   const { values } = useSettings();
   const recoveryRequest = useSyncExternalStore(
@@ -162,23 +163,30 @@ function Shell() {
         </button>
       </nav>
       {source && <Settings key={source} sourceKey={source} locale={values.locale} />}
-      <main style={{ height: "70vh", width: 640 }}>
-        <PluginToolsPane
-          session={owner.session}
-          locale={values.locale}
-          labels={labels}
-          onClose={() => settingsStore.set("rightPanel", null)}
-        />
-        <PluginStatusHost session={owner.session} locale={values.locale} labels={labels} />
-      </main>
-      <CoreRecoveryView
-        port={owner.recovery}
-        locale={values.locale}
-        labels={labels}
-        request={recoveryRequest}
-        observeStore={observeRecoveryStore}
-      />
-      <CorePersistenceRecovery port={window.kobrixa.plugins.persistenceRecovery} labels={labels} />
+      {!settingsOnly && (
+        <>
+          <main style={{ height: "70vh", width: 640 }}>
+            <PluginToolsPane
+              session={owner.session}
+              locale={values.locale}
+              labels={labels}
+              onClose={() => settingsStore.set("rightPanel", null)}
+            />
+            <PluginStatusHost session={owner.session} locale={values.locale} labels={labels} />
+          </main>
+          <CoreRecoveryView
+            port={owner.recovery}
+            locale={values.locale}
+            labels={labels}
+            request={recoveryRequest}
+            observeStore={observeRecoveryStore}
+          />
+          <CorePersistenceRecovery
+            port={window.kobrixa.plugins.persistenceRecovery}
+            labels={labels}
+          />
+        </>
+      )}
     </>
   );
 }

@@ -108,7 +108,17 @@ test("contention releases the original reservation when setup or cleanup fails",
       state: "active",
     };
     let scopes = 0;
+    let drainSettled = false;
+    const participant = {
+      async drain() {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        drainSettled = true;
+        return { state: "saved", blocker: false };
+      },
+    };
+    const originalDrain = participant.drain;
     const input = {
+      host: { participant },
       recording: { principal: () => principals[0] },
       settings: { principal: () => principals[1] },
       reserveRecording: async () => reservation,
@@ -138,8 +148,17 @@ test("contention releases the original reservation when setup or cleanup fails",
         async request(principal, method, params) {
           if (method === "devices/recording/release") {
             released.push({ principal, params });
+            // Production lifecycle schedules reservation-end dispatch this way.
+            queueMicrotask(() => {
+              void participant.drain();
+            });
             return { ok: true, value: { reservation } };
           }
+          if (method === "devices/list")
+            return {
+              ok: true,
+              value: { sessions: [{ sessionId: reservation.sessionId, state: "connected" }] },
+            };
           if (method === "devices/session") {
             if (stage === "session") throw failure;
             return {
@@ -166,6 +185,8 @@ test("contention releases the original reservation when setup or cleanup fails",
       assert.deepEqual(error.errors.slice(1), [cleanupFailure, cleanupFailure]);
       return true;
     });
+    assert.equal(drainSettled, true, "Returning the failure must not race consumer retirement");
+    assert.equal(participant.drain, originalDrain);
     assert.deepEqual(
       released,
       [{ principal: principals[0], params: { reservationId: reservation.reservationId } }],
@@ -309,6 +330,11 @@ test("contention uses original ports and mapped native settings controls", async
   assert.ok(renderer.includes("event.isTrusted"));
   assert.ok(!main.includes(".click()"), "Do not synthesize DOM activation");
   assert.ok(!producer.includes("createPersistenceHost("));
+  assert.ok(main.includes('url.searchParams.set("view", "settings-only")'));
+  assert.ok(renderer.includes("!settingsOnly &&"));
+  assert.ok(
+    producer.indexOf("await input.checkpoint(") < producer.indexOf("await input.winner.prepare()"),
+  );
 });
 
 test("unexpected recording admissions are retained before denial and released despite other cleanup failures", async () => {
@@ -382,6 +408,11 @@ test("unexpected recording admissions are retained before denial and released de
           },
         },
         async request(principal, method, params) {
+          if (method === "devices/list")
+            return {
+              ok: true,
+              value: { sessions: [{ sessionId: reservation.sessionId, state: "connected" }] },
+            };
           if (method === "devices/session")
             return {
               ok: true,
@@ -449,7 +480,7 @@ test("production seam: distinct native scopes remain live on the same backend", 
     alias: { "@kobrixa/plugin-protocol": resolve("packages/plugin-protocol/src/index.ts") },
   });
   const { createBoundSettingsService } = await import(
-    `data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString("base64")}`
+    `data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text + "\n//# sourceURL=contention-production-seam.mjs").toString("base64")}`
   );
   const e = contentionOracle().contention,
     owner = e.owners[1];
@@ -554,4 +585,162 @@ test("production seam: distinct native scopes remain live on the same backend", 
   service.dispose(second.binding);
   assert.equal((await service.read(first.binding)).ok, true);
   service.dispose(first.binding);
+});
+
+test("production broker requires each owner to list the connected session before BUSY arbitration", async () => {
+  const { build } = await import("esbuild");
+  const { resolve } = await import("node:path");
+  const compiled = await build({
+    stdin: {
+      contents: `export { createBroker } from './apps/desktop/src/main/device-broker/broker.ts';
+      export { operationHarness, pluginPrincipal, ID } from './apps/desktop/src/main/device-broker/fake-provider.ts';`,
+      resolveDir: process.cwd(),
+    },
+    bundle: true,
+    write: false,
+    platform: "node",
+    format: "esm",
+    alias: {
+      "@kobrixa/plugin-protocol": resolve("packages/plugin-protocol/src/index.ts"),
+      "@kobrixa/plugin-runtime": resolve("packages/plugin-runtime/src/index.ts"),
+    },
+  });
+  const { createBroker, operationHarness, pluginPrincipal, ID } = await import(
+    `data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text + "\n//# sourceURL=contention-production-seam.mjs").toString("base64")}`
+  );
+  const h = operationHarness();
+  const broker = createBroker(
+    {
+      ...h.dependencies,
+      authority: {
+        current: () => ({
+          ref: ID,
+          epoch: ID,
+          workbenchInstance: ID,
+          state: "local",
+          roomBinding: null,
+          connected: false,
+          synced: true,
+          role: null,
+          isHolder: true,
+        }),
+        assertContinuation() {},
+        subscribe: () => () => {},
+      },
+      coreActions: { claim: () => true, isClaimed: () => true, complete() {} },
+      hasPermission: () => true,
+      requirements: () => [],
+      operationGate: () => ({ ok: true, value: null }),
+      connectionPolicy: () => ({
+        wifiConnectTimeoutMs: 5000,
+        wifiHandshakeTimeoutMs: 3000,
+        usbAutoReconnect: false,
+        usbRetryInterval: "backoff",
+        usbRetryLimit: 3,
+      }),
+    },
+    {
+      recovery: ({ journal }) => ({
+        snapshot: () => journal.snapshot(),
+        subscribe: () => () => {},
+      }),
+      participant: (driver) => ({
+        retire: (owner, reason) => driver.revokeOwner(owner, reason),
+        async retireProvider(id, generation) {
+          const results = await Promise.all(driver.revokeProvider(id, generation));
+          return {
+            stopConfirmed: results.every((r) => r.stopConfirmed),
+            journalCommitted: results.every((r) => r.journalCommitted),
+            faultIds: results.flatMap((r) => r.faultIds),
+          };
+        },
+      }),
+    },
+  );
+  const unregister = broker.registerProvider(h.provider);
+  const principals = [
+    pluginPrincipal(),
+    {
+      ...pluginPrincipal(2),
+      owner: {
+        ...pluginPrincipal(2).owner,
+        sourceKey: "builtin:other.test",
+        pluginId: "other.test",
+      },
+    },
+  ];
+  const request = (index, method, params = {}) =>
+    broker.request(principals[index], method, params, new AbortController().signal);
+  const accepted = (result) => {
+    assert.ok(result.ok, JSON.stringify(result));
+    return result.value;
+  };
+  const scopes = [];
+  let reservation;
+  try {
+    const { session } = accepted(
+      await request(0, "devices/connect", {
+        target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" },
+      }),
+    );
+    const current = accepted(await request(0, "devices/session", { sessionId: session.sessionId }));
+    reservation = accepted(
+      await request(0, "devices/recording/reserve", {
+        sessionId: session.sessionId,
+        channelIds: current.sources.channels.map((row) => row.channelId),
+        expectedSourceRevision: current.sources.sourceRevision,
+      }),
+    ).reservation;
+    for (const principal of principals) {
+      const scope = broker.intent.bindMotionScope({
+        owner: principal.owner,
+        contextRef: ID,
+        panelInstance: crypto.randomUUID(),
+        uiResourceGeneration: 0,
+        workbenchInstance: ID,
+      });
+      scopes.push(scope);
+      broker.intent.pulsePanel(scope, 1);
+    }
+    const prepare = (index) =>
+      request(index, "devices/motion/prepare", {
+        sessionId: session.sessionId,
+        contextRef: ID,
+        motionScopeRef: scopes[index],
+        motion: {
+          actuatorId: current.sources.actuators[0].actuatorId,
+          mode: "timed",
+          power: 1,
+          direction: 1,
+          brake: true,
+          durationMs: 5000,
+        },
+      });
+    const stale = await prepare(1);
+    assert.equal(stale.error.code, "PLUGIN_E_STALE_RESOURCE");
+    assert.deepEqual(stale.error.detail, {
+      kind: "resource",
+      reason: "stale",
+      resource: "operation",
+    });
+    accepted(await request(1, "devices/list"));
+    for (const index of [0, 1]) {
+      const denied = await prepare(index);
+      assert.equal(denied.error.code, "PLUGIN_E_DEVICE_BUSY");
+      assert.equal(denied.error.detail.reason, "recording");
+    }
+    assert.equal(
+      accepted(
+        await request(0, "devices/recording/query", { reservationId: reservation.reservationId }),
+      ).reservation.state,
+      "active",
+    );
+  } finally {
+    for (const scope of scopes) broker.intent.revokeScope(scope, "closed");
+    if (reservation)
+      accepted(
+        await request(0, "devices/recording/release", { reservationId: reservation.reservationId }),
+      );
+    unregister();
+  }
 });
