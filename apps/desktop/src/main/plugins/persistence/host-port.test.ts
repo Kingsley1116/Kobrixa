@@ -1610,3 +1610,169 @@ it.each([
     expect(offer.deadlineMonotonicMs).toBe(10000);
   },
 );
+
+it.each([false, true])(
+  "mixed registered finals classify recovery per target (unknown flush: %s)",
+  async (unknown) => {
+    const wall = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(wall);
+    onTestFinished(() => clock.mockRestore());
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    const failed = f.record(),
+      saved = { ...failed, id: randomUUID() };
+    const records = new Map([failed, saved].map((record) => [record.id, record]));
+    const committed = new Map<string, PublicationTicket>();
+    const finals: PublicationTicket[] = [];
+    let now = 0;
+    f.input.now = () => now;
+    f.backend.reads.stat = async (_owner, id) => records.get(id)!;
+    const commit = (ticket: PublicationTicket) => {
+      committed.set(ticket.id, ticket);
+      if (ticket.metadata.kind === "record")
+        records.set(ticket.metadata.record.id, ticket.metadata.record);
+      return {
+        disposition: "committed" as const,
+        receipt: {
+          revision:
+            ticket.metadata.kind === "record" ? ticket.metadata.record.revision : failed.revision,
+          commitId: ticket.id,
+          durability: "file-sync-only" as const,
+        },
+      };
+    };
+    f.backend.engine.publish = vi.fn<PersistenceBackend["engine"]["publish"]>(async (ticket) => {
+      if (ticket.metadata.kind === "record") {
+        finals.push(ticket);
+        if (ticket.metadata.record.id === failed.id) return { disposition: "not-committed" };
+      }
+      return commit(ticket);
+    });
+    f.backend.engine.reconcile = async (ticket) =>
+      committed.has(ticket.id) ? commit(ticket) : { disposition: "not-committed" };
+    f.backend.engine.publishRecovery = vi.fn(async (ticket) => commit(ticket));
+    f.backend.evidence.flush = async (barrier) => {
+      const tickets = f.backend.evidence.tickets(barrier);
+      const incomplete = tickets
+        .filter((ticket) => !committed.has(ticket.id))
+        .map((ticket) => ticket.id);
+      return {
+        state: unknown ? "unknown" : incomplete.length ? "failed" : "saved",
+        accepted: tickets.map((ticket) => ticket.id),
+        incomplete,
+        unknown: unknown ? incomplete : [],
+      };
+    };
+    const host = await createPersistenceHost(f.input);
+    onTestFinished(() => host.dispose());
+    for (const record of records.values()) {
+      expect(
+        (
+          await host.request(
+            principal,
+            "storage/registerCheckpoint",
+            {
+              id: record.id,
+              expectedRevision: record.revision,
+            },
+            signal,
+          )
+        ).ok,
+      ).toBe(true);
+    }
+    const dispatch = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      const writes: string[] = [];
+      for (const checkpoint of request.checkpoints) {
+        const begin = await host.request(
+          principal,
+          "storage/beginWrite",
+          {
+            ...finalInput(checkpoint.record, request),
+            checkpoint: { handle: checkpoint.checkpoint, phase: "final" },
+          },
+          signal,
+        );
+        if (!begin.ok) throw new Error("final admission failed");
+        const write = begin.value.write;
+        expect((await host.request(principal, "storage/sealWrite", { write }, signal)).ok).toBe(
+          true,
+        );
+        const result = await host.request(
+          principal,
+          "storage/commitWrite",
+          {
+            write,
+            drainToken: request.token,
+          },
+          signal,
+        );
+        expect(result.ok).toBe(checkpoint.record.id === saved.id);
+        if (result.ok) writes.push(write);
+        else
+          expect(
+            await host.request(principal, "storage/writeStatus", { write }, signal),
+          ).toMatchObject({ ok: true, value: { state: "sealed" } });
+      }
+      return { ok: true, value: { status: "submitted", writes } };
+    });
+    const offer = host.participant.freeze(owner, "shutdown", 10000);
+    expect(await host.participant.drain(offer, dispatch)).toMatchObject({
+      state: unknown ? "uncertain" : "retryable",
+      blocker: true,
+    });
+    expect(
+      finals.map((ticket) => ticket.metadata.kind === "record" && ticket.metadata.record.id),
+    ).toEqual([failed.id, saved.id]);
+    const snapshot = host.recovery.snapshot().items;
+    expect(snapshot).toHaveLength(2);
+    const failedRow = snapshot.find((row) => row.recordId === failed.id)!;
+    const savedRow = snapshot.find((row) => row.recordId === saved.id)!;
+    expect(failedRow).toMatchObject({
+      state: unknown ? "uncertain" : "retryable",
+      payload: "complete-staging",
+    });
+    expect(savedRow).toMatchObject({
+      state: unknown ? "uncertain" : "saved",
+      payload: "checkpoint-only",
+    });
+    expect(
+      snapshot
+        .filter((row) => row.actions.some((action) => action.kind === "retry"))
+        .map((row) => row.recordId),
+    ).toEqual(unknown ? [] : [failed.id]);
+    expect(f.rows.get(savedRow.id)?.report.blocker).toBe(unknown);
+    expect(f.rows.get(savedRow.id)?.ticket).toBeNull();
+    const original = structuredClone(f.rows.get(failedRow.id)!);
+    expect(original.ticket?.id).toBe(finals[0]!.id);
+    expect(original.sealedPin).not.toBeNull();
+    const savedEvidence = structuredClone(f.rows.get(savedRow.id));
+    now = 1000;
+    clock.mockReturnValue(wall + now);
+    expect(await host.participant.drain(offer, dispatch)).toMatchObject({ blocker: true });
+    expect(f.rows.get(failedRow.id)?.expiresAt).toBe(original.expiresAt);
+    if (!unknown) {
+      expect(await host.participant.retry(failedRow.id, coreAction())).toMatchObject({
+        state: "saved",
+        blocker: false,
+      });
+      expect(await host.participant.drain(offer, dispatch)).toMatchObject({
+        state: "saved",
+        blocker: false,
+      });
+      expect(f.backend.engine.publishRecovery).toHaveBeenCalledOnce();
+      expect(f.rows.get(failedRow.id)).toMatchObject({
+        ticket: original.ticket,
+        expiresAt: original.expiresAt,
+        report: { state: "saved", blocker: false },
+      });
+      expect(
+        host.recovery
+          .snapshot()
+          .items.every((row) => row.actions.every((action) => action.kind !== "retry")),
+      ).toBe(true);
+    }
+    expect(f.rows.size).toBe(2);
+    expect(f.rows.get(savedRow.id)).toEqual(savedEvidence);
+    expect(dispatch).toHaveBeenCalledOnce();
+  },
+);

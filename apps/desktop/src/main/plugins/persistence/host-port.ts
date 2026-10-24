@@ -456,9 +456,27 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         const identity = item
           ? registrations.get(JSON.stringify([ownerKey(owner), item.id]))?.recovery
           : undefined;
+        // Retry belongs to this target's retained write, not every record in
+        // the drain. Owner-wide uncertainty/settings/errors still fail closed.
+        const state =
+          report.state === "uncertain" || report.pendingSettings || report.errors.length
+            ? "uncertain"
+            : !item
+              ? report.state
+              : item.final
+                ? "saved"
+                : item.payload === "complete-staging" && write?.state === "sealed"
+                  ? "retryable"
+                  : "checkpoint-only";
         const retained = await recovery.retain(
           owner,
-          { ...report, records: item ? [item] : [], ...(identity ? { recovery: identity } : {}) },
+          {
+            ...report,
+            state,
+            blocker: item ? state !== "saved" : report.blocker,
+            records: item ? [item] : [],
+            ...(identity ? { recovery: identity } : {}),
+          },
           write
             ? {
                 ticket: write.ticket,
