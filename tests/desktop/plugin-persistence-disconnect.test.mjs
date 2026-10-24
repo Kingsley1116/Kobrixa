@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertDisconnectObservation,
   cleanupDisconnect,
+  disconnectMilestones,
   produceDisconnectRetry,
 } from "./plugin-persistence-disconnect.ts";
 import { build } from "esbuild";
@@ -699,4 +700,23 @@ test("wall-clock projection may shorten the original recovery TTL but never exte
   assert.doesNotThrow(() => assertDisconnectObservation(observation));
   observation.recovered.expiresAt = observation.failed.expiresAt + 1;
   assert.throws(() => assertDisconnectObservation(observation), /TTL renewed/);
+});
+
+test("summary milestones retain repeated real quiesce/failure observations without hiding late failure", () => {
+  const result = evidence();
+  const failed = result.disconnect.events.findIndex((event) => event.kind === "save-failed");
+  result.disconnect.events.splice(failed, 0, structuredClone(result.disconnect.events[failed]));
+  const disconnected = result.disconnect.events.findIndex((event) => event.kind === "disconnect");
+  result.disconnect.events.splice(disconnected, 0, {
+    ...result.disconnect.events[disconnected],
+    kind: "quiesce",
+  });
+  result.events = disconnectMilestones(result.disconnect.events);
+  assertDisconnectEvidence(result);
+  assert.equal(result.disconnect.events.length, result.events.length + 2);
+  result.disconnect.events.splice(-1, 0, {
+    ...result.disconnect.events.at(-1),
+    kind: "save-failed",
+  });
+  assert.throws(() => assertDisconnectEvidence(result), /Failure after confirmed save/);
 });

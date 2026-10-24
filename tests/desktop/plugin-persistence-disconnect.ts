@@ -124,6 +124,13 @@ export type DisconnectObservation = {
 };
 
 /** Pure validation is necessary but cannot authenticate a serialized native receipt. */
+// Summary milestones keep the first observation; the complete trace is retained below.
+export function disconnectMilestones(events: CaseEvidence["events"]): CaseEvidence["events"] {
+  return events.filter(
+    (event, index) => events.findIndex((row) => row.kind === event.kind) === index,
+  );
+}
+
 export function assertDisconnectObservation(o: DisconnectObservation): void {
   assert.equal(o.coordinatorCalls.filter((r) => r.kind === "disconnect").length, 2);
   assert.ok(
@@ -465,6 +472,15 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
     assert.ok(time(kind) <= o.disconnects[0]!);
   }
   assert.equal(time("disconnect"), o.disconnects[0]);
+  let previousTime = -1;
+  for (const event of o.events) {
+    assert.ok(Number.isFinite(event.time) && event.time >= previousTime);
+    previousTime = event.time;
+    assert.ok(event.time <= o.disconnects[0]!);
+    if (event.kind === "save-failed")
+      assert.ok(event.time <= time("save-confirmed"), "Failure after confirmed save");
+  }
+
   assert.ok(
     o.stops.some((row) => row.at <= time("stop-confirmed")),
     "Stop event has no provider outcome",
@@ -1195,7 +1211,7 @@ export async function produceDisconnectRetry(
   );
   return {
     disconnect: observation,
-    events,
+    events: disconnectMilestones(events),
     samples: {},
     checks: {
       disconnectsBeforeSaved: disconnects.filter(

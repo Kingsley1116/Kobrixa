@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { assertFoundationOutcome } from "./plugin-persistence-outcomes.mjs";
-import { assertDisconnectObservation } from "./plugin-persistence-disconnect.ts";
+import {
+  assertDisconnectObservation,
+  disconnectMilestones,
+} from "./plugin-persistence-disconnect.ts";
 import { assertSuspendObservation } from "./plugin-persistence-suspend.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -512,7 +515,7 @@ export function assertDisconnectEvidence(evidence) {
   const o = evidence.disconnect;
   assert.ok(o, "Missing disconnect observations");
   assertDisconnectObservation(o);
-  assert.deepEqual(evidence.events, o.events);
+  assert.deepEqual(evidence.events, disconnectMilestones(o.events));
   const [prior, current] = o.reservations;
   assert.notEqual(prior.sessionId, current.sessionId);
   assert.equal(o.ended[0].reason, "disconnected");
