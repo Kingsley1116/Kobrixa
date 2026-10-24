@@ -885,6 +885,14 @@ export async function buildNative(directory) {
       JSON.stringify(result.metafile, null, 2),
     );
   });
+  // The integrated desktop composition starts the real persistence worker even
+  // when this motor-only case does not write records. Keep its executable beside
+  // the main bundle, matching persistenceWorkerPath's development resolution.
+  await build({
+    ...common,
+    entryPoints: [path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts")],
+    outfile: path.join(directory, "persistence-worker.cjs"),
+  });
   // Build the existing production preload from this checkout when no built artifact exists.
   await build({
     ...common,
@@ -929,6 +937,7 @@ export async function buildNative(directory) {
   const identity = { ...artifacts.identity, nativeBuildSha256: {} };
   for (const file of [
     "main.cjs",
+    "persistence-worker.cjs",
     "template/preload.cjs",
     "template/source/main.cjs",
     ...(await readdir(path.join(template, "renderer"), { recursive: true }))
