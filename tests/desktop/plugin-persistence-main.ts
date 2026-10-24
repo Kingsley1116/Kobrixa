@@ -23,7 +23,10 @@ export type FoundationCase =
   | "compatibility"
   | "installed";
 
+import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
+
 export type CaseEvidence = {
+  contention?: ContentionObservation;
   checks: Record<string, string | number | boolean | readonly string[] | readonly number[]>;
   events: Array<{
     kind: string;
@@ -90,24 +93,15 @@ export interface FoundationFixture {
 }
 */
 
-export const FOUNDATION_CASES = [
-  "contention",
-  "retirement",
-  "registration-end",
-  "healthy-release",
-  "disconnect-retry",
-  "suspend-wake",
-  "renderer-loss",
-  "sealed-ttl",
-  "unknown-publication",
-  "all-optional-off",
-  "action-replay",
-  "import-restart",
-  "storage-ui-pressure",
-  "compatibility",
-  "installed",
-] as const satisfies readonly FoundationCase[];
-export const FOUNDATION_CHECKS: Readonly<
+// @ts-expect-error The shared Node oracle is a test-local JavaScript module.
+import * as outcomes from "./plugin-persistence-outcomes.mjs";
+const {
+  FOUNDATION_CASES: caseIds,
+  FOUNDATION_CHECKS: caseChecks,
+  assertFoundationOutcome,
+} = outcomes;
+export const FOUNDATION_CASES = caseIds as readonly FoundationCase[];
+export const FOUNDATION_CHECKS = caseChecks as Readonly<
   Record<
     FoundationCase,
     {
@@ -116,249 +110,12 @@ export const FOUNDATION_CHECKS: Readonly<
       samples: readonly string[];
     }
   >
-> = {
-  contention: {
-    checks: [
-      "motionWhileRecording",
-      "recordingWhileMotion",
-      "concurrentActive",
-      "settingsSuccess",
-      "settingsConflict",
-      "dirtyDraftPreserved",
-    ],
-    events: [],
-    samples: [],
-  },
-  retirement: {
-    checks: ["firstDeadline"],
-    events: ["retire", "freeze", "drain", "process-exit"],
-    samples: [],
-  },
-  "registration-end": {
-    checks: [
-      "finalTargets",
-      "finalPublications",
-      "pendingRegistrationIncluded",
-      "firstDeadline",
-      "lastDeadline",
-    ],
-    events: [],
-    samples: [],
-  },
-  "healthy-release": {
-    checks: [
-      "retireCalls",
-      "freezeCalls",
-      "processExits",
-      "unrelatedSettingsCommitted",
-      "generationBefore",
-      "generationAfter",
-    ],
-    events: [],
-    samples: [],
-  },
-  "disconnect-retry": {
-    checks: [
-      "disconnectsBeforeSaved",
-      "failedSaveBlocker",
-      "retriesWithFreshAction",
-      "finalTargets",
-      "finalPublications",
-      "priorSessionIncluded",
-      "firstDeadline",
-      "lastDeadline",
-    ],
-    events: [
-      "quiesce",
-      "stop-confirmed",
-      "save-failed",
-      "save-confirmed",
-      "journal-confirmed",
-      "disconnect",
-    ],
-    samples: [],
-  },
-  "suspend-wake": {
-    checks: [
-      "quiesceReason",
-      "retireCalls",
-      "freezeCalls",
-      "processExits",
-      "replayedMotion",
-      "replayedRecording",
-      "replayedCommand",
-      "renewedOldToken",
-    ],
-    events: [],
-    samples: [],
-  },
-  "renderer-loss": {
-    checks: [
-      "processExited",
-      "explicitRestart",
-      "oldActionDenied",
-      "oldGestureDenied",
-      "oldEpochDenied",
-      "oldCommitDenied",
-      "newGeneration",
-      "previousGeneration",
-    ],
-    events: [],
-    samples: [],
-  },
-  "sealed-ttl": {
-    checks: [
-      "lastProgressAt",
-      "createdAt",
-      "observedExpiry",
-      "expiryAfterFailedRetry",
-      "afterExpiry",
-      "latePublishCalls",
-      "unresolvedEvidenceDeleted",
-      "originalExpiryPreserved",
-      "expiredPinRejected",
-      "checkpointOnlyNoInventedBytes",
-    ],
-    events: [],
-    samples: [],
-  },
-  "unknown-publication": {
-    checks: [
-      "disposition",
-      "oldEvidenceRetained",
-      "newEvidenceRetained",
-      "namespaceFenced",
-      "secondPublicationCalls",
-      "reconciledOriginalTicket",
-      "reconciledDisposition",
-      "exportOriginalJobReconciled",
-      "noRepublish",
-      "destinationIdentityPreserved",
-    ],
-    events: [],
-    samples: [],
-  },
-  "all-optional-off": {
-    checks: [
-      "optionalProcesses",
-      "optionalSchemaReads",
-      "mapperCalls",
-      "autoConnects",
-      "coreRecoveryVisible",
-      "coreExportSucceeded",
-      "featureActionRefsMinted",
-      "noProcessSettings",
-      "durableRecoveryRestored",
-      "committedExportHash",
-      "sealedExportHash",
-    ],
-    events: [],
-    samples: [],
-  },
-  "action-replay": {
-    checks: [
-      "forgedDestinationWrites",
-      "replayedDestinationWrites",
-      "expiredDestinationWrites",
-      "lateDialogWrites",
-      "deniedClipboardWrites",
-      "deviceLocksDuringDialog",
-      "leakedPathsOrValues",
-      "freshCoreAction",
-      "cancelNoWrite",
-      "lateDialogReleased",
-      "identitySwapRejected",
-    ],
-    events: [],
-    samples: [],
-  },
-  "import-restart": {
-    checks: [
-      "recordCounts",
-      "byteCounts",
-      "idsStable",
-      "originalsUnchanged",
-      "deletedRecordReimported",
-      "missingRendererCompletedEmpty",
-      "markerBeforeCrashPending",
-      "markerAfterCrashCompleteOnce",
-      "atomicImportReceipt",
-      "barrierRestored",
-      "originalBytesUnchanged",
-    ],
-    events: [],
-    samples: [],
-  },
-  "storage-ui-pressure": {
-    checks: [
-      "records",
-      "recordBytes",
-      "activeJobs",
-      "liveCounters",
-      "peakPendingJobs",
-      "peakQueuedHostBytes",
-      "peakQueuedSourceBytes",
-      "mainExtraRss",
-      "workerExtraRss",
-      "mainSyncMaxMs",
-      "uiHeapBytes",
-      "residualBytes",
-      "cycles",
-      "uiWarmupMs",
-      "uiSampleMs",
-      "uiRepeats",
-      "deviceWorkloadMs",
-      "namespaceIncludesSettingsImport",
-      "targetExcludesSettings",
-      "afterBarrierExcluded",
-    ],
-    events: [],
-    samples: [
-      "stopExtraMs",
-      "draftMs",
-      "pageMs",
-      "listMs",
-      "commitMs",
-      "uiApplyMs",
-      "uiInputMs",
-      "uiRevokeMs",
-    ],
-  },
-  compatibility: {
-    checks: [
-      "apiVersions",
-      "schemasEqual",
-      "secondGenerationDrift",
-      "legacyExecutePreserved",
-      "legacyInitializePreserved",
-      "drainSentBelow17",
-      "pythonExecuted",
-      "publicApi18Published",
-    ],
-    events: [],
-    samples: [],
-  },
-  installed: {
-    checks: [
-      "cwdOutsideCheckout",
-      "externalNodeUsed",
-      "networkRequired",
-      "primaryWorkers",
-      "secondaryWorkers",
-      "secondaryProviders",
-      "secondaryPlugins",
-      "primaryRecordingInterrupted",
-      "primaryFocused",
-      "childrenAfterFiveSeconds",
-    ],
-    events: [],
-    samples: [],
-  },
-};
+>;
 
 import assert from "node:assert/strict";
 // @ts-expect-error The test-local Node harness has no TypeScript declaration.
-import { assertRegistrationEndEvidence } from "./plugin-persistence-harness.mjs";
+import * as evidenceHarness from "./plugin-persistence-harness.mjs";
+const { assertRegistrationEndEvidence, assertContentionEvidence } = evidenceHarness;
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
   const required = FOUNDATION_CHECKS[id];
   assert.ok(required, `Unknown foundation case ${id}`);
@@ -413,6 +170,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
     assert.equal(drain.deadline, freeze.deadline);
   }
   if (id === "registration-end") assertRegistrationEndEvidence(evidence);
+  if (id === "contention") assertContentionEvidence(evidence);
   if (id === "healthy-release") {
     for (const key of ["retireCalls", "freezeCalls", "processExits"])
       assert.equal(evidence.checks[key], 0, key);
@@ -421,6 +179,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
   }
   for (const key of Object.keys(evidence.samples))
     assert.ok(required.samples.includes(key), `${id}: undeclared sample ${key}`);
+  assertFoundationOutcome(id, evidence);
 }
 function assertRealComposition(fixture: FoundationFixture): void {
   const c = fixture.composition;
@@ -458,7 +217,7 @@ type LiveConsumer = {
   principal: () => Principal;
   child: PluginProcess;
 };
-type LifecycleCaseInput = {
+export type LifecycleCaseInput = {
   now: () => number;
   broker: DeviceBrokerPort;
   host: PersistenceHost;
@@ -1161,7 +920,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     assert.ok(path.isAbsolute(config[key]), key);
   assert.match(config.commit, /^[0-9a-f]{40}$/);
   assert.match(config.artifactSha256, /^[0-9a-f]{64}$/);
-  if (!["retirement", "healthy-release", "registration-end"].includes(config.case))
+  if (!["retirement", "healthy-release", "registration-end", "contention"].includes(config.case))
     throw new Error(
       `BLOCKED: ${config.case} requires its observation-table producer; no implemented producer for this selector`,
     );
@@ -1197,7 +956,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     desktopFoundationTestHandles,
     desktopDeviceAccess,
   } = await import("../../apps/desktop/src/main/plugins/controller.js");
-  const { registerCoreRecoveryIpc } = await import("../../apps/desktop/src/main/plugins/ipc.js");
+  const { registerCoreRecoveryIpc, registerSettingsIpc170 } =
+    await import("../../apps/desktop/src/main/plugins/ipc.js");
   const { registerPersistenceWindow170 } = await import("../../apps/desktop/src/main/ipc.js");
   const { BUILTIN_PLUGIN_SOURCES } = await import("../../apps/desktop/src/main/plugins/builtin.js");
   const { validateBuiltinLeaf } =
@@ -1214,6 +974,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("../../packages/plugin-runtime/src/ui-lifecycle.js");
   const { diagnosticsFor: workerDiagnostics, persistenceWorkerCount } =
     await import("../../apps/desktop/src/main/plugins/persistence/worker.js");
+  const { produceContention, registerContentionCheckpoint } =
+    await import("./plugin-persistence-contention.js");
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
@@ -1233,10 +995,25 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         },
       });
       window = win;
+      const second =
+        config.case === "contention"
+          ? new BrowserWindow({
+              show: false,
+              width: 1000,
+              height: 800,
+              webPreferences: {
+                preload: config.preload,
+                contextIsolation: true,
+                nodeIntegration: false,
+                sandbox: true,
+              },
+            })
+          : undefined;
+      const windows = second ? [win, second] : [win];
       const authority = new AuthorityContexts(profile.hostEpoch);
-      const openDocument = () => {
-        const document = authority.open(win.webContents.id);
-        authority.report(win.webContents.id, {
+      const openDocument = (target = win) => {
+        const document = authority.open(target.webContents.id);
+        authority.report(target.webContents.id, {
           document,
           sequence: 1,
           state: "local",
@@ -1247,27 +1024,29 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           isHolder: true,
         });
       };
-      openDocument();
-      // Each actual top-level navigation receives a new main-owned document scope.
-      // No renderer-supplied authority or stale initial about:blank scope is reused.
-      win.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
-        if (mainFrame && !inPlace) {
-          authority.invalidate(win.webContents.id);
-          openDocument();
-        }
-      });
-      const scope = () => {
-        const p = authority.core(win.webContents.id, "recovery");
+      for (const target of windows) {
+        openDocument(target);
+        target.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => {
+          if (mainFrame && !inPlace) {
+            authority.invalidate(target.webContents.id);
+            openDocument(target);
+          }
+        });
+      }
+      const windowScope = (target: Electron.BrowserWindow) => {
+        const p = authority.core(target.webContents.id, "recovery");
         return { hostEpoch: p.hostEpoch, workbenchInstance: p.workbenchInstance };
       };
-      const currentScope: DesktopMainCompositionInput["currentScope"] = (candidate) => {
-        if (win.isDestroyed()) return false;
-        const current = scope();
-        return (
-          current.hostEpoch === candidate.hostEpoch &&
-          current.workbenchInstance === candidate.workbenchInstance
-        );
-      };
+      const scope = () => windowScope(win);
+      const currentScope: DesktopMainCompositionInput["currentScope"] = (candidate) =>
+        windows.some((target) => {
+          if (target.isDestroyed()) return false;
+          const current = windowScope(target);
+          return (
+            current.hostEpoch === candidate.hostEpoch &&
+            current.workbenchInstance === candidate.workbenchInstance
+          );
+        });
       const coreActions = createCoreActionLedger({ now, current: currentScope });
       const journalProfile = profile,
         journal = createJournal(createJournalFilesystem(userData), journalProfile);
@@ -1288,7 +1067,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const foundation = await createDesktopFoundation({
           ...options,
           providerFactory(catalog) {
-            const created = createFakeDeviceProvider({ catalog, now: options.now });
+            const created = createFakeDeviceProvider({
+              catalog,
+              now: options.now,
+              // The minimal fixture completes motion immediately. Contention
+              // must retain an actual timed operation until Stop interrupts it.
+              ...(config.case === "contention" ? { profile: "maximum" as const } : {}),
+            });
             fake = created.control;
             return created.provider;
           },
@@ -1429,16 +1214,33 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         assert.equal(handles.profile, profile);
         assert.equal(handles.persistenceProfile, profile);
         const trusted = (event: { sender: { id: number }; senderFrame: unknown }) =>
-          !win.isDestroyed() &&
-          event.sender.id === win.webContents.id &&
-          event.senderFrame === win.webContents.mainFrame;
-        const handle: IpcHandle = (name, action) => {
-          ipcNames.push(name);
-          ipcMain.handle(name, (event, ...args) => {
-            if (!trusted(event)) throw new Error("Untrusted acceptance sender");
-            return Reflect.apply(action, undefined, [event, ...args]);
-          });
-        };
+          windows.some(
+            (target) =>
+              !target.isDestroyed() &&
+              event.sender.id === target.webContents.id &&
+              event.senderFrame === target.webContents.mainFrame,
+          );
+        const routes = new Map<string, Map<number, Parameters<IpcHandle>[1]>>();
+        const handleFor =
+          (target?: Electron.BrowserWindow): IpcHandle =>
+          (name, action) => {
+            if (!routes.has(name)) {
+              routes.set(name, new Map());
+              ipcNames.push(name);
+              ipcMain.handle(name, (event, ...args) => {
+                if (!trusted(event)) throw new Error("Untrusted acceptance sender");
+                const route = routes.get(name)!.get(event.sender.id) ?? routes.get(name)!.get(0);
+                if (!route) throw new Error("No route for native window");
+                return Reflect.apply(route, undefined, [event, ...args]);
+              });
+            }
+            routes
+              .get(name)!
+              .set(target?.webContents.id ?? 0, (event, ...args) =>
+                Reflect.apply(action, undefined, [event, ...args]),
+              );
+          };
+        const handle = handleFor();
         registerUiIpc({ handle, bridge: ui.bridge, trusted });
         off.push(
           registerUiEventIpc({
@@ -1492,12 +1294,28 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         assert.ok(facets, "Missing D170 persistence facets");
         off.push(
           registerPersistenceWindow170({
-            handle,
+            handle: handleFor(win),
             facets,
             coreRecovery: recovery,
             renderer: () => (win.isDestroyed() ? undefined : win.webContents),
           }),
         );
+        if (second)
+          off.push(
+            registerSettingsIpc170({
+              handle: handleFor(second),
+              service: facets.settings,
+              scope: () => windowScope(second),
+              publish: (expected, channel, payload) => {
+                if (
+                  !second.isDestroyed() &&
+                  currentScope(expected) &&
+                  expected.workbenchInstance === windowScope(second).workbenchInstance
+                )
+                  second.webContents.send(channel, payload);
+              },
+            }),
+          );
         ui.setRecoveryNavigation(() => {
           if (!win.isDestroyed()) win.webContents.send("plugins:recovery:changed");
         });
@@ -1512,16 +1330,120 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         snapshots(); // Unknown instance lookups fail before activating consumers.
         await win.loadURL(config.rendererUrl);
         win.webContents.debugger.attach("1.3");
-        const browser = async (expression: string) => {
-          const result = await win.webContents.debugger.sendCommand("Runtime.evaluate", {
-            expression,
-            awaitPromise: true,
-            returnByValue: true,
-          });
-          assert.equal(result.exceptionDetails, undefined, "Browser collector failed");
-          return result.result.value;
+        const windowControls = (win: Electron.BrowserWindow, text: string) => {
+          const browser = async (expression: string) => {
+            const result = await win.webContents.debugger.sendCommand("Runtime.evaluate", {
+              expression,
+              awaitPromise: true,
+              returnByValue: true,
+            });
+            assert.equal(result.exceptionDetails, undefined, "Browser collector failed");
+            return result.result.value;
+          };
+
+          const observeForm = async (): Promise<ContentionForm> => {
+            const rows = (await browser(
+              "window.persistenceAcceptance.settingsSnapshot()",
+            )) as ContentionForm[];
+            const forms = rows.filter(
+              (row) => row.binding.owner.sourceKey === "builtin:acceptance.ui-settings",
+            );
+            assert.equal(forms.length, 1, "Exactly one live settings form required");
+            assert.ok(forms[0]!.input, "Actual mapped input not rendered");
+            return forms[0]!;
+          };
+          const painted = () =>
+            browser(
+              "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+            );
+          const nativeClick = async (selector: string) => {
+            const inspect = () =>
+              browser(`(() => {
+            const node = document.querySelector(${JSON.stringify(selector)});
+            if (!(node instanceof HTMLElement) || node.matches(':disabled')) return null;
+            node.scrollIntoView({block:'center'});
+            const r = node.getBoundingClientRect(), x = Math.floor(r.x + r.width / 2), y = Math.floor(r.y + r.height / 2);
+            return r.width > 0 && r.height > 0 && node.contains(document.elementFromPoint(x,y)) ? {x,y} : null;
+          })()`);
+            const down = await inspect();
+            assert.ok(down, `Native target unavailable: ${selector}`);
+            win.webContents.sendInputEvent({
+              type: "mouseDown",
+              button: "left",
+              clickCount: 1,
+              ...down,
+            });
+            await painted();
+            const up = await inspect();
+            assert.ok(up, `Native target disappeared: ${selector}`);
+            win.webContents.sendInputEvent({
+              type: "mouseUp",
+              button: "left",
+              clickCount: 1,
+              ...up,
+            });
+            await painted();
+          };
+          const contentionForm = {
+            async prepare() {
+              win.show();
+              win.focus();
+              win.webContents.focus();
+              await nativeClick('[data-persistence-open="settings"]');
+              const formDeadline = Date.now() + 15000;
+              await (async () => {
+                while (Date.now() < formDeadline) {
+                  const rows = await browser("window.persistenceAcceptance.settingsSnapshot()");
+                  if (
+                    rows.some(
+                      (row: ContentionForm) =>
+                        row.binding.owner.sourceKey === "builtin:acceptance.ui-settings" &&
+                        row.input,
+                    )
+                  )
+                    return;
+                  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+                }
+                throw new Error("Timed out observing native settings form");
+              })();
+              const form = await observeForm();
+              assert.equal(form.input.value, "", "Contention needs a fresh empty draft");
+              await nativeClick(`[id=${JSON.stringify(form.input.id)}]`);
+              assert.equal(await browser("document.activeElement?.id"), form.input.id);
+              await win.webContents.insertText(text);
+              await painted();
+              const draft = await observeForm();
+              assert.equal(draft.raw["fixture.note"], text);
+              assert.ok(
+                draft.inputEvents.some(
+                  (event) => event.type === "input" && event.trusted && event.value === text,
+                ),
+              );
+              return draft;
+            },
+            async submit() {
+              win.show();
+              win.focus();
+              win.webContents.focus();
+              const form = await observeForm();
+              assert.equal(await browser("document.activeElement?.id"), form.input.id);
+              win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+              win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+              await painted();
+            },
+            observe: observeForm,
+          };
+          return { browser, form: contentionForm };
         };
+        const { browser, form: contentionForm } = windowControls(win, "Losing draft");
         await browser("window.declarativeAcceptance.foundationDiagnostics()");
+        let winnerControls: ReturnType<typeof windowControls> | undefined;
+        if (second) {
+          await second.loadURL(config.rendererUrl);
+          second.webContents.debugger.attach("1.3");
+          winnerControls = windowControls(second, "Winning write");
+          await winnerControls.browser("window.declarativeAcceptance.foundationDiagnostics()");
+        }
         for (const role of ["recording", "settings"]) {
           const sourceKey = `builtin:acceptance.ui-${role}`;
           const activated = await live.plugins.execute(`acceptance.ui-${role}.legacy`);
@@ -1579,7 +1501,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const producers: Record<FoundationCase, () => Promise<CaseEvidence>> = {
           retirement: () => produceRetirement(input),
           "healthy-release": () => produceHealthyRelease(input),
-          contention: unavailable("contention"),
+          contention: () =>
+            produceContention({
+              ...input,
+              scope,
+              reserveRecording: () => reserveLiveRecording(input),
+              form: contentionForm,
+              winner: winnerControls!.form,
+              checkpoint: (reservation, whilePaused) =>
+                registerContentionCheckpoint(input, reservation, whilePaused),
+            }),
           "registration-end": () => produceRegistrationEnd(input),
           "disconnect-retry": unavailable("disconnect-retry"),
           "suspend-wake": unavailable("suspend-wake"),
@@ -1606,6 +1537,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               "window.declarativeAcceptance.foundationDiagnostics()",
             );
             assertZeroCounters(finalBrowser.snapshot);
+            if (winnerControls) {
+              const final = await winnerControls.browser(
+                "window.declarativeAcceptance.disposeFoundationRenderer()",
+              );
+              assertZeroCounters(final.snapshot);
+            }
             for (const snapshot of snapshots()) assertZeroCounters(snapshot);
             assert.equal(persistenceWorkerCount(handles.backend), 0);
             assert.equal(listeners, 0);
@@ -1616,6 +1553,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             win.webContents.debugger.detach();
             destroying = true;
             win.destroy();
+            if (second && !second.isDestroyed()) second.destroy();
           })());
         win.on("close", (event) => {
           if (destroying) return;
@@ -1648,7 +1586,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             node: process.versions.node,
             electron: process.versions.electron ?? "",
             memoryMethod:
-              config.case === "registration-end"
+              config.case === "registration-end" || config.case === "contention"
                 ? "not-measured-scoped-case"
                 : "not-measured-reference-only",
             warmCold: "cold",
@@ -1679,6 +1617,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
         restoreReservation();
         if (!win.isDestroyed()) win.destroy();
+        if (second && !second.isDestroyed()) second.destroy();
         if (failures.length)
           throw new AggregateError([error, ...failures], "Foundation construction/cleanup failed");
         throw error;

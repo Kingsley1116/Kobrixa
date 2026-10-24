@@ -1,4 +1,6 @@
 import test from "node:test";
+import { contentionOracle } from "./fixtures/plugin-persistence/contention-oracle.mjs";
+import { outcomeOracleFixture } from "./fixtures/plugin-persistence/outcome-oracle.mjs";
 import assert from "node:assert/strict";
 import {
   diagnosticError,
@@ -122,7 +124,13 @@ function assertNoConstantProducerChecks(source) {
 }
 
 test("producer checks reject literal and constant-alias replacements", async () => {
-  const source = await readFile(new URL("./plugin-persistence-main.ts", import.meta.url), "utf8");
+  const source = (
+    await Promise.all(
+      ["plugin-persistence-main.ts", "plugin-persistence-contention.ts"].map((file) =>
+        readFile(new URL(file, import.meta.url), "utf8"),
+      ),
+    )
+  ).join("\n");
   const checks = assertNoConstantProducerChecks(source);
   for (const check of checks) {
     for (const replacement of ["true", "false", "0", '"committed"', "[50, 50, 50]"]) {
@@ -154,6 +162,7 @@ const receiptFixture = () => ({
   level: "real-process",
   status: "passed",
   runId: "unit-oracle",
+  evidence: outcomeOracleFixture("retirement"),
   case: "retirement",
   commit: "a".repeat(40),
   bundleSha256: "b".repeat(64),
@@ -192,6 +201,15 @@ test("verifier negatives: reject stale, premature, absent, failed and leaked rec
     assert.throws(() => verifyRunReceipt(r, expected));
   }
 });
+test("receipt gate rejects missing or failed case evidence after a clean exit", () => {
+  for (const patch of [
+    { evidence: undefined },
+    { case: "healthy-release", evidence: { checks: { retireCalls: 1 }, events: [], samples: {} } },
+    { case: "not-a-case", evidence: { checks: {}, events: [], samples: {} } },
+  ])
+    assert.throws(() => verifyRunReceipt({ ...receiptFixture(), ...patch }));
+});
+
 test("verifier negatives: reject missing and duplicate case receipts", () => {
   assert.throws(
     () => verifyFoundationReports([], ["retirement", "healthy-release"]),
@@ -238,26 +256,7 @@ test("verifier negatives: every declared foundation observation is required", ()
   assert.deepEqual(Object.keys(FOUNDATION_CHECKS).sort(), [...FOUNDATION_CASES].sort());
   for (const id of FOUNDATION_CASES) {
     const required = FOUNDATION_CHECKS[id];
-    // Oracle-only shape example, never returned by a live producer.
-    const evidence = {
-      checks: Object.fromEntries(required.checks.map((k) => [k, 1])),
-      events: required.events.map((kind, i) => ({ kind, turn: 0, time: i })),
-      samples: Object.fromEntries(required.samples.map((k) => [k, Array(30).fill(1)])),
-    };
-    if (id === "retirement") {
-      const grant = {};
-      evidence.events[0].grant = grant;
-      evidence.events[1].grant = grant;
-      evidence.events[1].deadline = 1;
-      evidence.events[2].deadline = 1;
-    }
-    if (id === "healthy-release")
-      Object.assign(evidence.checks, {
-        retireCalls: 0,
-        freezeCalls: 0,
-        processExits: 0,
-        unrelatedSettingsCommitted: true,
-      });
+    const evidence = id === "contention" ? contentionOracle() : outcomeOracleFixture(id);
     if (id === "registration-end") {
       const oracle = registrationOracle();
       Object.assign(evidence.checks, oracle.checks);
@@ -435,7 +434,11 @@ for (const mode of ["timeout", "nonzero"])
   });
 test("T7fix I3: normal completion uses the same final observations without cleanup kills", async () => {
   const model = controllerModel("success");
-  const receipt = await superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 });
+  const receipt = await superviseCase({ case: "retirement" }, model.io, {
+    timeoutMs: 200,
+    pollMs: 100,
+    settleMs: 100,
+  });
   assert.equal(receipt.status, "passed");
   assert.equal(model.failure, undefined);
   assert.ok(!model.actions.some((a) => a.startsWith("kill")));
@@ -452,7 +455,7 @@ test("T7fix I3: cleanup/observation/write errors are retained and never mask ori
     throw new Error("report disk full");
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /fixture failed|exited/i,
   );
   const failure = model.actions.find((a) => typeof a === "object");
@@ -535,7 +538,7 @@ test("T7fix I3: failed cleanup records remaining identities and original nonzero
     throw new Error("kill denied");
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /fixture failed/,
   );
   assert.equal(model.failure.parentExit.code, 7);
@@ -564,7 +567,7 @@ test("T7fix I3: signal exit cleans an owned descendant that changed process grou
     }
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /fixture failed/,
   );
   assert.ok(model.actions.includes("kill:101"));
@@ -626,7 +629,11 @@ test("T7fix I3: spawn failure and malformed candidate still write failure receip
       };
     else model.setCandidate({ ...receiptFixture(), bundleSha256: "bad" });
     await assert.rejects(
-      superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+      superviseCase({ case: "retirement" }, model.io, {
+        timeoutMs: 200,
+        pollMs: 100,
+        settleMs: 100,
+      }),
       /spawn failed|match/,
     );
     assert.equal(model.failure.status, "failed");
@@ -740,7 +747,7 @@ test("T7fix2: supervisor cleans an owned replacement child instead of passing", 
     }
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 10, pollMs: 1, settleMs: 2 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 10, pollMs: 1, settleMs: 2 }),
     /Owned processes remain/,
   );
   assert.ok(model.actions.includes("kill-group:100"));
@@ -813,7 +820,7 @@ test("T7fix2: supervisor timeout preserves the preliminary case failure", async 
   };
   model.io.readCandidate = async () => ({ entryFailure: preliminary });
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /original before hung close/,
   );
   assert.match(model.failure.controllerError.message, /timeout/);
@@ -953,8 +960,8 @@ test("registration-end selector is bounded and full matrix remains fail-closed",
     "retirement",
     "healthy-release",
   ]);
-  assert.throws(() => selectFoundationCases(), /twelve observation-table producers/);
-  assert.throws(() => selectFoundationCases({ caseId: "contention" }), /unsupported case/);
+  assert.throws(() => selectFoundationCases(), /eleven observation-table producers/);
+  assert.throws(() => selectFoundationCases({ caseId: "sealed-ttl" }), /unsupported case/);
   assert.throws(
     () => selectFoundationCases({ referencesOnly: true, caseId: "registration-end" }),
     /mutually exclusive/,

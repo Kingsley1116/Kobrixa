@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertFoundationOutcome } from "./plugin-persistence-outcomes.mjs";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
@@ -504,6 +505,8 @@ export function assertRegistrationEndEvidence(evidence) {
   assert.equal(checks.lastDeadline, checks.firstDeadline);
 }
 export function verifyRunReceipt(r, expected = {}) {
+  assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "contention") assertContentionEvidence(r.evidence);
   if (r.case === "registration-end") assertRegistrationEndEvidence(r.evidence);
   assert.equal(r.level, "real-process");
   assert.equal(r.status, "passed");
@@ -536,6 +539,374 @@ export function verifyRunReceipt(r, expected = {}) {
   assert.equal(exits[0].count, 0, "worker exit must be observed");
   for (const row of r.workerTrace)
     assert.equal(row.pid, r.pid, "worker belongs to another composition phase");
+}
+export function assertContentionEvidence(evidence) {
+  const observed = evidence.contention;
+  assert.ok(observed, "Missing contention observations");
+  assert.equal(observed.owners.length, 2);
+  assert.notEqual(observed.owners[0].sourceKey, observed.owners[1].sourceKey);
+  for (const owner of observed.owners) {
+    for (const key of ["sourceKey", "pluginId"])
+      assert.ok(typeof owner[key] === "string" && owner[key].length > 0);
+    integer(owner.generation, "owner generation");
+    identity(owner.hostEpoch);
+    identity(owner.processEpoch);
+  }
+  assert.equal(observed.owners[0].hostEpoch, observed.owners[1].hostEpoch);
+  identity(observed.sessionId);
+  const cp = observed.checkpoint;
+  assert.ok(cp, "Missing durable original checkpoint");
+  identity(cp.checkpoint);
+  identity(cp.record.id);
+  identity(cp.recordTicket.id);
+  assert.deepEqual(cp.recordTicket.owner, observed.owners[0]);
+  assert.deepEqual(cp.recordTicket.target, {
+    kind: "record",
+    id: cp.record.id,
+    expectedRevision: null,
+  });
+  assert.deepEqual(cp.recordTicket.metadata, { kind: "record", record: cp.record, deleted: false });
+  assert.equal(cp.receipt.revision, cp.record.revision);
+  identity(cp.receipt.commitId);
+  assert.ok(["file-and-directory-sync", "file-sync-only"].includes(cp.receipt.durability));
+  assert.equal(cp.document.checkpoint, cp.checkpoint);
+  assert.deepEqual(cp.document.record, cp.record);
+  assert.equal(cp.document.state, "open");
+  assert.deepEqual(cp.document.binding.owner, observed.owners[0]);
+  assert.equal(cp.document.binding.reservationId, observed.released.reservationId);
+  assert.equal(cp.document.binding.sessionId, observed.sessionId);
+  const bytes = Buffer.from(cp.payloadBase64, "base64");
+  assert.ok(bytes.length > 0);
+  assert.equal(bytes.length, cp.record.byteLength);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), cp.record.sha256);
+  assert.deepEqual(cp.publication.ticket.owner, observed.owners[0]);
+  assert.deepEqual(cp.publication.ticket.target, { kind: "recovery", key: cp.checkpoint });
+  assert.deepEqual(cp.publication.ticket.metadata, { kind: "recovery", key: cp.checkpoint });
+  identity(cp.publication.ticket.id);
+  assert.equal(cp.publication.result.disposition, "committed");
+  identity(cp.publication.result.receipt.commitId);
+  assert.ok(
+    ["file-and-directory-sync", "file-sync-only"].includes(
+      cp.publication.result.receipt.durability,
+    ),
+  );
+  // Worker reconciliation is independent of the API receipt and the publish reply.
+  assert.equal(cp.recordOutcome.disposition, "committed");
+  assert.deepEqual(cp.recordOutcome.receipt, cp.receipt);
+  assert.deepEqual(cp.recoveryOutcome, cp.publication.result);
+  assert.ok(typeof cp.recoveryOutcome.receipt.revision === "string");
+  const pause = cp.pause;
+  assert.deepEqual(pause.document, cp.document);
+  assert.deepEqual(pause.ticket, cp.publication.ticket);
+  finite(pause.pausedAt, "registration pause");
+  finite(pause.releasedAt, "registration resume");
+  assert.ok(pause.releasedAt >= pause.pausedAt);
+  assert.equal(
+    pause.traceBeforeRelease.filter(
+      (row) => row.ticket === pause.ticket.id && row.point === "before-publish",
+    ).length,
+    1,
+  );
+  assert.ok(
+    !pause.traceBeforeRelease.some(
+      (row) => row.ticket === pause.ticket.id && row.point === "after-publish",
+    ),
+  );
+  assert.equal(
+    pause.traceAfterRelease.filter(
+      (row) => row.ticket === pause.ticket.id && row.point === "after-publish",
+    ).length,
+    1,
+  );
+  for (const probe of observed.motionProbes) {
+    finite(probe.startedAt, "probe start");
+    finite(probe.endedAt, "probe end");
+    assert.ok(
+      pause.pausedAt <= probe.startedAt &&
+        probe.startedAt <= probe.endedAt &&
+        probe.endedAt <= pause.releasedAt,
+      "Motion probe outside original registration pause",
+    );
+  }
+  const { ended, offer, deadline, dispatchedAt, request, report } = observed.finalDrain;
+  const binding = cp.document.binding;
+  integer(binding.providerGeneration, "original provider generation");
+  for (const key of ["owner", "sessionId", "reservationId", "providerGeneration"])
+    assert.deepEqual(ended[key], binding[key], `Reservation end changed ${key}`);
+  assert.equal(ended.reason, "released");
+  integer(ended.lastSequence, "original last sequence");
+  finite(ended.endedMonotonicMs, "original reservation end");
+  const grant = ended.drain;
+  assert.deepEqual(grant.owner, binding.owner);
+  assert.equal(grant.reservationId, binding.reservationId);
+  assert.equal(grant.lastSequence, ended.lastSequence);
+  finite(grant.expiresMonotonicMs, "original grant expiry");
+  finite(deadline, "original end deadline");
+  finite(dispatchedAt, "drain dispatch");
+  assert.deepEqual(offer.owner, binding.owner);
+  identity(offer.token);
+  assert.equal(offer.reason, "reservation-ended");
+  assert.equal(
+    offer.deadlineMonotonicMs,
+    Math.min(deadline, ended.endedMonotonicMs + 10000, grant.expiresMonotonicMs),
+  );
+  assert.ok(dispatchedAt >= ended.endedMonotonicMs && dispatchedAt < offer.deadlineMonotonicMs);
+  assert.equal(request.token, offer.token);
+  assert.equal(request.reason, offer.reason);
+  finite(request.remainingMs, "bounded SDK drain budget");
+  assert.ok(request.remainingMs > 0 && request.remainingMs <= 10000);
+  // Dispatch observation follows request construction in the same call stack.
+  assert.ok(Math.abs(dispatchedAt + request.remainingMs - offer.deadlineMonotonicMs) < 5);
+  assert.deepEqual(request.writes, []);
+  assert.deepEqual(request.checkpoints, offer.checkpoints);
+  assert.equal(request.checkpoints.length, 1);
+  assert.deepEqual(request.checkpoints[0], {
+    checkpoint: cp.checkpoint,
+    record: cp.record,
+    reservationEnd: {
+      reservationId: binding.reservationId,
+      reason: ended.reason,
+      lastSequence: ended.lastSequence,
+    },
+  });
+  const final = observed.finalPublication;
+  assert.equal(observed.finalWrites.length, 1);
+  const write = observed.finalWrites[0];
+  assert.deepEqual(write.owner, binding.owner);
+  for (const key of ["kind", "schemaVersion", "label", "mediaType", "byteLength", "sha256"]) {
+    assert.ok(Object.hasOwn(write.params, key), `Missing final SDK record ${key}`);
+    assert.ok(Object.hasOwn(observed.finalRecord, key), `Missing final worker record ${key}`);
+    assert.equal(write.params[key], observed.finalRecord[key], `Final SDK record ${key}`);
+  }
+  assert.equal(write.params.drainToken, offer.token);
+  assert.deepEqual(write.params.target, {
+    mode: "replace",
+    id: cp.record.id,
+    expectedRevision: cp.record.revision,
+  });
+  assert.deepEqual(write.params.checkpoint, { handle: cp.checkpoint, phase: "final" });
+  assert.equal(write.result.write, final.ticket.id);
+  assert.equal(write.result.id, cp.record.id);
+
+  assert.deepEqual(final.ticket.owner, binding.owner);
+  assert.deepEqual(final.ticket.target, {
+    kind: "record",
+    id: cp.record.id,
+    expectedRevision: cp.record.revision,
+  });
+  assert.deepEqual(final.ticket.metadata, {
+    kind: "record",
+    record: observed.finalRecord,
+    deleted: false,
+  });
+  assert.equal(final.result.disposition, "committed");
+  identity(final.result.receipt.commitId);
+  assert.equal(final.result.receipt.revision, observed.finalRecord.revision);
+  assert.ok(
+    ["file-and-directory-sync", "file-sync-only"].includes(final.result.receipt.durability),
+  );
+  assert.equal(report.records.length, 1);
+  assert.equal(report.records[0].id, cp.record.id);
+  assert.equal(report.records[0].committedRevision, final.result.receipt.revision);
+  assert.equal(report.records[0].final, true);
+  assert.deepEqual(report.errors, []);
+  assert.equal(observed.finalDrain.report.state, "saved");
+  assert.equal(observed.finalDrain.report.blocker, false);
+  assert.ok(
+    observed.finalDrain.request.checkpoints.some(
+      (row) =>
+        row.checkpoint === cp.checkpoint &&
+        row.record.id === cp.record.id &&
+        row.record.revision === cp.record.revision,
+    ),
+  );
+  assert.equal(observed.finalRecord.id, cp.record.id);
+  assert.equal(observed.finalRecord.checkpoint, "final");
+  assert.notEqual(observed.finalRecord.revision, cp.record.revision);
+  const reservationId = observed.released.reservationId;
+  const operationId = observed.stopped.operationId;
+  identity(reservationId);
+  identity(operationId);
+  let overlaps = 0;
+  for (const [name, active, idKey, id] of [
+    ["motionProbes", "active", "reservationId", reservationId],
+    ["recordingProbes", "running", "operationId", operationId],
+  ]) {
+    const probes = observed[name];
+    assert.equal(probes.length, 2, `Missing ${name} for both original owners`);
+    for (const [index, probe] of probes.entries()) {
+      assert.deepEqual(probe.owner, observed.owners[index], "Probe owner changed");
+      for (const snapshot of [probe.before, probe.after]) {
+        assert.equal(snapshot[idKey], id, "Wrong conflicting resource");
+        assert.equal(snapshot.sessionId, observed.sessionId, "Wrong conflicting session");
+        assert.equal(snapshot.state ?? snapshot.phase, active, "No active conflicting resource");
+      }
+      overlaps += Number(probe.result.ok === true);
+      assert.equal(probe.result.ok, false);
+      assert.equal(probe.result.error.code, "PLUGIN_E_DEVICE_BUSY", "Not an admission conflict");
+    }
+  }
+  assert.equal(observed.released.state, "ended");
+  assert.equal(observed.released.reason, "released");
+  assert.equal(observed.released.sessionId, observed.sessionId);
+  assert.equal(observed.stopped.sessionId, observed.sessionId);
+  assert.equal(observed.stopped.stage, "terminal");
+  assert.ok(["stopped", "completed"].includes(observed.stopped.phase));
+  assert.equal(observed.stopped.stopConfirmation, "confirmed");
+  const blocked = observed.blockedSave;
+  assert.ok(blocked, "Missing simultaneous blocked-save/stop observations");
+  let previous = -1;
+  for (const key of ["pausedAt", "stopRequestedAt", "stopConfirmedAt", "saveReleasedAt"]) {
+    finite(blocked[key], key);
+    assert.ok(blocked[key] >= previous, "Stop did not precede releasing the blocked save");
+    previous = blocked[key];
+  }
+  assert.equal(blocked.motionDuringSave.operationId, operationId);
+  assert.equal(blocked.motionDuringSave.sessionId, observed.sessionId);
+  assert.equal(blocked.motionDuringSave.phase, "running");
+  assert.equal(blocked.writeSettledAtStop, false);
+  identity(blocked.pausedTicket);
+  assert.equal(blocked.expectedTicket.id, blocked.pausedTicket);
+  assert.deepEqual(blocked.expectedTicket.owner, observed.owners[1]);
+  assert.deepEqual(blocked.expectedTicket.target, {
+    kind: "settings",
+    expectedRevision: observed.beforeForm.state.baseline.revision,
+  });
+  assert.equal(blocked.expectedTicket.metadata.kind, "settings");
+  assert.ok(
+    blocked.traceBeforeRelease.some(
+      (row) => row.point === "before-publish" && row.ticket === blocked.pausedTicket,
+    ),
+  );
+  assert.equal(
+    blocked.traceBeforeRelease.filter(
+      (row) => row.point === "after-publish" && row.ticket === blocked.pausedTicket,
+    ).length,
+    0,
+  );
+  assert.equal(
+    blocked.traceAfterRelease.filter(
+      (row) => row.point === "after-publish" && row.ticket === blocked.pausedTicket,
+    ).length,
+    1,
+  );
+  assert.equal(evidence.checks.concurrentActive, overlaps);
+  assert.equal(evidence.checks.motionWhileRecording, "busy");
+  assert.equal(evidence.checks.recordingWhileMotion, "busy");
+
+  assert.deepEqual(observed.updates.map((row) => row.caller).sort(), ["form", "winner"]);
+  const winner = observed.updates.find((row) => row.caller === "winner");
+  const loser = observed.updates.find((row) => row.caller === "form");
+  const before = observed.beforeForm,
+    after = observed.afterForm;
+  const wb = observed.winnerBefore,
+    wa = observed.winnerAfter;
+  assert.ok(wb && wa, "Missing second native window");
+  assert.deepEqual(winner.binding, wb.binding);
+  assert.deepEqual(loser.binding, before.binding);
+  assert.deepEqual(wb.binding.owner, before.binding.owner);
+  assert.equal(wb.binding.scope.hostEpoch, before.binding.scope.hostEpoch);
+  identity(wb.binding.scope.workbenchInstance);
+  identity(before.binding.scope.workbenchInstance);
+  assert.notEqual(wb.binding.scope.workbenchInstance, before.binding.scope.workbenchInstance);
+  assert.deepEqual(wb.state.baseline, before.state.baseline);
+  assert.deepEqual(wa.binding, wb.binding);
+  assert.deepEqual(wa.fieldIds, wb.fieldIds);
+  const winnerId = `setting-${wb.binding.scope.workbenchInstance}-${wb.fieldIds["fixture.note"]}`;
+  assert.equal(wb.input.id, winnerId);
+  assert.equal(wa.input.id, winnerId);
+  assert.equal(wb.raw["fixture.note"], wb.input.value);
+  assert.deepEqual(winner.params.changes, [{ key: "fixture.note", value: wb.input.value }]);
+  assert.ok(
+    wb.inputEvents.some(
+      (e) =>
+        e.id === winnerId && e.type === "input" && e.trusted === true && e.value === wb.input.value,
+    ),
+  );
+  assert.ok(
+    wa.inputEvents.some(
+      (e) =>
+        e.id === winnerId &&
+        e.type === "keydown" &&
+        e.key === "Enter" &&
+        e.trusted === true &&
+        e.value === wb.input.value,
+    ),
+  );
+  assert.equal(before.binding.owner.sourceKey, observed.owners[1].sourceKey);
+  assert.equal(before.binding.owner.pluginId, observed.owners[1].pluginId);
+  assert.equal(before.binding.scope.hostEpoch, observed.owners[1].hostEpoch);
+  assert.deepEqual(after.binding, before.binding, "The conflicted form was replaced");
+  assert.deepEqual(after.fieldIds, before.fieldIds, "Settings field map changed");
+  const inputId = `setting-${before.binding.scope.workbenchInstance}-${before.fieldIds["fixture.note"]}`;
+  for (const form of [before, after]) {
+    assert.ok(typeof form.fieldIds["fixture.note"] === "string");
+    assert.equal(form.input.id, inputId, "Wrong native field");
+    assert.equal(form.input.value, before.raw["fixture.note"]);
+    assert.equal(form.raw["fixture.note"], before.raw["fixture.note"]);
+  }
+  assert.ok(
+    typeof before.raw["fixture.note"] === "string" && before.raw["fixture.note"].length > 0,
+  );
+  for (const update of observed.updates) {
+    assert.equal(
+      update.params.expectedRevision,
+      before.state.baseline.revision,
+      "Not the same CAS revision",
+    );
+    assert.equal(update.params.schemaVersion, before.state.baseline.schemaVersion);
+  }
+  assert.deepEqual(loser.params.changes, [
+    { key: "fixture.note", value: before.raw["fixture.note"] },
+  ]);
+  assert.equal(winner.result.ok, true);
+  assert.equal(loser.result.ok, false);
+  assert.equal(loser.result.error.code, "PLUGIN_E_SETTINGS_CONFLICT");
+  assert.notEqual(observed.persisted.revision, before.state.baseline.revision);
+  assert.deepEqual(observed.persisted, winner.result.value.snapshot);
+  const persisted = observed.persisted.values.find((row) => row.key === "fixture.note");
+  assert.ok(persisted);
+  assert.deepEqual(winner.params.changes, [{ key: "fixture.note", value: persisted.value }]);
+  assert.notEqual(persisted.value, before.raw["fixture.note"]);
+  assert.ok(
+    after.state.draft.some(
+      (row) => row.key === "fixture.note" && row.value === before.raw["fixture.note"],
+    ),
+  );
+  assert.ok(after.state.errors.some((row) => row.key === "fixture.note"));
+  assert.ok(!after.state.busyKeys.includes("fixture.note"));
+  assert.ok(
+    before.inputEvents.some(
+      (event) =>
+        event.id === inputId &&
+        event.type === "input" &&
+        event.trusted === true &&
+        event.value === before.raw["fixture.note"],
+    ),
+    "Missing trusted text input",
+  );
+  assert.ok(
+    after.inputEvents.some(
+      (event) =>
+        event.id === inputId &&
+        event.type === "keydown" &&
+        event.key === "Enter" &&
+        event.trusted === true &&
+        event.value === before.raw["fixture.note"],
+    ),
+    "Missing trusted form submission",
+  );
+  assert.equal(
+    evidence.checks.settingsSuccess,
+    observed.updates.filter((row) => row.result.ok).length,
+  );
+  assert.equal(
+    evidence.checks.settingsConflict,
+    observed.updates.filter(
+      (row) => !row.result.ok && row.result.error.code === "PLUGIN_E_SETTINGS_CONFLICT",
+    ).length,
+  );
+  assert.equal(evidence.checks.dirtyDraftPreserved, true);
 }
 export function verifyFoundationReports(reports, cases) {
   assert.deepEqual(
@@ -726,7 +1097,9 @@ export async function runReferenceEntry(createFixture, config, io) {
       JSON.stringify({
         format: 1,
         level: "real-process",
-        status: config.case === "registration-end" ? "closed-case" : "closed-reference",
+        status: ["retirement", "healthy-release"].includes(config.case)
+          ? "closed-reference"
+          : "closed-case",
         runId: config.runId,
         case: config.case,
         commit: config.commit,

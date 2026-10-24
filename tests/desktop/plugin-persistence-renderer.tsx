@@ -18,7 +18,10 @@ import {
   useSettings,
 } from "../../apps/desktop/src/renderer/settings/settings-state.js";
 import { pluginUiCopy } from "../../apps/desktop/src/renderer/settings/plugin-copy.js";
-import { diagnosticsFor as hostDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
+import {
+  diagnosticsFor as hostDiagnostics,
+  settingsAttachment,
+} from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
 import { diagnosticsFor as stateDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/state-store.js";
 import type { FoundationCounters, FoundationDiagnostics } from "@kobrixa/plugin-runtime";
 import settingsResource from "./fixtures/plugin-persistence/settings.json?raw";
@@ -32,6 +35,27 @@ const owner = pluginUiWindow();
 const retained = new Map<object, FoundationDiagnostics>();
 const controls = new Set<SettingsControls>();
 const errors: string[] = [];
+const inputEvents: {
+  id: string;
+  type: string;
+  trusted: boolean;
+  key: string | null;
+  value: string;
+}[] = [];
+const observeInput = (event: Event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || !target.closest("[data-persistence-settings]"))
+    return;
+  inputEvents.push({
+    id: target.id,
+    type: event.type,
+    trusted: event.isTrusted,
+    key: event instanceof KeyboardEvent ? event.key : null,
+    value: target.value,
+  });
+  if (inputEvents.length > 64) inputEvents.shift();
+};
+for (const type of ["input", "keydown"]) document.addEventListener(type, observeInput, true);
 let disposed = false;
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 function retain(instance: object, lookup: (value: object) => FoundationDiagnostics) {
@@ -166,6 +190,7 @@ async function disposeFoundationRenderer() {
     root.unmount();
     owner.dispose();
     for (const detach of off.splice(0)) detach();
+    for (const type of ["input", "keydown"]) document.removeEventListener(type, observeInput, true);
   }
   await frame();
   await frame();
@@ -185,7 +210,24 @@ Object.assign(window, {
   persistenceAcceptance: {
     settingsSnapshot: () =>
       [...controls]
-        .map((control) => control.getSnapshot())
+        .map((control) => {
+          const view = control.getSnapshot();
+          if (!view) return null;
+          const map = settingsAttachment(control)?.fieldMap(view.resource);
+          if (!map) throw new Error("Actual settings field map missing");
+          const fieldIds = Object.fromEntries(
+            view.resource.fields.map((field) => [field.key, map.field(field.key)]),
+          );
+          const input = document.getElementById(
+            `setting-${view.binding.scope.workbenchInstance}-${fieldIds["fixture.note"]}`,
+          );
+          return {
+            ...view,
+            fieldIds,
+            input: input instanceof HTMLInputElement ? { id: input.id, value: input.value } : null,
+            inputEvents: inputEvents.filter((event) => event.id === input?.id),
+          };
+        })
         .filter(Boolean)
         .map((value) => structuredClone(value)),
     failures: () => [...errors],

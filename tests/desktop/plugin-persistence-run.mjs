@@ -104,7 +104,7 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
   if (blockers.length) throw new Error(`BLOCKED authoring acceptance:\n${blockers.join("\n")}`);
   return handoffs;
 }
-async function materialize(buildRoot, build) {
+export async function materializeFoundationFixtures(buildRoot, build, contention = false) {
   const desktopRequire = createRequire(path.join(root, "apps/desktop/package.json"));
   const { build: viteBuild } = desktopRequire("vite");
   const configBundle = path.join(buildRoot, "builtin-config.cjs");
@@ -155,13 +155,21 @@ async function materialize(buildRoot, build) {
     manifest.contributes.commands.push(
       ...persistence.contributes.commands.map((command) => ({ ...command, id: `${id}.run` })),
     );
-    if (role === "recording") {
+    if (role === "recording" || contention) {
       manifest.permissions = [
-        ...new Set([...manifest.permissions, "devices.read", "devices.connect"]),
+        ...new Set([
+          ...manifest.permissions,
+          "devices.read",
+          "devices.connect",
+          ...(contention ? ["devices.control"] : []),
+        ]),
       ];
       manifest.requires = {
         ...manifest.requires,
-        devices: [{ capability: "recordingReservation.v1", required: true }],
+        devices: [
+          { capability: "recordingReservation.v1", required: true },
+          ...(contention ? [{ capability: "finiteMotion.v1", required: true }] : []),
+        ],
       };
     }
     await writeFile(
@@ -401,7 +409,9 @@ export async function superviseCase(
       assert.equal(candidate.pid, child.pid);
       assert.equal(
         candidate.status,
-        config.case === "registration-end" ? "closed-case" : "closed-reference",
+        ["retirement", "healthy-release"].includes(config.case)
+          ? "closed-reference"
+          : "closed-case",
       );
       receipt = {
         ...candidate,
@@ -553,10 +563,10 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
   if (referencesOnly) return ["retirement", "healthy-release"];
-  if (caseId === "registration-end") return [caseId];
+  if (["registration-end", "contention"].includes(caseId)) return [caseId];
   if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
   throw new Error(
-    "BLOCKED: twelve observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+    "BLOCKED: eleven observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
 export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
@@ -573,7 +583,7 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
   const buildRoot = path.join(directory, "build");
   await mkdir(buildRoot);
   // Failed artifacts/profiles are retained for diagnosis; no profile deletion while a process is alive.
-  await materialize(buildRoot, build);
+  await materializeFoundationFixtures(buildRoot, build, selectedCases.includes("contention"));
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
     "@kobrixa/plugin-runtime": path.join(root, "packages/plugin-runtime/src/index.ts"),
