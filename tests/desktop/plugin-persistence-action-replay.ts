@@ -230,11 +230,12 @@ export async function produceActionReplay(
       uiResourceGeneration: panel.uiResourceGeneration,
     }),
   );
+  value(await input.ui.visibility({ binding: opened.binding, visible: true, reason: "tab" }));
   let revision = opened.formRevision;
   const invoke = async (speed: number) => {
     const params = {
       binding: opened.binding,
-      nodeId: "activate",
+      nodeId: "run",
       formRevision: ++revision,
       form: { ...opened.form, speed },
     };

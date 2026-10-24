@@ -104,7 +104,12 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
   if (blockers.length) throw new Error(`BLOCKED authoring acceptance:\n${blockers.join("\n")}`);
   return handoffs;
 }
-export async function materializeFoundationFixtures(buildRoot, build, contention = false) {
+export async function materializeFoundationFixtures(
+  buildRoot,
+  build,
+  contention = false,
+  actionReplay = false,
+) {
   const desktopRequire = createRequire(path.join(root, "apps/desktop/package.json"));
   const { build: viteBuild } = desktopRequire("vite");
   const configBundle = path.join(buildRoot, "builtin-config.cjs");
@@ -142,6 +147,29 @@ export async function materializeFoundationFixtures(buildRoot, build, contention
       }
     };
     await rewrite(sourceRoot);
+    if (actionReplay) {
+      // This case needs two distinct trusted UI commands through the real generic
+      // form path. The ordinary reference payload intentionally has no fields.
+      const panelPath = path.join(sourceRoot, "panel.json");
+      const panel = JSON.parse(await readFile(panelPath, "utf8"));
+      panel.fields.speed = {
+        schema: { type: "number", min: -100, max: 100, integer: true, nullable: false },
+        initial: 20,
+        required: true,
+      };
+      panel.nodes.find((node) => node.id === panel.root).children.unshift("speed");
+      panel.nodes.push({
+        id: "speed",
+        type: "number",
+        field: "speed",
+        label: { en: "Action selection" },
+        step: 1,
+      });
+      panel.nodes.find((node) => node.id === "run").action.arguments.speed = {
+        ref: { scope: "form", key: "speed" },
+      };
+      await writeFile(panelPath, JSON.stringify(panel, null, 2));
+    }
     const manifest = JSON.parse(
       await readFile(path.join(sourceRoot, "kobrixa-plugin.json"), "utf8"),
     );
@@ -609,6 +637,7 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     selectedCases.some(
       (id) => id === "contention" || id === "suspend-wake" || id === "disconnect-retry",
     ),
+    selectedCases.includes("action-replay"),
   );
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
