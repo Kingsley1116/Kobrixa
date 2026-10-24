@@ -892,6 +892,7 @@ export async function buildNative(directory) {
     ...common,
     entryPoints: [path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts")],
     outfile: path.join(directory, "persistence-worker.cjs"),
+    footer: { js: "exports.runPersistenceWorker({mappers:new Map()});" },
   });
   // Build the existing production preload from this checkout when no built artifact exists.
   await build({
