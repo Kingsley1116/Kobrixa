@@ -300,13 +300,22 @@ export function validateBlurEvidence(report) {
   );
   assert.equal(injection.detail?.focused, true);
   assert.equal(blur.detail?.focused, false);
-  assert.ok(disposed.detail?.before?.timers > 0, "Original intent existed at native blur");
+  assert.ok(injection.detail?.intent?.timers > 0, "Original intent existed before focus transfer");
   assert.equal(disposed.detail?.after?.timers, 0, "Native blur disposed intent timers");
+  // Native webContents blur may reach the renderer's cancellation path before
+  // BrowserWindow emits blur. Both paths must revoke the original identity;
+  // the injection marker alone never establishes that focus was actually lost.
+  const firstBlur = native
+    .filter(
+      (r) => ["contents-blur", "blur"].includes(r.type) && r.at >= injection.at && r.at <= blur.at,
+    )
+    .sort((a, b) => a.at - b.at)[0];
+  assert.ok(firstBlur, "Missing native focus-loss event");
   assert.ok(
     report.events.some(
       (e) =>
         e.kind === "revoke" &&
-        e.time >= blur.at &&
+        e.time >= firstBlur.at &&
         e.time <= disposed.at &&
         isDeepStrictEqual(e.binding, original.binding) &&
         isDeepStrictEqual(e.owner, original.owner),

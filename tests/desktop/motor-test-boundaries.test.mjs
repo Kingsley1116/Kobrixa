@@ -1764,7 +1764,7 @@ test("blur evidence distinguishes injection markers from native focus loss and b
     native: [
       { at: 1, type: "initial-focus-observed" },
       { at: 2, type: "fault-injection", detail: { fault: "blur" } },
-      { at: 3, type: "blur-injection-start", detail: { focused: true } },
+      { at: 3, type: "blur-injection-start", detail: { focused: true, intent: { timers: 2 } } },
       { at: 4, type: "blur", detail: { focused: false } },
       {
         at: 6,
@@ -1777,6 +1777,28 @@ test("blur evidence distinguishes injection markers from native focus loss and b
     ],
   };
   validateBlurEvidence(report);
+  // macOS can deliver webContents blur and renderer cancellation before the
+  // BrowserWindow blur listener runs. The original revoke still follows blur.
+  const rendererFirst = structuredClone(report);
+  rendererFirst.native.splice(3, 0, { at: 3.5, type: "contents-blur" });
+  rendererFirst.events[0].time = 3.75;
+  rendererFirst.native.at(-1).detail.before.timers = 0;
+  validateBlurEvidence(rendererFirst);
+  for (const mutate of [
+    (r) => {
+      r.events[0].time = 3.25;
+    },
+    (r) => {
+      r.native = r.native.filter((row) => row.type !== "contents-blur");
+    },
+    (r) => {
+      delete r.native.find((row) => row.type === "blur-injection-start").detail.intent;
+    },
+  ]) {
+    const invalid = structuredClone(rendererFirst);
+    mutate(invalid);
+    assert.throws(() => validateBlurEvidence(invalid));
+  }
   for (const mutate of [
     (r) => {
       delete r.events[0].binding;
@@ -1803,7 +1825,7 @@ test("blur evidence distinguishes injection markers from native focus loss and b
       r.native[3].detail.focused = true;
     },
     (r) => {
-      r.native[4].detail.before.timers = 0;
+      r.native[2].detail.intent.timers = 0;
     },
     (r) => {
       r.native[4].detail.after.timers = 2;

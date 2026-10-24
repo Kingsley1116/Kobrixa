@@ -1660,7 +1660,11 @@ export function runNativeMotor() {
           }
           case "blur": {
             const focused = window.isFocused();
-            native.push({ at: wall(), type: "blur-injection-start", detail: { focused } });
+            native.push({
+              at: wall(),
+              type: "blur-injection-start",
+              detail: { focused, intent: diagnostics.snapshot() },
+            });
             assert.ok(focused, "Blur injection requires focused original window");
             const other = new BrowserWindow({
               width: 200,
