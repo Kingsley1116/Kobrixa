@@ -969,7 +969,11 @@ export async function produceDisconnectRetry(
     const retryable = snapshot.items.filter(
       (r) => r.sourceKey === owner.sourceKey && r.state === "retryable",
     );
-    assert.equal(retryable.length, 1, "Expected one real failed final");
+    assert.equal(
+      retryable.length,
+      1,
+      `Expected one real failed final: ${JSON.stringify({ snapshot, reports, sdkDrains, publications })}`,
+    );
     const id = retryable[0]!.id;
     const failed = await input.backend.evidence.loadRecovery(id);
     assert.ok(failed?.ticket && failed.sealedPin && failed.expiresAt !== null);
