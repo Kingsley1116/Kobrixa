@@ -4,6 +4,7 @@ import {
   assertDisconnectObservation,
   disconnectMilestones,
 } from "./plugin-persistence-disconnect.ts";
+import { assertUnknownObservation } from "./plugin-persistence-unknown.ts";
 import { assertSuspendObservation } from "./plugin-persistence-suspend.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -619,6 +620,14 @@ export function assertDisconnectEvidence(evidence) {
 }
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "unknown-publication") {
+    assertUnknownEvidence(r.evidence);
+    assert.equal(
+      r.evidence.unknown.owner.hostEpoch,
+      r.hostEpoch,
+      "Unknown-publication proof belongs to another composition",
+    );
+  }
   if (r.case === "disconnect-retry") assertDisconnectEvidence(r.evidence);
   if (r.case === "contention") assertContentionEvidence(r.evidence);
   if (r.case === "suspend-wake") {
@@ -1257,4 +1266,41 @@ export async function runReferenceEntry(createFixture, config, io) {
   }
   await recordFailure(cleanupErrors.length ? "failed" : "settled", "entry-failure");
   return 1;
+}
+
+// Independent receipt binding: no producer summary helper or checks constants.
+export function assertUnknownEvidence(evidence) {
+  const o = evidence.unknown;
+  assert.ok(o, "Missing unknown-publication observations");
+  assertUnknownObservation(o);
+  const digest = (blob) =>
+    createHash("sha256").update(Buffer.from(blob.data, "base64")).digest("hex");
+  const publish = o.calls.filter(
+    (r) => r.phase === "publish" && r.method === "storage/commitWrite",
+  );
+  const create = o.calls.filter((r) => r.phase === "probe" && r.method === "storage/beginWrite");
+  const exported = o.export.calls.filter((r) => r.method === "reconcile");
+  assert.deepEqual(o.reconciliation.ticket, o.ticket);
+  assert.deepEqual(evidence.events, []);
+  assert.deepEqual(evidence.samples, {});
+  assert.deepEqual(evidence.checks, {
+    disposition: publish[0].result.error.detail.disposition,
+    oldEvidenceRetained: digest(o.disk.oldObject) === o.oldTicket.metadata.record.sha256,
+    newEvidenceRetained: digest(o.disk.newObject) === o.ticket.metadata.record.sha256,
+    namespaceFenced:
+      create.length === 1 &&
+      create[0].result.ok === false &&
+      o.traces.probe.length === o.traces.unknown.length,
+    secondPublicationCalls:
+      o.traces.final.filter((r) => r.point === "after-publish" && r.ticket === o.ticket.id).length -
+      1,
+    reconciledOriginalTicket: o.reconciliation.ticket.id === o.ticket.id,
+    reconciledDisposition: o.reconciliation.result.disposition,
+    exportOriginalJobReconciled:
+      exported.length === 3 && exported.every((r) => r.job === o.export.job),
+    noRepublish:
+      o.export.calls.filter((r) => r.method === "commit").length === 1 &&
+      exported.every((r) => r.trace.every((t) => t.point !== "after-publish")),
+    destinationIdentityPreserved: o.export.staged.identity === o.export.final.identity,
+  });
 }

@@ -115,7 +115,8 @@ export const FOUNDATION_CHECKS = caseChecks as Readonly<
 import assert from "node:assert/strict";
 // @ts-expect-error The test-local Node harness has no TypeScript declaration.
 import * as evidenceHarness from "./plugin-persistence-harness.mjs";
-const { assertRegistrationEndEvidence, assertContentionEvidence } = evidenceHarness;
+const { assertRegistrationEndEvidence, assertContentionEvidence, assertUnknownEvidence } =
+  evidenceHarness;
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
   const required = FOUNDATION_CHECKS[id];
   assert.ok(required, `Unknown foundation case ${id}`);
@@ -171,6 +172,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
   }
   if (id === "registration-end") assertRegistrationEndEvidence(evidence);
   if (id === "contention") assertContentionEvidence(evidence);
+  if (id === "unknown-publication") assertUnknownEvidence(evidence);
   if (id === "healthy-release") {
     for (const key of ["retireCalls", "freezeCalls", "processExits"])
       assert.equal(evidence.checks[key], 0, key);
@@ -929,6 +931,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "contention",
       "suspend-wake",
       "disconnect-retry",
+      "unknown-publication",
     ].includes(config.case)
   )
     throw new Error(
@@ -989,6 +992,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("./plugin-persistence-contention.js");
   const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
   const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
+  const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
@@ -1615,7 +1619,39 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             }),
           "renderer-loss": unavailable("renderer-loss"),
           "sealed-ttl": unavailable("sealed-ttl"),
-          "unknown-publication": unavailable("unknown-publication"),
+          "unknown-publication": () =>
+            produceUnknownPublication({
+              ...input,
+              profilePath: userData,
+              scope,
+              channel: handles
+                .channels()
+                .find((row) => row.context.owner.sourceKey === "builtin:acceptance.ui-recording")!
+                .context,
+              command: async (step) => {
+                const result = await live.plugins.execute(
+                  `acceptance.ui-recording.unknown-${step}`,
+                );
+                assert.equal(result.ok, true, JSON.stringify(result));
+              },
+              reenable: async () => {
+                const activated = await live.plugins.execute("acceptance.ui-recording.legacy");
+                assert.equal(activated.ok, true, JSON.stringify(activated));
+                const context = await handles.runtime.activateInitialized(
+                  "builtin:acceptance.ui-recording",
+                  new AbortController().signal,
+                );
+                await handles.runtime.ready(context.owner, new AbortController().signal);
+                const next = select("recording");
+                const observed = latch<ProcessExit>();
+                off.push(next.child.onExit((exit) => observed.resolve(exit)));
+                consumerExits.push(observed.promise);
+                const principal = next.principal();
+                assert.equal(principal.kind, "plugin");
+                if (principal.kind !== "plugin") throw new Error("Missing replacement principal");
+                return principal.owner;
+              },
+            }),
           "all-optional-off": unavailable("all-optional-off"),
           "action-replay": unavailable("action-replay"),
           "import-restart": unavailable("import-restart"),
@@ -1689,6 +1725,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               "contention",
               "suspend-wake",
               "disconnect-retry",
+              "unknown-publication",
             ].includes(config.case)
               ? "not-measured-scoped-case"
               : "not-measured-reference-only",

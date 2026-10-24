@@ -155,6 +155,11 @@ export async function materializeFoundationFixtures(buildRoot, build, contention
     manifest.contributes.commands.push(
       ...persistence.contributes.commands.map((command) => ({ ...command, id: `${id}.run` })),
     );
+    for (const step of ["seed", "publish", "probe", "reconcile"])
+      manifest.contributes.commands.push({
+        id: `${id}.unknown-${step}`,
+        title: { en: `Unknown publication ${step}`, "zh-TW": `未知發布 ${step}` },
+      });
     if (role === "recording" || contention) {
       manifest.permissions = [
         ...new Set([
@@ -563,7 +568,15 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
   if (referencesOnly) return ["retirement", "healthy-release"];
-  if (["registration-end", "contention", "suspend-wake", "disconnect-retry"].includes(caseId))
+  if (
+    [
+      "registration-end",
+      "contention",
+      "suspend-wake",
+      "disconnect-retry",
+      "unknown-publication",
+    ].includes(caseId)
+  )
     return [caseId];
   if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
   throw new Error(

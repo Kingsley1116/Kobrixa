@@ -34,7 +34,7 @@ test("ordinary test commands retain the pure oracle gate independently of native
   );
   assert.equal(
     scripts["test:persistence:oracles"],
-    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs tests/desktop/plugin-persistence-disconnect.test.mjs",
+    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs tests/desktop/plugin-persistence-disconnect.test.mjs tests/desktop/plugin-persistence-unknown.test.mjs",
   );
   for (const name of ["test", "test:desktop", "test:ci"])
     assert.ok(scripts[name].includes("pnpm test:persistence:oracles"), name);
@@ -153,4 +153,15 @@ test("shared manifest rejects unknown IDs and undeclared evidence", () => {
   const invalid = outcomeOracleFixture("healthy-release");
   invalid.checks.imaginary = true;
   assert.throws(() => assertFoundationOutcome("healthy-release", invalid));
+});
+
+test("unknown-publication summaries require outside raw proof", () => {
+  assert.throws(
+    () =>
+      verifyRunReceipt({
+        case: "unknown-publication",
+        evidence: outcomeOracleFixture("unknown-publication"),
+      }),
+    /Missing unknown-publication observations/,
+  );
 });

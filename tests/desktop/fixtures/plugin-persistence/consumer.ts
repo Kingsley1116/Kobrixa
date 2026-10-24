@@ -9,6 +9,75 @@ const value = <T>(result: { ok: true; value: T } | { ok: false; error: unknown }
 void runPlugin(
   definePlugin({
     activate(ctx) {
+      // Explicit T7 commands use this process's original public SDK channel.
+      // Keep the original write handle across the lost-confirmation boundary.
+      let unknownWrite: string | undefined;
+      let unknownStep = 0;
+      const unknownBytes = (next: boolean) =>
+        Buffer.from(
+          next ? "T7 complete replacement payload\n" : "T7 complete predecessor payload\n",
+        );
+      const unknownInput = (next: boolean) => ({
+        kind: "test.unknown-publication",
+        schemaVersion: 1,
+        label: "Unknown publication",
+        mediaType: "application/octet-stream" as const,
+        byteLength: unknownBytes(next).length,
+        sha256: createHash("sha256").update(unknownBytes(next)).digest("hex"),
+      });
+      if (ctx.pluginId.startsWith("acceptance.ui-"))
+        for (const step of ["seed", "publish", "probe", "reconcile"] as const)
+          ctx.commands.register(`${ctx.pluginId}.unknown-${step}`, async () => {
+            assert.equal(["seed", "publish", "probe", "reconcile"][unknownStep++], step);
+            if (step === "seed") {
+              const stage = async (
+                next: boolean,
+                target: Parameters<typeof ctx.storage.beginWrite>[0]["target"],
+              ) => {
+                const write = value(
+                  await ctx.storage.beginWrite({ ...unknownInput(next), target }),
+                );
+                value(
+                  await ctx.storage.writeChunk({
+                    write: write.write,
+                    offset: 0,
+                    data: unknownBytes(next).toString("base64"),
+                  }),
+                );
+                value(await ctx.storage.sealWrite({ write: write.write }));
+                return write;
+              };
+              const old = await stage(false, { mode: "create" });
+              const saved = value(await ctx.storage.commitWrite({ write: old.write }));
+              unknownWrite = (
+                await stage(true, {
+                  mode: "replace",
+                  id: saved.record.id,
+                  expectedRevision: saved.record.revision,
+                })
+              ).write;
+            } else if (step === "publish") {
+              assert.ok(unknownWrite);
+              const result = await ctx.storage.commitWrite({ write: unknownWrite });
+              assert.equal(result.ok, false);
+              if (!result.ok) assert.equal(result.error.code, "PLUGIN_E_STORAGE_IO");
+            } else if (step === "probe") {
+              const result = await ctx.storage.beginWrite({
+                ...unknownInput(true),
+                target: { mode: "create" },
+              });
+              // Always clean an accidentally admitted write before reporting failure.
+              if (result.ok) value(await ctx.storage.abortWrite({ write: result.value.write }));
+              assert.equal(result.ok, false);
+            } else {
+              assert.ok(unknownWrite);
+              const saved = value(await ctx.storage.commitWrite({ write: unknownWrite }));
+              assert.deepEqual(
+                value(await ctx.storage.commitWrite({ write: unknownWrite })),
+                saved,
+              );
+            }
+          });
       // One public SDK context for both the packaged UI v1 and persistence fixture.
       if (ctx.pluginId.startsWith("acceptance.ui-")) {
         ctx.commands.register(`${ctx.pluginId}.legacy`, async () => {});
