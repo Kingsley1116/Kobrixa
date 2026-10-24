@@ -163,9 +163,15 @@ if (signMac) {
   required(process.env, "APPLE_ID");
   required(process.env, "APPLE_APP_SPECIFIC_PASSWORD");
 }
+let nativeOutput;
 await packageElectron({
   publish: "never",
   config: {
+    afterPack: ({ appOutDir }) => {
+      if (nativeOutput && nativeOutput !== appOutDir)
+        throw new Error("Desktop build produced multiple platform outputs");
+      nativeOutput = appOutDir;
+    },
     publish: null, // Preserve the fixed updater resource; metadata is generated after signing.
     appId: "com.kobrixa.ide",
     productName: "Kobrixa",
@@ -229,15 +235,7 @@ await packageElectron({
     buildVersion: platform === "win32" ? windowsVersion(version) : version.split(/[+-]/)[0],
   },
 });
-const nativeOutput = path.join(
-  output,
-  "builder",
-  platform === "darwin"
-    ? `mac${arch === "arm64" ? "-arm64" : ""}`
-    : platform === "win32"
-      ? "win-unpacked"
-      : "linux-unpacked",
-);
+if (!nativeOutput) throw new Error("Desktop packaging did not report its output directory");
 const destination = path.join(output, `Kobrixa-${platform}-${arch}`);
 await rm(destination, { recursive: true, force: true });
 await cp(nativeOutput, destination, { recursive: true, verbatimSymlinks: true });
