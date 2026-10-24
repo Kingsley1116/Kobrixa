@@ -1635,6 +1635,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 assert.equal(result.ok, true, JSON.stringify(result));
               },
               reenable: async () => {
+                // Enable alone keeps the source generation. Explicitly reload the
+                // retired source before testing old-generation publication rights.
+                const reloaded = await live.plugins.reload("builtin:acceptance.ui-recording");
+                assert.equal(reloaded.ok, true, JSON.stringify(reloaded));
                 const activated = await live.plugins.execute("acceptance.ui-recording.legacy");
                 assert.equal(activated.ok, true, JSON.stringify(activated));
                 const context = await handles.runtime.activateInitialized(
