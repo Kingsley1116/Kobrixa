@@ -159,6 +159,8 @@ type Options = DeviceBrokerOptions;
 type Session = {
   /** Storage may outlive an already-ended reservation. */
   hadReservations: boolean;
+  initialization?: Promise<void>;
+  connectionClosed?: boolean;
   recoveryDisposition?: Promise<DeviceDisposition>;
   recoveryClosed?: boolean;
   snapshot: DeviceSessionSnapshot;
@@ -1246,22 +1248,53 @@ export function createBroker(
           unregister: () => {},
         };
         session = current;
+        const initialize = async () => {
+          try {
+            const outcome = await current.provider.sources(
+              connection.key,
+              contexts(principal, current, "passive-read", 10000).work,
+            );
+            if (
+              outcome.error?.reason === "provider-disabled" &&
+              outcome.dispatch !== "unknown" &&
+              outcome.stopConfirmation !== "unconfirmed"
+            )
+              deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "provider-disabled");
+            current.sources = sourceCatalogSchema.parse(value(outcome));
+            getSession(principal, id);
+            snapshot.sourceRevision = current.sources.sourceRevision;
+          } catch (error) {
+            current.sampler.dispose();
+            const detail = error instanceof BrokerFailure ? error.result.error.detail : null;
+            const withdrawn = detail?.kind === "device" && detail.reason === "provider-disabled";
+            if (withdrawn && !current.lane.quarantined) {
+              const cleanup = contexts(principal, current, "connection", 15000).cleanup;
+              let confirmed = false;
+              try {
+                const closed = await current.provider.disconnect(connection.key, cleanup);
+                confirmed = !closed.error && closed.stopConfirmation !== "unconfirmed";
+              } finally {
+                if (!confirmed) {
+                  current.lane.quarantined = true;
+                  current.snapshot.state = "quarantined";
+                }
+              }
+              if (confirmed) {
+                current.connectionClosed = true;
+                current.snapshot.state = "disconnected";
+              }
+            } else {
+              current.lane.quarantined = true;
+              current.snapshot.state = "quarantined";
+            }
+            throw error;
+          }
+        };
+        current.initialization = initialize();
         try {
-          current.sources = sourceCatalogSchema.parse(
-            value(
-              await current.provider.sources(
-                connection.key,
-                contexts(principal, current, "passive-read", 10000).work,
-              ),
-            ),
-          );
-          getSession(principal, id);
-          snapshot.sourceRevision = current.sources.sourceRevision;
-        } catch (error) {
-          current.sampler.dispose();
-          current.lane.quarantined = true;
-          current.snapshot.state = "quarantined";
-          throw error;
+          await current.initialization;
+        } finally {
+          delete current.initialization;
         }
         current.unregister = current.provider.onDisconnect((key) => {
           if (key !== connection.key) return;
@@ -2127,6 +2160,13 @@ export function createBroker(
           }
         }
         const work = async () => {
+          // Initialization owns its withdrawal cleanup. Its failure is reflected
+          // in the lane/retained native close, never turned into a clean receipt.
+          if (current?.initialization)
+            await bounded(
+              current.initialization.catch(() => {}),
+              15000,
+            );
           // Reuse the participant's original session receipt and recovery evidence.
           const device = (async () =>
             resources.retireProvider(provider.id, registration.generation))();
@@ -2153,7 +2193,7 @@ export function createBroker(
             15000,
           );
           const ctx = contexts(samplerPrincipal, current, "connection", 15000);
-          if (current && session === current && !disconnected) {
+          if (current && session === current && !disconnected && !current.connectionClosed) {
             const outcome = await current.provider.disconnect(current.connection.key, ctx.cleanup);
             if (outcome.error) throw new Error("Provider disconnect failed.", { cause: outcome });
             disconnected = true;
