@@ -1538,9 +1538,16 @@ export function runNativeMotor() {
           case "motor-disable":
             deferLifecycle(composition.plugins.setEnabled(sourceKey, false));
             break;
-          case "provider-disable":
-            deferLifecycle(composition.plugins.setEnabled("builtin:kobrixa.device-ev3", false));
+          case "provider-disable": {
+            const startedAt = wall();
+            deferLifecycle(
+              composition.plugins.setEnabled("builtin:kobrixa.device-ev3", false).then((result) => {
+                lifecycleReceipt.providerRetirement = { startedAt, finishedAt: wall() };
+                return result;
+              }),
+            );
             break;
+          }
           case "suspend":
             deferLifecycle(ui.coordinator.suspend(sessionId));
             break;

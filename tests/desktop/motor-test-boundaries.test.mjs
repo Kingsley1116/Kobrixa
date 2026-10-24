@@ -1901,3 +1901,51 @@ test("awaited cleanup permits one new disconnect identity without hiding reconne
     assert.throws(() => validateProviderTrace(invalid, { fault: "source-loss" }));
   }
 });
+
+test("provider disable joins one disconnect after original readback and never reconnects", () => {
+  const report = {
+    operationId: "motion",
+    faultAt: 1,
+    lifecycleReceipt: { providerRetirement: { startedAt: 1, finishedAt: 6 } },
+    trace: [
+      { step: "stop", dispatch: "sent", operationId: "motion", time: 2 },
+      { step: "readback", dispatch: "sent", operationId: "motion", time: 3 },
+      { step: "disconnect", dispatch: "not-sent", operationId: "retirement", time: 4 },
+      { step: "disconnect", dispatch: "sent", operationId: "retirement", time: 5 },
+    ],
+  };
+  validateProviderTrace(report, { fault: "provider-disable" });
+  for (const mutate of [
+    (r) => {
+      delete r.lifecycleReceipt.providerRetirement;
+    },
+    (r) => {
+      r.lifecycleReceipt.providerRetirement.startedAt = 0;
+    },
+    (r) => {
+      r.lifecycleReceipt.providerRetirement.finishedAt = 4;
+    },
+    (r) => {
+      r.lifecycleReceipt.error = "failure";
+    },
+    (r) => {
+      r.trace[2].time = 2;
+    },
+    (r) => {
+      r.trace[3].operationId = "foreign";
+    },
+    (r) => {
+      r.trace[2].operationId = r.trace[3].operationId = "motion";
+    },
+    (r) => {
+      r.trace[3].step = "connect";
+    },
+    (r) => {
+      r.trace.push({ ...r.trace[3] });
+    },
+  ]) {
+    const invalid = structuredClone(report);
+    mutate(invalid);
+    assert.throws(() => validateProviderTrace(invalid, { fault: "provider-disable" }));
+  }
+});

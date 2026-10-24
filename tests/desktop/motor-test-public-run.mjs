@@ -226,6 +226,32 @@ export function validateProviderTrace(report, scenario) {
       .every((r) => r.operationId === report.operationId),
     "Motor provider trace must belong to original operation",
   );
+  if (scenario.fault === "provider-disable") {
+    const retirement = report.lifecycleReceipt?.providerRetirement;
+    assert.ok(
+      retirement && Number.isFinite(retirement.startedAt) && Number.isFinite(retirement.finishedAt),
+    );
+    assert.ok(
+      retirement.startedAt >= report.faultAt && retirement.finishedAt >= retirement.startedAt,
+    );
+    assert.ok(!cleanup || retirement.finishedAt <= cleanup.startedAt);
+    assert.equal(report.lifecycleReceipt.error, undefined);
+    assert.deepEqual(
+      connections.map((row) => [row.step, row.dispatch]),
+      [
+        ["disconnect", "not-sent"],
+        ["disconnect", "sent"],
+      ],
+    );
+    const [admitted, sent] = connections;
+    assert.ok(admitted.operationId && admitted.operationId !== report.operationId);
+    assert.equal(sent.operationId, admitted.operationId);
+    const readback = workload.findLast((row) => row.step === "readback" && row.dispatch === "sent");
+    assert.ok(readback && readback.operationId === report.operationId);
+    assert.ok(admitted.time >= readback.time && admitted.time >= retirement.startedAt);
+    assert.ok(sent.time >= admitted.time && sent.time <= retirement.finishedAt);
+    return;
+  }
   if (scenario.fault !== "disconnect") return assert.deepEqual(connections, []);
   assert.equal(report.lifecycleReceipt?.error, undefined);
   const reconnected = report.lifecycleReceipt?.reconnected;
