@@ -303,6 +303,13 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
     );
     assert.equal(winnerBefore.state.baseline.revision, beforeForm.state.baseline.revision);
     assert.equal(beforeForm.binding.owner.sourceKey, owners[1]!.sourceKey);
+    // Core settings forms publish under their native window authority, not the
+    // optional feature process epoch. Source generation still comes from admission.
+    const settingsOwner: ResourceOwner = {
+      ...owners[1]!,
+      hostEpoch: winnerBefore.binding.scope.hostEpoch,
+      processEpoch: winnerBefore.binding.scope.workbenchInstance,
+    };
     const initial = value(
       await input.host.request(principals[1]!, "settings/read", { schemaVersion: 1 }, signal),
     );
@@ -506,7 +513,7 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
     let writeSettled = false;
     try {
       const priorBarrier = input.backend.evidence.capture(
-        { kind: "namespace", owner: owners[1]! },
+        { kind: "namespace", owner: settingsOwner },
         input.now() + 15000,
       );
       const priorTickets = new Set(
@@ -536,7 +543,7 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
         .at(-1)?.ticket;
       assert.ok(pausedTicket, "Paused write has no original ticket");
       const barrier = input.backend.evidence.capture(
-        { kind: "namespace", owner: owners[1]! },
+        { kind: "namespace", owner: settingsOwner },
         input.now() + 15000,
       );
       const originalTickets = input.backend.evidence
@@ -554,7 +561,7 @@ export async function produceContention(input: Input): Promise<CaseEvidence> {
       assert.equal(expectedTicket.metadata.kind, "settings");
       if (expectedTicket.target.kind === "settings")
         assert.equal(expectedTicket.target.expectedRevision, initial.revision);
-      assert.deepEqual(expectedTicket.owner, owners[1]);
+      assert.deepEqual(expectedTicket.owner, settingsOwner);
       beforeForm = await input.form.edit();
       await input.form.submit();
       const submitted = await bounded(entered.promise);

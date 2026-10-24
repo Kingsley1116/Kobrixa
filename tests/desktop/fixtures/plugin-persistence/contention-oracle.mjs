@@ -221,7 +221,11 @@ export function contentionOracle() {
         pausedTicket: id(10),
         expectedTicket: {
           id: id(10),
-          owner: owners[1],
+          owner: {
+            ...owners[1],
+            hostEpoch: winnerBefore.binding.scope.hostEpoch,
+            processEpoch: winnerBefore.binding.scope.workbenchInstance,
+          },
           target: { kind: "settings", expectedRevision: baseline.revision },
           metadata: { kind: "settings" },
         },

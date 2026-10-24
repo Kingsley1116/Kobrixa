@@ -203,6 +203,10 @@ test("contention releases the original reservation when setup or cleanup fails",
 test("contention oracle requires both owners, live conflicts and the actual losing form", () => {
   assertContentionEvidence(contentionOracle());
   for (const mutate of [
+    (e) => (e.contention.blockedSave.expectedTicket.owner = e.contention.owners[1]),
+    (e) =>
+      (e.contention.blockedSave.expectedTicket.owner.processEpoch =
+        e.contention.beforeForm.binding.scope.workbenchInstance),
     (e) => (e.contention.motionProbes[0].startedAt = 0),
     (e) => (e.contention.motionProbes[1].endedAt = 5),
     (e) => (e.contention.checkpoint.pause.ticket.id = e.contention.sessionId),

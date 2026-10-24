@@ -767,7 +767,11 @@ export function assertContentionEvidence(evidence) {
   assert.equal(blocked.writeSettledAtStop, false);
   identity(blocked.pausedTicket);
   assert.equal(blocked.expectedTicket.id, blocked.pausedTicket);
-  assert.deepEqual(blocked.expectedTicket.owner, observed.owners[1]);
+  assert.deepEqual(blocked.expectedTicket.owner, {
+    ...observed.owners[1],
+    hostEpoch: observed.winnerBefore.binding.scope.hostEpoch,
+    processEpoch: observed.winnerBefore.binding.scope.workbenchInstance,
+  });
   assert.deepEqual(blocked.expectedTicket.target, {
     kind: "settings",
     expectedRevision: observed.beforeForm.state.baseline.revision,
