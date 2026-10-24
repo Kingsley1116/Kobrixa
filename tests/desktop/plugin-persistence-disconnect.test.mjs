@@ -692,3 +692,11 @@ test("SDK dispatch may shorten a fractional budget but cannot renew or erase it"
     assert.throws(() => assertDisconnectObservation(observation));
   }
 });
+
+test("wall-clock projection may shorten the original recovery TTL but never extend it", () => {
+  const observation = specimen();
+  observation.recovered.expiresAt = observation.failed.expiresAt - 1;
+  assert.doesNotThrow(() => assertDisconnectObservation(observation));
+  observation.recovered.expiresAt = observation.failed.expiresAt + 1;
+  assert.throws(() => assertDisconnectObservation(observation), /TTL renewed/);
+});

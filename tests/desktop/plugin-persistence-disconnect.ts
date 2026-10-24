@@ -352,7 +352,10 @@ export function assertDisconnectObservation(o: DisconnectObservation): void {
   assert.equal(o.recovered.id, o.failed.id);
   assert.deepEqual(o.recovered.ticket, o.failed.ticket);
   assert.equal(o.recovered.sealedPin, null, "Saved recovery retained its staging pin");
-  assert.equal(o.recovered.expiresAt, o.failed.expiresAt, "Recovery TTL renewed");
+  assert.ok(
+    o.recovered.expiresAt !== null && o.recovered.expiresAt <= o.failed.expiresAt,
+    "Recovery TTL renewed",
+  );
   assert.ok(o.retry.wall < o.failed.expiresAt);
   assert.equal(o.retry.report.state, "saved");
   assert.equal(o.retry.report.blocker, false);
