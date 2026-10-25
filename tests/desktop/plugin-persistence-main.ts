@@ -120,6 +120,7 @@ const {
   assertContentionEvidence,
   assertUnknownEvidence,
   assertActionReplayEvidence,
+  assertSealedTtlEvidence,
 } = evidenceHarness;
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
   const required = FOUNDATION_CHECKS[id];
@@ -178,6 +179,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
   if (id === "contention") assertContentionEvidence(evidence);
   if (id === "unknown-publication") assertUnknownEvidence(evidence);
   if (id === "action-replay") assertActionReplayEvidence(evidence);
+  if (id === "sealed-ttl") assertSealedTtlEvidence(evidence);
   if (id === "healthy-release") {
     for (const key of ["retireCalls", "freezeCalls", "processExits"])
       assert.equal(evidence.checks[key], 0, key);
@@ -880,7 +882,7 @@ export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<
 
 // Test-local artifact metadata; no executable adapters, host factories or evidence inputs.
 // Controller materializes this JSON and configures userData before calling the factory.
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type * as ElectronModule from "electron";
@@ -936,6 +938,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "contention",
       "suspend-wake",
       "disconnect-retry",
+      "sealed-ttl",
       "unknown-publication",
       "action-replay",
     ].includes(config.case)
@@ -999,6 +1002,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("./plugin-persistence-contention.js");
   const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
   const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
+  const { produceSealedTtl } = await import("./plugin-persistence-sealed-ttl.js");
   const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
   const { produceActionReplay, nativeActionControl } =
     await import("./plugin-persistence-action-replay.js");
@@ -1660,7 +1664,57 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               },
             }),
           "renderer-loss": unavailable("renderer-loss"),
-          "sealed-ttl": unavailable("sealed-ttl"),
+          "sealed-ttl": () =>
+            produceSealedTtl({
+              ...input,
+              channel: handles
+                .channels()
+                .find((row) => row.context.owner.sourceKey === "builtin:acceptance.ui-recording")!
+                .context,
+              command: async (step, signal) => {
+                signal.throwIfAborted();
+                const result = await live.plugins.execute(`acceptance.ui-recording.ttl-${step}`);
+                assert.equal(result.ok, true, JSON.stringify(result));
+                signal.throwIfAborted();
+              },
+              discard: async (id) => {
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const option = snapshot.value.items
+                    .find((row) => row.id === id)
+                    ?.actions.find((row) => row.kind === "discard");
+                  if (!option) continue;
+                  const result = await detail.bridge.act({
+                    itemId: entry.item.id,
+                    optionId: option.id,
+                  });
+                  assert.equal(result.ok, true, JSON.stringify(result));
+                  return;
+                }
+                throw new Error("Original recovery bridge has no exact Discard option");
+              },
+              retry: async (id) => {
+                // Original composition's trusted recovery bridge owns option lookup,
+                // fresh ledger mint/claim and actual participant retry dispatch.
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const item = snapshot.value.items.find((row) => row.id === id);
+                  const option = item?.actions.find((row) => row.kind === "retry");
+                  if (!option) continue;
+                  const result = await detail.bridge.act({
+                    itemId: entry.item.id,
+                    optionId: option.id,
+                  });
+                  assert.ok(result.ok, JSON.stringify(result));
+                  return;
+                }
+                throw new Error("Original recovery bridge has no Retry option for failed final");
+              },
+            }),
           "unknown-publication": () =>
             produceUnknownPublication({
               ...input,
@@ -1922,6 +1976,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               "contention",
               "suspend-wake",
               "disconnect-retry",
+              "sealed-ttl",
               "unknown-publication",
               "action-replay",
             ].includes(config.case)
@@ -1935,7 +1990,17 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             assert.equal(closing, undefined);
             ran = true;
             assertRealComposition(fixture!);
-            const evidence = await producers[id]();
+            let evidence: CaseEvidence;
+            try {
+              evidence = await producers[id]();
+            } catch (error) {
+              if (id === "sealed-ttl" && error instanceof Error && error.cause)
+                await writeFile(
+                  path.join(userData, "sealed-ttl-failure-observation.json"),
+                  JSON.stringify(error.cause, null, 2),
+                );
+              throw error;
+            }
             assertFoundationEvidence(id, evidence);
             return evidence;
           },

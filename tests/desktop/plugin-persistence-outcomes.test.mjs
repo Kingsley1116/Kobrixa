@@ -1,3 +1,4 @@
+import "./plugin-persistence-sealed-ttl.test.mjs";
 import "./plugin-persistence-action-replay.test.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
