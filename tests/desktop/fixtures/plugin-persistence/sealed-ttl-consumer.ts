@@ -136,6 +136,8 @@ export function installSealedTtlConsumer(ctx: PluginContext) {
         assert.equal(pin.ok, false);
         const commit = await ctx.storage.commitWrite({ write: state.write! });
         assert.equal(commit.ok, false);
+        const status = value(await ctx.storage.writeStatus({ write: state.write! }));
+        assert.equal(status.state, "expired");
       } else if (step.startsWith("read-")) await read(step.slice(5), false);
       else {
         for (const state of states.values()) {

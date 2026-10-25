@@ -276,6 +276,19 @@ function specimen() {
     30202,
   );
   bad("expired", "commitWrite", { write: s.finalTicket.id }, "PLUGIN_E_STALE_RESOURCE", 30204);
+  row(
+    "expired",
+    "writeStatus",
+    { write: s.finalTicket.id },
+    {
+      write: s.finalTicket.id,
+      id: s.old.id,
+      state: "expired",
+      receivedBytes: s.finalBytes.length,
+      expiresAt: offset + 30025,
+    },
+    30205,
+  );
   read(s, "read-sealed", 30206, 51);
   const i = seed(30, 30220, "seed-incomplete", false),
     di = drain(i, "drain-incomplete", 30229, false);
@@ -365,6 +378,18 @@ test("pure correlated specimen validates; never executes a native producer", () 
   assert.equal(Object.keys(sealedTtlSummary(o)).length, 10);
 });
 const mutations = {
+  "write stayed sealed after expiry": (o) => {
+    get(o, "expired", "writeStatus").result.value.state = "sealed";
+  },
+  "write state belongs to another handle": (o) => {
+    get(o, "expired", "writeStatus").result.value.write = id(99);
+  },
+  "stale commit after discard": (o) => {
+    get(o, "expired", "commitWrite").end = clock(30219);
+  },
+  "stale read after discard": (o) => {
+    get(o, "expired", "readChunk").end = clock(30219);
+  },
   "discard before preservation probe": (o) => {
     o.discards[0].start = clock(30200);
   },

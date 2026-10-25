@@ -497,6 +497,16 @@ export function assertSealedTtlObservation(o: SealedTtlObservation): void {
   assert.equal(lateCommit.params.write, s.t.id);
   assert.ok(lateCommit.start.mono >= expired!.start.mono);
   denied(lateCommit, "PLUGIN_E_STALE_RESOURCE");
+  // An expired grant alone also rejects commit. Read the original write state
+  // before any explicit discard so this proof cannot confuse grant loss with TTL.
+  const expiredStatus = rpc(o, "expired", "writeStatus");
+  assert.deepEqual(expiredStatus.params, { write: s.t.id });
+  assert.equal(ok(expiredStatus).state, "expired");
+  assert.equal(ok(expiredStatus).write, s.t.id);
+  assert.equal(ok(expiredStatus).id, s.meta.id);
+  assert.equal(ok(expiredStatus).receivedBytes, s.staged.length);
+  assert.ok(expiredStatus.start.mono >= lateCommit.end.mono);
+
   assert.equal(
     o.calls.filter(
       (r) =>
@@ -520,6 +530,9 @@ export function assertSealedTtlObservation(o: SealedTtlObservation): void {
   const discard = one(o.discards, "explicit post-expiry recovery discard");
   clock(discard.start, o.started);
   clock(discard.end, o.started);
+  assert.ok(late.end.mono <= discard.start.mono);
+  assert.ok(lateCommit.end.mono <= discard.start.mono);
+  assert.ok(expiredStatus.end.mono <= discard.start.mono);
   assert.equal(discard.id, o.recovery.expired.id);
   assert.match(discard.action.actionToken, /^[0-9a-f-]{36}$/);
   assert.equal(discard.action.scope.hostEpoch, o.owner.hostEpoch);
