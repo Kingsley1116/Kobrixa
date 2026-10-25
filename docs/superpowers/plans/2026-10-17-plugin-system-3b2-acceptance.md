@@ -1,6 +1,10 @@
 # Stage 3B-2 acceptance ledger
 
-Status: BLOCKED for real acceptance; T7 W1 authoring only. This document records gates, not measured results. Synthetic unit results do not close real-process, installed, filesystem, UI or hardware acceptance. T7 owns this file until its stopped-owner handoff to T9.
+Status (2026-10-26): local source assembly and several scoped real-process cases are implemented and verified; aggregate acceptance remains OPEN. Historical W1 statements below describe their dated baseline, not current source capabilities. Synthetic unit results do not close real-process, installed, filesystem, UI or hardware acceptance.
+
+Retained scoped Electron evidence is available for [contention](../evidence/2026-10-24-3b2-contention/README.md), [suspend/wake](../evidence/2026-10-24-3b2-suspend/README.md), [disconnect/retry](../evidence/2026-10-24-3b2-disconnect/README.md), [unknown publication](../evidence/2026-10-24-3b2-unknown-publication/README.md), and [action replay](../evidence/2026-10-26-3b2-action-replay/README.md). Each receipt retains its own candidate commit, actual worker/consumer observations and cleanup. They are not interchangeable full-matrix results. Action replay at `89a1bbc` was revalidated under the strengthened `9189992` oracle; its independent scoped re-review passed. Installed worker packaging evidence is narrower than installed product acceptance.
+
+Remaining foundation producers include renderer-loss, sealed-ttl, all-optional-off, import-restart, storage-ui-pressure, compatibility and installed. Registration-end is implemented; its integrated execution receipt is maintained on the local integration branch. B2-N01–N29, complete RF5, JS/Python interop, load and installed-product/manual gates remain open. P170/R170/D170/V170/K170 local source handoffs do not by themselves close formal publication or X-T1.
 
 | Gate                | Required evidence                                                                                                                                                | Status  |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
