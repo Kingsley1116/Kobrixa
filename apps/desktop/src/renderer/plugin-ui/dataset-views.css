@@ -1,0 +1,42 @@
+.plugin-dataset-chart {
+  margin: 0;
+  min-width: 0;
+}
+.plugin-dataset-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+}
+.plugin-dataset-chart svg text {
+  fill: currentColor;
+  font-size: 13px;
+}
+.plugin-dataset-chart input[type="range"] {
+  width: 100%;
+}
+.plugin-dataset-chart ul {
+  padding-inline-start: 1.25rem;
+  overflow-wrap: anywhere;
+}
+.plugin-dataset-table,
+.plugin-dataset-code pre {
+  max-width: 100%;
+  overflow: auto;
+}
+.plugin-dataset-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.plugin-dataset-table th,
+.plugin-dataset-table td {
+  text-align: start;
+  vertical-align: top;
+  padding: 0.35rem;
+  border-bottom: 1px solid currentColor;
+  overflow-wrap: anywhere;
+}
+.plugin-dataset-code pre {
+  white-space: pre;
+  tab-size: 2;
+}
