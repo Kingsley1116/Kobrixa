@@ -255,7 +255,14 @@ export function createSettingsService(deps: SettingsDependencies) {
       },
       target: { kind: "settings" as const, expectedRevision: expected },
     });
-    const bytes = Buffer.from(JSON.stringify(values));
+    const bytes = Buffer.from(
+      JSON.stringify({
+        formatVersion: 1,
+        schemaVersion: version,
+        validationDigest: state.validationDigest,
+        values,
+      }),
+    );
     const check = () => {
       if (signal.aborted)
         throw { ok: false, error: { code: "PLUGIN_E_CANCELLED", message: "Cancelled." } };
@@ -436,16 +443,22 @@ export function createBoundSettingsService(input: {
 }): BoundSettingsService {
   const service = settingsComposition(input);
   if (service.bound) return service.bound;
-  let active:
-    | {
-        binding: SettingsFormBinding;
-        owner: ResourceOwner;
-        resource: SettingsResourceV1;
-        callbacks: Set<() => void>;
-        cleanups: Set<() => void>;
-        subscription?: Handle;
-      }
-    | undefined;
+  type Form = {
+    binding: SettingsFormBinding;
+    owner: ResourceOwner;
+    resource: SettingsResourceV1;
+    callbacks: Set<() => void>;
+    cleanups: Set<() => void>;
+    subscription?: Handle;
+  };
+  // One replaceable slot per admitted native window, including opens in flight.
+  // coreOwner restricts admission to the registered windows/source catalog.
+  const slots = new Map<string, { sourceKey: string; form?: Form }>();
+  let disposed = false;
+  const scopeKey = (scope: SettingsFormBinding["scope"]) =>
+    JSON.stringify([scope.hostEpoch, scope.workbenchInstance]);
+  const currentForm = (binding: SettingsFormBinding) => slots.get(scopeKey(binding.scope))?.form;
+  const isCurrent = (form: Form) => currentForm(form.binding) === form;
   const identity = (binding: SettingsFormBinding) =>
     JSON.stringify([
       binding.owner.sourceKey,
@@ -455,10 +468,9 @@ export function createBoundSettingsService(input: {
       binding.scope.workbenchInstance,
       binding.resourceDigest,
     ]);
-  async function resolve(binding: SettingsFormBinding) {
-    if (!active || identity(binding) !== identity(active.binding))
+  async function resolve(binding: SettingsFormBinding, form = currentForm(binding)) {
+    if (!form || !isCurrent(form) || identity(binding) !== identity(form.binding))
       throw new Error("Stale settings binding.");
-    const form = active;
     const resolved = await input.sources.settings({
       sourceKey: binding.owner.sourceKey,
       resourceDigest: binding.resourceDigest,
@@ -468,9 +480,10 @@ export function createBoundSettingsService(input: {
       scope: binding.scope,
     });
     if (
-      active !== form ||
+      !isCurrent(form) ||
       !resolved ||
       !owner ||
+      resolved.owner.sourceKey !== binding.owner.sourceKey ||
       ownerKey(owner) !== ownerKey(form.owner) ||
       resolved.owner.uiResourceGeneration !== binding.owner.uiResourceGeneration ||
       resolved.owner.pluginId !== binding.owner.pluginId
@@ -479,45 +492,64 @@ export function createBoundSettingsService(input: {
     service.admit(owner, binding.resourceDigest, resolved);
     return form;
   }
-  function dispose(binding: SettingsFormBinding) {
-    if (!active || identity(binding) !== identity(active.binding)) return;
-    if (active.subscription) {
-      input.events.unsubscribe(active.owner, active.subscription);
-      delete active.subscription;
+  function close(form: Form) {
+    if (isCurrent(form)) slots.delete(scopeKey(form.binding.scope));
+    if (form.subscription) {
+      input.events.unsubscribe(form.owner, form.subscription);
+      delete form.subscription;
     }
-    for (const off of active.cleanups) off();
-    active.cleanups.clear();
-    active.callbacks.clear();
-    active = undefined;
+    for (const off of form.cleanups) off();
+    form.cleanups.clear();
+    form.callbacks.clear();
+  }
+  function dispose(binding: SettingsFormBinding) {
+    const form = currentForm(binding);
+    if (form && identity(binding) === identity(form.binding)) close(form);
   }
   const bound: BoundSettingsService = {
     async open({ sourceKey, scope, resourceDigest }) {
-      const resolved = await input.sources.settings({ sourceKey, resourceDigest });
-      const owner = input.sources.coreOwner({ sourceKey, scope });
-      if (
-        !resolved ||
-        !owner ||
-        owner.sourceKey !== sourceKey ||
-        resolved.owner.sourceKey !== sourceKey ||
-        owner.pluginId !== resolved.owner.pluginId
-      )
+      scope = structuredClone(scope);
+      const admittedOwner = input.sources.coreOwner({ sourceKey, scope });
+      if (disposed || !admittedOwner || admittedOwner.sourceKey !== sourceKey)
         throw new Error("Settings source is not admitted.");
-      if (active) dispose(active.binding);
-      const binding = { owner: resolved.owner, scope, resourceDigest };
-      active = {
-        binding: structuredClone(binding),
-        owner: structuredClone(owner),
-        resource: structuredClone(resolved.resource),
-        callbacks: new Set(),
-        cleanups: new Set(),
-      };
-      service.admit(owner, resourceDigest, resolved);
-      const result = await bound.read(binding);
-      if (!result.ok) {
-        dispose(binding);
-        throw result.error;
+      const key = scopeKey(scope);
+      const previous = slots.get(key)?.form;
+      if (previous) close(previous);
+      const slot: { sourceKey: string; form?: Form } = { sourceKey };
+      slots.set(key, slot);
+      try {
+        const resolved = await input.sources.settings({ sourceKey, resourceDigest });
+        const owner = input.sources.coreOwner({ sourceKey, scope });
+        if (
+          slots.get(key) !== slot ||
+          !resolved ||
+          !owner ||
+          ownerKey(owner) !== ownerKey(admittedOwner) ||
+          resolved.owner.sourceKey !== sourceKey ||
+          owner.pluginId !== resolved.owner.pluginId
+        )
+          throw new Error("Stale settings binding.");
+        const binding = { owner: resolved.owner, scope, resourceDigest };
+        const form: Form = {
+          binding: structuredClone(binding),
+          owner: structuredClone(owner),
+          resource: structuredClone(resolved.resource),
+          callbacks: new Set(),
+          cleanups: new Set(),
+        };
+        slot.form = form;
+        service.admit(owner, resourceDigest, resolved);
+        const result = await bound.read(binding);
+        if (!isCurrent(form)) throw new Error("Stale settings binding.");
+        if (!result.ok) throw result.error;
+        return { binding, resource: resolved.resource, snapshot: result.value };
+      } catch (error) {
+        if (slots.get(key) === slot) {
+          if (slot.form) close(slot.form);
+          else slots.delete(key);
+        }
+        throw error;
       }
-      return { binding, resource: resolved.resource, snapshot: result.value };
     },
     async read(binding) {
       const form = await resolve(binding);
@@ -527,7 +559,7 @@ export function createBoundSettingsService(input: {
         { schemaVersion: form.resource.schemaVersion },
         new AbortController().signal,
         async () => {
-          await resolve(binding);
+          await resolve(binding, form);
         },
       );
     },
@@ -539,7 +571,7 @@ export function createBoundSettingsService(input: {
         params,
         new AbortController().signal,
         async () => {
-          await resolve(binding);
+          await resolve(binding, form);
         },
       );
     },
@@ -551,17 +583,17 @@ export function createBoundSettingsService(input: {
         params,
         new AbortController().signal,
         async () => {
-          await resolve(binding);
+          await resolve(binding, form);
         },
       );
     },
     watch(binding, changed) {
-      if (!active || identity(active.binding) !== identity(binding))
+      const form = currentForm(binding);
+      if (!form || identity(form.binding) !== identity(binding))
         throw new Error("Stale settings binding.");
-      const form = active;
       form.callbacks.add(changed);
       const invalidateForm = () => {
-        if (active !== form) return;
+        if (!isCurrent(form)) return;
         const callbacks = [...form.callbacks];
         dispose(binding);
         for (const callback of callbacks) {
@@ -572,19 +604,26 @@ export function createBoundSettingsService(input: {
           }
         }
       };
-      void resolve(binding)
+      void resolve(binding, form)
         .then(() => {
-          if (active !== form || !form.callbacks.has(changed) || form.subscription) return;
+          if (!isCurrent(form) || !form.callbacks.has(changed) || form.subscription) return;
           const result = input.events.create(form.owner);
           if (!result.ok) throw result.error;
           form.subscription = result.value.subscriptionId;
+          const offRemoved = input.events.onRemoved((id) => {
+            if (form.subscription !== id) return;
+            delete form.subscription;
+            offRemoved();
+            form.cleanups.delete(offRemoved);
+          });
+          form.cleanups.add(offRemoved);
           input.events.activate(form.owner, form.subscription);
         })
         .catch(invalidateForm);
       const off = service.onCommitted(form.owner, () => {
-        void resolve(binding)
+        void resolve(binding, form)
           .then(() => {
-            if (active === form && form.callbacks.has(changed)) {
+            if (isCurrent(form) && form.callbacks.has(changed)) {
               try {
                 changed();
               } catch {
@@ -610,8 +649,13 @@ export function createBoundSettingsService(input: {
     },
     dispose,
   };
-  service.bind(bound, () => {
-    if (active) dispose(active.binding);
+  service.bind(bound, (sourceKey) => {
+    if (sourceKey === undefined) disposed = true;
+    for (const [key, slot] of slots) {
+      if (sourceKey !== undefined && slot.sourceKey !== sourceKey) continue;
+      if (slot.form) close(slot.form);
+      else slots.delete(key);
+    }
   });
   return bound;
 }
@@ -642,7 +686,7 @@ function makeSettingsComposition(input: CompositionInput) {
   const listeners = new Map<string, Set<() => void>>();
   let disposed = false;
   let bound: BoundSettingsService | undefined;
-  let closeForm = () => {};
+  let closeForm = (_sourceKey?: string) => {};
   const offRemoved = input.events.onRemoved((id) => subscriptions.delete(id));
   const requireLive = () => {
     if (disposed) throw new Error("Settings service disposed.");
@@ -725,7 +769,7 @@ function makeSettingsComposition(input: CompositionInput) {
     get bound() {
       return bound;
     },
-    bind(value: BoundSettingsService, close: () => void) {
+    bind(value: BoundSettingsService, close: (sourceKey?: string) => void) {
       bound = value;
       closeForm = close;
     },
@@ -737,6 +781,15 @@ function makeSettingsComposition(input: CompositionInput) {
       )
         throw new Error("Wrong catalog owner.");
       admitted.set(owner.sourceKey, { digest, resolved: structuredClone(resolved) });
+    },
+    retire(sourceKey: string) {
+      closeForm(sourceKey);
+      admitted.delete(sourceKey);
+      for (const [id, owner] of subscriptions) {
+        if (owner.sourceKey !== sourceKey) continue;
+        input.events.unsubscribe(owner, id);
+        subscriptions.delete(id);
+      }
     },
     request<M extends keyof SettingsRequestMap>(
       principal: Principal,
@@ -778,7 +831,7 @@ function makeSettingsComposition(input: CompositionInput) {
       listeners.set(owner.sourceKey, set);
       return () => {
         set.delete(listener);
-        if (!set.size) listeners.delete(owner.sourceKey);
+        if (!set.size && listeners.get(owner.sourceKey) === set) listeners.delete(owner.sourceKey);
       };
     },
     async dispose() {

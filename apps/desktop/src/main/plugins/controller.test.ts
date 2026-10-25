@@ -3382,13 +3382,25 @@ it.each([false, true])("settings/watch uses afterReply; cancelled=%s", async (ca
 it("P170 constructs one worker and host before admission, keeps the original listener, and disposes once", async () => {
   const f = await compositionInput();
   const profile = f.input.foundationOptions.profile;
+  const nativeActions = {
+    choose: vi.fn(async () => "/host-only/selected.txt" as string | null),
+    copy: vi.fn(),
+  };
+  const destination = Object.freeze({}) as ExportDestination170;
+  const register = vi.fn(async () => destination),
+    release = vi.fn(async () => {});
+  const ledger = createCoreActionLedger({
+    now: f.input.foundationOptions.now,
+    current: f.input.currentScope,
+  });
+  f.input.foundationOptions.coreActions = ledger;
   const backend: PersistenceBackend170 = {
     engine: unusedPort170("engine"),
     reads: unusedPort170("reads"),
     evidence: unusedPort170("evidence"),
     imports: unusedPort170("imports"),
     output: unusedPort170("output"),
-    destinations: unusedPort170("destinations"),
+    destinations: { register, release },
     sources: unusedPort170("sources"),
     dispose: vi.fn(async () => {
       profile.assertHeld();
@@ -3451,7 +3463,7 @@ it("P170 constructs one worker and host before admission, keeps the original lis
     return foundation;
   });
   try {
-    const composition = await composeDesktopMain(f.input);
+    const composition = await composeDesktopMain(f.input, { nativeActions });
     expect(worker).toHaveBeenCalledExactlyOnceWith({
       profile,
       root,
@@ -3459,6 +3471,62 @@ it("P170 constructs one worker and host before admission, keeps the original lis
       now: f.input.foundationOptions.now,
     });
     expect(createHost).toHaveBeenCalledOnce();
+    // Direct composition seam test: only I/O is substituted. The original core
+    // ledger must authorize the SAME adapter passed into the production host.
+    const attached = createHost.mock.calls[0]![0];
+    const target = { kind: "persistence-export" as const, recovery: randomUUID() };
+    const action = ledger.mint(f.input.scope(), target);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(nativeActions.choose).not.toHaveBeenCalled();
+    expect(attached.coreActions.claim(action, target)).toBe(true);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBe(destination);
+    expect(nativeActions.choose).toHaveBeenCalledExactlyOnceWith("file.txt");
+    expect(register).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        action: action.actionToken,
+        scope: action.scope,
+        nativePath: "/host-only/selected.txt",
+      }),
+    );
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    await expect(attached.actionAdapter.copyText(action.actionToken, "denied")).rejects.toThrow(
+      "Stale clipboard",
+    );
+    expect(nativeActions.copy).not.toHaveBeenCalled();
+    attached.coreActions.complete(action);
+    const cancelled = ledger.mint(f.input.scope(), target);
+    expect(attached.coreActions.claim(cancelled, target)).toBe(true);
+    nativeActions.choose.mockResolvedValueOnce(null);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        cancelled.actionToken,
+        "cancel.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(register).toHaveBeenCalledTimes(1);
+    attached.coreActions.complete(cancelled);
+    const { dialog, clipboard } = await import("electron");
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
     expect(listenerCount).toBe(1);
     expect(composition.stage3.persistence).toBe(participant);
     expect(composition.stage3.device).toBe(composition.foundation.broker.resources);
@@ -3738,12 +3806,39 @@ it("composeDesktopMain uses the real worker/host for data-only settings, preserv
     expect(control).toBeDefined();
     expect(handles.channels()).toEqual([]);
     const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
-    const opened = await handles.host.settings.open({
+    let opened = await handles.host.settings.open({
       sourceKey: "builtin:test.settings",
       resourceDigest,
       scope: f.input.scope(),
     });
     expect(opened.snapshot.values).toEqual([{ key: "device.choice", value: 1 }]);
+    const stale = opened.binding;
+    await composition.plugins.setEnabled("builtin:test.settings", false);
+    await composition.plugins.setEnabled("builtin:test.settings", true);
+    opened = await vi.waitFor(() =>
+      handles.host.settings.open({
+        sourceKey: "builtin:test.settings",
+        resourceDigest,
+        scope: f.input.scope(),
+      }),
+    );
+    const reserve = vi.spyOn(handles.backend.engine, "reserve");
+    const reads = vi.spyOn(handles.backend.reads, "settings");
+    await expect(handles.host.settings.read(stale)).rejects.toThrow("Stale");
+    await expect(
+      handles.host.settings.update(stale, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "device.choice", value: "1" }],
+      }),
+    ).rejects.toThrow("Stale");
+    expect(() => handles.host.settings.watch(stale, vi.fn())).toThrow("Stale");
+    expect(opened.binding.owner.uiResourceGeneration).toBeGreaterThan(
+      stale.owner.uiResourceGeneration,
+    );
+    expect(reserve).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+    expect(await handles.host.settings.read(opened.binding)).toMatchObject({ ok: true });
     const changed = vi.fn();
     const off = handles.host.settings.watch(opened.binding, changed);
     const saved = await handles.host.settings.update(opened.binding, {
@@ -3759,6 +3854,9 @@ it("composeDesktopMain uses the real worker/host for data-only settings, preserv
       },
     });
     await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(reserve.mock.calls[0]![0].owner.generation).toBe(
+      composition.plugins.persistenceCatalogSources()[0]!.owner.generation,
+    );
     off();
     await composition.plugins.setEnabled("builtin:test.settings", false);
     await expect(handles.host.settings.read(opened.binding)).rejects.toThrow("Stale");
@@ -4466,3 +4564,378 @@ it.each(["1.7.0+build.1", "1.8.0-beta.1"])(
     }
   },
 );
+
+it.each(["malformed", "missing", "oversize", "invalid"])(
+  "isolates %s optional settings at startup and refresh while healthy settings and recovery remain available",
+  async (kind) => {
+    const f = await compositionInput();
+    const bad = staticSource170(
+      "test.bad",
+      kind === "malformed"
+        ? "{bad"
+        : kind === "oversize"
+          ? " ".repeat(65537)
+          : kind === "invalid"
+            ? "{}"
+            : settingsRaw170,
+    );
+    if (kind === "missing") bad.resources = {};
+    f.input.plugins.builtins = [bad, staticSource170()];
+    let composition: DesktopMainComposition | undefined;
+    try {
+      composition = await composeDesktopMain(f.input, {
+        worker: { entry: testWorkerEntry170, control: () => {} },
+      });
+      const settings = composition.plugins.persistence170!.settings;
+      const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
+      const open = () =>
+        settings.open({
+          sourceKey: "builtin:test.settings",
+          resourceDigest,
+          scope: f.input.scope(),
+        });
+      expect((await open()).snapshot.values).toEqual([{ key: "device.choice", value: 1 }]);
+      expect(f.input.report).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("builtin:test.bad") }),
+      );
+      expect(
+        desktopFoundationTestHandles(composition).host.participant.recoverySnapshot(),
+      ).toBeDefined();
+      await expect(
+        settings.open({ sourceKey: "builtin:test.bad", resourceDigest, scope: f.input.scope() }),
+      ).rejects.toThrow(/^(Settings source is not admitted|Stale settings binding)\.$/);
+      await composition.plugins.setEnabled("builtin:test.bad", false);
+      await composition.plugins.setEnabled("builtin:test.bad", true);
+      await vi.waitFor(() => expect(f.input.report).toHaveBeenCalledTimes(2));
+      expect((await open()).snapshot.values).toEqual([{ key: "device.choice", value: 1 }]);
+    } finally {
+      await composition?.dispose();
+      await f.cleanup();
+    }
+  },
+);
+
+it.each(["disable", "removal", "reload"])(
+  "source %s gets a new form lifetime while retaining actual backend ownership",
+  async (kind) => {
+    const sources = createPersistenceSources170({
+      currentScope: () => true,
+      currentRuntime: () => false,
+      beforeDelivery: () => {},
+    });
+    const owner = {
+      sourceKey: "builtin:test.settings",
+      pluginId: "test.settings",
+      uiResourceGeneration: 7,
+    };
+    const scope = { hostEpoch: h170, workbenchInstance: h170 };
+    const document = {
+      value: JSON.parse(settingsRaw170),
+      bytes: Buffer.byteLength(settingsRaw170),
+      digest: "a".repeat(64),
+    };
+    const first = sources.admit({ owner, eligible: true, document })!;
+    if (kind === "disable")
+      sources.reconcileSources([
+        {
+          owner: { ...owner, generation: 7, hostEpoch: h170, processEpoch: h170 },
+          eligible: false,
+        },
+      ]);
+    else if (kind === "removal") sources.reconcileSources([]);
+    else owner.uiResourceGeneration++;
+    const fresh = sources.admit({ owner, eligible: true, document })!;
+    expect(fresh.owner.uiResourceGeneration).toBeGreaterThan(first.owner.uiResourceGeneration);
+    expect(
+      (await sources.port.settings({
+        sourceKey: owner.sourceKey,
+        resourceDigest: document.digest,
+      }))!.owner,
+    ).toEqual(fresh.owner);
+    expect(sources.port.coreOwner({ sourceKey: owner.sourceKey, scope })!.generation).toBe(
+      owner.uiResourceGeneration,
+    );
+    expect(sources.admit({ owner, eligible: true, document })!.owner).toEqual(fresh.owner);
+  },
+);
+
+import * as staticResources170 from "@kobrixa/plugin-runtime";
+it("disabling an optional source during an asynchronous resource read prevents late readmission", async () => {
+  const f = await compositionInput();
+  const directory = await pluginFolder("async-settings");
+  const manifestPath = path.join(directory, "kobrixa-plugin.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.apiVersion = "^1.7.0";
+  manifest.permissions = ["settings.read", "settings.write"];
+  manifest.contributes.settings = { version: 1, path: "settings.json" };
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(path.join(directory, "settings.json"), settingsRaw170);
+  f.input.plugins.commandLine.developmentDirectories = [directory];
+  f.input.plugins.builtins = [staticSource170()];
+  const composition = await composeDesktopMain(f.input, {
+    worker: { entry: testWorkerEntry170, control: () => {} },
+  });
+  const sourceKey = developmentSourceKey(await realpath(directory));
+  const read = staticResources170.readPackagedJson;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const heldRead = vi
+    .spyOn(staticResources170, "readPackagedJson")
+    .mockImplementation(async (...args) => {
+      await gate;
+      return read(...args);
+    });
+  try {
+    await composition.plugins.setEnabled(sourceKey, false);
+    await composition.plugins.setEnabled(sourceKey, true);
+    await vi.waitFor(() => expect(heldRead).toHaveBeenCalled());
+    await composition.plugins.setEnabled(sourceKey, false);
+    release();
+    // A later healthy-source exchange is queued behind the held read and its stale completion.
+    await composition.plugins.setEnabled("builtin:test.settings", false);
+    await composition.plugins.setEnabled("builtin:test.settings", true);
+    const settings = composition.plugins.persistence170!.settings;
+    const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
+    await vi.waitFor(async () =>
+      expect(
+        (
+          await settings.open({
+            sourceKey: "builtin:test.settings",
+            resourceDigest,
+            scope: f.input.scope(),
+          })
+        ).snapshot.values,
+      ).toHaveLength(1),
+    );
+    await expect(
+      settings.open({ sourceKey, resourceDigest, scope: f.input.scope() }),
+    ).rejects.toThrow("not admitted");
+  } finally {
+    release();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("controller reload joins provider disposal, serializes toggles, and shutdown joins the replacement", async () => {
+  const f = await compositionInput();
+  let release!: () => void;
+  let entered!: () => void;
+  let enteredPromise = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let cleanup = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  f.factory.mockImplementation((options) =>
+    createDesktopFoundation({
+      ...options,
+      providerFactory: (catalog) => {
+        count++;
+        const provider = createFakeDeviceProvider({ catalog, now: options.now }).provider;
+        const dispose = provider.dispose.bind(provider);
+        provider.dispose = async (context) => {
+          entered();
+          await cleanup;
+          await dispose(context);
+        };
+        return provider;
+      },
+    }),
+  );
+  const composition = await composeDesktopMain(f.input);
+  const key = "builtin:kobrixa.device-ev3";
+  try {
+    let completed = false;
+    const reload = composition.plugins.reload(key).then((result) => {
+      completed = true;
+      return result;
+    });
+    await enteredPromise;
+    const disable = composition.plugins.setEnabled(key, false);
+    const enable = composition.plugins.setEnabled(key, true);
+    expect(completed).toBe(false);
+    expect(count).toBe(1);
+    release();
+    expect(await reload).toMatchObject({ ok: true });
+    expect(await disable).toMatchObject({ ok: true });
+    expect(await enable).toMatchObject({ ok: true });
+    expect(count).toBe(3);
+    enteredPromise = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    cleanup = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    completed = false;
+    const shutdown = composition.plugins.shutdown().then(() => {
+      completed = true;
+    });
+    await enteredPromise;
+    expect(completed).toBe(false);
+    release();
+    await shutdown;
+    expect(count).toBe(3);
+  } finally {
+    release();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("controller reports retained provider failure and explicit reload retries actual cleanup", async () => {
+  const f = await compositionInput();
+  let blocked = true;
+  let count = 0;
+  const attempts = vi.fn();
+  f.factory.mockImplementation((options) =>
+    createDesktopFoundation({
+      ...options,
+      providerFactory: (catalog) => {
+        count++;
+        const provider = createFakeDeviceProvider({ catalog, now: options.now }).provider;
+        const dispose = provider.dispose.bind(provider);
+        provider.dispose = async (context) => {
+          attempts();
+          if (blocked) throw new Error("provider cleanup rejected");
+          await dispose(context);
+        };
+        return provider;
+      },
+    }),
+  );
+  const composition = await composeDesktopMain(f.input);
+  const key = "builtin:kobrixa.device-ev3";
+  try {
+    expect(await composition.plugins.reload(key)).toMatchObject({
+      ok: false,
+      message: "provider cleanup rejected",
+    });
+    expect(count).toBe(1);
+    expect(attempts).toHaveBeenCalledTimes(1);
+    expect(await composition.plugins.setEnabled(key, false)).toMatchObject({ ok: false });
+    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(count).toBe(1);
+    blocked = false;
+    expect(await composition.plugins.reload(key)).toMatchObject({ ok: true });
+    expect(attempts).toHaveBeenCalledTimes(3);
+    expect(count).toBe(1); // Reload preserves the explicit disabled choice.
+    expect(await composition.plugins.setEnabled(key, true)).toMatchObject({ ok: true });
+    expect(count).toBe(2);
+  } finally {
+    blocked = false;
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("registered cancellation before output begin releases the real worker destination without aborting an absent job", async () => {
+  const { createPersistenceActions } = await import("./persistence/actions.js");
+  const f = await compositionInput();
+  const composition = await composeDesktopMain(f.input, {
+    worker: { entry: testWorkerEntry170, control: () => {} },
+  });
+  const { backend } = desktopFoundationTestHandles(composition);
+  const scope = f.input.scope();
+  const owner = {
+    sourceKey: "builtin:test.settings",
+    pluginId: "test.settings",
+    generation: 0,
+    hostEpoch: scope.hostEpoch,
+    processEpoch: randomUUID(),
+  };
+  const ledger = new UserPersistenceActions(
+    () => performance.now(),
+    () => true,
+  );
+  const claims = createPersistenceClaims170({
+    feature: ledger,
+    core: createCoreActionLedger({ now: () => performance.now(), current: () => true }),
+    scope: () => scope,
+    currentScope: () => true,
+    currentOwner: () => true,
+    now: () => performance.now(),
+  });
+  const destination = path.join(f.input.plugins.userData, "cancel-destination.txt");
+  await writeFile(destination, "sentinel");
+  let resume!: () => void;
+  const held = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let registered!: () => void;
+  const registration = new Promise<void>((resolve) => {
+    registered = resolve;
+  });
+  const original = backend.destinations.register.bind(backend.destinations);
+  vi.spyOn(backend.destinations, "register").mockImplementation(async (input) => {
+    const token = await original(input);
+    registered();
+    await held;
+    return token;
+  });
+  const release = vi.spyOn(backend.destinations, "release");
+  const begin = vi.spyOn(backend.output, "begin");
+  const abort = vi.spyOn(backend.output, "abort");
+  const adapter = createNativePersistenceActions170({
+    claims: claims.lookup,
+    backend,
+    currentScope: () => true,
+    now: () => performance.now(),
+    choose: async () => destination,
+    copy: () => {
+      throw new Error("Unexpected clipboard write");
+    },
+  });
+  const service = createPersistenceActions({
+    now: () => performance.now(),
+    wall: Date.now,
+    live: () => true,
+    permission: () => true,
+    actions: claims.feature,
+    adapter,
+    output: backend.output,
+    destinations: backend.destinations,
+  });
+  const principal = { kind: "plugin" as const, owner, authorityContext: null };
+  const signal = new AbortController().signal;
+  try {
+    const started = await service.request(
+      principal,
+      "storage/exportBegin",
+      {
+        actionRef: ledger.mint(owner, scope, 1),
+        suggestedName: "cancel.txt",
+        mediaType: "text/plain",
+        byteLength: 0,
+        sha256: createHash("sha256").update("").digest("hex"),
+      },
+      signal,
+    );
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error("Export admission failed");
+    await registration;
+    expect(
+      await service.request(
+        principal,
+        "storage/exportCancel",
+        { export: started.value.export },
+        signal,
+      ),
+    ).toEqual({ ok: true, value: { disposition: "aborted" } });
+    expect(abort).not.toHaveBeenCalled();
+    resume();
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(begin).not.toHaveBeenCalled();
+    expect(await readFile(destination, "utf8")).toBe("sentinel");
+    // The fix must not turn arbitrary missing worker handles into success.
+    await expect(backend.output.abort(randomUUID())).rejects.toThrow("stale");
+  } finally {
+    resume();
+    await service.dispose();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});

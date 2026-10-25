@@ -244,3 +244,80 @@ it("failure is visible even with no dirty fields", () => {
     initial.values.map(({ key }) => ({ key, message: { en: "Catalog unavailable" } })),
   );
 });
+
+it.each(
+  (["reload", "retry", "unknown"] as const).flatMap((operation) =>
+    [false, true].map((afterResolution) => ({ operation, afterResolution })),
+  ),
+)(
+  "$operation reconciliation cannot overwrite a later snapshot (read resolved: $afterResolution)",
+  async ({ operation, afterResolution }) => {
+    let finish!: (value: SettingsSnapshot) => void;
+    const read = vi.fn(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const mutate = vi.fn<SettingsStoreTransport["mutate"]>(async () => ({
+      ok: false,
+      error: {
+        code: "PLUGIN_E_SETTINGS_SAVE",
+        message: "Unknown",
+        detail: { kind: "persistence", reason: "publish-uncertain", disposition: "unknown" },
+      },
+    }));
+    const store = createContributedSettingsStore(initial, { validate: () => true, mutate, read });
+    store.edit("name", "draft", "change", false);
+    const reconcile =
+      operation === "reload"
+        ? store.reload()
+        : operation === "retry"
+          ? store.retry("name")
+          : (store.edit("name", "draft", "enter", false), store.idle());
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    if (!afterResolution) store.external(receipt(3).snapshot);
+    finish(receipt(2).snapshot);
+    if (afterResolution) {
+      // Replace after the transport continuation, before the store applies it.
+      await Promise.resolve();
+      store.external(receipt(3).snapshot);
+    }
+    await reconcile;
+    expect(store.state().baseline).toEqual(receipt(3).snapshot);
+    expect(store.state().draft).toContainEqual({ key: "name", value: "draft" });
+    expect(mutate).toHaveBeenCalledTimes(operation === "unknown" ? 1 : 0);
+  },
+);
+
+it.each(["reload", "retry"] as const)(
+  "idle waits for actual %s reconciliation",
+  async (operation) => {
+    let finish!: (value: SettingsSnapshot) => void;
+    const read = vi.fn(
+      () =>
+        new Promise<SettingsSnapshot>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const store = createContributedSettingsStore(initial, {
+      validate: () => true,
+      mutate: async () => ({ ok: true, value: receipt(2) }),
+      read,
+    });
+    store.edit("name", "draft", "change", false);
+    const reconciliation = operation === "reload" ? store.reload() : store.retry("name");
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    // A second action is ignored by the existing guard; it must not release idle.
+    await store.reload();
+    const settled = vi.fn();
+    const idle = store.idle().then(settled);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    finish(receipt(1).snapshot);
+    await reconciliation;
+    await idle;
+    expect(settled).toHaveBeenCalledOnce();
+  },
+);

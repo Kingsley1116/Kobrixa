@@ -163,11 +163,14 @@ export function CoreRecoveryView({
   locale,
   labels,
   request = 0,
+  observeStore,
 }: {
   port: CoreRecoveryPort;
   locale: "en" | "zh-TW";
   labels: UiLabels;
   request?: number;
+  /** Local diagnostics observer; never replaces the production store or its port. */
+  observeStore?: (store: CoreRecoveryStore) => void;
 }) {
   const details = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -179,9 +182,10 @@ export function CoreRecoveryView({
   const store = useMemo(() => new CoreRecoveryStore(port), [port]);
   const view = useSyncExternalStore(store.subscribe, store.getSnapshot);
   useEffect(() => {
+    observeStore?.(store);
     void store.start();
     return () => store.stop();
-  }, [store]);
+  }, [store, observeStore]);
   return (
     <section className="core-recovery" aria-label={labels.recovery} data-core-recovery="true">
       <details

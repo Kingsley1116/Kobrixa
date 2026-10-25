@@ -12,6 +12,52 @@ const indexRoots: string[] = [];
 afterEach(async () => {
   await Promise.all(indexRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+it("ships declared settings bytes and rejects missing, unindexed or modified settings", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-settings-index-")));
+  indexRoots.push(root);
+  const source = path.join(root, "source");
+  const output = path.join(root, "output");
+  await mkdir(source);
+  await mkdir(output);
+  await writeFile(
+    path.join(source, "kobrixa-plugin.json"),
+    JSON.stringify({
+      id: "acme.settings",
+      version: "1.0.0",
+      apiVersion: "^1.7.0",
+      runtime: { kind: "node", entry: "main.cjs" },
+      permissions: ["settings.read"],
+      contributes: { settings: { version: 1, path: "settings.json" } },
+    }),
+  );
+  const bytes = Buffer.from('{"schemaVersion":1,"title":{"en":"Settings"},"fields":[]}\n');
+  await writeFile(path.join(source, "settings.json"), bytes);
+  await writeFile(path.join(output, "main.cjs"), "module.exports = {};\n");
+  const index = await emitResourceIndex(source, output, "acme.settings");
+  expect(index.files.map((file) => file.path)).toContain("settings.json");
+  expect(await readFile(path.join(output, "settings.json"))).toEqual(bytes);
+  const payload = await validateBuiltinLeaf(output, "acme.settings");
+  expect(payload.resources["settings.json"]).toBe(bytes.toString("utf8"));
+  await writeFile(path.join(output, "settings.json"), Buffer.alloc(bytes.length, 32));
+  await expect(validateBuiltinLeaf(output, "acme.settings")).rejects.toMatchObject({
+    code: "PLUGIN_E_ENTRY",
+  });
+  await writeFile(path.join(output, "settings.json"), bytes);
+  await writeFile(
+    path.join(output, "resource-index.json"),
+    JSON.stringify({
+      ...index,
+      files: index.files.filter((file) => file.path !== "settings.json"),
+    }),
+  );
+  await expect(validateBuiltinLeaf(output, "acme.settings")).rejects.toMatchObject({
+    code: "PLUGIN_E_ENTRY",
+  });
+  await rm(path.join(source, "settings.json"));
+  await expect(emitResourceIndex(source, output, "acme.settings")).rejects.toMatchObject({
+    code: "PLUGIN_E_ENTRY",
+  });
+});
 it("copies original bytes and indexes the executable, manifest and declared JSON only", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kobrixa-index-"));
   indexRoots.push(root);

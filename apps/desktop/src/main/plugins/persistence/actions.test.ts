@@ -1,3 +1,4 @@
+import { persistenceActionRequestSchemas } from "@kobrixa/plugin-protocol";
 import { expect, it, vi } from "vitest";
 import { PersistenceFault } from "./record-port.js";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -483,4 +484,73 @@ it("T5fix pending aborts cannot evict the job before their outcome is known", as
   await f.service.dispose();
   expect(status).toMatchObject({ ok: true });
   expect(f.deps.destinations.release).not.toHaveBeenCalled();
+});
+
+it("fractional advancing clocks keep export results schema-valid and the original admission cap", async () => {
+  const f = fixture();
+  let now = 0.25;
+  f.deps.now = () => (now += 0.125);
+  f.deps.wall = () => 100000 + Math.floor(now);
+  let deadline = 0;
+  f.deps.output.begin = async (_id, _owner, _destination, _length, _hash, admittedDeadline) => {
+    deadline = admittedDeadline;
+  };
+  const signal = new AbortController().signal;
+  const begun = await f.service.request(
+    p,
+    "storage/exportBegin",
+    {
+      actionRef,
+      suggestedName: "data",
+      mediaType: "text/plain",
+      byteLength: 1,
+      sha256: "a".repeat(64),
+    },
+    signal,
+  );
+  persistenceActionRequestSchemas["storage/exportBegin"].result.parse(begun);
+  if (!begun.ok) throw new Error("begin failed");
+  expect(begun.value.expiresAt).toBe(219999);
+  f.choose(Object.freeze({}) as ExportDestination);
+  await vi.waitFor(() => expect(deadline).toBeGreaterThan(120000));
+  expect(deadline % 1).not.toBe(0);
+  const chunk = { export: begun.value.export, offset: 0, data: "eA==" };
+  const written = await f.service.request(p, "storage/exportChunk", chunk, signal);
+  persistenceActionRequestSchemas["storage/exportChunk"].result.parse(written);
+  expect(written.ok).toBe(true);
+  expect(await f.service.request(p, "storage/exportChunk", chunk, signal)).toEqual(written);
+  const status = await f.service.request(
+    p,
+    "storage/exportStatus",
+    { export: begun.value.export },
+    signal,
+  );
+  persistenceActionRequestSchemas["storage/exportStatus"].result.parse(status);
+  await f.service.dispose();
+  const g = fixture();
+  now = 0.375;
+  g.deps.now = () => now;
+  g.deps.wall = () => 100000 + Math.floor(now);
+  const waiting = await g.service.request(
+    p,
+    "storage/exportBegin",
+    {
+      actionRef,
+      suggestedName: "data",
+      mediaType: "text/plain",
+      byteLength: 0,
+      sha256: "a".repeat(64),
+    },
+    signal,
+  );
+  if (!waiting.ok) throw new Error("begin failed");
+  now = 120000.25;
+  expect(
+    await g.service.request(p, "storage/exportStatus", { export: waiting.value.export }, signal),
+  ).toMatchObject({ ok: true, value: { state: "waiting" } });
+  now = 120000.375;
+  expect(
+    await g.service.request(p, "storage/exportStatus", { export: waiting.value.export }, signal),
+  ).toMatchObject({ ok: true, value: { state: "expired" } });
+  await g.service.dispose();
 });

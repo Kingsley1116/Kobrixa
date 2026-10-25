@@ -413,6 +413,12 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     this.uncertain.set(ticket.owner.sourceKey, ticket.id); return { disposition: "unknown" };
   }
   async abort(ticket: PublicationTicket): Promise<"aborted" | "committed" | "unknown"> {
+    this.fs.profile.assertHeld();
+    const tombstone=this.tombstones.get(ticket.id);
+    // A denied admission has no Entry, but its exact ticket still needs idempotent cleanup.
+    if(!this.entries.has(ticket.id) && !this.failedReserves.has(ticket.id) &&
+      ticket.owner.hostEpoch===this.fs.profile.hostEpoch && tombstone?.disposition==="aborted" &&
+      tombstone.until>this.fs.now() && tombstone.signature===JSON.stringify(ticket))return "aborted";
     const failed = this.failedReserves.get(ticket.id);
     if (failed) {
       if (JSON.stringify(ticket) !== JSON.stringify(failed.ticket)) throw new Error("stale");

@@ -75,3 +75,36 @@ it("AM-22 stopping a stalled recovery fetch clears every local timer", async () 
     vi.useRealTimers();
   }
 });
+
+it("retains diagnostics for the actual mounted recovery store after unmount", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  f.recovery.snapshot.mockReturnValue(new Promise(() => {}));
+  const div = document.createElement("div");
+  const root = createRoot(div);
+  let observed: CoreRecoveryStore | undefined;
+  try {
+    await act(async () =>
+      root.render(
+        createElement(CoreRecoveryView, {
+          port: f.recovery,
+          locale: "en",
+          labels,
+          observeStore: (store) => {
+            observed = store;
+          },
+        }),
+      ),
+    );
+    expect(observed).toBeInstanceOf(CoreRecoveryStore);
+    const diagnostic = diagnosticsFor(observed!);
+    expect(f.recovery.snapshot).toHaveBeenCalledOnce();
+    expect(diagnostic.snapshot().timers).toBe(1);
+    await act(async () => root.unmount());
+    expect(Object.values(diagnostic.snapshot()).every((value) => value === 0)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await act(async () => root.unmount());
+    vi.useRealTimers();
+  }
+});

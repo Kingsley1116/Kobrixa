@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { validateBuiltinLeaf } from "./src/main/plugins/builtin-launch.js";
+import { persistenceWorkerPath } from "./src/main/plugins/persistence/worker-path.js";
 const workspaceNodeModules = fileURLToPath(new URL("../../node_modules", import.meta.url));
 const licenseFile = /^(license|licence|copying)(\.|$)/i;
 
@@ -126,17 +127,7 @@ export async function copyNativeDependencies(
 export const BUILTIN_PAYLOAD_UNPACK = "{**/*.node,**/.vite/build/plugins/**}";
 export const PERSISTENCE_WORKER_ENTRY = "src/main/plugins/persistence/worker.ts";
 
-export function persistenceWorkerPath(input: {
-  packaged: boolean;
-  resourcesPath: string;
-  buildRoot: string;
-}): string {
-  const root = input.packaged ? input.resourcesPath : input.buildRoot;
-  if (!path.isAbsolute(root)) throw new Error("Persistence worker root must be absolute");
-  return input.packaged
-    ? path.join(root, "app.asar.unpacked", ".vite", "build", "persistence-worker.cjs")
-    : path.join(root, "persistence-worker.cjs");
-}
+export { persistenceWorkerPath };
 
 export function withPersistenceWorkerUnpack(existing: string): string {
   const worker = "**/.vite/build/persistence-worker.cjs";
@@ -166,7 +157,15 @@ export const DELIVERED_BUILTIN_PROCESS_BUILDS: readonly {
   target: "main";
   slug: string;
   pluginId: string;
-}[] = Object.freeze([]);
+}[] = Object.freeze([
+  {
+    entry: "../../plugins/motor-test/src/main.ts",
+    config: "vite.plugin-motor.config.ts",
+    target: "main",
+    slug: "motor-test",
+    pluginId: "kobrixa.motor-test",
+  },
+]);
 export function builtinProcessBuilds(fixture: boolean) {
   // The installed acceptance fixture uses an already allowed identity without
   // registering a product. Never broaden the production launch allowlist for a test,

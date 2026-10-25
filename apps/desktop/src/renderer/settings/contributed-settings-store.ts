@@ -33,6 +33,24 @@ export function createContributedSettingsStore(
     paused = false,
     disposed = false;
   let reconciling = false;
+  let reconciliation = Promise.resolve();
+  let finishReconciliation = () => {};
+  function beginReconciliation() {
+    reconciling = true;
+    reconciliation = new Promise<void>((resolve) => {
+      finishReconciliation = resolve;
+    });
+  }
+  let observationGeneration = 0;
+  async function readCurrent() {
+    const generation = ++observationGeneration;
+    try {
+      const value = await io.read();
+      if (!disposed && generation === observationGeneration) return { value, generation };
+    } catch (error) {
+      if (!disposed && generation === observationGeneration) throw error;
+    }
+  }
   let editVersion = 0;
   const editedAt = new Map<string, number>();
   const pausedMessage = "Saved values changed or save failed. Retry or reload.";
@@ -59,6 +77,8 @@ export function createContributedSettingsStore(
   }
   function external(next: SettingsSnapshot) {
     if (disposed || next.schemaVersion !== baseline.schemaVersion) return;
+    // A later observation supersedes pending reconciliation, even while saving.
+    ++observationGeneration;
     if (busy !== null) {
       deferredWatch = structuredClone(next);
       return;
@@ -96,8 +116,11 @@ export function createContributedSettingsStore(
           if (
             result.error.detail?.kind === "persistence" &&
             result.error.detail.disposition === "unknown"
-          )
-            deferredWatch = await io.read();
+          ) {
+            const observed = await readCurrent();
+            if (observed && observed.generation === observationGeneration)
+              deferredWatch = observed.value;
+          }
           continue;
         }
         if (
@@ -119,7 +142,9 @@ export function createContributedSettingsStore(
         paused = true;
         error(key, "Save outcome is unavailable. Read current values before retry.");
         try {
-          deferredWatch = await io.read();
+          const observed = await readCurrent();
+          if (observed && observed.generation === observationGeneration)
+            deferredWatch = observed.value;
         } catch {
           error(key, "Current saved values are unavailable.");
         }
@@ -174,7 +199,16 @@ export function createContributedSettingsStore(
         listeners.delete(listener);
       };
     },
-    idle: () => running,
+    async idle() {
+      // Retry can start a mutation after reading. Wait for the whole operation,
+      // including any work that replaced running while we were awaiting it.
+      for (;;) {
+        const mutation = running;
+        const reconcile = reconciliation;
+        await Promise.all([mutation, reconcile]);
+        if (mutation === running && reconcile === reconciliation) return;
+      }
+    },
     fail(message: string) {
       paused = true;
       for (const key of new Set([...draft.keys(), ...dirty, ...queued.keys()]))
@@ -183,7 +217,7 @@ export function createContributedSettingsStore(
     },
     async retry(key: string) {
       if (disposed || reconciling || !dirty.has(key)) return;
-      reconciling = true;
+      beginReconciliation();
       paused = true;
       markPending();
       queued.clear();
@@ -191,7 +225,9 @@ export function createContributedSettingsStore(
         await running;
         if (disposed || !dirty.has(key)) return;
         try {
-          external(await io.read());
+          const observed = await readCurrent();
+          if (disposed || !observed || observed.generation !== observationGeneration) return;
+          external(observed.value);
         } catch {
           error(key, "Current saved values are unavailable.");
           return;
@@ -207,20 +243,22 @@ export function createContributedSettingsStore(
         await running;
       } finally {
         reconciling = false;
+        finishReconciliation();
       }
     },
     async reload() {
       if (disposed || reconciling) return;
       const startedAt = editVersion;
-      reconciling = true;
+      beginReconciliation();
       paused = true;
       markPending();
       queued.clear();
       try {
         await running;
         if (disposed) return;
-        const value = await io.read();
-        if (disposed) return;
+        const observed = await readCurrent();
+        if (disposed || !observed || observed.generation !== observationGeneration) return;
+        const value = observed.value;
         const retained = [...draft].filter(([key]) => (editedAt.get(key) ?? 0) > startedAt);
         dirty.clear();
         queued.clear();
@@ -238,6 +276,7 @@ export function createContributedSettingsStore(
         notify();
       } finally {
         reconciling = false;
+        finishReconciliation();
       }
     },
     dispose() {

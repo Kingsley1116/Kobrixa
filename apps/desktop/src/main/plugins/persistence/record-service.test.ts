@@ -1,3 +1,4 @@
+import { storageRequestSchemas } from "@kobrixa/plugin-protocol";
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import type { RecordMeta, RecordWrite, ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -608,4 +609,84 @@ it("T5 projects a pending reserve promise before beginWrite acknowledges admissi
   expect(settled).toBe(false);
   release();
   expect((await pending).ok).toBe(true);
+});
+
+it("fractional monotonic clocks produce schema-valid write/read results without rounding admission", async () => {
+  const f = fixture();
+  let now = 0.25;
+  f.deps.now = () => (now += 0.125);
+  f.deps.wall = () => 100000 + Math.floor(now);
+  const begun = await f.service.request(p, "storage/beginWrite", input(Buffer.from("x")), signal());
+  storageRequestSchemas["storage/beginWrite"].result.parse(begun);
+  if (!begun.ok) throw new Error("begin failed");
+  const admitted = f.service.admittedWrites(owner)[0]!;
+  expect(admitted.created % 1).not.toBe(0);
+  expect(admitted.ticket.deadlineMonotonicMs).toBe(admitted.created + 120000);
+  expect(begun.value.expiresAt).toBe(Math.floor(f.deps.wall() + admitted.created + 30000 - now));
+  const chunk = { write: begun.value.write, offset: 0, data: "eA==" };
+  const written = await f.service.request(p, "storage/writeChunk", chunk, signal());
+  storageRequestSchemas["storage/writeChunk"].result.parse(written);
+  const progressed = f.service.admittedWrites(owner)[0]!;
+  expect(progressed.progress).toBeGreaterThan(admitted.progress);
+  expect(await f.service.request(p, "storage/writeChunk", chunk, signal())).toEqual(written);
+  expect(f.service.admittedWrites(owner)[0]!.progress).toBe(progressed.progress);
+  const sealed = await f.service.request(
+    p,
+    "storage/sealWrite",
+    { write: begun.value.write },
+    signal(),
+  );
+  storageRequestSchemas["storage/sealWrite"].result.parse(sealed);
+  const status = await f.service.request(
+    p,
+    "storage/writeStatus",
+    { write: begun.value.write },
+    signal(),
+  );
+  storageRequestSchemas["storage/writeStatus"].result.parse(status);
+  await f.service.request(p, "storage/commitWrite", { write: begun.value.write }, signal());
+  const committed = f.records.get(begun.value.id)!;
+  const opened = await f.service.request(
+    p,
+    "storage/openRead",
+    {
+      id: committed.id,
+      expectedRevision: committed.revision,
+      schemaVersion: 1,
+    },
+    signal(),
+  );
+  storageRequestSchemas["storage/openRead"].result.parse(opened);
+  expect(opened.ok).toBe(true);
+  await f.service.close();
+});
+
+it("fractional idle deadlines admit until the exact original boundary and clamp old status to zero", async () => {
+  const f = fixture();
+  let now = 0.375;
+  f.deps.now = () => now;
+  f.deps.wall = () => 0;
+  const begun = await f.begin(Buffer.from("x"));
+  now = 30000.25;
+  expect(
+    await f.service.request(p, "storage/writeStatus", { write: begun.write }, signal()),
+  ).toMatchObject({ ok: true, value: { state: "receiving", expiresAt: 0 } });
+  now = 30000.375;
+  expect(
+    await f.service.request(
+      p,
+      "storage/writeChunk",
+      { write: begun.write, offset: 0, data: "eA==" },
+      signal(),
+    ),
+  ).toMatchObject({ ok: false });
+  expect(f.append).not.toHaveBeenCalled();
+  const expired = await f.service.request(
+    p,
+    "storage/writeStatus",
+    { write: begun.write },
+    signal(),
+  );
+  storageRequestSchemas["storage/writeStatus"].result.parse(expired);
+  expect(expired).toMatchObject({ ok: true, value: { state: "expired", expiresAt: 0 } });
 });

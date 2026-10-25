@@ -53,6 +53,7 @@ export function declaredJsonPaths(manifest: PluginManifest): string[] {
   for (const item of contributes?.languages ?? [])
     declarations.push(item.tokenizer, item.configuration);
   if (contributes?.diagnosticHelp) declarations.push(contributes.diagnosticHelp);
+  if (contributes?.settings) declarations.push(contributes.settings);
   const paths = new Set<string>();
   for (const declaration of declarations) {
     if (

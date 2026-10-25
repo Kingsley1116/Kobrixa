@@ -1,3 +1,4 @@
+import { storedRecoverySchema } from "./namespace.js";
 import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import type { ExportDestination } from "./actions.js";
 import { expect, it, vi } from "vitest";
@@ -477,4 +478,82 @@ it("T5fix restart export uses current core authority and preserves historical ev
   expect(coreOwner).toHaveBeenCalledWith({ sourceKey: historical.sourceKey, scope: fresh.scope });
   expect(backend.reads.close).toHaveBeenCalledWith(current, "pin");
   expect(row.owner).toEqual(historical);
+});
+
+it("fractional recovery projections validate on retain/retry/snapshot without renewing retention", async () => {
+  const backend = recoveryBackendDouble();
+  const validOwner = {
+    ...owner,
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    processEpoch: "00000000-0000-4000-8000-000000000002",
+  };
+  const validReport: DrainReport = {
+    ...report,
+    records: [{ ...report.records[0]!, id: "00000000-0000-4000-8000-000000000003" }],
+  };
+  let now = 0.25;
+  let advancing = true;
+  let wall = () => 100000 + Math.floor(now);
+  const clock = {
+    now: () => (advancing ? (now += 0.125) : now),
+    wall: () => wall(),
+  };
+  const saved: StoredRecovery[] = [];
+  const save = backend.evidence.saveRecovery;
+  backend.evidence.saveRecovery = async (row) => {
+    storedRecoverySchema.parse(row);
+    saved.push(structuredClone(row));
+    await save(row);
+  };
+  const deadlines: number[] = [];
+  const recovery = createPersistenceRecovery({
+    ...clock,
+    coreOwner: () => validOwner,
+    actions: { claim: () => true, isClaimed: () => true, complete() {} },
+    retry: async (_owner, previous, deadline) => {
+      deadlines.push(deadline);
+      now += 0.125;
+      return { ...previous, records: previous.records.map((r) => ({ ...r, expiresAt: 200000 })) };
+    },
+    discard: async () => validReport,
+    backend,
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  const retained = await recovery.retain(validOwner, validReport);
+  expect(saved).toHaveLength(1); // retain must not swallow a durable-schema failure.
+  expect(retained.state).toBe("retryable");
+  expect(saved[0]!.expiresAt).toBe(129999);
+  const snapshot = recovery.snapshot();
+  expect(Number.isInteger(snapshot.items[0]!.expiresAt)).toBe(true);
+  expect(snapshot.items[0]!.expiresAt).toBeLessThanOrEqual(130000);
+  const retried = await recovery.retry(retained.recovery!, action);
+  storedRecoverySchema.shape.report.parse(retried);
+  expect(saved).toHaveLength(2);
+  expect(retried.records[0]!.expiresAt).toBeLessThanOrEqual(130000);
+  expect(deadlines[0]! % 1).not.toBe(0);
+  // Initial retain translates 130000 at monotonic 0.375 into 30000.375.
+  // Later projection/rounding and failed retries cannot move that deadline.
+  now = 30000.25;
+  advancing = false;
+  expect(recovery.snapshot().items[0]!.state).toBe("retryable");
+  now = 30000.375;
+  expect(recovery.snapshot().items[0]!.state).toBe("checkpoint-only");
+  await expect(recovery.retry(retained.recovery!, action)).rejects.toThrow();
+  expect(deadlines).toHaveLength(1);
+  // An overdue finite retention projected after a backwards wall-clock jump
+  // still persists valid evidence, with a zero wall expiry.
+  now = 200000;
+  wall = () => 0;
+  await recovery.retain(validOwner, {
+    ...retained,
+    state: "checkpoint-only",
+    records: retained.records.map((record) => ({
+      id: record.id,
+      committedRevision: record.committedRevision,
+      final: record.final,
+      payload: "none",
+    })),
+  });
+  expect(saved).toHaveLength(3);
+  expect(saved.at(-1)!.expiresAt).toBe(0);
 });

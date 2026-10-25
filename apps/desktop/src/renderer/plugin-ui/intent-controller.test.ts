@@ -108,3 +108,108 @@ it("AM-22 observes revoke before release IPC and clears queued input on disposal
   expect(counters.timers).toBe(2); // captured counters stay immutable
   expect(vi.getTimerCount()).toBe(0);
 });
+
+import { UiIntent } from "../../main/plugins/ui-intent.js";
+it.each(["ack", "release", "blur", "hide", "expired", "null-ack"] as const)(
+  "pending pointer begin uses no incomplete gesture pulse: %s",
+  async (outcome) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const pending = deferred<Awaited<ReturnType<typeof f.bridge.hold>>>();
+    const state = new UiStateStore(f.bridge, panel, snapshot());
+    const intent = new UiIntentController(f.bridge, state);
+    const pulseGesture = vi.fn();
+    const revokeScope = vi.fn();
+    const host = new UiIntent(
+      {
+        bindMotionScope: () => "scope",
+        beginGesture: () => handle(4),
+        pulsePanel() {},
+        pulseGesture,
+        endGesture() {},
+        revokeScope,
+      },
+      () => Date.now(),
+      (event) => {
+        if (event.type === "pulse") intent.challenge(event.challenge);
+      },
+    );
+    f.bridge.pulse.mockImplementation(async (input) =>
+      host.pulse(input.binding, input.challenge, input.gesture, input.inputToken)
+        ? { ok: true, value: { accepted: true } }
+        : { ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE", message: "Stale" } },
+    );
+    f.bridge.hold.mockImplementation((input) => {
+      if (input.phase === "begin") {
+        expect(host.begin(input.binding, input.inputToken)).toBe(handle(4));
+        return pending.promise;
+      }
+      host.end(input.binding, input.inputToken, input.phase);
+      return Promise.resolve({ ok: true, value: { gesture: null } });
+    });
+    try {
+      host.bind(binding, {
+        owner: { ...entry, ...binding },
+        contextRef: "context",
+        panelInstance: binding.panelInstance,
+        uiResourceGeneration: binding.uiResourceGeneration,
+        workbenchInstance: "window",
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.bridge.pulse).toHaveBeenCalledTimes(1);
+      f.bridge.pulse.mockClear();
+      // Unit admission only; native trusted-pointer evidence is in the captured reports.
+      expect(
+        intent.begin("hold", {
+          trusted: true,
+          kind: "pointer",
+          id: "1",
+          primary: true,
+          repeat: false,
+        }),
+      ).toBe(true);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(f.bridge.pulse).not.toHaveBeenCalled();
+      expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual(["begin"]);
+      expect(pulseGesture).not.toHaveBeenCalled();
+      if (outcome === "release") intent.release("pointer", "1", false);
+      if (outcome === "blur") intent.focus(false);
+      if (outcome === "hide") await intent.hide("sidebar");
+      if (outcome === "expired") {
+        await vi.advanceTimersByTimeAsync(249);
+        expect(revokeScope).toHaveBeenCalledTimes(1); // Original 350 ms host deadline.
+      }
+      const token = f.bridge.hold.mock.calls[0]![0].inputToken;
+      pending.resolve({
+        ok: true,
+        value: {
+          gesture: outcome === "null-ack" || outcome === "expired" ? null : handle(4),
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.bridge.pulse).not.toHaveBeenCalled(); // No replay on acknowledgement.
+      await vi.advanceTimersByTimeAsync(101);
+      if (outcome === "ack") {
+        expect(f.bridge.pulse).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            gesture: handle(4),
+            inputToken: token,
+          }),
+        );
+        expect(pulseGesture).toHaveBeenCalledTimes(1);
+        expect(intent.isHolding("hold")).toBe(true);
+      } else {
+        expect(intent.isHolding("hold")).toBe(false);
+        expect(pulseGesture).not.toHaveBeenCalled();
+        expect(f.bridge.hold.mock.calls.map(([input]) => input.phase)).toEqual([
+          "begin",
+          outcome === "release" ? "end" : "cancel",
+        ]);
+      }
+    } finally {
+      intent.dispose();
+      state.retire();
+      host.dispose();
+    }
+  },
+);

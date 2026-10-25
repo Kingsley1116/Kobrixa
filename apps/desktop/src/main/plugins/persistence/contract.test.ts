@@ -45,14 +45,14 @@ import type { LegacyPreferencesSnapshot, LegacyPreferenceChallenge } from './imp
 import type { CoreWindowScope } from '@kobrixa/plugin-runtime';
 import type { RecordMeta, SettingsRevision, Version, Sha256 } from '@kobrixa/plugin-protocol';
 import { PLUGIN_API_VERSION } from '@kobrixa/plugin-protocol';
-it('preserves ticket, tag, renderer DTOs and the unpublished wire version',()=>{
+it('preserves ticket, tag, renderer DTOs and the published P170 wire version',()=>{
   expectTypeOf<PublicationTicket>().toEqualTypeOf<Readonly<{id:Handle;owner:PersistenceOwner;deadlineMonotonicMs:number;
     metadata:{kind:'settings';schemaVersion:Version;validationDigest:Sha256}|{kind:'record';record:RecordMeta;deleted:boolean}|{kind:'recovery'|'import';key:string};
     target:{kind:'settings';expectedRevision:SettingsRevision|null}|{kind:'record';id:RecordId;expectedRevision:RecordRevision|null}|{kind:'recovery'|'import';key:string}}>>();
   expectTypeOf<ImportTag>().toEqualTypeOf<Readonly<{importId:string;itemKey:string;sourceSha256:Sha256}>>();
   expectTypeOf<LegacyPreferencesSnapshot>().toEqualTypeOf<{nonce:Handle;scope:CoreWindowScope;entries:Array<{key:string;raw:string|null}>}>();
   expectTypeOf<LegacyPreferenceChallenge>().toEqualTypeOf<Readonly<{nonce:Handle;scope:CoreWindowScope;descriptorId:string;keys:readonly string[]}>>();
-  expect(PLUGIN_API_VERSION).toBe('1.5.0');
+  expect(PLUGIN_API_VERSION).toBe('1.7.0');
 });
 it('typed backend doubles supply admission and durable preference resolution',async()=>{
   const owner:PersistenceOwner={sourceKey:'builtin:test',pluginId:'test',generation:1,hostEpoch:'00000000-0000-4000-8000-000000000001',processEpoch:'00000000-0000-4000-8000-000000000002'};

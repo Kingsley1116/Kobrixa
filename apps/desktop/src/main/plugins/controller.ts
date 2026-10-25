@@ -100,6 +100,10 @@ export type PluginManagerPort = Pick<
   | "resolveLanguageService"
 >;
 export interface PluginControllerDependencies {
+  providerSettlement?: {
+    settle(): Promise<void>;
+    retry(): Promise<void>;
+  };
   manager: PluginManagerPort;
   settings: Pick<PluginSettingsStore, "settings" | "update">;
   dialogs: PluginDialogs;
@@ -136,6 +140,7 @@ type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey
  */
 export class PluginController {
   #revision = 0;
+  #providerFailed = false;
   #helpCatalog: PluginHelpCatalogView | undefined;
   #staticRiskRecorded = false;
   #staticSaveProblem: PluginProblem | undefined;
@@ -394,7 +399,7 @@ export class PluginController {
       outsideSafeMode: optionalBuiltin,
     });
     if (refused) return refused;
-    return this.#result(await this.deps.manager.setEnabled(sourceKey, enabled));
+    return this.#providerAction(sourceKey, () => this.deps.manager.setEnabled(sourceKey, enabled));
   }
 
   async setDeveloperMode(enabled: boolean): Promise<PluginsResult> {
@@ -509,7 +514,38 @@ export class PluginController {
     const refused = this.#refuse({ developer: !optionalBuiltin, outsideSafeMode: true });
     if (refused) return refused;
     this.#pendingReload.delete(sourceKey);
-    return this.#result(await this.deps.manager.reloadSource(sourceKey));
+    return this.#providerAction(sourceKey, () => this.deps.manager.reloadSource(sourceKey));
+  }
+
+  async #providerAction(
+    sourceKey: string,
+    action: () => Promise<PluginActionResult>,
+  ): Promise<PluginsResult> {
+    const retry = this.#providerFailed;
+    if (sourceKey !== "builtin:kobrixa.device-ev3") return this.#result(await action());
+    try {
+      const result = await action();
+      // The manager must release its own cleanup/admission holds first.
+      await this.#settleProvider(retry);
+      return this.#result(result);
+    } catch (error) {
+      return failure(
+        error instanceof PluginError ? error.code : "PLUGIN_E_DEVICE_OPERATION",
+        messageOf(error),
+      );
+    }
+  }
+
+  async #settleProvider(retry = false): Promise<void> {
+    try {
+      const settlement = this.deps.providerSettlement;
+      if (retry) await settlement?.retry();
+      else await settlement?.settle();
+      this.#providerFailed = false;
+    } catch (error) {
+      this.#providerFailed = true;
+      throw error;
+    }
   }
 
   async pythonCandidates(): Promise<PythonChoice[]> {
@@ -588,7 +624,9 @@ export class PluginController {
       const refused = this.#refuse({});
       if (refused) return refused;
       if (!this.deps.session.safeMode) {
-        const left = await this.deps.manager.leaveSafeMode();
+        const left = await this.#providerAction("builtin:kobrixa.device-ev3", () =>
+          this.deps.manager.leaveSafeMode(),
+        );
         if (!left.ok) return left;
       }
       this.#changed();
@@ -658,7 +696,11 @@ export class PluginController {
 
   shutdown(deadlineMs?: number): Promise<void> {
     this.#closing = true;
-    return this.deps.manager.shutdown(deadlineMs);
+    return this.#enqueue(async () => {
+      const retry = this.#providerFailed;
+      await this.deps.manager.shutdown(deadlineMs);
+      await this.#settleProvider(retry);
+    });
   }
 
   get acceptingUi(): boolean {
@@ -671,6 +713,7 @@ export class PluginController {
   async resume(): Promise<void> {
     await this.#enqueue(async () => {
       await this.deps.manager.resume();
+      await this.#settleProvider(this.#providerFailed);
       this.#closing = false;
       this.#preparingUpdate = false;
       this.#changed();
@@ -889,11 +932,12 @@ export class PluginController {
 }
 
 export interface StartPluginsOptions {
+  providerSettlement?: PluginControllerDependencies["providerSettlement"];
   stage3?: PluginManagerOptions["stage3"];
   stage3Host?: PluginManagerOptions["stage3Host"];
   onStage3Runtime?: (
     runtime: UiRuntimeAttachment,
-    providers: Pick<PluginManager, "state" | "onEvent">,
+    providers: Pick<PluginManager, "state" | "onEvent" | "builtinSourceEligibility">,
   ) => void;
   userData: string;
   builtins: readonly PluginSource[];
@@ -1062,6 +1106,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   }
   const commandLinePython = options.commandLine.python;
   const controller = new PluginController({
+    ...(options.providerSettlement ? { providerSettlement: options.providerSettlement } : {}),
     manager,
     settings,
     dialogs: options.dialogs,
@@ -1420,6 +1465,7 @@ export async function composeDesktopMain(
     revoke: (_owner, binding) => intent.forget(binding),
   });
   const sourceProjection = createPersistenceSources170({
+    onRetire: (sourceKey) => settingsRequests(backend).retire(sourceKey),
     currentScope: input.currentScope,
     currentRuntime: (owner) => runtimeAttachment?.current(owner) ?? false,
     beforeDelivery: (sourceKey) => {
@@ -1479,11 +1525,13 @@ export async function composeDesktopMain(
     backend,
     currentScope: input.currentScope,
     now,
-    choose: async (suggestedName) => {
-      const result = await dialog.showSaveDialog({ defaultPath: suggestedName });
-      return result.canceled || !result.filePath ? null : result.filePath;
-    },
-    copy: (text) => clipboard.writeText(text),
+    choose:
+      test?.nativeActions?.choose ??
+      (async (suggestedName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: suggestedName });
+        return result.canceled || !result.filePath ? null : result.filePath;
+      }),
+    copy: test?.nativeActions?.copy ?? ((text) => clipboard.writeText(text)),
   });
   let imports: LegacyImportHostPort | undefined;
   const pendingImports = (): LegacyImportHostPort => {
@@ -1504,6 +1552,7 @@ export async function composeDesktopMain(
     },
   };
   let persistence170: Awaited<ReturnType<typeof composePersistence170>>;
+  let cleanupLifecycle: LifecycleCoordinator | undefined;
   let hostOwnsBackend = false;
   try {
     persistence170 = await attachPersistenceHost170(
@@ -1516,6 +1565,7 @@ export async function composeDesktopMain(
         coreActions: claims.core,
         now,
         hasPermission: input.foundationOptions.hasPermission,
+        reconciled: (id, report) => cleanupLifecycle?.reconcileRecovery(id, report),
       },
       { device: broker.resources, ui },
       () => {
@@ -1553,7 +1603,6 @@ export async function composeDesktopMain(
     await foundation.dispose();
     throw error;
   }
-  let cleanupLifecycle: LifecycleCoordinator | undefined;
   const uiDisposers: Array<() => void> = [
     () => events.dispose(),
     () => subscriptions.dispose(),
@@ -1809,18 +1858,27 @@ export async function composeDesktopMain(
             loaded.push({ owner, eligible: true });
             continue;
           }
-          if (source.settings.version !== 1)
-            throw new Error("Unsupported settings resource version");
-          const document =
-            source.resources.kind === "builtin"
-              ? readBuiltinJson(source.resources.files, source.settings.path, 65536)
-              : await readPackagedJson(
-                  source.resources.root,
-                  source.settings.path,
-                  65536,
-                  new SourceReadBudget(5000, now),
-                );
-          loaded.push({ owner, eligible: true, document });
+          try {
+            if (source.settings.version !== 1)
+              throw new Error("Unsupported settings resource version");
+            const document =
+              source.resources.kind === "builtin"
+                ? readBuiltinJson(source.resources.files, source.settings.path, 65536)
+                : await readPackagedJson(
+                    source.resources.root,
+                    source.settings.path,
+                    65536,
+                    new SourceReadBudget(5000, now),
+                  );
+            validateSettingsResource(document.value, document.bytes);
+            loaded.push({ owner, eligible: true, document });
+          } catch (cause) {
+            sourceProjection.revoke(owner.sourceKey);
+            loaded.push({ owner, eligible: true });
+            input.report(
+              new Error(`Settings contribution unavailable: ${owner.sourceKey}`, { cause }),
+            );
+          }
         }
         if (JSON.stringify(plugins!.persistenceCatalogSources()) !== key) return;
         for (const source of loaded) {
@@ -1848,13 +1906,18 @@ export async function composeDesktopMain(
         : {}),
       stage3,
       stage3Host,
+      providerSettlement: {
+        settle: () => foundation.settleProvider(),
+        retry: () => foundation.retryProvider(),
+      },
       onStage3Runtime(attachment, providers) {
         if (runtimeAttachment) throw new Error("Runtime already attached.");
         runtimeAttachment = attachment;
         foundation.attachProvider(providers);
         offSources = providers.onEvent((event) => {
           if (event.type === "state" && plugins) {
-            sourceProjection.reconcileSources(plugins.persistenceCatalogSources());
+            if (sourceProjection.reconcileSources(plugins.persistenceCatalogSources()))
+              inventory = "";
             void refreshCatalog();
           }
         });
@@ -2309,6 +2372,7 @@ export function legacyPreferencesFor170(
 
 type PersistenceSourceRow170 = {
   owner: UiOwner;
+  sourceGeneration: number;
   settings: {
     resourceDigest: Sha256;
     resource: SettingsResourceV1;
@@ -2316,13 +2380,16 @@ type PersistenceSourceRow170 = {
   } | null;
 };
 export function createPersistenceSources170(input: {
+  onRetire?: (sourceKey: string) => void;
   currentScope: (scope: CoreWindowScope) => boolean;
   currentRuntime: (owner: ResourceOwner) => boolean;
   beforeDelivery: (sourceKey: string) => void;
 }) {
   const rows = new Map<string, PersistenceSourceRow170>();
   const namespaces = new Map<string, ResourceOwner>();
-  const retiredScopes = new Set<string>();
+  // Only the latest retiring window needs a fence; currentScope rejects all older windows.
+  let retiredScope: string | undefined;
+  let generation = 0;
   const scopeKey = (scope: CoreWindowScope) =>
     JSON.stringify([scope.hostEpoch, scope.workbenchInstance]);
   const key = (owner: ResourceOwner) =>
@@ -2333,6 +2400,9 @@ export function createPersistenceSources170(input: {
       owner.hostEpoch,
       owner.processEpoch,
     ]);
+  const retire = (sourceKey: string) => {
+    if (rows.get(sourceKey)?.settings) input.onRetire?.(sourceKey);
+  };
   const port: PersistenceSourcePort = {
     current(owner) {
       return (
@@ -2361,12 +2431,12 @@ export function createPersistenceSources170(input: {
     },
     coreOwner({ sourceKey, scope }) {
       const row = rows.get(sourceKey);
-      if (!row || retiredScopes.has(scopeKey(scope)) || !input.currentScope(scope)) return null;
+      if (!row || retiredScope === scopeKey(scope) || !input.currentScope(scope)) return null;
       const id = JSON.stringify([sourceKey, scope.hostEpoch, scope.workbenchInstance]);
       const owner: ResourceOwner = {
         sourceKey,
         pluginId: row.owner.pluginId,
-        generation: row.owner.uiResourceGeneration,
+        generation: row.sourceGeneration,
         hostEpoch: scope.hostEpoch,
         processEpoch: scope.workbenchInstance,
       };
@@ -2382,6 +2452,7 @@ export function createPersistenceSources170(input: {
       document?: { value: unknown; bytes: number; digest: string };
     }) {
       if (!input.eligible) {
+        retire(input.owner.sourceKey);
         rows.delete(input.owner.sourceKey);
         for (const [id, owner] of namespaces)
           if (owner.sourceKey === input.owner.sourceKey) namespaces.delete(id);
@@ -2396,29 +2467,56 @@ export function createPersistenceSources170(input: {
           .digest("hex");
         settings = { resourceDigest, resource, validationDigest };
       }
-      rows.set(input.owner.sourceKey, { owner: structuredClone(input.owner), settings });
+      const existing = rows.get(input.owner.sourceKey);
+      if (
+        existing &&
+        existing.sourceGeneration === input.owner.uiResourceGeneration &&
+        existing.owner.pluginId === input.owner.pluginId &&
+        existing.settings?.resourceDigest === settings?.resourceDigest &&
+        existing.settings?.validationDigest === settings?.validationDigest
+      ) {
+        return existing.settings
+          ? {
+              owner: structuredClone(existing.owner),
+              resource: structuredClone(existing.settings.resource),
+              validationDigest: existing.settings.validationDigest,
+            }
+          : null;
+      }
+      // Form authority has its own monotonic lifetime; durable backend ownership
+      // continues to use the manager's actual source generation.
+      retire(input.owner.sourceKey);
+      generation = Math.max(generation + 1, input.owner.uiResourceGeneration);
+      const owner = { ...input.owner, uiResourceGeneration: generation };
+      rows.set(input.owner.sourceKey, {
+        owner,
+        sourceGeneration: input.owner.uiResourceGeneration,
+        settings,
+      });
       for (const [id, owner] of namespaces)
         if (owner.sourceKey === input.owner.sourceKey) namespaces.delete(id);
       return settings
         ? {
-            owner: structuredClone(input.owner),
+            owner: structuredClone(owner),
             resource: structuredClone(settings.resource),
             validationDigest: settings.validationDigest,
           }
         : null;
     },
     revoke(sourceKey: string) {
+      retire(sourceKey);
       rows.delete(sourceKey);
       for (const [id, owner] of namespaces)
         if (owner.sourceKey === sourceKey) namespaces.delete(id);
     },
     retireScope(scope: CoreWindowScope) {
-      retiredScopes.add(scopeKey(scope));
+      retiredScope = scopeKey(scope);
       for (const [id, owner] of namespaces)
         if (owner.hostEpoch === scope.hostEpoch && owner.processEpoch === scope.workbenchInstance)
           namespaces.delete(id);
     },
     reconcileSources(sources: readonly { owner: ResourceOwner; eligible: boolean }[]) {
+      let changed = false;
       const admitted = new Map(
         sources
           .filter((source) => source.eligible)
@@ -2429,13 +2527,16 @@ export function createPersistenceSources170(input: {
         if (
           owner &&
           owner.pluginId === row.owner.pluginId &&
-          owner.generation === row.owner.uiResourceGeneration
+          owner.generation === row.sourceGeneration
         )
           continue;
+        changed = true;
+        retire(key);
         rows.delete(key);
         for (const [id, namespace] of namespaces)
           if (namespace.sourceKey === key) namespaces.delete(id);
       }
+      return changed;
     },
     currentSource: (sourceKey: string) => rows.has(sourceKey),
   };
@@ -2600,7 +2701,7 @@ import {
 } from "./persistence/host-port.js";
 import { openStoreRoot } from "./persistence/filesystem.js";
 import { startPersistenceWorker, type PersistenceFaultControl } from "./persistence/worker.js";
-import { persistenceWorkerPath } from "../../../packaging.js";
+import { persistenceWorkerPath } from "./persistence/worker-path.js";
 import {
   createLegacyWriterBarrier,
   type LegacyWriterPort,
@@ -2624,6 +2725,11 @@ type DesktopPersistenceAttachment170 = {
 };
 
 export interface DesktopCompositionTestOptions {
+  /** Host-only I/O substitution; claims, liveness and destination registration stay production-owned. */
+  nativeActions?: {
+    choose(suggestedName: string): Promise<string | null>;
+    copy(text: string): void;
+  };
   worker?: { entry: string; control(control: PersistenceFaultControl): void };
   legacy?: { descriptors: readonly LegacyImportDescriptor[]; writers: readonly LegacyWriterPort[] };
 }

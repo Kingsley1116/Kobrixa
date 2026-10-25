@@ -213,8 +213,29 @@ export interface ProviderCleanupContext {
 import { deviceFailure } from "./registry.js";
 export class ExchangeLane {
   foreground: string | null = null;
-  quarantined = false;
+  #quarantined = false;
+  #quarantineOwners = new Set<string | null>();
+  #inflightOwner: string | null = null;
+  get quarantined(): boolean {
+    return this.#quarantined;
+  }
+  set quarantined(value: boolean) {
+    if (value) this.#quarantine(this.foreground);
+    else {
+      this.#quarantined = false;
+      this.#quarantineOwners.clear();
+    }
+  }
+  get quarantineOwners(): readonly (string | null)[] {
+    return [...this.#quarantineOwners];
+  }
+  #quarantine(owner: string | null): void {
+    this.#quarantined = true;
+    this.#quarantineOwners.add(owner);
+  }
   #inflight: Promise<unknown> | null = null;
+  #released = false;
+  #recovery: string | null = null;
   constructor(private readonly now: () => number) {}
   get occupied(): boolean {
     return this.#inflight !== null;
@@ -223,9 +244,26 @@ export class ExchangeLane {
     if (this.foreground !== null || this.quarantined)
       return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
     this.foreground = id;
+    this.#released = false;
+  }
+  /** Host safety owner only. Quarantine remains an ordinary-admission fence. */
+  reserveRecovery(id: string): void {
+    if (this.#recovery || this.#inflight || (this.foreground !== null && !this.#released))
+      return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
+    this.foreground = id;
+    this.#released = false;
+    this.#recovery = id;
+  }
+  releaseRecovery(id: string): void {
+    if (this.#recovery !== id) return;
+    this.#recovery = null;
+    this.release(id);
+    if (!this.#inflight) this.foreground = null;
   }
   release(id: string): void {
-    if (this.foreground === id && !this.#inflight && !this.quarantined) this.foreground = null;
+    if (this.foreground !== id) return;
+    this.#released = true;
+    if (!this.#inflight && !this.quarantined) this.foreground = null;
   }
   async drain(deadline: number): Promise<void> {
     // Wait for ownership of the transport lane, not for the previous caller's
@@ -251,7 +289,7 @@ export class ExchangeLane {
         promise,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
-            this.quarantined = true;
+            this.#quarantine(this.#inflightOwner);
             reject(new Error("Provider exchange deadline"));
           }, remaining);
         }),
@@ -284,6 +322,7 @@ export class ExchangeLane {
       return invoke(controller.signal, timeout);
     });
     this.#inflight = promise;
+    this.#inflightOwner = id;
     void promise.then(
       () => {
         if (this.#inflight === promise) this.#inflight = null;
@@ -318,6 +357,7 @@ export function createContexts(input: {
   now: () => number;
   lane: ExchangeLane;
   check: () => void;
+  checkCleanup?: () => void;
   progress: ProviderOperationContext["publishProgress"];
   onStop: (reason: DeviceErrorReason) => void;
 }) {
@@ -370,6 +410,7 @@ export function createContexts(input: {
     if (stopDeadline === null) stopDeadline = input.now() + 15000;
     if (input.now() >= stopDeadline)
       return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "stop-deadline", "unknown");
+    input.checkCleanup?.();
   };
   const cleanup: ProviderCleanupContext = {
     operationId: input.id,

@@ -11,6 +11,7 @@ test("verifier negatives: mock kill and missing OS exit cannot pass", () => {
 });
 
 import { FAULT_POINTS } from "./plugin-persistence-harness.mjs";
+import { outcomeOracleFixture } from "./fixtures/plugin-persistence/outcome-oracle.mjs";
 const beforeReplacement = [
   "reserve",
   "open-temp",
@@ -64,7 +65,10 @@ function killOracle() {
       level: "real-process",
       status: "passed",
       runId: "oracle-only",
-      case: "kill",
+      // The generic execution receipt must still carry a valid foundation outcome.
+      // Publication-frontier observations below are independently verified.
+      case: "retirement",
+      evidence: outcomeOracleFixture("retirement"),
       profileId: "oracle-profile",
       commit: "a".repeat(40),
       bundleSha256: "b".repeat(64),

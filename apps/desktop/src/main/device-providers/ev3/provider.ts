@@ -115,6 +115,7 @@ export function buildEv3Provider(
     { descriptor: DeviceDescriptor; expires: number }
   >();
   const records = new Map<ProviderSessionKey, RecordState>();
+  const acquiring = new Set<Promise<EV3DeviceSession>>();
   // At most one original native close can be outstanding: admission stays shut
   // until it succeeds. Keep its failure even though raw.disconnect is idempotent.
   const retiring = new Map<ProviderSessionKey, Promise<void>>();
@@ -122,9 +123,8 @@ export function buildEv3Provider(
     const existing = retiring.get(key);
     if (existing) return existing;
     record.removeListener();
-    records.delete(key);
     let timer: ReturnType<typeof setTimeout>;
-    const original = record.raw.disconnect();
+    const original = Promise.resolve().then(() => record.raw.disconnect());
     const bounded = Promise.race([
       original,
       new Promise<never>((_, reject) => {
@@ -137,7 +137,10 @@ export function buildEv3Provider(
     // is not. Neither a timeout nor a rejected close opens fresh admission.
     void original.then(
       () => {
-        if (retiring.get(key) === bounded) retiring.delete(key);
+        if (retiring.get(key) === bounded) {
+          retiring.delete(key);
+          records.delete(key);
+        }
       },
       () => {},
     );
@@ -150,7 +153,7 @@ export function buildEv3Provider(
     ctx?: ProviderOperationContext | ProviderCleanupContext,
   ): RecordState => {
     const record = records.get(key);
-    if (!record || !record.raw.connected) throw new Error("disconnected");
+    if (!record || retiring.has(key) || !record.raw.connected) throw new Error("disconnected");
     if (ctx?.sessionId) {
       if (record.sessionId && record.sessionId !== ctx.sessionId)
         throw new Error("provider-contract");
@@ -338,10 +341,11 @@ export function buildEv3Provider(
       }
     },
     async connect(target, ctx) {
-      let raw: EV3DeviceSession | undefined;
+      let record: RecordState | undefined;
+      const key = Object.freeze({}) as ProviderSessionKey;
       try {
         ctx.assertContinuation("connect");
-        if (records.size || retiring.size) throw new Error("provider-contract");
+        if (records.size || retiring.size || acquiring.size) throw new Error("provider-contract");
         let selected: DeviceDescriptor;
         if ("wifiAddress" in target) {
           if (!isIP(target.wifiAddress) || target.wifiAddress.includes("%"))
@@ -359,55 +363,81 @@ export function buildEv3Provider(
           candidates.delete(target);
         }
         const policy: DeviceConnectionPolicy = ids.connectionPolicy(); // broker-captured immutable policy for this attempt
-        raw = await ctx.exchange("connect", (signal, remaining) => {
-          const budget = Math.min(remaining, ctx.deadlineMonotonicMs - ctx.now());
-          if (budget <= 0) throw new Error("deadline");
-          return selected.transport === "usb"
-            ? transports.usb.connect(selected, signal)
-            : transports.wifi.connect(selected, signal, {
-                connectTimeoutMs: Math.min(policy.wifiConnectTimeoutMs, budget),
-                handshakeTimeoutMs: Math.min(policy.wifiHandshakeTimeoutMs, budget),
+        await ctx.exchange("connect", (signal, remaining) => {
+          const acquire = (async () => {
+            const budget = Math.min(remaining, ctx.deadlineMonotonicMs - ctx.now());
+            if (budget <= 0) throw new Error("deadline");
+            const raw = await (selected.transport === "usb"
+              ? transports.usb.connect(selected, signal)
+              : transports.wifi.connect(selected, signal, {
+                  connectTimeoutMs: Math.min(policy.wifiConnectTimeoutMs, budget),
+                  handshakeTimeoutMs: Math.min(policy.wifiHandshakeTimeoutMs, budget),
+                }));
+            // Own the handle before any continuation check, including the lane's
+            // postcheck. Disposal also joins this acquisition after a lane timeout.
+            const connection: ProviderConnection = {
+              key,
+              descriptor: descriptor(selected),
+              physical: physicalIdentity(selected),
+              capabilities: [...capabilities],
+            };
+            record = {
+              raw,
+              connection,
+              origin: ctx.now(),
+              motion: new Ev3MotionEngine(),
+              removeListener: () => {},
+            };
+            records.set(key, record);
+            try {
+              if (signal.aborted) throw new Error("deadline");
+              ctx.assertContinuation("connect");
+              const owned = record;
+              record.removeListener = raw.onDisconnect(() => {
+                void retire(key, owned);
+                for (const listener of listeners) {
+                  try {
+                    listener(key, "connection-lost");
+                  } catch {
+                    /* Isolate observers. */
+                  }
+                }
               });
+            } catch (error) {
+              await retire(key, record);
+              throw error;
+            }
+            return raw;
+          })();
+          acquiring.add(acquire);
+          const done = () => {
+            acquiring.delete(acquire);
+          };
+          void acquire.then(done, done);
+          return acquire;
         });
         ctx.assertContinuation("connect");
-        if (!raw) throw new Error("provider-contract");
-        const key = Object.freeze({}) as ProviderSessionKey;
-        const connection: ProviderConnection = {
-          key,
-          descriptor: descriptor(selected),
-          physical: physicalIdentity(selected),
-          capabilities: [...capabilities],
-        };
-        const record: RecordState = {
-          raw,
-          connection,
-          origin: ctx.now(),
-          motion: new Ev3MotionEngine(),
-          removeListener: () => {},
-        };
-        record.removeListener = raw.onDisconnect((_) => {
-          void retire(key, record);
-          for (const listener of listeners) {
-            try {
-              listener(key, "connection-lost");
-            } catch {
-              /* Isolate observers. */
-            }
-          }
-        });
-        records.set(key, record);
+        if (!record) throw new Error("provider-contract");
         return {
-          value: connection,
+          value: record.connection,
           dispatch: "sent",
           stopConfirmation: "not-required",
           error: null,
         };
       } catch (error) {
-        await raw?.disconnect().catch(() => {});
+        let cleanupFailed = false;
+        if (record && records.has(key)) {
+          try {
+            await retire(key, record);
+          } catch {
+            // The retained record and original close promise block dispose/retry.
+            cleanupFailed = true;
+          }
+        }
         return {
           value: null,
-          dispatch: raw ? "unknown" : "not-sent",
-          stopConfirmation: "not-required",
+          dispatch: record ? "unknown" : "not-sent",
+          stopConfirmation: cleanupFailed ? "unconfirmed" : "not-required",
           error: { reason: reason(error), message: "EV3 connection unavailable." },
         };
       }
@@ -433,6 +463,7 @@ export function buildEv3Provider(
       execute(key, ctx, async (record, bind) => {
         const reading = await bind("read").readMonitor(ctx.cancellation, () => ctx.shouldYield());
         if (!reading || !record.catalog) throw new Error("provider-contract");
+        ctx.assertContinuation("read");
         return record.catalog.accept(reading);
       }),
     read: (key, ctx) =>
@@ -573,6 +604,14 @@ export function buildEv3Provider(
       for (const record of records.values()) record.motion.release(id);
     },
     async dispose(ctx) {
+      // A rejected acquisition may have retained a failed native close below.
+      // Joining it is necessary even if the broker's bounded connect has returned.
+      if (acquiring.size) {
+        ctx.assertCleanup("disconnect");
+        await ctx.exchange("disconnect", async () => {
+          await Promise.allSettled([...acquiring]);
+        });
+      }
       for (const [key, record] of records) {
         ctx.assertCleanup("disconnect");
         await ctx.exchange("disconnect", () => retire(key, record));

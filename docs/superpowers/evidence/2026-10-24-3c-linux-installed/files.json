@@ -1,0 +1,58 @@
+[
+  {
+    "file": "installed.json.gz",
+    "source": "/private/tmp/kobrixa-stage3-linux-evidence/kobrixa-installed-product-ApJy4h/installed.json",
+    "bytes": 57722,
+    "sha256": "2740b884411425237b99a989512f2ff6f328a0d4c5410428b863a63c5bb6d044",
+    "gzipSha256": "c71175de5fc2fb3424d2800bcace32e6e04b9f45457fe27d0e8c43ee6f48ed3a"
+  },
+  {
+    "file": "healthy.log.gz",
+    "source": "/private/tmp/kobrixa-stage3-linux-evidence/kobrixa-installed-product-ApJy4h/healthy.log",
+    "bytes": 3635,
+    "sha256": "d4e0b94f953ffe2425826ef1f90a1a3acbd266215b461b486b77c8070400366e",
+    "gzipSha256": "029ca8aceff9466a2634f6ed5ea98c558af9b86f267c5d7b986b304d3f08f6b5"
+  },
+  {
+    "file": "restart.log.gz",
+    "source": "/private/tmp/kobrixa-stage3-linux-evidence/kobrixa-installed-product-ApJy4h/restart.log",
+    "bytes": 3064,
+    "sha256": "7d657dea13169958afef4e96c6a1cc97d837502900a80a5f124a474ff9601c6e",
+    "gzipSha256": "32306f03253cb58c409680c35f2eaddb0ff50b0893014380e5e311441123d53e"
+  },
+  {
+    "file": "missing.log.gz",
+    "source": "/private/tmp/kobrixa-stage3-linux-evidence/kobrixa-installed-product-ApJy4h/missing.log",
+    "bytes": 2162,
+    "sha256": "1491a55f6b485df3ae93cdf3a8e68dd298c3f456fcae96a72196378a845ab558",
+    "gzipSha256": "81d6eb8ab633264066340e26ee82e802611a74027441b21fe2bee0e781b7e246"
+  },
+  {
+    "file": "tampered.log.gz",
+    "source": "/private/tmp/kobrixa-stage3-linux-evidence/kobrixa-installed-product-ApJy4h/tampered.log",
+    "bytes": 2162,
+    "sha256": "9e9bfffa3483f9abbd9380ff34a93cdd671c9a15ff4c297c6b694df61c5e68de",
+    "gzipSha256": "4418806095e16d1db017c1efb0f2260fc612c584a6a878dde07e8dc1dc474f38"
+  },
+  {
+    "file": "3c-linux-clean-installed-isolated.log.gz",
+    "source": "/private/tmp/3c-linux-clean-installed-isolated.log",
+    "bytes": 645,
+    "sha256": "79c62816985aa365514e8d47fb174c7ba4a9137d6e2a83e9dac2b786c689af84",
+    "gzipSha256": "3e1008bf6690c36bb37405b289e0cc8baa9980943519fe069bd20c3b5adfd20f"
+  },
+  {
+    "file": "kobrixa-stage3-linux-clean-build.log.gz",
+    "source": "/private/tmp/kobrixa-stage3-linux-clean-build.log",
+    "bytes": 24868,
+    "sha256": "94cbf2510b38ef082e81e7f96f8db8b98e31c2152041e51c6d1698c3e3489ddf",
+    "gzipSha256": "b93758b8d526816539edc3512c3e7f565d90ed5d482c715c0ba53cce5c50561e"
+  },
+  {
+    "file": "3c-linux-clean-landlock-tests.log.gz",
+    "source": "/private/tmp/3c-linux-clean-landlock-tests.log",
+    "bytes": 311,
+    "sha256": "1216319c6bc1c17e6db510ef70d26b66cdbeba0a99d10937d1d2cdb6530cc89d",
+    "gzipSha256": "9b93a03e526b35522e09977ba071329c234f475460510558d821aed13abf9166"
+  }
+]

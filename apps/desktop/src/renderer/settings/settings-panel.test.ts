@@ -347,14 +347,11 @@ function mountedSettings170() {
 it("mount opens once, reads after watch, and removes watch/form/binding on cleanup", async () => {
   const f = mountedSettings170();
   const dispose = f.mount();
-  await Promise.resolve();
-  await Promise.resolve();
+  await vi.waitFor(() => expect(f.api.read).toHaveBeenCalledOnce());
   expect(f.api.open).toHaveBeenCalledOnce();
   expect(f.changed.size).toBe(1);
-  expect(f.api.read).toHaveBeenCalledOnce();
   for (const changed of f.changed) changed();
-  await Promise.resolve();
-  expect(f.api.read).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(f.api.read).toHaveBeenCalledTimes(2));
   dispose();
   dispose();
   expect(f.changed.size).toBe(0);
@@ -405,14 +402,19 @@ it("stale digest rejection is visible without mounting controls or activating a 
 
 import { SettingsControls } from "../plugin-ui/forms.js";
 import type { SettingsSnapshot } from "@kobrixa/plugin-protocol";
-it("ignores superseded reads and disposes once after watch setup fails", async () => {
+it("coalesces superseded reads and disposes once after watch setup fails", async () => {
   const f = mountedSettings170();
   const reads: Array<(value: Awaited<ReturnType<typeof f.api.read>>) => void> = [];
   vi.mocked(f.api.read).mockImplementation(() => new Promise((resolve) => reads.push(resolve)));
   const dispose = f.mount();
   await vi.waitFor(() => expect(reads).toHaveLength(1));
-  for (const changed of f.changed) changed();
+  for (let i = 0; i < 3; i++) for (const changed of f.changed) changed();
+  await Promise.resolve();
+  expect(reads).toHaveLength(1); // One read in flight; watch events queue one fresh read.
+  const before = vi.mocked(f.controls.render).mock.calls.length;
+  reads[0]!({ ok: true, value: f.snapshot });
   await vi.waitFor(() => expect(reads).toHaveLength(2));
+  expect(f.controls.render).toHaveBeenCalledTimes(before); // Superseded result is not drawn.
   reads[1]!({ ok: true, value: { ...f.snapshot, revision: "r_" + "2".repeat(32) } });
   await vi.waitFor(() =>
     expect(f.controls.render).toHaveBeenLastCalledWith(
@@ -423,10 +425,7 @@ it("ignores superseded reads and disposes once after watch setup fails", async (
       }),
     ),
   );
-  const calls = vi.mocked(f.controls.render).mock.calls.length;
-  reads[0]!({ ok: true, value: f.snapshot });
-  await Promise.resolve();
-  expect(f.controls.render).toHaveBeenCalledTimes(calls);
+  expect(reads).toHaveLength(2);
   dispose();
   expect(f.api.dispose).toHaveBeenCalledOnce();
   const g = mountedSettings170();

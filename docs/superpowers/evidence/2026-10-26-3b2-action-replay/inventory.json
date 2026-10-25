@@ -1,0 +1,44 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/persistence-action-replay-native5.json",
+    "uncompressedBytes": 161729,
+    "uncompressedSha256": "57d3d8cb4b070ff9f200ce6d1a21af42b375628bf30ba9fbd4ae27ef5d29e187",
+    "sha256": "91bd08838095f96ec2d99807fadb571a99ee14a0bdd7e8e2278066b842e6a853"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-DZ4d8b/action-replay.candidate.json",
+    "uncompressedBytes": 70823,
+    "uncompressedSha256": "a3ce1cabd3224869f501e4f637d8f4ddf6ce5957ae0a02f70b1ec77ff7a42f8a",
+    "sha256": "b7f588c031d2256be852928579ad447a39c362d5e067d96c8d2455e630a09cd8"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-DZ4d8b/action-replay.json",
+    "uncompressedBytes": 1171,
+    "uncompressedSha256": "f22fed25f33fc394af771b6f2bb5d2f8919574cfa3025b78c8ee5511062d14c1",
+    "sha256": "e97fec504743bd52a06d9137dd9620c20f7ed516815350f164b8761a428d6533"
+  },
+  {
+    "file": "observation.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-DZ4d8b/action-replay-nm5S2u/action-replay-observation.json",
+    "uncompressedBytes": 107424,
+    "uncompressedSha256": "79796b4fc8a93daacd687e87b68484b0f4d1a0b9d56b2a845f76f5ae7f0de889",
+    "sha256": "cb64be023d437487afbf21a0ad7e962cad66951fb80b5ae5f7f3023695ffe27b"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/b2-action-replay-native5.log",
+    "uncompressedBytes": 13494,
+    "uncompressedSha256": "75c76cd41f9e7751db53146c46e49ec4eee47c2579f9e81a46c454aeb42cf1de",
+    "sha256": "80d28f75c702ebda8cfda9d492eba457114485cf019c4aea7a2c572f9b7056b1"
+  },
+  {
+    "file": "renderer-artifact.json.gz",
+    "source": "/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-renderer-sI7bH2/renderer-artifact.json",
+    "uncompressedBytes": 21983,
+    "uncompressedSha256": "a40b7f4378c6157ee8e6a53ac8234c2ce2704e3954eb9df7dbc36969600c82ea",
+    "sha256": "f31a185d83fba19b4d1f1699cfabff0151396ac2e23236e5d9de907db66122bf"
+  }
+]

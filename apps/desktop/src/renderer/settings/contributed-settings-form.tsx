@@ -76,6 +76,7 @@ export function createContributedSettingsForm(
         store: ReturnType<typeof createContributedSettingsStore>;
         off: () => void;
         change: () => void;
+        invalidateReads: () => void;
       }
     | undefined;
   function matches(binding: SettingsFormBinding) {
@@ -106,6 +107,8 @@ export function createContributedSettingsForm(
           }
         },
         async read() {
+          // Explicit reconciliation supersedes any earlier background read.
+          ++readGeneration;
           const result = await service.read(binding);
           if (!result.ok) throw result.error;
           return result.value;
@@ -132,25 +135,35 @@ export function createContributedSettingsForm(
       });
       const draw = () => controls.render(binding, resource, store.state());
       const offDraw = store.subscribe(draw);
+      let refreshPending = false;
+      let refreshing = false;
       const refresh = () => {
-        const generation = ++readGeneration;
-        void store
-          .idle()
-          .then(() => {
-            if (current?.store !== store || generation !== readGeneration) return;
-            return service.read(binding);
-          })
-          .then(
-            (result) => {
-              if (!result || current?.store !== store || generation !== readGeneration) return;
-              if (result.ok) store.external(result.value);
-              else store.fail(result.error.message);
-            },
-            () => {
-              if (current?.store === store && generation === readGeneration)
-                store.fail("Current saved values are unavailable.");
-            },
-          );
+        ++readGeneration;
+        refreshPending = true;
+        if (refreshing) return;
+        refreshing = true;
+        void (async () => {
+          try {
+            while (refreshPending) {
+              // Coalesce watch events while a mutation or reconciliation is pending.
+              await store.idle();
+              if (current?.store !== store) return;
+              refreshPending = false;
+              const generation = readGeneration;
+              try {
+                const result = await service.read(binding);
+                if (current?.store !== store || generation !== readGeneration) continue;
+                if (result.ok) store.external(result.value);
+                else store.fail(result.error.message);
+              } catch {
+                if (current?.store === store && generation === readGeneration)
+                  store.fail("Current saved values are unavailable.");
+              }
+            }
+          } finally {
+            refreshing = false;
+          }
+        })();
       };
       let offWatch: () => void;
       try {
@@ -177,12 +190,24 @@ export function createContributedSettingsForm(
           field.type === "boolean" || field.type === "enum",
         );
       });
-      current = { binding: structuredClone(binding), resource, store, off, change };
+      current = {
+        binding: structuredClone(binding),
+        resource,
+        store,
+        off,
+        change,
+        invalidateReads: () => {
+          ++readGeneration;
+        },
+      };
       draw();
       refresh();
     },
     replaceSnapshot(binding, snapshot) {
-      if (matches(binding)) current!.store.external(snapshot);
+      if (matches(binding)) {
+        current!.invalidateReads();
+        current!.store.external(snapshot);
+      }
     },
     showFailure(binding, error) {
       if (matches(binding)) current!.store.fail(error.message);

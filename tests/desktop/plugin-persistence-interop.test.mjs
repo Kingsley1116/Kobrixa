@@ -1,6 +1,28 @@
 import test from "node:test";
+import { contentionOracle } from "./fixtures/plugin-persistence/contention-oracle.mjs";
+import { outcomeOracleFixture } from "./fixtures/plugin-persistence/outcome-oracle.mjs";
 import assert from "node:assert/strict";
-import { readEvidence, verifyMatrix, verifyInterop } from "./plugin-persistence-harness.mjs";
+import {
+  diagnosticError,
+  readEvidence,
+  verifyMatrix,
+  verifyInterop,
+} from "./plugin-persistence-harness.mjs";
+
+test("entry diagnostics retain bounded causes and aggregate construction failures", () => {
+  const cause = new Error("missing settings payload");
+  const error = new AggregateError(
+    [new Error("activation failed"), new Error("settings unavailable", { cause })],
+    "construction failed",
+  );
+  const result = diagnosticError(error);
+  assert.equal(result.message, "construction failed");
+  assert.equal(result.errors[0].message, "activation failed");
+  assert.equal(result.errors[1].cause.message, "missing settings payload");
+  cause.cause = cause;
+  assert.doesNotThrow(() => JSON.stringify(diagnosticError(cause)));
+  assert.equal(diagnosticError(new AggregateError(Array(40).fill(error))).errors.length, 16);
+});
 
 test("B2 §10: every negative row has real reopened state evidence", async () => {
   const report = await readEvidence();
@@ -102,7 +124,13 @@ function assertNoConstantProducerChecks(source) {
 }
 
 test("producer checks reject literal and constant-alias replacements", async () => {
-  const source = await readFile(new URL("./plugin-persistence-main.ts", import.meta.url), "utf8");
+  const source = (
+    await Promise.all(
+      ["plugin-persistence-main.ts", "plugin-persistence-contention.ts"].map((file) =>
+        readFile(new URL(file, import.meta.url), "utf8"),
+      ),
+    )
+  ).join("\n");
   const checks = assertNoConstantProducerChecks(source);
   for (const check of checks) {
     for (const replacement of ["true", "false", "0", '"committed"', "[50, 50, 50]"]) {
@@ -134,6 +162,7 @@ const receiptFixture = () => ({
   level: "real-process",
   status: "passed",
   runId: "unit-oracle",
+  evidence: outcomeOracleFixture("retirement"),
   case: "retirement",
   commit: "a".repeat(40),
   bundleSha256: "b".repeat(64),
@@ -172,6 +201,15 @@ test("verifier negatives: reject stale, premature, absent, failed and leaked rec
     assert.throws(() => verifyRunReceipt(r, expected));
   }
 });
+test("receipt gate rejects missing or failed case evidence after a clean exit", () => {
+  for (const patch of [
+    { evidence: undefined },
+    { case: "healthy-release", evidence: { checks: { retireCalls: 1 }, events: [], samples: {} } },
+    { case: "not-a-case", evidence: { checks: {}, events: [], samples: {} } },
+  ])
+    assert.throws(() => verifyRunReceipt({ ...receiptFixture(), ...patch }));
+});
+
 test("verifier negatives: reject missing and duplicate case receipts", () => {
   assert.throws(
     () => verifyFoundationReports([], ["retirement", "healthy-release"]),
@@ -194,7 +232,11 @@ test("verifier negatives: diagnostic owners cannot duplicate counters or omit mo
   );
 });
 
-import { preflight, runFoundationEvidence } from "./plugin-persistence-run.mjs";
+import {
+  preflight,
+  runFoundationEvidence,
+  selectFoundationCases,
+} from "./plugin-persistence-run.mjs";
 test("BM-20 reference cases execute through createFoundationFixture", async () => {
   const result = await runFoundationEvidence({ referencesOnly: true });
   verifyFoundationReports(result.reports, ["retirement", "healthy-release"]);
@@ -214,26 +256,12 @@ test("verifier negatives: every declared foundation observation is required", ()
   assert.deepEqual(Object.keys(FOUNDATION_CHECKS).sort(), [...FOUNDATION_CASES].sort());
   for (const id of FOUNDATION_CASES) {
     const required = FOUNDATION_CHECKS[id];
-    // Oracle-only shape example, never returned by a live producer.
-    const evidence = {
-      checks: Object.fromEntries(required.checks.map((k) => [k, 1])),
-      events: required.events.map((kind, i) => ({ kind, turn: 0, time: i })),
-      samples: Object.fromEntries(required.samples.map((k) => [k, Array(30).fill(1)])),
-    };
-    if (id === "retirement") {
-      const grant = {};
-      evidence.events[0].grant = grant;
-      evidence.events[1].grant = grant;
-      evidence.events[1].deadline = 1;
-      evidence.events[2].deadline = 1;
+    const evidence = id === "contention" ? contentionOracle() : outcomeOracleFixture(id);
+    if (id === "registration-end") {
+      const oracle = registrationOracle();
+      Object.assign(evidence.checks, oracle.checks);
+      evidence.registration = oracle.registration;
     }
-    if (id === "healthy-release")
-      Object.assign(evidence.checks, {
-        retireCalls: 0,
-        freezeCalls: 0,
-        processExits: 0,
-        unrelatedSettingsCommitted: true,
-      });
     assertFoundationEvidence(id, evidence);
     for (const key of required.checks) {
       const altered = structuredClone(evidence);
@@ -406,7 +434,11 @@ for (const mode of ["timeout", "nonzero"])
   });
 test("T7fix I3: normal completion uses the same final observations without cleanup kills", async () => {
   const model = controllerModel("success");
-  const receipt = await superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 });
+  const receipt = await superviseCase({ case: "retirement" }, model.io, {
+    timeoutMs: 200,
+    pollMs: 100,
+    settleMs: 100,
+  });
   assert.equal(receipt.status, "passed");
   assert.equal(model.failure, undefined);
   assert.ok(!model.actions.some((a) => a.startsWith("kill")));
@@ -423,7 +455,7 @@ test("T7fix I3: cleanup/observation/write errors are retained and never mask ori
     throw new Error("report disk full");
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /fixture failed|exited/i,
   );
   const failure = model.actions.find((a) => typeof a === "object");
@@ -506,7 +538,7 @@ test("T7fix I3: failed cleanup records remaining identities and original nonzero
     throw new Error("kill denied");
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /fixture failed/,
   );
   assert.equal(model.failure.parentExit.code, 7);
@@ -535,7 +567,7 @@ test("T7fix I3: signal exit cleans an owned descendant that changed process grou
     }
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /fixture failed/,
   );
   assert.ok(model.actions.includes("kill:101"));
@@ -597,7 +629,11 @@ test("T7fix I3: spawn failure and malformed candidate still write failure receip
       };
     else model.setCandidate({ ...receiptFixture(), bundleSha256: "bad" });
     await assert.rejects(
-      superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+      superviseCase({ case: "retirement" }, model.io, {
+        timeoutMs: 200,
+        pollMs: 100,
+        settleMs: 100,
+      }),
       /spawn failed|match/,
     );
     assert.equal(model.failure.status, "failed");
@@ -711,7 +747,7 @@ test("T7fix2: supervisor cleans an owned replacement child instead of passing", 
     }
   };
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 10, pollMs: 1, settleMs: 2 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 10, pollMs: 1, settleMs: 2 }),
     /Owned processes remain/,
   );
   assert.ok(model.actions.includes("kill-group:100"));
@@ -784,7 +820,7 @@ test("T7fix2: supervisor timeout preserves the preliminary case failure", async 
   };
   model.io.readCandidate = async () => ({ entryFailure: preliminary });
   await assert.rejects(
-    superviseCase({}, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
+    superviseCase({ case: "retirement" }, model.io, { timeoutMs: 200, pollMs: 100, settleMs: 100 }),
     /original before hung close/,
   );
   assert.match(model.failure.controllerError.message, /timeout/);
@@ -844,4 +880,141 @@ test("T7fix2: entry reader prefers the final diagnostic and never hides an unrea
     (value) => value === error,
   );
   assert.equal(await readEntryFailure("candidate.json", async () => undefined), undefined);
+});
+
+// Pure verifier oracle; never written as a native receipt or supplied to a producer.
+function registrationOracle() {
+  const id = "target",
+    handle = "checkpoint",
+    token = "drain";
+  const sha256 = createHash("sha256").update(`Synthetic final checkpoint ${id}\n`).digest("hex");
+  const record = { id, revision: "seed", kind: "test.registration-end" };
+  const checkpoint = { checkpoint: handle, record };
+  const firstOffer = { token, deadlineMonotonicMs: 100, checkpoints: [checkpoint], writes: [] };
+  const registrationTicket = {
+    id: "registration-ticket",
+    target: { kind: "recovery", key: handle },
+  };
+  const finalRecord = { ...record, revision: "final", checkpoint: "final", sha256 };
+  const ticket = {
+    id: "final-ticket",
+    target: { kind: "record", id, expectedRevision: record.revision },
+    metadata: { record: finalRecord },
+  };
+  const endTrace = [{ point: "before-publish", ticket: registrationTicket.id }];
+  return {
+    checks: {
+      finalTargets: 1,
+      finalPublications: 1,
+      pendingRegistrationIncluded: true,
+      firstDeadline: 100,
+      lastDeadline: 100,
+    },
+    events: [],
+    samples: {},
+    registration: {
+      firstOffer,
+      offers: [firstOffer],
+      requests: [{ token, reason: "reservation-ended", checkpoints: [checkpoint], writes: [] }],
+      submissions: [{ ok: true, value: { status: "submitted", writes: ["sdk-write"] } }],
+      registrationTicket,
+      finalTickets: [ticket],
+      endTrace,
+      trace: [
+        ...endTrace,
+        { point: "after-publish", ticket: registrationTicket.id },
+        { point: "after-publish", ticket: ticket.id },
+      ],
+      finalRecord,
+      payloadSha256: sha256,
+    },
+  };
+}
+import { createHash } from "node:crypto";
+test("registration-end rejects missing and mismatched actual observations", () => {
+  const oracle = registrationOracle();
+  assertFoundationEvidence("registration-end", oracle);
+  for (const key of Object.keys(oracle.registration)) {
+    const changed = structuredClone(oracle);
+    delete changed.registration[key];
+    assert.throws(() => assertFoundationEvidence("registration-end", changed));
+  }
+  for (const mutate of [
+    (o) => o.registration.requests[0].checkpoints.push(o.registration.requests[0].checkpoints[0]),
+    (o) => o.registration.requests[0].writes.push({ id: "target", write: "fabricated-checkpoint" }),
+    (o) => o.registration.trace.push(o.registration.trace.at(-1)),
+    (o) => o.registration.endTrace.push({ point: "after-publish", ticket: "registration-ticket" }),
+    (o) => (o.registration.finalTickets[0].target.id = "other-target"),
+    (o) => (o.registration.submissions = []),
+    (o) => (o.registration.payloadSha256 = "0".repeat(64)),
+    (o) => o.registration.offers[0].deadlineMonotonicMs++,
+  ]) {
+    const changed = structuredClone(oracle);
+    mutate(changed);
+    assert.throws(() => assertFoundationEvidence("registration-end", changed));
+  }
+});
+test("registration-end selector is bounded and full matrix remains fail-closed", () => {
+  assert.deepEqual(selectFoundationCases({ caseId: "registration-end" }), ["registration-end"]);
+  assert.deepEqual(selectFoundationCases({ referencesOnly: true }), [
+    "retirement",
+    "healthy-release",
+  ]);
+  assert.throws(() => selectFoundationCases(), /eleven observation-table producers/);
+  assert.throws(() => selectFoundationCases({ caseId: "sealed-ttl" }), /unsupported case/);
+  assert.throws(
+    () => selectFoundationCases({ referencesOnly: true, caseId: "registration-end" }),
+    /mutually exclusive/,
+  );
+});
+
+test("registration-end source provenance retains original ports and SDK callback", async () => {
+  const source = await readFile(new URL("./plugin-persistence-main.ts", import.meta.url), "utf8");
+  const consumer = await readFile(
+    new URL("./fixtures/plugin-persistence/consumer.ts", import.meta.url),
+    "utf8",
+  );
+  const file = ts.createSourceFile("producer.ts", source, ts.ScriptTarget.Latest, true);
+  const producer = file.statements.find(
+    (node) => ts.isFunctionDeclaration(node) && node.name?.text === "produceRegistrationEnd",
+  );
+  assert.ok(producer, "missing live producer");
+  const normalize = (text) => text.replace(/\s+/g, " ").replace(/\s*\.\s*/g, ".");
+  const body = normalize(producer.getText(file));
+  const required = [
+    'input.host.request(\n        principal,\n        "storage/registerCheckpoint"',
+    'input.fault.arm("before-publish", "pause")',
+    'input.fault.release("before-publish")',
+    "endReservation.call(this, event, deadline)",
+    "drain.call(this, offer,",
+    "reserve.call(this, ticket, size)",
+    "input.backend.evidence.capture(",
+    "input.backend.evidence.tickets(barrier)",
+    "input.backend.evidence.flush(barrier)",
+    "dispatch(target, request, ...rest)",
+    "input.fault.trace()",
+    '"devices/recording/release"',
+    '"storage/readChunk"',
+    "participant.endReservation = endReservation",
+    "participant.drain = drain",
+    "engine.reserve = reserve",
+  ];
+  const observations = required.map(normalize);
+  const verify = (text) => {
+    for (const observation of observations)
+      assert.ok(text.includes(observation), `missing source provenance: ${observation}`);
+    assert.ok(text.includes("finally"));
+  };
+  verify(body);
+  for (const observation of observations)
+    assert.throws(
+      () => verify(body.replaceAll(observation, "removed-observation")),
+      /missing source provenance/,
+    );
+  assert.ok(source.includes('"registration-end": () => produceRegistrationEnd(input)'));
+  assert.ok(consumer.includes('from "@kobrixa/plugin-sdk"'));
+  for (const operation of ["beginWrite", "writeChunk", "sealWrite", "commitWrite", "flush"])
+    assert.ok(consumer.includes(`storage.${operation}(`), `missing SDK operation ${operation}`);
+  assert.ok(consumer.includes('phase: "final"'));
+  assert.ok(consumer.includes("drainToken: request.token"));
 });

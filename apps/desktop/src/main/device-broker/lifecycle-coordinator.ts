@@ -1,6 +1,7 @@
 import type { DrainReason } from "@kobrixa/plugin-protocol";
 import { randomUUID } from "node:crypto";
 import { resumeQuiescedSession } from "./broker.js";
+import { attachProviderRetirementLifecycle } from "./resource-participant.js";
 import type { DeviceDrainGrant } from "@kobrixa/plugin-runtime";
 import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
 import type {
@@ -36,7 +37,11 @@ export interface DesktopFoundationOptions {
 }
 export type DesktopFoundation = {
   broker: DeviceBrokerPort & LegacyOperationPort;
-  attachProvider(manager: Pick<PluginManager, "state" | "onEvent">): void;
+  attachProvider(
+    manager: Pick<PluginManager, "state" | "onEvent" | "builtinSourceEligibility">,
+  ): void;
+  settleProvider(): Promise<void>;
+  retryProvider(): Promise<void>;
   dispose(): Promise<void>;
 };
 
@@ -168,6 +173,7 @@ export class LifecycleCoordinator {
   readonly #disconnecting = new Map<string, Promise<void>>();
   readonly #off: () => void;
   readonly #offRecovery: (() => void) | undefined;
+  readonly #offProvider: () => void;
   #close: Promise<void> | undefined;
   #closeStarted: number | undefined;
   #closed = false;
@@ -176,6 +182,17 @@ export class LifecycleCoordinator {
       throw new Error("Coordinator must share the runtime participants.");
     this.#off = input.reservations.onEnded((event) => this.#ended(event));
     this.#offRecovery = input.recovery?.subscribe(() => this.#reconcileDeviceRecovery());
+    this.#offProvider = attachProviderRetirementLifecycle(input.resources, async (sessionId) => {
+      const [reports] = await Promise.all([
+        this.#sessionReports(sessionId),
+        this.#bounded(
+          input.legacyFlush("close"),
+          input.now() + 10_000,
+          "Provider legacy save deadline expired.",
+        ),
+      ]);
+      this.#assertStorage(reports);
+    });
   }
   #bounded<T>(work: Promise<T>, deadline: number, message: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -422,9 +439,12 @@ export class LifecycleCoordinator {
     // close already clears only its settled attempt. Keep #closeStarted, all work promises and grants.
   }
   #assert(device: DeviceDisposition, storage: readonly DrainReport[]): void {
+    if (!device.stopConfirmed || !device.journalCommitted)
+      throw new CleanupBlocked(device, storage);
+    this.#assertStorage(storage, device);
+  }
+  #assertStorage(storage: readonly DrainReport[], device: DeviceDisposition | null = null): void {
     if (
-      !device.stopConfirmed ||
-      !device.journalCommitted ||
       storage.some(
         (report) =>
           report.blocker ||
@@ -436,10 +456,24 @@ export class LifecycleCoordinator {
     )
       throw new CleanupBlocked(device, storage);
   }
-  async #sessionReports(sessionId: Handle): Promise<DrainReport[]> {
-    return Promise.all(
-      [...this.#ends.values()]
+  async #sessionReports(sessionId: Handle, includeEarlier = false): Promise<DrainReport[]> {
+    const ends = [...this.#ends.values()];
+    // Persistence groups final saves by exact execution owner. Reconnecting a
+    // healthy consumer changes the device session, not that owner or its pending
+    // final. Disconnect must join those saves without waiting on other hosts,
+    // generations or consumers. Suspend/pendingSession retain their session scope.
+    const owners = new Set(
+      ends
         .filter((work) => work.event.sessionId === sessionId)
+        .map((work) => ownerKey(work.event.owner)),
+    );
+    return Promise.all(
+      ends
+        .filter(
+          (work) =>
+            work.event.sessionId === sessionId ||
+            (includeEarlier && owners.has(ownerKey(work.event.owner))),
+        )
         .map(async (work) => {
           const original = await work.promise;
           return work.report ?? original;
@@ -466,7 +500,7 @@ export class LifecycleCoordinator {
     for (const event of quiescence.ended) this.#ended(event);
     const [device, storage] = await Promise.all([
       this.#bounded(quiescence.settled, t0 + 20_000, "Disconnect stop/journal deadline expired."),
-      this.#sessionReports(sessionId),
+      this.#sessionReports(sessionId, true),
       this.input.legacyFlush("close"),
     ]);
     this.#assert(device, storage);
@@ -601,6 +635,7 @@ export class LifecycleCoordinator {
     return bounded;
   }
   dispose(): void {
+    this.#offProvider();
     this.#off();
     this.#offRecovery?.();
   }
@@ -738,7 +773,7 @@ export async function createDesktopFoundation(
   });
   let attached = false,
     disposed = false;
-  let detach: (() => void) | undefined;
+  let detach: ReturnType<typeof attachBuiltinDeviceProvider> | undefined;
   let disposal: Promise<void> | undefined;
   return {
     broker,
@@ -753,6 +788,12 @@ export async function createDesktopFoundation(
         input.providerFactory,
       );
     },
+    async settleProvider() {
+      await detach?.settled();
+    },
+    async retryProvider() {
+      await detach?.retry();
+    },
     dispose() {
       if (disposed) return Promise.resolve();
       if (disposal) return disposal;
@@ -761,7 +802,7 @@ export async function createDesktopFoundation(
         const disposition = await broker.resources.beginShutdown();
         if (!disposition.stopConfirmed || !disposition.journalCommitted)
           throw new CleanupBlocked(disposition, []);
-        detach?.();
+        await detach?.();
         disposed = true;
       })();
       disposal = attempt;

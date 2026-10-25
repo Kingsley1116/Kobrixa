@@ -1,3 +1,4 @@
+import { wallExpiry as projectWallExpiry } from "./wall-expiry.js";
 import { randomUUID } from "node:crypto";
 import { RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
 import type { Handle, PersistenceActionRequestMap, ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -98,7 +99,7 @@ export function createPersistenceActions(deps: ActionDependencies) {
   const active = (job: Job) => ["waiting", "receiving", "publishing"].includes(job.state);
   const expires = (job: Job) =>
     job.state === "waiting" ? job.deadline : Math.min(job.deadline, job.progress + 30000);
-  const wallExpiry = (job: Job) => Math.max(0, deps.wall() + expires(job) - deps.now());
+  const wallExpiry = (job: Job) => projectWallExpiry(deps, expires(job));
   function gate(job: Job) {
     if (
       disposed ||
@@ -381,7 +382,14 @@ export function createPersistenceActions(deps: ActionDependencies) {
       const job = get(owner, p.export);
       job.control.abort();
       clearTimeout(job.timer);
-      const disposition = job.state === "completed" ? "committed" : await deps.output.abort(job.id);
+      // No worker output exists while the chooser/registration is pending.
+      // Keep worker stale checks intact for every dispatched output job.
+      const disposition =
+        job.state === "completed"
+          ? "committed"
+          : job.beginDispatched
+            ? await deps.output.abort(job.id)
+            : "aborted";
       job.state =
         disposition === "aborted"
           ? "cancelled"

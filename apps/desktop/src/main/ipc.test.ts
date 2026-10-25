@@ -726,7 +726,8 @@ async function foundationIpc(legacyMetadata = false) {
         if (blocked) {
           await expect(composition.dispose()).rejects.toThrow("disposition");
           expect(shutdown).not.toHaveBeenCalled();
-          await controller.shutdown(); // Dispose the in-memory test process only.
+          // Process teardown cannot turn unresolved provider evidence into success.
+          await expect(controller.shutdown()).rejects.toThrow("disposition");
           coordinator.dispose();
           // Test-only cleanup after asserting the real disposition blocker. No
           // production lock is released or successful shutdown receipt invented.
@@ -1406,7 +1407,7 @@ it("D150 Disconnect also waits for a concurrent current-stop's final journal pub
   }
 });
 
-it.each(["shutdown", "disconnect", "provider"] as const)(
+it.each(["shutdown", "disconnect", "provider", "reload"] as const)(
   "D150 later recovery after blocked Disconnect keeps %s pending through its final journal",
   async (teardown) => {
     const f = await foundationIpc();
@@ -1440,9 +1441,11 @@ it.each(["shutdown", "disconnect", "provider"] as const)(
       pending = Promise.resolve(
         teardown === "shutdown"
           ? f.composition.dispose()
-          : teardown === "provider"
-            ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration)
-            : f.call("device:disconnect", f.sessionId),
+          : teardown === "reload"
+            ? f.controller.reload("builtin:kobrixa.device-ev3")
+            : teardown === "provider"
+              ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration)
+              : f.call("device:disconnect", f.sessionId),
       ).finally(() => {
         settled = true;
       });
@@ -1468,7 +1471,10 @@ it.each(["shutdown", "disconnect", "provider"] as const)(
       ).toHaveLength(1);
       if (teardown === "shutdown") expect(f.shutdown).toHaveBeenCalledOnce();
       else if (teardown === "disconnect") expect(physical).toHaveBeenCalledOnce();
-      else
+      else if (teardown === "reload") {
+        await expect(pending).resolves.toMatchObject({ ok: true });
+        expect(f.catalogs).toHaveLength(2);
+      } else
         await expect(pending).resolves.toMatchObject({
           stopConfirmed: true,
           journalCommitted: true,
@@ -1719,11 +1725,13 @@ function persistenceWindowFixture170() {
     watch: unexpected,
     dispose: vi.fn(),
   };
+  const offOpen = vi.fn(),
+    offChanged = vi.fn();
   const bridge: PluginsApi["persistenceRecovery"] = {
     snapshot: vi.fn(async () => ({ ok: true as const, value: { revision: 0, items: [] } })),
     act: unexpected,
-    onOpen: vi.fn(() => () => {}),
-    onChanged: vi.fn(() => () => {}),
+    onOpen: vi.fn(() => offOpen),
+    onChanged: vi.fn(() => offChanged),
   };
   const facets: NonNullable<PluginController["persistence170"]> = {
     settings,
@@ -1773,6 +1781,8 @@ function persistenceWindowFixture170() {
   } as unknown as IpcMainInvokeEvent;
   return {
     renderer,
+    offOpen,
+    offChanged,
     facets,
     challenge,
     event,
@@ -1892,3 +1902,68 @@ afterAll(async () => {
 });
 
 import type { PersistenceFaultControl as PersistenceFaultControl170 } from "./plugins/persistence/worker.js";
+
+it("persistence routes survive in-place/subframe navigation and admit only a fresh document scope after reload", async () => {
+  const f = persistenceWindowFixture170();
+  try {
+    await f.call("plugins:persistence-recovery:subscribe");
+    for (const [inPlace, mainFrame] of [
+      [true, true],
+      [false, false],
+    ]) {
+      f.renderer.emit("did-start-navigation", {}, "app://page#part", inPlace, mainFrame);
+      await f.call("persistence:legacy-preferences-challenge", "test.preferences");
+    }
+    expect(f.retirePreferences).not.toHaveBeenCalled();
+    const oldSettings = (await f.call("plugins:settings:open", {
+      sourceKey: "builtin:test.settings",
+      resourceDigest: "a".repeat(64),
+    })) as { binding: unknown };
+    const oldFrame = f.event.senderFrame;
+    f.renderer.emit("did-start-navigation", {}, "app://page", false, true);
+    expect(f.retirePreferences).toHaveBeenCalledExactlyOnceWith(f.challenge.scope);
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    expect(f.offOpen).toHaveBeenCalledOnce();
+    expect(f.offChanged).toHaveBeenCalledTimes(2);
+    expect(f.facets.settings.dispose).toHaveBeenCalledOnce();
+    f.replace();
+    // The authority epoch can rotate at navigation start, before the new document commits.
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    f.renderer.mainFrame = {};
+    f.renderer.emit("did-navigate", {}, "app://page");
+    const freshEvent = { ...f.event, senderFrame: f.renderer.mainFrame };
+    expect(() =>
+      handlers.get("persistence:legacy-preferences-challenge")!(
+        { ...f.event, senderFrame: oldFrame },
+        "test.preferences",
+      ),
+    ).toThrow("untrusted");
+    await handlers.get("persistence:legacy-preferences-challenge")!(freshEvent, "test.preferences");
+    await expect(
+      handlers.get("persistence:legacy-preferences-submit")!(freshEvent, {
+        nonce: f.challenge.nonce,
+        scope: f.challenge.scope,
+        entries: [],
+      }),
+    ).rejects.toThrow("scope");
+    await expect(
+      handlers.get("plugins:settings:read")!(freshEvent, oldSettings.binding),
+    ).rejects.toThrow("Stale");
+    await handlers.get("plugins:settings:open")!(freshEvent, {
+      sourceKey: "builtin:test.settings",
+      resourceDigest: "a".repeat(64),
+    });
+    await handlers.get("plugins:persistence-recovery:subscribe")!(freshEvent);
+    await handlers.get("plugins:persistence-recovery:snapshot")!(freshEvent, { itemId: id(6) });
+    expect(f.facets.detail.bridge.onOpen).toHaveBeenCalledTimes(2);
+    expect(f.renderer.listenerCount("did-start-navigation")).toBe(1);
+  } finally {
+    f.dispose();
+    f.dispose();
+  }
+  expect(f.retirePreferences).toHaveBeenCalledTimes(2);
+});

@@ -78,7 +78,16 @@ function fixture() {
         pending.set(ticket.id, { values: [], version: ticket.metadata.schemaVersion });
       },
       append: async (ticket, _offset, bytes) => {
-        pending.get(ticket.id)!.values = JSON.parse(new TextDecoder().decode(bytes));
+        const document = JSON.parse(new TextDecoder().decode(bytes));
+        expect(document.formatVersion).toBe(1);
+        expect(ticket.metadata.kind).toBe("settings");
+        expect(document.schemaVersion).toBe(
+          ticket.metadata.kind === "settings" ? ticket.metadata.schemaVersion : undefined,
+        );
+        expect(document.validationDigest).toBe(
+          ticket.metadata.kind === "settings" ? ticket.metadata.validationDigest : undefined,
+        );
+        pending.get(ticket.id)!.values = document.values;
         return bytes.length;
       },
       seal: async () => {},
@@ -329,17 +338,26 @@ import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
 function boundFixture() {
   const f = fixture();
   const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: owner.processEpoch };
+  const secondScope = { ...scope, workbenchInstance: "00000000-0000-4000-8000-000000000004" };
+  const thirdScope = { ...scope, workbenchInstance: "00000000-0000-4000-8000-000000000005" };
+  const registeredScopes = new Set(
+    [scope, secondScope, thirdScope].map((item) => JSON.stringify(item)),
+  );
+  const catalog = new Map([
+    [owner.sourceKey, owner.pluginId],
+    ["builtin:other.settings", "other.settings"],
+  ]);
   let generation = 1,
     digest = "a".repeat(64);
   const sources: PersistenceSourcePort = {
     current: (candidate) =>
       candidate.generation === generation && candidate.processEpoch === owner.processEpoch,
     settings: vi.fn(async (input) =>
-      input.resourceDigest === digest
+      input.resourceDigest === digest && catalog.has(input.sourceKey)
         ? {
             owner: {
-              sourceKey: owner.sourceKey,
-              pluginId: owner.pluginId,
+              sourceKey: input.sourceKey,
+              pluginId: catalog.get(input.sourceKey)!,
               uiResourceGeneration: generation,
             },
             resource,
@@ -348,11 +366,18 @@ function boundFixture() {
         : null,
     ),
     coreOwner: (input) =>
-      JSON.stringify(input.scope) === JSON.stringify(scope)
-        ? { ...owner, generation, processEpoch: "00000000-0000-4000-8000-000000000099" }
+      registeredScopes.has(JSON.stringify(input.scope)) && catalog.has(input.sourceKey)
+        ? {
+            ...owner,
+            sourceKey: input.sourceKey,
+            pluginId: catalog.get(input.sourceKey)!,
+            generation,
+            processEpoch: input.scope.workbenchInstance,
+          }
         : null,
   };
   const subscriptions = new Set<string>();
+  const removedListeners = new Set<(id: string) => void>();
   const events = {
     create: vi.fn(() => {
       const subscriptionId = crypto.randomUUID();
@@ -363,9 +388,13 @@ function boundFixture() {
     publish: vi.fn(() => ({ ok: true, value: { accepted: true } })),
     unsubscribe: vi.fn((_owner, id) => {
       subscriptions.delete(id);
+      for (const listener of removedListeners) listener(id);
       return { ok: true, value: { removed: true } };
     }),
-    onRemoved: () => () => {},
+    onRemoved: (listener: (id: string) => void) => {
+      removedListeners.add(listener);
+      return () => removedListeners.delete(listener);
+    },
     owns: (_owner: ResourceOwner, id: string) => subscriptions.has(id),
   } as unknown as CommonEventLedgerPort;
   const reads = { settings: vi.fn(f.deps.read.settings) } as unknown as PersistenceBackend["reads"];
@@ -396,8 +425,13 @@ function boundFixture() {
     sources,
     events,
     scope,
+    secondScope,
+    thirdScope,
+    registeredScopes,
     subscriptions,
-    open: () => bound.open({ sourceKey: owner.sourceKey, scope, resourceDigest: digest }),
+    removedListeners,
+    open: (windowScope = scope, sourceKey = owner.sourceKey) =>
+      bound.open({ sourceKey, scope: windowScope, resourceDigest: digest }),
     changeGeneration: () => {
       generation++;
     },
@@ -731,4 +765,296 @@ it("throwing local observers neither silence peers nor invalidate public subscri
   await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
   expect(f.events.unsubscribe).not.toHaveBeenCalled();
   f.bound.dispose(binding);
+});
+
+it("bound: source retirement removes watches immediately and rejects stale calls before backend work", async () => {
+  const f = boundFixture();
+  const stale = (await f.open()).binding;
+  f.bound.watch(stale, vi.fn());
+  await vi.waitFor(() => expect(f.subscriptions.size).toBe(1));
+  expect(
+    await f.bound.update(stale, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).toMatchObject({ ok: true });
+  settingsRequests(f.backend).retire(owner.sourceKey);
+  expect(f.subscriptions.size).toBe(0);
+  f.changeGeneration();
+  const fresh = await f.open();
+  expect(fresh.snapshot.values).toContainEqual({ key: "enabled", value: false });
+  const reads = vi.mocked(f.backend.reads.settings);
+  reads.mockClear();
+  const reserve = vi.spyOn(f.backend.engine, "reserve");
+  await expect(f.bound.read(stale)).rejects.toThrow("Stale");
+  await expect(
+    f.bound.update(stale, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).rejects.toThrow("Stale");
+  expect(() => f.bound.watch(stale, vi.fn())).toThrow("Stale");
+  expect(reads).not.toHaveBeenCalled();
+  expect(reserve).not.toHaveBeenCalled();
+  expect(await f.bound.read(fresh.binding)).toMatchObject({ ok: true });
+  await settingsRequests(f.backend).dispose();
+});
+
+it("bound: two admitted windows share CAS, notify independently, and close independently", async () => {
+  const f = boundFixture();
+  const first = await f.open();
+  const second = await f.open(f.secondScope);
+  expect(first.snapshot.revision).toBe(second.snapshot.revision);
+  const changed = [vi.fn(), vi.fn()];
+  const offFirst = f.bound.watch(first.binding, changed[0]!);
+  f.bound.watch(second.binding, changed[1]!);
+  await vi.waitFor(() => expect(f.subscriptions.size).toBe(2));
+  const results = await Promise.all(
+    [first, second].map(({ binding }, index) =>
+      f.bound.update(binding, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "enabled", value: index === 0 }],
+      }),
+    ),
+  );
+  expect(results.filter((result) => result.ok)).toHaveLength(1);
+  expect(results.find((result) => !result.ok)).toMatchObject({
+    error: { code: "PLUGIN_E_SETTINGS_CONFLICT" },
+  });
+  expect(f.publish).toHaveBeenCalledOnce();
+  await vi.waitFor(() => changed.forEach((callback) => expect(callback).toHaveBeenCalledOnce()));
+  offFirst();
+  offFirst();
+  expect(f.subscriptions.size).toBe(1);
+  f.bound.dispose(first.binding);
+  await expect(f.bound.read(first.binding)).rejects.toThrow("Stale");
+  const read = await f.bound.read(second.binding);
+  if (!read.ok) throw new Error("Expected live second window");
+  expect(
+    await f.bound.reset(second.binding, {
+      schemaVersion: 1,
+      expectedRevision: read.value.revision,
+      keys: ["enabled"],
+    }),
+  ).toMatchObject({ ok: true });
+  await vi.waitFor(() => expect(changed[1]).toHaveBeenCalledTimes(2));
+  expect(changed[0]).toHaveBeenCalledOnce();
+  await settingsRequests(f.backend).dispose();
+  expect(f.subscriptions.size).toBe(0);
+  expect(f.removedListeners.size).toBe(0);
+});
+
+import type {
+  SettingsControlsPort,
+  SettingsDraftState,
+} from "../../../renderer/plugin-ui/host-ports.js";
+it("bound: two production forms racing at one revision preserve the losing draft", async () => {
+  const f = boundFixture();
+  const opened = [await f.open(), await f.open(f.secondScope)];
+  const forms = opened.map((item, index) => {
+    const edit =
+      index === 0 ? { key: "enabled", value: false } : { key: "connection.mode", value: "1" };
+    let state!: SettingsDraftState;
+    let change!: Parameters<SettingsControlsPort["onChange"]>[0];
+    const form = createContributedSettingsForm(
+      {
+        render: (_binding, _resource, next) => {
+          state = next;
+        },
+        dispose: vi.fn(),
+        onChange: (listener) => {
+          change = listener;
+          return () => {};
+        },
+      },
+      f.bound,
+    );
+    form.open(item.binding, item.resource, item.snapshot);
+    return {
+      form,
+      edit,
+      state: () => state,
+      change: () => change(item.binding, edit.key, edit.value, "change"),
+    };
+  });
+  forms.forEach((form) => form.change());
+  await vi.waitFor(() => {
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(forms.filter((form) => form.state().errors.length > 0)).toHaveLength(1);
+  });
+  const loser = forms.find((form) => form.state().errors.length > 0)!;
+  expect(loser.state().draft).toContainEqual(loser.edit);
+  expect(loser.state().baseline.values).not.toContainEqual(loser.edit);
+  forms.forEach((form, index) => form.form.dispose(opened[index]!.binding));
+  await settingsRequests(f.backend).dispose();
+});
+
+it("bound: retiring a source removes every matching window but preserves other sources", async () => {
+  const f = boundFixture();
+  const first = await f.open();
+  const second = await f.open(f.secondScope);
+  const other = await f.open(f.thirdScope, "builtin:other.settings");
+  for (const item of [first, second, other]) f.bound.watch(item.binding, vi.fn());
+  await vi.waitFor(() => expect(f.subscriptions.size).toBe(3));
+  settingsRequests(f.backend).retire(owner.sourceKey);
+  expect(f.subscriptions.size).toBe(1);
+  for (const item of [first, second]) {
+    await expect(f.bound.read(item.binding)).rejects.toThrow("Stale");
+    expect(() => f.bound.watch(item.binding, vi.fn())).toThrow("Stale");
+  }
+  expect(await f.bound.read(other.binding)).toMatchObject({ ok: true });
+  await settingsRequests(f.backend).dispose();
+  expect(f.subscriptions.size).toBe(0);
+  expect(f.removedListeners.size).toBe(0);
+  await expect(f.bound.read(other.binding)).rejects.toThrow("Stale");
+  await expect(f.open()).rejects.toThrow();
+});
+
+function holdNextSettings(f: ReturnType<typeof boundFixture>) {
+  const original = vi.mocked(f.sources.settings).getMockImplementation()!;
+  let release!: () => void;
+  const gate = new Promise<void>((done) => {
+    release = done;
+  });
+  vi.mocked(f.sources.settings).mockImplementationOnce(async (input) => {
+    const resolved = await original(input);
+    await gate;
+    return resolved;
+  });
+  return release;
+}
+
+it.each(["replace", "retire", "dispose", "unregister"] as const)(
+  "bound: pending open cannot revive after %s",
+  async (action) => {
+    const f = boundFixture();
+    const release = holdNextSettings(f);
+    const pending = f.open();
+    const rejected = expect(pending).rejects.toThrow("Stale");
+    const other = await f.open(f.secondScope, "builtin:other.settings");
+    let replacement;
+    if (action === "replace") replacement = await f.open();
+    if (action === "retire") settingsRequests(f.backend).retire(owner.sourceKey);
+    if (action === "dispose") await settingsRequests(f.backend).dispose();
+    if (action === "unregister") f.registeredScopes.delete(JSON.stringify(f.scope));
+    release();
+    await rejected;
+    if (replacement) expect(await f.bound.read(replacement.binding)).toMatchObject({ ok: true });
+    if (action !== "dispose") {
+      expect(await f.bound.read(other.binding)).toMatchObject({ ok: true });
+      await settingsRequests(f.backend).dispose();
+    }
+    expect(f.subscriptions.size).toBe(0);
+    expect(f.removedListeners.size).toBe(0);
+  },
+);
+
+it("bound: stale async resolve and watch cannot attach to an identical remount", async () => {
+  const f = boundFixture();
+  const first = await f.open();
+  const releaseRead = holdNextSettings(f);
+  const pendingRead = expect(f.bound.read(first.binding)).rejects.toThrow("Stale");
+  const releaseWatch = holdNextSettings(f);
+  const oldChanged = vi.fn();
+  const off = f.bound.watch(first.binding, oldChanged);
+  const next = await f.open();
+  expect(next.binding).toEqual(first.binding);
+  const changed = vi.fn();
+  f.bound.watch(next.binding, changed);
+  releaseRead();
+  releaseWatch();
+  await pendingRead;
+  await vi.waitFor(() => expect(f.subscriptions.size).toBe(1));
+  off();
+  expect(
+    await f.bound.update(next.binding, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).toMatchObject({ ok: true });
+  await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  expect(oldChanged).not.toHaveBeenCalled();
+  expect(f.removedListeners.size).toBe(2);
+  await settingsRequests(f.backend).dispose();
+  expect(f.removedListeners.size).toBe(0);
+});
+
+it("bound: an in-flight write cannot continue through an identical remount", async () => {
+  const f = boundFixture();
+  const first = await f.open();
+  let release!: () => void;
+  f.deps.engine.seal = vi.fn(
+    () =>
+      new Promise<void>((done) => {
+        release = done;
+      }),
+  );
+  const pending = f.bound.update(first.binding, {
+    schemaVersion: 1,
+    expectedRevision: null,
+    changes: [{ key: "enabled", value: false }],
+  });
+  await vi.waitFor(() => expect(f.deps.engine.seal).toHaveBeenCalled());
+  const next = f.open();
+  release();
+  expect(await pending).toMatchObject({ ok: false });
+  expect(f.publish).not.toHaveBeenCalled();
+  expect(await f.bound.read((await next).binding)).toMatchObject({ ok: true });
+  await settingsRequests(f.backend).dispose();
+});
+
+it("bound: repeated same-window remounts replace callbacks and subscriptions", async () => {
+  const f = boundFixture();
+  const peer = await f.open(f.secondScope);
+  const peerChanged = vi.fn();
+  f.bound.watch(peer.binding, peerChanged);
+  const oldCallbacks: ReturnType<typeof vi.fn>[] = [];
+  const oldUnsubscribes = [];
+  for (let index = 0; index < 4; index++) {
+    const item = await f.open();
+    const callback = vi.fn();
+    oldCallbacks.push(callback);
+    oldUnsubscribes.push(f.bound.watch(item.binding, callback));
+    await vi.waitFor(() => expect(f.subscriptions.size).toBe(2));
+    expect(f.removedListeners.size).toBe(3);
+  }
+  // Renderer teardown may arrive after the backend has replaced its old form.
+  oldUnsubscribes.slice(0, -1).forEach((off) => off());
+  expect(
+    await f.bound.update(peer.binding, {
+      schemaVersion: 1,
+      expectedRevision: null,
+      changes: [{ key: "enabled", value: false }],
+    }),
+  ).toMatchObject({ ok: true });
+  await vi.waitFor(() => expect(oldCallbacks.at(-1)).toHaveBeenCalledOnce());
+  expect(peerChanged).toHaveBeenCalledOnce();
+  oldCallbacks.slice(0, -1).forEach((callback) => expect(callback).not.toHaveBeenCalled());
+  await settingsRequests(f.backend).dispose();
+  expect(f.subscriptions.size).toBe(0);
+  expect(f.removedListeners.size).toBe(0);
+});
+
+it("bound: replacement during open's initial read cannot be removed by stale open cleanup", async () => {
+  const f = boundFixture();
+  const read = vi.mocked(f.backend.reads.settings);
+  let release!: () => void;
+  read.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        release = () => done(null);
+      }),
+  );
+  const pending = f.open();
+  const rejected = expect(pending).rejects.toThrow("Stale");
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  const replacement = f.open();
+  release();
+  await rejected;
+  expect(await f.bound.read((await replacement).binding)).toMatchObject({ ok: true });
+  await settingsRequests(f.backend).dispose();
 });

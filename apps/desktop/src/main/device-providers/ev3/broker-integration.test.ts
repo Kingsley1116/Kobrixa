@@ -45,7 +45,7 @@ function reading(): DeviceMonitorSnapshot {
     })),
   };
 }
-async function fixture(auto = false) {
+async function setup(auto = false) {
   const hostEpoch = randomUUID(),
     context = randomUUID(),
     workbench = randomUUID();
@@ -203,22 +203,6 @@ async function fixture(auto = false) {
       signal,
     );
   };
-  const connected = await discoverConnect();
-  if (!connected.ok) throw new Error("initial connect");
-  const sessionId = connected.value.session.sessionId;
-  const catalog = async (id = sessionId) => {
-    const result = await broker.request(principal, "devices/session", { sessionId: id }, signal);
-    if (!result.ok) throw new Error(JSON.stringify(result));
-    return result.value;
-  };
-  const first = await catalog();
-  const read = (ids = first.sources.channels.map((c) => c.channelId), id = sessionId) =>
-    broker.request(
-      principal,
-      "devices/read",
-      { sessionId: id, channelIds: ids, freshness: "fresh" },
-      signal,
-    );
   onTestFinished(async () => {
     channel.dispose();
     await broker.resources.beginShutdown();
@@ -230,14 +214,11 @@ async function fixture(auto = false) {
     provider,
     providerConnect,
     catalogPort,
+    descriptor,
     principal,
     core,
     context,
     signal,
-    sessionId,
-    first,
-    read,
-    catalog,
     discoverConnect,
     connect,
     closes,
@@ -255,6 +236,27 @@ async function fixture(auto = false) {
     channel,
     lose: () => nativeLoss!(new Error("native loss")),
   };
+}
+async function fixture(auto = false) {
+  const f = await setup(auto);
+  const { broker, principal, signal, discoverConnect } = f;
+  const connected = await discoverConnect();
+  if (!connected.ok) throw new Error("initial connect");
+  const sessionId = connected.value.session.sessionId;
+  const catalog = async (id = sessionId) => {
+    const result = await broker.request(principal, "devices/session", { sessionId: id }, signal);
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    return result.value;
+  };
+  const first = await catalog();
+  const read = (ids = first.sources.channels.map((c) => c.channelId), id = sessionId) =>
+    broker.request(
+      principal,
+      "devices/read",
+      { sessionId: id, channelIds: ids, freshness: "fresh" },
+      signal,
+    );
+  return { ...f, sessionId, first, read, catalog };
 }
 it("A-final mode set preserves preflight identity and publishes one stable EV3 catalog", async () => {
   const f = await fixture();
@@ -1186,3 +1188,129 @@ it.each(["type", "mode", "removed", "component", "actuator"] as const)(
     }
   },
 );
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+async function replaceAndConnect(f: Awaited<ReturnType<typeof setup>>) {
+  const provider = buildEv3Provider(f.broker.providerCatalog(EV3_PROVIDER_ID), {
+    usb: { discover: async () => [f.descriptor], connect: f.connect },
+    wifi: { discover: async () => [], connect: f.connect },
+  });
+  const registration = f.broker.registerProvider(provider);
+  expect((await f.discoverConnect()).ok).toBe(true);
+  expect(f.connect).toHaveBeenCalledTimes(2);
+  await registration.retirement!.retire();
+  expect(f.closes).toHaveBeenCalledTimes(2);
+}
+it.each([false, true])(
+  "retirement race retains late native connect and close failure=%s",
+  async (fails) => {
+    const f = await setup();
+    const dispose = vi.spyOn(f.provider, "dispose");
+    const arrival = deferred<void>(),
+      close = deferred<void>();
+    const nativeConnect = f.connect.getMockImplementation()!;
+    f.connect.mockImplementationOnce(async () => {
+      await arrival.promise;
+      return nativeConnect();
+    });
+    f.closes.mockImplementationOnce(() => close.promise);
+    const connect = f.discoverConnect();
+    await turn();
+    expect(f.connect).toHaveBeenCalledOnce();
+    const retirement = f.unregister.retirement!.retire();
+    const settled = vi.fn();
+    void retirement.then(settled, settled);
+    arrival.resolve();
+    await turn();
+    expect(f.closes).toHaveBeenCalledOnce();
+    expect(settled).not.toHaveBeenCalled();
+    expect(() => f.broker.registerProvider(f.provider)).toThrow();
+    if (fails) close.reject(new Error("native close failed"));
+    else close.resolve();
+    expect((await connect).ok).toBe(false);
+    if (fails) {
+      await expect(retirement).rejects.toThrow();
+      await expect(f.unregister.retirement!.retire()).rejects.toThrow();
+      expect(() => f.broker.registerProvider(f.provider)).toThrow();
+      expect(f.closes).toHaveBeenCalledOnce();
+      expect(dispose).toHaveBeenCalledTimes(2);
+      for (const result of dispose.mock.results) await expect(result.value).rejects.toThrow();
+    } else {
+      await retirement;
+      await replaceAndConnect(f);
+    }
+  },
+);
+it.each(["hold", "get-session", "retire", "transport", "close-failure"] as const)(
+  "initial sources withdrawal: %s",
+  async (cause) => {
+    const f = await setup();
+    const sources = deferred<DeviceMonitorSnapshot>();
+    f.monitor.mockImplementationOnce(() => sources.promise);
+    if (cause === "close-failure") f.closes.mockRejectedValueOnce(new Error("native close failed"));
+    if (cause === "get-session") {
+      const original = f.provider.sources.bind(f.provider);
+      vi.spyOn(f.provider, "sources").mockImplementationOnce(async (...args) => {
+        const result = await original(...args);
+        expect(result.error).toBeNull();
+        f.unregister.retirement!.admission(false);
+        return result;
+      });
+    }
+    const connect = f.discoverConnect();
+    await turn();
+    expect(f.monitor).toHaveBeenCalledOnce();
+    const retirement = cause === "retire" ? f.unregister.retirement!.retire() : undefined;
+    if (cause !== "get-session") f.unregister.retirement!.admission(false);
+    if (cause === "transport") sources.reject(new Error("transport failed"));
+    else sources.resolve(structuredClone(f.observed));
+    expect((await connect).ok).toBe(false);
+    f.unregister.retirement!.admission(true);
+    if (cause === "hold" || cause === "get-session" || cause === "retire") {
+      expect(f.closes).toHaveBeenCalledOnce();
+      await (retirement ?? f.unregister.retirement!.retire());
+      await replaceAndConnect(f);
+    } else {
+      await expect(f.unregister.retirement!.retire()).rejects.toThrow();
+      await expect(f.unregister.retirement!.retire()).rejects.toThrow();
+      expect(() => f.broker.registerProvider(f.provider)).toThrow();
+    }
+  },
+);
+
+it("retirement joins a connect whose exchange timed out before the native handle arrived", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = await setup();
+    const arrival = deferred<void>();
+    const nativeConnect = f.connect.getMockImplementation()!;
+    f.connect.mockImplementationOnce(async () => {
+      await arrival.promise;
+      return nativeConnect();
+    });
+    const connect = f.discoverConnect();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect((await connect).ok).toBe(false);
+    const retirement = f.unregister.retirement!.retire();
+    const settled = vi.fn();
+    void retirement.then(settled, settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toHaveBeenCalled();
+    expect(() => f.broker.registerProvider(f.provider)).toThrow();
+    arrival.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await retirement;
+    expect(f.closes).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});

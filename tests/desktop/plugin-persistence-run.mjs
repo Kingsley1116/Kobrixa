@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
-import { access, readFile, writeFile, mkdir, mkdtemp, cp, readdir } from "node:fs/promises";
+import {
+  access,
+  readFile,
+  writeFile,
+  mkdir,
+  mkdtemp,
+  cp,
+  readdir,
+  realpath,
+} from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { builtinModules, createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -12,6 +21,7 @@ import {
   diagnosticError,
 } from "./plugin-persistence-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
+import { readFoundationRenderer } from "./plugin-persistence-renderer-build.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // These are dependency locations, not permission to edit another owner's source.
@@ -80,6 +90,13 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
     for (const field of ["rendererUrl", "preload", "filesystem"])
       if (typeof handoffs[field] !== "string" || !handoffs[field])
         blockers.push(`Missing artifact ${field}`);
+    if (typeof handoffs.rendererArtifact !== "string")
+      blockers.push("Missing retained renderer artifact receipt");
+    else {
+      const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
+      assert.equal(handoffs.rendererUrl, renderer.rendererUrl);
+      assert.equal(handoffs.preload, renderer.preload);
+    }
     // Final native mounting/collector review cannot be guessed against F declarations.
     if (handoffs.nativeMountsReviewed !== true)
       blockers.push("D170/V170: review and attach native settings/recovery mounts in T7 shell");
@@ -87,7 +104,12 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
   if (blockers.length) throw new Error(`BLOCKED authoring acceptance:\n${blockers.join("\n")}`);
   return handoffs;
 }
-async function materialize(buildRoot, build) {
+export async function materializeFoundationFixtures(
+  buildRoot,
+  build,
+  contention = false,
+  actionReplay = false,
+) {
   const desktopRequire = createRequire(path.join(root, "apps/desktop/package.json"));
   const { build: viteBuild } = desktopRequire("vite");
   const configBundle = path.join(buildRoot, "builtin-config.cjs");
@@ -97,13 +119,19 @@ async function materialize(buildRoot, build) {
     bundle: true,
     platform: "node",
     format: "cjs",
-    packages: "external",
-    banner: {
-      js: `module.paths.push(${JSON.stringify(path.join(root, "node_modules"))},${JSON.stringify(path.join(root, "apps/desktop/node_modules"))});`,
+    define: {
+      // Config URLs describe checkout sources, not the temporary CJS bundle.
+      "import.meta.url": JSON.stringify(
+        pathToFileURL(path.join(root, "apps/desktop/vite.plugin.config.ts")).href,
+      ),
     },
   });
   const { builtinPluginConfig } = desktopRequire(configBundle);
   const template = path.join(root, "tests/desktop/fixtures/builtin-process");
+  const templateId = JSON.parse(
+    await readFile(path.join(template, "kobrixa-plugin.json"), "utf8"),
+  ).id;
+  assert.ok(typeof templateId === "string" && templateId.length > 0);
   const fixture = path.join(root, "tests/desktop/fixtures/plugin-persistence");
   for (const role of ["recording", "settings"]) {
     const id = `acceptance.ui-${role}`,
@@ -115,10 +143,33 @@ async function materialize(buildRoot, build) {
         const file = path.join(directory, entry.name);
         if (entry.isDirectory()) await rewrite(file);
         else if (/\.(json|ts)$/.test(entry.name))
-          await writeFile(file, (await readFile(file, "utf8")).replaceAll("acceptance.ui", id));
+          await writeFile(file, (await readFile(file, "utf8")).replaceAll(templateId, id));
       }
     };
     await rewrite(sourceRoot);
+    if (actionReplay) {
+      // This case needs two distinct trusted UI commands through the real generic
+      // form path. The ordinary reference payload intentionally has no fields.
+      const panelPath = path.join(sourceRoot, "panel.json");
+      const panel = JSON.parse(await readFile(panelPath, "utf8"));
+      panel.fields.speed = {
+        schema: { type: "number", min: -100, max: 100, integer: true, nullable: false },
+        initial: 20,
+        required: true,
+      };
+      panel.nodes.find((node) => node.id === panel.root).children.unshift("speed");
+      panel.nodes.push({
+        id: "speed",
+        type: "number",
+        field: "speed",
+        label: { en: "Action selection" },
+        step: 1,
+      });
+      panel.nodes.find((node) => node.id === "run").action.arguments.speed = {
+        ref: { scope: "form", key: "speed" },
+      };
+      await writeFile(panelPath, JSON.stringify(panel, null, 2));
+    }
     const manifest = JSON.parse(
       await readFile(path.join(sourceRoot, "kobrixa-plugin.json"), "utf8"),
     );
@@ -132,13 +183,36 @@ async function materialize(buildRoot, build) {
     manifest.contributes.commands.push(
       ...persistence.contributes.commands.map((command) => ({ ...command, id: `${id}.run` })),
     );
-    if (role === "recording") {
+    for (const step of ["seed", "publish", "probe", "reconcile"])
+      manifest.contributes.commands.push({
+        id: `${id}.unknown-${step}`,
+        title: { en: `Unknown publication ${step}`, "zh-TW": `未知發布 ${step}` },
+      });
+    for (const step of ["chunk", "commit"])
+      manifest.contributes.commands.push({
+        id: `${id}.action-${step}`,
+        title: { en: `Action ${step}` },
+      });
+    if (actionReplay && role === "recording")
+      manifest.contributes.commands.push({
+        id: `${id}.action-checkpoint-only`,
+        title: { en: "Prepare checkpoint recovery" },
+      });
+    if (role === "recording" || contention) {
       manifest.permissions = [
-        ...new Set([...manifest.permissions, "devices.read", "devices.connect"]),
+        ...new Set([
+          ...manifest.permissions,
+          "devices.read",
+          "devices.connect",
+          ...(contention ? ["devices.control"] : []),
+        ]),
       ];
       manifest.requires = {
         ...manifest.requires,
-        devices: [{ capability: "recordingReservation.v1", required: true }],
+        devices: [
+          { capability: "recordingReservation.v1", required: true },
+          ...(contention ? [{ capability: "finiteMotion.v1", required: true }] : []),
+        ],
       };
     }
     await writeFile(
@@ -152,7 +226,16 @@ async function materialize(buildRoot, build) {
     await viteBuild({
       ...config,
       configFile: false,
-      build: { ...config.build, outDir: path.join(buildRoot, "plugins", slug) },
+      resolve: { ...config.resolve, conditions: ["node"] },
+      build: {
+        ...config.build,
+        lib: { entry: path.join(sourceRoot, "src/main.ts"), formats: ["cjs"] },
+        rollupOptions: {
+          ...config.build.rollupOptions,
+          external: builtinModules.flatMap((name) => [name, `node:${name}`]),
+        },
+        outDir: path.join(buildRoot, "plugins", slug),
+      },
     });
   }
 }
@@ -367,7 +450,12 @@ export async function superviseCase(
   if (!originalError)
     try {
       assert.equal(candidate.pid, child.pid);
-      assert.equal(candidate.status, "closed-reference");
+      assert.equal(
+        candidate.status,
+        ["retirement", "healthy-release"].includes(config.case)
+          ? "closed-reference"
+          : "closed-case",
+      );
       receipt = {
         ...candidate,
         status: "passed",
@@ -515,23 +603,47 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
     reportFailure: (failure) => console.error(JSON.stringify(failure)),
   });
 }
-export async function runFoundationEvidence({ referencesOnly = false } = {}) {
+export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
+  assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
+  if (referencesOnly) return ["retirement", "healthy-release"];
+  if (
+    [
+      "registration-end",
+      "contention",
+      "suspend-wake",
+      "disconnect-retry",
+      "unknown-publication",
+      "action-replay",
+    ].includes(caseId)
+  )
+    return [caseId];
+  if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
+  throw new Error(
+    "BLOCKED: ten observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+  );
+}
+export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
+  const selectedCases = selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
-  if (!referencesOnly)
-    throw new Error(
-      "BLOCKED: thirteen observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
-    );
+  const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
   const output = process.env.PERSISTENCE_EVIDENCE;
   assert.ok(
     output && path.isAbsolute(output),
     "PERSISTENCE_EVIDENCE must be an absolute retained report path",
   );
   const { build } = await import("esbuild");
-  const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-persistence-"));
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-persistence-")));
   const buildRoot = path.join(directory, "build");
   await mkdir(buildRoot);
   // Failed artifacts/profiles are retained for diagnosis; no profile deletion while a process is alive.
-  await materialize(buildRoot, build);
+  await materializeFoundationFixtures(
+    buildRoot,
+    build,
+    selectedCases.some(
+      (id) => id === "contention" || id === "suspend-wake" || id === "disconnect-retry",
+    ),
+    selectedCases.includes("action-replay"),
+  );
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
     "@kobrixa/plugin-runtime": path.join(root, "packages/plugin-runtime/src/index.ts"),
@@ -545,8 +657,25 @@ export async function runFoundationEvidence({ referencesOnly = false } = {}) {
       platform: "node",
       format: "cjs",
       alias,
-      external: ["electron"],
-      plugins: [rawResourcePlugin()],
+      external: ["electron", "node-hid", "usb"],
+      plugins: [
+        rawResourcePlugin(),
+        {
+          name: "preserve-packaging-source-url",
+          setup(builder) {
+            builder.onLoad(
+              { filter: /[/\\]apps[/\\]desktop[/\\]packaging\.ts$/ },
+              async ({ path: file }) => ({
+                contents: (await readFile(file, "utf8")).replaceAll(
+                  "import.meta.url",
+                  JSON.stringify(pathToFileURL(file).href),
+                ),
+                loader: "ts",
+              }),
+            );
+          },
+        },
+      ],
     });
   const syntheticRoot = path.join(directory, "synthetic");
   await mkdir(syntheticRoot);
@@ -562,10 +691,11 @@ export async function runFoundationEvidence({ referencesOnly = false } = {}) {
   await writeFile(
     source,
     `import {app} from 'electron';
-import {readFile,writeFile} from 'node:fs/promises';
+import {writeFile} from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
 import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-main.ts"))};
 import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
-const config=JSON.parse(await readFile(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
+const config=JSON.parse(readFileSync(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
 app.setPath('userData',config.profile);
 const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
  reportFailure:failure=>console.error(JSON.stringify(failure))});
@@ -585,6 +715,7 @@ app.exit(code);
     Buffer.concat([
       await readFile(entry),
       await readFile(workerEntry),
+      Buffer.from(renderer.receiptSha256),
       await readFile(
         path.join(buildRoot, "plugins/acceptance-builtin-recording/resource-index.json"),
       ),
@@ -593,9 +724,18 @@ app.exit(code);
       ),
     ]),
   );
-  const electron = createRequire(path.join(root, "apps/desktop/package.json"))("electron");
+  // Never invoke Electron's path getter: it may auto-download an absent binary.
+  const electronPackage = path.dirname(
+    createRequire(path.join(root, "apps/desktop/package.json")).resolve("electron/package.json"),
+  );
+  const electron = path.join(
+    electronPackage,
+    "dist",
+    (await readFile(path.join(electronPackage, "path.txt"), "utf8")).trim(),
+  );
+  await access(electron);
   const reports = [];
-  for (const id of ["retirement", "healthy-release"]) {
+  for (const id of selectedCases) {
     const profile = await mkdtemp(path.join(directory, `${id}-`)),
       report = path.join(directory, `${id}.candidate.json`),
       configFile = path.join(directory, `${id}.json`);
@@ -626,15 +766,17 @@ app.exit(code);
     });
     reports.push(receipt);
   }
-  verifyFoundationReports(reports, ["retirement", "healthy-release"]);
+  verifyFoundationReports(reports, selectedCases);
   const result = {
     format: 1,
     level: "real-process",
-    status: "reference-only",
+    status: referencesOnly ? "reference-only" : "scoped-case",
+    cases: selectedCases,
     reports,
     artifact: entry,
     bundleSha256,
     artifactSha256,
+    renderer,
     blocked: [
       "full foundation matrix",
       "public JS/Python parity",
@@ -650,7 +792,11 @@ app.exit(code);
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.includes("--preflight")) await preflight();
-    else await runFoundationEvidence({ referencesOnly: process.argv.includes("--references") });
+    else
+      await runFoundationEvidence({
+        referencesOnly: process.argv.includes("--references"),
+        caseId: process.argv.find((arg) => arg.startsWith("--case="))?.slice(7),
+      });
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

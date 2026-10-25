@@ -165,6 +165,68 @@ function fixture(recovery?: DeviceRecoveryPort) {
   };
 }
 afterEach(() => vi.useRealTimers());
+it("Disconnect includes earlier-session finals for the same execution, without joining unrelated owners", async () => {
+  const f = fixture();
+  const prior = deferred<DrainReport>();
+  const unrelated = deferred<DrainReport>();
+  const earlier = { ...ended, sessionId: id(80), reservationId: id(81) };
+  const foreign = [
+    { ...owner, sourceKey: "dev:unrelated" },
+    { ...owner, hostEpoch: id(90) },
+    { ...owner, processEpoch: id(91) },
+    { ...owner, generation: 2 },
+  ];
+  vi.mocked(f.persistence.endReservation).mockImplementation((event, deadline) => ({
+    owner: event.owner,
+    reason: "reservation-ended",
+    token: event.reservationId,
+    deadlineMonotonicMs: deadline,
+    checkpoints: [],
+    writes: [],
+    acceptedTickets: [],
+  }));
+  vi.mocked(f.persistence.drain).mockImplementation((offer) =>
+    offer.token === earlier.reservationId
+      ? prior.promise
+      : offer.token === ended.reservationId
+        ? Promise.resolve(saved)
+        : unrelated.promise,
+  );
+  f.emit(earlier);
+  foreign.forEach((other, i) => f.emit({ ...earlier, owner: other, reservationId: id(100 + i) }));
+  f.device.resolve(clean);
+  let settled = false;
+  const attempt = f.coordinator.disconnect(ended.sessionId, action);
+  void attempt.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  try {
+    expect(settled).toBe(false);
+    expect(f.sessions.disconnect).not.toHaveBeenCalled();
+    prior.resolve({ ...saved, recovery: id(82), state: "retryable", blocker: true });
+    await expect(attempt).rejects.toThrow("disposition");
+    f.coordinator.reconcileRecovery(id(82), saved);
+    await f.coordinator.disconnect(ended.sessionId, { ...action, actionToken: id(83) });
+    expect(f.sessions.disconnect).toHaveBeenCalledOnce();
+    expect(
+      vi
+        .mocked(f.persistence.endReservation)
+        .mock.calls.every(([, deadline]) => deadline === 10000),
+    ).toBe(true);
+    expect(f.persistence.drain).toHaveBeenCalledTimes(6);
+  } finally {
+    prior.resolve(saved);
+    unrelated.resolve(saved);
+    await attempt.catch(() => {});
+    f.coordinator.dispose();
+  }
+});
 it("a closed channel cannot substitute for actual exit while the owner is still retained", async () => {
   const f = fixture();
   const retiring = f.coordinator.retire(owner, "update");
@@ -573,13 +635,16 @@ async function providerComposition(safeMode = false, disabled = false, wrongId =
     },
   });
   const register = foundation.broker.registerProvider.bind(foundation.broker);
-  const removals: Array<ReturnType<typeof vi.fn<() => void>>> = [];
+  const removals: Array<ReturnType<typeof vi.fn<() => Promise<void>>>> = [];
   const registration = vi
     .spyOn(foundation.broker, "registerProvider")
     .mockImplementation((provider) => {
-      const remove = vi.fn(register(provider));
+      const registration = register(provider);
+      const remove = vi.fn(registration.retirement!.retire);
       removals.push(remove);
-      return remove;
+      return Object.assign(registration, {
+        retirement: { ...registration.retirement!, retire: remove },
+      });
     });
   const manager = await PluginManager.create({
     sources: BUILTIN_PLUGIN_SOURCES,
@@ -643,7 +708,7 @@ it("BM-03 override obeys one registration per enable and fresh allocators after 
     expect(f.registration).toHaveBeenCalledTimes(2);
     expect(f.catalogs[1]).not.toBe(f.catalogs[0]);
     await f.manager.reloadSource("builtin:kobrixa.device-ev3");
-    expect(f.registration).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(f.registration).toHaveBeenCalledTimes(3));
     expect(new Set(f.catalogs).size).toBe(3);
     expect(f.controls.every((control) => control.trace().length === 0)).toBe(true);
   } finally {

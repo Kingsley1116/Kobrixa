@@ -65,3 +65,52 @@ it("F17 no resources is an explicit empty disposition; rejected cleanup never be
     faultIds: [],
   });
 });
+
+it("provider retirement preserves rejected driver evidence and joins every deferred obligation before retry", async () => {
+  const error = new Error("driver retirement failed");
+  let finish!: (value: DeviceDisposition) => void;
+  const deferred = new Promise<DeviceDisposition>((resolve) => {
+    finish = resolve;
+  });
+  const revoke = vi
+    .fn<ResourceDriver["revokeProvider"]>()
+    .mockReturnValueOnce([Promise.reject(error), deferred])
+    .mockReturnValue(
+      [{ stopConfirmed: true, journalCommitted: true, faultIds: [] }].map((value) =>
+        Promise.resolve(value),
+      ),
+    );
+  const resources = createDeviceResourceParticipant({
+    revokeOwner: () => {
+      throw new Error("unused");
+    },
+    revokeProvider: revoke,
+    revokeAll: () => [],
+  });
+  const pending = resources.retireProvider("kobrixa.device-ev3", 1);
+  let settled = false;
+  void pending.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  finish({ stopConfirmed: true, journalCommitted: false, faultIds: ["retained-fault"] });
+  await expect(pending).rejects.toMatchObject({
+    errors: [error],
+    disposition: {
+      stopConfirmed: false,
+      journalCommitted: false,
+      faultIds: ["retained-fault"],
+    },
+  });
+  expect(await resources.retireProvider("kobrixa.device-ev3", 1)).toEqual({
+    stopConfirmed: true,
+    journalCommitted: true,
+    faultIds: [],
+  });
+});

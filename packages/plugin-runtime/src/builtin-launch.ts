@@ -23,4 +23,6 @@ export type Stage3BuiltinSource = {
   resources: Readonly<Record<string, string>>;
   policy: BuiltinPolicy;
   launch?: BuiltinLaunchDescriptor;
+  /** Host-only pre-read failure; never read from a manifest or plugin/wire data. */
+  payloadUnavailable?: true;
 };
