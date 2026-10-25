@@ -2871,6 +2871,130 @@ it("R170 kill requests and stop timeout never count as actual exit or repeat nor
   await h.manager.shutdown();
 });
 
+it.each([false, true])(
+  "disabled core inventory is metadata-only with safe mode=%s",
+  async (safeMode) => {
+    const original = optionalNodeSource();
+    const reads = vi.fn(() => {
+      throw new Error("Optional resource read");
+    });
+    const resources = Object.defineProperty({}, "settings.json", { enumerable: true, get: reads });
+    const source = {
+      ...original,
+      resources,
+      manifest: {
+        ...original.manifest,
+        contributes: {
+          ...original.manifest.contributes,
+          settings: { version: 1, path: "settings.json" },
+        },
+      },
+    };
+    const unread = { kind: "development" as const, directory: path.join(root, "unread") };
+    const invalid = {
+      ...builtin,
+      policy: "optional" as const,
+      manifest: { ...builtin.manifest, id: "INVALID" },
+    };
+    const conflicting = { ...original };
+    const fixture = stage3Fixture();
+    const launch = vi.fn(async () => {
+      throw new Error("Optional launch");
+    });
+    const manager = await PluginManager.create({
+      sources: [source, invalid, conflicting, unread],
+      store: memoryStore([source.launch.sourceKey]),
+      safeMode,
+      launcher: launch,
+      locale: "en",
+      stage3: fixture.stage3,
+      stage3Host: fixture.host,
+    });
+    fixture.assign(manager);
+    try {
+      const inventory = manager.persistenceCoreSources();
+      expect(inventory).toEqual([
+        { sourceKey: source.launch.sourceKey, pluginId: original.manifest.id, generation: 0 },
+      ]);
+      inventory[0]!.pluginId = "tampered";
+      expect(manager.persistenceCoreSources()[0]!.pluginId).toBe(original.manifest.id);
+      expect(manager.persistenceCatalogSources()).toEqual([]);
+      expect(manager.uiCatalogSources()).toEqual([]);
+      expect(reads).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      await manager.shutdown();
+    }
+  },
+);
+
+it("disabled core inventory follows manifest replacement and removal without launching", async () => {
+  const source = await devPlugin("core-inventory");
+  const manager = await create([source], memoryStore([keyOf(source)]));
+  try {
+    const first = manager.persistenceCoreSources()[0]!;
+    expect(first.pluginId).toBe("acme.core-inventory");
+    const file = path.join(source.directory, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.id = "acme.replaced";
+    manifest.contributes.commands = [];
+    await writeFile(file, JSON.stringify(manifest));
+    await manager.reloadSource(keyOf(source));
+    const next = manager.persistenceCoreSources()[0]!;
+    expect(next.sourceKey).toBe(first.sourceKey);
+    expect(next.pluginId).toBe("acme.replaced");
+    expect(next.generation).toBeGreaterThan(first.generation);
+    await manager.removeSource(keyOf(source));
+    expect(manager.persistenceCoreSources()).toEqual([]);
+    expect(launcher).not.toHaveBeenCalled();
+  } finally {
+    await manager.shutdown();
+  }
+});
+
+it("disabled core inventory announces removal before process retirement settles", async () => {
+  const source = await devPlugin("core-removal");
+  let release!: () => void;
+  const retiring = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const manager = await PluginManager.create({
+    sources: [source],
+    store: memoryStore(),
+    safeMode: false,
+    locale: "en",
+    launcher: async () =>
+      memoryPlugin((peer, { exit }) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.0.0",
+          sdk: { name: "test", version: "1" },
+        }));
+        peer.handle("command/execute", () => null);
+        peer.handle("shutdown", async () => {
+          await retiring;
+          return null;
+        });
+        peer.onNotification("exit", () => exit(0));
+      }).process,
+  });
+  const inventories: ReturnType<PluginManager["persistenceCoreSources"]>[] = [];
+  const off = manager.onEvent((event) => {
+    if (event.type === "state") inventories.push(manager.persistenceCoreSources());
+  });
+  let removing: ReturnType<PluginManager["removeSource"]> | undefined;
+  try {
+    expect(await manager.executeCommand("acme.core-removal.greet")).toMatchObject({ ok: true });
+    removing = manager.removeSource(keyOf(source));
+    await vi.waitFor(() => expect(manager.persistenceCoreSources()).toEqual([]));
+    expect(structuredClone(inventories)).toContainEqual([]);
+  } finally {
+    release();
+    await removing;
+    off();
+    await manager.shutdown();
+  }
+});
+
 it("R170 admitted persistence catalog is lazy, isolated metadata and excludes disabled sources", async () => {
   const source = {
     ...optionalNodeSource(),
