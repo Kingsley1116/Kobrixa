@@ -370,6 +370,20 @@ export class PluginManager {
     });
   }
 
+  /** Validated namespace identities only; never reads resources or admits execution/UI. */
+  persistenceCoreSources(): readonly Pick<
+    ResourceOwner,
+    "sourceKey" | "pluginId" | "generation"
+  >[] {
+    return this.#entries.flatMap(({ plugin, generation }) =>
+      plugin.manifest &&
+      !plugin.unread &&
+      (plugin.status === "enabled" || plugin.status === "disabled")
+        ? [{ sourceKey: plugin.sourceKey, pluginId: plugin.manifest.id, generation }]
+        : [],
+    );
+  }
+
   readonly #admittedOwners = new Map<ResourceOwner, readonly DeviceRequirement[]>();
 
   requirements(owner: ResourceOwner): readonly DeviceRequirement[] | null {
@@ -886,10 +900,11 @@ export class PluginManager {
     const supervisor = this.#supervisors.get(sourceKey);
     // Withdraw the registry row before cleanup so a removed process cannot publish notices.
     this.#entries = this.#entries.filter((entry) => entry.read.sourceKey !== sourceKey);
-    if (supervisor) {
-      this.#supervisors.delete(sourceKey);
-      await this.#retire([supervisor], "removed");
-    }
+    if (supervisor) this.#supervisors.delete(sourceKey);
+    const retirement = this.#retire(supervisor ? [supervisor] : [], "removed");
+    // Core namespace consumers must see removal before asynchronous process cleanup.
+    this.#emitState();
+    await retirement;
     this.#clearRegistrationFailures(sourceKey);
     if (forget && this.#disabled.delete(sourceKey)) await this.#saveBestEffort();
     await this.#apply("cancelled");
