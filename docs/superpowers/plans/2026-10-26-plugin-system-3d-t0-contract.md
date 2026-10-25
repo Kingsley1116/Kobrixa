@@ -296,3 +296,9 @@ D4 在背景3,600frames／4×2×800、table50rows與cursor同時跑60s，實測a
 4. 各owner精確path/stopped/base-head/驗證receipt及foundation aggregate gate disposition。3C retained proofs可消費，但不代替本D artifact，也不把P160/P170/X-T1記closed。
 
 正式 D1 close 需上述具名 acceptance；D2 API1.8發布、D7公開transport、D9a/b Lab source-free installed、D8 legacy removal、MANUAL仍是後續獨立 gates。本次產物只是一份可實作、可反駁的 local technical freeze draft。
+
+## Controller local D2 leaf-schema handoff
+
+2026-10-26: independent scoped review identified numeric EV3 output ports and absent time-domain metadata; both are resolved above against the merged provider and legacy panel formulas. Controller accepts this candidate for **unpublished local D2 leaf implementation and tests** under the existing local-assembly ruling. Formal D1/aggregate publication statuses remain open, and no package/API version is raised by this handoff.
+
+Exclusive disjoint write ownership: the data worker owns new protocol `ui-v2-data.ts`, its focused tests and `test-fixtures/declarative-ui-v2/data/`; controller owns new `ui-v2-resource.ts` and focused tests. Dataset declaration/header/chunk types and canonical byte helpers belong to the data module; resource imports these, never vice versa. Both may import existing v1 leaf types. No writer changes shared registry/exports/schema/SDK/package metadata until these leaves have passed review; subsequent D2 integration is serialized by the controller. No B2 product or runtime writer shares these paths. New leaves must use exportable wire schemas plus explicit semantic validation, reject unknown fields/unsafe strings/nonfinite values, and remain browser-safe.
