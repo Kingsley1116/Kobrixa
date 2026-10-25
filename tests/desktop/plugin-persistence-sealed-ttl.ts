@@ -570,10 +570,6 @@ export function assertSealedTtlObservation(o: SealedTtlObservation): void {
 export function sealedTtlSummary(o: SealedTtlObservation): CaseEvidence["checks"] {
   const b = finalBegin(o, "drain-sealed"),
     id = b.ticket!.id;
-  const s = one(
-    o.calls.filter((r) => r.method === "storage/sealWrite" && r.params.write === id),
-    "seal",
-  );
   const expiry = o.recovery.before.expiresAt! - offset(o);
   const expired = o.drains[1]!;
   return {
