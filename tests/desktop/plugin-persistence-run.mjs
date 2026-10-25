@@ -188,6 +188,11 @@ export async function materializeFoundationFixtures(
         id: `${id}.unknown-${step}`,
         title: { en: `Unknown publication ${step}`, "zh-TW": `未知發布 ${step}` },
       });
+    if (role === "recording")
+      manifest.contributes.commands.push({
+        id: `${id}.renderer-seed`,
+        title: { en: "Renderer loss seed" },
+      });
     for (const step of ["chunk", "commit"])
       manifest.contributes.commands.push({
         id: `${id}.action-${step}`,
@@ -639,6 +644,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "sealed-ttl",
       "unknown-publication",
       "action-replay",
+      "renderer-loss",
     ].includes(caseId)
   )
     return [caseId];
@@ -665,9 +671,13 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     buildRoot,
     build,
     selectedCases.some(
-      (id) => id === "contention" || id === "suspend-wake" || id === "disconnect-retry",
+      (id) =>
+        id === "contention" ||
+        id === "suspend-wake" ||
+        id === "disconnect-retry" ||
+        id === "renderer-loss",
     ),
-    selectedCases.includes("action-replay"),
+    selectedCases.some((id) => id === "action-replay" || id === "renderer-loss"),
   );
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
