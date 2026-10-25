@@ -7,10 +7,11 @@ import type {
 import type {
   Condition,
   PanelResourceV1,
+  PanelResourceV2,
   UiStateSnapshot,
   UiScalar,
   ValueSpec,
-  UiNodeV1,
+  UiNodeV2,
   Text,
   ResourceOwner,
 } from "@kobrixa/plugin-protocol";
@@ -182,7 +183,7 @@ export class UiStateStore {
   onAccepted: (nodeId: string) => void = () => {};
   constructor(
     private bridge: Pick<PluginUiBridge, "snapshot" | "invoke">,
-    readonly resource: PanelResourceV1,
+    readonly resource: PanelResourceV1 | PanelResourceV2,
     initial: UiStateSnapshot,
     restored?: DraftPayload,
   ) {
@@ -288,7 +289,7 @@ export class UiStateStore {
       state.enabled
     );
   }
-  fieldValid(node: UiNodeV1): boolean {
+  fieldValid(node: UiNodeV2): boolean {
     if (!("field" in node)) return true;
     const field = this.resource.fields[node.field];
     if (!field) return false;

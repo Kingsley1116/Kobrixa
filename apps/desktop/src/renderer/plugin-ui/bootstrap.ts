@@ -4,15 +4,23 @@ import type {
   UiBinding,
   PanelResourceV1,
   StatusResourceV1,
+  UiResourceV2,
 } from "@kobrixa/plugin-protocol";
-import { validateUiResource, type UiValidationContext } from "@kobrixa/plugin-protocol";
+import {
+  validateUiResource,
+  validateUiResourceV2,
+  type UiValidationContext,
+} from "@kobrixa/plugin-protocol";
 import { contributionKey, send, UiCatalogStore } from "./catalog-store.js";
 import { bindingKey, UiStateStore } from "./state-store.js";
 import { UiIntentController } from "./intent-controller.js";
+import { UiDatasetStore } from "./data-store.js";
 import { DraftCache } from "./draft-cache.js";
 export type PanelRecord = {
   entry: UiCatalogEntry;
-  resource: PanelResourceV1 | StatusResourceV1;
+  resource: PanelResourceV1 | StatusResourceV1 | UiResourceV2;
+  datasets?: UiDatasetStore;
+  detachDatasets?: () => void;
   state: UiStateStore;
   intent: UiIntentController;
 };
@@ -34,13 +42,23 @@ const kinds = new Set([
   "keyValue",
 ]);
 export function assertRenderable(
-  resource: PanelResourceV1 | StatusResourceV1,
+  resource: PanelResourceV1 | StatusResourceV1 | UiResourceV2,
   validationContext: UiValidationContext,
   rawBytes: number,
+  version: 1 | 2 = 1,
 ): void {
   const measured = new TextEncoder().encode(JSON.stringify(resource)).length;
   if (!Number.isSafeInteger(rawBytes) || rawBytes < 0)
     throw new Error("Invalid admitted byte count");
+  if (version === 2) {
+    const validated = validateUiResourceV2(
+      resource,
+      validationContext,
+      Math.max(rawBytes, measured),
+    );
+    if (!validated.ok) throw new Error(validated.error.code);
+    return; // v2's validator covers dialog roots and the complete bounded graph.
+  }
   const validated = validateUiResource(resource, validationContext, Math.max(rawBytes, measured));
   if (!validated.ok) throw new Error(validated.error.code);
   if (new TextEncoder().encode(JSON.stringify(resource)).length > 262144)
@@ -225,13 +243,18 @@ export class RendererSession {
       const admitted = await this.catalog.resource(entry);
       const resource = admitted?.resource;
       if (this.dead || !this.catalog.current(entry) || serial !== this.serial) return;
-      if (!resource) {
+      if (!resource || resource.kind !== "panel") {
         this.failures.add(this.failureKey(entry));
         this.publish();
         return;
       }
       try {
-        assertRenderable(resource, admitted!.validationContext, admitted!.rawBytes);
+        assertRenderable(
+          resource,
+          admitted!.validationContext,
+          admitted!.rawBytes,
+          admitted!.version,
+        );
       } catch {
         this.quarantine(entry, "validation");
         return;
@@ -262,7 +285,7 @@ export class RendererSession {
         }
         const state = new UiStateStore(
           this.bridge,
-          resource as PanelResourceV1,
+          resource,
           result.value,
           this.drafts.restore(entry, result.value.binding),
         );
@@ -294,7 +317,36 @@ export class RendererSession {
             if (target) void this.open(target);
           }
         };
-        this.records.set(key, { entry, resource, state, intent });
+        const record: PanelRecord = { entry, resource, state, intent };
+        if ("datasets" in resource) {
+          const datasets = new UiDatasetStore(result.value.binding, resource.datasets, {
+            snapshot: (binding) =>
+              this.bridge.dataSnapshot({ binding: { ...binding, kind: "panel" } }),
+            read: (params) => this.bridge.dataRead(params),
+          });
+          record.datasets = datasets;
+          const sync = () => {
+            if (!state.getSnapshot().active) {
+              datasets.retire();
+              return;
+            }
+            const presentation = state.getSnapshot().snapshot.data[resource.presentationKey];
+            if (typeof presentation !== "number") {
+              this.quarantine(entry, "renderer");
+              return;
+            }
+            try {
+              datasets.setPresentation(presentation);
+            } catch {
+              this.quarantine(entry, "renderer");
+            }
+          };
+          record.detachDatasets = state.subscribe(sync);
+          this.records.set(key, record);
+          sync();
+          if (this.records.get(key) === record) void datasets.invalidate();
+        } else this.records.set(key, record);
+        if (this.records.get(key) !== record) return;
         void intent.visibility(true, "tab");
         this.publish();
       } catch {
@@ -327,6 +379,8 @@ export class RendererSession {
       const view = record.state.getSnapshot();
       this.drafts.retain(record.entry, view.snapshot.binding, record.resource, view);
     } else this.drafts.drop(record.entry);
+    record.detachDatasets?.();
+    record.datasets?.retire();
     record.intent.dispose();
     record.state.retire();
     this.records.delete(key);
@@ -410,6 +464,7 @@ export class RendererSession {
     }
     if (record) {
       if (event.type === "state") void record.state.invalidate(event.revision);
+      else if (event.type === "data") void record.datasets?.invalidate();
       else record.intent.challenge(event.challenge);
     } else if (event.type === "state" && event.binding.kind === "status") {
       const key = bindingKey(event.binding);
@@ -445,7 +500,12 @@ export class RendererSession {
       const resource = admitted?.resource;
       if (!resource || resource.kind !== "status") return;
       try {
-        assertRenderable(resource, admitted!.validationContext, admitted!.rawBytes);
+        assertRenderable(
+          resource,
+          admitted!.validationContext,
+          admitted!.rawBytes,
+          admitted!.version,
+        );
       } catch {
         this.quarantine(entry, "validation");
         return;

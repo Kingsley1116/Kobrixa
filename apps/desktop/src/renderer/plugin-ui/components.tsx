@@ -1,3 +1,5 @@
+import { DatasetNodeView } from "./dataset-node.js";
+import type { UiDatasetStore } from "./data-store.js";
 import { CompositionInput, composingKey } from "./composition-input.js";
 import { translated } from "./recovery-support.js";
 export { translated } from "./recovery-support.js";
@@ -64,11 +66,13 @@ export function PanelTree({
   intent,
   locale,
   labels,
+  datasets,
 }: {
   state: UiStateStore;
   intent: UiIntentController;
   locale: "en" | "zh-TW";
   labels: UiLabels;
+  datasets?: UiDatasetStore;
 }) {
   const view = useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
   useLayoutEffect(
@@ -406,6 +410,18 @@ export function PanelTree({
           </dl>
         );
         break;
+      case "lineChart":
+      case "table":
+      case "list":
+      case "code":
+        if (!datasets || !("datasets" in state.resource))
+          throw new Error("Dataset cache unavailable");
+        content = (
+          <DatasetNodeView node={node} resource={state.resource} store={datasets} locale={locale} />
+        );
+        break;
+      case "dialog":
+        return null; // Separate dialog roots are mounted only by an admitted view action.
       default:
         throw new Error("Unsupported UI component");
     }

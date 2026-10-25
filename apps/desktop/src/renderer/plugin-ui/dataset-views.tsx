@@ -81,7 +81,7 @@ export function DatasetChart({
   view?: TimeViewV2;
   cursor: number | null;
   enabled: boolean;
-  onCursor(time: number): void;
+  onCursor?: (time: number) => void;
 }) {
   const clip = useId();
   const [from, to] = effectiveTimeDomainV2(header, view);
@@ -136,7 +136,7 @@ export function DatasetChart({
               strokeWidth="2"
             />
           ))}
-          {enabled && (
+          {enabled && onCursor && (
             <line
               x1={x}
               x2={x}
@@ -174,23 +174,26 @@ export function DatasetChart({
           </li>
         ))}
       </ul>
-      <label>
-        {zh ? "游標時間" : "Cursor time"}
-        <input
-          type="range"
-          min={from}
-          max={to}
-          step="any"
-          value={selected}
-          disabled={!enabled}
-          aria-label={`${label}: ${zh ? "游標時間" : "Cursor time"}`}
-          aria-valuetext={`${(selected / 1000).toFixed(3)} s`}
-          onChange={(event) => {
-            const value = event.currentTarget.valueAsNumber;
-            if (enabled && Number.isFinite(value) && value >= from && value <= to) onCursor(value);
-          }}
-        />
-      </label>
+      {onCursor && (
+        <label>
+          {zh ? "游標時間" : "Cursor time"}
+          <input
+            type="range"
+            min={from}
+            max={to}
+            step="any"
+            value={selected}
+            disabled={!enabled}
+            aria-label={`${label}: ${zh ? "游標時間" : "Cursor time"}`}
+            aria-valuetext={`${(selected / 1000).toFixed(3)} s`}
+            onChange={(event) => {
+              const value = event.currentTarget.valueAsNumber;
+              if (enabled && Number.isFinite(value) && value >= from && value <= to)
+                onCursor(value);
+            }}
+          />
+        </label>
+      )}
     </figure>
   );
 }
@@ -275,16 +278,18 @@ export function DatasetCode({
   entries: readonly string[];
   locale: "en" | "zh-TW";
   enabled: boolean;
-  onCopy(): void;
+  onCopy?: () => void;
 }) {
   return (
     <section aria-label={label} className="plugin-dataset-code">
       <pre tabIndex={0} aria-label={label}>
         <code>{entries.join("")}</code>
       </pre>
-      <button type="button" disabled={!enabled} onClick={onCopy}>
-        {locale === "zh-TW" ? "複製" : "Copy"}
-      </button>
+      {onCopy && (
+        <button type="button" disabled={!enabled} onClick={onCopy}>
+          {locale === "zh-TW" ? "複製" : "Copy"}
+        </button>
+      )}
     </section>
   );
 }

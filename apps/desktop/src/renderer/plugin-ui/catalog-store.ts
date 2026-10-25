@@ -5,7 +5,7 @@ export const contributionKey = (entry: Pick<UiCatalogEntry, "sourceKey" | "id">)
 const ownerKey = (owner: UiOwner): string =>
   JSON.stringify([owner.sourceKey, owner.pluginId, owner.uiResourceGeneration]);
 const resourceKey = (entry: UiCatalogEntry): string =>
-  JSON.stringify([contributionKey(entry), ownerKey(entry), entry.resourceDigest]);
+  JSON.stringify([contributionKey(entry), ownerKey(entry), entry.resourceDigest, entry.version]);
 export function bounded<T>(work: Promise<T>, milliseconds = 5000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("UI response deadline")), milliseconds);
@@ -28,10 +28,7 @@ export function send(work: () => Promise<unknown>): void {
     /* synchronous adapter failure cannot interrupt revocation */
   }
 }
-type Resource = Extract<
-  Extract<Awaited<ReturnType<PluginUiBridge["resource"]>>, { ok: true }>["value"],
-  { version: 1 }
->;
+type Resource = Extract<Awaited<ReturnType<PluginUiBridge["resource"]>>, { ok: true }>["value"];
 const catalogs = new WeakSet<object>();
 export function catalogDiagnostics(instance: object): FoundationDiagnostics | undefined {
   if (!catalogs.has(instance)) return undefined;
@@ -286,7 +283,7 @@ export class UiCatalogStore {
         const value = result.value;
         if (
           new TextEncoder().encode(JSON.stringify(value)).length > 524288 ||
-          value.version !== 1 ||
+          value.version !== entry.version ||
           value.id !== entry.id ||
           ownerKey(value.owner) !== ownerKey(entry) ||
           value.resource.kind !== entry.kind

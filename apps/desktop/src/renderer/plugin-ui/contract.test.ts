@@ -140,6 +140,18 @@ export function fixture() {
   const listeners = new Set<(event: UiBridgeEvent) => void>();
   const changed = new Set<() => void>();
   const bridge = {
+    dataRead: vi.fn<PluginUiBridge["dataRead"]>(async () => ({
+      ok: false,
+      error: {
+        code: "PLUGIN_E_UI_RESOURCE",
+        message: "No dataset in v1 fixture",
+        detail: { kind: "ui-data", reason: "undeclared" },
+      },
+    })),
+    dataSnapshot: vi.fn<PluginUiBridge["dataSnapshot"]>(async () => ({
+      ok: true,
+      value: { datasets: [] },
+    })),
     catalog: vi.fn<PluginUiBridge["catalog"]>(async () => ({
       ok: true,
       value: { hostEpoch: handle(1), revision: 1, entries: [entry], nextCursor: null },

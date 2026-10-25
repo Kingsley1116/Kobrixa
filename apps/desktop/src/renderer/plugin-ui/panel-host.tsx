@@ -80,6 +80,7 @@ export function PluginToolsPane({
               fallback={labels.unavailable}
             >
               <PanelTree
+                {...(record.datasets ? { datasets: record.datasets } : {})}
                 state={record.state}
                 intent={record.intent}
                 locale={locale}

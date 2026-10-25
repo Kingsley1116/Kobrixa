@@ -105,6 +105,8 @@ const api = {
     onChanged: vi.fn<PluginsApi["persistenceRecovery"]["onChanged"]>(() => () => {}),
   },
   ui: {
+    dataRead: vi.fn<PluginsApi["ui"]["dataRead"]>(),
+    dataSnapshot: vi.fn<PluginsApi["ui"]["dataSnapshot"]>(),
     catalog: vi.fn<PluginsApi["ui"]["catalog"]>(),
     resource: vi.fn<PluginsApi["ui"]["resource"]>(),
     open: vi.fn<PluginsApi["ui"]["open"]>(),

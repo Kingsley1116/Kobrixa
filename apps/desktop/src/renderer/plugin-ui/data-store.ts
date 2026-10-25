@@ -109,6 +109,9 @@ export class UiDatasetStore {
       ? cached.data
       : undefined;
   }
+  revision(id: string): number | undefined {
+    return this.dataset(id) ? this.#cache.get(id)?.metadata.revision : undefined;
+  }
   chartGroup(ids: readonly string[]): readonly ChartHeaderV2[] | undefined {
     if (!ids.length || ids.length > 4 || new Set(ids).size !== ids.length) return;
     const headers: ChartHeaderV2[] = [];

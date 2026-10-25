@@ -12,7 +12,10 @@ export type DraftPayload = {
 
 // Copy only admitted fields and primitive values. Invalid values remain invalid;
 // in particular, a numeric raw "-" and its canonical null travel together.
-export function copyDraft(resource: PanelResourceV1, payload: DraftPayload): DraftPayload {
+export function copyDraft(
+  resource: Pick<PanelResourceV1, "fields">,
+  payload: DraftPayload,
+): DraftPayload {
   const draft: [string, UiScalar][] = [];
   const raw: [string, string][] = [];
   for (const [key, field] of Object.entries(resource.fields)) {
@@ -68,7 +71,7 @@ export class DraftCache {
   retain(
     entry: UiCatalogEntry,
     binding: UiBinding,
-    resource: PanelResourceV1,
+    resource: Pick<PanelResourceV1, "fields">,
     payload: DraftPayload,
   ): void {
     this.drop(entry);
