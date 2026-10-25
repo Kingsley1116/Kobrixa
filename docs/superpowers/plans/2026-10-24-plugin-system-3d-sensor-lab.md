@@ -47,7 +47,7 @@ write set：只本design/plan及具名T0 receipt；此時不升版。凍結候�
 
 write set：新增`packages/plugin-protocol/src/ui-v2-{resource,data,methods}.ts`及tests；更新既有`ui-methods.ts`/validation/methods/manifest/exports/schema、JS UI client、Python UI client與bundled schema、`test-fixtures/declarative-ui-v2/`。最終檔名以D1receipt固定，不能平行另造同義API。
 
-實作：以T0精確union為準，v1保持；v2 chart/table/list/dialog/code/status core Open/Stop；typed完整dataset替換、snapshot/invalidation、binding/revision/chunks/TTL/bytes/count；API1.8 negotiation及UI version rejection。正式公開EV3 vocabulary與conformance，不讓feature匯入provider catalog。
+實作：以T0精確union為準，v1保持；v2 chart/table/list/dialog/code/status core Open/Stop；typed完整dataset替換、snapshot/invalidation、binding/revision/chunks/TTL/bytes/count；API1.8 negotiation及UI version rejection。依T0 §4.1實作typed timeDomain/full/recent60s、shared group與expanded cursor語意，byte fixtures包含新header。EV3 vocabulary固定output:0..3→legacy port0..3→codeletters A..D；正式公開與conformance仍需後續gate，不讓feature匯入provider catalog。
 
 驗證：共同valid/invalid/maximum fixtures跨Zod、JSON Schema、JS、Python；未知version/component/field、NaN/nonfinite、proto key、stale/cross-owner、UTF-8與code points、每項limit−1/limit/limit+1。1.6 motor與1.7 storage不退化，沒有未聲明UIv2 fallback。
 

@@ -56,7 +56,7 @@ type ActionV2 = UiAction
   | { kind: "view"; action: "openDialog" | "closeDialog"; dialogId: LocalId };
 type NewNode =
   | { type: "lineChart"; label: Text; dataset: LocalId;
-      cursorGroup: LocalId; onCursor: CursorCommand }
+      cursorGroup: LocalId; timeView: "default" | "inspect"; onCursor: CursorCommand }
   | { type: "table"; label: Text; dataset: LocalId; onSelect?: RowCommand }
   | { type: "list"; label: Text; dataset: LocalId;
       actions: { id: LocalId; label: Text; action:
@@ -86,8 +86,8 @@ type StatusResourceV2 = StatusResourceV1 & {
 - 每 panel ≤8 datasets；chart declarations ≤4、每個 1–2 series；table ≤8 columns；list ≤3 columns／3 actions；code ≤1。每 table/list 當前頁 ≤50 unique keys，cell null 或該 column 型別，string ≤200 Unicode scalar values。以 v1 action＋scalar page token 做 previous/next，沒有隱含 host 全量 history cache。
 - 一個 cursorGroup/panel，最多一個 open dialog、不巢狀。dialog 的 children 是獨立可達子樹，不屬初始 root traversal；全 resource node count/depth 仍計入。放大 chart 引用同 dataset，不重複計 4 個 dataset／6,400 points；每 node 的 ID 唯一。
 - `presentationKey` 必須是 nonnullable safe-integer number data slot，initial 0，min 0/max MAX_SAFE_INTEGER。0 為尚未發布；feature 完成一組 dataset commits 後以既有 `ui.patch` CAS 更新它。renderer 只讓 dataset.presentation 與 state 該值相同的內容互相比較；其餘顯示 updating/disabled，不混舊 cursor/table。沒有跨 dataset transaction，也不保留第二套完整可顯示 snapshots。
-- row action 的 host event 是 `{dataset, revision, key}`；host 重新查當前頁，加入 key、row.version（可 null）、dataset revision 三個 scalar args。list 的 openDialog action 開啟時捕捉同 tuple；一般 openDialog（例如放大圖）沒有 row tuple，不能開帶 confirm 的 dialog。confirm 重驗仍存在且 revision/version 相同；變更即 stale，不重新選另一筆。chart event 是 `{dataset, revision, time}`，host 驗 finite time 落在資料時間域，加入 time 與 presentation。仍用 `context-v1` panel invocation，禁止 renderer 注入任意 arguments/owner/actionRef。row參數的command宣告須相容string/string|null/safe integer，cursor為finite number/safe integer；不相容在resource admission拒絕。
-- cursor 由 raw `cursorReading` 得值，不能用 reduced point。`CursorCommand.readings` 最多8項，必須精確涵蓋該group的dataset/series，每組rawKey/valueKey為不同LocalId；共用group的onCursor宣告必須相同。command result.output 這16個以内欄位只接受finite number/null；host查型別，renderer以invocationId＋binding＋presentation＋query time取最新回覆，舊結果丟棄。讀值在chart旁以有label的唯讀raw/value表呈現，不把command output升格成任意renderer state。每group一個in-flight、合併最後位置、最多10次/s，無actionRef/motionScopeRef、無dataset或patch流量；仍受existing invocation bounds，Stop走control。如此4chart×2Hz commits＋2Hz presentation patch=10/s，不把10Hz cursor另塞進已滿的patch budget；history/page更新時降低live commit頻率而不提高上限。chart run boundaries、完整 extrema、omitted counts 明示。code copy command 經真 user action 取得既有 actionRef，文字先備妥；不能從 dataset commit 自動 copy。
+- row action 的 host event 是 `{dataset, revision, key}`；host 重新查當前頁，加入 key、row.version（可 null）、dataset revision 三個 scalar args。list 的 openDialog action 開啟時捕捉同 tuple；一般 openDialog（例如放大圖）沒有 row tuple，不能開帶 confirm 的 dialog。confirm 重驗仍存在且 revision/version 相同；變更即 stale，不重新選另一筆。chart event 是 `{dataset, revision, time}`，host 驗 finite time 落在該 node/view 當前有效時間域（§4），加入 time 與 presentation。仍用 `context-v1` panel invocation，禁止 renderer 注入任意 arguments/owner/actionRef。row參數的command宣告須相容string/string|null/safe integer，cursor為finite number/safe integer；不相容在resource admission拒絕。
+- cursor 由 raw `cursorReading` 得值，不能用 reduced point。`CursorCommand.readings` 最多8項，必須精確涵蓋該group的dataset/series，每組rawKey/valueKey為不同LocalId；共用group的onCursor宣告必須相同。command result.output 這16個以内欄位只接受finite number/null；host查型別，renderer以invocationId＋binding＋presentation＋query time＋view generation取最新回覆，舊結果丟棄。讀值在chart旁以有label的唯讀raw/value表呈現，不把command output升格成任意renderer state。每group一個in-flight、合併最後位置、最多10次/s，無actionRef/motionScopeRef、無dataset或patch流量；仍受existing invocation bounds，Stop走control。如此4chart×2Hz commits＋2Hz presentation patch=10/s，不把10Hz cursor另塞進已滿的patch budget；history/page更新時降低live commit頻率而不提高上限。chart run boundaries、完整 extrema、omitted counts 明示。code copy command 經真 user action 取得既有 actionRef，文字先備妥；不能從 dataset commit 自動 copy。
 - **最小 status 不提供 plugin command actions**：只 Open/Stop，因現有 command context.origin 是 panel/management。status 的可信 context 是 host resolved binding＋owner＋window scope，直接 core action，不偽造 panel invocation、不新增 origin/status 或 commandEnvelope v2。未來要 status plugin command 須另案；不阻擋 Lab parity。
 
 版本：候選 API 1.8 negotiation 的 UI intersection 允許 `[1,2]`（排序唯一），commandEnvelope 仍 `[1]`。1.6/1.7 session 仍僅 `[1]`；version 2 未共同協商時 unavailable，無降級。catalog version/read DTO、雙 SDK validation 必須一併擴展，不能只把 resource parser 改成接受 2。
@@ -102,7 +102,9 @@ type Series = { id: LocalId; unit: string; range: [number, number];
   extrema: [[number, number], [number, number]] | null;
   fullPointCount: number; omittedPoints: number; omittedRuns: number };
 type Row = { key: string; version: string | null; cells: Scalar[] };
-type Header = { kind: "chart"; series: Series[] }
+type TimeDomain = [from: number, to: number]; // finite milliseconds, from=0, to>=1000
+type TimeView = "full" | "recent60s";
+type Header = { kind: "chart"; timeDomain: TimeDomain; view: TimeView; series: Series[] }
   | { kind: "table" } | { kind: "list" } | { kind: "code" };
 type Chunk = { kind: "chart"; entries: Point[] }
   | { kind: "table"; entries: Row[] }
@@ -111,6 +113,18 @@ type Chunk = { kind: "chart"; entries: Point[] }
 ```
 
 header/entries 是按 kind 配對的 discriminated union，不能獨立任選。chart series IDs/order 必須等於宣告，unit ≤32 code points；range finite 且 low≤high；extrema 是 full raw 最小/最大之 time/value（空 series 為 null），須在 range 內。time ≥0 finite、series index 在宣告內；run 為 nonnegative safe integer，依 series/run/time 排序，同 run time 非遞減；run change 絕不連線。每 series ≤800 points，panel 合計 ≤6,400；fullPointCount ≤3,600，omittedPoints = fullPointCount − transmitted count，omittedRuns ≤3,600。這些 metadata 必須來自 pure reducer，不可藉省略數量宣稱所有 raw points 都畫出。
+
+### 4.1 明確時間域與 full/recent60s 呈現
+
+`timeDomain` 是完整 elapsed-ms 範圍 `[0,end]`，不是值域 `Series.range`，也不是 reduced points 的 min/max time。`view` 指定一般 chart 的預設視窗；兩欄均為 typed header、納入 canonical bytes/digest，同 dataset revision/presentation 原子發布。timeDomain 兩端 finite、from 必為0、to≥1000；points/extrema 的時間必須在完整域內。視窗 full=`timeDomain`，recent60s=`[max(0,end-60000),end]`，兩端 inclusive。renderer 按有效視窗裁切繪圖，不以有值點縮短軸，不跨 run/gap 補線；fullPointCount/omitted metadata 仍描述 dataset 的完整 reducer 輸入，不因 view 裁切改稱新的減點結果。
+
+Lab adapter 精確沿用 `apps/desktop/src/renderer/device/sensor-lab-panel.tsx` 的主 panel 與 `ExpandedCharts`：`last=frames.at(-1)?.elapsedMs ?? 0`（包含 null/error frame）；`live=!current || (active && current.id===activeRecording.id)`；`end=max(1000,current?.durationMs ?? last,!live ? (comparison?.durationMs ?? 0) : 0)`。live 的 header.view=`recent60s`，history=`full`；comparison 在非live時延長共同域，不能只取任一有值 series 的末點。無 current/無 frame 時仍為 `[0,1000]`；有 recording 時即使全 null/error、尾段無有效點或 entries 為空，仍用 duration/end，保留空白時間及可檢查的 cursor。不得從 extrema、最後有效點或 reduced entries 重建 end。
+
+同 cursorGroup、同 presentation 的所有 chart headers 必須有相同 timeDomain/view；不同即 group updating/disabled，不取交集或聯集猜測。commit 可逐 dataset 發生，group 未齊時不可 dispatch cursor；單 dataset 格式/域錯依 §5 schema error，group 不一致則阻止呈現與互動直至一致。cursor reading 仍查原始樣本、含 null/error、1500ms inclusive cutoff及later-input tie；空 series 回 null，不能為填滿視窗而外插。
+
+`lineChart.timeView="default"` 使用 header.view；`"inspect"` 只允許在 dialog 子樹，啟用通用 renderer 的 full/recent60s picker 與100ms-step cursor控制。同一 dialog/group 共用一份 view/cursor state，預設面板不受其切換影響。開啟 dialog 時以當時 header.view 初始化；之後保留使用者選擇（即使live轉history），close/reopen 重新初始化，沿用 legacy `useState(!live)` 行為。未指定 cursor time 時跟隨 end；使用者指定後保留 requestedTime，每次有效域或模式改變均顯示 `clamp(requestedTime ?? end, from, end)`，不得把 clamp 後值覆寫成使用者原值。expanded 與一般圖共用同 committed dataset/point budget，不另複製或產生第二個 dataset。
+
+view/picker/cursor 是 host-owned 通用 UI view state，經既有可信 node/action bridge 驗 current binding/node/dialog；不增加 plugin RPC、command origin 或 caller authority。host cursor admission 以該來源 node 的有效視窗重驗時間，不只驗完整 timeDomain；越界 event 拒絕。切換模式、關 dialog 或有效域改變即遞增 view generation、丟棄舊 cursor 回覆；view state 不需 dataset commit/patch，仍沿用 §3 的 cursor合併/頻率限制。沒有單點時仍可移動 cursor，顯示 no-value。D2/D4 fixtures 必含空域資料、trailing null/error、比較資料較長、60秒邊界、group域不一致、view切換中late reply、live→history與dialog重開；以以上 legacy公式作 oracle。
 
 row.key 是非空 ≤128 code points 字串，不解釋為 path；version null 或非空 ≤128；key unique，cells 長度精確等於宣告。history/profile row.key 用 host record ID，version 用 host revision；cursor table 可用穩定通道 key/null。code 每 entry 是 ≤1,024 code points 非空片段，合併後 ≤16,384 code points 且原文字 UTF-8 ≤65,536 bytes；沒有分割 surrogate。空 code 用零 entries。所有新文字拒 unpaired surrogate/NUL，拒危險 object keys；所有 numbers finite，counter 為 safe integer。
 
@@ -189,8 +203,10 @@ type UiDataDetail = { kind: "ui-data"; reason:
 | public tuple | pure adapter 輸出給 legacy code generator |
 | --- | --- |
 | kind=input，portId 精確 `input:0`..`input:3`，typeId `ev3:N` canonical decimal N=1..124，modeId `mode:0`..`mode:7`，component0..7 | kind=input、port0..3、type=N、mode0..7、channel=component、unit 原樣 |
-| kind=output-angle，portId `output:A`..`output:D`，typeId `ev3:7`或`ev3:8`，modeId=null，component0，unit=deg | kind=output、port0..3、type7/8、mode0、channel0、unit=deg |
+| kind=output-angle，portId 精確 `output:0`..`output:3`，typeId `ev3:7`或`ev3:8`，modeId=null，component0，unit=deg | kind=output、port0..3、type7/8、mode0、channel0、unit=deg；僅 code generator 轉為字母 A..D |
 | 其他 provider、battery、非 canonical 數字、null input mode、未知 type/port | explicit unsupported；不 parseInt 猜測、不接私有 catalog |
+
+此 local 候選固定 merged provider 的數字 vocabulary：`output:0→port0→Motor.GetCount("A")`，依序至 `output:3→port3→Motor.GetCount("D")`；`output:A`..`output:D` 不是 wire alias，必須拒絕。依據為 `main/device-providers/ev3/catalog.ts` 的 `output:${p.port}` 與 numeric monitor ports；轉字母沿用純 generator 的 `String.fromCharCode(65 + source.port)`，不改 provider wire。D2 fixtures 覆蓋四個 numeric ports及拒絕letter/noncanonical ports。
 
 即時 Capture/Zero 還需 ready、same session/sourceRevision、fresh snapshot age≤2500ms；靜態保存資料 compatibility 不要求 sensor 現在 online。canonical semantic key 為 JSON tuple `["ev3",kind,port,type,mode,component,rawUnit]`；已驗 public 與 legacy 使用同 key，calibrated comparison 另驗 calibrated unit。這是顯示／profile/code compatibility，**不是授權或硬體身份證據**：RPC 仍只用原 opaque channelId/session/sourceRevision，不從 key 合成 ID；不改原 SourceSnapshot。保留現有 generic `compatible` 保守行為，新增 feature adapter 包裝 EV3 cross-origin 特例，未驗 provider 不相等。native code 由純轉換後既有 generator 產生，延續 D0 nonzero component、motor zero、不 reset count、float32、雙語 VM fixtures。
 
@@ -233,12 +249,36 @@ shutdown/update 是 **drain lifecycle reason，不是 reservation enum**。其�
 
 本次只執行 standalone Node 記憶體算術，沒有 product/native tests。以下固定 recipe 使用上述 canonical key順序；bytes=`Buffer.byteLength(JSON.stringify([header,entries]),"utf8")`。
 
-- Chart header：2 series，id s0/s1、unit deg、range[-100,100]、extrema[[0,-100],[1500,100]]、fullPointCount3600、omittedPoints2800、omittedRuns0。entries i=0..1599：`[floor(i/800),0,(i%800)*500,i%2?100:-100]`。單 chart **27,853 bytes**；4 charts=111,412，正好6,400 points。這是合成的最大點數 fixture；extrema時間/值落在對應points，full raw需另附3,600點且相同extrema，並非native trace。
+- Chart header 依序為 kind=`chart`、timeDomain=`[0,1800000]`、view=`full`、series。2 series，id s0/s1、unit deg、range[-100,100]、extrema[[0,-100],[500,100]]、fullPointCount3600、omittedPoints2800、omittedRuns0。entries i=0..1599：`[floor(i/800),0,(i%800)*500,i%2?100:-100]`。單 chart **27,890 bytes**；4 charts=111,560，正好6,400 points。這是合成的最大點數 fixture；extrema使用最早相同極值（500ms而非1500ms），時間/值落在對應points。此算術entries是合成count fixture，不宣稱為3,600點經pure reducer的實際輸出；D2另附raw/reducer parity fixture，不是native trace。
 - Table：50 rows，key `row-0`..`row-49`，version `00000000-0000-4000-8000-000000000001`，8 cells各 `臺`.repeat(200)：**245,010 bytes**。每 row最大4,899 bytes（兩位 row index），不能一個64KiB message送整頁。
 - List 同 rows，3 cells：**94,259 bytes**；history/profile各一份。
 - Code：header `{kind:"code"}`、16 entries各 `界`.repeat(1024)：**49,219 bytes**，原文字49,152 bytes/16,384 cp；需要多chunk（單entry3,074 bytes）。ASCII與4-byte Unicode、quote/control escapes另測雙cap，不可只算原文字。
-- 以上8 datasets 合計 **594,159 >524,288**，必須 quota reject，不可宣稱「各count合法所以合計合法」。byte-aware pagination 應減 table頁；50-row普通 cell=`value`、兩list同替換的完整8-dataset fixture為 **177,659 bytes**，保留4×2×800及50 rows，是可容納的 max-count fixture。最大字串頁與最大圖各自boundary fixture，不承諾所有局部最大同時成立。
-- 舊式一次送1,600 chart entries 的示例 JSON-RPC envelope28,037 bytes雖小於64KiB，仍因 **256 entries cap** 不合法；正確拆7 chunks。此反例防止只驗byte不驗count。
+- 以上8 datasets 合計 **594,307 >524,288**，必須 quota reject，不可宣稱「各count合法所以合計合法」。byte-aware pagination 應減 table頁；50-row普通 cell=`value`、兩list同替換的完整8-dataset fixture為 **177,807 bytes**，保留4×2×800及50 rows，是可容納的 max-count fixture。最大字串頁與最大圖各自boundary fixture，不承諾所有局部最大同時成立。
+- 一次送1,600 chart entries 的 typed chunk `{kind:"chart",entries}` 為27,580 bytes，雖低於49,152，仍因 **256 entries cap** 不合法；正確拆7 chunks（6×256＋64）。不沿用未具體固定binding/id的舊envelope數字；完整JSON-RPC envelope仍須按§4獨立驗64KiB。此反例防止只驗byte不驗count。
+
+本次實際執行的 standalone Node recipe（物件插入順序即 canonical順序；不載入product）：
+
+```js
+const bytes = x => Buffer.byteLength(JSON.stringify(x), "utf8");
+const header = {kind:"chart", timeDomain:[0,1800000], view:"full",
+  series:[0,1].map(i => ({id:`s${i}`, unit:"deg", range:[-100,100],
+    extrema:[[0,-100],[500,100]], fullPointCount:3600,
+    omittedPoints:2800, omittedRuns:0}))};
+const entries = Array.from({length:1600}, (_,i) =>
+  [Math.floor(i/800),0,(i%800)*500,i%2?100:-100]);
+const rows = (n,cell) => Array.from({length:50}, (_,i) => ({key:`row-${i}`,
+  version:"00000000-0000-4000-8000-000000000001", cells:Array(n).fill(cell)}));
+const chart = bytes([header,entries]);
+const table = cell => bytes([{kind:"table"},rows(8,cell)]);
+const list = cell => bytes([{kind:"list"},rows(3,cell)]);
+const code = bytes([{kind:"code"},Array(16).fill("界".repeat(1024))]);
+const total = cell => 4*chart + table(cell) + 2*list(cell) + code;
+console.log({chart, fourCharts:4*chart, table:table("臺".repeat(200)),
+  list:list("臺".repeat(200)), code, reject:total("臺".repeat(200)),
+  fit:total("value"), maxRow:bytes(rows(8,"臺".repeat(200))[49]),
+  codeEntry:bytes("界".repeat(1024)), oversizeChunk:bytes({kind:"chart",entries}),
+  chunks:Math.ceil(entries.length/256)});
+```
 
 D2 要把上列 recipe 落成 shared TS/Python/schema fixtures，補 canonical SHA golden vectors及所有 limit−1/limit/limit+1，不以本文件數字取代實作測試。必須有 exact524,288-byte合法整體、524,289拒絕；49,152/49,153 page；1,024/1,025 code entry；8/9 datasets、800/801 points、50/51 rows、duplicate keys、stale base、offset replay、checksum、timeout、cross-owner/process/resource generation、doublecommit、hidden/closed late result、status同owner/foreign/已ended/失權。schema/reference錯誤保持舊snapshot，control不可被dataset queue餓死。
 

@@ -69,9 +69,9 @@ session改變清除live選取/preview，通道選取改變重設preview時間域
 
 ### 4.1 公開 EV3 identity 映射提案（T0 由 3A/H-P 確認）
 
-現有 `main/device-providers/ev3/catalog.ts` 實際產出 provider `kobrixa.device-ev3`、`input:0..3`／`output:A..D`、`ev3:<numeric type>`、`mode:0..7`，output-angle 的 modeId=null、component=0、unit=deg。這是目前實作，尚不可單靠讀私有 catalog 當公開契約。
+現有 `main/device-providers/ev3/catalog.ts` 實際產出 provider `kobrixa.device-ev3`、`input:0..3`／`output:0..3`、`ev3:<numeric type>`、`mode:0..7`，output-angle 的 modeId=null、component=0、unit=deg。這是目前實作，尚不可單靠讀私有 catalog 當公開契約。
 
-在 1.8 文件／conformance 批次正式固定此 provider 的 bounded vocabulary（不更動 frozen 1.5 wire shape），由 feature 新增純 `ev3-source.ts` adapter，完整驗 provider、kind、port、numeric range、mode/component/unit 後才轉換供既有 `calibrationCode`；其餘包括 battery 維持明確 unsupported。input type=1..124、port=0..3、mode/component=0..7；output只接受type7/8、A..D映0..3、null mode映legacy0且component0。未知值不得parseInt後猜測，完全比對格式再轉換。
+在 1.8 文件／conformance 批次正式固定此 provider 的 bounded vocabulary（不更動 frozen 1.5 wire shape），由 feature 新增純 `ev3-source.ts` adapter，完整驗 provider、kind、port、numeric range、mode/component/unit 後才轉換供既有 `calibrationCode`；其餘包括 battery 維持明確 unsupported。input type=1..124、port=0..3、mode/component=0..7；output只接受type7/8、output:0..3映legacy port0..3、null mode映legacy0且component0；只有code generator把port0..3轉字母A..D，wire不接受letter alias。未知值不得parseInt後猜測，完全比對格式再轉換。
 
 同一 adapter 產生比較／profile compatibility key，對已驗 EV3 public 與 legacy 使用 kind、port、type、mode、component、raw unit；不以名稱或 UUID 相等判斷。不改寫原 public snapshot 或偽造 channelId。若 3A 不接受 vocabulary 公開化，須回 T0 設計具版本的 semantic descriptor；不得將 live EV3 永久 code-unavailable 當 parity 完成。這是契約 owner 審查事項，不是要求使用者重選功能。
 
@@ -103,7 +103,7 @@ Lab 以約2 Hz更新 live charts，cursor至多10 Hz且合併到最後位置；t
 
 ### 5.2 數值與呈現
 
-每條線先依null、非ok、segment、explicit gap、倒退時間、>2秒斷點切run，再減點；保留全資料extrema/range，超多孤立runs明示omitted count且不跨缺口連線。table/cursor/CSV皆用raw；comparison時間域涵蓋兩份記錄，最多兩條series。
+每條線先依null、非ok、segment、explicit gap、倒退時間、>2秒斷點切run，再減點；保留全資料extrema/range，超多孤立runs明示omitted count且不跨缺口連線。table/cursor/CSV皆用raw；comparison時間域涵蓋兩份記錄，最多兩條series。T0 §4.1 固定 typed `timeDomain:[0,end]`／`view:full|recent60s`、group一致性與expanded view/cursor：end來自duration/最後frame（含null/error），空資料至少1秒，不能由reduced points重建時間域；dialog共用dataset，保留獨立full/recent選擇。
 
 `en`／`zh-TW`完整文字、明暗主題用host tokens；320px sidebar／125% scale可操作、表格必要時水平捲動且有標題；圖表用線型和文字區分，不只顏色。鍵盤可選通道、調cursor、開關dialog、確認刪除及copy，status/錯誤用適當live region，telemetry不每frame朗讀；focus不因patch重建。native對照包含校正form draft／validation，不把feature的Apply誤改成settings Apply（contributed settings仍逐欄立即CAS）。
 
