@@ -104,6 +104,7 @@ class _UiEventClientPort:
         return _BOUND[self.peer].begin_subscription()
 
     def adopt(self, subscription_id, sequence, snapshot, listener):
+        epoch = getattr(self.peer, "_ui_epoch", None)
         inbox = _BOUND[self.peer]
         inbox.enable()
         async def resync():
@@ -112,6 +113,8 @@ class _UiEventClientPort:
                 raise ValueError(result["error"]["message"])
             inbox.reconcile(subscription_id, result["value"]["sequence"])
         def receive(event):
+            if event["kind"] == "ui.data" and (getattr(self.peer, "_ui_epoch", None) != epoch or not getattr(self.peer, "_ui_data_ready", False)):
+                return
             if event["kind"].startswith("ui."):
                 return listener(event)
         inbox.open(subscription_id, receive, resync, sequence)

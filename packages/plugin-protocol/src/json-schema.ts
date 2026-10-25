@@ -1,3 +1,5 @@
+import { uiResourceV2Schema } from "./ui-v2-resource.js";
+import { uiRequestSchemas } from "./ui-methods.js";
 import { settingsResourceV1Schema } from "./settings.js";
 import { uiResourceV1Schema } from "./ui-resource.js";
 import { z } from "zod";
@@ -17,6 +19,13 @@ import {
 export const SCHEMA_DEFINITIONS: Record<string, z.ZodType> = {
   "settings-resource-v1": settingsResourceV1Schema,
   "ui-resource-v1": uiResourceV1Schema,
+  "ui-resource-v2": uiResourceV2Schema,
+  ...Object.fromEntries(
+    Object.entries(uiRequestSchemas).flatMap(([method, schemas]) => [
+      [`${method}.v1.params`, schemas.params],
+      [`${method}.v1.result`, schemas.result],
+    ]),
+  ),
   resourceOwner: resourceOwnerSchema,
   commonFailure: commonFailureSchema,
   manifest: pluginManifestSchema,

@@ -114,3 +114,5 @@ export { validateSettingsResource } from "./persistence-validation.js";
 export * from "./ui-v2-data.js";
 export * from "./ui-v2-resource.js";
 export * from "./ui-v2-methods.js";
+
+export * from "./ui-v2-session.js";

@@ -1,7 +1,7 @@
 import { settingsRequestSchemas } from "./settings.js";
 import { storageRequestSchemas } from "./storage.js";
 import { persistenceActionRequestSchemas } from "./persistence-actions.js";
-import { uiRequestSchemas } from "./ui-methods.js";
+import { uiRequestSchemasV2 } from "./ui-v2-session.js";
 import { z } from "zod";
 import { deviceRequestSchemas } from "./device-methods.js";
 import { eventEnvelopeSchema } from "./events.js";
@@ -23,7 +23,7 @@ export const requestMethods = {
   ...settingsRequestSchemas,
   ...storageRequestSchemas,
   ...persistenceActionRequestSchemas,
-  ...uiRequestSchemas,
+  ...uiRequestSchemasV2,
   ...deviceRequestSchemas,
   initialize: {
     params: z.strictObject({

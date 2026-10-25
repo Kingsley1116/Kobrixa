@@ -59,7 +59,7 @@ import {
 } from "./index.js";
 
 it("publishes all and only the domain persistence methods at 1.7", () => {
-  expect(PLUGIN_API_VERSION).toBe("1.7.0");
+  expect(PLUGIN_API_VERSION).toBe("1.8.0");
   for (const [name, schemas] of Object.entries({
     ...settingsRequestSchemas,
     ...storageRequestSchemas,

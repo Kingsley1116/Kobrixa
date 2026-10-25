@@ -143,7 +143,7 @@ describe("JS plugin SDK", () => {
     }
   });
   it("exposes the same API version as its initialize response", () => {
-    expect(API_VERSION).toBe("1.7.0");
+    expect(API_VERSION).toBe("1.8.0");
   });
   it("activates during initialize and runs registered commands", async () => {
     const messages: unknown[] = [];
@@ -161,7 +161,7 @@ describe("JS plugin SDK", () => {
       return null;
     });
     await expect(host.request("initialize", init)).resolves.toMatchObject({
-      apiVersion: "1.7.0",
+      apiVersion: "1.8.0",
       sdk: { name: "@kobrixa/plugin-sdk" },
     });
     await host.request("command/execute", { command: "acme.hello.greet" });

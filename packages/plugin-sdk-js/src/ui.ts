@@ -1,6 +1,6 @@
 import {
-  type UiRequestMap,
-  type UiEventEnvelope,
+  type UiRequestMapV2 as UiRequestMap,
+  type UiEventEnvelopeV2 as UiEventEnvelope,
   type Handle,
   type UiBinding,
   type UiScalar,

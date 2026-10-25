@@ -1,3 +1,4 @@
+from ._ui_data import UiData
 """UI v1 semantic validation and a facade over the shared event client."""
 import json
 import math
@@ -292,13 +293,18 @@ def validate_result(value, invocation):
 class Ui:
     def __init__(self, request, events):
         self._request, self._events = request, events
+        self.data = UiData(request)
         self._ready = False
 
-    def mark_ready(self):
+    def mark_ready(self, version=1):
+        self._resource_version = version
         self._ready = True
+        if version == 2: self.data.mark_ready()
+        else: self.data.retire()
 
     def retire(self):
         self._ready = False
+        self.data.retire()
 
     def _check(self):
         if not self._ready:
@@ -321,7 +327,7 @@ class Ui:
 
     async def subscribe(self, topics, callback, binding=None):
         self._check()
-        require(len(set(topics)) == len(topics) and 1 <= len(topics) <= 5)
+        require(len(set(topics)) == len(topics) and 1 <= len(topics) <= (6 if self._resource_version == 2 else 5))
         require(binding is not None or set(topics).issubset({"instances", "environment"}))
         params = {"topics": topics}
         if binding is not None:

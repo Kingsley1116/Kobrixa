@@ -21,7 +21,7 @@ const value = (languageServices: unknown, frontends: unknown = [front]) => ({
   contributes: { frontends, languageServices },
 });
 it("exports API 1.7.0 and exactly twelve capabilities", () => {
-  expect(PLUGIN_API_VERSION).toBe("1.7.0");
+  expect(PLUGIN_API_VERSION).toBe("1.8.0");
   expect(LANGUAGE_CAPABILITIES).toEqual([
     "analysis",
     "completion",

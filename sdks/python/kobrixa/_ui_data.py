@@ -2,11 +2,16 @@
 
 The port validates method params/results, enforces timeout and propagates task
 cancellation through the existing RPC cancel path. This facade adds dataset
-semantics and ready-session fencing. It is not attached to Plugin until the
-versioned protocol schemas and negotiation are integrated.
+semantics and ready-session fencing. Plugin attaches it as ui.data only usable
+after the unpublished 1.8 candidate negotiates v2 and enters readiness.
 """
 import copy
 from typing import Any, Protocol
+from ._ui_data_types import (
+    PanelBinding, DataBeginParams, DataChunkParams, DataTransferParams, DataReadParams,
+    DataBeginResult, DataChunkResult, DataCommitResult, DataAbortResult,
+    DataReadResult, DataSnapshotResult,
+)
 
 from ._ui_v2_data import (
     _require, _object, _array, _counter, _id, _bytes,
@@ -79,20 +84,20 @@ class UiData:
                 validate_snapshot(result["value"])
         return result
 
-    async def begin(self, params):
+    async def begin(self, params: DataBeginParams) -> DataBeginResult:
         return await self._call("ui/dataBegin", params)
 
-    async def chunk(self, params):
+    async def chunk(self, params: DataChunkParams) -> DataChunkResult:
         return await self._call("ui/dataChunk", params)
 
-    async def commit(self, params):
+    async def commit(self, params: DataTransferParams) -> DataCommitResult:
         return await self._call("ui/dataCommit", params)
 
-    async def abort(self, params):
+    async def abort(self, params: DataTransferParams) -> DataAbortResult:
         return await self._call("ui/dataAbort", params)
 
-    async def read(self, params):
+    async def read(self, params: DataReadParams) -> DataReadResult:
         return await self._call("ui/dataRead", params)
 
-    async def snapshot(self, binding):
+    async def snapshot(self, binding: PanelBinding) -> DataSnapshotResult:
         return await self._call("ui/dataSnapshot", {"binding": binding})

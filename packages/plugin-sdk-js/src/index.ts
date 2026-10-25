@@ -1,3 +1,7 @@
+import { UiDataClient } from "./ui-data.js";
+import { supportsUiV2 } from "@kobrixa/plugin-protocol";
+export { UiDataClient } from "./ui-data.js";
+export type { UiDataRequestPort } from "./ui-data.js";
 import { createSettingsClient, type PersistenceRequest } from "./settings.js";
 import { createStorageClient } from "./storage.js";
 import { createPersistenceActionsClient } from "./persistence-actions.js";
@@ -135,7 +139,9 @@ export interface PluginContext {
       handler: ContextCommandHandler,
     ): void;
   };
-  readonly ui: UiClient & ReturnType<typeof createPersistenceContext>["ui"];
+  readonly ui: UiClient & { readonly data: UiDataClient } & ReturnType<
+      typeof createPersistenceContext
+    >["ui"];
 }
 export interface PluginDefinition {
   drain?(
@@ -188,16 +194,31 @@ export async function runPlugin(
 ): Promise<RpcPeer> {
   const channel = options.channel ?? (await electronParentPortChannel());
   const exit = options.exit ?? ((code: number) => process.exit(code));
-  const peer = new RpcPeer(channel, { onProtocolError: () => exit(1) });
+  let retire = () => {};
+  const peer = new RpcPeer(channel, {
+    onProtocolError: () => {
+      retire();
+      exit(1);
+    },
+  });
   const launchOwner = process.env.KOBRIXA_RESOURCE_OWNER;
   if (launchOwner !== undefined)
     bindEventChannel(peer, resourceOwnerSchema.parse(JSON.parse(launchOwner)));
   const commands = new Map<string, CommandHandler>();
   const persistence = createPersistenceContext(peer);
+  const data = new UiDataClient(peer.request.bind(peer));
   const ui = Object.assign(
     new UiClient(peer.request.bind(peer), uiEventClientPort(peer)),
     persistence.ui,
+    { data },
   );
+  let uiEpoch = 0;
+  retire = () => {
+    uiEpoch++;
+    ui.retire();
+    data.retire();
+    peer.setUiSession(null);
+  };
   let persistenceNegotiated = false;
   peer.handle("storage/drain", async (request, { signal }) => {
     if (!persistenceNegotiated || !definition.drain)
@@ -213,29 +234,48 @@ export async function runPlugin(
   let contextCommands: ContextCommands | undefined;
   let pluginContext: PluginContext | undefined;
   let negotiated = false;
+  let candidate = false;
+  let resourceVersion: 1 | 2 | null = null;
   let readyResult: Promise<Result<Record<string, never>>> | undefined;
   peer.handle("ui/negotiate", async (params) => {
     if (!pluginContext) return uiFailure("negotiation");
-    negotiated = params.commandEnvelopeVersions.includes(1);
+    uiEpoch++;
+    ui.retire();
+    data.retire();
+    readyResult = undefined;
+    const versions = [1, ...(candidate ? [2] : [])].filter((v) =>
+      params.uiResourceVersions.some((offered) => offered === v),
+    );
+    resourceVersion = versions.includes(2) ? 2 : versions.includes(1) ? 1 : null;
+    negotiated = params.commandEnvelopeVersions.includes(1) && resourceVersion !== null;
     return {
       ok: true as const,
       value: {
         commandEnvelopeVersions: negotiated ? [1] : [],
-        uiResourceVersions: params.uiResourceVersions.includes(1) ? [1] : [],
+        uiResourceVersions: versions,
       },
     };
   });
-  peer.handle("ui/ready", async () => {
+  peer.handle("ui/ready", async (_params, request) => {
     if (!negotiated || !pluginContext) return uiFailure("negotiation");
     if (!readyResult) {
       ui.markReady();
+      peer.setUiSession(resourceVersion, true);
+      if (resourceVersion === 2) data.markReady();
+      const epoch = uiEpoch;
+      request.afterReply(
+        () => {},
+        () => {
+          if (epoch === uiEpoch) retire();
+        },
+      );
       const context = pluginContext;
       readyResult = Promise.resolve()
         .then(() => definition.ready?.(context))
         .then(
           () => ({ ok: true as const, value: {} }),
           () => {
-            ui.retire();
+            if (epoch === uiEpoch) retire();
             return uiFailure<Record<string, never>>("negotiation");
           },
         );
@@ -255,6 +295,12 @@ export async function runPlugin(
   });
   const devices = createDevicesClient(peer, ready);
   peer.handle("initialize", async ({ pluginId, locale, apiVersion }, request) => {
+    candidate = supportsUiV2(apiVersion);
+    retire();
+    peer.setUiCandidate(candidate);
+    negotiated = false;
+    resourceVersion = null;
+    readyResult = undefined;
     persistenceNegotiated = supportsPersistence(apiVersion);
     contextCommands = new ContextCommands(pluginId);
     pluginContext = {
@@ -290,7 +336,12 @@ export async function runPlugin(
       },
       ui,
     };
-    await definition.activate(pluginContext);
+    try {
+      await definition.activate(pluginContext);
+    } catch (error) {
+      retire();
+      throw error;
+    }
     // Readiness follows successful response publication, without a timer racing
     // the first command or activation continuations overtaking the handshake.
     request.afterReply(
@@ -310,11 +361,16 @@ export async function runPlugin(
     return null;
   });
   peer.handle("shutdown", async () => {
-    ui.retire();
+    retire();
+    negotiated = false;
+    readyResult = undefined;
     await definition.deactivate?.();
     return null;
   });
-  peer.onNotification("exit", () => exit(0));
+  peer.onNotification("exit", () => {
+    retire();
+    exit(0);
+  });
   return peer;
 }
 

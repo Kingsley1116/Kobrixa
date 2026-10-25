@@ -2,7 +2,7 @@ import {
   eventEnvelopeSchema,
   validateDeviceWire,
   type Stage3EventEnvelope,
-  uiEventEnvelopeSchema,
+  uiEventEnvelopeSchemaV2,
   type ResourceOwner,
 } from "@kobrixa/plugin-protocol";
 type Listener = (event: Stage3EventEnvelope) => void | Promise<void>;
@@ -167,8 +167,8 @@ export function eventInbox(peer: RpcPeer): EventInbox {
 import type {
   Handle,
   Counter,
-  UiRequestMap,
-  UiEventEnvelope,
+  UiRequestMapV2 as UiRequestMap,
+  UiEventEnvelopeV2 as UiEventEnvelope,
   RpcPeer,
 } from "@kobrixa/plugin-protocol";
 export interface UiEventClientPort {
@@ -190,13 +190,19 @@ export function beginUiSubscription(port: UiEventClientPort): () => void {
 export function uiEventClientPort(peer: RpcPeer): UiEventClientPort {
   const port: UiEventClientPort = {
     adopt({ subscriptionId, sequence, snapshot, listener }) {
+      const epoch = peer.uiSessionEpoch;
       const inbox = eventInbox(peer);
       inbox.enable();
       inbox.open(
         subscriptionId,
         (event) => {
           if (event.kind.startsWith("ui.")) {
-            const parsed = uiEventEnvelopeSchema.parse(event);
+            const parsed = uiEventEnvelopeSchemaV2.parse(event);
+            if (
+              parsed.kind === "ui.data" &&
+              (peer.uiResourceVersion !== 2 || peer.uiSessionEpoch !== epoch)
+            )
+              return;
             return listener(parsed);
           }
         },

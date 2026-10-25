@@ -9,7 +9,7 @@ export type EventKindV150 =
   | "devices.recordingFrames"
   | "devices.authority"
   | "events.resyncRequired";
-export type EventKind = EventKindV150 | UiEvent["kind"] | "settings.changed"; // 後續 API 批次由唯一 registry 擴充。
+export type EventKind = EventKindV150 | UiEvent["kind"] | "ui.data" | "settings.changed"; // 後續 API 批次由唯一 registry 擴充。
 export type EventEnvelope<Data> = {
   version: 1;
   subscriptionId: Handle;
@@ -84,15 +84,17 @@ export const deviceEventDataSchemas = {
     affected: z.array(h).max(32),
   }),
 } as const satisfies Record<EventKindV150, z.ZodType>;
+import { uiDataEventSchemaV2 } from "./ui-v2-methods.js";
 import { uiEventSchema } from "./ui-types.js";
 export const uiEventDataSchemas = {
+  "ui.data": uiDataEventSchemaV2.shape.data,
   "ui.instances": uiEventSchema.options[0].shape.data,
   "ui.visibility": uiEventSchema.options[1].shape.data,
   "ui.environment": uiEventSchema.options[2].shape.data,
   "ui.form": uiEventSchema.options[3].shape.data,
   "ui.state": uiEventSchema.options[4].shape.data,
   "ui.revoked": uiEventSchema.options[5].shape.data,
-} as const satisfies Record<UiEvent["kind"], z.ZodType>;
+} as const satisfies Record<UiEvent["kind"] | "ui.data", z.ZodType>;
 export const settingsEventDataSchemas = { "settings.changed": settingsChangedSchema } as const;
 export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
   event("settings.changed", "telemetry", settingsChangedSchema),
@@ -104,6 +106,7 @@ export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
   event("devices.recordingFrames", "telemetry", deviceEventDataSchemas["devices.recordingFrames"]),
   event("devices.authority", "control", deviceEventDataSchemas["devices.authority"]),
   event("events.resyncRequired", "control", deviceEventDataSchemas["events.resyncRequired"]),
+  event("ui.data", "telemetry", uiEventDataSchemas["ui.data"]),
   event("ui.instances", "control", uiEventDataSchemas["ui.instances"]),
   event("ui.visibility", "control", uiEventDataSchemas["ui.visibility"]),
   event("ui.environment", "control", uiEventDataSchemas["ui.environment"]),
