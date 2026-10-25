@@ -434,6 +434,7 @@ class Plugin:
         raise RpcError(_METHOD_NOT_FOUND, f"Unknown method {method}.")
 
     async def _request(self, method: str, params: dict, timeout: float = 10):
+        ui_epoch = self._ui_epoch if method.startswith("ui/") else None
         params = copy.deepcopy(params)
         if method.startswith("ui/data") and (self._ui_version != 2 or not self._ui_data_ready):
             raise RpcError(_INVALID_REQUEST, "UI v2 data is not ready.")
@@ -455,6 +456,10 @@ class Plugin:
         finally:
             self._pending.pop(request_id, None)
             self._pending_methods.pop(request_id, None)
+        # Check after the await, before interpreting either success or error
+        # using the current session's schemas. Non-UI replies are unaffected.
+        if ui_epoch is not None and ui_epoch != self._ui_epoch:
+            raise RpcError(_CANCELLED, "UI session retired.")
         if "error" in reply:
             raise RpcError(reply["error"]["code"], reply["error"]["message"])
         self._validate_ui(method, "result", reply["result"], params)

@@ -181,3 +181,92 @@ class UiDataIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     "instances": [], "states": [], "locale": "en", "theme": "light",
                     "data": [{"binding": {**BINDING, "generation": 2}, "datasets": []}]}}},
                 {"topics": ["data"], "binding": BINDING})
+
+    async def test_subscription_retirement_before_adoption(self):
+        from kobrixa._events import bind_event_channel, close_event_channel
+        owner = {"sourceKey": "builtin:test.lab", "pluginId": "test.lab", "generation": 1,
+                 "hostEpoch": ID, "processEpoch": ID}
+        bind_event_channel(self.plugin, owner)
+        snapshot = {"ok": True, "value": {"subscriptionId": ID, "sequence": 0,
+                    "snapshot": {"instances": [], "states": [], "locale": "en", "theme": "light",
+                                 "data": [{"binding": BINDING, "datasets": []}]}}}
+        event = {"jsonrpc": "2.0", "method": "events/deliver", "params": {
+            "version": 1, "owner": owner, "subscriptionId": ID, "sequence": 1,
+            "delivery": "telemetry", "kind": "ui.data", "data": {
+                "binding": BINDING, "dataset": "code", "revision": 1, "presentation": 1}}}
+        try:
+            for timing in ("delayed", "resolved"):
+                for transition in ("ui/negotiate", "shutdown"):
+                    with self.subTest(timing=timing, transition=transition):
+                        await self.ready()
+                        received = []
+                        pending = asyncio.create_task(self.plugin.ui.subscribe(
+                            ["data"], received.append, BINDING))
+                        await asyncio.sleep(0)
+                        request_id = self.messages()[-1]["id"]
+                        reply = json.dumps({"jsonrpc": "2.0", "id": request_id, "result": snapshot})
+                        if timing == "resolved":
+                            # Resolve the actual pending Future, then retire before
+                            # its awaiting task resumes. No fake request port.
+                            self.plugin._receive(reply)
+                        await self.handle(transition, {} if transition == "shutdown" else {
+                            "commandEnvelopeVersions": [1], "uiResourceVersions": [2]})
+                        if timing == "delayed":
+                            self.plugin._receive(reply)
+                        outcome = (await asyncio.gather(pending, return_exceptions=True))[0]
+                        self.assertIsInstance(outcome, (RpcError, RuntimeError))
+                        self.assertIn("retired", str(outcome))
+                        self.assertEqual(self.plugin._pending, {})
+                        self.assertEqual(self.plugin._pending_methods, {})
+                        await self.ready()
+                        self.plugin._receive(json.dumps(event))
+                        await asyncio.sleep(0)
+                        self.assertEqual(received, [])
+            # A fresh request still succeeds, while a different original owner is rejected.
+            await self.ready()
+            received = []
+            pending = asyncio.create_task(self.plugin.ui.subscribe(["data"], received.append, BINDING))
+            await self.reply(pending, snapshot)
+            wrong = copy.deepcopy(event)
+            wrong["params"]["owner"]["generation"] = 2
+            self.plugin._receive(json.dumps(wrong))
+            await asyncio.sleep(0)
+            self.assertEqual(received, [])
+            self.plugin._receive(json.dumps(event))
+            await asyncio.sleep(0)
+            self.assertEqual(len(received), 1)
+            ack = self.messages()[-1]
+            self.assertEqual(ack["method"], "events/ack")
+            self.plugin._receive(json.dumps({"jsonrpc": "2.0", "id": ack["id"],
+                "result": {"ok": True, "value": {"acknowledged": 1}}}))
+            await asyncio.sleep(0)
+        finally:
+            close_event_channel(self.plugin)
+
+    async def test_pending_ui_response_keeps_originating_session(self):
+        for outcome in ("success", "malformed", "error"):
+            with self.subTest(outcome=outcome):
+                await self.ready()
+                pending = asyncio.create_task(self.plugin._request("ui/instances", {}))
+                await asyncio.sleep(0)
+                request_id = self.messages()[-1]["id"]
+                await self.ready()
+                body = {"jsonrpc": "2.0", "id": request_id}
+                if outcome == "error":
+                    body["error"] = {"code": -32603, "message": "old session error"}
+                else:
+                    body["result"] = {"ok": True, "value": {"instances": []}} if outcome == "success" else {}
+                self.plugin._receive(json.dumps(body))
+                with self.assertRaisesRegex(RpcError, "retired") as caught:
+                    await pending
+                self.assertEqual(caught.exception.code, -32800)
+                self.assertEqual(self.plugin._pending, {})
+                self.assertEqual(self.plugin._pending_methods, {})
+        # UI retirement does not invalidate an unrelated common-event acknowledgment.
+        pending = asyncio.create_task(self.plugin._request("events/ack", {"subscriptionId": ID, "sequence": 1}))
+        await asyncio.sleep(0)
+        request_id = self.messages()[-1]["id"]
+        await self.ready()
+        result = {"ok": True, "value": {"acknowledged": 1}}
+        self.plugin._receive(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}))
+        self.assertEqual(await pending, result)

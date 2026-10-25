@@ -28,6 +28,7 @@ export interface UiRequestPort {
 }
 export class UiClient {
   #ready = false;
+  #epoch = 0;
   constructor(
     private readonly request: UiRequestPort,
     private readonly events: UiEventClientPort,
@@ -36,6 +37,7 @@ export class UiClient {
     this.#ready = true;
   }
   retire(): void {
+    this.#epoch++;
     this.#ready = false;
   }
   private check(): void {
@@ -78,6 +80,7 @@ export class UiClient {
     signal?: AbortSignal,
   ): Promise<UiRequestMap["ui/subscribe"]["result"]> {
     this.check();
+    const epoch = this.#epoch;
     if (
       new Set(params.topics).size !== params.topics.length ||
       (!params.binding && params.topics.some((t) => t !== "instances" && t !== "environment"))
@@ -89,6 +92,9 @@ export class UiClient {
         timeoutMs: 5000,
         ...(signal ? { signal } : {}),
       });
+      // Retirement can run after RpcPeer resolves the reply but before this
+      // continuation. Never adopt that reply into a newer ready session.
+      if (!this.#ready || epoch !== this.#epoch) throw new Error("UI session retired.");
       if (result.ok)
         this.events.adopt({
           subscriptionId: result.value.subscriptionId,

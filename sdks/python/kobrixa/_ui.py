@@ -295,6 +295,7 @@ class Ui:
         self._request, self._events = request, events
         self.data = UiData(request)
         self._ready = False
+        self._epoch = 0
 
     def mark_ready(self, version=1):
         self._resource_version = version
@@ -303,6 +304,7 @@ class Ui:
         else: self.data.retire()
 
     def retire(self):
+        self._epoch += 1
         self._ready = False
         self.data.retire()
 
@@ -327,6 +329,7 @@ class Ui:
 
     async def subscribe(self, topics, callback, binding=None):
         self._check()
+        epoch = self._epoch
         require(len(set(topics)) == len(topics) and 1 <= len(topics) <= (6 if self._resource_version == 2 else 5))
         require(binding is not None or set(topics).issubset({"instances", "environment"}))
         params = {"topics": topics}
@@ -335,6 +338,10 @@ class Ui:
         finish = self._events.begin()
         try:
             result = await self._request("ui/subscribe", params)
+            # Readiness may have been restored for a different session while
+            # the request was pending. Fence before the event port adopts it.
+            if not self._ready or epoch != self._epoch:
+                raise RuntimeError("UI session retired.")
             if result["ok"]:
                 value = result["value"]
                 async def snapshot():

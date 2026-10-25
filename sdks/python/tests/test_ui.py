@@ -92,3 +92,20 @@ class UiClientTests(unittest.IsolatedAsyncioTestCase):
         result = await ui.unsubscribe("00000000-0000-4000-8000-000000000001")
         self.assertFalse(result["value"]["removed"])
         self.assertEqual(calls[0][0], "events/unsubscribe")
+
+    async def test_subscription_fences_retire_and_re_ready_before_adoption(self):
+        calls = []
+        class Events:
+            def begin(self):
+                return lambda: calls.append("finish")
+            def adopt(self, **kwargs):
+                calls.append("adopt")
+        async def request(method, params):
+            ui.retire()
+            ui.mark_ready()
+            return {"ok": True, "value": {"subscriptionId": "00000000-0000-4000-8000-000000000001", "sequence": 0}}
+        ui = Ui(request, Events())
+        ui.mark_ready()
+        with self.assertRaisesRegex(RuntimeError, "retired"):
+            await ui.subscribe(["instances"], lambda event: None)
+        self.assertEqual(calls, ["finish"])
