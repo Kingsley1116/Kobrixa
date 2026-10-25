@@ -882,7 +882,7 @@ export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<
 
 // Test-local artifact metadata; no executable adapters, host factories or evidence inputs.
 // Controller materializes this JSON and configures userData before calling the factory.
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type * as ElectronModule from "electron";
@@ -1677,6 +1677,24 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 assert.equal(result.ok, true, JSON.stringify(result));
                 signal.throwIfAborted();
               },
+              discard: async (id) => {
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const option = snapshot.value.items
+                    .find((row) => row.id === id)
+                    ?.actions.find((row) => row.kind === "discard");
+                  if (!option) continue;
+                  const result = await detail.bridge.act({
+                    itemId: entry.item.id,
+                    optionId: option.id,
+                  });
+                  assert.equal(result.ok, true, JSON.stringify(result));
+                  return;
+                }
+                throw new Error("Original recovery bridge has no exact Discard option");
+              },
               retry: async (id) => {
                 // Original composition's trusted recovery bridge owns option lookup,
                 // fresh ledger mint/claim and actual participant retry dispatch.
@@ -1972,7 +1990,17 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             assert.equal(closing, undefined);
             ran = true;
             assertRealComposition(fixture!);
-            const evidence = await producers[id]();
+            let evidence: CaseEvidence;
+            try {
+              evidence = await producers[id]();
+            } catch (error) {
+              if (id === "sealed-ttl" && error instanceof Error && error.cause)
+                await writeFile(
+                  path.join(userData, "sealed-ttl-failure-observation.json"),
+                  JSON.stringify(error.cause, null, 2),
+                );
+              throw error;
+            }
             assertFoundationEvidence(id, evidence);
             return evidence;
           },

@@ -81,6 +81,7 @@ export type SealedTtlInput = LifecycleCaseInput & {
   channel: Stage3ChannelContext;
   command(step: SealedTtlStep, signal: AbortSignal): Promise<void>;
   retry(recovery: string, signal: AbortSignal): Promise<void>;
+  discard(recovery: string, signal: AbortSignal): Promise<void>;
 };
 // Raw heterogeneous public envelopes, not substitute services.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,6 +117,7 @@ export type SealedTtlObservation = {
   calls: Rpc[];
   drains: Drain[];
   retry: { id: string; action: Wire; start: Clock; end: Clock; report: DrainReport }[];
+  discards: { id: string; action: Wire; start: Clock; end: Clock; report: DrainReport }[];
   publications: {
     ticket: PublicationTicket;
     pin: string;
@@ -476,6 +478,37 @@ export function assertSealedTtlObservation(o: SealedTtlObservation): void {
   assert.equal(lateCommit.params.write, s.t.id);
   assert.ok(lateCommit.start.mono >= expired!.start.mono);
   denied(lateCommit, "PLUGIN_E_STALE_RESOURCE");
+  assert.equal(
+    o.calls.filter(
+      (r) =>
+        r.method === "storage/closeRead" &&
+        r.params.read === late.params.read &&
+        r.start.mono < late.start.mono,
+    ).length,
+    0,
+    "Early read closure invalidates expiry attribution",
+  );
+  assert.equal(
+    o.calls.filter(
+      (r) =>
+        r.method === "storage/abortWrite" &&
+        r.params.write === s.t.id &&
+        r.start.mono < lateCommit.start.mono,
+    ).length,
+    0,
+    "Early write abort invalidates expiry attribution",
+  );
+  const discard = one(o.discards, "explicit post-expiry recovery discard");
+  clock(discard.start, o.started);
+  clock(discard.end, o.started);
+  assert.equal(discard.id, o.recovery.expired.id);
+  assert.match(discard.action.actionToken, /^[0-9a-f-]{36}$/);
+  assert.equal(discard.action.scope.hostEpoch, o.owner.hostEpoch);
+  assert.equal(discard.report.state, "saved");
+  assert.equal(discard.report.blocker, false);
+  assert.ok(discard.start.mono >= rpc(o, "read-sealed", "readChunk").end.mono);
+  assert.ok(discard.end.mono <= rpc(o, "seed-incomplete", "commitWrite").start.mono);
+
   // Reject a hidden reseal/chunk or extra commit even if all correlated summaries agree.
   assert.equal(o.calls.filter((r) => r.method === "storage/commitWrite").length, 4);
   assert.equal(o.calls.filter((r) => r.method === "storage/sealWrite").length, 3);
@@ -584,6 +617,7 @@ export async function produceSealedTtl(
     drains: Drain[] = [],
     retry: SealedTtlObservation["retry"] = [],
     publications: SealedTtlObservation["publications"] = [],
+    discards: SealedTtlObservation["discards"] = [],
     retained: SealedTtlObservation["retained"] = [],
     exits: unknown[] = [];
   const sdkDrains: SealedTtlObservation["sdkDrains"] = [];
@@ -705,6 +739,22 @@ export async function produceSealedTtl(
   };
   restores.push(() => {
     participant.drain = drain;
+  });
+  const discardPort = participant.discard;
+  participant.discard = async function (id, action) {
+    const start = sample();
+    const report = await discardPort.call(this, id, action);
+    discards.push({
+      id,
+      action: structuredClone(action),
+      start,
+      end: sample(),
+      report: structuredClone(report),
+    });
+    return report;
+  };
+  restores.push(() => {
+    participant.discard = discardPort;
   });
   const retryPort = participant.retry;
   participant.retry = async function (id, action) {
@@ -842,6 +892,10 @@ export async function produceSealedTtl(
     assert.ok(expiredRecovery);
     const expired = trace();
     await command("read-sealed");
+    // The expired unresolved group retains its original deadline. Explicit core
+    // discard after the preservation proof ends it before admitting another group.
+    phase = "discard-expired";
+    await bounded(input.discard(before.id, abort.signal));
     await command("seed-incomplete");
     await command("drain-incomplete");
     await waitForDrain(3);
@@ -861,6 +915,7 @@ export async function produceSealedTtl(
       drains: structuredClone(drains),
       retry,
       publications,
+      discards: structuredClone(discards),
       retained,
       recovery: { before, after, expired: expiredRecovery },
       payloads: {
@@ -883,6 +938,14 @@ export async function produceSealedTtl(
     }
   };
   await clean(() => input.fault.release("before-publish"));
+  // Resolve fixture-only checkpoint blockers using the same trusted UI bridge,
+  // after capturing all TTL evidence. Cleanup never supplies an acceptance result.
+  for (const report of drains.map((d) => d.report))
+    if (report.recovery)
+      await clean(async () => {
+        if (input.host.recovery.snapshot().items.some((row) => row.id === report.recovery))
+          await bounded(input.discard(report.recovery!, AbortSignal.timeout(7000)), true);
+      });
   abort.abort();
   phase = "cleanup";
   // One 8s cleanup allowance shared by settlement and public consumer cleanup.

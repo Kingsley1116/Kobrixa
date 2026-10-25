@@ -314,6 +314,15 @@ function specimen() {
     calls,
     drains: [d, expired, di],
     retry: [retry],
+    discards: [
+      {
+        id: recovery.id,
+        action: { ...copy(retry.action), actionToken: id(77) },
+        start: clock(30210),
+        end: clock(30211),
+        report: { ...copy(expired.report), state: "saved", blocker: false },
+      },
+    ],
     publications: [
       {
         ticket: s.finalTicket,
@@ -354,6 +363,28 @@ test("pure correlated specimen validates; never executes a native producer", () 
   assert.equal(Object.keys(sealedTtlSummary(o)).length, 10);
 });
 const mutations = {
+  "discard before preservation probe": (o) => {
+    o.discards[0].start = clock(30200);
+  },
+  "foreign discard recovery": (o) => {
+    o.discards[0].id = id(99);
+  },
+  "discard still blocked": (o) => {
+    o.discards[0].report.blocker = true;
+  },
+  "early read handle closure": (o) => {
+    const r = structuredClone(get(o, "seed-sealed", "readChunk"));
+    r.method = "storage/closeRead";
+    r.params = { read: r.params.read };
+    r.result = { ok: true, value: {} };
+    o.calls.push(r);
+  },
+  "early sealed write abort": (o) => {
+    const r = structuredClone(get(o, "status", "writeStatus"));
+    r.method = "storage/abortWrite";
+    r.result = { ok: true, value: { disposition: "aborted" } };
+    o.calls.push(r);
+  },
   "original peer never dispatched": (o) => {
     o.sdkDrains = [];
   },
