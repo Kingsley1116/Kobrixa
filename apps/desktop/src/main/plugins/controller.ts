@@ -2249,7 +2249,10 @@ export function bindPersistenceRoutes170(input: {
   const originalOwner = structuredClone(input.context.owner);
   if (!sameResourceOwner(originalOwner, input.attachment.owner))
     throw new Error("Persistence attachment owner mismatch");
-  const principal = () => {
+  const principal = <M extends InboundPersistence170>(
+    method: M,
+    params: PersistenceRequestMap[M]["params"],
+  ) => {
     const api = semverSchema.safeParse(input.apiVersion());
     if (!api.success || api.data.split(".")[0] !== "1" || !gte(api.data, "1.7.0"))
       throw new RpcError(RPC_ERRORS.methodNotFound, "Persistence is not negotiated");
@@ -2257,7 +2260,7 @@ export function bindPersistenceRoutes170(input: {
     if (
       disposed ||
       input.context.peer.closed ||
-      !input.admitted() ||
+      (!input.admitted() && !permitsRetainedPersistenceRequest(input.host, p, method, params)) ||
       p.kind !== "plugin" ||
       !sameResourceOwner(p.owner, originalOwner) ||
       !sameResourceOwner(input.context.owner, originalOwner)
@@ -2278,19 +2281,19 @@ export function bindPersistenceRoutes170(input: {
   ) => void;
   function bind<M extends Exclude<InboundPersistence170, "settings/watch">>(method: M): void {
     register(method, (params, request) =>
-      input.host.request(principal(), method, params, request.signal),
+      input.host.request(principal(method, params), method, params, request.signal),
     );
   }
   for (const method of persistenceRoutes170) if (method !== "settings/watch") bind(method);
   input.context.peer.handle("settings/watch", async (params, request) => {
-    const p = principal();
+    const p = principal("settings/watch", params);
     const result = await input.host.request(p, "settings/watch", params, request.signal);
     if (result.ok) {
       const id = result.value.subscriptionId;
       request.afterReply(
         () => {
           try {
-            principal();
+            principal("settings/watch", params);
             input.attachment.negotiated("settings", 1);
             input.attachment.activate(id);
           } catch {
@@ -2670,6 +2673,7 @@ import {
 } from "@kobrixa/plugin-runtime";
 import {
   createPersistenceHost,
+  permitsRetainedPersistenceRequest,
   type PersistenceHost,
   type PersistenceRequestMap,
   type PersistenceSourcePort,

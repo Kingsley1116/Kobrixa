@@ -57,6 +57,22 @@ export interface PersistenceHost {
   ): Promise<PersistenceRequestMap[M]["result"]>;
   dispose(): Promise<void>;
 }
+// Kept outside the public port: a caller cannot forge a continuation by adding
+// a field to a host double or a wire request. The real host revalidates it again.
+type RetainedRequestCheck = (
+  principal: Principal,
+  method: keyof PersistenceRequestMap,
+  params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+) => boolean;
+const retainedRouteChecks = new WeakMap<PersistenceHost, RetainedRequestCheck>();
+export function permitsRetainedPersistenceRequest(
+  host: PersistenceHost,
+  principal: Principal,
+  method: keyof PersistenceRequestMap,
+  params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+): boolean {
+  return retainedRouteChecks.get(host)?.(principal, method, params) ?? false;
+}
 export interface PersistenceSourcePort {
   current(owner: ResourceOwner): boolean;
   settings(input: { sourceKey: string; resourceDigest: Sha256 }): Promise<{
@@ -528,15 +544,22 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     method: keyof PersistenceRequestMap,
     params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
   ): boolean {
-    // A registered checkpoint was admitted with storage.write on this exact
-    // owner. Freeze retains its existing final grant, not the owner's ordinary
-    // permission set. A live owner's independent permission loss stays denied.
-    if (
-      principal.kind !== "plugin" ||
-      !frozen.has(ownerKey(principal.owner)) ||
-      sources.current(principal.owner)
-    )
-      return false;
+    // A live owner's independent permission loss must still fail. Only retired
+    // owners may use the original final grant instead of ordinary permissions.
+    return (
+      principal.kind === "plugin" &&
+      !sources.current(principal.owner) &&
+      frozenFinalRequest(principal, method, params)
+    );
+  }
+  function frozenFinalRequest(
+    principal: Principal,
+    method: keyof PersistenceRequestMap,
+    params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+  ): boolean {
+    // Shutdown withdraws channel admission before retiring its owner. This
+    // proves only the frozen obligation; domain permission checks remain intact.
+    if (principal.kind !== "plugin" || !frozen.has(ownerKey(principal.owner))) return false;
     if (
       ![
         "storage/beginWrite",
@@ -641,6 +664,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     recovery: { ...recovery, ...recoveryPort },
     participant,
     retainedFinalRequest,
+    frozenFinalRequest,
     live: (principal: Principal) =>
       principal.kind === "plugin" &&
       sources.current(principal.owner) &&
@@ -801,7 +825,7 @@ export async function createPersistenceHost(input: {
       signal,
     ) as Promise<PersistenceRequestMap[M]["result"]>;
   }
-  return {
+  const host: PersistenceHost = {
     participant: services.participant,
     settings: services.boundSettings,
     recovery: services.recovery,
@@ -935,4 +959,10 @@ export async function createPersistenceHost(input: {
       return disposal;
     },
   };
+  retainedRouteChecks.set(
+    host,
+    (principal, method, params) =>
+      !closed && services.frozenFinalRequest(principal, method, params),
+  );
+  return host;
 }

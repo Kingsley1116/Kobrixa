@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { expect, it, vi, onTestFinished } from "vitest";
 import type { DrainRequest, StorageRequestMap } from "@kobrixa/plugin-protocol";
 import { createPersistenceHost } from "./host-port.js";
+import { bindPersistenceRoutes170 } from "../controller.js";
 import type { PersistenceBackend, PublicationTicket, StoredRecovery } from "./engine-port.js";
 import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
 import type { DrainDispatcher } from "@kobrixa/plugin-runtime";
@@ -1806,18 +1807,20 @@ async function retainedDrainFixture(outcome: "saved" | "sealed" = "saved") {
   const [a, b] = createMemoryChannelPair();
   const peer = new RpcPeer(a),
     child = new RpcPeer(b);
-  for (const method of [
-    "storage/registerCheckpoint",
-    "storage/beginWrite",
-    "storage/writeChunk",
-    "storage/sealWrite",
-    "storage/commitWrite",
-    "storage/writeStatus",
-    "storage/abortWrite",
-  ] as const)
-    peer.handle(method, (params, context) =>
-      host.request(principal, method, params, context.signal),
-    );
+  let routesAdmitted = true;
+  const detach = bindPersistenceRoutes170({
+    context: { peer, owner, principal: () => principal, requirements: [] },
+    host,
+    attachment: {
+      owner,
+      negotiated: vi.fn(),
+      activate: vi.fn(),
+      abandon: vi.fn(),
+      dispose: vi.fn(),
+    },
+    apiVersion: () => "1.7.0",
+    admitted: () => live && routesAdmitted,
+  });
   const row = new RetainedPersistenceChannel(
     owner,
     peer,
@@ -1833,6 +1836,7 @@ async function retainedDrainFixture(outcome: "saved" | "sealed" = "saved") {
   });
   if (!registered.ok) throw new Error("checkpoint registration failed");
   onTestFinished(async () => {
+    detach();
     await host.participant.ownerLost(owner);
     peer.close();
     child.close();
@@ -1845,6 +1849,10 @@ async function retainedDrainFixture(outcome: "saved" | "sealed" = "saved") {
     child,
     row,
     registered,
+    detach,
+    withdrawRoutes() {
+      routesAdmitted = false;
+    },
     revoke() {
       live = false;
     },
@@ -1917,6 +1925,66 @@ it.each(["saved", "sealed"] as const)(
     }
     expect(f.input.composition.sources.current(owner)).toBe(false);
     expect(f.input.hasPermission(principal, "storage.write")).toBe(false);
+  },
+);
+
+it("shutdown withdrawal permits only the frozen final request while the owner remains live", async () => {
+  const f = await retainedDrainFixture();
+  f.withdrawRoutes();
+  const offer = f.host.participant.freeze(owner, "shutdown", 10000);
+  const input = finalInput(f.record(), {
+    token: offer.token,
+    reason: offer.reason,
+    remainingMs: 10000,
+    checkpoints: [...offer.checkpoints],
+    writes: [],
+  });
+  await expect(f.child.request("storage/stat", { id: f.record().id })).rejects.toThrow(
+    "Original admitted owner required",
+  );
+  const begin = await f.child.request("storage/beginWrite", input);
+  expect(begin.ok).toBe(true);
+  expect(f.input.composition.sources.current(owner)).toBe(true);
+  if (begin.ok)
+    expect((await f.child.request("storage/abortWrite", { write: begin.value.write })).ok).toBe(
+      true,
+    );
+});
+
+it.each(["forged", "expired", "lost", "detached", "permission", "ordinary"] as const)(
+  "the actual retained RPC route rejects %s final admission",
+  async (stop) => {
+    const f = await retainedDrainFixture();
+    f.withdrawRoutes();
+    if (stop !== "permission") f.revoke();
+    else f.denyPermission();
+    const offer = f.host.participant.freeze(owner, "disable", 10000);
+    const input = finalInput(f.record(), {
+      token: offer.token,
+      reason: offer.reason,
+      remainingMs: 10000,
+      checkpoints: [...offer.checkpoints],
+      writes: [],
+    });
+    if (stop === "forged") input.drainToken = randomUUID();
+    if (stop === "ordinary") {
+      delete input.drainToken;
+      delete input.checkpoint;
+    }
+    if (stop === "expired") f.time(10000);
+    if (stop === "lost") await f.host.participant.ownerLost(owner);
+    if (stop === "detached") f.detach();
+    if (stop === "permission") {
+      expect(await f.child.request("storage/beginWrite", input)).toMatchObject({
+        ok: false,
+        error: { code: "PLUGIN_E_PERMISSION_DENIED" },
+      });
+    } else {
+      await expect(f.child.request("storage/beginWrite", input)).rejects.toThrow(
+        "Original admitted owner required",
+      );
+    }
+    expect(f.backend.engine.reserveFinal).not.toHaveBeenCalled();
   },
 );
 
