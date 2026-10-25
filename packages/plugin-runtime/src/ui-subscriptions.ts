@@ -1,11 +1,18 @@
+import type { UiDataHost } from "./ui-data-host.js";
 import type {
   ResourceOwner,
   Handle,
   Counter,
   Result,
-  UiEvent,
-  UiSubscriptionSnapshot,
+  UiEventEnvelopeV2,
+  UiEvent as UiEventV1,
+  UiRequestMapV2,
 } from "@kobrixa/plugin-protocol";
+type UiEvent = Pick<Extract<UiEventEnvelopeV2, { kind: "ui.data" }>, "kind" | "data"> | UiEventV1;
+type UiSubscriptionSnapshot = Extract<
+  UiRequestMapV2["ui/snapshot"]["result"],
+  { ok: true }
+>["value"]["snapshot"];
 export interface UiEventLedgerPort {
   create(owner: ResourceOwner): Result<{ subscriptionId: Handle; sequence: 0 }>;
   owns(owner: ResourceOwner, subscriptionId: Handle): boolean;
@@ -29,10 +36,10 @@ export interface UiEventLedgerPort {
 import {
   RpcError,
   RPC_ERRORS,
-  uiRequestSchemas,
+  uiRequestSchemasV2 as uiRequestSchemas,
   resourceFailure,
   type UiBinding,
-  type UiRequestMap,
+  type UiRequestMapV2 as UiRequestMap,
 } from "@kobrixa/plugin-protocol";
 import { sameResourceOwner, sameUiBinding } from "./ui-host-ports.js";
 import type { UiStateRegistry } from "./ui-state.js";
@@ -50,6 +57,7 @@ export class UiSubscriptions {
     private readonly state: UiStateRegistry,
     private readonly ledger: UiEventLedgerPort,
     private readonly revokeIntent: (owner: ResourceOwner, binding?: UiBinding) => void,
+    private readonly data?: UiDataHost,
   ) {
     this.#offState = state.onEvent((owner, event) => this.#deliver(owner, event));
     this.#offRemoved = ledger.onRemoved((id) => {
@@ -64,9 +72,22 @@ export class UiSubscriptions {
       return { ok: true, value: { instances, states: [], ...environment } };
     const state = this.state.state(subscription.owner, subscription.binding);
     if (!state.ok) return state;
+    let metadata: UiSubscriptionSnapshot["data"];
+    if (subscription.topics.includes("data")) {
+      if (!this.data || subscription.binding.kind !== "panel") return resourceFailure("stale");
+      const result = this.data.snapshot(subscription.owner, {
+        ...subscription.binding,
+        kind: "panel",
+      });
+      if (!result.ok) return resourceFailure("stale");
+      metadata = [
+        { binding: { ...subscription.binding, kind: "panel" }, datasets: result.value.datasets },
+      ];
+    }
     return {
       ok: true,
       value: {
+        ...(metadata ? { data: metadata } : {}),
         instances: instances.filter((binding) => sameUiBinding(binding, subscription.binding!)),
         states: [state.value],
         ...environment,
@@ -131,6 +152,9 @@ export class UiSubscriptions {
     this.#environment.set(JSON.stringify(owner), { locale, theme });
     this.#deliver(owner, { kind: "ui.environment", data: { locale, theme } });
   }
+  dataEvent(owner: ResourceOwner, event: Extract<UiEvent, { kind: "ui.data" }>): void {
+    this.#deliver(owner, event);
+  }
   #deliver(owner: ResourceOwner, event: UiEvent): void {
     for (const [id, subscription] of [...this.#subscriptions]) {
       if (!sameResourceOwner(owner, subscription.owner) || !this.ledger.owns(owner, id)) continue;
@@ -151,7 +175,8 @@ export class UiSubscriptions {
             ),
           },
         };
-      const delivery = selected.kind === "ui.state" ? "telemetry" : "control";
+      const delivery =
+        selected.kind === "ui.state" || selected.kind === "ui.data" ? "telemetry" : "control";
       const result = this.ledger.publish(owner, id, selected, delivery);
       if (!result.ok) {
         if (delivery === "telemetry" && this.ledger.resync(owner, id).ok) continue;

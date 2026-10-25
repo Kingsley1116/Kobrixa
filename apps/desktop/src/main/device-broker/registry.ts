@@ -1,3 +1,4 @@
+import { uiDataEventEnvelopeSchemaV2 } from "@kobrixa/plugin-protocol";
 import { randomUUID } from "node:crypto";
 import type {
   BusinessResult,
@@ -184,7 +185,12 @@ type EventRow = {
   pending: Array<{ event: Stage3EventEnvelope; at: number; bytes: number }>;
 };
 const encodedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-const eventSuccess = <T>(value: T): BusinessResult<T, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150> => ({ ok: true, value });
+const eventSuccess = <T>(
+  value: T,
+): BusinessResult<T, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150> => ({
+  ok: true,
+  value,
+});
 export class EventLedger implements CommonEventLedgerPort {
   #rows = new Map<Handle, EventRow>();
   #timer: ReturnType<typeof setInterval> | null = null;
@@ -328,7 +334,9 @@ export class EventLedger implements CommonEventLedgerPort {
       delivery,
       ...event,
     };
+    if (event.kind === "ui.data") uiDataEventEnvelopeSchemaV2.parse(envelope);
     const bytes = encodedBytes(envelope);
+    if (bytes > 65536) return this.resync(owner, id);
     if (delivery === "control" && bytes > 16384) return this.resync(owner, id);
     const pending = [...this.#rows.values()]
       .filter((r) => r.owner.sourceKey === owner.sourceKey && !r.removed)

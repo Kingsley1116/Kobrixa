@@ -17,6 +17,7 @@ import type {
   CommandValue,
   Result,
 } from "@kobrixa/plugin-protocol";
+import type { UiDataHost } from "./ui-data-host.js";
 import type { UiCatalogPort } from "./ui-host-ports.js";
 export type OwnerRetirement = Exclude<DrainReason, "reservation-ended"> | "crashed";
 export interface Stage3ChannelContext {
@@ -231,6 +232,7 @@ import type { UiStateRegistry } from "./ui-state.js";
 import type { UiSubscriptions } from "./ui-subscriptions.js";
 export function createUiLifetimePort(input: {
   catalog: UiCatalogPort;
+  data?: Pick<UiDataHost, "retire">;
   states: Pick<UiStateRegistry, "instances" | "retireExecution">;
   subscriptions: Pick<UiSubscriptions, "retire">;
   revoke(owner: ResourceOwner, binding: UiBinding): void;
@@ -240,6 +242,7 @@ export function createUiLifetimePort(input: {
     resource: (value) => input.catalog.resource(value),
     onEvent: (listener) => input.catalog.onEvent(listener),
     retire: (owner) => {
+      input.data?.retire(owner);
       for (const binding of input.states.instances(owner)) input.revoke(owner, binding);
       input.states.retireExecution(owner, "generation-retired");
       input.subscriptions.retire(owner);

@@ -11,6 +11,8 @@ import {
   resourceFailure,
   uiFailure,
   uiRequestSchemas,
+  uiRequestSchemasV2,
+  uiDataRequestSchemasV2,
   type RequestContext,
   type Handle,
 } from "@kobrixa/plugin-protocol";
@@ -20,6 +22,7 @@ import {
   remainingActivationMs,
   UiCatalog,
   UiStateRegistry,
+  UiDataHost,
   UiSubscriptions,
   currentStatusBindings,
   type UiRuntimeAttachment,
@@ -43,6 +46,7 @@ import type {
   ResourceOwner,
   Result,
   StatusResourceV1,
+  UiResourceV2,
   UiBinding,
   UiStateSnapshot,
   UiScalar as Scalar,
@@ -55,7 +59,7 @@ import type { UserPersistenceActions } from "./user-persistence-actions.js";
 
 export type ResolvedUi = {
   owner: ResourceOwner;
-  resource: PanelResourceV1 | StatusResourceV1;
+  resource: PanelResourceV1 | StatusResourceV1 | UiResourceV2;
   state: UiStateSnapshot;
   workbenchInstance: string;
   contextRef: string | null;
@@ -66,6 +70,8 @@ export interface UiExecutionAdapter {
   close: PluginUiBridge["close"];
   visibility: PluginUiBridge["visibility"];
   snapshot: PluginUiBridge["snapshot"];
+  dataRead?: PluginUiBridge["dataRead"];
+  dataSnapshot?: PluginUiBridge["dataSnapshot"];
   reportFailure: PluginUiBridge["reportFailure"];
   resolve(binding: UiBinding): ResolvedUi | null;
   acceptForm(binding: UiBinding, revision: number, values: Record<string, Scalar>): boolean;
@@ -487,6 +493,28 @@ export function createPluginUiBridge(input: {
       intent.pulse(value.binding, value.challenge, value.gesture, value.inputToken)
         ? { ok: true, value: { accepted: true } }
         : stale(),
+    dataRead: (value) =>
+      execution.dataRead
+        ? execution.dataRead(value)
+        : Promise.resolve({
+            ok: false,
+            error: {
+              code: "PLUGIN_E_STALE_RESOURCE",
+              message: "UI data unavailable",
+              detail: { kind: "ui-data", reason: "stale" },
+            },
+          }),
+    dataSnapshot: (value) =>
+      execution.dataSnapshot
+        ? execution.dataSnapshot(value)
+        : Promise.resolve({
+            ok: false,
+            error: {
+              code: "PLUGIN_E_STALE_RESOURCE",
+              message: "UI data unavailable",
+              detail: { kind: "ui-data", reason: "stale" },
+            },
+          }),
     snapshot: (value) => execution.snapshot(value),
     reportFailure: (value) => execution.reportFailure(value),
     onEvent: input.events.subscribe,
@@ -627,6 +655,12 @@ export function registerUiIpc(input: {
     }),
     (value) => input.bridge.pulse(value),
   );
+  register("plugins:ui:data-read", uiDataRequestSchemasV2["ui/dataRead"].params, (value) =>
+    input.bridge.dataRead(value),
+  );
+  register("plugins:ui:data-snapshot", uiDataRequestSchemasV2["ui/dataSnapshot"].params, (value) =>
+    input.bridge.dataSnapshot(value),
+  );
   register("plugins:ui:snapshot", z.strictObject({ binding: bindingSchema }), (value) =>
     input.bridge.snapshot(value),
   );
@@ -702,6 +736,8 @@ export function createUiChannelBinding(
     catalog: UiCatalog;
     runtime: UiRuntimeAttachment;
     attachment: DeviceChannelAttachment;
+    data?: UiDataHost;
+    hasPanelsPermission?: (owner: ResourceOwner) => boolean;
     scope(): CoreWindowScope;
   },
 ): Stage3ChannelBinding {
@@ -710,6 +746,21 @@ export function createUiChannelBinding(
     initialized = false,
     ready = false;
   const lifetime = new AbortController();
+  let versions: (1 | 2)[] = [];
+  const detachData = input.data?.bind(context.owner, {
+    current: () => {
+      try {
+        checkOwner();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    panelsPermission: () => input.hasPanelsPermission?.(context.owner) === true,
+    scope: input.scope,
+    versions: () => versions,
+    ready: () => ready && negotiated && !disposed,
+  });
   const checkOwner = () => {
     const principal = context.principal();
     if (
@@ -756,14 +807,14 @@ export function createUiChannelBinding(
   });
   context.peer.handle("ui/snapshot", (params, request) => {
     check(request);
-    const parsed = uiRequestSchemas["ui/snapshot"].params.parse(params);
-    return uiRequestSchemas["ui/snapshot"].result.parse(
+    const parsed = uiRequestSchemasV2["ui/snapshot"].params.parse(params);
+    return uiRequestSchemasV2["ui/snapshot"].result.parse(
       input.subscriptions.snapshot(context.owner, parsed.subscriptionId),
     );
   });
   context.peer.handle("ui/subscribe", (params, request) => {
     check(request);
-    const parsed = uiRequestSchemas["ui/subscribe"].params.parse(params);
+    const parsed = uiRequestSchemasV2["ui/subscribe"].params.parse(params);
     const result = input.subscriptions.subscribe(context.owner, parsed);
     if (result.ok) {
       const id = result.value.subscriptionId;
@@ -780,109 +831,176 @@ export function createUiChannelBinding(
         () => input.attachment.abandon(id),
       );
     }
-    return uiRequestSchemas["ui/subscribe"].result.parse(result);
+    return uiRequestSchemasV2["ui/subscribe"].result.parse(result);
   });
+  if (input.data) {
+    const data = input.data;
+    const checkData = (request: RequestContext) => {
+      check(request);
+      if (!ready || !versions.includes(2))
+        throw new RpcError(RPC_ERRORS.invalidParams, "UI v2 data is not ready.");
+    };
+    context.peer.handle("ui/dataBegin", (params, request) => {
+      checkData(request);
+      return data.store.begin(context.owner, params);
+    });
+    context.peer.handle("ui/dataChunk", (params, request) => {
+      checkData(request);
+      return data.store.chunk(context.owner, params);
+    });
+    context.peer.handle("ui/dataCommit", (params, request) => {
+      checkData(request);
+      const result = data.store.commit(context.owner, params);
+      if (result.ok) {
+        const flush = () => flushStateAfterReply(input.states);
+        request.afterReply(flush, flush);
+      }
+      return result;
+    });
+    context.peer.handle("ui/dataAbort", (params, request) => {
+      checkData(request);
+      return data.store.abort(context.owner, params);
+    });
+    context.peer.handle("ui/dataRead", (params, request) => {
+      checkData(request);
+      return data.store.read(context.owner, params);
+    });
+    context.peer.handle("ui/dataSnapshot", (params, request) => {
+      checkData(request);
+      return data.store.snapshot(context.owner, params);
+    });
+  }
+  const retire = () => {
+    ready = false;
+    negotiated = false;
+    versions = [];
+    detachData?.();
+    input.states.cancelInitialBindings(context.owner);
+    input.states.retireExecution(context.owner, "process-gone");
+    input.subscriptions.retire(context.owner);
+  };
   return {
     async initialized(signal) {
-      checkOwner();
-      signal.throwIfAborted();
-      if (initialized) throw new Error("UI initialized twice.");
-      initialized = true;
-      if (!input.catalog.declaresUi(context.owner)) return;
-      const combined = AbortSignal.any([signal, lifetime.signal]);
-      const initialBindings = input.states.initialBindingsReady(context.owner, combined);
-      void initialBindings.catch(() => undefined);
-      const result = uiRequestSchemas["ui/negotiate"].result.parse(
-        await context.peer.request(
-          "ui/negotiate",
-          { commandEnvelopeVersions: [1], uiResourceVersions: [1] },
-          { signal: combined, timeoutMs: remainingActivationMs(signal) },
-        ),
-      );
-      checkOwner();
-      combined.throwIfAborted();
-      if (
-        !result.ok ||
-        !result.value.commandEnvelopeVersions.some((version) => version === 1) ||
-        !result.value.uiResourceVersions.some((version) => version === 1)
-      )
-        throw new Error("Declared UI is unsupported by the negotiated SDK.");
-      input.attachment.negotiated("ui", 1);
-      negotiated = true;
-      // A process was explicitly activated already. Bind its statuses to this
-      // host-owned workbench before ready, without recursively starting it.
-      const scope = input.scope();
-      let cursor: string | undefined;
-      let revision: number | undefined;
-      do {
-        const page = await input.catalog.catalog(cursor ? { cursor } : {});
+      try {
+        checkOwner();
+        signal.throwIfAborted();
+        if (initialized) throw new Error("UI initialized twice.");
+        initialized = true;
+        if (!input.catalog.declaresUi(context.owner)) return;
+        const combined = AbortSignal.any([signal, lifetime.signal]);
+        const initialBindings = input.states.initialBindingsReady(context.owner, combined);
+        void initialBindings.catch(() => undefined);
+        const result = uiRequestSchemasV2["ui/negotiate"].result.parse(
+          await context.peer.request(
+            "ui/negotiate",
+            { commandEnvelopeVersions: [1], uiResourceVersions: input.data ? [1, 2] : [1] },
+            { signal: combined, timeoutMs: remainingActivationMs(signal) },
+          ),
+        );
         checkOwner();
         combined.throwIfAborted();
-        if (!page.ok || (revision !== undefined && revision !== page.value.revision))
-          throw new Error("UI catalog changed during initialization.");
-        revision = page.value.revision;
-        for (const entry of page.value.entries) {
-          if (
-            entry.kind !== "status" ||
-            entry.availability !== "available" ||
-            entry.sourceKey !== context.owner.sourceKey ||
-            entry.pluginId !== context.owner.pluginId
-          )
-            continue;
-          const resource = await input.catalog.resource({
-            sourceKey: entry.sourceKey,
-            id: entry.id,
-            uiResourceGeneration: entry.uiResourceGeneration,
-            resourceDigest: entry.resourceDigest,
-          });
+        if (
+          !result.ok ||
+          !result.value.commandEnvelopeVersions.some((version) => version === 1) ||
+          result.value.uiResourceVersions.length === 0
+        )
+          throw new Error("Declared UI is unsupported by the negotiated SDK.");
+        versions = result.value.uiResourceVersions.filter(
+          (version): version is 1 | 2 => version === 1 || version === 2,
+        );
+        input.attachment.negotiated("ui", 1);
+        negotiated = true;
+        // A process was explicitly activated already. Bind its statuses to this
+        // host-owned workbench before ready, without recursively starting it.
+        const scope = input.scope();
+        let cursor: string | undefined;
+        let revision: number | undefined;
+        do {
+          const page = await input.catalog.catalog(cursor ? { cursor } : {});
           checkOwner();
           combined.throwIfAborted();
-          if (!resource.ok) throw new Error("Status resource unavailable during initialization.");
-          if (resource.value.version !== 1)
-            throw new Error("Status resource version unsupported during initialization.");
-          const opened = await input.states.open({
-            owner: resource.value.owner,
-            id: entry.id,
-            scope,
-            resource: resource.value.resource,
-            signal: combined,
-            activateInitialized: async () => context,
-          });
-          if (!opened.ok) throw new Error("Status binding unavailable during initialization.");
-        }
-        cursor = page.value.nextCursor ?? undefined;
-      } while (cursor);
-      const currentScope = input.scope();
-      if (
-        scope.hostEpoch !== currentScope.hostEpoch ||
-        scope.workbenchInstance !== currentScope.workbenchInstance
-      )
-        throw new Error("Workbench changed during UI initialization.");
-      await initialBindings;
-      checkOwner();
+          if (!page.ok || (revision !== undefined && revision !== page.value.revision))
+            throw new Error("UI catalog changed during initialization.");
+          revision = page.value.revision;
+          for (const entry of page.value.entries) {
+            if (
+              entry.sourceKey === context.owner.sourceKey &&
+              entry.pluginId === context.owner.pluginId &&
+              entry.availability === "available" &&
+              !versions.includes(entry.version)
+            )
+              throw new Error("Resource version not negotiated.");
+            if (
+              entry.kind !== "status" ||
+              entry.availability !== "available" ||
+              entry.sourceKey !== context.owner.sourceKey ||
+              entry.pluginId !== context.owner.pluginId
+            )
+              continue;
+            const resource = await input.catalog.resource({
+              sourceKey: entry.sourceKey,
+              id: entry.id,
+              uiResourceGeneration: entry.uiResourceGeneration,
+              resourceDigest: entry.resourceDigest,
+            });
+            checkOwner();
+            combined.throwIfAborted();
+            if (!resource.ok) throw new Error("Status resource unavailable during initialization.");
+            if (!versions.includes(resource.value.version))
+              throw new Error("Status resource version unsupported");
+            const opened = await input.states.open({
+              ...resource.value,
+              owner: resource.value.owner,
+              id: entry.id,
+              scope,
+              signal: combined,
+              activateInitialized: async () => context,
+            });
+            if (!opened.ok) throw new Error("Status binding unavailable during initialization.");
+          }
+          cursor = page.value.nextCursor ?? undefined;
+        } while (cursor);
+        const currentScope = input.scope();
+        if (
+          scope.hostEpoch !== currentScope.hostEpoch ||
+          scope.workbenchInstance !== currentScope.workbenchInstance
+        )
+          throw new Error("Workbench changed during UI initialization.");
+        await initialBindings;
+        checkOwner();
+      } catch (error) {
+        retire();
+        throw error;
+      }
     },
     async ready(signal) {
-      checkOwner();
-      signal.throwIfAborted();
-      if (!initialized || ready) throw new Error("Invalid UI ready phase.");
-      ready = true;
-      if (!input.catalog.declaresUi(context.owner)) return;
-      if (!negotiated) throw new Error("UI negotiation is incomplete.");
-      const combined = AbortSignal.any([signal, lifetime.signal]);
-      const result = uiRequestSchemas["ui/ready"].result.parse(
-        await context.peer.request(
-          "ui/ready",
-          {},
-          { signal: combined, timeoutMs: remainingActivationMs(signal) },
-        ),
-      );
-      checkOwner();
-      combined.throwIfAborted();
-      if (!result.ok) throw new Error("Plugin UI ready failed.");
+      try {
+        checkOwner();
+        signal.throwIfAborted();
+        if (!initialized || ready) throw new Error("Invalid UI ready phase.");
+        ready = true;
+        if (!input.catalog.declaresUi(context.owner)) return;
+        if (!negotiated) throw new Error("UI negotiation is incomplete.");
+        const combined = AbortSignal.any([signal, lifetime.signal]);
+        const result = uiRequestSchemas["ui/ready"].result.parse(
+          await context.peer.request(
+            "ui/ready",
+            {},
+            { signal: combined, timeoutMs: remainingActivationMs(signal) },
+          ),
+        );
+        checkOwner();
+        combined.throwIfAborted();
+        if (!result.ok) throw new Error("Plugin UI ready failed.");
+      } catch (error) {
+        retire();
+        throw error;
+      }
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      retire();
       negotiated = false;
       lifetime.abort(new Error("UI channel disposed."));
       input.states.cancelInitialBindings(context.owner);
@@ -909,6 +1027,7 @@ export function createUiExecutionAdapter(input: {
   scope(): CoreWindowScope;
   runtime: UiRuntimeAttachment;
   core: UiExecutionAdapter["core"];
+  data?: UiDataHost;
   now?: () => number;
 }): UiExecutionAdapter {
   const openings = new Set<AbortController>();
@@ -980,6 +1099,32 @@ export function createUiExecutionAdapter(input: {
   };
   return {
     resolve,
+    dataRead: async (params) => {
+      const value = resolve(params.binding);
+      return value && input.data
+        ? input.data.store.read(value.owner, params)
+        : {
+            ok: false,
+            error: {
+              code: "PLUGIN_E_STALE_RESOURCE",
+              message: "UI data unavailable",
+              detail: { kind: "ui-data", reason: "stale" },
+            },
+          };
+    },
+    dataSnapshot: async (params) => {
+      const value = resolve(params.binding);
+      return value && input.data
+        ? input.data.store.snapshot(value.owner, params)
+        : {
+            ok: false,
+            error: {
+              code: "PLUGIN_E_STALE_RESOURCE",
+              message: "UI data unavailable",
+              detail: { kind: "ui-data", reason: "stale" },
+            },
+          };
+    },
     invoke: (owner, invocation, signal) => input.runtime.invoke(owner, invocation, signal),
     core: input.core,
     dispose: () => {
@@ -1012,13 +1157,16 @@ export function createUiExecutionAdapter(input: {
               resourceDigest: descriptor.resourceDigest,
             });
             if (!resource.ok) return resource;
-            if (resource.value.version !== 1) return uiFailure("version");
+            if (resource.value.version === 2 && !input.data) return uiFailure("version");
             const scope = input.scope();
             const state = await input.states.open({
+              ...resource.value,
+              ...(resource.value.version === 2 && resource.value.resource.kind === "panel"
+                ? { initialVisible: true }
+                : {}),
               owner: resource.value.owner,
               id: value.id,
               scope,
-              resource: resource.value.resource,
               signal: opening.signal,
               activateInitialized: (sourceKey, signal) =>
                 input.runtime.activateInitialized(sourceKey, signal),
@@ -1046,6 +1194,10 @@ export function createUiExecutionAdapter(input: {
               ),
             });
             await input.runtime.ready(owner, opening.signal);
+            if (resource.value.version === 2 && !input.data?.supports(owner, 2)) {
+              input.states.close(owner, state.value.binding);
+              return uiFailure("version");
+            }
             if (
               disposed ||
               opening.signal.aborted ||
@@ -1168,19 +1320,30 @@ export function createUiRegistry(input: {
   now(): number;
   beforeDelivery(sourceKey: string): void;
   revokeIntent(owner: ResourceOwner, binding?: UiBinding): void;
-}): { catalog: UiCatalog; states: UiStateRegistry; subscriptions: UiSubscriptions } {
+  supportedResourceVersions?: readonly (1 | 2)[];
+}): {
+  catalog: UiCatalog;
+  states: UiStateRegistry;
+  subscriptions: UiSubscriptions;
+  data: UiDataHost;
+} {
   const catalog = new UiCatalog(input.hostEpoch, {
+    supportedResourceVersions: input.supportedResourceVersions ?? [1],
     now: input.now,
     beforeDelivery: input.beforeDelivery,
   });
   const states = new UiStateRegistry({
+    supportedResourceVersions: input.supportedResourceVersions ?? [1],
     now: input.now,
     current: (owner) => catalog.isCurrent(owner),
     eventCounters: () => input.broker.events.diagnostics(),
   });
   const ledger: UiEventLedgerPort = uiEventLedgerPort(input.broker.events);
-  const subscriptions = new UiSubscriptions(states, ledger, input.revokeIntent);
-  return { catalog, states, subscriptions };
+  catalog.onEvent(() => states.retireStaleResources());
+  const data = new UiDataHost(states, input.now);
+  const subscriptions = new UiSubscriptions(states, ledger, input.revokeIntent, data);
+  data.onEvent((owner, event) => subscriptions.dataEvent(owner, event));
+  return { catalog, states, subscriptions, data };
 }
 
 const foundationDiagnostics = new WeakMap<object, FoundationDiagnostics>();

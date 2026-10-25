@@ -1268,6 +1268,11 @@ function bindDesktopChannel(
           attachment = target.attachChannel({
             ...args,
             send(event) {
+              if (
+                event.kind === "ui.data" &&
+                !input.data?.snapshot(event.owner, event.data.binding).ok
+              )
+                throw new Error("UI data delivery authority retired.");
               // The common ledger already withdrew broker scopes. Withdraw the
               // corresponding UI heartbeat/gesture before the consumer sees resync.
               if (event.kind === "events.resyncRequired") input.revokeIntent(event.owner);
@@ -1445,7 +1450,8 @@ export async function composeDesktopMain(
         uiResourceGeneration,
       }),
   );
-  const { catalog, states, subscriptions } = createUiRegistry({
+  const { catalog, states, subscriptions, data } = createUiRegistry({
+    supportedResourceVersions: [1, 2],
     hostEpoch: profile.hostEpoch,
     broker,
     now,
@@ -1459,6 +1465,7 @@ export async function composeDesktopMain(
     },
   });
   const ui = createUiLifetimePort({
+    data,
     catalog,
     states,
     subscriptions,
@@ -1504,6 +1511,7 @@ export async function composeDesktopMain(
       });
     } catch (error) {
       actions.dispose();
+      data.dispose();
       subscriptions.dispose();
       intent.dispose();
       events.dispose();
@@ -1577,6 +1585,7 @@ export async function composeDesktopMain(
     // factory owns backend cleanup from entry, including failed construction.
     if (!hostOwnsBackend) await backend.dispose();
     actions.dispose();
+    data.dispose();
     subscriptions.dispose();
     intent.dispose();
     events.dispose();
@@ -1596,6 +1605,7 @@ export async function composeDesktopMain(
     });
   } catch (error) {
     actions.dispose();
+    data.dispose();
     subscriptions.dispose();
     intent.dispose();
     events.dispose();
@@ -1604,6 +1614,7 @@ export async function composeDesktopMain(
     throw error;
   }
   const uiDisposers: Array<() => void> = [
+    () => data.dispose(),
     () => events.dispose(),
     () => subscriptions.dispose(),
     () => actions.dispose(),
@@ -1639,6 +1650,7 @@ export async function composeDesktopMain(
       throw new Error("Recovery navigation is not attached.");
     };
     const execution: UiExecutionAdapter = createUiExecutionAdapter({
+      data,
       catalog,
       states,
       runtime: runtimePort,
@@ -1656,6 +1668,7 @@ export async function composeDesktopMain(
         )
           return resourceFailure("stale");
         const action = node.action;
+        if (action.action === "stopRecording") return resourceFailure("stale");
         if (action.action === "openRecovery") {
           navigateRecovery();
           return { ok: true, value: { output: {}, fieldErrors: [] } };
@@ -1764,6 +1777,12 @@ export async function composeDesktopMain(
       else if (event.kind === "ui.form") intent.cancelHold(event.data.binding);
     });
     uiDisposers.push(offState);
+    uiDisposers.push(
+      data.onEvent((owner, event) => {
+        if (runtime().current(owner) && states.inScope(owner, event.data.binding, input.scope()))
+          events.publish({ type: "data", ...event.data });
+      }),
+    );
     const stage3Host: Stage3HostAttachment = {
       hostEpoch: profile.hostEpoch,
       principal: input.principal,
@@ -1792,6 +1811,9 @@ export async function composeDesktopMain(
               catalog,
               states,
               subscriptions,
+              data,
+              hasPanelsPermission: (owner) =>
+                input.foundationOptions.hasPermission(input.principal(owner), "ui.panels"),
               runtime: runtimePort,
               scope: input.scope,
               revokeIntent: (owner) => intent.revokeOwner(owner),

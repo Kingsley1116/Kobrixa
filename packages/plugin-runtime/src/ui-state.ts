@@ -46,6 +46,7 @@ type OpenInput = {
   scope: CoreWindowScope;
   activateInitialized: UiRuntimeAttachment["activateInitialized"];
   signal?: AbortSignal;
+  initialVisible?: boolean;
 } & (
   | { version?: 1; resource: PanelResourceV1 | StatusResourceV1 }
   | { version: 2; resource: UiResourceV2 }
@@ -176,6 +177,14 @@ export class UiStateRegistry {
         opening.scope.hostEpoch === owner.hostEpoch
       )
         opening.cancel();
+  }
+  inScope(owner: ResourceOwner, binding: UiBinding, scope: CoreWindowScope): boolean {
+    const live = this.#find(owner, binding);
+    return (
+      !!live &&
+      live.scope.hostEpoch === scope.hostEpoch &&
+      live.scope.workbenchInstance === scope.workbenchInstance
+    );
   }
   executionOwner(binding: UiBinding): ResourceOwner | null {
     const live = this.#live.get(binding.panelInstance);
@@ -346,7 +355,7 @@ export class UiStateRegistry {
               !Object.values(resource.fields).some(
                 (f) => f.required && (f.initial === null || f.initial === ""),
               ),
-            visible: kind === "status",
+            visible: input.initialVisible ?? kind === "status",
             locale: this.#locale,
           };
           this.#opening.delete(key);
@@ -537,6 +546,16 @@ export class UiStateRegistry {
     }
     this.#remove(live, "closed");
     return { ok: true, value: { closed: true } };
+  }
+  /** Catalog replacement/quarantine invalidates payload registrations synchronously. */
+  retireStaleResources(): void {
+    const owners = [
+      ...[...this.#live.values()].map((live) => live.uiOwner),
+      ...[...this.#opening.values()].map((opening) => opening.owner),
+      ...[...this.#closed.values()].map((receipt) => receipt.uiOwner),
+    ];
+    for (const owner of owners)
+      if (!this.deps.current(owner)) this.retireResource(owner, "resource-replaced");
   }
   retireResource(owner: UiOwner, reason: UiRevokeReason): void {
     for (const [key, receipt] of this.#closed)

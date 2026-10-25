@@ -12,7 +12,7 @@ function initializedChannel(): Stage3ChannelContext {
 import { expect, it } from "vitest";
 import { UiSubscriptions, type UiEventLedgerPort } from "./ui-subscriptions.js";
 import { UiStateRegistry } from "./ui-state.js";
-import { resourceFailure, type ResourceOwner, type UiEvent } from "@kobrixa/plugin-protocol";
+import { resourceFailure, type ResourceOwner } from "@kobrixa/plugin-protocol";
 const h = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const owner: ResourceOwner = {
   sourceKey: "builtin:test.ui",
@@ -32,7 +32,11 @@ function sharedLedgerFixture() {
   };
   const live = new Map<string, Record>();
   const tombstones = new Map<string, ResourceOwner>();
-  const sent: { id: string; event: UiEvent; delivery: string }[] = [];
+  const sent: {
+    id: string;
+    event: Parameters<UiEventLedgerPort["publish"]>[2];
+    delivery: string;
+  }[] = [];
   const removed = new Set<(id: string) => void>();
   let next = 100;
   let deviceSubscriptions = 0;

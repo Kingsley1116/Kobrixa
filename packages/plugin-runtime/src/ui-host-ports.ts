@@ -16,6 +16,7 @@ import type {
   StatusResourceV1,
   UiResourceV2,
   UiValidationContext,
+  UiDataRequestMapV2,
 } from "@kobrixa/plugin-protocol";
 export type FoundationDiagnosticEvent = {
   kind: "apply" | "revoke" | "stop-dispatch";
@@ -40,6 +41,7 @@ export interface FoundationDiagnostics {
   onEvent(listener: (event: FoundationDiagnosticEvent) => void): () => void;
 }
 export type UiBridgeEvent =
+  | { type: "data"; binding: UiBinding; dataset: string; revision: Counter; presentation: Counter }
   | { type: "catalog"; hostEpoch: Handle; revision: Counter; owners: UiOwner[] }
   | { type: "state"; binding: UiBinding; revision: Counter }
   | { type: "pulse"; binding: UiBinding; challenge: Handle }
@@ -55,6 +57,12 @@ export type UiCatalogResourceValue = {
   | { version: 2; resource: UiResourceV2 }
 );
 export interface PluginUiBridge {
+  dataRead(
+    input: UiDataRequestMapV2["ui/dataRead"]["params"],
+  ): Promise<UiDataRequestMapV2["ui/dataRead"]["result"]>;
+  dataSnapshot(
+    input: UiDataRequestMapV2["ui/dataSnapshot"]["params"],
+  ): Promise<UiDataRequestMapV2["ui/dataSnapshot"]["result"]>;
   catalog(input: { cursor?: Handle }): Promise<Result<UiCatalogPage>>;
   resource(input: {
     sourceKey: string;
