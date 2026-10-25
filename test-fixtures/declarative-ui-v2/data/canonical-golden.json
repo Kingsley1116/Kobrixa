@@ -1,0 +1,20 @@
+[
+  {
+    "name": "numbers",
+    "canonical": "[{\"kind\":\"table\"},[{\"key\":\"n\",\"version\":null,\"cells\":[0,5e-324,1e-7,1e+21,100000000000000000000,1.2345678901234567,1.7976931348623157e+308,2.2250738585072014e-308]}]]",
+    "byteLength": 166,
+    "sha256": "93e6fc132fcb8ee14b3a3fbe7a28aa2be549dbcbcc840f0bc22905259b3b1b07"
+  },
+  {
+    "name": "unicode-escapes",
+    "canonical": "[{\"kind\":\"code\"},[\"臺😀éé\\\"\\\\\\n\\t\\u0001\"]]",
+    "byteLength": 48,
+    "sha256": "cfff4d1e1e6d3f0c9251df17e3cde7e7a679ca5896ea810dc47471907a5390f6"
+  },
+  {
+    "name": "empty-code",
+    "canonical": "[{\"kind\":\"code\"},[]]",
+    "byteLength": 20,
+    "sha256": "3e77f41dc73c556481ef4e035a0541fc2413ee786213e52cd786b1c836548707"
+  }
+]
