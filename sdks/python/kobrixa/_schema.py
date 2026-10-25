@@ -10,6 +10,9 @@ import ipaddress
 import re
 from functools import lru_cache
 from importlib import resources
+from collections.abc import Mapping
+from threading import Lock
+from types import MappingProxyType
 
 SUPPORTED_KEYWORDS = frozenset({
     "$schema", "$id", "title", "$defs", "type", "properties", "required",
@@ -51,17 +54,55 @@ def _is_type(value, name: str) -> bool:
 def _equal(left, right) -> bool:
     if isinstance(left, bool) or isinstance(right, bool):
         return left is right
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        return (isinstance(left, Mapping) and isinstance(right, Mapping)
+                and left.keys() == right.keys()
+                and all(_equal(left[key], right[key]) for key in left))
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        return (isinstance(left, (list, tuple)) and isinstance(right, (list, tuple))
+                and len(left) == len(right)
+                and all(_equal(a, b) for a, b in zip(left, right)))
     return left == right
+
+
+def _freeze_schema(value):
+    # Read-only caller views can still have mutable backing storage. Copy every
+    # mapping; only the private bundled constructor may reuse frozen definitions.
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_schema(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_schema(item) for item in value)
+    return value
+
+
+@lru_cache(maxsize=1)
+def _bundled_schema():
+    text = resources.files("kobrixa").joinpath("plugin-protocol.schema.json").read_text("utf-8")
+    return _freeze_schema(json.loads(text))
+
+
+_bundle_lock = Lock()
 
 
 class Validator:
     def __init__(self, document: dict) -> None:
-        self._definitions = document["$defs"]
+        self._definitions = _freeze_schema(document)["$defs"]
 
     @classmethod
     def bundled(cls) -> "Validator":
-        text = resources.files("kobrixa").joinpath("plugin-protocol.schema.json").read_text("utf-8")
-        return cls(json.loads(text))
+        # A process owns one immutable parsed bundle, shared by command contexts
+        # and event/settings/storage clients. Lock cache lookup too: concurrent
+        # first users must not each parse the multi-megabyte resource.
+        with _bundle_lock:
+            document = _bundled_schema()
+        return cls.__from_bundled(document)
+
+    @classmethod
+    def __from_bundled(cls, document) -> "Validator":
+        # Called only with our recursively frozen cache, never a caller document.
+        instance = cls.__new__(cls)
+        instance._definitions = document["$defs"]
+        return instance
 
     def has(self, name: str) -> bool:
         return name in self._definitions
@@ -90,7 +131,7 @@ class Validator:
         if "enum" in schema and not any(_equal(value, item) for item in schema["enum"]):
             return [f"{path}: expected one of {schema['enum']!r}"]
         if "type" in schema:
-            types = schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
+            types = schema["type"] if isinstance(schema["type"], (list, tuple)) else [schema["type"]]
             if not any(_is_type(value, item) for item in types):
                 return [f"{path}: expected {schema['type']}"]
         errors = []
@@ -127,7 +168,7 @@ class Validator:
                     errors += self._check(properties[key], item, f"{path}.{key}")
                 elif schema.get("additionalProperties") is False:
                     errors.append(f"{path}.{key}: is not allowed")
-                elif isinstance(schema.get("additionalProperties"), dict):
+                elif isinstance(schema.get("additionalProperties"), Mapping):
                     errors += self._check(schema["additionalProperties"], item, f"{path}.{key}")
         return errors
 
