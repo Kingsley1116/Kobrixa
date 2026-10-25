@@ -1296,19 +1296,23 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         }
         if (optional) {
           optionalPolicy!.beforeCompose = Date.now();
-          // Required resources remain ordinary. Every optional resource property is observed,
-          // including a future unexpected read of the currently empty provider resource map.
+          // Keep resources structured-cloneable. The fixture sources already expose
+          // observed getters; use getters for any provider resources as well, not a Proxy.
           for (const source of builtins)
             if (source.kind === "builtin" && source.policy === "optional") {
               const key = `builtin:${(source.manifest as { id: string }).id}`;
+              if (key !== "builtin:kobrixa.device-ev3") continue;
               const resources = source.resources;
-              source.resources = new Proxy(resources, {
-                get(target, name, receiver) {
-                  if (typeof name === "string" && key === "builtin:kobrixa.device-ev3")
+              const observed: Record<string, string> = {};
+              for (const name of Object.keys(resources))
+                Object.defineProperty(observed, name, {
+                  enumerable: true,
+                  get() {
                     optional.event("resource", { sourceKey: key, file: name });
-                  return Reflect.get(target, name, receiver);
-                },
-              });
+                    return resources[name];
+                  },
+                });
+              source.resources = observed;
             }
         }
         const compositionInput: DesktopMainCompositionInput = {

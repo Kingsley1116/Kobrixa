@@ -679,7 +679,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
     return [caseId];
   if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
   throw new Error(
-    "BLOCKED: ten observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+    "BLOCKED: remaining observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
 export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
