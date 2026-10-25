@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { definePlugin, runPlugin, type PluginContext } from "@kobrixa/plugin-sdk";
 import { installSealedTtlConsumer } from "./sealed-ttl-consumer.js";
+import { installOptionalOffConsumer } from "./optional-off-consumer.js";
+let optionalDrain: ReturnType<typeof installOptionalOffConsumer> | undefined;
 let ttlDrain: ReturnType<typeof installSealedTtlConsumer> | undefined;
 const value = <T>(result: { ok: true; value: T } | { ok: false; error: unknown }): T => {
   assert.equal(result.ok, true);
@@ -12,7 +14,10 @@ let actionCheckpointOnly = false;
 void runPlugin(
   definePlugin({
     activate(ctx) {
-      if (ctx.pluginId === "acceptance.ui-recording") ttlDrain = installSealedTtlConsumer(ctx);
+      if (ctx.pluginId === "acceptance.ui-recording") {
+        ttlDrain = installSealedTtlConsumer(ctx);
+        optionalDrain = installOptionalOffConsumer(ctx);
+      }
       // Explicit T7 commands use this process's original public SDK channel.
       // Keep the original write handle across the lost-confirmation boundary.
       if (ctx.pluginId === "acceptance.ui-recording")
@@ -251,6 +256,8 @@ void runPlugin(
     },
     async drain(context) {
       const { request, storage } = context;
+      const optional = await optionalDrain?.(context);
+      if (optional) return optional;
       const ttl = await ttlDrain?.(context);
       if (ttl) return ttl;
       if (actionCheckpointOnly) {
