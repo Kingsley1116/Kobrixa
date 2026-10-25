@@ -3,6 +3,7 @@ import {
   valueSpecSchema,
   type PanelResourceV1,
   type StatusResourceV1,
+  type UiNodeV1,
   type Scalar,
   type ValueSpec,
   type ValueRef,
@@ -453,8 +454,13 @@ export function validateUiResource(
     throw error;
   }
 }
-export function validateUiData(
-  resource: Resource,
+/** Scalar validation inputs only. V2 callers project their progress nodes into
+ * this v1-compatible shape; this helper does not parse or admit a resource. */
+export type UiScalarValidationResource =
+  | (Pick<PanelResourceV1, "kind" | "data"> & { readonly nodes: readonly UiNodeV1[] })
+  | Pick<StatusResourceV1, "kind" | "data">;
+export function validateUiData<R extends UiScalarValidationResource>(
+  resource: R,
   data: Record<string, Scalar>,
 ): Result<Record<string, Scalar>> {
   const keys = Object.keys(data);
