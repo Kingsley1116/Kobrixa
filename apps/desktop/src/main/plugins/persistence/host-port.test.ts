@@ -6,6 +6,8 @@ import { createPersistenceHost } from "./host-port.js";
 import type { PersistenceBackend, PublicationTicket, StoredRecovery } from "./engine-port.js";
 import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
 import type { DrainDispatcher } from "@kobrixa/plugin-runtime";
+import { createMemoryChannelPair, RpcPeer } from "@kobrixa/plugin-protocol";
+import { RetainedPersistenceChannel } from "../../../../../../packages/plugin-runtime/src/supervisor.js";
 const owner = {
   sourceKey: "builtin:test.host",
   pluginId: "test.host",
@@ -1785,3 +1787,345 @@ it.each([false, true])(
     expect(dispatch).toHaveBeenCalledOnce();
   },
 );
+
+/** Actual retained original RPC channel; only backend I/O is the existing test double. */
+async function retainedDrainFixture(outcome: "saved" | "sealed" = "saved") {
+  const f = checkpointFixture();
+  let live = true,
+    permitted = true,
+    clock = 0;
+  f.input.composition.sources.current = () => live;
+  f.input.hasPermission = () => live && permitted;
+  f.input.now = () => clock;
+  f.backend.engine.reserveFinal = vi.fn(f.backend.engine.reserveFinal!);
+  const publish = f.backend.engine.publish;
+  if (outcome === "sealed")
+    f.backend.engine.publish = async (ticket) =>
+      ticket.metadata.kind === "record" ? { disposition: "not-committed" } : publish(ticket);
+  const host = await createPersistenceHost(f.input);
+  const [a, b] = createMemoryChannelPair();
+  const peer = new RpcPeer(a),
+    child = new RpcPeer(b);
+  for (const method of [
+    "storage/registerCheckpoint",
+    "storage/beginWrite",
+    "storage/writeChunk",
+    "storage/sealWrite",
+    "storage/commitWrite",
+    "storage/writeStatus",
+    "storage/abortWrite",
+  ] as const)
+    peer.handle(method, (params, context) =>
+      host.request(principal, method, params, context.signal),
+    );
+  const row = new RetainedPersistenceChannel(
+    owner,
+    peer,
+    () => clock,
+    async () => {
+      await host.participant.ownerLost(owner);
+    },
+  );
+  row.negotiated("1.7.0");
+  const registered = await child.request("storage/registerCheckpoint", {
+    id: f.record().id,
+    expectedRevision: f.record().revision,
+  });
+  if (!registered.ok) throw new Error("checkpoint registration failed");
+  onTestFinished(async () => {
+    await host.participant.ownerLost(owner);
+    peer.close();
+    child.close();
+    await host.dispose();
+  });
+  return {
+    ...f,
+    host,
+    peer,
+    child,
+    row,
+    registered,
+    revoke() {
+      live = false;
+    },
+    denyPermission() {
+      permitted = false;
+    },
+    time(value: number) {
+      clock = value;
+    },
+  };
+}
+
+it.each(["saved", "sealed"] as const)(
+  "retained drain completes original final RPCs after ordinary admission is revoked (%s)",
+  async (outcome) => {
+    const f = await retainedDrainFixture(outcome);
+    const reserveFinal = vi.mocked(f.backend.engine.reserveFinal!);
+    const results: unknown[] = [];
+    const callback = vi.fn(async (request: DrainRequest) => {
+      const begin = await f.child.request("storage/beginWrite", {
+        ...finalInput(f.record(), request),
+        byteLength: 2,
+        sha256: createHash("sha256").update("xy").digest("hex"),
+      });
+      results.push(begin);
+      if (!begin.ok)
+        return { ok: true as const, value: { status: "checkpoint-only" as const, writes: [] } };
+      const write = begin.value.write;
+      results.push(
+        await f.child.request("storage/writeChunk", {
+          write,
+          offset: 0,
+          data: Buffer.from("xy").toString("base64"),
+        }),
+      );
+      results.push(await f.child.request("storage/sealWrite", { write }));
+      results.push(await f.child.request("storage/writeStatus", { write }));
+      results.push(
+        await f.child.request("storage/commitWrite", { write, drainToken: request.token }),
+      );
+      if (outcome === "sealed")
+        results.push(await f.child.request("storage/writeStatus", { write }));
+      return { ok: true as const, value: { status: "submitted" as const, writes: [write] } };
+    });
+    f.child.handle("storage/drain", callback);
+    f.revoke();
+    const offer = f.host.participant.freeze(owner, "disable", 10000);
+    const report = await f.host.participant.drain(offer, f.row.dispatch);
+    expect(callback).toHaveBeenCalledOnce();
+    expect(results.slice(0, 4)).toHaveLength(4);
+    expect(results.slice(0, 4).every((r) => (r as { ok: boolean }).ok)).toBe(true);
+    expect(reserveFinal).toHaveBeenCalledOnce();
+    expect(reserveFinal.mock.calls[0]![2]).toMatchObject({
+      owner,
+      token: offer.token,
+      checkpoint: f.registered.value.checkpoint,
+      deadlineMonotonicMs: 10000,
+    });
+    if (outcome === "saved") {
+      expect(results[4]).toMatchObject({ ok: true, value: { record: { checkpoint: "final" } } });
+      expect(report).toMatchObject({ state: "saved", blocker: false });
+    } else {
+      expect(results[4]).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STORAGE_IO" } });
+      expect(results[5]).toMatchObject({ ok: true, value: { state: "sealed" } });
+      expect(report).toMatchObject({
+        state: "retryable",
+        blocker: true,
+        records: [{ payload: "complete-staging" }],
+      });
+    }
+    expect(f.input.composition.sources.current(owner)).toBe(false);
+    expect(f.input.hasPermission(principal, "storage.write")).toBe(false);
+  },
+);
+
+it("retained drain does not restore normal permission or allow forged final requests", async () => {
+  const f = await retainedDrainFixture(),
+    signal = new AbortController().signal;
+  f.revoke();
+  const offer = f.host.participant.freeze(owner, "disable", 10000);
+  const request: DrainRequest = {
+    token: offer.token,
+    reason: offer.reason,
+    remainingMs: 10000,
+    checkpoints: [...offer.checkpoints],
+    writes: [],
+  };
+  const valid = finalInput(f.record(), request);
+  const reserve = vi.mocked(f.backend.engine.reserveFinal!);
+  for (const changed of [
+    { ...valid, drainToken: randomUUID() },
+    { ...valid, checkpoint: { handle: randomUUID(), phase: "final" as const } },
+    {
+      ...valid,
+      checkpoint: { handle: f.registered.value.checkpoint, phase: "checkpoint" as const },
+    },
+    { ...valid, target: { mode: "create" as const } },
+    {
+      ...valid,
+      target: { mode: "replace" as const, id: randomUUID(), expectedRevision: f.record().revision },
+    },
+  ])
+    expect(await f.host.request(principal, "storage/beginWrite", changed, signal)).toMatchObject({
+      ok: false,
+    });
+  for (const field of [
+    "sourceKey",
+    "pluginId",
+    "generation",
+    "hostEpoch",
+    "processEpoch",
+  ] as const) {
+    const foreign = {
+      ...principal,
+      owner: { ...owner, [field]: field === "generation" ? owner.generation + 1 : randomUUID() },
+    };
+    expect(await f.host.request(foreign, "storage/beginWrite", valid, signal)).toMatchObject({
+      ok: false,
+    });
+  }
+  const ordinary = { ...valid };
+  delete ordinary.checkpoint;
+  delete ordinary.drainToken;
+  expect(await f.host.request(principal, "storage/beginWrite", ordinary, signal)).toMatchObject({
+    error: { code: "PLUGIN_E_PERMISSION_DENIED" },
+  });
+  expect(
+    await f.host.request(principal, "storage/stat", { id: f.record().id }, signal),
+  ).toMatchObject({ error: { code: "PLUGIN_E_PERMISSION_DENIED" } });
+  expect(await f.host.request(principal, "settings/read", {} as never, signal)).toMatchObject({
+    error: { code: "PLUGIN_E_PERMISSION_DENIED" },
+  });
+  expect(reserve).not.toHaveBeenCalled();
+});
+
+it.each(["permission", "expired", "lost", "aborted"] as const)(
+  "retained drain cannot bypass %s before final admission",
+  async (stop) => {
+    const f = await retainedDrainFixture(),
+      caller = new AbortController();
+    if (stop !== "permission") f.revoke();
+    else f.denyPermission();
+    const offer = f.host.participant.freeze(owner, "disable", 10000);
+    const input = finalInput(f.record(), {
+      token: offer.token,
+      reason: offer.reason,
+      remainingMs: 10000,
+      checkpoints: [...offer.checkpoints],
+      writes: [],
+    });
+    if (stop === "expired") f.time(10000);
+    if (stop === "lost") await f.host.participant.ownerLost(owner);
+    if (stop === "aborted") caller.abort();
+    const reserve = vi.mocked(f.backend.engine.reserveFinal!);
+    expect(
+      await f.host.request(principal, "storage/beginWrite", input, caller.signal),
+    ).toMatchObject({ ok: false });
+    expect(reserve).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["expired", "lost", "aborted"] as const)(
+  "retained drain revalidates %s during an admitted short write",
+  async (stop) => {
+    const f = await retainedDrainFixture(),
+      caller = new AbortController();
+    const entered = pause(),
+      release = pause();
+    const append = vi.fn(async (_ticket, offset: number, _bytes: Uint8Array) => {
+      entered.resolve();
+      await release.promise;
+      return offset + 1;
+    });
+    f.backend.engine.append = append;
+    f.revoke();
+    const offer = f.host.participant.freeze(owner, "disable", 10000);
+    const input = {
+      ...finalInput(f.record(), {
+        token: offer.token,
+        reason: offer.reason,
+        remainingMs: 10000,
+        checkpoints: [...offer.checkpoints],
+        writes: [],
+      }),
+      byteLength: 2,
+      sha256: createHash("sha256").update("xy").digest("hex"),
+    };
+    const begin = await f.host.request(principal, "storage/beginWrite", input, caller.signal);
+    if (!begin.ok) throw new Error("final admission failed");
+    const pending = f.host.request(
+      principal,
+      "storage/writeChunk",
+      { write: begin.value.write, offset: 0, data: Buffer.from("xy").toString("base64") },
+      caller.signal,
+    );
+    await entered.promise;
+    let lost: Promise<unknown> | undefined;
+    if (stop === "expired") f.time(10000);
+    if (stop === "lost") lost = f.host.participant.ownerLost(owner);
+    if (stop === "aborted") caller.abort();
+    release.resolve();
+    expect(await pending).toMatchObject({ ok: false });
+    expect(append).toHaveBeenCalledOnce();
+    expect(
+      await f.host.request(
+        principal,
+        "storage/commitWrite",
+        { write: begin.value.write, drainToken: offer.token },
+        caller.signal,
+      ),
+    ).toMatchObject({ ok: false });
+    await lost;
+  },
+);
+
+it("retained drain ticket cannot be continued by a replacement owner or another token", async () => {
+  const f = await retainedDrainFixture(),
+    signal = new AbortController().signal;
+  f.revoke();
+  const offer = f.host.participant.freeze(owner, "disable", 10000);
+  const input = finalInput(f.record(), {
+    token: offer.token,
+    reason: offer.reason,
+    remainingMs: 10000,
+    checkpoints: [...offer.checkpoints],
+    writes: [],
+  });
+  const begin = await f.host.request(principal, "storage/beginWrite", input, signal);
+  if (!begin.ok) throw new Error("final admission failed");
+  const replacement = { ...principal, owner: { ...owner, processEpoch: randomUUID() } };
+  for (const method of ["storage/sealWrite", "storage/writeStatus", "storage/abortWrite"] as const)
+    expect(
+      await f.host.request(replacement, method, { write: begin.value.write }, signal),
+    ).toMatchObject({ ok: false });
+  expect(
+    await f.host.request(
+      principal,
+      "storage/commitWrite",
+      { write: begin.value.write, drainToken: randomUUID() },
+      signal,
+    ),
+  ).toMatchObject({ ok: false });
+  expect(
+    await f.host.request(principal, "storage/abortWrite", { write: begin.value.write }, signal),
+  ).toMatchObject({ ok: true });
+});
+
+it("retained drain does not make a stale ordinary owner live when permissions remain granted", async () => {
+  const f = await retainedDrainFixture(),
+    signal = new AbortController().signal;
+  f.input.hasPermission = () => true;
+  f.revoke();
+  f.host.participant.freeze(owner, "disable", 10000);
+  expect(
+    await f.host.request(
+      principal,
+      "storage/beginWrite",
+      {
+        target: { mode: "create" },
+        kind: "test.record",
+        schemaVersion: 1,
+        label: "ordinary",
+        mediaType: "text/plain",
+        byteLength: 0,
+        sha256: f.record().sha256,
+      },
+      signal,
+    ),
+  ).toMatchObject({ error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+  expect(await f.host.request(principal, "settings/read", {} as never, signal)).toMatchObject({
+    error: { code: "PLUGIN_E_STALE_RESOURCE" },
+  });
+  expect(
+    await f.host.request(
+      principal,
+      "storage/registerCheckpoint",
+      {
+        id: randomUUID(),
+        expectedRevision: f.record().revision,
+      },
+      signal,
+    ),
+  ).toMatchObject({ error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+});

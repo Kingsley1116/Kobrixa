@@ -523,6 +523,57 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         .some((w) => w.record.id === id && ["receiving", "sealed", "publishing"].includes(w.state)),
     recovery,
   });
+  function retainedFinalRequest(
+    principal: Principal,
+    method: keyof PersistenceRequestMap,
+    params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+  ): boolean {
+    // A registered checkpoint was admitted with storage.write on this exact
+    // owner. Freeze retains its existing final grant, not the owner's ordinary
+    // permission set. A live owner's independent permission loss stays denied.
+    if (
+      principal.kind !== "plugin" ||
+      !frozen.has(ownerKey(principal.owner)) ||
+      sources.current(principal.owner)
+    )
+      return false;
+    if (
+      ![
+        "storage/beginWrite",
+        "storage/writeChunk",
+        "storage/sealWrite",
+        "storage/commitWrite",
+        "storage/writeStatus",
+        "storage/abortWrite",
+      ].includes(method)
+    )
+      return false;
+    try {
+      const parsed =
+        storageRequestSchemas[method as keyof StorageRequestMap].params.safeParse(params);
+      if (!parsed.success) return false;
+      let write: RecordWrite;
+      if (method === "storage/beginWrite") {
+        write = parsed.data as RecordWrite;
+      } else {
+        if (!("write" in parsed.data)) return false;
+        const handle = parsed.data.write;
+        const admitted = records
+          .admittedWrites(principal.owner)
+          .find((w) => w.ticket.id === handle);
+        if (!admitted) return false;
+        if (
+          method === "storage/commitWrite" &&
+          (!("drainToken" in parsed.data) || parsed.data.drainToken !== admitted.input.drainToken)
+        )
+          return false;
+        write = admitted.input;
+      }
+      return !!write.drainToken && !!lifecycle.finalGrant(principal.owner, write);
+    } catch {
+      return false;
+    }
+  }
   // T2 returns the cumulative received offset; T4 consumes a short-write byte count.
   const records = createRecordService({
     engine: {
@@ -537,6 +588,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     wall,
     checkpoint: lifecycle,
     retainForRecovery: true,
+    retainedFinalRequest,
   });
   const actions = createPersistenceActions({
     output: backend.output,
@@ -588,6 +640,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     actions,
     recovery: { ...recovery, ...recoveryPort },
     participant,
+    retainedFinalRequest,
     live: (principal: Principal) =>
       principal.kind === "plugin" &&
       sources.current(principal.owner) &&
@@ -770,7 +823,8 @@ export async function createPersistenceHost(input: {
         !input.hasPermission(principal, required(method) as Permission) &&
         !(
           method === "storage/quota" && input.hasPermission(principal, "storage.read" as Permission)
-        )
+        ) &&
+        !services.retainedFinalRequest(principal, method, params)
       )
         return {
           ok: false,

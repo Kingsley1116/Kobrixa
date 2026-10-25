@@ -632,3 +632,52 @@ it.each([true, false])(
     expect(expired.records[0]).not.toHaveProperty("expiresAt");
   },
 );
+
+it("retained frozen callback survives ordinary liveness revocation without reopening admission", async () => {
+  const f = fixture();
+  const registered = await f.life.register(owner, {
+    id: record.id,
+    expectedRevision: record.revision,
+  });
+  if (!registered.ok) throw new Error("registration failed");
+  f.deps.live = () => false;
+  const offer = f.life.participant.freeze(owner, "disable", 10000);
+  const callback = vi.fn(async (original, request) => {
+    expect(original).toEqual(owner);
+    expect(request.token).toBe(offer.token);
+    expect(request.checkpoints[0]?.checkpoint).toBe(registered.value.checkpoint);
+    f.setFinal();
+    return { ok: true as const, value: { status: "submitted" as const, writes: [] } };
+  });
+  expect(await f.life.participant.drain(offer, callback)).toMatchObject({ state: "saved" });
+  expect(callback).toHaveBeenCalledOnce();
+  expect(
+    await f.life.register(owner, { id: record.id, expectedRevision: record.revision }),
+  ).toMatchObject({ error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+});
+
+it.each(["lost", "expired", "owner", "token"] as const)(
+  "retained frozen callback remains blocked after %s",
+  async (reason) => {
+    const f = fixture();
+    expect(
+      (await f.life.register(owner, { id: record.id, expectedRevision: record.revision })).ok,
+    ).toBe(true);
+    f.deps.live = () => false;
+    const original = f.life.participant.freeze(owner, "disable", 10000);
+    if (reason === "lost") await f.life.participant.ownerLost(owner);
+    if (reason === "expired") f.advance(10000);
+    const offer =
+      reason === "owner"
+        ? { ...original, owner: { ...owner, processEpoch: "00000000-0000-4000-8000-000000000099" } }
+        : reason === "token"
+          ? { ...original, token: "00000000-0000-4000-8000-000000000098" }
+          : original;
+    const callback = vi.fn(async () => ({
+      ok: true as const,
+      value: { status: "submitted" as const, writes: [] },
+    }));
+    await f.life.participant.drain(offer, callback);
+    expect(callback).not.toHaveBeenCalled();
+  },
+);
