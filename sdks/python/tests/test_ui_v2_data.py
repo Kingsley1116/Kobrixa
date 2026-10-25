@@ -151,3 +151,15 @@ class UiDataTests(unittest.TestCase):
             validate_panel(datasets)
         with self.assertRaises(UiDataValidationError):
             validate_panel([{"declaration": {"kind": "code"}, "header": {"kind": "code"}, "entries": []}] * 2)
+
+    def test_panel_count_reports_quota_but_non_list_reports_schema(self):
+        table = {"declaration": {"kind": "table", "columns": [
+            {"id": "v", "label": {"en": "Value"}, "value": "number"}]},
+                 "header": {"kind": "table"}, "entries": []}
+        self.assertEqual(validate_panel([table] * 8)["pointCount"], 0)
+        with self.assertRaises(UiDataValidationError) as error:
+            validate_panel([table] * 9)
+        self.assertEqual(error.exception.reason, "quota")
+        with self.assertRaises(UiDataValidationError) as error:
+            validate_panel((table,))
+        self.assertEqual(error.exception.reason, "schema")

@@ -260,7 +260,8 @@ def canonical_chunk_bytes(value):
 
 def validate_panel(datasets):
     """Caller supplies each distinct committed dataset exactly once."""
-    _array(datasets, 0, 8)
+    _require(type(datasets) is list)
+    _require(len(datasets) <= 8, "quota")
     byte_length = points = charts = codes = 0
     for item in datasets:
         _object(item, ("declaration", "header", "entries"))
