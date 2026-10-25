@@ -11,6 +11,9 @@ function initializedChannel(): Stage3ChannelContext {
 }
 import { expect, it } from "vitest";
 import { UiStateRegistry } from "./ui-state.js";
+import { UiDataStore } from "./ui-data.js";
+import { canonicalDatasetV2Bytes } from "@kobrixa/plugin-protocol";
+import { createHash } from "node:crypto";
 import type {
   PanelResourceV1,
   ResourceOwner,
@@ -138,6 +141,175 @@ it("U04 denies foreign bindings and late patches after close", async () => {
   expect(
     registry.patch(owner, { binding: initial.binding, baseRevision: 0, set: { count: 1 } }).ok,
   ).toBe(false);
+});
+it("shares four queued publications between scalar patches and dataset commits", async () => {
+  const registry = new UiStateRegistry({ current: () => true });
+  const { binding } = await open(registry);
+  registry.visibility(owner, binding, true);
+  const events: string[] = [];
+  registry.onEvent((_owner, event) => events.push(event.kind));
+  for (let i = 0; i < 2; i++) expect(registry.admitDataCommit(owner, binding)).toBe("admitted");
+  for (let i = 0; i < 2; i++)
+    expect(registry.patch(owner, { binding, baseRevision: i, set: { count: i + 1 } }).ok).toBe(
+      true,
+    );
+  expect(registry.admitDataCommit(owner, binding)).toBe("queue");
+  expect(registry.patch(owner, { binding, baseRevision: 2, set: { count: 3 } })).toMatchObject({
+    ok: false,
+    error: { detail: { reason: "queue" } },
+  });
+  registry.flush();
+  expect(events).toEqual(["ui.state"]);
+  expect(registry.admitDataCommit(owner, binding)).toBe("admitted");
+  registry.flush();
+  // A dataset publication does not manufacture a scalar state update.
+  expect(events).toEqual(["ui.state"]);
+  expect(registry.state(owner, binding)).toMatchObject({ ok: true, value: { revision: 2 } });
+});
+
+it("shares ten-per-second publication admission across datasets and patches per panel", async () => {
+  let now = 0;
+  const registry = new UiStateRegistry({ current: () => true, now: () => now });
+  const { binding } = await open(registry);
+  registry.visibility(owner, binding, true);
+  for (let i = 0; i < 8; i++) {
+    expect(registry.admitDataCommit(owner, binding)).toBe("admitted");
+    registry.flush();
+  }
+  for (let i = 0; i < 2; i++) {
+    expect(registry.patch(owner, { binding, baseRevision: i, set: { count: i + 1 } }).ok).toBe(
+      true,
+    );
+    registry.flush();
+  }
+  expect(registry.admitDataCommit(owner, binding)).toBe("rate");
+  expect(registry.patch(owner, { binding, baseRevision: 2, set: { count: 3 } })).toMatchObject({
+    ok: false,
+    error: { detail: { reason: "rate" } },
+  });
+  const other = await open(registry, "test.ui.other");
+  registry.visibility(owner, other.binding, true);
+  expect(registry.admitDataCommit(owner, other.binding)).toBe("admitted");
+  now = 999;
+  expect(registry.admitDataCommit(owner, binding)).toBe("rate");
+  now = 1000;
+  expect(registry.admitDataCommit(owner, binding)).toBe("admitted");
+});
+
+it("denies stale/hidden data admission and does not spend another owner's allowance", async () => {
+  let current = true;
+  const registry = new UiStateRegistry({ current: () => current });
+  const { binding } = await open(registry);
+  expect(registry.admitDataCommit(owner, binding)).toBe("stale");
+  registry.visibility(owner, binding, true);
+  for (let i = 0; i < 12; i++) {
+    expect(registry.admitDataCommit({ ...owner, sourceKey: "foreign" }, binding)).toBe("stale");
+    expect(registry.admitDataCommit(owner, { ...binding, processEpoch: h(99) })).toBe("stale");
+  }
+  current = false;
+  expect(registry.admitDataCommit(owner, binding)).toBe("stale");
+  current = true;
+  for (let i = 0; i < 4; i++) expect(registry.admitDataCommit(owner, binding)).toBe("admitted");
+  expect(registry.admitDataCommit(owner, binding)).toBe("queue");
+  registry.close(owner, binding);
+  registry.flush();
+  expect(registry.admitDataCommit(owner, binding)).toBe("stale");
+  const reopened = await open(registry);
+  registry.visibility(owner, reopened.binding, true);
+  expect(registry.admitDataCommit(owner, reopened.binding)).toBe("admitted");
+});
+
+it("charges real data-store commits and patches to one budget without charging receipt replay", async () => {
+  const registry = new UiStateRegistry({ current: () => true, now: () => 0 });
+  const dataResource = {
+    ...resource(),
+    data: {
+      ...resource().data,
+      presentation: {
+        schema: {
+          type: "number" as const,
+          min: 0,
+          max: Number.MAX_SAFE_INTEGER,
+          integer: true,
+          nullable: false,
+        },
+        initial: 0,
+      },
+    },
+    datasets: { code: { kind: "code" as const } },
+    presentationKey: "presentation",
+  };
+  const opened = await registry.open({
+    owner: uiOwner,
+    id: "test.ui.data",
+    scope,
+    resource: dataResource,
+    activateInitialized: async () => initializedChannel(),
+  });
+  if (!opened.ok) throw new Error("open failed");
+  if (opened.value.binding.kind !== "panel") throw new Error("Expected panel binding");
+  const binding = { ...opened.value.binding, kind: opened.value.binding.kind };
+  registry.visibility(owner, binding, true);
+  const registration = {};
+  let publications = 0;
+  const store = new UiDataStore({
+    now: () => 0,
+    resolve: (candidate, query) => {
+      const state = registry.state(candidate, query);
+      if (!state.ok) return null;
+      return {
+        owner: candidate,
+        binding: query,
+        registration,
+        resource: dataResource,
+        version: 2,
+        ready: true,
+        panelsPermission: true,
+        visible: state.value.visible,
+        presentation: state.value.data.presentation as number,
+      };
+    },
+    admitCommit: (candidate, query) => registry.admitDataCommit(candidate, query),
+    publish: () => publications++,
+  });
+  const header = { kind: "code" as const };
+  const bytes = canonicalDatasetV2Bytes(header, []);
+  const start = (baseRevision: number) => {
+    const result = store.begin(owner, {
+      binding,
+      dataset: "code",
+      baseRevision,
+      presentation: 1,
+      header,
+      entryCount: 0,
+      byteLength: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    if (!result.ok) throw new Error("begin failed");
+    return { binding, dataset: "code", transfer: result.value.transfer };
+  };
+  let last = start(0);
+  for (let i = 0; i < 8; i++) {
+    if (i > 0) last = start(i);
+    expect(store.commit(owner, last)).toMatchObject({ ok: true, value: { revision: i + 1 } });
+    registry.flush();
+  }
+  for (let i = 0; i < 2; i++) {
+    expect(registry.patch(owner, { binding, baseRevision: i, set: { count: i + 1 } }).ok).toBe(
+      true,
+    );
+    registry.flush();
+  }
+  expect(store.commit(owner, last)).toMatchObject({ ok: true, value: { revision: 8 } });
+  expect(publications).toBe(8);
+  expect(store.commit(owner, start(8))).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_RESOURCE_LIMIT", detail: { reason: "rate" } },
+  });
+  expect(store.snapshot(owner, { binding })).toMatchObject({
+    ok: true,
+    value: { datasets: [{ revision: 8 }] },
+  });
 });
 it("U03 reserves instance quota before activation and retirement rejects the late activation", async () => {
   let current = true;

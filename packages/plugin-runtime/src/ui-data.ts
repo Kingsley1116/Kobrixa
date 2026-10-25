@@ -51,7 +51,7 @@ export interface UiDataStorePorts {
   resolve(owner: ResourceOwner, binding: UiBinding): UiDataAuthority | null;
   /** Connect to the existing per-panel patch+commit budget (10/s, 4 pending).
    * Synchronous admission; this store has no separate rate bucket. */
-  admitCommit(owner: ResourceOwner, binding: UiBinding): "admitted" | "rate" | "queue";
+  admitCommit(owner: ResourceOwner, binding: UiBinding): "admitted" | "rate" | "queue" | "stale";
   /** Synchronously enqueue on the existing owner-scoped event bus; must not throw.
    * Queued delivery must revalidate owner/epoch. */
   publish(

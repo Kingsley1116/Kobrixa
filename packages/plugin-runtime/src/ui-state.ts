@@ -44,6 +44,7 @@ type Live = {
   state: UiStateSnapshot;
   times: number[];
   pending: number;
+  pendingData: number;
 };
 type Reservation = {
   owner: UiOwner;
@@ -307,6 +308,7 @@ export class UiStateRegistry {
             state,
             times: [],
             pending: 0,
+            pendingData: 0,
           });
           this.#emit(owner, { kind: "ui.instances", data: { instances: this.instances(owner) } });
           // Existing renderer listeners must discover a newly initialized status too;
@@ -327,6 +329,28 @@ export class UiStateRegistry {
     const live = this.#find(owner, binding);
     return live ? { ok: true, value: structuredClone(live.state) } : resourceFailure("stale");
   }
+  #publicationLimit(live: Live): "rate" | "queue" | null {
+    const now = this.#now();
+    live.times = live.times.filter((time) => now - time < 1000);
+    if (live.times.length >= L.patchesPerSecond) return "rate";
+    if (live.pending + live.pendingData >= L.pendingPatches) return "queue";
+    return null;
+  }
+  /** Host-only hook for the v2 store after authority and payload validation.
+   * Uses the same window/queue as patches. The store enqueues its own metadata
+   * event; flush must not emit an unrelated scalar state event for this slot. */
+  admitDataCommit(
+    owner: ResourceOwner,
+    binding: UiBinding,
+  ): "admitted" | "rate" | "queue" | "stale" {
+    const live = this.#find(owner, binding);
+    if (!live || live.state.binding.kind !== "panel" || !live.state.visible) return "stale";
+    const limit = this.#publicationLimit(live);
+    if (limit) return limit;
+    live.times.push(this.#now());
+    live.pendingData++;
+    return "admitted";
+  }
   patch(
     owner: ResourceOwner,
     input: UiRequestMap["ui/patch"]["params"],
@@ -340,23 +364,23 @@ export class UiStateRegistry {
       return uiFailure("limit", "$.patch", "patchBytes");
     if (keys.some((key) => !Object.hasOwn(live.resource.data, key)))
       return uiFailure("reference", "$.set");
-    const now = this.#now();
-    live.times = live.times.filter((time) => now - time < 1000);
-    if (live.times.length >= L.patchesPerSecond) return resourceFailure("rate", L.patchesPerSecond);
-    if (live.pending >= L.pendingPatches) return resourceFailure("queue", L.pendingPatches);
+    const limit = this.#publicationLimit(live);
+    if (limit)
+      return resourceFailure(limit, limit === "rate" ? L.patchesPerSecond : L.pendingPatches);
     if (live.state.revision === Number.MAX_SAFE_INTEGER)
       return resourceFailure("quota", Number.MAX_SAFE_INTEGER);
     const next = { ...live.state.data, ...input.set };
     const valid = validateUiData(live.resource, next);
     if (!valid.ok) return valid;
     live.state = { ...live.state, revision: live.state.revision + 1, data: valid.value };
-    live.times.push(now);
+    live.times.push(this.#now());
     live.pending++;
     return { ok: true, value: { revision: live.state.revision } };
   }
   flush(): void {
     // T3 schedules this on its existing bounded event drain, not a new timer per panel.
-    for (const live of this.#live.values())
+    for (const live of this.#live.values()) {
+      live.pendingData = 0;
       if (live.pending > 0) {
         live.pending = 0;
         this.#emit(live.owner, {
@@ -364,6 +388,7 @@ export class UiStateRegistry {
           data: { binding: live.state.binding, revision: live.state.revision },
         });
       }
+    }
   }
   setForm(
     owner: ResourceOwner,
@@ -410,6 +435,7 @@ export class UiStateRegistry {
   #remove(live: Live, reason: UiRevokeReason): void {
     this.#live.delete(live.state.binding.panelInstance);
     live.pending = 0;
+    live.pendingData = 0;
     this.#emit(live.owner, { kind: "ui.revoked", data: { binding: live.state.binding, reason } });
     this.#emit(live.owner, {
       kind: "ui.instances",
