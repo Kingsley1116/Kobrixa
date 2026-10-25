@@ -20398,3 +20398,13 @@ Electron-running package/desktop/plugin/static-language/installed commands, brow
 - [ ] 30 storage samples, separate RSS, UI 5s/60s/3 runs and device 10-minute evidence retain exact budgets.
 - [ ] Manual/platform/unrun rows, stage-2 V01–V04 and 3C/3D/3E remain honest.
 - [ ] No implementation tests, builds or commits were executed merely while writing this plan.
+
+### Controller execution clarification — all-optional-off recovery phases (2026-10-26)
+
+The observation-table fields describe distinct, explicitly labelled trials; they do not authorize resurrecting transient sealed pins after a host restart. Current recovery scanning deliberately discards old-host staging and invalidates old-epoch sealed capabilities. Keep that lifetime rule.
+
+- **Same-host sealed export:** seed through the original public SDK/worker, disable all optional sources and await their real retirement, then export retained complete staging through trusted core recovery before its original expiry. Record the sealed bytes/hash, disabled-source state, zero active optional processes and exact same-host identity. Do not call this a cold-start or cross-host sealed-payload proof.
+- **Cold all-disabled recovery:** persist disabled policy before discovery, restart the same profile in a fresh actual host, then prove durable recovery IDs/committed checkpoint export and zero optional schema reads, mapper calls, launches, auto-connects and feature action mints during that cold phase. Preserve raw phase boundaries; pre-restart seeding activity cannot be hidden in cold counters. Old-host sealed handles stay invalid; committed predecessor bytes cannot satisfy the sealed-export field.
+- **No-process settings:** the existing separate admitted, data-only settings trial remains outside cold safe mode; its schema admission and zero process launches must be observed independently.
+
+The aggregate producer must retain each trial's original owner, host epoch, source, durable record/revision, export destination hash and lifecycle/cleanup receipts. A missing trial remains unrun. No successful all-optional-off receipt exists as of this clarification. The discovered disabled-source core-namespace projection defect is being corrected separately; this clarification is neither a workaround nor acceptance of that defect.
