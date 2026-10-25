@@ -470,3 +470,21 @@ describe("rows, code, chunks and actual budgets", () => {
     fails(() => validateDatasetChunkV2({ kind: "table", entries: [row] }), "quota");
   });
 });
+
+it("keeps the shared Python binary64 formatting vectors tied to JavaScript", () => {
+  const vectors = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../test-fixtures/declarative-ui-v2/data/binary64-golden.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as { cases: { bits: string; json: string }[] };
+  expect(vectors.cases.length).toBeGreaterThanOrEqual(990);
+  for (const entry of vectors.cases) {
+    const n = Buffer.from(entry.bits, "hex").readDoubleBE();
+    expect(Number.isFinite(n)).toBe(true);
+    expect(JSON.stringify(n)).toBe(entry.json);
+  }
+});
