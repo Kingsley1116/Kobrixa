@@ -1070,8 +1070,10 @@ it("T5fix2 discarding one checkpoint preserves a different sealed write blocker"
 it.each(["other-checkpoint", "unknown-barrier"])(
   "T5fix2 retry preserves unrelated %s evidence",
   async (kind) => {
+    const reconciled = vi.fn();
     const f = checkpointFixture(),
       signal = new AbortController().signal;
+    f.input.reconciled = reconciled;
     const other = { ...f.record(), id: randomUUID(), checkpoint: "open" as const };
     f.backend.reads.stat = async (_owner, id) => (id === other.id ? other : f.record());
     let committed = false;
@@ -1117,6 +1119,7 @@ it.each(["other-checkpoint", "unknown-barrier"])(
     expect((await host.participant.retry(before.recovery!, coreAction())).state).toBe("saved");
     const after = await host.participant.drain(offer, f.input.composition.dispatchDrain);
     expect(after.blocker).toBe(true);
+    expect(reconciled).toHaveBeenCalledExactlyOnceWith(before.recovery, after);
     expect(after.records.find((r) => r.id === f.record().id)?.final).toBe(true);
     if (kind === "other-checkpoint")
       expect(after.records.find((r) => r.id === other.id)?.final).toBe(false);
@@ -1127,10 +1130,12 @@ it.each(["other-checkpoint", "unknown-barrier"])(
 );
 
 it("T5fix2 discarded sealed identity stays resolved after terminal group retention", async () => {
+  const reconciled = vi.fn();
   const f = checkpointFixture(),
     signal = new AbortController().signal;
   let now = 0;
   f.input.now = () => now;
+  f.input.reconciled = reconciled;
   const publish = f.backend.engine.publish;
   f.backend.engine.reconcile = async (t) =>
     t.metadata.kind === "record" ? { disposition: "not-committed" } : publish(t);
@@ -1157,6 +1162,10 @@ it("T5fix2 discarded sealed identity stays resolved after terminal group retenti
   const offer = host.participant.freeze(owner, "shutdown", 10000);
   const before = await host.participant.drain(offer, f.input.composition.dispatchDrain);
   expect((await host.participant.discard(before.recovery!, coreAction())).blocker).toBe(false);
+  expect(reconciled).toHaveBeenCalledExactlyOnceWith(
+    before.recovery,
+    expect.objectContaining({ state: "saved", blocker: false, pendingSettings: false, errors: [] }),
+  );
   expect((await host.participant.drain(offer, f.input.composition.dispatchDrain)).blocker).toBe(
     false,
   );

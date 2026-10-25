@@ -37,6 +37,7 @@ import type {
   CoreWindowScope,
   BoundSettingsService,
   DrainDispatcher,
+  DrainReport,
 } from "@kobrixa/plugin-runtime";
 import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
 import type { LegacyImportHostPort } from "./import-sources.js";
@@ -144,7 +145,10 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     actions: input.coreActions,
     coreOwner: sources.coreOwner,
     changing: (owner) => lifecycle.invalidateRecovery(owner),
-    retried: (owner, _report, deadline) => lifecycle.refreshRecovery(owner, deadline),
+    retried: async (owner, report, deadline) => {
+      const current = await lifecycle.refreshRecovery(owner, deadline);
+      if (report.recovery && current) input.reconciled?.(report.recovery, current);
+    },
     retired(owner, report, ticket) {
       if (
         ticket &&
@@ -161,7 +165,10 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       }
     },
     // This is a bounded read/reconciliation budget, never a new publication grant.
-    discarded: (owner) => lifecycle.refreshRecovery(owner, now() + 10000),
+    discarded: async (owner, report) => {
+      const current = await lifecycle.refreshRecovery(owner, now() + 10000);
+      if (report.recovery && current) input.reconciled?.(report.recovery, current);
+    },
     now,
     wall,
     async retry(_owner, report, deadline) {
@@ -663,6 +670,8 @@ export async function createPersistenceHost(input: {
   coreActions: CoreActionValidationPort;
   now: () => number;
   hasPermission: (principal: Principal, permission: Permission) => boolean;
+  /** Host-observed disposition after recovery has reconciled all original obligations. */
+  reconciled?: (recovery: string, report: DrainReport) => void;
 }): Promise<PersistenceHost> {
   input.profile.assertHeld();
   if (!input.composition) throw new TypeError("Incomplete persistence composition.");

@@ -1507,6 +1507,7 @@ export async function composeDesktopMain(
     },
   };
   let persistence170: Awaited<ReturnType<typeof composePersistence170>>;
+  let cleanupLifecycle: LifecycleCoordinator | undefined;
   let hostOwnsBackend = false;
   try {
     persistence170 = await attachPersistenceHost170(
@@ -1519,6 +1520,7 @@ export async function composeDesktopMain(
         coreActions: claims.core,
         now,
         hasPermission: input.foundationOptions.hasPermission,
+        reconciled: (id, report) => cleanupLifecycle?.reconcileRecovery(id, report),
       },
       { device: broker.resources, ui },
       () => {
@@ -1556,7 +1558,6 @@ export async function composeDesktopMain(
     await foundation.dispose();
     throw error;
   }
-  let cleanupLifecycle: LifecycleCoordinator | undefined;
   const uiDisposers: Array<() => void> = [
     () => events.dispose(),
     () => subscriptions.dispose(),
