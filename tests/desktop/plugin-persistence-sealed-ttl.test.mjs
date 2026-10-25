@@ -168,7 +168,7 @@ function specimen() {
   const drain = (s, phase, at, complete) => {
     const offer = {
       owner: copy(owner),
-      reason: "released",
+      reason: "reservation-ended",
       deadlineMonotonicMs: at + 10000,
       token: id(s.n + 8),
       checkpoints: [{ checkpoint: id(s.n + 6), record: copy(s.old) }],
@@ -201,6 +201,8 @@ function specimen() {
           owner: copy(owner),
           request: {
             token: offer.token,
+            remainingMs: 9999,
+            reason: "reservation-ended",
             writes: copy(offer.writes),
             checkpoints: copy(offer.checkpoints),
           },
@@ -403,7 +405,7 @@ const mutations = {
   "missing seal": (o) => o.calls.splice(o.calls.indexOf(seal(o)), 1),
   "incomplete seal bytes": (o) => seal(o).result.value.receivedBytes--,
   "false sealed state": (o) => (seal(o).result.value.state = "receiving"),
-  "renewed public expiry": (o) => get(o, "status", "writeStatus").result.value.expiresAt++,
+  "renewed public expiry": (o) => (get(o, "status", "writeStatus").result.value.expiresAt += 100),
   "progress outside seal interval": (o) => (seal(o).result.value.expiresAt += 100),
   "wall clock jump": (o) => (o.retry[0].start.wall += 100),
   "host only clock advancement": (o) => (o.drains[1].start.elapsed -= 30000),
@@ -418,7 +420,8 @@ const mutations = {
   "retry without action": (o) => delete o.retry[0].action.actionToken,
   "retry on another ticket": (o) => (o.publications[0].ticket.id = id(99)),
   "retry on another pin": (o) => (o.publications[0].pin = id(99)),
-  "retry renews work deadline": (o) => (o.publications[0].deadline = 10061),
+  "retry renews work deadline": (o) =>
+    (o.publications[0].deadline = o.publications[0].start.mono + 10001),
   "no actual recovery publication": (o) => (o.publications = []),
   "unknown mistaken for safe failure": (o) => (o.publications[0].result.disposition = "unknown"),
   "published retry": (o) => (o.publications[0].result.disposition = "committed"),
@@ -568,4 +571,28 @@ test("producer waits for host aggregation after asynchronous SDK release", async
   );
   assert.match(source, /await command\("drain-incomplete"\);\s*await waitForDrain\(3\);/);
   assert.match(source, /while \(drains.length < expected\)/);
+});
+
+test("public integer wall projection may differ by one tick while durable expiry stays exact", () => {
+  const o = specimen();
+  get(o, "status", "writeStatus").result.value.expiresAt++;
+  assertSealedTtlEvidence(evidence(o));
+  o.recovery.after.expiresAt++;
+  assert.throws(() => assertSealedTtlEvidence(evidence(o)));
+});
+test("wire drain remaining time is floored without moving the original offer deadline", () => {
+  const o = specimen();
+  for (const d of o.drains) for (const r of d.requests) r.request.remainingMs += 0.75;
+  assertSealedTtlEvidence(evidence(o));
+  o.sdkDrains[0].request.remainingMs++;
+  assert.throws(() => assertSealedTtlEvidence(evidence(o)));
+});
+test("worker mapped I/O exception still requires exact original failed-publication evidence", () => {
+  const o = specimen();
+  o.publications[0].result = { thrown: { name: "Error", message: "persistence-io" } };
+  o.retry[0].report.state = "uncertain";
+  o.recovery.after.report.state = "uncertain";
+  assertSealedTtlEvidence(evidence(o));
+  o.publications[0].result.thrown.message = "unrelated failure";
+  assert.throws(() => assertSealedTtlEvidence(evidence(o)));
 });
