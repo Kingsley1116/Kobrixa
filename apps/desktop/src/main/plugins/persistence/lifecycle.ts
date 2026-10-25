@@ -316,10 +316,13 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       if (
         !value ||
         value.token !== token ||
+        !value.callbackAllowed ||
+        value.control.signal.aborted ||
         deps.now() >= value.deadline ||
         input.target.mode !== "replace" ||
         !target ||
         !value.entries.has(target) ||
+        target.failed ||
         target.final ||
         target.ended?.drain === null ||
         !input.checkpoint ||
@@ -525,7 +528,10 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
           !pending.length ||
           !dispatch ||
           !value.callbackAllowed ||
-          !deps.live(value.owner) ||
+          // Ordinary admission is already revoked during retirement. The frozen
+          // original group retains only its bounded callback; dispatch still
+          // checks the exact original channel, negotiation and peer lifetime.
+          (!value.retired && !deps.live(value.owner)) ||
           value.control.signal.aborted ||
           deps.now() >= value.deadline
         )

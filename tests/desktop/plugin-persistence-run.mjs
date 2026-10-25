@@ -1,3 +1,4 @@
+import { assertOptionalPhaseReceipt } from "./plugin-persistence-optional-off.ts";
 import assert from "node:assert/strict";
 import {
   access,
@@ -8,6 +9,7 @@ import {
   cp,
   readdir,
   realpath,
+  lstat,
 } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
@@ -190,6 +192,11 @@ export async function materializeFoundationFixtures(
       });
     if (role === "recording")
       manifest.contributes.commands.push({
+        id: `${id}.optional-off-seed`,
+        title: { en: "Optional-off seed" },
+      });
+    if (role === "recording")
+      manifest.contributes.commands.push({
         id: `${id}.renderer-seed`,
         title: { en: "Renderer loss seed" },
       });
@@ -246,6 +253,10 @@ export async function materializeFoundationFixtures(
     await cp(
       path.join(fixture, "sealed-ttl-consumer.ts"),
       path.join(sourceRoot, "src/sealed-ttl-consumer.ts"),
+    );
+    await cp(
+      path.join(fixture, "optional-off-consumer.ts"),
+      path.join(sourceRoot, "src/optional-off-consumer.ts"),
     );
     const config = builtinPluginConfig({ slug, pluginId: id, sourceRoot });
     await viteBuild({
@@ -477,13 +488,22 @@ export async function superviseCase(
       assert.equal(candidate.pid, child.pid);
       assert.equal(
         candidate.status,
-        ["retirement", "healthy-release"].includes(config.case)
-          ? "closed-reference"
-          : "closed-case",
+        config.case === "all-optional-off" && config.optionalPhase === "seed"
+          ? "retained-phase"
+          : config.case === "all-optional-off" && config.optionalPhase === "settings"
+            ? "closed-phase"
+            : ["retirement", "healthy-release"].includes(config.case)
+              ? "closed-reference"
+              : "closed-case",
       );
       receipt = {
         ...candidate,
-        status: "passed",
+        status:
+          config.case === "all-optional-off" && config.optionalPhase === "seed"
+            ? "retained-exit"
+            : config.case === "all-optional-off" && config.optionalPhase === "settings"
+              ? "passed-phase"
+              : "passed",
         exitCode: parentExit.code,
         signal: parentExit.signal,
         exitedAt: parentExit.at,
@@ -491,7 +511,11 @@ export async function superviseCase(
         cleanup: { ...candidate.cleanup, children: remaining.length },
         observedDescendants: tracker.observed().filter((row) => row.pid !== child.pid),
       };
-      verifyRunReceipt(
+      const verify =
+        config.case === "all-optional-off" && ["seed", "settings"].includes(config.optionalPhase)
+          ? assertOptionalPhaseReceipt
+          : verifyRunReceipt;
+      verify(
         receipt,
         Object.fromEntries(
           ["runId", "case", "bundleSha256", "artifactSha256", "commit"]
@@ -557,6 +581,10 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
           throw new Error("BLOCKED: Windows owned-process observer required");
         const env = { ...process.env };
         delete env.ELECTRON_RUN_AS_NODE;
+        if (config.case === "all-optional-off") {
+          env.PERSISTENCE_OPTIONAL_MAPPER_LOG = config.mapperLog;
+          env.PERSISTENCE_OPTIONAL_RUN_ID = config.runId;
+        }
         const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
           stdio: "inherit",
           env,
@@ -645,12 +673,13 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "unknown-publication",
       "action-replay",
       "renderer-loss",
+      "all-optional-off",
     ].includes(caseId)
   )
     return [caseId];
   if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
   throw new Error(
-    "BLOCKED: ten observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+    "BLOCKED: remaining observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
 export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
@@ -718,7 +747,9 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     workerEntry = path.join(buildRoot, "worker.cjs");
   await writeFile(
     workerSource,
-    `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
+    selectedCases.includes("all-optional-off")
+      ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
+      : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
   );
   await bundle(workerSource, workerEntry);
   const source = path.join(directory, "entry.ts"),
@@ -732,6 +763,9 @@ import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/de
 import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
 const config=JSON.parse(readFileSync(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
 app.setPath('userData',config.profile);
+// This supervised entry owns exit after awaited receipt I/O. Closing its last
+// test window must not implicitly terminate an in-flight observation/write.
+app.on('window-all-closed',()=>{});
 const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
  reportFailure:failure=>console.error(JSON.stringify(failure))});
 app.exit(code);
@@ -790,6 +824,69 @@ app.exit(code);
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
     };
+    if (id === "all-optional-off") {
+      const settingsProfile = await mkdtemp(path.join(directory, "optional-settings-"));
+      const receipts = {};
+      for (const optionalPhase of ["settings", "seed", "cold"]) {
+        const phaseConfig = {
+          ...config,
+          optionalPhase,
+          profile: optionalPhase === "settings" ? settingsProfile : profile,
+          profileId: optionalPhase === "settings" ? randomUUID() : config.profileId,
+          runId: randomUUID(),
+          report: path.join(directory, `optional-${optionalPhase}.candidate.json`),
+          mapperLog: path.join(directory, `optional-${optionalPhase}.mapper.jsonl`),
+          seedReceipt: path.join(directory, "optional-seed.receipt.json"),
+          settingsReceipt: path.join(directory, "optional-settings.receipt.json"),
+        };
+        const phaseConfigFile = path.join(directory, `optional-${optionalPhase}.json`);
+        await writeFile(phaseConfigFile, JSON.stringify(phaseConfig), { flag: "wx" });
+        const receipt = await launchCase(
+          electron,
+          entry,
+          phaseConfigFile,
+          phaseConfig.report,
+          phaseConfig,
+        );
+        if (optionalPhase !== "cold")
+          assertOptionalPhaseReceipt(receipt, {
+            runId: phaseConfig.runId,
+            profileId: phaseConfig.profileId,
+          });
+        else {
+          verifyRunReceipt(receipt, {
+            runId: phaseConfig.runId,
+            profileId: phaseConfig.profileId,
+            commit,
+            artifactSha256,
+            bundleSha256,
+          });
+          assert.deepEqual(receipt.evidence.optionalOff.seed, receipts.seed);
+          assert.deepEqual(receipt.evidence.optionalOff.settings, receipts.settings);
+          // Outside the child, verify the retained native outputs, not only self-reported hashes.
+          for (const p of [
+            receipts.seed.evidence.optionalPhase,
+            receipt.evidence.optionalOff.cold,
+          ]) {
+            const file = p.export.file;
+            const bytes = await readFile(file.path),
+              stat = await lstat(file.path);
+            assert.equal(digest(bytes), file.sha256);
+            assert.equal(bytes.toString("base64"), file.data);
+            assert.equal(`${stat.dev}:${stat.ino}`, file.identity);
+            assert.equal(stat.size, file.bytes);
+          }
+          reports.push(receipt);
+        }
+        receipts[optionalPhase] = receipt;
+        await writeFile(
+          path.join(directory, `optional-${optionalPhase}.receipt.json`),
+          JSON.stringify(receipt, null, 2),
+          { flag: "wx" },
+        );
+      }
+      continue;
+    }
     await writeFile(configFile, JSON.stringify(config));
     const receipt = await launchCase(electron, entry, configFile, report, config);
     verifyRunReceipt(receipt, {

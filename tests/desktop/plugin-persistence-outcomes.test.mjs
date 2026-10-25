@@ -1,3 +1,4 @@
+import "./plugin-persistence-optional-off.test.mjs";
 import "./plugin-persistence-renderer-loss.test.mjs";
 import "./plugin-persistence-sealed-ttl.test.mjs";
 import "./plugin-persistence-action-replay.test.mjs";

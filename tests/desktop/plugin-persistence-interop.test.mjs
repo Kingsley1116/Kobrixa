@@ -960,8 +960,10 @@ test("registration-end selector is bounded and full matrix remains fail-closed",
     "retirement",
     "healthy-release",
   ]);
-  assert.throws(() => selectFoundationCases(), /eleven observation-table producers/);
-  assert.throws(() => selectFoundationCases({ caseId: "sealed-ttl" }), /unsupported case/);
+  assert.throws(() => selectFoundationCases(), /remaining observation-table producers/);
+  assert.deepEqual(selectFoundationCases({ caseId: "sealed-ttl" }), ["sealed-ttl"]);
+  assert.deepEqual(selectFoundationCases({ caseId: "all-optional-off" }), ["all-optional-off"]);
+  assert.throws(() => selectFoundationCases({ caseId: "installed" }), /unsupported case/);
   assert.throws(
     () => selectFoundationCases({ referencesOnly: true, caseId: "registration-end" }),
     /mutually exclusive/,
