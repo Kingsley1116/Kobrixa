@@ -6,11 +6,32 @@ const value = <T>(result: { ok: true; value: T } | { ok: false; error: unknown }
   if (!result.ok) throw new Error("fixture business failure");
   return result.value;
 };
+let actionCheckpointOnly = false;
 void runPlugin(
   definePlugin({
     activate(ctx) {
       // Explicit T7 commands use this process's original public SDK channel.
       // Keep the original write handle across the lost-confirmation boundary.
+      if (ctx.pluginId === "acceptance.ui-recording")
+        ctx.commands.register(`${ctx.pluginId}.action-checkpoint-only`, async () => {
+          actionCheckpointOnly = true;
+        });
+      let actionJob: string | undefined;
+      const actionBytes = Buffer.from("T7 action export value sentinel\n");
+      if (ctx.pluginId.startsWith("acceptance.ui-"))
+        for (const step of ["chunk", "commit"] as const)
+          ctx.commands.register(`${ctx.pluginId}.action-${step}`, async () => {
+            assert.ok(actionJob);
+            if (step === "chunk")
+              value(
+                await ctx.actions.exportChunk({
+                  export: actionJob,
+                  offset: 0,
+                  data: actionBytes.toString("base64"),
+                }),
+              );
+            else await ctx.actions.exportCommit({ export: actionJob });
+          });
       let unknownWrite: string | undefined;
       let unknownStep = 0;
       const unknownBytes = (next: boolean) =>
@@ -91,10 +112,31 @@ void runPlugin(
           },
           mode: { type: "enum" as const, values: ["coast", "brake"], nullable: false as const },
         };
-        ctx.commands.registerContext(`${ctx.pluginId}.activate`, args, async (invocation) => ({
-          output: { speed: invocation.arguments.speed!, mode: invocation.arguments.mode! },
-          fieldErrors: [],
-        }));
+        ctx.commands.registerContext(`${ctx.pluginId}.activate`, args, async (invocation) => {
+          if (invocation.arguments.speed === -90 || invocation.arguments.speed === -91) {
+            const actionRef = invocation.context.actionRef;
+            assert.ok(actionRef, "Actual trusted UI dispatch must mint the action");
+            if (invocation.arguments.speed === -91) {
+              actionJob = value(
+                await ctx.actions.exportBegin({
+                  actionRef,
+                  suggestedName: "action.txt",
+                  mediaType: "text/plain",
+                  byteLength: actionBytes.length,
+                  sha256: createHash("sha256").update(actionBytes).digest("hex"),
+                }),
+              ).export;
+            }
+            return {
+              output: { "action-ref": actionRef, ...(actionJob ? { export: actionJob } : {}) },
+              fieldErrors: [],
+            };
+          }
+          return {
+            output: { speed: invocation.arguments.speed!, mode: invocation.arguments.mode! },
+            fieldErrors: [],
+          };
+        });
         ctx.commands.registerContext(`${ctx.pluginId}.hold`, args, async (invocation) => ({
           output: {
             speed: invocation.arguments.speed!,
@@ -183,6 +225,11 @@ void runPlugin(
       });
     },
     async drain({ request, storage }) {
+      if (actionCheckpointOnly) {
+        actionCheckpointOnly = false;
+        // Preserve the actual committed checkpoint for a core recovery export.
+        return { ok: true, value: { status: "checkpoint-only", writes: [] } };
+      }
       const writes: string[] = [];
       for (const { checkpoint, record } of request.checkpoints) {
         assert.equal(record.kind, "test.registration-end");

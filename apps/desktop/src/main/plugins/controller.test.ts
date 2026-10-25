@@ -3382,13 +3382,25 @@ it.each([false, true])("settings/watch uses afterReply; cancelled=%s", async (ca
 it("P170 constructs one worker and host before admission, keeps the original listener, and disposes once", async () => {
   const f = await compositionInput();
   const profile = f.input.foundationOptions.profile;
+  const nativeActions = {
+    choose: vi.fn(async () => "/host-only/selected.txt" as string | null),
+    copy: vi.fn(),
+  };
+  const destination = Object.freeze({}) as ExportDestination170;
+  const register = vi.fn(async () => destination),
+    release = vi.fn(async () => {});
+  const ledger = createCoreActionLedger({
+    now: f.input.foundationOptions.now,
+    current: f.input.currentScope,
+  });
+  f.input.foundationOptions.coreActions = ledger;
   const backend: PersistenceBackend170 = {
     engine: unusedPort170("engine"),
     reads: unusedPort170("reads"),
     evidence: unusedPort170("evidence"),
     imports: unusedPort170("imports"),
     output: unusedPort170("output"),
-    destinations: unusedPort170("destinations"),
+    destinations: { register, release },
     sources: unusedPort170("sources"),
     dispose: vi.fn(async () => {
       profile.assertHeld();
@@ -3451,7 +3463,7 @@ it("P170 constructs one worker and host before admission, keeps the original lis
     return foundation;
   });
   try {
-    const composition = await composeDesktopMain(f.input);
+    const composition = await composeDesktopMain(f.input, { nativeActions });
     expect(worker).toHaveBeenCalledExactlyOnceWith({
       profile,
       root,
@@ -3459,6 +3471,62 @@ it("P170 constructs one worker and host before admission, keeps the original lis
       now: f.input.foundationOptions.now,
     });
     expect(createHost).toHaveBeenCalledOnce();
+    // Direct composition seam test: only I/O is substituted. The original core
+    // ledger must authorize the SAME adapter passed into the production host.
+    const attached = createHost.mock.calls[0]![0];
+    const target = { kind: "persistence-export" as const, recovery: randomUUID() };
+    const action = ledger.mint(f.input.scope(), target);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(nativeActions.choose).not.toHaveBeenCalled();
+    expect(attached.coreActions.claim(action, target)).toBe(true);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBe(destination);
+    expect(nativeActions.choose).toHaveBeenCalledExactlyOnceWith("file.txt");
+    expect(register).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        action: action.actionToken,
+        scope: action.scope,
+        nativePath: "/host-only/selected.txt",
+      }),
+    );
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        action.actionToken,
+        "file.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    await expect(attached.actionAdapter.copyText(action.actionToken, "denied")).rejects.toThrow(
+      "Stale clipboard",
+    );
+    expect(nativeActions.copy).not.toHaveBeenCalled();
+    attached.coreActions.complete(action);
+    const cancelled = ledger.mint(f.input.scope(), target);
+    expect(attached.coreActions.claim(cancelled, target)).toBe(true);
+    nativeActions.choose.mockResolvedValueOnce(null);
+    expect(
+      await attached.actionAdapter.chooseDestination(
+        cancelled.actionToken,
+        "cancel.txt",
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(register).toHaveBeenCalledTimes(1);
+    attached.coreActions.complete(cancelled);
+    const { dialog, clipboard } = await import("electron");
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
     expect(listenerCount).toBe(1);
     expect(composition.stage3.persistence).toBe(participant);
     expect(composition.stage3.device).toBe(composition.foundation.broker.resources);
@@ -4759,6 +4827,114 @@ it("controller reports retained provider failure and explicit reload retries act
     expect(count).toBe(2);
   } finally {
     blocked = false;
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("registered cancellation before output begin releases the real worker destination without aborting an absent job", async () => {
+  const { createPersistenceActions } = await import("./persistence/actions.js");
+  const f = await compositionInput();
+  const composition = await composeDesktopMain(f.input, {
+    worker: { entry: testWorkerEntry170, control: () => {} },
+  });
+  const { backend } = desktopFoundationTestHandles(composition);
+  const scope = f.input.scope();
+  const owner = {
+    sourceKey: "builtin:test.settings",
+    pluginId: "test.settings",
+    generation: 0,
+    hostEpoch: scope.hostEpoch,
+    processEpoch: randomUUID(),
+  };
+  const ledger = new UserPersistenceActions(
+    () => performance.now(),
+    () => true,
+  );
+  const claims = createPersistenceClaims170({
+    feature: ledger,
+    core: createCoreActionLedger({ now: () => performance.now(), current: () => true }),
+    scope: () => scope,
+    currentScope: () => true,
+    currentOwner: () => true,
+    now: () => performance.now(),
+  });
+  const destination = path.join(f.input.plugins.userData, "cancel-destination.txt");
+  await writeFile(destination, "sentinel");
+  let resume!: () => void;
+  const held = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let registered!: () => void;
+  const registration = new Promise<void>((resolve) => {
+    registered = resolve;
+  });
+  const original = backend.destinations.register.bind(backend.destinations);
+  vi.spyOn(backend.destinations, "register").mockImplementation(async (input) => {
+    const token = await original(input);
+    registered();
+    await held;
+    return token;
+  });
+  const release = vi.spyOn(backend.destinations, "release");
+  const begin = vi.spyOn(backend.output, "begin");
+  const abort = vi.spyOn(backend.output, "abort");
+  const adapter = createNativePersistenceActions170({
+    claims: claims.lookup,
+    backend,
+    currentScope: () => true,
+    now: () => performance.now(),
+    choose: async () => destination,
+    copy: () => {
+      throw new Error("Unexpected clipboard write");
+    },
+  });
+  const service = createPersistenceActions({
+    now: () => performance.now(),
+    wall: Date.now,
+    live: () => true,
+    permission: () => true,
+    actions: claims.feature,
+    adapter,
+    output: backend.output,
+    destinations: backend.destinations,
+  });
+  const principal = { kind: "plugin" as const, owner, authorityContext: null };
+  const signal = new AbortController().signal;
+  try {
+    const started = await service.request(
+      principal,
+      "storage/exportBegin",
+      {
+        actionRef: ledger.mint(owner, scope, 1),
+        suggestedName: "cancel.txt",
+        mediaType: "text/plain",
+        byteLength: 0,
+        sha256: createHash("sha256").update("").digest("hex"),
+      },
+      signal,
+    );
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error("Export admission failed");
+    await registration;
+    expect(
+      await service.request(
+        principal,
+        "storage/exportCancel",
+        { export: started.value.export },
+        signal,
+      ),
+    ).toEqual({ ok: true, value: { disposition: "aborted" } });
+    expect(abort).not.toHaveBeenCalled();
+    resume();
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(begin).not.toHaveBeenCalled();
+    expect(await readFile(destination, "utf8")).toBe("sentinel");
+    // The fix must not turn arbitrary missing worker handles into success.
+    await expect(backend.output.abort(randomUUID())).rejects.toThrow("stale");
+  } finally {
+    resume();
+    await service.dispose();
     await composition.dispose();
     await f.cleanup();
   }

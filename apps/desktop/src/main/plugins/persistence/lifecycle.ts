@@ -723,7 +723,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       if (value.run) await value.run;
       // Recovery reconciles evidence without dispatching callbacks or altering
       // the original grant, token, publication deadline or staging retention.
-      await start(value, undefined, deadline);
+      return start(value, undefined, deadline);
     },
     retireCheckpoint(
       owner: ResourceOwner,

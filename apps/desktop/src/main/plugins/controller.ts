@@ -1525,11 +1525,13 @@ export async function composeDesktopMain(
     backend,
     currentScope: input.currentScope,
     now,
-    choose: async (suggestedName) => {
-      const result = await dialog.showSaveDialog({ defaultPath: suggestedName });
-      return result.canceled || !result.filePath ? null : result.filePath;
-    },
-    copy: (text) => clipboard.writeText(text),
+    choose:
+      test?.nativeActions?.choose ??
+      (async (suggestedName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: suggestedName });
+        return result.canceled || !result.filePath ? null : result.filePath;
+      }),
+    copy: test?.nativeActions?.copy ?? ((text) => clipboard.writeText(text)),
   });
   let imports: LegacyImportHostPort | undefined;
   const pendingImports = (): LegacyImportHostPort => {
@@ -1550,6 +1552,7 @@ export async function composeDesktopMain(
     },
   };
   let persistence170: Awaited<ReturnType<typeof composePersistence170>>;
+  let cleanupLifecycle: LifecycleCoordinator | undefined;
   let hostOwnsBackend = false;
   try {
     persistence170 = await attachPersistenceHost170(
@@ -1562,6 +1565,7 @@ export async function composeDesktopMain(
         coreActions: claims.core,
         now,
         hasPermission: input.foundationOptions.hasPermission,
+        reconciled: (id, report) => cleanupLifecycle?.reconcileRecovery(id, report),
       },
       { device: broker.resources, ui },
       () => {
@@ -1599,7 +1603,6 @@ export async function composeDesktopMain(
     await foundation.dispose();
     throw error;
   }
-  let cleanupLifecycle: LifecycleCoordinator | undefined;
   const uiDisposers: Array<() => void> = [
     () => events.dispose(),
     () => subscriptions.dispose(),
@@ -2722,6 +2725,11 @@ type DesktopPersistenceAttachment170 = {
 };
 
 export interface DesktopCompositionTestOptions {
+  /** Host-only I/O substitution; claims, liveness and destination registration stay production-owned. */
+  nativeActions?: {
+    choose(suggestedName: string): Promise<string | null>;
+    copy(text: string): void;
+  };
   worker?: { entry: string; control(control: PersistenceFaultControl): void };
   legacy?: { descriptors: readonly LegacyImportDescriptor[]; writers: readonly LegacyWriterPort[] };
 }

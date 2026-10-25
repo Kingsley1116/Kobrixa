@@ -4,6 +4,7 @@ import {
   assertDisconnectObservation,
   disconnectMilestones,
 } from "./plugin-persistence-disconnect.ts";
+import { assertActionObservation, actionSummary } from "./plugin-persistence-action-replay.ts";
 import { assertUnknownObservation } from "./plugin-persistence-unknown.ts";
 import { assertSuspendObservation } from "./plugin-persistence-suspend.ts";
 import { createHash } from "node:crypto";
@@ -620,6 +621,14 @@ export function assertDisconnectEvidence(evidence) {
 }
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "action-replay") {
+    assertActionReplayEvidence(r.evidence);
+    assert.equal(
+      r.evidence.actionReplay.owner.hostEpoch,
+      r.hostEpoch,
+      "Action proof belongs to another composition",
+    );
+  }
   if (r.case === "unknown-publication") {
     assertUnknownEvidence(r.evidence);
     assert.equal(
@@ -1303,4 +1312,14 @@ export function assertUnknownEvidence(evidence) {
       exported.every((r) => r.trace.every((t) => t.point !== "after-publish")),
     destinationIdentityPreserved: o.export.staged.identity === o.export.final.identity,
   });
+}
+
+export function assertActionReplayEvidence(evidence) {
+  assert.ok(evidence.actionReplay, "Missing action replay observations");
+  assertActionObservation(evidence.actionReplay);
+  assert.deepEqual(
+    evidence.checks,
+    actionSummary(evidence.actionReplay),
+    "Action summary differs from raw observations",
+  );
 }

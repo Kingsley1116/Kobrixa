@@ -382,7 +382,14 @@ export function createPersistenceActions(deps: ActionDependencies) {
       const job = get(owner, p.export);
       job.control.abort();
       clearTimeout(job.timer);
-      const disposition = job.state === "completed" ? "committed" : await deps.output.abort(job.id);
+      // No worker output exists while the chooser/registration is pending.
+      // Keep worker stale checks intact for every dispatched output job.
+      const disposition =
+        job.state === "completed"
+          ? "committed"
+          : job.beginDispatched
+            ? await deps.output.abort(job.id)
+            : "aborted";
       job.state =
         disposition === "aborted"
           ? "cancelled"
