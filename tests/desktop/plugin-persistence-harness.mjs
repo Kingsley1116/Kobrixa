@@ -1,3 +1,5 @@
+import { assertSealedTtlEvidence } from "./plugin-persistence-sealed-ttl.ts";
+export { assertSealedTtlEvidence };
 import assert from "node:assert/strict";
 import { assertFoundationOutcome } from "./plugin-persistence-outcomes.mjs";
 import {
@@ -621,6 +623,7 @@ export function assertDisconnectEvidence(evidence) {
 }
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "sealed-ttl") assertSealedTtlEvidence(r.evidence, r.hostEpoch);
   if (r.case === "action-replay") {
     assertActionReplayEvidence(r.evidence);
     assert.equal(

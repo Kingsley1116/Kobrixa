@@ -193,6 +193,22 @@ export async function materializeFoundationFixtures(
         id: `${id}.action-${step}`,
         title: { en: `Action ${step}` },
       });
+    if (role === "recording")
+      for (const step of [
+        "seed-sealed",
+        "drain-sealed",
+        "status",
+        "expired",
+        "read-sealed",
+        "seed-incomplete",
+        "drain-incomplete",
+        "read-incomplete",
+        "cleanup",
+      ])
+        manifest.contributes.commands.push({
+          id: `${id}.ttl-${step}`,
+          title: { en: `TTL ${step}` },
+        });
     if (actionReplay && role === "recording")
       manifest.contributes.commands.push({
         id: `${id}.action-checkpoint-only`,
@@ -222,6 +238,10 @@ export async function materializeFoundationFixtures(
     await cp(path.join(fixture, "settings.json"), path.join(sourceRoot, "settings.json"));
     await mkdir(path.join(sourceRoot, "src"), { recursive: true });
     await cp(path.join(fixture, "consumer.ts"), path.join(sourceRoot, "src/main.ts"));
+    await cp(
+      path.join(fixture, "sealed-ttl-consumer.ts"),
+      path.join(sourceRoot, "src/sealed-ttl-consumer.ts"),
+    );
     const config = builtinPluginConfig({ slug, pluginId: id, sourceRoot });
     await viteBuild({
       ...config,
@@ -523,85 +543,89 @@ export async function readEntryFailure(reportFile, read) {
   if (finalError) throw finalError;
 }
 async function launchCase(electron, entry, configFile, reportFile, config) {
-  return superviseCase(config, {
-    now: Date.now,
-    async start() {
-      if (process.platform === "win32")
-        throw new Error("BLOCKED: Windows owned-process observer required");
-      const env = { ...process.env };
-      delete env.ELECTRON_RUN_AS_NODE;
-      const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
-        stdio: "inherit",
-        env,
-        detached: true,
-      });
-      let exit;
-      child.once("exit", (code, signal) => {
-        exit = { code, signal, at: Date.now() };
-      });
-      return new Promise((resolve, reject) => {
-        child.once("error", (error) => {
-          exit = { error, at: Date.now() };
-          reject(error);
+  return superviseCase(
+    config,
+    {
+      now: Date.now,
+      async start() {
+        if (process.platform === "win32")
+          throw new Error("BLOCKED: Windows owned-process observer required");
+        const env = { ...process.env };
+        delete env.ELECTRON_RUN_AS_NODE;
+        const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
+          stdio: "inherit",
+          env,
+          detached: true,
         });
-        child.once("spawn", () => resolve({ pid: child.pid, exit: () => exit }));
-      });
-    },
-    processes: async () => processTable(),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    async killGroup(pgid, identities, parentAlive) {
-      if (!parentAlive) {
-        const current = processTable().filter((row) => row.pgid === pgid);
-        if (!current.length) return;
-        assert.ok(
-          current.some((row) =>
-            identities.some((old) => row.pid === old.pid && row.start === old.start),
-          ),
-          "Owned process group identity changed; refusing to signal it",
-        );
-      }
-      try {
-        process.kill(-pgid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    },
-    async killProcess(identity) {
-      // Recheck the birth identity immediately before signalling an escaped-group descendant.
-      const current = processTable().find((row) => row.pid === identity.pid);
-      if (!current || current.start !== identity.start) return;
-      try {
-        process.kill(identity.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    },
-    async readCandidate() {
-      const read = async (file) => {
-        try {
-          return JSON.parse(await readFile(file, "utf8"));
-        } catch (error) {
-          if (error.code === "ENOENT") return undefined;
-          throw error;
+        let exit;
+        child.once("exit", (code, signal) => {
+          exit = { code, signal, at: Date.now() };
+        });
+        return new Promise((resolve, reject) => {
+          child.once("error", (error) => {
+            exit = { error, at: Date.now() };
+            reject(error);
+          });
+          child.once("spawn", () => resolve({ pid: child.pid, exit: () => exit }));
+        });
+      },
+      processes: async () => processTable(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      async killGroup(pgid, identities, parentAlive) {
+        if (!parentAlive) {
+          const current = processTable().filter((row) => row.pgid === pgid);
+          if (!current.length) return;
+          assert.ok(
+            current.some((row) =>
+              identities.some((old) => row.pid === old.pid && row.start === old.start),
+            ),
+            "Owned process group identity changed; refusing to signal it",
+          );
         }
-      };
-      const entryFailure = await readEntryFailure(reportFile, read);
-      if (entryFailure) {
-        assert.equal(entryFailure.status, "failed");
-        assert.equal(entryFailure.runId, config.runId);
-        assert.ok(typeof entryFailure.originalError?.message === "string");
-        assert.ok(Array.isArray(entryFailure.cleanupErrors));
-        // A partial candidate must not mask the entry's already-recorded original error.
-        return { entryFailure };
-      }
-      return { candidate: await read(reportFile) };
+        try {
+          process.kill(-pgid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      },
+      async killProcess(identity) {
+        // Recheck the birth identity immediately before signalling an escaped-group descendant.
+        const current = processTable().find((row) => row.pid === identity.pid);
+        if (!current || current.start !== identity.start) return;
+        try {
+          process.kill(identity.pid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      },
+      async readCandidate() {
+        const read = async (file) => {
+          try {
+            return JSON.parse(await readFile(file, "utf8"));
+          } catch (error) {
+            if (error.code === "ENOENT") return undefined;
+            throw error;
+          }
+        };
+        const entryFailure = await readEntryFailure(reportFile, read);
+        if (entryFailure) {
+          assert.equal(entryFailure.status, "failed");
+          assert.equal(entryFailure.runId, config.runId);
+          assert.ok(typeof entryFailure.originalError?.message === "string");
+          assert.ok(Array.isArray(entryFailure.cleanupErrors));
+          // A partial candidate must not mask the entry's already-recorded original error.
+          return { entryFailure };
+        }
+        return { candidate: await read(reportFile) };
+      },
+      writeFailure: (failure) =>
+        writeFile(`${reportFile}.controller-failure.json`, JSON.stringify(failure, null, 2), {
+          flag: "wx",
+        }),
+      reportFailure: (failure) => console.error(JSON.stringify(failure)),
     },
-    writeFailure: (failure) =>
-      writeFile(`${reportFile}.controller-failure.json`, JSON.stringify(failure, null, 2), {
-        flag: "wx",
-      }),
-    reportFailure: (failure) => console.error(JSON.stringify(failure)),
-  });
+    config.case === "sealed-ttl" ? { timeoutMs: 120000 } : undefined,
+  );
 }
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
@@ -612,6 +636,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "contention",
       "suspend-wake",
       "disconnect-retry",
+      "sealed-ttl",
       "unknown-publication",
       "action-replay",
     ].includes(caseId)
