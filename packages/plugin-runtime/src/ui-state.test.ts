@@ -220,7 +220,11 @@ it("denies stale/hidden data admission and does not spend another owner's allowa
 });
 
 it("charges real data-store commits and patches to one budget without charging receipt replay", async () => {
-  const registry = new UiStateRegistry({ current: () => true, now: () => 0 });
+  const registry = new UiStateRegistry({
+    current: () => true,
+    now: () => 0,
+    supportedResourceVersions: [1, 2],
+  });
   const dataResource = {
     ...resource(),
     data: {
@@ -244,29 +248,23 @@ it("charges real data-store commits and patches to one budget without charging r
     id: "test.ui.data",
     scope,
     resource: dataResource,
+    version: 2,
     activateInitialized: async () => initializedChannel(),
   });
   if (!opened.ok) throw new Error("open failed");
   if (opened.value.binding.kind !== "panel") throw new Error("Expected panel binding");
   const binding = { ...opened.value.binding, kind: opened.value.binding.kind };
   registry.visibility(owner, binding, true);
-  const registration = {};
   let publications = 0;
   const store = new UiDataStore({
     now: () => 0,
     resolve: (candidate, query) => {
-      const state = registry.state(candidate, query);
-      if (!state.ok) return null;
+      const authority = registry.dataAuthority(candidate, query);
+      if (!authority) return null;
       return {
-        owner: candidate,
-        binding: query,
-        registration,
-        resource: dataResource,
-        version: 2,
+        ...authority,
         ready: true,
         panelsPermission: true,
-        visible: state.value.visible,
-        presentation: state.value.data.presentation as number,
       };
     },
     admitCommit: (candidate, query) => registry.admitDataCommit(candidate, query),

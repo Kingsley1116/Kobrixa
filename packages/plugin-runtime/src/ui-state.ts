@@ -16,31 +16,47 @@ import {
   type UiScalar,
   type PanelResourceV1,
   type StatusResourceV1,
+  type UiResourceV2,
+  type UiNodeV1,
   type Result,
   type UiRequestMap,
 } from "@kobrixa/plugin-protocol";
 import type { CoreWindowScope } from "./core-actions.js";
 import type { UiRuntimeAttachment } from "./ui-lifecycle.js";
+import type { UiDataAuthority } from "./ui-data.js";
 import {
   sameResourceOwner,
   sameUiBinding,
   type FoundationCounters,
   type FoundationDiagnostics,
 } from "./ui-host-ports.js";
-type Resource = PanelResourceV1 | StatusResourceV1;
+type Resource = PanelResourceV1 | StatusResourceV1 | UiResourceV2;
+// Advanced nodes do not change scalar data validation. Only progress nodes add
+// constraints beyond the declared slots; pass that typed projection to v1's
+// shared scalar validator rather than treating a v2 resource as a v1 tree.
+function scalarResource(resource: Resource) {
+  if (resource.kind === "status") return resource;
+  const nodes: Extract<UiNodeV1, { type: "progress" }>[] = [];
+  for (const node of resource.nodes) if (node.type === "progress") nodes.push(node);
+  return { kind: "panel" as const, data: resource.data, nodes };
+}
 type OpenInput = {
   owner: UiOwner;
   id: string;
   scope: CoreWindowScope;
-  resource: Resource;
   activateInitialized: UiRuntimeAttachment["activateInitialized"];
   signal?: AbortSignal;
-};
+} & (
+  | { version?: 1; resource: PanelResourceV1 | StatusResourceV1 }
+  | { version: 2; resource: UiResourceV2 }
+);
 type Live = {
   owner: ResourceOwner;
   uiOwner: UiOwner;
   scope: CoreWindowScope;
   resource: Resource;
+  version: 1 | 2;
+  registration: object;
   state: UiStateSnapshot;
   times: number[];
   pending: number;
@@ -67,12 +83,14 @@ export class UiStateRegistry {
   readonly #opening = new Map<string, Reservation>();
   readonly #listeners = new Set<(owner: ResourceOwner, event: UiEvent) => void>();
   readonly #now: () => number;
+  readonly #versions: ReadonlySet<1 | 2>;
   #locale: "en" | "zh-TW" = "en";
   #theme: "light" | "dark" = "light";
   constructor(
     private readonly deps: {
       current(owner: UiOwner): boolean;
       now?: () => number;
+      supportedResourceVersions?: readonly (1 | 2)[];
       eventCounters?: () => Pick<
         FoundationCounters,
         "subscriptions" | "queuedEvents" | "queuedBytes"
@@ -80,6 +98,7 @@ export class UiStateRegistry {
     },
   ) {
     this.#now = deps.now ?? (() => performance.now());
+    this.#versions = new Set(deps.supportedResourceVersions ?? [1]);
     stateDiagnostics.set(this, {
       snapshot: () =>
         Object.freeze({
@@ -164,6 +183,34 @@ export class UiStateRegistry {
       ? structuredClone(live.owner)
       : null;
   }
+  /** Current host-owned identity and scalar presentation for the data store.
+   * The channel adapter must additionally check negotiation, ready and permission.
+   * A copied token/UUID alone cannot recover this registration after retirement. */
+  dataAuthority(
+    owner: ResourceOwner,
+    binding: UiBinding,
+  ): Omit<UiDataAuthority, "ready" | "panelsPermission"> | null {
+    const live = this.#find(owner, binding);
+    if (
+      !live ||
+      live.version !== 2 ||
+      live.resource.kind !== "panel" ||
+      !("presentationKey" in live.resource)
+    )
+      return null;
+    const presentation = live.state.data[live.resource.presentationKey];
+    if (typeof presentation !== "number" || !Number.isSafeInteger(presentation) || presentation < 0)
+      return null;
+    return {
+      owner: structuredClone(live.owner),
+      binding: structuredClone(live.state.binding),
+      registration: live.registration,
+      resource: live.resource,
+      version: 2,
+      visible: live.state.visible,
+      presentation,
+    };
+  }
   instances(owner: ResourceOwner): UiBinding[] {
     return [...this.#live.values()]
       .filter((live) => sameResourceOwner(owner, live.owner) && this.deps.current(live.uiOwner))
@@ -199,6 +246,8 @@ export class UiStateRegistry {
   }
   async open(input: OpenInput): Promise<Result<UiStateSnapshot>> {
     if (input.signal?.aborted) return resourceFailure("stale");
+    const version = input.version ?? 1;
+    if (!this.#versions.has(version)) return uiFailure("version");
     if (!this.deps.current(input.owner) || !input.id.startsWith(`${input.owner.pluginId}.`))
       return resourceFailure("stale");
     const key = identity(input.owner, input.id, input.scope);
@@ -265,10 +314,11 @@ export class UiStateRegistry {
           )
             return resolve(resourceFailure("stale"));
           const resource = structuredClone(input.resource);
+          freezeResource(resource);
           const data = Object.fromEntries(
             Object.entries(resource.data).map(([key, slot]) => [key, slot.initial]),
           );
-          const dataResult = validateUiData(resource, data);
+          const dataResult = validateUiData(scalarResource(resource), data);
           if (!dataResult.ok) return resolve(dataResult);
           const form =
             resource.kind === "panel"
@@ -305,6 +355,8 @@ export class UiStateRegistry {
             uiOwner: structuredClone(input.owner),
             scope: structuredClone(input.scope),
             resource,
+            version,
+            registration: Object.freeze({}),
             state,
             times: [],
             pending: 0,
@@ -370,7 +422,23 @@ export class UiStateRegistry {
     if (live.state.revision === Number.MAX_SAFE_INTEGER)
       return resourceFailure("quota", Number.MAX_SAFE_INTEGER);
     const next = { ...live.state.data, ...input.set };
-    const valid = validateUiData(live.resource, next);
+    if (
+      live.version === 2 &&
+      live.resource.kind === "panel" &&
+      "presentationKey" in live.resource
+    ) {
+      const key = live.resource.presentationKey;
+      const presentation = next[key];
+      const previous = live.state.data[key];
+      if (
+        typeof presentation !== "number" ||
+        !Number.isSafeInteger(presentation) ||
+        typeof previous !== "number" ||
+        presentation < previous
+      )
+        return resourceFailure("stale");
+    }
+    const valid = validateUiData(scalarResource(live.resource), next);
     if (!valid.ok) return valid;
     live.state = { ...live.state, revision: live.state.revision + 1, data: valid.value };
     live.times.push(this.#now());
@@ -511,6 +579,11 @@ export class UiStateRegistry {
     for (const live of [...this.#live.values()])
       if (sameResourceOwner(owner, live.owner)) this.#remove(live, reason);
   }
+}
+function freezeResource(value: object): void {
+  for (const child of Object.values(value))
+    if (child && typeof child === "object") freezeResource(child);
+  Object.freeze(value);
 }
 export function currentStatusBindings(
   state: UiStateRegistry,
