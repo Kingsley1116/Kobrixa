@@ -763,6 +763,9 @@ import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/de
 import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
 const config=JSON.parse(readFileSync(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
 app.setPath('userData',config.profile);
+// This supervised entry owns exit after awaited receipt I/O. Closing its last
+// test window must not implicitly terminate an in-flight observation/write.
+app.on('window-all-closed',()=>{});
 const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
  reportFailure:failure=>console.error(JSON.stringify(failure))});
 app.exit(code);
