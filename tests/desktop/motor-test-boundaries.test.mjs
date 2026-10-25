@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { gunzipSync } from "node:zlib";
 import {
   compose,
   nativeClick,
@@ -1949,3 +1950,37 @@ test("provider disable joins one disconnect after original readback and never re
     assert.throws(() => validateProviderTrace(invalid, { fault: "provider-disable" }));
   }
 });
+
+for (const fault of ["source-loss", "provider-disable", "disconnect"])
+  test(`full native validator preserves recorded ${fault} evidence`, async () => {
+    const evidence = path.join(
+      root,
+      "docs/superpowers/evidence/2026-10-24-stage3-motor-integration",
+    );
+    const readEvidence = async (name) =>
+      JSON.parse(gunzipSync(await readFile(path.join(evidence, `${fault}-${name}.json.gz`))));
+    const report = await readEvidence("report");
+    const identity = await readEvidence("artifact-identity");
+    validateNative(report, identity, report.scenario);
+    if (fault !== "provider-disable") return;
+
+    // Keep the valid retirement pair and add a fresh, well-formed pair in cleanup.
+    // Mutate only in memory; this is not a new native execution receipt.
+    const invalid = structuredClone(report);
+    const cleanup = invalid.providerCleanup;
+    assert.equal(cleanup.traceStart, cleanup.traceEnd);
+    const retirement = invalid.trace.filter((row) => row.step === "disconnect");
+    assert.equal(retirement.length, 2);
+    invalid.trace.push(
+      ...retirement.map((row, index) => ({
+        ...row,
+        operationId: "duplicate-cleanup-disconnect",
+        time: index === 0 ? cleanup.startedAt : cleanup.finishedAt,
+      })),
+    );
+    cleanup.traceEnd = invalid.trace.length;
+    assert.throws(
+      () => validateNative(invalid, identity, report.scenario),
+      /Provider-disable retirement must leave no cleanup disconnect/,
+    );
+  });

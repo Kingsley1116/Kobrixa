@@ -199,6 +199,12 @@ export function validateProviderTrace(report, scenario) {
     assert.ok(cleanup.traceStart >= 0 && cleanup.traceStart <= cleanup.traceEnd);
     assert.equal(cleanup.traceEnd, report.trace.length, "No provider work after awaited cleanup");
     const retired = report.trace.slice(cleanup.traceStart, cleanup.traceEnd);
+    if (scenario.fault === "provider-disable")
+      assert.equal(
+        retired.length,
+        0,
+        "Provider-disable retirement must leave no cleanup disconnect",
+      );
     for (const row of retired) {
       assert.equal(row.step, "disconnect", "Retirement cannot reconnect or move motors");
       assert.ok(row.time >= cleanup.startedAt && row.time <= cleanup.finishedAt);
