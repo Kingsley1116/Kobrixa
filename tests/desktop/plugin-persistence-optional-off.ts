@@ -136,6 +136,7 @@ type OptionalInput = {
   native: NativeActionControl;
   channels(): readonly { context: Wire; process: Wire }[];
   coreActions: object;
+  runtime: object;
 };
 export async function produceOptionalOff(i: OptionalInput): Promise<CaseEvidence> {
   const { config, input, monitor } = i;
@@ -253,6 +254,7 @@ export async function produceOptionalOff(i: OptionalInput): Promise<CaseEvidence
   });
   observe(input.backend.evidence, "retainSealed", "evidence");
   observe(input.host.participant, "drain", "lifecycle");
+  observe(i.runtime, "dispatchDrain", "runtime");
   try {
     if (phase === "settings") {
       const sourceKey = "builtin:acceptance.ui-settings";
@@ -331,22 +333,23 @@ export async function produceOptionalOff(i: OptionalInput): Promise<CaseEvidence
       );
       const facets = i.plugins.persistence170!;
       const entry = one([...facets.detail.entries()], "core recovery entry");
+      facets.detail.openDetail(
+        { itemId: entry.item.id },
+        i.scope() as Parameters<typeof facets.detail.openDetail>[1],
+      );
+      let rendered: { text: string; visible: boolean } | null = null;
       await wait(async () => {
-        facets.detail.openDetail(
-          { itemId: entry.item.id },
-          i.scope() as Parameters<typeof facets.detail.openDetail>[1],
-        );
-        return !!(await i.browser(
-          "document.querySelector('.core-persistence-detail')?.textContent.includes('acceptance.ui-recording')",
-        ));
-      }, "actual recovery UI");
-      const rendered = (await i.browser(`(() => {
+        rendered = (await i.browser(`(() => {
         const el = document.querySelector('.core-persistence-detail');
+        if (!el) return null;
         el.scrollIntoView({block:'center'});
         const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
         return {text: el.textContent, visible: rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight && style.display !== 'none' && style.visibility !== 'hidden'};
-      })()`)) as { text: string; visible: boolean };
-      const dom = rendered.text;
+        })()`)) as { text: string; visible: boolean } | null;
+        return !!rendered?.visible && rendered.text.includes("acceptance.ui-recording");
+      }, "actual recovery UI");
+      assert.ok(rendered);
+      const dom = (rendered as { text: string }).text;
       const snapshot = await bridgeCall("snapshot", { itemId: entry.item.id });
       p.visible = clone({ entry, snapshot, dom, rendered });
       const actions = ok(snapshot).items.flatMap((item: Wire) => item.actions);

@@ -2000,6 +2000,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               native: nativeActions,
               channels: handles.channels,
               coreActions,
+              runtime: handles.runtime,
             });
           },
           "action-replay": () =>
