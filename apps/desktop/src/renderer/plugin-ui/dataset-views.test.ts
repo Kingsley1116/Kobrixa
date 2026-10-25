@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ChartHeaderV2, DatasetDeclarationV2, DatasetPointV2 } from "@kobrixa/plugin-protocol";
+import { validateDatasetV2 } from "@kobrixa/plugin-protocol";
 import { datasetChartPaths, DatasetChart, DatasetTable, DatasetCode } from "./dataset-views.js";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 afterEach(() => document.body.replaceChildren());
@@ -93,15 +94,21 @@ it("handles finite extreme and constant value ranges without NaN or Infinity geo
   expect(datasetChartPaths(constant, [[0, 0, 0, 4]])[0]).toContain(",94.00");
 });
 it("paints isolated samples and extrema without joining separate runs", () => {
+  const isolatedHeader: ChartHeaderV2 = {
+    ...header,
+    series: [{ ...header.series[0]!, fullPointCount: 2 }],
+  };
+  const isolated: DatasetPointV2[] = [
+    [0, 0, 0, -10],
+    [0, 1, 1000, 10],
+  ];
+  validateDatasetV2(declaration, isolatedHeader, isolated);
   document.body.innerHTML = renderToStaticMarkup(
     createElement(DatasetChart, {
       label: "Angle",
       declaration,
-      header,
-      points: [
-        [0, 0, 0, -10],
-        [0, 1, 1000, 10],
-      ],
+      header: isolatedHeader,
+      points: isolated,
       locale: "en",
       cursor: null,
       enabled: true,
@@ -158,7 +165,17 @@ it("follows the domain end for an unset cursor in both views while preserving re
   expect(document.querySelector("input")!.value).toBe("1000");
 });
 it("does not project out-of-window samples into a collapsed finite time window", () => {
-  const extreme: ChartHeaderV2 = { ...header, timeDomain: [0, 1e21], view: "recent60s" };
+  const extreme: ChartHeaderV2 = {
+    ...header,
+    timeDomain: [0, 1e21],
+    view: "recent60s",
+    series: [{ ...header.series[0]!, fullPointCount: 2 }],
+  };
+  const old: DatasetPointV2[] = [
+    [0, 0, 0, -10],
+    [0, 0, 1000, 10],
+  ];
+  validateDatasetV2(declaration, extreme, old);
   expect(
     datasetChartPaths(extreme, [
       [0, 0, 0, -10],
@@ -170,7 +187,7 @@ it("does not project out-of-window samples into a collapsed finite time window",
       label: "Angle",
       declaration,
       header: extreme,
-      points: [[0, 0, 0, -10]],
+      points: old,
       locale: "en",
       cursor: null,
       enabled: true,
