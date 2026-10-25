@@ -255,3 +255,260 @@ it("U04 explicit retry preserves unrelated source resource generations", async (
     before.value.entries[1]!.uiResourceGeneration,
   );
 });
+
+const panelV2 = () => ({
+  kind: "panel" as const,
+  root: "root",
+  data: {
+    presentation: {
+      schema: {
+        type: "number" as const,
+        min: 0,
+        max: Number.MAX_SAFE_INTEGER,
+        integer: true,
+        nullable: false,
+      },
+      initial: 0,
+    },
+  },
+  fields: {},
+  presentationKey: "presentation",
+  datasets: {
+    rows: {
+      kind: "table" as const,
+      columns: [{ id: "value", label: { en: "Value" }, value: "number" as const }],
+    },
+  },
+  nodes: [
+    { id: "root", type: "group" as const, layout: "stack" as const, children: ["rows"] },
+    { id: "rows", type: "table" as const, dataset: "rows", label: { en: "Rows" } },
+  ],
+});
+const v2Source = (n = 1): UiCatalogSource => ({
+  ...source(n),
+  resources: { kind: "builtin", files: { "panel.json": JSON.stringify(panelV2()) } },
+  status: [],
+  panels: [
+    {
+      id: `test.p${n}.panel`,
+      title: { en: "Panel" },
+      location: "right",
+      resource: { version: 2, path: "panel.json" },
+    },
+  ],
+});
+const load = async (catalog: UiCatalog) => {
+  const item = await entry(catalog);
+  return catalog.resource({
+    sourceKey: item.sourceKey,
+    id: item.id,
+    uiResourceGeneration: item.uiResourceGeneration,
+    resourceDigest: item.resourceDigest,
+  });
+};
+it("keeps production defaults v1 and quarantines declared v2 before reading", async () => {
+  const read = vi.fn();
+  const catalog = new UiCatalog(h(1), { read });
+  await catalog.replace([v2Source()]);
+  expect(read).not.toHaveBeenCalled();
+  expect(await entry(catalog)).toMatchObject({
+    version: 2,
+    availability: "unavailable",
+    problem: { code: "PLUGIN_E_UI_VERSION" },
+  });
+  expect((await load(catalog)).ok).toBe(false);
+  const normal = new UiCatalog(h(1));
+  await normal.replace([source()]);
+  expect(await load(normal)).toMatchObject({
+    ok: true,
+    value: { version: 1, resource: { kind: "status" } },
+  });
+});
+it("returns discriminated v1/v2 resources using only their declared parser", async () => {
+  const validate = vi.fn(validateUiResource);
+  const versions: (1 | 2)[] = [1, 2];
+  const catalog = new UiCatalog(h(1), { supportedResourceVersions: versions, validate });
+  versions.pop(); // Configuration is captured, not mutable authority.
+  await catalog.replace([v2Source()]);
+  const result = await load(catalog);
+  if (!result.ok || result.value.version !== 2 || result.value.resource.kind !== "panel")
+    throw new Error("Expected v2 panel");
+  expect(result.value.resource.datasets.rows?.kind).toBe("table");
+  expect(result.value.resource.nodes.some((n) => n.type === "table")).toBe(true);
+  expect(result.value.validationContext.panels[0]?.resource.version).toBe(2);
+  expect(validate).not.toHaveBeenCalled();
+  result.value.resource.presentationKey = "changed";
+  expect(await load(catalog)).toMatchObject({
+    ok: true,
+    value: { version: 2, resource: { presentationKey: "presentation" } },
+  });
+  await catalog.replace([source()]);
+  expect(await load(catalog)).toMatchObject({ ok: true, value: { version: 1 } });
+  expect(validate).toHaveBeenCalledTimes(1);
+});
+it("fails closed on wrong-version content and unsupported declarations without relabeling", async () => {
+  const catalog = new UiCatalog(h(1), { supportedResourceVersions: [1, 2] });
+  const input = v2Source();
+  input.panels = input.panels.map((p) => ({ ...p, resource: { ...p.resource, version: 1 } }));
+  await catalog.replace([input]);
+  expect(await entry(catalog)).toMatchObject({
+    version: 1,
+    availability: "unavailable",
+    problem: { code: "PLUGIN_E_UI_RESOURCE" },
+  });
+  const read = vi.fn();
+  const unknown = new UiCatalog(h(1), { supportedResourceVersions: [1, 2], read });
+  for (const version of [3, 65535]) {
+    await unknown.replace([
+      {
+        ...input,
+        panels: input.panels.map((p) => ({ ...p, resource: { ...p.resource, version } })),
+      },
+    ]);
+    expect(await entry(unknown)).toMatchObject({
+      version,
+      availability: "unavailable",
+      problem: { code: "PLUGIN_E_UI_VERSION" },
+    });
+  }
+  expect(read).not.toHaveBeenCalled();
+  const missing = panelV2();
+  missing.presentationKey = "missing";
+  await catalog.replace([
+    {
+      ...v2Source(),
+      resources: { kind: "builtin", files: { "panel.json": JSON.stringify(missing) } },
+    },
+  ]);
+  expect(await entry(catalog)).toMatchObject({
+    version: 2,
+    availability: "unavailable",
+    problem: { code: "PLUGIN_E_UI_RESOURCE" },
+  });
+});
+it("validates opt-in v2 status actions and rejects contribution-kind mismatch", async () => {
+  const catalog = new UiCatalog(h(1), { supportedResourceVersions: [1, 2] });
+  const input = source();
+  input.status = input.status.map((d) => ({ ...d, resource: { ...d.resource, version: 2 } }));
+  input.resources = {
+    kind: "builtin",
+    files: {
+      "status.json": JSON.stringify({
+        kind: "status",
+        data: {},
+        text: { text: { en: "Ready" } },
+        tone: "neutral",
+        actions: [],
+      }),
+    },
+  };
+  await catalog.replace([input]);
+  expect(await load(catalog)).toMatchObject({
+    ok: true,
+    value: { version: 2, resource: { kind: "status", actions: [] } },
+  });
+  input.resources = { kind: "builtin", files: { "status.json": JSON.stringify(panelV2()) } };
+  await catalog.replace([input]);
+  expect(await entry(catalog)).toMatchObject({
+    availability: "unavailable",
+    problem: { code: "PLUGIN_E_UI_RESOURCE" },
+  });
+});
+it("retains original v2 byte accounting/digest and rejects maximum plus one", async () => {
+  const catalog = new UiCatalog(h(1), { supportedResourceVersions: [1, 2] });
+  const input = v2Source(),
+    json = JSON.stringify(panelV2());
+  const padded = "\ufeff" + json + " ".repeat(262144 - Buffer.byteLength(json) - 3);
+  input.resources = { kind: "builtin", files: { "panel.json": padded } };
+  await catalog.replace([input]);
+  const accepted = await entry(catalog);
+  expect(accepted).toMatchObject({ version: 2, availability: "available", resourceBytes: 262144 });
+  expect(await load(catalog)).toMatchObject({ ok: true, value: { version: 2, rawBytes: 262144 } });
+  const { createHash } = await import("node:crypto");
+  expect(accepted.resourceDigest).toBe(createHash("sha256").update(padded).digest("hex"));
+  expect((await catalog.resource({ ...accepted, resourceDigest: "f".repeat(64) })).ok).toBe(false);
+  input.resources = { kind: "builtin", files: { "panel.json": padded + " " } };
+  await catalog.replace([input]);
+  expect(await entry(catalog)).toMatchObject({ version: 2, availability: "unavailable" });
+  expect((await catalog.resource(accepted)).ok).toBe(false);
+});
+it("charges v2 repeated reads to the same host budget and preserves sorted admission", async () => {
+  const limits: number[] = [];
+  const catalog = new UiCatalog(h(1), {
+    supportedResourceVersions: [1, 2],
+    read: async (_input, _path, limit) => {
+      limits.push(limit);
+      return { value: panelV2(), bytes: 262144, digest: "a".repeat(64) };
+    },
+  });
+  const inputs = Array.from({ length: 9 }, (_, i) => {
+    const input = v2Source(i + 1);
+    input.panels = Array.from({ length: 4 }, (_, j) => ({
+      ...input.panels[0]!,
+      id: `${input.owner.pluginId}.panel${j}`,
+    }));
+    return input;
+  });
+  await catalog.replace(inputs.reverse());
+  const entries = [];
+  let page = await catalog.catalog({});
+  while (page.ok) {
+    entries.push(...page.value.entries);
+    if (!page.value.nextCursor) break;
+    page = await catalog.catalog({ cursor: page.value.nextCursor });
+  }
+  expect(limits).toHaveLength(32);
+  expect(limits.every((limit) => limit === 262144)).toBe(true);
+  expect(entries.filter((e) => e.availability === "available")).toHaveLength(32);
+  expect(entries.every((e) => e.version === 2)).toBe(true);
+  expect(entries[0]?.sourceKey).toBe("source-01");
+});
+it("v2 quarantine/retry preserves version and invalidates old generations, not unrelated owners", async () => {
+  const catalog = new UiCatalog(h(1), { supportedResourceVersions: [1, 2] });
+  await catalog.replace([v2Source(), source(2)]);
+  const before = await catalog.catalog({});
+  if (!before.ok) throw new Error("catalog failed");
+  const old = before.value.entries[0]!,
+    other = before.value.entries[1]!;
+  expect(
+    await catalog.reportFailure({
+      ...old,
+      catalogRevision: before.value.revision,
+      reason: "validation",
+    }),
+  ).toMatchObject({ ok: true, value: { accepted: true } });
+  expect(await entry(catalog)).toMatchObject({ version: 2, availability: "unavailable" });
+  expect((await catalog.resource(old)).ok).toBe(false);
+  await catalog.retry(old.sourceKey);
+  expect(await load(catalog)).toMatchObject({ ok: true, value: { version: 2 } });
+  expect((await catalog.resource(old)).ok).toBe(false);
+  expect((await catalog.resource(other)).ok).toBe(true);
+});
+it("late v2 reads cannot revive a retired owner or overwrite its replacement", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const catalog = new UiCatalog(h(1), {
+    supportedResourceVersions: [1, 2],
+    read: async () => {
+      if (++reads === 1) await gate;
+      return { value: panelV2(), bytes: 1000, digest: "a".repeat(64) };
+    },
+  });
+  const old = v2Source();
+  const pending = catalog.replace([old]);
+  catalog.retire(old.owner);
+  await catalog.replace([v2Source(2)]);
+  release();
+  await pending;
+  const page = await catalog.catalog({});
+  if (!page.ok) throw new Error("catalog failed");
+  expect(page.value.entries).toHaveLength(1);
+  expect(page.value.entries[0]).toMatchObject({
+    sourceKey: "source-02",
+    version: 2,
+    availability: "available",
+  });
+});

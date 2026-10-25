@@ -14,6 +14,7 @@ import type {
   Result,
   PanelResourceV1,
   StatusResourceV1,
+  UiResourceV2,
   UiValidationContext,
 } from "@kobrixa/plugin-protocol";
 export type FoundationDiagnosticEvent = {
@@ -43,6 +44,16 @@ export type UiBridgeEvent =
   | { type: "state"; binding: UiBinding; revision: Counter }
   | { type: "pulse"; binding: UiBinding; challenge: Handle }
   | { type: "revoked"; binding: UiBinding; reason: UiRevokeReason };
+/** Host-only discriminated resource reply; does not widen the published v1 parser. */
+export type UiCatalogResourceValue = {
+  owner: UiOwner;
+  id: Id;
+  validationContext: UiValidationContext;
+  rawBytes: number;
+} & (
+  | { version: 1; resource: PanelResourceV1 | StatusResourceV1 }
+  | { version: 2; resource: UiResourceV2 }
+);
 export interface PluginUiBridge {
   catalog(input: { cursor?: Handle }): Promise<Result<UiCatalogPage>>;
   resource(input: {
@@ -50,16 +61,7 @@ export interface PluginUiBridge {
     id: Id;
     uiResourceGeneration: Counter;
     resourceDigest: string;
-  }): Promise<
-    Result<{
-      owner: UiOwner;
-      id: Id;
-      version: 1;
-      resource: PanelResourceV1 | StatusResourceV1;
-      validationContext: UiValidationContext;
-      rawBytes: number;
-    }>
-  >;
+  }): Promise<Result<UiCatalogResourceValue>>;
   open(input: {
     sourceKey: string;
     id: Id;

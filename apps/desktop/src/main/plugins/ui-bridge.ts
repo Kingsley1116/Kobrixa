@@ -9,6 +9,7 @@ import {
   RPC_ERRORS,
   UI_LIMITS_V1,
   resourceFailure,
+  uiFailure,
   uiRequestSchemas,
   type RequestContext,
   type Handle,
@@ -837,6 +838,8 @@ export function createUiChannelBinding(
           checkOwner();
           combined.throwIfAborted();
           if (!resource.ok) throw new Error("Status resource unavailable during initialization.");
+          if (resource.value.version !== 1)
+            throw new Error("Status resource version unsupported during initialization.");
           const opened = await input.states.open({
             owner: resource.value.owner,
             id: entry.id,
@@ -1009,6 +1012,7 @@ export function createUiExecutionAdapter(input: {
               resourceDigest: descriptor.resourceDigest,
             });
             if (!resource.ok) return resource;
+            if (resource.value.version !== 1) return uiFailure("version");
             const scope = input.scope();
             const state = await input.states.open({
               owner: resource.value.owner,

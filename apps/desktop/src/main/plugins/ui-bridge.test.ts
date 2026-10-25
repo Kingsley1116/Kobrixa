@@ -683,6 +683,44 @@ it("negotiated command activation creates status before ready without another ac
     h.dispose();
   }
 });
+it("v1 activation refuses a version-2 catalog reply before creating state or activating a process", async () => {
+  const h = await channelFixture();
+  const original = h.catalog.resource.bind(h.catalog);
+  const read = vi.spyOn(h.catalog, "resource").mockImplementation(async (input) => {
+    const result = await original(input);
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        version: 2,
+        resource: {
+          kind: "status",
+          text: { text: { en: "Ready" } },
+          tone: "neutral",
+          data: {},
+          actions: [],
+        },
+      },
+    };
+  });
+  try {
+    await expect(h.bridge.open(h.descriptor)).resolves.toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_UI_VERSION", detail: { reason: "version" } },
+    });
+    await expect(h.binding.initialized(h.controller.signal)).rejects.toThrow(
+      "Status resource version unsupported",
+    );
+    expect(h.states.instances(h.owner)).toEqual([]);
+    expect(h.runtime.activateInitialized).not.toHaveBeenCalled();
+    expect(h.runtime.ready).not.toHaveBeenCalled();
+    expect(stateDiagnostics(h.states).snapshot().bindings).toBe(0);
+  } finally {
+    read.mockRestore();
+    h.dispose();
+  }
+});
 it("actual patch RPCs drain coalesced state notifications without a manual test flush", async () => {
   const h = await channelFixture();
   try {

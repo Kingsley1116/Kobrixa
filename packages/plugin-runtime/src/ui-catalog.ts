@@ -10,6 +10,7 @@ import {
   type UiOwner,
   type UiCatalogEntry,
   type UiCatalogPage,
+  type UiResourceVersion,
   type PanelResourceV1,
   type StatusResourceV1,
   type Result,
@@ -30,9 +31,13 @@ import {
   type PluginUiBridge,
 } from "./ui-host-ports.js";
 type Resource = PanelResourceV1 | StatusResourceV1;
-type Entry = { descriptor: UiCatalogEntry; resource?: Resource };
+import { validateVersionedUiResource, type VersionedUiResource } from "./ui-resource-version.js";
+type Entry = { descriptor: UiCatalogEntry; resource?: VersionedUiResource };
 type Source = { input: UiCatalogSource; owner: UiOwner; token: object; entries: Entry[] };
 export type UiCatalogDependencies = {
+  /** Local host opt-in only. Production remains v1 until activation/rendering and
+   * negotiation support are wired. Unsupported declared versions stay quarantined. */
+  supportedResourceVersions?: readonly UiResourceVersion[];
   beforeDelivery?: (sourceKey: string) => void;
   now?: () => number;
   read?: (
@@ -57,11 +62,16 @@ export class UiCatalog implements UiCatalogPort {
   readonly #now: () => number;
   readonly #read: NonNullable<UiCatalogDependencies["read"]>;
   readonly #validate: NonNullable<UiCatalogDependencies["validate"]>;
+  readonly #supportedResourceVersions: ReadonlySet<UiResourceVersion>;
   readonly #beforeDelivery: UiCatalogDependencies["beforeDelivery"];
   constructor(
     readonly hostEpoch: Handle,
     deps: UiCatalogDependencies = {},
   ) {
+    const versions = deps.supportedResourceVersions ?? [1];
+    if (versions.some((version) => version !== 1 && version !== 2))
+      throw new TypeError("Unsupported host UI resource version.");
+    this.#supportedResourceVersions = new Set(versions);
     this.#now = deps.now ?? (() => performance.now());
     this.#read =
       deps.read ??
@@ -184,7 +194,7 @@ export class UiCatalog implements UiCatalogPort {
           id: declaration.id,
           kind: declaration.kind,
           title: structuredClone(declaration.title),
-          version: 1,
+          version: declaration.resource.version,
           resourceDigest: "0".repeat(64),
           resourceBytes: 0,
           availability: "unavailable",
@@ -193,7 +203,8 @@ export class UiCatalog implements UiCatalogPort {
         const quarantine = (code: string, message: string) => {
           descriptor.problem = { code, message };
         };
-        if (declaration.resource.version !== 1)
+        const version = declaration.resource.version;
+        if ((version !== 1 && version !== 2) || !this.#supportedResourceVersions.has(version))
           quarantine("PLUGIN_E_UI_VERSION", "Unsupported UI resource version.");
         else if (!pathValid(declaration.resource.path))
           quarantine("PLUGIN_E_UI_RESOURCE", "Invalid packaged UI resource path.");
@@ -218,7 +229,8 @@ export class UiCatalog implements UiCatalogPort {
               sourceBytes += parsed.bytes;
               descriptor.resourceBytes = parsed.bytes;
               descriptor.resourceDigest = parsed.digest;
-              const validated = this.#validate(
+              const validated = validateVersionedUiResource(
+                version,
                 parsed.value,
                 {
                   pluginId: source.owner.pluginId,
@@ -226,16 +238,16 @@ export class UiCatalog implements UiCatalogPort {
                   panels: source.input.panels,
                 },
                 parsed.bytes,
+                this.#validate,
               );
               if (!validated.ok) quarantine(validated.error.code, "UI resource validation failed.");
-              else if (validated.value.kind !== declaration.kind)
+              else if (validated.value.resource.kind !== declaration.kind)
                 quarantine("PLUGIN_E_UI_RESOURCE", "UI contribution kind does not match resource.");
               else if (
                 uiBytes({
                   owner: source.owner,
                   id: descriptor.id,
-                  version: 1,
-                  resource: validated.value,
+                  ...validated.value,
                   validationContext: {
                     pluginId: source.owner.pluginId,
                     commands: source.input.commands,
@@ -247,7 +259,11 @@ export class UiCatalog implements UiCatalogPort {
                 quarantine("PLUGIN_E_UI_RESOURCE", "UI resource reply exceeds its limit.");
               else {
                 entry.resource = validated.value;
-                descriptor.availability = "available";
+                entry.descriptor = {
+                  ...descriptor,
+                  version: validated.value.version,
+                  availability: "available",
+                };
                 hostBytes += parsed.bytes;
               }
             } catch {
@@ -351,8 +367,7 @@ export class UiCatalog implements UiCatalogPort {
       value: {
         owner: structuredClone(source.owner),
         id: input.id,
-        version: 1,
-        resource: structuredClone(entry.resource),
+        ...structuredClone(entry.resource),
         validationContext: {
           pluginId: source.owner.pluginId,
           commands: structuredClone(source.input.commands),
@@ -376,7 +391,7 @@ export class UiCatalog implements UiCatalogPort {
     if (!entry || entry.descriptor.availability === "unavailable")
       return { ok: true, value: { accepted: false } };
     delete entry.resource;
-    entry.descriptor.availability = "unavailable";
+    entry.descriptor = { ...entry.descriptor, availability: "unavailable" };
     entry.descriptor.problem = {
       code: "PLUGIN_E_UI_RESOURCE",
       message: "UI rendering is unavailable; explicit retry is required.",

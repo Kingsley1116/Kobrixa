@@ -51,6 +51,7 @@ export type * from "./ui-subscriptions.js";
 export type {
   PluginUiBridge,
   UiCatalogPort,
+  UiCatalogResourceValue,
   UiBridgeEvent,
   FoundationDiagnostics,
   FoundationCounters,
@@ -75,3 +76,6 @@ export { UiSubscriptions } from "./ui-subscriptions.js";
 export { sameUiBinding, sameResourceOwner } from "./ui-host-ports.js";
 
 export { readPackagedJson, readBuiltinJson, SourceReadBudget } from "./packaged-json-resource.js";
+
+export { validateVersionedUiResource } from "./ui-resource-version.js";
+export type { VersionedUiResource } from "./ui-resource-version.js";

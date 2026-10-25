@@ -28,7 +28,10 @@ export function send(work: () => Promise<unknown>): void {
     /* synchronous adapter failure cannot interrupt revocation */
   }
 }
-type Resource = Extract<Awaited<ReturnType<PluginUiBridge["resource"]>>, { ok: true }>["value"];
+type Resource = Extract<
+  Extract<Awaited<ReturnType<PluginUiBridge["resource"]>>, { ok: true }>["value"],
+  { version: 1 }
+>;
 const catalogs = new WeakSet<object>();
 export function catalogDiagnostics(instance: object): FoundationDiagnostics | undefined {
   if (!catalogs.has(instance)) return undefined;

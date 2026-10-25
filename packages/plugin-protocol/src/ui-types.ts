@@ -11,7 +11,7 @@ import type { Text, LocalId, Scalar, ValueSpec } from "./ui-resource.js";
 import { UI_LIMITS_V1 } from "./ui-limits.js";
 export type Id = string;
 export type UiResourceDeclaration = {
-  version: number; // header 為 integer 1–65,535；本批次只支援 1
+  version: number; // Declared integer 1–65,535; host support is explicit and versioned.
   path: string;
 };
 export type PanelDeclaration = {
@@ -41,16 +41,20 @@ export type UiOwner = {
   pluginId: Id;
   uiResourceGeneration: Counter;
 };
+/** Local host catalog only; not a negotiated RPC resource version. */
+export type UiResourceVersion = 1 | 2;
 export type UiCatalogEntry = UiOwner & {
   id: Id;
   kind: "panel" | "status";
   title: Text;
-  version: 1;
   resourceDigest: string; // SHA-256，64 lower-case hex
   resourceBytes: number;
-  availability: "available" | "unavailable";
   problem?: { code: string; message: string }; // 使用正式共用 error enum
-};
+} & (
+    | { availability: "available"; version: UiResourceVersion }
+    // Preserve unsupported declared versions in quarantined metadata, never relabel as v1.
+    | { availability: "unavailable"; version: number }
+  );
 export type UiCatalogPage = {
   hostEpoch: Handle;
   revision: Counter;
