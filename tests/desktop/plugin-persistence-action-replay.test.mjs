@@ -47,7 +47,15 @@ function specimen() {
   const copyFile = (phase) => {
     files[phase] = { before: structuredClone(current), after: structuredClone(current) };
   };
-  const binding = { ...owner };
+  const binding = {
+    generation: owner.generation,
+    hostEpoch: owner.hostEpoch,
+    processEpoch: owner.processEpoch,
+    contributionId: "acceptance.ui-recording.panel",
+    panelInstance: id(5),
+    kind: "panel",
+    uiResourceGeneration: 1,
+  };
   const mint = (phase) => {
     const action = id(serial++),
       start = clock++;
@@ -621,3 +629,32 @@ test("actual initial generation zero remains a valid owner", () => {
   replace(copy);
   assertActionObservation(copy);
 });
+
+for (const phase of ["cancel", "identity", "registered-cancel", "late"])
+  for (const field of [
+    "mintOwner",
+    "mintScope",
+    "hostEpoch",
+    "processEpoch",
+    "generation",
+    "contributionId",
+    "panelInstance",
+    "uiResourceGeneration",
+  ])
+    test(`successful action binding tamper: ${phase} ${field}`, () => {
+      const o = specimen();
+      if (field === "mintOwner") find(o, phase, "feature", "mint").args.values[0] = o.otherOwner;
+      else if (field === "mintScope")
+        find(o, phase, "feature", "mint").args.values[1] = {
+          ...o.scope,
+          workbenchInstance: id(999),
+        };
+      else {
+        const row = find(o, phase, "ui", "invoke");
+        row.args.binding = {
+          ...row.args.binding,
+          [field]: ["generation", "uiResourceGeneration"].includes(field) ? 99 : id(999),
+        };
+      }
+      assert.throws(() => assertActionObservation(o));
+    });

@@ -693,6 +693,21 @@ export function assertActionObservation(o: ActionObservation): void {
     );
     assert.ok(row.args && row.result);
   }
+  let originalBinding: Wire | undefined;
+  for (const row of o.rows.filter((row) => row.kind === "ui" && row.method === "invoke")) {
+    const binding = row.args.binding;
+    assert.equal(binding.hostEpoch, o.owner.hostEpoch);
+    assert.equal(binding.processEpoch, o.owner.processEpoch);
+    assert.equal(binding.generation, o.owner.generation);
+    assert.equal(binding.contributionId, "acceptance.ui-recording.panel");
+    assert.equal(binding.kind, "panel");
+    assert.match(binding.panelInstance, /^[0-9a-f-]{36}$/);
+    assert.ok(
+      Number.isSafeInteger(binding.uiResourceGeneration) && binding.uiResourceGeneration > 0,
+    );
+    originalBinding ??= binding;
+    assert.deepEqual(binding, originalBinding, "Action invoked through another UI binding");
+  }
   for (const phase of [
     "forged",
     "wrong-source",
@@ -826,6 +841,7 @@ export function assertActionObservation(o: ActionObservation): void {
       assert.deepEqual(claim[0]!.result.value, { ok: true, value: { action } });
       const mint = selectedRows(o, phase, "feature", "mint");
       assert.equal(mint.length, 1);
+      assert.deepEqual(mint[0]!.args.values.slice(0, 2), [o.owner, o.scope]);
       assert.equal(mint[0]!.result.value, action);
       const ui = selectedRows(o, phase, "ui", "invoke");
       assert.equal(ui.length, 1);
