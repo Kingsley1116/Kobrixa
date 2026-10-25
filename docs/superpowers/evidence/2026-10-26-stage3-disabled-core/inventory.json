@@ -1,0 +1,47 @@
+{
+  "commit": "bae83a1191c167c26d1f25083efb2301d6a3e020",
+  "files": [
+    {
+      "file": "native-receipt.json.gz",
+      "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/I-disabled-core-action-native.json",
+      "bytes": 161746,
+      "sha256": "f295f80bd20cb0dee025c351a7b620a04a3763538625791a74eeaa4b704b180e",
+      "gzipSha256": "81d567bdb941d399fa2fd2191b7d33d93ce1ebea5a24cd52f2109820bc0986ab"
+    },
+    {
+      "file": "candidate.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-JTXsva/action-replay.candidate.json",
+      "bytes": 70840,
+      "sha256": "34efeaa30ff343cf802047eb247df0f47d13c510b2e098871bbe7a563ee11cca",
+      "gzipSha256": "fe88df8f8d6f6d8fae614408f85b8f5f4d3cd9592e6e8ce30fe851c550dd460f"
+    },
+    {
+      "file": "native-config.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-JTXsva/action-replay.json",
+      "bytes": 1171,
+      "sha256": "1c3b58f7c1e6df286c3a15dc59b8e52f6d7336466b59a2262831af12a5c10f42",
+      "gzipSha256": "84bb82571c54c77689c4f88e348a3f6f1ec8100e521091707c451d7a621b094c"
+    },
+    {
+      "file": "native.log.gz",
+      "source": "/private/tmp/stage3-disabled-core-action-native.log",
+      "bytes": 13499,
+      "sha256": "a98fb7bb31056676f26aa0c99efe88992cb6d01083f0bf6d477111c795d01474",
+      "gzipSha256": "fd19cd98757a27a39884a840ea3844b8d876d01ed9c5fe9f6f6f20ef4681dbb1"
+    },
+    {
+      "file": "controller-tests.log.gz",
+      "source": "/private/tmp/stage3-disabled-core-controller.log",
+      "bytes": 231,
+      "sha256": "bba71f8266e738c9b83660cee545bd7e7a610cf281b68bdb14f4a9cb1cae67c3",
+      "gzipSha256": "62476c031d00760358c3d813cd705405b786c6a83680363ab89dc828fd32de61"
+    },
+    {
+      "file": "desktop-check.log.gz",
+      "source": "/private/tmp/stage3-disabled-core-types.log",
+      "bytes": 32,
+      "sha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630",
+      "gzipSha256": "a60eba922b5bc3d00aca42d68c9f9630d5d251d066c3ebf5595ed53ef4fbbd29"
+    }
+  ]
+}

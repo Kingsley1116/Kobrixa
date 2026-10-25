@@ -1,0 +1,7 @@
+# Disabled-source core authority integration — 2026-10-26
+
+The local integration candidate `bae83a1191c167c26d1f25083efb2301d6a3e020` includes the independently controller-reviewed four-file authority fix `f231abc`. Valid disabled-source identities retain host-only recovery namespace admission; optional settings, UI resources and runtime admission remain enabled-only. Removal/replacement revokes old capabilities, including identical-tuple re-addition. The merge preserved the stricter new settings-error assertion in the sole test conflict.
+
+Controller verification: rebuilt runtime; full desktop typecheck passed; 206 controller tests passed. Actual fresh-profile Electron action-replay run `JTXsva` passed, outside exit 0, cleanup workers/listeners/children zero and errors empty. The controller independently reran `verifyRunReceipt` and recomputed main-bundle and combined-artifact SHA-256 from the executed files. Original receipt/candidate/config/log and test-output bytes are retained as gzip with per-file hashes in `inventory.json`.
+
+This is regression evidence for the existing real worker/SDK/core recovery action path after the authority change. It does not prove the separate all-optional-off producer, cold disabled startup/export, full foundation matrix, installed packages or manual hardware acceptance. Fake device provider and trusted host intent seams remain explicit. Expected disposed-render-frame warnings are preserved in the original log; this is not a warning-free run. The shared stage/main branches were not merged or pushed.
