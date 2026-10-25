@@ -92,6 +92,102 @@ it("handles finite extreme and constant value ranges without NaN or Infinity geo
   };
   expect(datasetChartPaths(constant, [[0, 0, 0, 4]])[0]).toContain(",94.00");
 });
+it("paints isolated samples and extrema without joining separate runs", () => {
+  document.body.innerHTML = renderToStaticMarkup(
+    createElement(DatasetChart, {
+      label: "Angle",
+      declaration,
+      header,
+      points: [
+        [0, 0, 0, -10],
+        [0, 1, 1000, 10],
+      ],
+      locale: "en",
+      cursor: null,
+      enabled: true,
+      onCursor() {},
+    }),
+  );
+  const marks = [...document.querySelectorAll("circle")];
+  expect(marks).toHaveLength(2);
+  expect(marks.map((mark) => Number(mark.getAttribute("cy")))).toEqual([172, 16]);
+  expect(marks.every((mark) => Number(mark.getAttribute("r")) > 0)).toBe(true);
+  expect(document.querySelector("g[clip-path]")?.contains(marks[0]!)).toBe(true);
+  expect(
+    datasetChartPaths(header, [
+      [0, 0, 0, -10],
+      [0, 1, 1000, 10],
+    ])[0],
+  ).not.toContain("L");
+});
+it("follows the domain end for an unset cursor in both views while preserving requested time", () => {
+  for (const view of ["full", "recent60s"] as const) {
+    for (const end of [120000, 180000]) {
+      document.body.innerHTML = renderToStaticMarkup(
+        createElement(DatasetChart, {
+          label: "Angle",
+          declaration,
+          header: { ...header, timeDomain: [0, end] },
+          points,
+          view,
+          locale: "en",
+          cursor: null,
+          enabled: true,
+          onCursor() {},
+        }),
+      );
+      expect(document.querySelector("input")!.value).toBe(String(end));
+      expect(document.querySelector("input")!.getAttribute("aria-valuetext")).toBe(
+        `${(end / 1000).toFixed(3)} s`,
+      );
+      expect(document.querySelector("line")!.getAttribute("x1")).toBe("592");
+    }
+  }
+  document.body.innerHTML = renderToStaticMarkup(
+    createElement(DatasetChart, {
+      label: "Angle",
+      declaration,
+      header,
+      points,
+      locale: "en",
+      cursor: 1000,
+      enabled: true,
+      onCursor() {},
+    }),
+  );
+  expect(document.querySelector("input")!.value).toBe("1000");
+});
+it("does not project out-of-window samples into a collapsed finite time window", () => {
+  const extreme: ChartHeaderV2 = { ...header, timeDomain: [0, 1e21], view: "recent60s" };
+  expect(
+    datasetChartPaths(extreme, [
+      [0, 0, 0, -10],
+      [0, 0, 1000, 10],
+    ])[0],
+  ).toBe("");
+  document.body.innerHTML = renderToStaticMarkup(
+    createElement(DatasetChart, {
+      label: "Angle",
+      declaration,
+      header: extreme,
+      points: [[0, 0, 0, -10]],
+      locale: "en",
+      cursor: null,
+      enabled: true,
+      onCursor() {},
+    }),
+  );
+  expect(document.querySelectorAll("circle")).toHaveLength(0);
+  // A sample at the representable end remains visible.
+  expect(datasetChartPaths(extreme, [[0, 0, 1e21, 10]])[0]).toContain("318.00,16.00");
+  // Nondegenerate windows still preserve a segment crossing their left edge.
+  expect(
+    datasetChartPaths({ ...header, view: "recent60s" }, [
+      [0, 0, 50000, -10],
+      [0, 0, 70000, 10],
+    ])[0],
+  ).toContain("L");
+});
 it("keeps empty domains, recent-window bounds and disables cursor for an incoherent group", () => {
   const empty: ChartHeaderV2 = {
     ...header,

@@ -21,16 +21,22 @@ const fraction = (value: number, low: number, high: number): number => {
 /** Keep run boundaries and the full declared time axis, including null-only tails.
  * SVG clipping, not point deletion, preserves segments crossing the view edge.
  */
-export function datasetChartPaths(
+function chartGeometry(
   header: ChartHeaderV2,
   points: readonly DatasetPointV2[],
   view: TimeViewV2 = header.view,
-): string[] {
+) {
   const [from, to] = effectiveTimeDomainV2(header, view);
   const paths = header.series.map(() => "");
+  const isolated: { series: number; x: number; y: number }[] = [];
+  // At very large finite times the recent-window subtraction can round to zero
+  // width. Only the exact endpoint belongs to that window; value-axis centering
+  // must not project unrelated old times into the visible plot.
+  const visible = from === to ? points.filter((point) => point[2] === to) : points;
   let lastSeries = -1;
   let lastRun = -1;
-  for (const [series, run, time, value] of points) {
+  for (let index = 0; index < visible.length; index++) {
+    const [series, run, time, value] = visible[index]!;
     const range = header.series[series]!.range;
     const x = frame.left + fraction(time, from, to) * (frame.right - frame.left);
     // A constant series remains centered, rather than inventing an engineering unit range.
@@ -38,10 +44,23 @@ export function datasetChartPaths(
     const y = frame.bottom - ratio * (frame.bottom - frame.top);
     paths[series] +=
       `${series === lastSeries && run === lastRun ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)} `;
+    const next = visible[index + 1];
+    if (
+      (series !== lastSeries || run !== lastRun) &&
+      (!next || next[0] !== series || next[1] !== run)
+    )
+      isolated.push({ series, x, y });
     lastSeries = series;
     lastRun = run;
   }
-  return paths;
+  return { paths, isolated };
+}
+export function datasetChartPaths(
+  header: ChartHeaderV2,
+  points: readonly DatasetPointV2[],
+  view: TimeViewV2 = header.view,
+): string[] {
+  return chartGeometry(header, points, view).paths;
 }
 export function DatasetChart({
   label,
@@ -66,8 +85,8 @@ export function DatasetChart({
 }) {
   const clip = useId();
   const [from, to] = effectiveTimeDomainV2(header, view);
-  const paths = datasetChartPaths(header, points, view);
-  const selected = Math.max(from, Math.min(to, cursor ?? from));
+  const { paths, isolated } = chartGeometry(header, points, view);
+  const selected = Math.max(from, Math.min(to, cursor ?? to));
   const x = frame.left + fraction(selected, from, to) * (frame.right - frame.left);
   const zh = locale === "zh-TW";
   return (
@@ -106,7 +125,18 @@ export function DatasetChart({
               strokeDasharray={index === 0 ? undefined : "7 4"}
             />
           ))}
-          {cursor !== null && enabled && (
+          {isolated.map((point, index) => (
+            <circle
+              key={index}
+              cx={point.x}
+              cy={point.y}
+              r="3"
+              fill={point.series === 0 ? "currentColor" : "none"}
+              stroke="currentColor"
+              strokeWidth="2"
+            />
+          ))}
+          {enabled && (
             <line
               x1={x}
               x2={x}
