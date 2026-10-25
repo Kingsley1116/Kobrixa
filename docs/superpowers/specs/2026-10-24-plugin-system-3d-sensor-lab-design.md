@@ -6,7 +6,7 @@
 
 權威為 [Stage 3 umbrella](2026-10-17-plugin-system-stage-3-design.md) §§3–7、S3-08/09/12–15；沿用 [3B1](2026-10-17-plugin-system-3b1-declarative-ui-design.md) UI v1／lifecycle ports 與 [3B2](2026-10-17-plugin-system-3b2-settings-storage-design.md) storage／import／drain。本文不覆寫凍結契約。
 
-目前 3D 僅有 `8c8878b` 的純模型及測試，沒有 shipped Lab、UIv2 或 API 1.8.0 的完成證據。3C public-only／installed proof 正在收尾；依 umbrella §6 可先寫設計、計畫與純資料 fixtures，**3C proof 及 foundation 交接完成前不得凍結／合入 UIv2 或發布 1.8.0**。本草案所有新增名稱皆為提案，須 T0 經 owner 確認、schema／fixtures 一起凍結。
+2026-10-26 更新：D 已在 `e66f1f1` 合入 integration `31a5810`。3C actual public／macOS installed 與 Linux source-isolation proofs 已具名保留；精確 producer、路徑及平台限制見 [D1/T0 候選契約](../plans/2026-10-26-plugin-system-3d-t0-contract.md) §1。D 仍只有 pure model/parity，沒有 shipped Lab、UIv2 或 API1.8 完成證據；aggregate P160/P170/X-T1 及 foundation owner handoff 仍 open。可作 local technical freeze draft，不代表 formal D1 close／公開API發布；本草案新增名稱須 owner 確認、schema／fixtures 一起驗證。
 
 純模型基準以 commit `8c8878b` 及其五組測試為準，不代表 runtime acceptance。實作順序見[計畫](../plans/2026-10-24-plugin-system-3d-sensor-lab.md)。
 
@@ -87,15 +87,15 @@ session改變清除live選取/preview，通道選取改變重設preview時間域
 | table／list    | 一個可見資料頁各最多 50 rows/items；table ≤8 columns，list ≤3 actions/item；row key 穩定且唯一，cell 只 scalar/plain text、≤200 code points。payload byte cap 優先，較小頁也要有 next/previous。選取傳 row ID＋dataset revision，禁止攜帶整筆資料。                  |
 | dialog         | 每 panel 最多 1 個 open，禁止巢狀；resource 內靜態宣告內容／confirm/cancel，引用既有 chart dataset；刪除確認含 host record ID/revision，stale confirm 拒絕。Escape 關閉、focus trap／還原，關閉放大圖不停止錄製。                                                    |
 | code           | 唯讀 plain text，≤16,384 code points 且≤64 KiB，固定可選取字型；有 label／copy command，無執行／語法 script；code payload 分塊走 v2 dataset，不放寬 v1 4,000 字元 Text。                                                                                             |
-| status actions | 最多 2 個：`openPanel` 與新增 v2 `stopRecording`，後者綁同 owner reservation reference，由通用 host action 驗 epoch／owner 後 release，接既有 endReservation/drain；失權仍可停止。status instance 也提供可信 command context，但不以 motion scope 冒用 reservation。 |
+| status actions | 最多 2 個：`openPanel` 與新增 v2 `stopRecording`，後者綁同 owner reservation reference，由通用 host action 驗 epoch／owner 後 release，接既有 endReservation/drain；失權仍可停止。status 只提供 host-resolved core action context，不送 plugin command/invented panel invocation；不以 motion scope 冒用 reservation。 |
 
 ### 5.1 資料傳送（待 T0 固定正式名稱）
 
-提案新增 `ui/dataBegin`、`ui/dataChunk`、`ui/dataCommit`、`ui/dataAbort`、`ui/dataRead`，SDK 為 `ctx.ui.data.*`；是 registered UI 資料平面，非 filesystem／storage bus。所有 request 必含已驗 binding（owner、execution/resource generation、instance）與宣告 dataset ID；begin 含 baseRevision、目標 revision、型別、bytes／hash。每次完整替換單一 dataset，chart 可用有界 append/drop-prefix delta，但結果須通過完整限額及 run continuity 驗證。
+候選精確 union、SDK、errors、fixtures 以 [D1/T0 契約](../plans/2026-10-26-plugin-system-3d-t0-contract.md) §§3–5 為準：`ui/dataBegin/Chunk/Commit/Abort/Read/Snapshot`、`ctx.ui.data.*` 是 registered UI 資料平面。binding 不含 caller-supplied owner，由原 channel principal 查 owner。begin 帶 baseRevision、presentation、typed header、bytes/hash；host commit 分配 revision。只完整替換，不提供 append/drop-prefix delta。
 
-chunk 含 host transfer handle／offset／bounded typed entries，單 request 含 envelope ≤64 KiB；commit 原子發布 revision／小型 invalidation event，失敗維持舊 snapshot。`dataRead` 依 revision／cursor 分頁 ≤64 KiB；沒有跨資料集 transaction 保證，feature 用 presentation revision 關聯 charts、cursor/table，未齊時顯示 updating，禁止混搭值。offset／hash／duplicate key／NaN／Infinity／stale revision／跨 owner 一律拒絕。
+chunk 含 host transfer handle／offset／bounded typed entries，單 request 含 envelope ≤64 KiB；commit 原子發布 revision／小型 invalidation event，失敗維持舊 snapshot。`dataRead` 依 revision／entry offset 分頁，typed result≤48 KiB且完整envelope≤64 KiB；沒有跨資料集 transaction 保證，feature 用 presentation revision 關聯 charts、cursor/table，未齊時顯示 updating，禁止混搭值。offset／hash／duplicate key／NaN／Infinity／stale revision／跨 owner 一律拒絕。
 
-每 panel 同時最多 8 datasets（4 charts、table、history list、profiles list、code），committed 合計≤512 KiB，source≤2 MiB，host≤8 MiB；每 panel 僅 1 個 receiving transfer、≤512 KiB，source≤512 KiB、host≤2 MiB，idle 5 秒／total 10 秒。所有數量與序列化 bytes 雙重限制；最大 point count 不代表任意長數字／文字都可塞滿 byte cap。超限必須回錯，不能默默裁掉 extrema／row。
+每 panel 同時最多 8 datasets（4 charts、table、history list、profiles list、code），committed 合計≤512 KiB，source≤2 MiB，host≤8 MiB；最大點數與最大文字頁不能一律同時塞滿，按 T0 §10 byte fixtures 分頁；每 panel 僅 1 個 receiving transfer、≤512 KiB，source≤512 KiB、host≤2 MiB，idle 5 秒／total 10 秒。所有數量與序列化 bytes 雙重限制；最大 point count 不代表任意長數字／文字都可塞滿 byte cap。超限必須回錯，不能默默裁掉 extrema／row。
 
 UI resource 仍每份256 KiB／256 nodes／depth8，source1 MiB／host8 MiB；一般 scalar state／patch 維持64 KiB、10 Hz、4 pending。dataset commits 同享每 panel10 Hz／4待送 admission，event仍64 KiB／256 KiB queue、32 subscriptions/source；不把整個 dataset塞 event。frame仍1 MiB。傳輸暫存計量與committed分開，沒有隱藏倍增 cache。
 
@@ -132,7 +132,7 @@ B2 `DrainReport`四態直接呈現：saved需final receipt及flush；retryable�
 
 新增host adapter `main/plugins/persistence/sensor-lab-import.ts`，實作既有 `LegacyImportDescriptor`，使用`import-sources.ts`／`import-coordinator.ts`／`LegacyWriterBarrier`；純mapping呼叫現有model，不發新RPC。sourceKind=`sensor-lab`、targetSourceKey=`builtin:kobrixa.sensor-lab`、mappingVersion=1、來源format1、target record schema2；分辨recordings與calibrations envelope，host resolver核對UUID basename與payload ID後傳expectedId，不接受plugin提供path。
 
-現行descriptor `validate/map`只接bytes/sha256，沒有basename參數：身份核對必須在既有resolver的item key邊界完成，再交pure mapper；若現有adapter缺此核對，由B2 owner在host-only seam補上，不擴公開API、不以payload自稱ID代替檔名證據。
+現行descriptor `validate/map`只接bytes/sha256，沒有basename參數，而且 worker inventory 讀formatVersion，實際Lab用schemaVersion。T0 §8指定兩個allowlisted descriptors／roots，host-only fileFormat與basename input，按record/profile真envelope核對後呼叫pure mapper；兩者完成才切換。此修補需B2/H-D handoff，未實作，不擴公開API、不以payload自稱ID代替檔名證據。
 
 固定root下regular JSON、拒symlink/reparse、8MiB前置byte檢查；逐筆處理、保留originals/digest。先停所有legacy writers／取得import barrier；planned journal先落盤、host分配target IDs、target CAS含import receipt，commit→receipt→complete marker後才切新history讀取。crash於commit/receipt間依tag對帳，重跑不重複；刪除已匯入record後不復活舊檔。未完成／corrupt／quota／permission／source-changed均blocked，不以defaults或空資料報成功、不雙寫或回退legacy。舊loader會將壞檔移入corrupt，新匯入遵B2保留originals並顯示issues；既有corrupt目錄保留且不擅自回填。較新schema拒絕並保留資料。B2 inventory4096／journal512項2MiB、批64仍生效；50筆最大record需實際遷移證據。
 

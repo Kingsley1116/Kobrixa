@@ -6,7 +6,7 @@
 
 - authoritative [umbrella](../specs/2026-10-17-plugin-system-stage-3-design.md) §6 允許平行設計與純模型；3C public-only／installed proof 完成後才可最終凍結UIv2／發布API1.8.0。
 - 已有 `8c8878b` 純模型五檔及 `apps/desktop/src/builtin-features/sensor-lab/` 五組測試直接沿用，不重寫。review report PASS只屬此slice；Lab process/UIv2仍未交付。
-- foundation 3A／3B1／3B2需有實際baseline、owner receipts、正式ports；不從未驗收sibling branch取得隱含API。3C證據尚未完成不勾任何gate。
+- 2026-10-26：D `e66f1f1` 已合入 integration `31a5810`；3C actual public/installed/Linux source-isolation證據已保留，精確界線見 [D1/T0候選契約](2026-10-26-plugin-system-3d-t0-contract.md) §1。foundation P160/P170/X-T1及owner handoff仍open；不因merge勾aggregate gate。
 - 每任務先確認write set與前owner停止，保留baseline SHA／交接receipt；單一writer序列編輯hotspots。可將沒有重疊 write set 的工作平行執行。
 - 每task交付實際diff、targeted驗證結果與限制；不以spec中的候選API當成目前可呼叫能力。以下驗證均須在對應實作完成後執行。
 
@@ -41,13 +41,13 @@ write set：只本design/plan及具名T0 receipt；此時不升版。凍結候�
 
 必須解決：v1 scalar無array；status無action且core stop只接motion；model ID≠host record ID；public EV3 code/cross-origin mapping；import descriptor不帶basename；模型stopReason與public reservation reason不相等。前三項不能用任意JSON字串／偽operation／私有service暫時繞過。
 
-完成條件：owner確認候選合約可表達每列parity、基於最大fixture確認limits；3C未交付時只保留草案，D1不記closed。
+目前產物：[2026-10-26 T0契約](2026-10-26-plugin-system-3d-t0-contract.md)，只屬local technical freeze draft。完成條件：owner確認候選合約可表達每列parity、跨SDK canonical byte fixtures/limits及foundation handoff/gate disposition齊全；保留3C證據不等於formal D1 close。
 
 ### D2：公開UIv2、雙SDK與conformance（H-P）
 
 write set：新增`packages/plugin-protocol/src/ui-v2-{resource,data,methods}.ts`及tests；更新既有`ui-methods.ts`/validation/methods/manifest/exports/schema、JS UI client、Python UI client與bundled schema、`test-fixtures/declarative-ui-v2/`。最終檔名以D1receipt固定，不能平行另造同義API。
 
-實作：v1 union保持；v2 chart/table/list/dialog/code/status action；dataset binding/revision/chunks/TTL/bytes/count；API1.8 negotiation及UI version rejection。正式公開EV3 vocabulary與conformance，不讓feature匯入provider catalog。
+實作：以T0精確union為準，v1保持；v2 chart/table/list/dialog/code/status core Open/Stop；typed完整dataset替換、snapshot/invalidation、binding/revision/chunks/TTL/bytes/count；API1.8 negotiation及UI version rejection。正式公開EV3 vocabulary與conformance，不讓feature匯入provider catalog。
 
 驗證：共同valid/invalid/maximum fixtures跨Zod、JSON Schema、JS、Python；未知version/component/field、NaN/nonfinite、proto key、stale/cross-owner、UTF-8與code points、每項limit−1/limit/limit+1。1.6 motor與1.7 storage不退化，沒有未聲明UIv2 fallback。
 
@@ -86,7 +86,7 @@ write set：新增`plugins/sensor-lab/src/{main,controller,recorder,persistence,
 
 write set：新增`main/plugins/persistence/sensor-lab-import.ts`及tests；既有`import-sources.ts`、resolver／worker allowlist與composition僅H-D在B2 owner receipt後改；純model mapper只讀。不得加public importFromPath。
 
-註冊既有`LegacyImportDescriptor`、sourceKind sensor-lab、schema1→2、mappingVersion1；resolver UUID basename核對再呼叫bytes/expectedId mapper。停止legacy writers、planned journal→target receipt→complete marker→切換，原檔不動。
+依T0 §8註冊兩個`LegacyImportDescriptor`（recordings/calibrations）、sourceKind sensor-lab、schema1→2、mappingVersion1；先修host-only schemaVersion識別/fileFormat與basename傳遞，再呼叫bytes/expectedId mapper；兩descriptor皆完成才切換。停止legacy writers、planned journal→target receipt→complete marker→切換，原檔不動。
 
 驗證：records與calibration實際envelope、50×8MiB plus profiles/quota、malformed UTF-8/version/key/float/cardinality/size、symlink、permission≠missing；commit後receipt前kill、marker失敗、source/destination變動、re-entry／downgrade、刪新record後restart不再import；safe mode/disabled不執行mapper。未complete禁止半套history與雙寫。
 
