@@ -1,0 +1,68 @@
+{
+  "commit": "2a39344dcdcad3b4776f1a3ee30c73197f30702e",
+  "files": [
+    {
+      "file": "native-receipt.json.gz",
+      "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/B2-renderer-loss-native.json",
+      "bytes": 52628,
+      "sha256": "3aaf0f81844f7ed56e719b2a0580fc2dd4ab6152940fc3edc7797a4602ee9bec",
+      "gzipSha256": "66ec0a43947ded70cb33b24b58589d9e410e515d1bcfe649f6af7914aa324861"
+    },
+    {
+      "file": "candidate.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-Gbg1iR/renderer-loss.candidate.json",
+      "bytes": 15494,
+      "sha256": "27c46f6c086d54fc49e63a3dc50a80e9e01060b33ca97b5fc7f9d518e2a4aa00",
+      "gzipSha256": "a36be82db55bed2b2b3809671a42408d27bf4f49ca23c0633e18a0640154ce38"
+    },
+    {
+      "file": "native-config.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-Gbg1iR/renderer-loss.json",
+      "bytes": 1171,
+      "sha256": "665d345e7838a4d4c018a892b00d110d04efc1ac471ecf9b8a12353fde6e9f3f",
+      "gzipSha256": "3f77f2b165ca7eaddcc2ffe4292117488a4bd5c4f41b6a3e749ef6b6baf4e1e2"
+    },
+    {
+      "file": "native.log.gz",
+      "source": "/private/tmp/b2-renderer-loss-native.log",
+      "bytes": 13497,
+      "sha256": "fb437d1bbedceeb5dc58fac879de394a812db751f81bd528a086883f107f3f03",
+      "gzipSha256": "b5fd33f8a385a220ea25657f171cce58ded9231ae250a6ec87552959ff645fa3"
+    },
+    {
+      "file": "oracle-tests.log.gz",
+      "source": "/private/tmp/b2-renderer-loss-oracles.log",
+      "bytes": 34046,
+      "sha256": "b180a9dfa43f3787bcd33453b2d80391d8c01ac39701922a162083666b493720",
+      "gzipSha256": "34adcf9e2c08c7d2d751e61aa98202b4dcfb7709a25e746ff2bb087d2690fb72"
+    },
+    {
+      "file": "action-refactor-receipt.json.gz",
+      "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/B2-action-refactor-native.json",
+      "bytes": 161745,
+      "sha256": "fcb691a3ff258b1113f96a0c2ce5329a537348f489950952090271cc53dc450d",
+      "gzipSha256": "e5cd0c5319c454d6df84c53f5160cf5c64159298791a33743c29e07382110f34"
+    },
+    {
+      "file": "action-refactor-candidate.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-PS6emk/action-replay.candidate.json",
+      "bytes": 70839,
+      "sha256": "8e38ed2222e338cc23ae58bd2d921ae6303fbb57ec72fc2a36c757fca2b7efbb",
+      "gzipSha256": "7e1a7138b649362b69cfa45e44f4b792e6f2c612ec91240b621e814696f09549"
+    },
+    {
+      "file": "action-refactor-config.json.gz",
+      "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-PS6emk/action-replay.json",
+      "bytes": 1171,
+      "sha256": "fe0f1c4cff6ad220d7bb40995376977902ec9389e1dae8fa5a4513ed4e0d398f",
+      "gzipSha256": "4de735833424a8a0e84973c7736204b12a334dc7e960b1921485ddf64f365a32"
+    },
+    {
+      "file": "action-refactor.log.gz",
+      "source": "/private/tmp/b2-action-refactor-native.log",
+      "bytes": 13497,
+      "sha256": "f57bc84c762a5647ac7531ffd4359df719588d08a2e0c7ec06f51fc9b7dbea0b",
+      "gzipSha256": "383873b82ee7541a8c5b22b16eb2aebc247b25e7fb8b1ade1818fa88f692e6df"
+    }
+  ]
+}

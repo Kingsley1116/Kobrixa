@@ -1,3 +1,4 @@
+import type { RendererLaunch } from "./plugin-persistence-renderer-loss.js";
 import type {
   DeviceDrainGrant,
   ProfileWriterLock,
@@ -120,6 +121,7 @@ const {
   assertContentionEvidence,
   assertUnknownEvidence,
   assertActionReplayEvidence,
+  assertRendererLossEvidence,
   assertSealedTtlEvidence,
 } = evidenceHarness;
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
@@ -178,6 +180,7 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
   if (id === "registration-end") assertRegistrationEndEvidence(evidence);
   if (id === "contention") assertContentionEvidence(evidence);
   if (id === "unknown-publication") assertUnknownEvidence(evidence);
+  if (id === "renderer-loss") assertRendererLossEvidence(evidence);
   if (id === "action-replay") assertActionReplayEvidence(evidence);
   if (id === "sealed-ttl") assertSealedTtlEvidence(evidence);
   if (id === "healthy-release") {
@@ -941,6 +944,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "sealed-ttl",
       "unknown-publication",
       "action-replay",
+      "renderer-loss",
     ].includes(config.case)
   )
     throw new Error(
@@ -1006,6 +1010,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
   const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
   const { produceActionReplay, nativeActionControl } =
     await import("./plugin-persistence-action-replay.js");
+  const { produceRendererLoss } = await import("./plugin-persistence-renderer-loss.js");
+  const { createDesktopLauncher } =
+    await import("../../apps/desktop/src/main/plugins/launchers.js");
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
@@ -1078,7 +1085,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           );
         });
       const nativeActions = nativeActionControl(now);
+      const rendererLaunches: RendererLaunch[] = [];
+      let rendererProbe: (() => Promise<void>) | undefined;
       let expectedRendererLoss = false;
+      let rendererReopened = false;
       let rendererExit:
         | {
             pid: number;
@@ -1223,6 +1233,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             operationGate: () => ({ ok: true, value: null }),
           },
           plugins: {
+            launcher: (hooks) => {
+              const launch = createDesktopLauncher(hooks);
+              return async (plugin) => {
+                if (plugin.channelOwner)
+                  rendererLaunches.push({ owner: structuredClone(plugin.channelOwner), at: now() });
+                return launch(plugin);
+              };
+            },
             userData,
             builtins,
             commandLine: { developmentDirectories: [], safeMode: false },
@@ -1242,7 +1260,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           report,
         };
         composition = await composeDesktopMain(compositionInput, {
-          ...(config.case === "action-replay" ? { nativeActions } : {}),
+          ...(["action-replay", "renderer-loss"].includes(config.case) ? { nativeActions } : {}),
           worker: {
             entry: config.workerEntry,
             control(control: PersistenceFaultControl) {
@@ -1322,7 +1340,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               reason: details.reason,
               exitCode: details.exitCode,
             };
-            rendererRetirement = retireActionRenderer(false);
+            const retirement = retireActionRenderer(false);
+            rendererRetirement = Promise.all([retirement, rendererProbe?.()]).then(() => {});
             void rendererRetirement.catch(report);
             return;
           }
@@ -1583,6 +1602,57 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const unavailable = (id: FoundationCase) => async (): Promise<CaseEvidence> => {
           throw new Error(`BLOCKED: ${id} observation-table producer is not implemented`);
         };
+        const crashRenderer = async (probe?: () => Promise<void>) => {
+          rendererProbe = probe;
+          assert.equal(expectedRendererLoss, false);
+          expectedRendererLoss = true;
+          rendererExit = {
+            pid: win.webContents.getOSProcessId(),
+            at: 0,
+            reason: "pending",
+            exitCode: 0,
+            osExit: { at: 0, code: "pending" },
+          };
+          assert.ok(rendererExit.pid > 0);
+          const gone = new Promise<void>((resolve) =>
+            win.webContents.once("render-process-gone", () => resolve()),
+          );
+          win.webContents.forcefullyCrashRenderer();
+          await within(gone, "Actual renderer exit");
+          assert.ok(rendererRetirement);
+          await rendererRetirement;
+          await within(
+            (async () => {
+              for (;;) {
+                try {
+                  process.kill(rendererExit!.pid, 0);
+                } catch (error) {
+                  assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+                  rendererExit!.osExit = {
+                    at: now(),
+                    code: (error as NodeJS.ErrnoException).code!,
+                  };
+                  return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 10));
+              }
+            })(),
+            "Renderer OS exit",
+          );
+          return rendererExit;
+        };
+        const finishRecovery = async () => {
+          const detail = live.plugins.persistence170!.detail;
+          for (const entry of detail.entries()) {
+            const snapshot = accepted(await detail.bridge.snapshot({ itemId: entry.item.id }));
+            const discard = snapshot.items
+              .flatMap((item) => item.actions)
+              .find((action) => action.kind === "discard");
+            assert.ok(discard, "Seed recovery must offer explicit discard");
+            accepted(await detail.bridge.act({ itemId: entry.item.id, optionId: discard.id }));
+          }
+          assert.equal(input.host.recovery.snapshot().items.length, 0);
+        };
         const producers: Record<FoundationCase, () => Promise<CaseEvidence>> = {
           retirement: () => produceRetirement(input),
           "healthy-release": () => produceHealthyRelease(input),
@@ -1663,7 +1733,45 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 assert.equal(result.ok, true, JSON.stringify(result));
               },
             }),
-          "renderer-loss": unavailable("renderer-loss"),
+          "renderer-loss": () =>
+            produceRendererLoss({
+              ...input,
+              scope,
+              ui: ui.bridge,
+              actions: ui.actions,
+              seed: async () => {
+                assert.equal(
+                  (await live.plugins.execute("acceptance.ui-recording.renderer-seed")).ok,
+                  true,
+                );
+              },
+              launches: () => rendererLaunches,
+              owners: () => [...handles.runtime.owners()],
+              crash: crashRenderer,
+              restart: async () => {
+                // Explicit reopen restores trusted core scope before resolving fixture recovery.
+                await win.loadURL(config.rendererUrl);
+                rendererReopened = true;
+                if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach("1.3");
+                await finishRecovery();
+                const command = "acceptance.ui-recording.legacy";
+                const result = await live.plugins.execute(command);
+                assert.equal(result.ok, true, JSON.stringify(result));
+                const context = await handles.runtime.activateInitialized(
+                  "builtin:acceptance.ui-recording",
+                  new AbortController().signal,
+                );
+                await handles.runtime.ready(context.owner, new AbortController().signal);
+                const next = select("recording");
+                const exited = latch<ProcessExit>();
+                off.push(next.child.onExit((event) => exited.resolve(event)));
+                consumerExits.push(exited.promise);
+                const principal = next.principal();
+                assert.equal(principal.kind, "plugin");
+                if (principal.kind !== "plugin") throw new Error("Missing replacement principal");
+                return { owner: principal.owner, principal, command, result };
+              },
+            }),
           "sealed-ttl": () =>
             produceSealedTtl({
               ...input,
@@ -1832,60 +1940,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 }
                 throw new Error("Actual recovery bridge offered no export");
               },
-              finishCore: async () => {
-                const detail = live.plugins.persistence170!.detail;
-                for (const entry of detail.entries()) {
-                  const snapshot = accepted(
-                    await detail.bridge.snapshot({ itemId: entry.item.id }),
-                  );
-                  const discard = snapshot.items
-                    .flatMap((item) => item.actions)
-                    .find((action) => action.kind === "discard");
-                  assert.ok(discard, "Seed recovery must offer explicit discard");
-                  accepted(
-                    await detail.bridge.act({ itemId: entry.item.id, optionId: discard.id }),
-                  );
-                }
-                assert.equal(input.host.recovery.snapshot().items.length, 0);
-              },
-              destroyRenderer: async () => {
-                assert.equal(expectedRendererLoss, false);
-                expectedRendererLoss = true;
-                rendererExit = {
-                  pid: win.webContents.getOSProcessId(),
-                  at: 0,
-                  reason: "pending",
-                  exitCode: 0,
-                  osExit: { at: 0, code: "pending" },
-                };
-                assert.ok(rendererExit.pid > 0);
-                const gone = new Promise<void>((resolve) =>
-                  win.webContents.once("render-process-gone", () => resolve()),
-                );
-                win.webContents.forcefullyCrashRenderer();
-                await within(gone, "Actual renderer exit");
-                assert.ok(rendererRetirement);
-                await rendererRetirement;
-                await within(
-                  (async () => {
-                    for (;;) {
-                      try {
-                        process.kill(rendererExit!.pid, 0);
-                      } catch (error) {
-                        assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
-                        rendererExit!.osExit = {
-                          at: now(),
-                          code: (error as NodeJS.ErrnoException).code!,
-                        };
-                        return;
-                      }
-                      await new Promise((resolve) => setTimeout(resolve, 10));
-                    }
-                  })(),
-                  "Renderer OS exit",
-                );
-                return rendererExit;
-              },
+              finishCore: finishRecovery,
+              destroyRenderer: () => crashRenderer(),
             }),
           "import-restart": unavailable("import-restart"),
           "storage-ui-pressure": unavailable("storage-ui-pressure"),
@@ -1900,7 +1956,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           (closing ??= (async () => {
             await live.dispose();
             await within(Promise.all(consumerExits), "original consumer exits during close");
-            if (!rendererExit) {
+            if (!rendererExit || rendererReopened) {
               await browser("window.declarativeAcceptance.disposeFoundationRenderer()");
               const finalBrowser = await browser(
                 "window.declarativeAcceptance.foundationDiagnostics()",
@@ -1979,6 +2035,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               "sealed-ttl",
               "unknown-publication",
               "action-replay",
+              "renderer-loss",
             ].includes(config.case)
               ? "not-measured-scoped-case"
               : "not-measured-reference-only",

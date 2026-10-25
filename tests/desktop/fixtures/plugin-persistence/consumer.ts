@@ -19,6 +19,28 @@ void runPlugin(
         ctx.commands.register(`${ctx.pluginId}.action-checkpoint-only`, async () => {
           actionCheckpointOnly = true;
         });
+      if (ctx.pluginId === "acceptance.ui-recording")
+        ctx.commands.register(`${ctx.pluginId}.renderer-seed`, async () => {
+          const bytes = Buffer.from("Renderer loss unfinished write sentinel\n");
+          const write = value(
+            await ctx.storage.beginWrite({
+              target: { mode: "create" },
+              kind: "test.renderer-loss",
+              schemaVersion: 1,
+              label: "Renderer loss",
+              mediaType: "application/octet-stream",
+              byteLength: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            }),
+          );
+          value(
+            await ctx.storage.writeChunk({
+              write: write.write,
+              offset: 0,
+              data: bytes.toString("base64"),
+            }),
+          );
+        });
       let actionJob: string | undefined;
       const actionBytes = Buffer.from("T7 action export value sentinel\n");
       if (ctx.pluginId.startsWith("acceptance.ui-"))

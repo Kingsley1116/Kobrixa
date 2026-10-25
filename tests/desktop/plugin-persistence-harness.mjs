@@ -1,3 +1,5 @@
+import { assertRendererLossEvidence } from "./plugin-persistence-renderer-loss.ts";
+export { assertRendererLossEvidence };
 import { assertSealedTtlEvidence } from "./plugin-persistence-sealed-ttl.ts";
 export { assertSealedTtlEvidence };
 import assert from "node:assert/strict";
@@ -623,6 +625,7 @@ export function assertDisconnectEvidence(evidence) {
 }
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "renderer-loss") assertRendererLossEvidence(r.evidence, r.hostEpoch);
   if (r.case === "sealed-ttl") assertSealedTtlEvidence(r.evidence, r.hostEpoch);
   if (r.case === "action-replay") {
     assertActionReplayEvidence(r.evidence);
