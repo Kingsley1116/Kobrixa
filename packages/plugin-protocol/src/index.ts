@@ -109,3 +109,8 @@ export type {
 } from "./ui-resource.js";
 
 export { validateSettingsResource } from "./persistence-validation.js";
+
+// Local UI v2 implementation leaves. Transport registration/negotiation is separate.
+export * from "./ui-v2-data.js";
+export * from "./ui-v2-resource.js";
+export * from "./ui-v2-methods.js";
