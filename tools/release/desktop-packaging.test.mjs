@@ -24,6 +24,12 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
   for (const slug of ["motor-test", "sensor-lab"]) {
     const script = `
       let reads = 0;
+      let cryptoLoads = 0;
+      const Module = require("node:module"), originalLoad = Module._load;
+      Module._load = function (id, ...args) {
+        if (id === "node:crypto" || id === "crypto") cryptoLoads++;
+        return originalLoad.call(this, id, ...args);
+      };
       const original = process.env;
       process.env = new Proxy(original, { get(target, key) {
         if (key === "KOBRIXA_RESOURCE_OWNER") reads++;
@@ -35,6 +41,8 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
       require(process.argv[1]);
       setImmediate(() => {
         if (reads !== 1) throw new Error("Production leaf discarded launch owner metadata");
+        if (${JSON.stringify(slug)} === "sensor-lab" && cryptoLoads === 0)
+          throw new Error("Production Lab must use Node crypto, not a browser shim");
         console.log("launch-owner-read");
       });
     `;

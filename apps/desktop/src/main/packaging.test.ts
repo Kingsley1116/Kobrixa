@@ -157,7 +157,10 @@ it("does not externalize SDK or protocol or share chunks between process leaves"
     pluginId: "acceptance.ui",
     sourceRoot: "/fixture",
   });
-  expect(result.build?.rollupOptions?.external).toEqual([]);
+  const external = result.build?.rollupOptions?.external;
+  if (typeof external !== "function") throw new Error("Expected Node builtin predicate");
+  expect(external("@kobrixa/plugin-sdk", undefined, false)).toBe(false);
+  expect(external("@kobrixa/plugin-protocol", undefined, false)).toBe(false);
   expect(result.build?.rollupOptions?.output).toMatchObject({
     format: "cjs",
     inlineDynamicImports: true,

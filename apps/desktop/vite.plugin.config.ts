@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isBuiltin } from "node:module";
 import type { UserConfig } from "vite";
 import { emitResourceIndex } from "./plugin-resource-index.js";
 
@@ -46,7 +47,9 @@ export function builtinPluginConfig(input: {
       target: "node24",
       rollupOptions: {
         input: path.join(input.sourceRoot, "src/main.ts"),
-        external: [],
+        // Node builtins belong to the utility-process runtime. All package and
+        // workspace imports still bundle into the standalone shipped leaf.
+        external: (id) => isBuiltin(id),
         output: { format: "cjs", entryFileNames: "main.cjs", inlineDynamicImports: true },
       },
     },
