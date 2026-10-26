@@ -205,6 +205,7 @@ export function readSettings(storage: Pick<Storage, "getItem">, language: string
 export class SettingsStore {
   private state: SettingsSnapshot;
   private wifiAddress = "";
+  private devicePreferencesFrozen = false;
   readonly defaults: Settings;
   private listeners = new Set<() => void>();
   private transitions = new Set<(next: Settings) => void>();
@@ -228,7 +229,13 @@ export class SettingsStore {
     }
   }
   getWifiAddress = (): string => this.wifiAddress;
+  /** Called before requesting the host's legacy snapshot challenge. Other editor
+   * and appearance settings remain writable; the three original keys stay intact. */
+  freezeDevicePreferences(): void {
+    this.devicePreferencesFrozen = true;
+  }
   rememberAddress(address: string): void {
+    if (this.devicePreferencesFrozen) throw new Error("Device preferences writer is frozen.");
     if (!this.state.values.rememberWifiAddress) return;
     this.wifiAddress = address.trim();
     this.save();
@@ -245,6 +252,8 @@ export class SettingsStore {
     key: K,
     value: Settings[K] | ((previous: Settings[K]) => Settings[K]),
   ): void {
+    if (this.devicePreferencesFrozen && (key === "connectionMode" || key === "rememberWifiAddress"))
+      throw new Error("Device preferences writer is frozen.");
     const next = typeof value === "function" ? value(this.state.values[key]) : value;
     if (next === this.state.values[key]) return;
     const values = { ...this.state.values, [key]: next };
@@ -270,12 +279,19 @@ export class SettingsStore {
     let saveError = false;
     try {
       const storage = this.storage();
-      storage.setItem(
-        WIFI_ADDRESS_KEY,
-        this.state.values.rememberWifiAddress ? this.wifiAddress : "",
-      );
-      for (const key of Object.keys(SETTINGS_KEYS) as (keyof Settings)[])
+      if (!this.devicePreferencesFrozen)
+        storage.setItem(
+          WIFI_ADDRESS_KEY,
+          this.state.values.rememberWifiAddress ? this.wifiAddress : "",
+        );
+      for (const key of Object.keys(SETTINGS_KEYS) as (keyof Settings)[]) {
+        if (
+          this.devicePreferencesFrozen &&
+          (key === "connectionMode" || key === "rememberWifiAddress")
+        )
+          continue;
         storage.setItem(SETTINGS_KEYS[key], String(this.state.values[key]));
+      }
     } catch {
       saveError = true;
     }
