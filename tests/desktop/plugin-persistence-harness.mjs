@@ -1,3 +1,8 @@
+import { assertOptionalEvidence, assertOptionalPhase } from "./plugin-persistence-optional-off.ts";
+import { assertRendererLossEvidence } from "./plugin-persistence-renderer-loss.ts";
+export { assertRendererLossEvidence };
+import { assertSealedTtlEvidence } from "./plugin-persistence-sealed-ttl.ts";
+export { assertSealedTtlEvidence };
 import assert from "node:assert/strict";
 import { assertFoundationOutcome } from "./plugin-persistence-outcomes.mjs";
 import {
@@ -621,6 +626,16 @@ export function assertDisconnectEvidence(evidence) {
 }
 export function verifyRunReceipt(r, expected = {}) {
   assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "all-optional-off") {
+    assertOptionalEvidence(r.evidence, r.hostEpoch);
+    for (const phase of [r.evidence.optionalOff.seed, r.evidence.optionalOff.settings])
+      for (const key of ["commit", "bundleSha256", "artifactSha256"])
+        assert.equal(phase[key], r[key], `cross-artifact optional phase: ${key}`);
+    for (const key of ["hostEpoch", "pid", "runId", "profileId"])
+      assert.equal(r[key], r.evidence.optionalOff.cold[key]);
+  }
+  if (r.case === "renderer-loss") assertRendererLossEvidence(r.evidence, r.hostEpoch);
+  if (r.case === "sealed-ttl") assertSealedTtlEvidence(r.evidence, r.hostEpoch);
   if (r.case === "action-replay") {
     assertActionReplayEvidence(r.evidence);
     assert.equal(
@@ -1227,9 +1242,17 @@ export async function runReferenceEntry(createFixture, config, io) {
     fixture = await createFixture();
     const started = fixture.composition.workerCount;
     const evidence = await fixture.runCase(config.case);
-    await fixture.close();
-    await fixture.close();
-    closed = true;
+    const phase = config.case === "all-optional-off" ? config.optionalPhase : undefined;
+    if (phase === "seed") {
+      assertOptionalPhase(evidence.optionalPhase);
+      // Deliberate retained-profile exit. Do not claim clean lifecycle/worker shutdown.
+      closed = true;
+    } else {
+      await fixture.close();
+      await fixture.close();
+      closed = true;
+    }
+    await fixture.finishObservation?.(evidence);
     const workers = fixture.composition.workerCount,
       listeners = fixture.composition.reservationListenerCount;
     await io.write(
@@ -1237,9 +1260,14 @@ export async function runReferenceEntry(createFixture, config, io) {
       JSON.stringify({
         format: 1,
         level: "real-process",
-        status: ["retirement", "healthy-release"].includes(config.case)
-          ? "closed-reference"
-          : "closed-case",
+        status:
+          phase === "seed"
+            ? "retained-phase"
+            : phase === "settings"
+              ? "closed-phase"
+              : ["retirement", "healthy-release"].includes(config.case)
+                ? "closed-reference"
+                : "closed-case",
         runId: config.runId,
         case: config.case,
         commit: config.commit,
@@ -1250,11 +1278,11 @@ export async function runReferenceEntry(createFixture, config, io) {
         hostEpoch: fixture.composition.profile.hostEpoch,
         environment: fixture.environment,
         evidence,
-        closedAt: io.now(),
+        ...(phase === "seed" ? { retainedAt: io.now() } : { closedAt: io.now() }),
         cleanup: { workers, listeners, errors: [] },
         workerTrace: [
           { kind: "start", count: started, pid: io.pid },
-          { kind: "exit", count: workers, pid: io.pid },
+          ...(phase === "seed" ? [] : [{ kind: "exit", count: workers, pid: io.pid }]),
         ],
       }),
     );

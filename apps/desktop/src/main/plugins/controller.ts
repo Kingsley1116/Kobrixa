@@ -95,6 +95,7 @@ export type PluginManagerPort = Pick<
   | "thirdPartyActive"
   | "uiCatalogSources"
   | "persistenceCatalogSources"
+  | "persistenceCoreSources"
   | "shutdown"
   | "resume"
   | "resolveCompiler"
@@ -187,6 +188,9 @@ export class PluginController {
   }
   persistenceCatalogSources(): ReturnType<PluginManager["persistenceCatalogSources"]> {
     return this.deps.manager.persistenceCatalogSources();
+  }
+  persistenceCoreSources(): ReturnType<PluginManager["persistenceCoreSources"]> {
+    return this.deps.manager.persistenceCoreSources();
   }
   uiCatalogSources(): readonly UiCatalogSource[] {
     return this.deps.manager.uiCatalogSources();
@@ -1884,6 +1888,7 @@ export async function composeDesktopMain(
     uiDisposers.push(offAuthority, () => offSources?.());
     const refreshCatalog = () => {
       refresh = refresh.catch(input.report).then(async () => {
+        sourceProjection.reconcileCoreSources(plugins!.persistenceCoreSources());
         const sources = plugins!.persistenceCatalogSources();
         const key = JSON.stringify(sources);
         sourceProjection.reconcileSources(sources);
@@ -1961,6 +1966,8 @@ export async function composeDesktopMain(
         foundation.attachProvider(providers);
         offSources = providers.onEvent((event) => {
           if (event.type === "state" && plugins) {
+            // Fence core capabilities synchronously, before optional resource I/O.
+            sourceProjection.reconcileCoreSources(plugins.persistenceCoreSources());
             if (sourceProjection.reconcileSources(plugins.persistenceCatalogSources()))
               inventory = "";
             void refreshCatalog();
@@ -2336,7 +2343,10 @@ export function bindPersistenceRoutes170(input: {
   const originalOwner = structuredClone(input.context.owner);
   if (!sameResourceOwner(originalOwner, input.attachment.owner))
     throw new Error("Persistence attachment owner mismatch");
-  const principal = () => {
+  const principal = <M extends InboundPersistence170>(
+    method: M,
+    params: PersistenceRequestMap[M]["params"],
+  ) => {
     const api = semverSchema.safeParse(input.apiVersion());
     if (!api.success || api.data.split(".")[0] !== "1" || !gte(api.data, "1.7.0"))
       throw new RpcError(RPC_ERRORS.methodNotFound, "Persistence is not negotiated");
@@ -2344,7 +2354,7 @@ export function bindPersistenceRoutes170(input: {
     if (
       disposed ||
       input.context.peer.closed ||
-      !input.admitted() ||
+      (!input.admitted() && !permitsRetainedPersistenceRequest(input.host, p, method, params)) ||
       p.kind !== "plugin" ||
       !sameResourceOwner(p.owner, originalOwner) ||
       !sameResourceOwner(input.context.owner, originalOwner)
@@ -2365,19 +2375,19 @@ export function bindPersistenceRoutes170(input: {
   ) => void;
   function bind<M extends Exclude<InboundPersistence170, "settings/watch">>(method: M): void {
     register(method, (params, request) =>
-      input.host.request(principal(), method, params, request.signal),
+      input.host.request(principal(method, params), method, params, request.signal),
     );
   }
   for (const method of persistenceRoutes170) if (method !== "settings/watch") bind(method);
   input.context.peer.handle("settings/watch", async (params, request) => {
-    const p = principal();
+    const p = principal("settings/watch", params);
     const result = await input.host.request(p, "settings/watch", params, request.signal);
     if (result.ok) {
       const id = result.value.subscriptionId;
       request.afterReply(
         () => {
           try {
-            principal();
+            principal("settings/watch", params);
             input.attachment.negotiated("settings", 1);
             input.attachment.activate(id);
           } catch {
@@ -2431,7 +2441,9 @@ export function createPersistenceSources170(input: {
   beforeDelivery: (sourceKey: string) => void;
 }) {
   const rows = new Map<string, PersistenceSourceRow170>();
-  const namespaces = new Map<string, ResourceOwner>();
+  type CoreSource = Pick<ResourceOwner, "sourceKey" | "pluginId" | "generation">;
+  const coreSources = new Map<string, CoreSource>();
+  const namespaces = new Map<string, { owner: ResourceOwner; scope: CoreWindowScope }>();
   // Only the latest retiring window needs a fence; currentScope rejects all older windows.
   let retiredScope: string | undefined;
   let generation = 0;
@@ -2448,19 +2460,22 @@ export function createPersistenceSources170(input: {
   const retire = (sourceKey: string) => {
     if (rows.get(sourceKey)?.settings) input.onRetire?.(sourceKey);
   };
+  const revokeNamespaces = (sourceKey: string) => {
+    for (const [id, value] of namespaces)
+      if (value.owner.sourceKey === sourceKey) namespaces.delete(id);
+  };
   const port: PersistenceSourcePort = {
     current(owner) {
       return (
         (rows.get(owner.sourceKey)?.owner.pluginId === owner.pluginId &&
+          rows.get(owner.sourceKey)?.sourceGeneration === owner.generation &&
           input.currentRuntime(owner)) ||
         [...namespaces.values()].some(
-          (value) =>
+          ({ owner: value, scope }) =>
             key(value) === key(owner) &&
-            rows.has(value.sourceKey) &&
-            input.currentScope({
-              hostEpoch: value.hostEpoch,
-              workbenchInstance: value.processEpoch,
-            }),
+            coreSources.get(value.sourceKey)?.pluginId === value.pluginId &&
+            coreSources.get(value.sourceKey)?.generation === value.generation &&
+            input.currentScope(scope),
         )
       );
     },
@@ -2475,22 +2490,40 @@ export function createPersistenceSources170(input: {
       };
     },
     coreOwner({ sourceKey, scope }) {
-      const row = rows.get(sourceKey);
+      const row = coreSources.get(sourceKey);
       if (!row || retiredScope === scopeKey(scope) || !input.currentScope(scope)) return null;
       const id = JSON.stringify([sourceKey, scope.hostEpoch, scope.workbenchInstance]);
+      const existing = namespaces.get(id);
+      if (existing) return structuredClone(existing.owner);
       const owner: ResourceOwner = {
         sourceKey,
-        pluginId: row.owner.pluginId,
-        generation: row.sourceGeneration,
+        pluginId: row.pluginId,
+        generation: row.generation,
         hostEpoch: scope.hostEpoch,
-        processEpoch: scope.workbenchInstance,
+        // A window may remove/re-add an identical source tuple. Its old capability
+        // must stay revoked even when the manager's generation is reused.
+        processEpoch: randomUUID(),
       };
-      namespaces.set(id, owner);
+      namespaces.set(id, { owner, scope: structuredClone(scope) });
       return structuredClone(owner);
     },
   };
   return {
     port,
+    reconcileCoreSources(sources: readonly CoreSource[]) {
+      const next = new Map(sources.map((source) => [source.sourceKey, { ...source }]));
+      for (const [sourceKey, previous] of coreSources) {
+        const current = next.get(sourceKey);
+        if (
+          !current ||
+          current.pluginId !== previous.pluginId ||
+          current.generation !== previous.generation
+        )
+          revokeNamespaces(sourceKey);
+      }
+      coreSources.clear();
+      for (const [sourceKey, source] of next) coreSources.set(sourceKey, source);
+    },
     admit(input: {
       owner: UiOwner;
       eligible: boolean;
@@ -2499,8 +2532,7 @@ export function createPersistenceSources170(input: {
       if (!input.eligible) {
         retire(input.owner.sourceKey);
         rows.delete(input.owner.sourceKey);
-        for (const [id, owner] of namespaces)
-          if (owner.sourceKey === input.owner.sourceKey) namespaces.delete(id);
+        revokeNamespaces(input.owner.sourceKey);
         return null;
       }
       let settings: PersistenceSourceRow170["settings"] = null;
@@ -2538,8 +2570,7 @@ export function createPersistenceSources170(input: {
         sourceGeneration: input.owner.uiResourceGeneration,
         settings,
       });
-      for (const [id, owner] of namespaces)
-        if (owner.sourceKey === input.owner.sourceKey) namespaces.delete(id);
+      revokeNamespaces(input.owner.sourceKey);
       return settings
         ? {
             owner: structuredClone(owner),
@@ -2551,14 +2582,12 @@ export function createPersistenceSources170(input: {
     revoke(sourceKey: string) {
       retire(sourceKey);
       rows.delete(sourceKey);
-      for (const [id, owner] of namespaces)
-        if (owner.sourceKey === sourceKey) namespaces.delete(id);
+      revokeNamespaces(sourceKey);
     },
     retireScope(scope: CoreWindowScope) {
       retiredScope = scopeKey(scope);
-      for (const [id, owner] of namespaces)
-        if (owner.hostEpoch === scope.hostEpoch && owner.processEpoch === scope.workbenchInstance)
-          namespaces.delete(id);
+      for (const [id, value] of namespaces)
+        if (scopeKey(value.scope) === scopeKey(scope)) namespaces.delete(id);
     },
     reconcileSources(sources: readonly { owner: ResourceOwner; eligible: boolean }[]) {
       let changed = false;
@@ -2578,8 +2607,7 @@ export function createPersistenceSources170(input: {
         changed = true;
         retire(key);
         rows.delete(key);
-        for (const [id, namespace] of namespaces)
-          if (namespace.sourceKey === key) namespaces.delete(id);
+        revokeNamespaces(key);
       }
       return changed;
     },
@@ -2713,7 +2741,7 @@ export function createNativePersistenceActions170(input: {
 }
 
 import { app, dialog, clipboard } from "electron";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   RPC_ERRORS,
   RpcError,
@@ -2739,6 +2767,7 @@ import {
 } from "@kobrixa/plugin-runtime";
 import {
   createPersistenceHost,
+  permitsRetainedPersistenceRequest,
   type PersistenceHost,
   type PersistenceRequestMap,
   type PersistenceSourcePort,

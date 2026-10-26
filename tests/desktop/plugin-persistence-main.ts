@@ -1,3 +1,14 @@
+// @ts-expect-error Node's pure oracle entry imports the test-local TypeScript source.
+import * as optionalOffCase from "./plugin-persistence-optional-off.ts";
+import type { Wire as OptionalWire } from "./plugin-persistence-optional-off.js";
+const {
+  optionalStartup,
+  produceOptionalOff,
+  assertOptionalPhase,
+  assertOptionalEvidence,
+  optionalKeys,
+} = optionalOffCase;
+import type { RendererLaunch } from "./plugin-persistence-renderer-loss.js";
 import type {
   DeviceDrainGrant,
   ProfileWriterLock,
@@ -26,6 +37,8 @@ export type FoundationCase =
 import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
 
 export type CaseEvidence = {
+  optionalPhase?: OptionalWire;
+  optionalOff?: OptionalWire;
   contention?: ContentionObservation;
   checks: Record<string, string | number | boolean | readonly string[] | readonly number[]>;
   events: Array<{
@@ -76,6 +89,7 @@ export interface FoundationFixture {
   };
   runCase(id: FoundationCase): Promise<CaseEvidence>;
   close(): Promise<void>;
+  finishObservation?(evidence: CaseEvidence): Promise<void>;
 }
 
 /* Frozen measurement manifest for the T7 implementation (no measurements claimed).
@@ -120,6 +134,8 @@ const {
   assertContentionEvidence,
   assertUnknownEvidence,
   assertActionReplayEvidence,
+  assertRendererLossEvidence,
+  assertSealedTtlEvidence,
 } = evidenceHarness;
 export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvidence): void {
   const required = FOUNDATION_CHECKS[id];
@@ -177,7 +193,11 @@ export function assertFoundationEvidence(id: FoundationCase, evidence: CaseEvide
   if (id === "registration-end") assertRegistrationEndEvidence(evidence);
   if (id === "contention") assertContentionEvidence(evidence);
   if (id === "unknown-publication") assertUnknownEvidence(evidence);
+  if (id === "renderer-loss") assertRendererLossEvidence(evidence);
   if (id === "action-replay") assertActionReplayEvidence(evidence);
+  if (id === "sealed-ttl") assertSealedTtlEvidence(evidence);
+  if (id === "all-optional-off")
+    assertOptionalEvidence(evidence, evidence.optionalOff?.cold.hostEpoch);
   if (id === "healthy-release") {
     for (const key of ["retireCalls", "freezeCalls", "processExits"])
       assert.equal(evidence.checks[key], 0, key);
@@ -880,7 +900,7 @@ export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<
 
 // Test-local artifact metadata; no executable adapters, host factories or evidence inputs.
 // Controller materializes this JSON and configures userData before calling the factory.
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type * as ElectronModule from "electron";
@@ -936,8 +956,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "contention",
       "suspend-wake",
       "disconnect-retry",
+      "sealed-ttl",
       "unknown-publication",
       "action-replay",
+      "renderer-loss",
+      "all-optional-off",
     ].includes(config.case)
   )
     throw new Error(
@@ -999,9 +1022,22 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("./plugin-persistence-contention.js");
   const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
   const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
+  const { produceSealedTtl } = await import("./plugin-persistence-sealed-ttl.js");
   const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
   const { produceActionReplay, nativeActionControl } =
     await import("./plugin-persistence-action-replay.js");
+  const { produceRendererLoss } = await import("./plugin-persistence-renderer-loss.js");
+  const { createDesktopLauncher } =
+    await import("../../apps/desktop/src/main/plugins/launchers.js");
+  const optional =
+    config.case === "all-optional-off"
+      ? optionalStartup(
+          config,
+          (await import("../../apps/desktop/src/main/plugins/user-persistence-actions.js"))
+            .UserPersistenceActions.prototype,
+        )
+      : undefined;
+  let optionalPolicy: OptionalWire | undefined;
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
@@ -1074,7 +1110,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           );
         });
       const nativeActions = nativeActionControl(now);
+      const rendererLaunches: RendererLaunch[] = [];
+      let rendererProbe: (() => Promise<void>) | undefined;
       let expectedRendererLoss = false;
+      let rendererReopened = false;
       let rendererExit:
         | {
             pid: number;
@@ -1099,6 +1138,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         failures: unknown[] = [];
       const report = (error: unknown) => {
         failures.push(error);
+        optional?.event("failure", { error: String(error) });
       };
       const acceptanceFoundation = async (
         options: DesktopFoundationOptions,
@@ -1106,6 +1146,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const foundation = await createDesktopFoundation({
           ...options,
           providerFactory(catalog) {
+            optional?.event("provider");
             const created = createFakeDeviceProvider({
               catalog,
               now: options.now,
@@ -1118,9 +1159,29 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             });
             fake = created.control;
             provider = created.provider;
+            if (optional) {
+              const connect = provider.connect;
+              provider.connect = function (...args) {
+                optional.event("connect", { target: args[0] });
+                return connect.apply(this, args);
+              };
+            }
             return created.provider;
           },
         });
+        if (optional) {
+          const request = foundation.broker.request;
+          foundation.broker.request = function (this: typeof foundation.broker, ...args) {
+            if (args[1] === "devices/connect")
+              optional.event("connect", { site: "broker.request" });
+            return request.apply(this, args);
+          } as typeof request;
+          const reconnect = foundation.broker.reconnectForRecovery;
+          foundation.broker.reconnectForRecovery = function (...args) {
+            optional.event("reconnect");
+            return reconnect.apply(this, args);
+          };
+        }
         const reservations = foundation.broker.reservations,
           original = reservations.onEnded;
         reservations.onEnded = function (listener) {
@@ -1141,8 +1202,46 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       };
       try {
         await journal.load();
+        if (optional) {
+          const { filePluginStateStore } =
+            await import("../../apps/desktop/src/main/plugins/state-store.js");
+          const store = filePluginStateStore(userData);
+          await store.load();
+          if (config.optionalPhase !== "cold") {
+            const disabled =
+              config.optionalPhase === "seed"
+                ? ["builtin:acceptance.ui-settings"]
+                : ["builtin:acceptance.ui-recording", "builtin:kobrixa.device-ev3"];
+            await store.update((current) => ({ ...current, disabled }));
+          }
+          const disabled = [...store.settings().disabled].sort();
+          assert.deepEqual(
+            disabled,
+            config.optionalPhase === "seed"
+              ? [optionalKeys[1]]
+              : config.optionalPhase === "settings"
+                ? [optionalKeys[0], optionalKeys[2]]
+                : optionalKeys,
+            "Actual saved policy must precede optional discovery",
+          );
+          const policyPath = path.join(userData, "plugins/state.json");
+          const data = await readFile(policyPath, "utf8");
+          optionalPolicy = {
+            at: Date.now(),
+            disabled,
+            path: policyPath,
+            data,
+            sha256: createHash("sha256").update(data).digest("hex"),
+            beforeCompose: 0,
+          };
+        }
+
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
         for (const role of ["recording", "settings"]) {
+          if (optional) {
+            builtins.push(optional.source(config.buildRoot, role));
+            continue;
+          }
           const pluginId = `acceptance.ui-${role}`,
             sourceKey = `builtin:${pluginId}`,
             slug = `acceptance-builtin-${role}`;
@@ -1195,6 +1294,27 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(validated.sourceKey, sourceKey);
           builtins.push(source);
         }
+        if (optional) {
+          optionalPolicy!.beforeCompose = Date.now();
+          // Keep resources structured-cloneable. The fixture sources already expose
+          // observed getters; use getters for any provider resources as well, not a Proxy.
+          for (const source of builtins)
+            if (source.kind === "builtin" && source.policy === "optional") {
+              const key = `builtin:${(source.manifest as { id: string }).id}`;
+              if (key !== "builtin:kobrixa.device-ev3") continue;
+              const resources = source.resources;
+              const observed: Record<string, string> = {};
+              for (const name of Object.keys(resources))
+                Object.defineProperty(observed, name, {
+                  enumerable: true,
+                  get() {
+                    optional.event("resource", { sourceKey: key, file: name });
+                    return resources[name];
+                  },
+                });
+              source.resources = observed;
+            }
+        }
         const compositionInput: DesktopMainCompositionInput = {
           createFoundation: acceptanceFoundation,
           foundationOptions: {
@@ -1219,6 +1339,18 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             operationGate: () => ({ ok: true, value: null }),
           },
           plugins: {
+            launcher: (hooks) => {
+              const launch = createDesktopLauncher(hooks);
+              return async (plugin) => {
+                optional?.event("launch", {
+                  owner: plugin.channelOwner,
+                  sourceKey: plugin.sourceKey,
+                });
+                if (plugin.channelOwner)
+                  rendererLaunches.push({ owner: structuredClone(plugin.channelOwner), at: now() });
+                return launch(plugin);
+              };
+            },
             userData,
             builtins,
             commandLine: { developmentDirectories: [], safeMode: false },
@@ -1238,7 +1370,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           report,
         };
         composition = await composeDesktopMain(compositionInput, {
-          ...(config.case === "action-replay" ? { nativeActions } : {}),
+          ...(["action-replay", "renderer-loss", "all-optional-off"].includes(config.case)
+            ? { nativeActions }
+            : {}),
           worker: {
             entry: config.workerEntry,
             control(control: PersistenceFaultControl) {
@@ -1251,10 +1385,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const live = composition,
           handles = desktopFoundationTestHandles(live),
           ui = desktopUi(live);
-        assert.ok(fake, "Missing actual provider callback");
-        assert.ok(provider, "Missing actual provider instance");
-        const admittedProvider = provider,
-          providerControl = fake;
+        if (!optional || config.optionalPhase === "seed") {
+          assert.ok(fake, "Missing actual provider callback");
+          assert.ok(provider, "Missing actual provider instance");
+        }
+        const admittedProvider = provider!,
+          providerControl = fake!;
         assert.ok(fault, "Missing actual worker control");
         assert.equal(handles.recovery, "ready");
         assert.equal(live.stage3.persistence, handles.host.participant);
@@ -1318,7 +1454,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               reason: details.reason,
               exitCode: details.exitCode,
             };
-            rendererRetirement = retireActionRenderer(false);
+            const retirement = retireActionRenderer(false);
+            rendererRetirement = Promise.all([retirement, rendererProbe?.()]).then(() => {});
             void rendererRetirement.catch(report);
             return;
           }
@@ -1525,7 +1662,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           }
           return winnerControls.form.prepare();
         };
-        for (const role of ["recording", "settings"]) {
+        const activateRole = async (role: string) => {
           const sourceKey = `builtin:acceptance.ui-${role}`;
           const activated = await live.plugins.execute(`acceptance.ui-${role}.legacy`);
           assert.equal(
@@ -1541,7 +1678,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             new AbortController().signal,
           );
           await handles.runtime.ready(context.owner, new AbortController().signal);
-        }
+        };
+        for (const role of optional ? [] : ["recording", "settings"]) await activateRole(role);
         const select = (role: string): LiveConsumer => {
           const sourceKey = `builtin:acceptance.ui-${role}`;
           const rows = handles
@@ -1560,6 +1698,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(principal.owner.hostEpoch, profile.hostEpoch);
           return { principal: row.context.principal, child: row.process };
         };
+        const referenceConsumers = optional
+          ? undefined
+          : { recording: select("recording"), settings: select("settings") };
         const input: LifecycleCaseInput = {
           now,
           broker: live.foundation.broker,
@@ -1568,16 +1709,75 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           plugins: live.plugins,
           fault,
           backend: handles.backend,
-          recording: select("recording"),
-          settings: select("settings"),
+          get recording() {
+            assert.ok(referenceConsumers, "This startup policy has no reference consumers");
+            return referenceConsumers.recording;
+          },
+          get settings() {
+            assert.ok(referenceConsumers, "This startup policy has no reference consumers");
+            return referenceConsumers.settings;
+          },
         };
-        const consumerExits = [input.recording, input.settings].map((consumer) => {
-          const observed = latch<ProcessExit>();
-          off.push(consumer.child.onExit((exit) => observed.resolve(exit)));
-          return observed.promise;
-        });
+        const consumerExits = (optional ? [] : [input.recording, input.settings]).map(
+          (consumer) => {
+            const observed = latch<ProcessExit>();
+            off.push(consumer.child.onExit((exit) => observed.resolve(exit)));
+            return observed.promise;
+          },
+        );
         const unavailable = (id: FoundationCase) => async (): Promise<CaseEvidence> => {
           throw new Error(`BLOCKED: ${id} observation-table producer is not implemented`);
+        };
+        const crashRenderer = async (probe?: () => Promise<void>) => {
+          rendererProbe = probe;
+          assert.equal(expectedRendererLoss, false);
+          expectedRendererLoss = true;
+          rendererExit = {
+            pid: win.webContents.getOSProcessId(),
+            at: 0,
+            reason: "pending",
+            exitCode: 0,
+            osExit: { at: 0, code: "pending" },
+          };
+          assert.ok(rendererExit.pid > 0);
+          const gone = new Promise<void>((resolve) =>
+            win.webContents.once("render-process-gone", () => resolve()),
+          );
+          win.webContents.forcefullyCrashRenderer();
+          await within(gone, "Actual renderer exit");
+          assert.ok(rendererRetirement);
+          await rendererRetirement;
+          await within(
+            (async () => {
+              for (;;) {
+                try {
+                  process.kill(rendererExit!.pid, 0);
+                } catch (error) {
+                  assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+                  rendererExit!.osExit = {
+                    at: now(),
+                    code: (error as NodeJS.ErrnoException).code!,
+                  };
+                  return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 10));
+              }
+            })(),
+            "Renderer OS exit",
+          );
+          return rendererExit;
+        };
+        const finishRecovery = async () => {
+          const detail = live.plugins.persistence170!.detail;
+          for (const entry of detail.entries()) {
+            const snapshot = accepted(await detail.bridge.snapshot({ itemId: entry.item.id }));
+            const discard = snapshot.items
+              .flatMap((item) => item.actions)
+              .find((action) => action.kind === "discard");
+            assert.ok(discard, "Seed recovery must offer explicit discard");
+            accepted(await detail.bridge.act({ itemId: entry.item.id, optionId: discard.id }));
+          }
+          assert.equal(input.host.recovery.snapshot().items.length, 0);
         };
         const producers: Record<FoundationCase, () => Promise<CaseEvidence>> = {
           retirement: () => produceRetirement(input),
@@ -1659,8 +1859,96 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 assert.equal(result.ok, true, JSON.stringify(result));
               },
             }),
-          "renderer-loss": unavailable("renderer-loss"),
-          "sealed-ttl": unavailable("sealed-ttl"),
+          "renderer-loss": () =>
+            produceRendererLoss({
+              ...input,
+              scope,
+              ui: ui.bridge,
+              actions: ui.actions,
+              seed: async () => {
+                assert.equal(
+                  (await live.plugins.execute("acceptance.ui-recording.renderer-seed")).ok,
+                  true,
+                );
+              },
+              launches: () => rendererLaunches,
+              owners: () => [...handles.runtime.owners()],
+              crash: crashRenderer,
+              restart: async () => {
+                // Explicit reopen restores trusted core scope before resolving fixture recovery.
+                await win.loadURL(config.rendererUrl);
+                rendererReopened = true;
+                if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach("1.3");
+                await finishRecovery();
+                const command = "acceptance.ui-recording.legacy";
+                const result = await live.plugins.execute(command);
+                assert.equal(result.ok, true, JSON.stringify(result));
+                const context = await handles.runtime.activateInitialized(
+                  "builtin:acceptance.ui-recording",
+                  new AbortController().signal,
+                );
+                await handles.runtime.ready(context.owner, new AbortController().signal);
+                const next = select("recording");
+                const exited = latch<ProcessExit>();
+                off.push(next.child.onExit((event) => exited.resolve(event)));
+                consumerExits.push(exited.promise);
+                const principal = next.principal();
+                assert.equal(principal.kind, "plugin");
+                if (principal.kind !== "plugin") throw new Error("Missing replacement principal");
+                return { owner: principal.owner, principal, command, result };
+              },
+            }),
+          "sealed-ttl": () =>
+            produceSealedTtl({
+              ...input,
+              channel: handles
+                .channels()
+                .find((row) => row.context.owner.sourceKey === "builtin:acceptance.ui-recording")!
+                .context,
+              command: async (step, signal) => {
+                signal.throwIfAborted();
+                const result = await live.plugins.execute(`acceptance.ui-recording.ttl-${step}`);
+                assert.equal(result.ok, true, JSON.stringify(result));
+                signal.throwIfAborted();
+              },
+              discard: async (id) => {
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const option = snapshot.value.items
+                    .find((row) => row.id === id)
+                    ?.actions.find((row) => row.kind === "discard");
+                  if (!option) continue;
+                  const result = await detail.bridge.act({
+                    itemId: entry.item.id,
+                    optionId: option.id,
+                  });
+                  assert.equal(result.ok, true, JSON.stringify(result));
+                  return;
+                }
+                throw new Error("Original recovery bridge has no exact Discard option");
+              },
+              retry: async (id) => {
+                // Original composition's trusted recovery bridge owns option lookup,
+                // fresh ledger mint/claim and actual participant retry dispatch.
+                const detail = live.plugins.persistence170!.detail;
+                for (const entry of detail.entries()) {
+                  const snapshot = await detail.bridge.snapshot({ itemId: entry.item.id });
+                  if (!snapshot.ok) continue;
+                  const item = snapshot.value.items.find((row) => row.id === id);
+                  const option = item?.actions.find((row) => row.kind === "retry");
+                  if (!option) continue;
+                  const result = await detail.bridge.act({
+                    itemId: entry.item.id,
+                    optionId: option.id,
+                  });
+                  assert.ok(result.ok, JSON.stringify(result));
+                  return;
+                }
+                throw new Error("Original recovery bridge has no Retry option for failed final");
+              },
+            }),
           "unknown-publication": () =>
             produceUnknownPublication({
               ...input,
@@ -1698,7 +1986,23 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 return principal.owner;
               },
             }),
-          "all-optional-off": unavailable("all-optional-off"),
+          "all-optional-off": () => {
+            assert.ok(optional && optionalPolicy);
+            return produceOptionalOff({
+              config,
+              plugins: live.plugins,
+              input,
+              activateRecording: () => activateRole("recording"),
+              monitor: optional,
+              policy: optionalPolicy,
+              scope,
+              browser,
+              native: nativeActions,
+              channels: handles.channels,
+              coreActions,
+              runtime: handles.runtime,
+            });
+          },
           "action-replay": () =>
             produceActionReplay({
               ...input,
@@ -1778,60 +2082,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 }
                 throw new Error("Actual recovery bridge offered no export");
               },
-              finishCore: async () => {
-                const detail = live.plugins.persistence170!.detail;
-                for (const entry of detail.entries()) {
-                  const snapshot = accepted(
-                    await detail.bridge.snapshot({ itemId: entry.item.id }),
-                  );
-                  const discard = snapshot.items
-                    .flatMap((item) => item.actions)
-                    .find((action) => action.kind === "discard");
-                  assert.ok(discard, "Seed recovery must offer explicit discard");
-                  accepted(
-                    await detail.bridge.act({ itemId: entry.item.id, optionId: discard.id }),
-                  );
-                }
-                assert.equal(input.host.recovery.snapshot().items.length, 0);
-              },
-              destroyRenderer: async () => {
-                assert.equal(expectedRendererLoss, false);
-                expectedRendererLoss = true;
-                rendererExit = {
-                  pid: win.webContents.getOSProcessId(),
-                  at: 0,
-                  reason: "pending",
-                  exitCode: 0,
-                  osExit: { at: 0, code: "pending" },
-                };
-                assert.ok(rendererExit.pid > 0);
-                const gone = new Promise<void>((resolve) =>
-                  win.webContents.once("render-process-gone", () => resolve()),
-                );
-                win.webContents.forcefullyCrashRenderer();
-                await within(gone, "Actual renderer exit");
-                assert.ok(rendererRetirement);
-                await rendererRetirement;
-                await within(
-                  (async () => {
-                    for (;;) {
-                      try {
-                        process.kill(rendererExit!.pid, 0);
-                      } catch (error) {
-                        assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
-                        rendererExit!.osExit = {
-                          at: now(),
-                          code: (error as NodeJS.ErrnoException).code!,
-                        };
-                        return;
-                      }
-                      await new Promise((resolve) => setTimeout(resolve, 10));
-                    }
-                  })(),
-                  "Renderer OS exit",
-                );
-                return rendererExit;
-              },
+              finishCore: finishRecovery,
+              destroyRenderer: () => crashRenderer(),
             }),
           "import-restart": unavailable("import-restart"),
           "storage-ui-pressure": unavailable("storage-ui-pressure"),
@@ -1846,7 +2098,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           (closing ??= (async () => {
             await live.dispose();
             await within(Promise.all(consumerExits), "original consumer exits during close");
-            if (!rendererExit) {
+            if (!rendererExit || rendererReopened) {
               await browser("window.declarativeAcceptance.disposeFoundationRenderer()");
               const finalBrowser = await browser(
                 "window.declarativeAcceptance.foundationDiagnostics()",
@@ -1882,6 +2134,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             for (const unsubscribe of off.splice(0)) unsubscribe();
             for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
             restoreReservation();
+            optional?.restore();
             if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
             destroying = true;
             win.destroy();
@@ -1922,8 +2175,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               "contention",
               "suspend-wake",
               "disconnect-retry",
+              "sealed-ttl",
               "unknown-publication",
               "action-replay",
+              "renderer-loss",
+              "all-optional-off",
             ].includes(config.case)
               ? "not-measured-scoped-case"
               : "not-measured-reference-only",
@@ -1935,9 +2191,32 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             assert.equal(closing, undefined);
             ran = true;
             assertRealComposition(fixture!);
-            const evidence = await producers[id]();
-            assertFoundationEvidence(id, evidence);
+            let evidence: CaseEvidence;
+            try {
+              evidence = await producers[id]();
+            } catch (error) {
+              if (
+                (id === "sealed-ttl" || id === "all-optional-off") &&
+                error instanceof Error &&
+                error.cause
+              )
+                await writeFile(
+                  path.join(userData, `${id}-failure-observation.json`),
+                  JSON.stringify(error.cause, null, 2),
+                );
+              throw error;
+            }
+            if (id === "all-optional-off" && config.optionalPhase !== "cold")
+              assertOptionalPhase(evidence.optionalPhase!);
+            else assertFoundationEvidence(id, evidence);
             return evidence;
+          },
+          async finishObservation(evidence) {
+            if (!optional) return;
+            const p = evidence.optionalPhase ?? evidence.optionalOff!.cold;
+            p.observation = await optional.finish(config);
+            p.ended = Date.now();
+            assertOptionalPhase(p);
           },
           close,
         };

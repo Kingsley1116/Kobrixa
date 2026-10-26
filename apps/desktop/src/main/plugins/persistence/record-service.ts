@@ -60,7 +60,16 @@ type List = {
   bytes: number;
   closed: boolean;
 };
-export function createRecordService(deps: RecordDependencies): RecordServiceHostPort {
+export function createRecordService(
+  deps: RecordDependencies & {
+    /** Host-only admission for an existing frozen final grant, never normal writes. */
+    retainedFinalRequest?(
+      principal: Principal,
+      method: keyof StorageRequestMap,
+      params: StorageRequestMap[keyof StorageRequestMap]["params"],
+    ): boolean;
+  },
+): RecordServiceHostPort {
   const writes = new Map<string, Write>();
   const closingPins = new Set<Promise<void>>();
   function releaseRetained(write: Write) {
@@ -696,7 +705,8 @@ export function createRecordService(deps: RecordDependencies): RecordServiceHost
       const permission = read ? "storage.read" : "storage.write";
       if (
         !deps.permission(principal, permission) &&
-        !(method === "storage/quota" && deps.permission(principal, "storage.read"))
+        !(method === "storage/quota" && deps.permission(principal, "storage.read")) &&
+        !deps.retainedFinalRequest?.(principal, method, params)
       )
         return {
           ok: false,

@@ -3659,7 +3659,92 @@ it("late registry return releases its opaque destination without returning a nat
   ).toBeNull();
   expect(release).toHaveBeenCalledExactlyOnceWith(destination);
 });
-it("data-only source namespace never activates runtime and revoked catalog data cannot be read", async () => {
+it("disabled core authority uses metadata without settings, runtime or schema delivery", async () => {
+  const scope = { hostEpoch: h170, workbenchInstance: h170 };
+  const currentRuntime = vi.fn(() => true),
+    beforeDelivery = vi.fn();
+  const sources = createPersistenceSources170({
+    currentScope: (s) =>
+      s.hostEpoch === scope.hostEpoch && s.workbenchInstance === scope.workbenchInstance,
+    currentRuntime,
+    beforeDelivery,
+  });
+  const identity = { sourceKey: "builtin:test.settings", pluginId: "test.settings", generation: 7 };
+  sources.reconcileCoreSources([identity]);
+  sources.reconcileSources([]);
+  const owner = sources.port.coreOwner({ sourceKey: identity.sourceKey, scope })!;
+  expect(owner).toMatchObject({ ...identity, hostEpoch: scope.hostEpoch });
+  expect(sources.port.current(owner)).toBe(true);
+  expect(
+    await sources.port.settings({ sourceKey: identity.sourceKey, resourceDigest: "a".repeat(64) }),
+  ).toBeNull();
+  expect(sources.currentSource(identity.sourceKey)).toBe(false);
+  expect(beforeDelivery).not.toHaveBeenCalled();
+  expect(currentRuntime).not.toHaveBeenCalled();
+  for (const forged of [
+    { ...owner, pluginId: "test.foreign" },
+    { ...owner, sourceKey: "builtin:test.foreign" },
+    { ...owner, generation: 6 },
+    { ...owner, hostEpoch: "old-host" },
+    { ...owner, processEpoch: "ordinary-runtime" },
+  ])
+    expect(sources.port.current(forged)).toBe(false);
+  expect(sources.port.coreOwner({ sourceKey: "builtin:unknown", scope })).toBeNull();
+  expect(
+    sources.port.coreOwner({
+      sourceKey: identity.sourceKey,
+      scope: { ...scope, workbenchInstance: "old-window" },
+    }),
+  ).toBeNull();
+  expect(
+    sources.port.coreOwner({
+      sourceKey: identity.sourceKey,
+      scope: { ...scope, hostEpoch: "old-host" },
+    }),
+  ).toBeNull();
+  sources.retireScope(scope);
+  expect(sources.port.current(owner)).toBe(false);
+  expect(sources.port.coreOwner({ sourceKey: identity.sourceKey, scope })).toBeNull();
+});
+
+it("disabled core authority invalidates replacement/removal and never revives an old capability", () => {
+  let scope = { hostEpoch: h170, workbenchInstance: h170 };
+  const sources = createPersistenceSources170({
+    currentScope: (s) =>
+      s.hostEpoch === scope.hostEpoch && s.workbenchInstance === scope.workbenchInstance,
+    currentRuntime: () => false,
+    beforeDelivery: () => {
+      throw new Error("No delivery");
+    },
+  });
+  const identity = { sourceKey: "builtin:test.settings", pluginId: "test.settings", generation: 7 };
+  const mint = () => sources.port.coreOwner({ sourceKey: identity.sourceKey, scope })!;
+  sources.reconcileCoreSources([identity]);
+  const first = mint();
+  sources.reconcileCoreSources([identity]);
+  expect(mint()).toEqual(first);
+  sources.reconcileCoreSources([{ ...identity, generation: 8 }]);
+  const next = mint();
+  expect(sources.port.current(first)).toBe(false);
+  expect(next.generation).toBe(8);
+  sources.reconcileCoreSources([{ ...identity, generation: 8, pluginId: "test.replaced" }]);
+  const replacement = mint();
+  expect(sources.port.current(next)).toBe(false);
+  expect(replacement.pluginId).toBe("test.replaced");
+  sources.reconcileCoreSources([]);
+  expect(sources.port.current(replacement)).toBe(false);
+  expect(mint()).toBeNull();
+  sources.reconcileCoreSources([identity]);
+  const readded = mint();
+  expect(sources.port.current(first)).toBe(false);
+  expect(readded).not.toEqual(first);
+  expect(sources.port.current(readded)).toBe(true);
+  scope = { ...scope, workbenchInstance: "new-window" };
+  expect(sources.port.current(readded)).toBe(false);
+  expect(sources.port.current(mint())).toBe(true);
+});
+
+it("data-only settings withdrawal revokes old capabilities without removing core identity", async () => {
   const currentRuntime = vi.fn(() => false),
     beforeDelivery = vi.fn();
   const sources = createPersistenceSources170({
@@ -3672,6 +3757,9 @@ it("data-only source namespace never activates runtime and revoked catalog data 
     title: { en: "Settings" },
     fields: [{ key: "enabled", label: { en: "Enabled" }, type: "boolean", default: false }],
   });
+  sources.reconcileCoreSources([
+    { sourceKey: "builtin:test.settings", pluginId: "test.settings", generation: 1 },
+  ]);
   sources.admit({
     owner: {
       sourceKey: "builtin:test.settings",
@@ -3688,12 +3776,13 @@ it("data-only source namespace never activates runtime and revoked catalog data 
   expect(owner).not.toBeNull();
   expect(currentRuntime).not.toHaveBeenCalled();
   sources.revoke("builtin:test.settings");
+  expect(sources.port.current(owner!)).toBe(false);
   expect(
     sources.port.coreOwner({
       sourceKey: "builtin:test.settings",
       scope: { hostEpoch: h170, workbenchInstance: h170 },
     }),
-  ).toBeNull();
+  ).not.toBeNull();
   expect(
     await sources.port.settings({
       sourceKey: "builtin:test.settings",
@@ -4230,6 +4319,9 @@ it("source retirement forbids core namespace rebinding and a marker failure with
     uiResourceGeneration: 7,
   };
   const scope = { hostEpoch: h170, workbenchInstance: h170 };
+  sources.reconcileCoreSources([
+    { sourceKey: owner.sourceKey, pluginId: owner.pluginId, generation: 7 },
+  ]);
   sources.admit({
     owner,
     eligible: true,
@@ -4403,6 +4495,87 @@ it("composeDesktopMain cleans a coordinator construction failure after the actua
     await f.cleanup();
   }
 });
+it.each(["safe-mode", "saved-disable"])(
+  "disabled core composition admits recovery authority without resources: %s",
+  async (mode) => {
+    const f = await compositionInput();
+    const source = staticSource170();
+    const reads = vi.fn(() => {
+      throw new Error("Disabled schema read");
+    });
+    source.resources = Object.defineProperty({}, "settings.json", { enumerable: true, get: reads });
+    f.input.plugins.builtins = [source];
+    f.input.plugins.commandLine.safeMode = mode === "safe-mode";
+    if (mode === "saved-disable") {
+      const { filePluginStateStore } = await import("./state-store.js");
+      const state = filePluginStateStore(f.input.plugins.userData);
+      await state.load();
+      await state.save({
+        disabled: new Set(["builtin:test.settings"]),
+        legacyDisabledIds: new Set(),
+      });
+    }
+    const hostFactory = vi.spyOn(persistenceFactory, "createPersistenceHost");
+    const launch = vi.fn(async () => {
+      throw new Error("Disabled launch");
+    });
+    f.input.plugins.launcher = () => launch;
+    const composition = await composeDesktopMain(f.input);
+    try {
+      const sources = hostFactory.mock.calls[0]![0].composition.sources;
+      const owner = sources.coreOwner({
+        sourceKey: "builtin:test.settings",
+        scope: f.input.scope(),
+      });
+      expect(owner).not.toBeNull();
+      expect(sources.current(owner!)).toBe(true);
+      expect(composition.plugins.persistenceCatalogSources()).toEqual([]);
+      expect(composition.plugins.uiCatalogSources()).toEqual([]);
+      await expect(
+        composition.plugins.persistence170!.settings.open({
+          sourceKey: "builtin:test.settings",
+          scope: f.input.scope(),
+          resourceDigest: "a".repeat(64),
+        }),
+      ).rejects.toThrow("Stale settings binding");
+      expect(reads).not.toHaveBeenCalled();
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      await composition.dispose();
+      await f.cleanup();
+    }
+  },
+);
+
+it("disabled core composition revokes enabled settings/runtime while preserving trusted namespace access", async () => {
+  const f = await compositionInput();
+  f.input.plugins.builtins = [staticSource170()];
+  const hostFactory = vi.spyOn(persistenceFactory, "createPersistenceHost");
+  const composition = await composeDesktopMain(f.input);
+  try {
+    const sources = hostFactory.mock.calls[0]![0].composition.sources;
+    const sourceKey = "builtin:test.settings",
+      scope = f.input.scope();
+    const previous = sources.coreOwner({ sourceKey, scope })!;
+    const service = composition.plugins.persistence170!.settings;
+    const resourceDigest = createHash("sha256").update(settingsRaw170).digest("hex");
+    const form = await service.open({ sourceKey, scope, resourceDigest });
+    expect((await service.read(form.binding)).ok).toBe(true);
+    await composition.plugins.setEnabled(sourceKey, false);
+    expect(sources.current(previous)).toBe(false);
+    const current = sources.coreOwner({ sourceKey, scope })!;
+    expect(current).not.toBeNull();
+    expect(current.processEpoch).not.toBe(previous.processEpoch);
+    expect(sources.current(current)).toBe(true);
+    expect(sources.current({ ...current, processEpoch: randomUUID() })).toBe(false);
+    await expect(service.read(form.binding)).rejects.toThrow("Stale settings binding");
+    expect(composition.plugins.persistenceCatalogSources()).toEqual([]);
+  } finally {
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
 it("safe mode suppresses the actual optional static settings inventory before reading invalid resources", async () => {
   const f = await compositionInput();
   f.input.plugins.builtins = [staticSource170("test.settings", "{not JSON")];
@@ -4416,7 +4589,7 @@ it("safe mode suppresses the actual optional static settings inventory before re
         scope: f.input.scope(),
         resourceDigest: "a".repeat(64),
       }),
-    ).rejects.toThrow("not admitted");
+    ).rejects.toThrow("Stale settings binding");
   } finally {
     await composition.dispose();
     await f.cleanup();
@@ -4603,7 +4776,7 @@ it.each(["malformed", "missing", "oversize", "invalid"])(
       ).toBeDefined();
       await expect(
         settings.open({ sourceKey: "builtin:test.bad", resourceDigest, scope: f.input.scope() }),
-      ).rejects.toThrow(/^(Settings source is not admitted|Stale settings binding)\.$/);
+      ).rejects.toThrow("Stale settings binding");
       await composition.plugins.setEnabled("builtin:test.bad", false);
       await composition.plugins.setEnabled("builtin:test.bad", true);
       await vi.waitFor(() => expect(f.input.report).toHaveBeenCalledTimes(2));
@@ -4644,6 +4817,13 @@ it.each(["disable", "removal", "reload"])(
       ]);
     else if (kind === "removal") sources.reconcileSources([]);
     else owner.uiResourceGeneration++;
+    sources.reconcileCoreSources([
+      {
+        sourceKey: owner.sourceKey,
+        pluginId: owner.pluginId,
+        generation: owner.uiResourceGeneration,
+      },
+    ]);
     const fresh = sources.admit({ owner, eligible: true, document })!;
     expect(fresh.owner.uiResourceGeneration).toBeGreaterThan(first.owner.uiResourceGeneration);
     expect(
@@ -4711,7 +4891,7 @@ it("disabling an optional source during an asynchronous resource read prevents l
     );
     await expect(
       settings.open({ sourceKey, resourceDigest, scope: f.input.scope() }),
-    ).rejects.toThrow("not admitted");
+    ).rejects.toThrow("Stale settings binding");
   } finally {
     release();
     await composition.dispose();

@@ -57,6 +57,22 @@ export interface PersistenceHost {
   ): Promise<PersistenceRequestMap[M]["result"]>;
   dispose(): Promise<void>;
 }
+// Kept outside the public port: a caller cannot forge a continuation by adding
+// a field to a host double or a wire request. The real host revalidates it again.
+type RetainedRequestCheck = (
+  principal: Principal,
+  method: keyof PersistenceRequestMap,
+  params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+) => boolean;
+const retainedRouteChecks = new WeakMap<PersistenceHost, RetainedRequestCheck>();
+export function permitsRetainedPersistenceRequest(
+  host: PersistenceHost,
+  principal: Principal,
+  method: keyof PersistenceRequestMap,
+  params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+): boolean {
+  return retainedRouteChecks.get(host)?.(principal, method, params) ?? false;
+}
 export interface PersistenceSourcePort {
   current(owner: ResourceOwner): boolean;
   settings(input: { sourceKey: string; resourceDigest: Sha256 }): Promise<{
@@ -523,6 +539,64 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         .some((w) => w.record.id === id && ["receiving", "sealed", "publishing"].includes(w.state)),
     recovery,
   });
+  function retainedFinalRequest(
+    principal: Principal,
+    method: keyof PersistenceRequestMap,
+    params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+  ): boolean {
+    // A live owner's independent permission loss must still fail. Only retired
+    // owners may use the original final grant instead of ordinary permissions.
+    return (
+      principal.kind === "plugin" &&
+      !sources.current(principal.owner) &&
+      frozenFinalRequest(principal, method, params)
+    );
+  }
+  function frozenFinalRequest(
+    principal: Principal,
+    method: keyof PersistenceRequestMap,
+    params: PersistenceRequestMap[keyof PersistenceRequestMap]["params"],
+  ): boolean {
+    // Shutdown withdraws channel admission before retiring its owner. This
+    // proves only the frozen obligation; domain permission checks remain intact.
+    if (principal.kind !== "plugin" || !frozen.has(ownerKey(principal.owner))) return false;
+    if (
+      ![
+        "storage/beginWrite",
+        "storage/writeChunk",
+        "storage/sealWrite",
+        "storage/commitWrite",
+        "storage/writeStatus",
+        "storage/abortWrite",
+      ].includes(method)
+    )
+      return false;
+    try {
+      const parsed =
+        storageRequestSchemas[method as keyof StorageRequestMap].params.safeParse(params);
+      if (!parsed.success) return false;
+      let write: RecordWrite;
+      if (method === "storage/beginWrite") {
+        write = parsed.data as RecordWrite;
+      } else {
+        if (!("write" in parsed.data)) return false;
+        const handle = parsed.data.write;
+        const admitted = records
+          .admittedWrites(principal.owner)
+          .find((w) => w.ticket.id === handle);
+        if (!admitted) return false;
+        if (
+          method === "storage/commitWrite" &&
+          (!("drainToken" in parsed.data) || parsed.data.drainToken !== admitted.input.drainToken)
+        )
+          return false;
+        write = admitted.input;
+      }
+      return !!write.drainToken && !!lifecycle.finalGrant(principal.owner, write);
+    } catch {
+      return false;
+    }
+  }
   // T2 returns the cumulative received offset; T4 consumes a short-write byte count.
   const records = createRecordService({
     engine: {
@@ -537,6 +611,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     wall,
     checkpoint: lifecycle,
     retainForRecovery: true,
+    retainedFinalRequest,
   });
   const actions = createPersistenceActions({
     output: backend.output,
@@ -588,6 +663,8 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     actions,
     recovery: { ...recovery, ...recoveryPort },
     participant,
+    retainedFinalRequest,
+    frozenFinalRequest,
     live: (principal: Principal) =>
       principal.kind === "plugin" &&
       sources.current(principal.owner) &&
@@ -748,7 +825,7 @@ export async function createPersistenceHost(input: {
       signal,
     ) as Promise<PersistenceRequestMap[M]["result"]>;
   }
-  return {
+  const host: PersistenceHost = {
     participant: services.participant,
     settings: services.boundSettings,
     recovery: services.recovery,
@@ -770,7 +847,8 @@ export async function createPersistenceHost(input: {
         !input.hasPermission(principal, required(method) as Permission) &&
         !(
           method === "storage/quota" && input.hasPermission(principal, "storage.read" as Permission)
-        )
+        ) &&
+        !services.retainedFinalRequest(principal, method, params)
       )
         return {
           ok: false,
@@ -881,4 +959,10 @@ export async function createPersistenceHost(input: {
       return disposal;
     },
   };
+  retainedRouteChecks.set(
+    host,
+    (principal, method, params) =>
+      !closed && services.frozenFinalRequest(principal, method, params),
+  );
+  return host;
 }

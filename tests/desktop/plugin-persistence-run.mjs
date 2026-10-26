@@ -1,3 +1,4 @@
+import { assertOptionalPhaseReceipt } from "./plugin-persistence-optional-off.ts";
 import assert from "node:assert/strict";
 import {
   access,
@@ -8,6 +9,7 @@ import {
   cp,
   readdir,
   realpath,
+  lstat,
 } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
@@ -188,11 +190,37 @@ export async function materializeFoundationFixtures(
         id: `${id}.unknown-${step}`,
         title: { en: `Unknown publication ${step}`, "zh-TW": `未知發布 ${step}` },
       });
+    if (role === "recording")
+      manifest.contributes.commands.push({
+        id: `${id}.optional-off-seed`,
+        title: { en: "Optional-off seed" },
+      });
+    if (role === "recording")
+      manifest.contributes.commands.push({
+        id: `${id}.renderer-seed`,
+        title: { en: "Renderer loss seed" },
+      });
     for (const step of ["chunk", "commit"])
       manifest.contributes.commands.push({
         id: `${id}.action-${step}`,
         title: { en: `Action ${step}` },
       });
+    if (role === "recording")
+      for (const step of [
+        "seed-sealed",
+        "drain-sealed",
+        "status",
+        "expired",
+        "read-sealed",
+        "seed-incomplete",
+        "drain-incomplete",
+        "read-incomplete",
+        "cleanup",
+      ])
+        manifest.contributes.commands.push({
+          id: `${id}.ttl-${step}`,
+          title: { en: `TTL ${step}` },
+        });
     if (actionReplay && role === "recording")
       manifest.contributes.commands.push({
         id: `${id}.action-checkpoint-only`,
@@ -222,6 +250,14 @@ export async function materializeFoundationFixtures(
     await cp(path.join(fixture, "settings.json"), path.join(sourceRoot, "settings.json"));
     await mkdir(path.join(sourceRoot, "src"), { recursive: true });
     await cp(path.join(fixture, "consumer.ts"), path.join(sourceRoot, "src/main.ts"));
+    await cp(
+      path.join(fixture, "sealed-ttl-consumer.ts"),
+      path.join(sourceRoot, "src/sealed-ttl-consumer.ts"),
+    );
+    await cp(
+      path.join(fixture, "optional-off-consumer.ts"),
+      path.join(sourceRoot, "src/optional-off-consumer.ts"),
+    );
     const config = builtinPluginConfig({ slug, pluginId: id, sourceRoot });
     await viteBuild({
       ...config,
@@ -452,13 +488,22 @@ export async function superviseCase(
       assert.equal(candidate.pid, child.pid);
       assert.equal(
         candidate.status,
-        ["retirement", "healthy-release"].includes(config.case)
-          ? "closed-reference"
-          : "closed-case",
+        config.case === "all-optional-off" && config.optionalPhase === "seed"
+          ? "retained-phase"
+          : config.case === "all-optional-off" && config.optionalPhase === "settings"
+            ? "closed-phase"
+            : ["retirement", "healthy-release"].includes(config.case)
+              ? "closed-reference"
+              : "closed-case",
       );
       receipt = {
         ...candidate,
-        status: "passed",
+        status:
+          config.case === "all-optional-off" && config.optionalPhase === "seed"
+            ? "retained-exit"
+            : config.case === "all-optional-off" && config.optionalPhase === "settings"
+              ? "passed-phase"
+              : "passed",
         exitCode: parentExit.code,
         signal: parentExit.signal,
         exitedAt: parentExit.at,
@@ -466,7 +511,11 @@ export async function superviseCase(
         cleanup: { ...candidate.cleanup, children: remaining.length },
         observedDescendants: tracker.observed().filter((row) => row.pid !== child.pid),
       };
-      verifyRunReceipt(
+      const verify =
+        config.case === "all-optional-off" && ["seed", "settings"].includes(config.optionalPhase)
+          ? assertOptionalPhaseReceipt
+          : verifyRunReceipt;
+      verify(
         receipt,
         Object.fromEntries(
           ["runId", "case", "bundleSha256", "artifactSha256", "commit"]
@@ -523,85 +572,93 @@ export async function readEntryFailure(reportFile, read) {
   if (finalError) throw finalError;
 }
 async function launchCase(electron, entry, configFile, reportFile, config) {
-  return superviseCase(config, {
-    now: Date.now,
-    async start() {
-      if (process.platform === "win32")
-        throw new Error("BLOCKED: Windows owned-process observer required");
-      const env = { ...process.env };
-      delete env.ELECTRON_RUN_AS_NODE;
-      const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
-        stdio: "inherit",
-        env,
-        detached: true,
-      });
-      let exit;
-      child.once("exit", (code, signal) => {
-        exit = { code, signal, at: Date.now() };
-      });
-      return new Promise((resolve, reject) => {
-        child.once("error", (error) => {
-          exit = { error, at: Date.now() };
-          reject(error);
-        });
-        child.once("spawn", () => resolve({ pid: child.pid, exit: () => exit }));
-      });
-    },
-    processes: async () => processTable(),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    async killGroup(pgid, identities, parentAlive) {
-      if (!parentAlive) {
-        const current = processTable().filter((row) => row.pgid === pgid);
-        if (!current.length) return;
-        assert.ok(
-          current.some((row) =>
-            identities.some((old) => row.pid === old.pid && row.start === old.start),
-          ),
-          "Owned process group identity changed; refusing to signal it",
-        );
-      }
-      try {
-        process.kill(-pgid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    },
-    async killProcess(identity) {
-      // Recheck the birth identity immediately before signalling an escaped-group descendant.
-      const current = processTable().find((row) => row.pid === identity.pid);
-      if (!current || current.start !== identity.start) return;
-      try {
-        process.kill(identity.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    },
-    async readCandidate() {
-      const read = async (file) => {
-        try {
-          return JSON.parse(await readFile(file, "utf8"));
-        } catch (error) {
-          if (error.code === "ENOENT") return undefined;
-          throw error;
+  return superviseCase(
+    config,
+    {
+      now: Date.now,
+      async start() {
+        if (process.platform === "win32")
+          throw new Error("BLOCKED: Windows owned-process observer required");
+        const env = { ...process.env };
+        delete env.ELECTRON_RUN_AS_NODE;
+        if (config.case === "all-optional-off") {
+          env.PERSISTENCE_OPTIONAL_MAPPER_LOG = config.mapperLog;
+          env.PERSISTENCE_OPTIONAL_RUN_ID = config.runId;
         }
-      };
-      const entryFailure = await readEntryFailure(reportFile, read);
-      if (entryFailure) {
-        assert.equal(entryFailure.status, "failed");
-        assert.equal(entryFailure.runId, config.runId);
-        assert.ok(typeof entryFailure.originalError?.message === "string");
-        assert.ok(Array.isArray(entryFailure.cleanupErrors));
-        // A partial candidate must not mask the entry's already-recorded original error.
-        return { entryFailure };
-      }
-      return { candidate: await read(reportFile) };
+        const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
+          stdio: "inherit",
+          env,
+          detached: true,
+        });
+        let exit;
+        child.once("exit", (code, signal) => {
+          exit = { code, signal, at: Date.now() };
+        });
+        return new Promise((resolve, reject) => {
+          child.once("error", (error) => {
+            exit = { error, at: Date.now() };
+            reject(error);
+          });
+          child.once("spawn", () => resolve({ pid: child.pid, exit: () => exit }));
+        });
+      },
+      processes: async () => processTable(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      async killGroup(pgid, identities, parentAlive) {
+        if (!parentAlive) {
+          const current = processTable().filter((row) => row.pgid === pgid);
+          if (!current.length) return;
+          assert.ok(
+            current.some((row) =>
+              identities.some((old) => row.pid === old.pid && row.start === old.start),
+            ),
+            "Owned process group identity changed; refusing to signal it",
+          );
+        }
+        try {
+          process.kill(-pgid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      },
+      async killProcess(identity) {
+        // Recheck the birth identity immediately before signalling an escaped-group descendant.
+        const current = processTable().find((row) => row.pid === identity.pid);
+        if (!current || current.start !== identity.start) return;
+        try {
+          process.kill(identity.pid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      },
+      async readCandidate() {
+        const read = async (file) => {
+          try {
+            return JSON.parse(await readFile(file, "utf8"));
+          } catch (error) {
+            if (error.code === "ENOENT") return undefined;
+            throw error;
+          }
+        };
+        const entryFailure = await readEntryFailure(reportFile, read);
+        if (entryFailure) {
+          assert.equal(entryFailure.status, "failed");
+          assert.equal(entryFailure.runId, config.runId);
+          assert.ok(typeof entryFailure.originalError?.message === "string");
+          assert.ok(Array.isArray(entryFailure.cleanupErrors));
+          // A partial candidate must not mask the entry's already-recorded original error.
+          return { entryFailure };
+        }
+        return { candidate: await read(reportFile) };
+      },
+      writeFailure: (failure) =>
+        writeFile(`${reportFile}.controller-failure.json`, JSON.stringify(failure, null, 2), {
+          flag: "wx",
+        }),
+      reportFailure: (failure) => console.error(JSON.stringify(failure)),
     },
-    writeFailure: (failure) =>
-      writeFile(`${reportFile}.controller-failure.json`, JSON.stringify(failure, null, 2), {
-        flag: "wx",
-      }),
-    reportFailure: (failure) => console.error(JSON.stringify(failure)),
-  });
+    config.case === "sealed-ttl" ? { timeoutMs: 120000 } : undefined,
+  );
 }
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   assert.ok(!(referencesOnly && caseId), "--references and --case are mutually exclusive");
@@ -612,14 +669,17 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "contention",
       "suspend-wake",
       "disconnect-retry",
+      "sealed-ttl",
       "unknown-publication",
       "action-replay",
+      "renderer-loss",
+      "all-optional-off",
     ].includes(caseId)
   )
     return [caseId];
   if (caseId) throw new Error(`BLOCKED: unsupported case ${caseId}`);
   throw new Error(
-    "BLOCKED: ten observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
+    "BLOCKED: remaining observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
 export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
@@ -640,9 +700,13 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     buildRoot,
     build,
     selectedCases.some(
-      (id) => id === "contention" || id === "suspend-wake" || id === "disconnect-retry",
+      (id) =>
+        id === "contention" ||
+        id === "suspend-wake" ||
+        id === "disconnect-retry" ||
+        id === "renderer-loss",
     ),
-    selectedCases.includes("action-replay"),
+    selectedCases.some((id) => id === "action-replay" || id === "renderer-loss"),
   );
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
@@ -683,7 +747,9 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     workerEntry = path.join(buildRoot, "worker.cjs");
   await writeFile(
     workerSource,
-    `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
+    selectedCases.includes("all-optional-off")
+      ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
+      : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
   );
   await bundle(workerSource, workerEntry);
   const source = path.join(directory, "entry.ts"),
@@ -697,6 +763,9 @@ import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/de
 import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
 const config=JSON.parse(readFileSync(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
 app.setPath('userData',config.profile);
+// This supervised entry owns exit after awaited receipt I/O. Closing its last
+// test window must not implicitly terminate an in-flight observation/write.
+app.on('window-all-closed',()=>{});
 const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
  reportFailure:failure=>console.error(JSON.stringify(failure))});
 app.exit(code);
@@ -755,6 +824,69 @@ app.exit(code);
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
     };
+    if (id === "all-optional-off") {
+      const settingsProfile = await mkdtemp(path.join(directory, "optional-settings-"));
+      const receipts = {};
+      for (const optionalPhase of ["settings", "seed", "cold"]) {
+        const phaseConfig = {
+          ...config,
+          optionalPhase,
+          profile: optionalPhase === "settings" ? settingsProfile : profile,
+          profileId: optionalPhase === "settings" ? randomUUID() : config.profileId,
+          runId: randomUUID(),
+          report: path.join(directory, `optional-${optionalPhase}.candidate.json`),
+          mapperLog: path.join(directory, `optional-${optionalPhase}.mapper.jsonl`),
+          seedReceipt: path.join(directory, "optional-seed.receipt.json"),
+          settingsReceipt: path.join(directory, "optional-settings.receipt.json"),
+        };
+        const phaseConfigFile = path.join(directory, `optional-${optionalPhase}.json`);
+        await writeFile(phaseConfigFile, JSON.stringify(phaseConfig), { flag: "wx" });
+        const receipt = await launchCase(
+          electron,
+          entry,
+          phaseConfigFile,
+          phaseConfig.report,
+          phaseConfig,
+        );
+        if (optionalPhase !== "cold")
+          assertOptionalPhaseReceipt(receipt, {
+            runId: phaseConfig.runId,
+            profileId: phaseConfig.profileId,
+          });
+        else {
+          verifyRunReceipt(receipt, {
+            runId: phaseConfig.runId,
+            profileId: phaseConfig.profileId,
+            commit,
+            artifactSha256,
+            bundleSha256,
+          });
+          assert.deepEqual(receipt.evidence.optionalOff.seed, receipts.seed);
+          assert.deepEqual(receipt.evidence.optionalOff.settings, receipts.settings);
+          // Outside the child, verify the retained native outputs, not only self-reported hashes.
+          for (const p of [
+            receipts.seed.evidence.optionalPhase,
+            receipt.evidence.optionalOff.cold,
+          ]) {
+            const file = p.export.file;
+            const bytes = await readFile(file.path),
+              stat = await lstat(file.path);
+            assert.equal(digest(bytes), file.sha256);
+            assert.equal(bytes.toString("base64"), file.data);
+            assert.equal(`${stat.dev}:${stat.ino}`, file.identity);
+            assert.equal(stat.size, file.bytes);
+          }
+          reports.push(receipt);
+        }
+        receipts[optionalPhase] = receipt;
+        await writeFile(
+          path.join(directory, `optional-${optionalPhase}.receipt.json`),
+          JSON.stringify(receipt, null, 2),
+          { flag: "wx" },
+        );
+      }
+      continue;
+    }
     await writeFile(configFile, JSON.stringify(config));
     const receipt = await launchCase(electron, entry, configFile, report, config);
     verifyRunReceipt(receipt, {
