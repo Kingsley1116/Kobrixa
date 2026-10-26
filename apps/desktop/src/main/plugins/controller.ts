@@ -1,3 +1,4 @@
+import { SensorLabMigrationGate } from "./persistence/sensor-lab-migration.js";
 import { releaseUiRecording } from "./ui-bridge.js";
 import type {
   Permission as ImportedPermission,
@@ -1388,6 +1389,7 @@ export async function composeDesktopMain(
       return process;
     };
   let persistenceAdmitted = false;
+  let labMigration: SensorLabMigrationGate | undefined;
   const ownerKey = (owner: ImportedResourceOwner) =>
     JSON.stringify([
       owner.sourceKey,
@@ -1403,8 +1405,15 @@ export async function composeDesktopMain(
   };
   // The forwarding port is inert until the callback assigns the actual manager attachment.
   const runtimePort: UiRuntimeAttachment = {
-    activateInitialized: (source, signal) => {
-      if (!plugins?.acceptingUi) return Promise.reject(new Error("Plugin admission is paused."));
+    activateInitialized: async (source, signal) => {
+      if (!plugins?.acceptingUi) throw new Error("Plugin admission is paused.");
+      if (source === "builtin:kobrixa.sensor-lab") {
+        if (!labMigration) throw new Error("Sensor Lab migration is not attached.");
+        await labMigration.prepare(signal);
+        labMigration.assertReady();
+        if (!plugins.acceptingUi) throw new Error("Plugin admission is paused.");
+      }
+      signal.throwIfAborted();
       return runtime().activateInitialized(source, signal);
     },
     ready: (owner, signal) => {
@@ -1525,6 +1534,15 @@ export async function composeDesktopMain(
     }
   })();
   const { backend, recovery } = worker;
+  if (input.legacyLabWriter) {
+    labMigration = new SensorLabMigrationGate({
+      backend,
+      writers: [input.legacyLabWriter],
+      active: () => sourceProjection.currentSource("builtin:kobrixa.sensor-lab"),
+      owner: () => importOwner("builtin:kobrixa.sensor-lab"),
+      currentScope: input.currentScope,
+    });
+  }
   const claims = createPersistenceClaims170({
     feature: actions,
     core: coreActions,

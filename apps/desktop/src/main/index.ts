@@ -286,7 +286,19 @@ const primary = startPrimary(
     const reportCleanupError = (error: unknown) => {
       console.error("Device cleanup blocked.", error);
     };
+    // The shipped plugin owns Lab from this release onward. Disabling it must
+    // never re-enable the old writer (including before an import is resumed).
+    const legacyLabService: { current?: SensorLabService } = {};
     const pendingComposition = composeDesktopMain({
+      legacyLabWriter: {
+        sourceKey: "builtin:kobrixa.sensor-lab",
+        freezeAdmission() {
+          legacyLabService.current?.freezeAdmission();
+        },
+        async settled() {
+          await legacyLabService.current?.settleMigration();
+        },
+      },
       createFoundation: createDesktopFoundation,
       foundationOptions: {
         profile,
@@ -557,6 +569,8 @@ const primary = startPrimary(
         send("sensor-lab:state", state);
       },
     });
+    legacyLabService.current = sensorLab;
+    sensorLab.freezeAdmission();
     // On macOS the application can outlive its last window. A quit in that state
     // still has to finish any crash recovery / background checkpoint writes.
     const mainQuit = new MainProcessCloseGuard(
@@ -599,7 +613,7 @@ const primary = startPrimary(
     powerMonitor.on("resume", () => {
       for (const id of legacy.sessionIds()) void coordinator.resume(id).catch(reportCleanupError);
     });
-    void sensorLab.getState().catch(reportCleanupError);
+    // Legacy storage initializes only on an explicit legacy request, never during startup.
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
     updates = await createUpdateService(
       renderer,

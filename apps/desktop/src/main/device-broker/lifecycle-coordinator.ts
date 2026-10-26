@@ -45,7 +45,10 @@ export type DesktopFoundation = {
   dispose(): Promise<void>;
 };
 
+import type { LegacyWriterPort } from "../plugins/persistence/import-sources.js";
+
 export interface DesktopMainCompositionInput {
+  legacyLabWriter?: LegacyWriterPort;
   createFoundation: typeof createDesktopFoundation;
   foundationOptions: DesktopFoundationOptions;
   plugins: Omit<StartPluginsOptions, "stage3" | "stage3Host" | "onStage3Runtime">;

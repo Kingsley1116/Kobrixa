@@ -13,7 +13,7 @@ export default defineConfig(({ forgeConfigSelf }) => {
         external: ["node-hid", "electron-updater"],
         output: {
           entryFileNames: worker ? "persistence-worker.cjs" : "main.cjs",
-          footer: worker ? "exports.runPersistenceWorker({mappers:new Map()});" : "",
+          footer: worker ? "exports.runShippedPersistenceWorker();" : "",
         },
       },
     },

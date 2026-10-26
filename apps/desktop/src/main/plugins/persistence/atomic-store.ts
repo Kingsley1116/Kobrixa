@@ -616,6 +616,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       if(result.disposition==="unknown")result=await this.reconcileDocument(previous.ticket);
       if(result.disposition==="unknown")throw new Error("publish-uncertain");
       this.documentWrites.delete(identity);
+      if(result.disposition==="committed")this.forgetCompletedDocument(previous.ticket);
       if(result.disposition==="committed" && Buffer.from(previous.bytes).equals(bytes))return;
       if(result.disposition==="committed")throw new Error("reload-import");
     }
@@ -646,6 +647,16 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if(outcome.disposition==="unknown")throw new Error("publish-uncertain");
     this.documentWrites.delete(identity);
     if(outcome.disposition!=="committed")throw new Error("not-committed");
+    this.forgetCompletedDocument(ticket);
+  }
+  private forgetCompletedDocument(ticket:PublicationTicket):void {
+    // These host-only journal/recovery writes return no write handle or ticket.
+    // Once their exact result was observed and cleanup finished, the durable head
+    // is authoritative. Do not consume the 64 public/uncertain live-entry slots
+    // for every internal progress update in a many-record import.
+    const entry=this.entries.get(ticket.id);
+    if(entry && entry.state==="committed" && entry.cleaned && !entry.busy &&
+       (ticket.target.kind==="import" || ticket.target.kind==="recovery"))this.forgetEntry(ticket.id,entry);
   }
   admitImport(owner:PersistenceOwner,id:string,key:string):Promise<PublicationTicket> {
     return this.mutateImport(owner,id,async()=>{

@@ -3,6 +3,7 @@ import { createHash,randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { z } from "zod";
+import { sensorLabImportDescriptors } from "./sensor-lab-import.js";
 import type { ProfileWriterLock,PersistenceOwner } from "@kobrixa/plugin-runtime";
 import type { LegacyImportDescriptor,LegacySourceItem,LegacyMappedItem,LegacySourceResolver } from "./import-sources.js";
 import type { ExportDestination } from "./actions.js";
@@ -251,7 +252,7 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   return {backend,recovery:ready.recovery};
 }
 
-export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>;sourceRoots?:ReadonlyMap<string,string>}):void {
+export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImportDescriptor>;sourceRoots?:ReadonlyMap<string,string>;sourceRootsForStore?:(root:string)=>ReadonlyMap<string,string>;lazySourceRoots?:boolean}):void {
   if(!parentPort)throw new Error("worker-port-missing");const port=parentPort;
   port.once("message",async raw=>{
     const boot=bootSchema.parse(raw);if(!path.isAbsolute(boot.root) || boot.held.byteLength!==sharedBytes)throw new Error("invalid-boot");
@@ -266,8 +267,8 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       if(action==="kill")process.exit(71);if(action==="fail")throw Object.assign(new Error("injected"),{code:"EIO"});
       await new Promise<void>(resolve=>paused.set(point,resolve));
     }});
-    await fs.check(fs.path());const store=new AtomicStore(fs),output=new NativeOutput(profile,store.quota,()=>performance.now(),fs),sources=new WorkerSources(boot.root,store,input.mappers,input.sourceRoots??new Map());
-    await sources.validateRoots();
+    await fs.check(fs.path());const store=new AtomicStore(fs),output=new NativeOutput(profile,store.quota,()=>performance.now(),fs),sources=new WorkerSources(boot.root,store,input.mappers,input.sourceRootsForStore?.(boot.root)??input.sourceRoots??new Map());
+    if(!input.lazySourceRoots)await sources.validateRoots();
     let recovery:"ready"|"blocked"="ready";try{await store.initialize();}catch{recovery="blocked";}
     const queue=new WorkQueue(()=>performance.now()),accepted=new Map<number,{ticket:PublicationTicket;until:number|null}>(),destinations=new Map<string,ExportDestination>();let closed=false;const requests=new Map<number,z.infer<typeof PersistenceWorkerRequest>>();
     function collectSettled() {
@@ -335,7 +336,17 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
     port.postMessage({version:1,kind:"ready",recovery});
   });
 }
-// K170's CJS entry footer calls exports.runPersistenceWorker({mappers:new Map()}).
+/** Production roots are derived from the already-held profile store, never a plugin path.
+ * No filesystem operation occurs until an admitted host explicitly registers/runs migration. */
+export function shippedLegacySourceRoots(root:string):ReadonlyMap<string,string> {
+  if(!path.isAbsolute(root) || path.normalize(root)!==root || path.basename(root)!=="persistence-v1" || path.basename(path.dirname(root))!=="plugins")throw new Error("invalid-store-root");
+  const userData=path.dirname(path.dirname(root));
+  return new Map(sensorLabImportDescriptors.map((d,i)=>[d.id,path.join(userData,"sensor-lab",i===0?"recordings":"calibrations")]));
+}
+export function runShippedPersistenceWorker():void {
+  runPersistenceWorker({mappers:new Map(sensorLabImportDescriptors.map(d=>[d.id,d])),sourceRootsForStore:shippedLegacySourceRoots,lazySourceRoots:true});
+}
+// The shipped CJS footer invokes runShippedPersistenceWorker; test entries retain explicit inventories.
 // The module itself has no auto-start side effect, so T7's wrapper can call the runner once.
 
 import { parseNonceDocument, snapshotBytes, importIdFor } from "./import-sources.js";
@@ -416,7 +427,12 @@ export class WorkerSources implements LegacySourceResolver {
     const {fs}=binding;
     // Only the fixed root's initial check can establish absence. Once collection
     // starts, ENOENT is incomplete inventory (for example a disappearing child).
-    try { await fs.check(fs.path()); }
+    try {
+      // Check existing ancestors before classifying a missing source as absent.
+      // lstat(leaf) alone would follow a symlinked parent and misclassify its missing child.
+      const anchor=path.parse(fs.root).root,anchored=new NodePersistenceFs(anchor,fs.profile);
+      await anchored.check(anchored.path(...path.relative(anchor,fs.root).split(path.sep)));
+    }
     catch(e){return {state:(e as NodeJS.ErrnoException).code==="ENOENT"?"absent":"blocked",entries:[]};}
     try {
       const entries=await fs.entries(fs.path(),4096),items:LegacySourceItem[]=[];

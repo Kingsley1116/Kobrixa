@@ -437,3 +437,68 @@ it("F12 reservation pins requested channels before the first durable recording s
   expect(h.acquire.mock.invocationCallOrder[0]).toBeLessThan(save.mock.invocationCallOrder[0]!);
   await h.service.stop();
 });
+
+describe("legacy migration writer barrier", () => {
+  it("keeps a cold frozen service free of source reads and writes", async () => {
+    const h = await setup({});
+    const initialize = vi.spyOn(h.store, "initialize");
+    const save = vi.spyOn(h.store, "save");
+    h.service.freezeAdmission();
+    await h.service.settleMigration();
+    await h.service.getState();
+    await expect(h.service.start(h.request)).rejects.toThrow("plugin tools");
+    await expect(h.service.list()).rejects.toThrow("plugin tools");
+    await h.service.flush();
+    expect(initialize).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(h.acquire).not.toHaveBeenCalled();
+  });
+
+  it("waits for the original start and saves its final state before freezing forever", async () => {
+    const h = await setup({});
+    let releaseAcquire!: () => void;
+    h.acquire.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseAcquire = resolve;
+        }),
+    );
+    const original = h.service.start(h.request);
+    await vi.waitFor(() => expect(h.acquire).toHaveBeenCalledOnce());
+    const queued = h.service.start(h.request);
+    const queuedOutcome = queued.catch((error: unknown) => error);
+    h.service.freezeAdmission();
+    let settled = false;
+    const barrier = h.service.settleMigration().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseAcquire();
+    await original;
+    await barrier;
+    expect(await queuedOutcome).toBeInstanceOf(Error);
+    expect(h.release).toHaveBeenCalledOnce();
+    expect(await h.service.getState()).toMatchObject({
+      active: false,
+      saved: true,
+      recording: { reason: "close" },
+    });
+    const save = vi.spyOn(h.store, "save");
+    h.emit();
+    await h.service.flush();
+    await h.service.settleMigration();
+    expect(save).not.toHaveBeenCalled();
+    expect(h.release).toHaveBeenCalledOnce();
+  });
+
+  it("does not turn a failed release into a successful second migration attempt", async () => {
+    const h = await setup({});
+    await h.service.start(h.request);
+    h.release.mockRejectedValueOnce(new Error("release unknown"));
+    h.service.freezeAdmission();
+    await expect(h.service.settleMigration()).rejects.toThrow("release unknown");
+    await expect(h.service.settleMigration()).rejects.toThrow("release unknown");
+    expect(h.release).toHaveBeenCalledOnce();
+  });
+});

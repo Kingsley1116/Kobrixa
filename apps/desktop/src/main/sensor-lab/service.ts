@@ -52,6 +52,37 @@ export class SensorLabService {
     issues: [],
   };
   private initialized: Promise<void> | undefined;
+  private migrationFrozen = false;
+  private initializationAttempted = false;
+  private migrationSettlement: Promise<void> | undefined;
+
+  /** Host migration barrier. Already-admitted work is drained before source hashing. */
+  freezeAdmission(): void {
+    this.migrationFrozen = true;
+    clearInterval(this.checkpointTimer);
+    clearTimeout(this.limitTimer);
+  }
+
+  settleMigration(): Promise<void> {
+    this.freezeAdmission();
+    if (this.migrationSettlement) return this.migrationSettlement;
+    const attempt = this.serial(async () => {
+      // A cold disabled feature must not create, repair or quarantine legacy files.
+      if (!this.initialized) {
+        if (this.initializationAttempted)
+          throw new Error("Legacy initialization failed; restart and recover before migration.");
+        return;
+      }
+      await this.initialized;
+      const state = await this.stopCurrent("close");
+      if (!state.saved) throw new Error(state.error ?? "Legacy recording is not saved.");
+    });
+    this.migrationSettlement = attempt;
+    // Keep an uncertain release/save blocked for this lifetime. A retry must not
+    // lose the original failure and hash files while an old writer may be live.
+    void attempt.catch(() => {});
+    return attempt;
+  }
   private updates = new Map<string, MonitorUpdate>();
   private sessionId: string | undefined;
   private startedMonotonic = 0;
@@ -72,6 +103,9 @@ export class SensorLabService {
   }
 
   private initialize(): Promise<void> {
+    if (this.migrationFrozen)
+      return Promise.reject(new Error("Sensor Lab has moved to plugin tools."));
+    this.initializationAttempted = true;
     this.initialized ??= (async () => {
       this.state.issues = await this.store.initialize();
       try {
@@ -105,6 +139,7 @@ export class SensorLabService {
   }
 
   async getState(): Promise<SensorLabState> {
+    if (this.migrationFrozen) return this.snapshot();
     await this.initialize();
     return this.snapshot();
   }
@@ -223,6 +258,7 @@ export class SensorLabService {
   }
 
   observe(update: MonitorUpdate): void {
+    if (this.migrationFrozen) return;
     const previous = this.updates.get(update.sessionId);
     if (previous && update.sequence <= previous.sequence) return;
     this.updates.set(update.sessionId, update);
@@ -287,7 +323,13 @@ export class SensorLabService {
   }
 
   private checkpoint(): void {
-    if (!this.state.active || !this.state.recording || this.checkpointPending) return;
+    if (
+      this.migrationFrozen ||
+      !this.state.active ||
+      !this.state.recording ||
+      this.checkpointPending
+    )
+      return;
     this.state.recording.durationMs = this.elapsed();
     const record = structuredClone(this.state.recording);
     this.checkpointPending = this.store
@@ -308,38 +350,43 @@ export class SensorLabService {
   }
 
   stop(reason: SensorLabStopReason = "manual"): Promise<SensorLabState> {
+    if (this.migrationFrozen) return this.settleMigration().then(() => this.snapshot());
     return this.serial(async () => {
       await this.initialize();
-      clearInterval(this.checkpointTimer);
-      clearTimeout(this.limitTimer);
-      this.checkpointTimer = undefined;
-      this.limitTimer = undefined;
-      const sessionId = this.sessionId;
-      this.sessionId = undefined;
-      if (this.state.active && this.state.recording) {
-        this.state.recording.durationMs = this.elapsed();
-        this.state.recording.endedAt = this.now();
-        this.state.recording.reason = reason;
-      }
-      this.state.active = false;
-      this.state.waiting = false;
-      this.autoStopping = false;
-      this.publish();
-      let releaseError: unknown;
-      try {
-        if (sessionId) await this.dependencies.release(sessionId);
-      } catch (error) {
-        releaseError = error;
-      }
-      await this.checkpointPending;
-      await this.saveCurrent();
-      if (releaseError) {
-        this.state.error = errorMessage(releaseError);
-        this.publish();
-        throw releaseError;
-      }
-      return this.snapshot();
+      return this.stopCurrent(reason);
     });
+  }
+
+  private async stopCurrent(reason: SensorLabStopReason): Promise<SensorLabState> {
+    clearInterval(this.checkpointTimer);
+    clearTimeout(this.limitTimer);
+    this.checkpointTimer = undefined;
+    this.limitTimer = undefined;
+    const sessionId = this.sessionId;
+    this.sessionId = undefined;
+    if (this.state.active && this.state.recording) {
+      this.state.recording.durationMs = this.elapsed();
+      this.state.recording.endedAt = this.now();
+      this.state.recording.reason = reason;
+    }
+    this.state.active = false;
+    this.state.waiting = false;
+    this.autoStopping = false;
+    this.publish();
+    let releaseError: unknown;
+    try {
+      if (sessionId) await this.dependencies.release(sessionId);
+    } catch (error) {
+      releaseError = error;
+    }
+    await this.checkpointPending;
+    await this.saveCurrent();
+    if (releaseError) {
+      this.state.error = errorMessage(releaseError);
+      this.publish();
+      throw releaseError;
+    }
+    return this.snapshot();
   }
 
   private async saveCurrent(): Promise<void> {
