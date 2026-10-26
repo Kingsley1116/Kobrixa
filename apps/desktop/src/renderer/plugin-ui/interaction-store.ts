@@ -107,14 +107,7 @@ export class UiInteractionStore {
       void this.refresh().then(() => this.#followCursor());
   }
   async refresh(): Promise<void> {
-    if (
-      !this.#alive ||
-      !this.bridge.interact ||
-      !this.state.getSnapshot().snapshot.visible ||
-      !this.state.formCurrent() ||
-      !this.state.derivedCurrent()
-    )
-      return;
+    if (!this.#alive || !this.bridge.interact || !this.state.getSnapshot().snapshot.visible) return;
     this.#refreshAgain = true;
     if (this.#refresh) return this.#refresh;
     this.#refresh = (async () => {
