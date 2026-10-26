@@ -1487,6 +1487,18 @@ export async function composeDesktopMain(
   });
   const sourceProjection = createPersistenceSources170({
     onRetire: (sourceKey) => settingsRequests(backend).retire(sourceKey),
+    hostSettings: {
+      hostEpoch: profile.hostEpoch,
+      current: () => {
+        if (!persistenceAdmitted) return false;
+        try {
+          profile.assertHeld();
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    },
     currentScope: input.currentScope,
     currentRuntime: (owner) => runtimeAttachment?.current(owner) ?? false,
     beforeDelivery: (sourceKey) => {
@@ -2461,6 +2473,7 @@ type PersistenceSourceRow170 = {
 };
 export function createPersistenceSources170(input: {
   onRetire?: (sourceKey: string) => void;
+  hostSettings?: { hostEpoch: string; current: () => boolean };
   currentScope: (scope: CoreWindowScope) => boolean;
   currentRuntime: (owner: ResourceOwner) => boolean;
   beforeDelivery: (sourceKey: string) => void;
@@ -2469,6 +2482,9 @@ export function createPersistenceSources170(input: {
   type CoreSource = Pick<ResourceOwner, "sourceKey" | "pluginId" | "generation">;
   const coreSources = new Map<string, CoreSource>();
   const namespaces = new Map<string, { owner: ResourceOwner; scope: CoreWindowScope }>();
+  // Host reads use a separate capability lifetime, independent of windows and
+  // plugin processes. These owners are never admitted by the ordinary current().
+  const hostNamespaces = new Map<string, ResourceOwner>();
   // Only the latest retiring window needs a fence; currentScope rejects all older windows.
   let retiredScope: string | undefined;
   let generation = 0;
@@ -2486,10 +2502,44 @@ export function createPersistenceSources170(input: {
     if (rows.get(sourceKey)?.settings) input.onRetire?.(sourceKey);
   };
   const revokeNamespaces = (sourceKey: string) => {
+    hostNamespaces.delete(sourceKey);
     for (const [id, value] of namespaces)
       if (value.owner.sourceKey === sourceKey) namespaces.delete(id);
   };
   const port: PersistenceSourcePort = {
+    settingsNamespace(sourceKey) {
+      if (!input.hostSettings?.current()) {
+        hostNamespaces.clear();
+        return null;
+      }
+      const row = rows.get(sourceKey);
+      const core = coreSources.get(sourceKey);
+      if (
+        !row?.settings ||
+        !core ||
+        core.pluginId !== row.owner.pluginId ||
+        core.generation !== row.sourceGeneration
+      ) {
+        hostNamespaces.delete(sourceKey);
+        return null;
+      }
+      let owner = hostNamespaces.get(sourceKey);
+      if (!owner) {
+        owner = {
+          sourceKey,
+          pluginId: core.pluginId,
+          generation: core.generation,
+          hostEpoch: input.hostSettings.hostEpoch,
+          processEpoch: randomUUID(),
+        };
+        hostNamespaces.set(sourceKey, owner);
+      }
+      return {
+        owner: structuredClone(owner),
+        resourceDigest: row.settings.resourceDigest,
+        uiResourceGeneration: row.owner.uiResourceGeneration,
+      };
+    },
     current(owner) {
       return (
         (rows.get(owner.sourceKey)?.owner.pluginId === owner.pluginId &&
